@@ -103,6 +103,7 @@ export type PromptEnvelopeLayerId =
   | 'conversation_context'
   | 'peer_context'
   | 'active_goal'
+  | 'work_contract'
   | 'ollama_session_memory'
   | 'ollama_workflow_hint'
   | 'current_request'

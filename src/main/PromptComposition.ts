@@ -5,7 +5,7 @@ import {
 } from './ollama/OllamaRunMemory'
 import { classifyOllamaPromptIntent } from './ollama/OllamaPromptIntent'
 import { ollamaTierAwareWorkflowHint } from './ollama/OllamaModelProfiles'
-import { formatActiveGoalPromptBlock, shouldInjectActiveGoal } from './GoalState'
+import { buildAgentWorkContract } from './AgentWorkContract'
 import { grokAcpEnabled } from './grokGate'
 import type {
   ActiveGoal,
@@ -1110,6 +1110,7 @@ const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
   'conversation_context',
   'peer_context',
   'active_goal',
+  'work_contract',
   'current_request'
 ]
 
@@ -1540,16 +1541,31 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       ? `${compactionSummaryBlock}\n\n${contextualPrompt}`
       : `${compactionSummaryBlock}\n\nCurrent user request:\n${contextualPrompt}`
   }
-  const activeGoalContext = shouldInjectActiveGoal(input.activeGoal)
-    ? formatActiveGoalPromptBlock(input.activeGoal)
-    : ''
-  const injectActiveGoalContext = (prompt: string): string => {
-    if (!activeGoalContext) return prompt
+  const providerOwnsGoalSteering = Boolean(
+    input.activeGoal &&
+    (input.activeGoal.status === 'active' || input.activeGoal.status === 'blocked') &&
+    (input.activeGoal.mode === 'codex_native' ||
+      input.activeGoal.mode === 'claude_native' ||
+      input.activeGoal.mode === 'grok_native')
+  )
+  const workContractContext =
+    provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+      ? ''
+      : buildAgentWorkContract({
+          activeGoal: input.activeGoal,
+          providerOwnsGoalSteering,
+          completionAuthority: 'root'
+        })
+  const injectWorkContractContext = (prompt: string): string => {
+    if (!workContractContext) return prompt
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
     if (prompt.includes(currentRequestMarker)) {
-      return prompt.replace(currentRequestMarker, `${activeGoalContext}\n\n${currentRequestMarker}`)
+      return prompt.replace(
+        currentRequestMarker,
+        `${workContractContext}\n\n${currentRequestMarker}`
+      )
     }
-    return `${activeGoalContext}\n\nCurrent user request:\n${prompt}`
+    return `${workContractContext}\n\nCurrent user request:\n${prompt}`
   }
   let applicationLog = kimiNeedsContextInjection
     ? `Context turns: ${contextTurnsApplied} (Kimi: appending compact conversation context because no native ACP resume is available)`
@@ -1609,10 +1625,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     }
   }
 
-  contextualPrompt = injectActiveGoalContext(contextualPrompt)
-  if (activeGoalContext) {
-    applicationLog = `${applicationLog}; active goal injected`
-  }
+  contextualPrompt = injectWorkContractContext(contextualPrompt)
+  if (workContractContext) applicationLog = `${applicationLog}; work contract injected`
   if (compactionSummaryBlock) {
     applicationLog = `${applicationLog}; prior-session compaction summary injected`
   }
@@ -1951,10 +1965,10 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       state: 'applied'
     })
   }
-  if (activeGoalContext) {
+  if (workContractContext) {
     envelopeLayers.push({
-      id: 'active_goal',
-      label: 'Active goal',
+      id: 'work_contract',
+      label: 'Goal / plan work contract',
       state: 'applied'
     })
   }

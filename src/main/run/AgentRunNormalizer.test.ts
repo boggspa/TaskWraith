@@ -613,6 +613,44 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(invalid.kimiThinking).toBe(true)
   })
 
+  it('preserves bounded Goal specification provenance through the run boundary', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'codex',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'continue',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Ship the feature.',
+          objectiveSource: 'user',
+          specification: {
+            kind: 'approved_plan',
+            sourceMessageId: 'message-source',
+            intendedPlanId: 'plan-1',
+            acceptanceCriteria: ['Works.', 'Tested.']
+          },
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'codex',
+          createdAt: '2026-08-21T00:00:00.000Z',
+          updatedAt: '2026-08-21T00:00:00.000Z'
+        }
+      },
+      makeDeps()
+    )
+
+    expect(result.activeGoal).toMatchObject({
+      objectiveSource: 'user',
+      specification: {
+        kind: 'approved_plan',
+        sourceMessageId: 'message-source',
+        intendedPlanId: 'plan-1',
+        acceptanceCriteria: ['Works.', 'Tested.']
+      }
+    })
+  })
+
   // Invariant 5 (coverage): the global-scope branch threads requireGlobalChat +
   // globalRunCwd (and skips the workspace canonicalizer). Combined with the tests
   // above, all 7 deps are asserted "called where expected":

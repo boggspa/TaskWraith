@@ -244,6 +244,9 @@ export class MissionFactShadowService {
               : goal.objectiveSource === 'agent'
                 ? 'agent'
                 : 'system',
+          ...(goal.specification?.sourceMessageId
+            ? { sourcePromptMessageId: goal.specification.sourceMessageId }
+            : {}),
           chatId: chat.appChatId,
           ...(chat.workspaceId ? { workspaceId: chat.workspaceId } : {}),
           ...(chat.ensemble?.activeRound?.roundId

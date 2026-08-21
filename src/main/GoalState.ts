@@ -3,6 +3,7 @@ import type {
   ActiveGoal,
   ActiveGoalMode,
   ActiveGoalObjectiveSource,
+  ActiveGoalSpecification,
   ActiveGoalStatus,
   GoalRuntimeLedger,
   GoalRuntimeLedgerInterval,
@@ -14,6 +15,8 @@ export { activeGoalModeLabel }
 
 export const MAX_ACTIVE_GOAL_OBJECTIVE_CHARS = 4000
 export const MAX_ACTIVE_GOAL_REASON_CHARS = 800
+export const MAX_ACTIVE_GOAL_ACCEPTANCE_CRITERIA = 24
+export const MAX_ACTIVE_GOAL_ACCEPTANCE_CRITERION_CHARS = 1000
 
 export function normalizeActiveGoalObjective(value: unknown): string {
   const text = typeof value === 'string' ? value : String(value ?? '')
@@ -23,6 +26,39 @@ export function normalizeActiveGoalObjective(value: unknown): string {
 export function normalizeActiveGoalReason(value: unknown): string {
   const text = typeof value === 'string' ? value : String(value ?? '')
   return text.trim().slice(0, MAX_ACTIVE_GOAL_REASON_CHARS)
+}
+
+export function normalizeActiveGoalSpecification(
+  value: unknown
+): ActiveGoalSpecification | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const kind = record.kind
+  if (kind !== 'user_prompt' && kind !== 'expected_outcome' && kind !== 'approved_plan') {
+    return undefined
+  }
+  const sourceMessageId = String(record.sourceMessageId || '')
+    .trim()
+    .slice(0, 512)
+  const intendedPlanId = String(record.intendedPlanId || '')
+    .trim()
+    .slice(0, 512)
+  const acceptanceCriteria = Array.isArray(record.acceptanceCriteria)
+    ? [
+        ...new Set(
+          record.acceptanceCriteria
+            .map((criterion) => String(criterion || '').trim())
+            .filter(Boolean)
+            .map((criterion) => criterion.slice(0, MAX_ACTIVE_GOAL_ACCEPTANCE_CRITERION_CHARS))
+        )
+      ].slice(0, MAX_ACTIVE_GOAL_ACCEPTANCE_CRITERIA)
+    : []
+  return {
+    kind,
+    ...(sourceMessageId ? { sourceMessageId } : {}),
+    ...(intendedPlanId ? { intendedPlanId } : {}),
+    ...(acceptanceCriteria.length > 0 ? { acceptanceCriteria } : {})
+  }
 }
 
 export function resolveActiveGoalMode(
@@ -152,6 +188,7 @@ export function createActiveGoal(
     /** Omit for legacy/unknown callers. Callers that accept a human's goal
      * text must label it `user`; agent control actions must label it `agent`. */
     objectiveSource?: ActiveGoalObjectiveSource
+    specification?: ActiveGoalSpecification
   } = {}
 ): ActiveGoal {
   const now = options.now || new Date()
@@ -160,10 +197,14 @@ export function createActiveGoal(
   if (!normalizedObjective) {
     throw new Error('Goal objective is required.')
   }
+  const specification =
+    normalizeActiveGoalSpecification(options.specification) ||
+    (options.objectiveSource === 'user' ? { kind: 'expected_outcome' as const } : undefined)
   return {
     id: `goal-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
     objective: normalizedObjective,
     ...(options.objectiveSource ? { objectiveSource: options.objectiveSource } : {}),
+    ...(specification ? { specification } : {}),
     status: 'active',
     mode: resolveActiveGoalMode(provider, {
       codexNativeAvailable: options.codexNativeAvailable,

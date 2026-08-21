@@ -80,6 +80,25 @@ describe('GoalState', () => {
     expect(legacyGoal.objectiveSource).toBeUndefined()
   })
 
+  it('retains an untruncated prompt/plan reference beside the bounded objective summary', () => {
+    const goal = createActiveGoal('codex', 'Bounded display summary', {
+      objectiveSource: 'user',
+      specification: {
+        kind: 'approved_plan',
+        sourceMessageId: 'message-with-the-complete-user-prompt',
+        intendedPlanId: 'plan-1',
+        acceptanceCriteria: ['Feature works.', 'Feature is tested.', 'Feature works.']
+      }
+    })
+
+    expect(goal.specification).toEqual({
+      kind: 'approved_plan',
+      sourceMessageId: 'message-with-the-complete-user-prompt',
+      intendedPlanId: 'plan-1',
+      acceptanceCriteria: ['Feature works.', 'Feature is tested.']
+    })
+  })
+
   it('creates provider-aware goals without treating todos as the objective', () => {
     const goal = createActiveGoal('ollama', 'Fix the failing parser test', {
       now: new Date('2026-06-13T12:00:00Z')

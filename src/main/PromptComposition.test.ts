@@ -182,7 +182,8 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       targetProvider: 'kimi'
     })
 
-    expect(sanitized).toBe('User work.')
+    expect(sanitized).toContain('<taskwraith_work_contract>')
+    expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('this Claude workspace run')
   })
 
@@ -207,7 +208,9 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       targetProvider: 'claude'
     })
 
-    expect(sanitized).toBe(`${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`)
+    expect(sanitized).toContain(TASKWRAITH_CORE_MCP_PROFILE_NOTE)
+    expect(sanitized).toContain('<taskwraith_work_contract>')
+    expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('mcp_taskwraith-broker')
     expect(sanitized).not.toContain('native Cursor Write')
   })
@@ -662,10 +665,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       }
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_active_goal>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
     expect(result.contextualPrompt).toContain('Finish the composer goal affordance with tests.')
     expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
-    expect(result.applicationLog).toContain('active goal injected')
+    expect(result.applicationLog).toContain('work contract injected')
   })
 
   it('injects progressive skill discovery and SessionStart hook context when provided', () => {
@@ -717,6 +720,8 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Paused objective.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('current user request below')
   })
 
   it('does not inject native Codex goals because app-server owns steering', () => {
@@ -744,6 +749,8 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Codex native goal state.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('provider-native Goal state')
   })
 
   it('does not inject native Grok goals because the Grok runtime owns /goal steering', () => {
@@ -770,6 +777,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Grok native slash goal state.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
     expect(result.contextualPrompt).toContain(
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
@@ -1192,7 +1200,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt.match(/Current user request:/g)?.length).toBe(1)
   })
 
-  it('does not add Current user request cold-wrap for non-Ollama providers', () => {
+  it('anchors the work contract immediately above the request for non-Ollama providers', () => {
     const result = composeRunPrompt({
       instructionContext: null,
       provider: 'claude',
@@ -1206,7 +1214,8 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('Add a Zig joke test.')
-    expect(result.contextualPrompt).not.toContain('Current user request:')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('Current user request:\nAdd a Zig joke test.')
   })
 
   it('keeps thanks-only follow-ups free of the prior tool trajectory block', () => {
@@ -1482,7 +1491,11 @@ describe('Browser Canvas handoff', () => {
       openCanvasSessions: [{ canvasId: 'canvas-live-1', driver: 'web', status: 'active' }]
     })
 
-    expect(result.contextualPrompt).toBe('Can you see the webpage in the browser canvas?')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain(
+      'Current user request:\nCan you see the webpage in the browser canvas?'
+    )
+    expect(result.contextualPrompt).not.toContain('canvas_snapshot')
   })
 })
 
@@ -1592,7 +1605,9 @@ describe('Simulator Canvas handoff', () => {
       taskWraithMcpAdvertised: false
     })
 
-    expect(result.contextualPrompt).toBe(prompt)
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain(`Current user request:\n${prompt}`)
+    expect(result.contextualPrompt).not.toContain('simulator_status')
   })
 })
 
@@ -2074,7 +2089,8 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     })
 
-    expect(result.contextualPrompt).toBe('Continue the work.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('Current user request:\nContinue the work.')
     expect(result.contextualPrompt).not.toContain('Prior session summary')
     expect(result.contextualPrompt).not.toContain('FRESH detail')
     expect(result.applicationLog).toContain('resuming Kimi Code ACP session context')
@@ -2451,6 +2467,8 @@ describe('composeRunPrompt envelope layers', () => {
     const result = composeRunPrompt({ ...base, provider: 'cursor' })
     const ids = result.envelopeLayers.map((layer) => layer.id)
     expect(ids[ids.length - 1]).toBe('current_request')
+    expect(ids).toContain('work_contract')
+    expect(ids.indexOf('work_contract')).toBeLessThan(ids.indexOf('current_request'))
     expect(ids.indexOf('runtime_preamble')).toBeLessThan(ids.indexOf('instructions_global'))
     const globalLayer = result.envelopeLayers.find((layer) => layer.id === 'instructions_global')
     expect(globalLayer?.state).toBe('applied')

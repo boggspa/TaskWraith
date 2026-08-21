@@ -17,7 +17,7 @@ import {
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
-import { normalizeActiveGoalObjective } from '../GoalState'
+import { normalizeActiveGoalObjective, normalizeActiveGoalSpecification } from '../GoalState'
 import {
   claudeModelSupportsFastMode,
   isKimiK3Model,
@@ -384,9 +384,13 @@ function normalizeAgentRunActiveGoal(value: unknown): ActiveGoal | null | undefi
   } catch {
     return undefined
   }
+  const objectiveSource = optionalString(value.objectiveSource)
+  const specification = normalizeActiveGoalSpecification(value.specification)
   return {
     id,
     objective,
+    ...(objectiveSource === 'user' || objectiveSource === 'agent' ? { objectiveSource } : {}),
+    ...(specification ? { specification } : {}),
     status,
     mode,
     provider,

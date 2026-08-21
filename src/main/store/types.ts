@@ -425,6 +425,17 @@ export type ActiveGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
  * deliberately omitted rather than guessed; control-plane features treat only
  * `user` as safe display text. */
 export type ActiveGoalObjectiveSource = 'user' | 'agent'
+export type ActiveGoalSpecificationKind = 'user_prompt' | 'expected_outcome' | 'approved_plan'
+export interface ActiveGoalSpecification {
+  /** Which user-owned surface supplied the binding goal specification. */
+  kind: ActiveGoalSpecificationKind
+  /** Exact ChatMessage containing the untruncated source text when available. */
+  sourceMessageId?: string
+  /** Approved MissionPlanState / plan-artifact identity when the plan is binding. */
+  intendedPlanId?: string
+  /** Concise acceptance conditions; the referenced prompt/plan remains authoritative. */
+  acceptanceCriteria?: string[]
+}
 export type ActiveGoalMode =
   | 'codex_native'
   | 'claude_native'
@@ -453,9 +464,12 @@ export interface GoalRuntimeLedger {
 }
 export interface ActiveGoal {
   id: string
+  /** Bounded display summary. `specification.sourceMessageId` identifies the
+   * untruncated user prompt or approved plan that remains authoritative. */
   objective: string
   /** Provenance of `objective`, not of its lifecycle/status fields. */
   objectiveSource?: ActiveGoalObjectiveSource
+  specification?: ActiveGoalSpecification
   status: ActiveGoalStatus
   mode: ActiveGoalMode
   provider: ProviderId
