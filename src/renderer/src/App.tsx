@@ -913,6 +913,7 @@ import {
   buildRoundCloseoutSummaryDigest,
   buildRunCloseoutSummaryDigest
 } from './lib/closeoutSummaryDigest'
+import { roundSummaryRefreshKeyForCloseout } from './lib/closeoutRoundSummaryRefresh'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
 import {
   fetchProviderRates,
@@ -25492,6 +25493,7 @@ function App(): React.JSX.Element {
   )
   const closeoutChildChatsRef = useRef(closeoutChildChats)
   closeoutChildChatsRef.current = closeoutChildChats
+  const closeoutRoundSummaryRefreshKey = roundSummaryRefreshKeyForCloseout(currentChat)
   const closeoutSubagentRefreshKey = useMemo(() => {
     if (!currentChat || !visibleRunCompleteNotice || settings?.showRunCompleteSummary === false) {
       return ''
@@ -25617,6 +25619,7 @@ function App(): React.JSX.Element {
     })
   }, [
     closeoutAiSummaries,
+    closeoutRoundSummaryRefreshKey,
     closeoutSubagentRefreshKey,
     currentChat?.appChatId,
     currentChat?.chatKind,
