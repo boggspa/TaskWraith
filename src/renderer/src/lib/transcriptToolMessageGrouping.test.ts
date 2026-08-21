@@ -11,6 +11,7 @@ import {
   isEnsembleFanoutResultMessage,
   readEnsembleFanoutTranscriptParts
 } from '../components/EnsembleFanoutResultCardModel'
+import { inlineStatsForActivity } from './ActivityInlineStats'
 import { summarizeCollapsedActivityStack } from './collapsedActivityStack'
 
 function activity(
@@ -276,10 +277,17 @@ describe('groupAdjacentToolMessages', () => {
       diffSummary: { additions: 33, deletions: 14 },
       durationMs: 25_948
     })
+    expect(inlineStatsForActivity(grouped[0].toolActivities![0])).toMatchObject({
+      visible: true,
+      additions: 33,
+      deletions: 14,
+      confidence: 'exact'
+    })
     expect(summarizeCollapsedActivityStack(grouped[0].toolActivities || [])).toMatchObject({
       label: 'Edited 1 file · Ran 1 command · 1 error',
       activityCount: 2,
-      errorCount: 1
+      errorCount: 1,
+      diff: { additions: 33, deletions: 14, estimated: false }
     })
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual([
       'provider-row',
