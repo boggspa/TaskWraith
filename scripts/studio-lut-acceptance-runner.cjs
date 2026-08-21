@@ -23,9 +23,9 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'e76a73f4e16f75c7ae8ec97e41c88706eddbf2c64052d384e9e025e46ec759b7',
+    '0a660b3cb755b73bff46ff7293d627e099199ea4013aa7b606a1dec00f57ea82',
   'scripts/studio-acceptance-ui-driver.swift':
-    'ce92e7858a9e0127b55a3f3cdb05acbaf3ae69fb9b3a4476411cd4f0c5543642',
+    '31e049ce81bd5dc1d0e1366c33c5b3f6f85bc10ccfcfd751f8925678bc67aa29',
   'scripts/studio-acceptance-watchdog.cjs':
     'c68429a807ca03465e076e8dd609283ef21937fac1e86aa23177e0972bbd3a8e',
   'scripts/studio-acceptance-window-probe.swift':

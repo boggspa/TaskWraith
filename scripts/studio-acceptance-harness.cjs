@@ -154,7 +154,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    'ce92e7858a9e0127b55a3f3cdb05acbaf3ae69fb9b3a4476411cd4f0c5543642',
+    '31e049ce81bd5dc1d0e1366c33c5b3f6f85bc10ccfcfd751f8925678bc67aa29',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':

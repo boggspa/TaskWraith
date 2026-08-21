@@ -517,31 +517,41 @@ func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
         throw DriverFailure.refused("macOS Accessibility access is unavailable")
     }
     let applicationElement = AXUIElementCreateApplication(pid_t(request.expectedPid))
-    var rawWindows: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(
-        applicationElement,
-        kAXWindowsAttribute as CFString,
-        &rawWindows
-    ) == .success,
-        let windows = rawWindows as? [AXUIElement]
-    else {
-        throw DriverFailure.refused("could not inspect the exact Companion accessibility windows")
-    }
-    let matches = windows.filter { window in
-        var rawTitle: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            window,
-            kAXTitleAttribute as CFString,
-            &rawTitle
+    let deadline = Date().addingTimeInterval(5)
+    var inspectedWindows = false
+    repeat {
+        var rawWindows: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXWindowsAttribute as CFString,
+            &rawWindows
         ) == .success,
-            let title = rawTitle as? String
-        else { return false }
-        return title == request.windowTitle
-    }
-    guard matches.count == 1, let window = matches.first else {
-        throw DriverFailure.refused("exact Companion accessibility window identity is unavailable")
-    }
-    return window
+            let windows = rawWindows as? [AXUIElement]
+        {
+            inspectedWindows = true
+            let matches = windows.filter { window in
+                var rawTitle: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(
+                    window,
+                    kAXTitleAttribute as CFString,
+                    &rawTitle
+                ) == .success,
+                    let title = rawTitle as? String
+                else { return false }
+                return title == request.windowTitle
+            }
+            if matches.count == 1, let window = matches.first { return window }
+            if matches.count > 1 {
+                throw DriverFailure.refused(
+                    "exact Companion accessibility window identity is duplicated")
+            }
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    } while Date() <= deadline
+    throw DriverFailure.refused(
+        inspectedWindows
+            ? "exact Companion accessibility window identity is unavailable"
+            : "could not inspect the exact Companion accessibility windows")
 }
 
 func stringAttribute(_ attribute: String, of element: AXUIElement) -> String? {
