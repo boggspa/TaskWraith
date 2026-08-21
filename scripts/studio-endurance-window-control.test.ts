@@ -24,47 +24,55 @@ function request(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe('Studio endurance window control', () => {
-  it('uses exact background AX close and refuses the installed owner target', () => {
-    expect(helperSource).toContain('kAXCloseButtonAttribute')
-    expect(helperSource).toContain('AXUIElementPerformAction(close, kAXPressAction')
-    expect(helperSource).toContain('getpgid(pid_t(request.expectedPid))')
-    expect(helperSource).toContain('validateFocusIsolation(')
-    expect(helperSource).toContain('cursorPreserved: cursorPreserved')
-    expect(helperSource).toContain('CFGetTypeID(rawClose) == AXUIElementGetTypeID()')
-    expect(helperSource).not.toContain('rawClose as! AXUIElement')
-    expect(helperSource).toContain('!executable.path.hasPrefix("/Applications/TaskWraith.app/")')
-    expect(helperSource).not.toContain('CGEvent(')
-    expect(helperSource).not.toContain('.activate(')
+  it.runIf(process.platform === 'darwin')(
+    'uses exact background AX close and refuses the installed owner target',
+    () => {
+      expect(helperSource).toContain('kAXCloseButtonAttribute')
+      expect(helperSource).toContain('AXUIElementPerformAction(close, kAXPressAction')
+      expect(helperSource).toContain('getpgid(pid_t(request.expectedPid))')
+      expect(helperSource).toContain('validateFocusIsolation(')
+      expect(helperSource).toContain('cursorPreserved: cursorPreserved')
+      expect(helperSource).toContain('CFGetTypeID(rawClose) == AXUIElementGetTypeID()')
+      expect(helperSource).not.toContain('rawClose as! AXUIElement')
+      expect(helperSource).toContain('!executable.path.hasPrefix("/Applications/TaskWraith.app/")')
+      expect(helperSource).not.toContain('CGEvent(')
+      expect(helperSource).not.toContain('.activate(')
 
-    const directory = mkdtempSync(join(tmpdir(), 'studio-endurance-window-control-'))
-    try {
-      const requestPath = join(directory, 'request.json')
-      writeFileSync(requestPath, JSON.stringify(request()), { mode: 0o600 })
-      const result = spawnSync('/usr/bin/swift', [helperPath, requestPath], {
-        encoding: 'utf8',
-        timeout: 30_000
-      })
-      expect(result.status).toBe(2)
-      expect(result.stderr).toMatch(/installed or inexact Companion is never a target/)
-      expect(result.stdout).toBe('')
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
+      const directory = mkdtempSync(join(tmpdir(), 'studio-endurance-window-control-'))
+      try {
+        const requestPath = join(directory, 'request.json')
+        writeFileSync(requestPath, JSON.stringify(request()), { mode: 0o600 })
+        // @portability-ok: this Darwin-gated test executes the macOS-only
+        // Swift/AppKit acceptance helper by its fixed system interpreter.
+        const result = spawnSync('/usr/bin/swift', [helperPath, requestPath], {
+          encoding: 'utf8',
+          timeout: 30_000
+        })
+        expect(result.status).toBe(2)
+        expect(result.stderr).toMatch(/installed or inexact Companion is never a target/)
+        expect(result.stdout).toBe('')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
-  it('rejects extra request authority before inspecting a process or window', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'studio-endurance-window-control-'))
-    try {
-      const requestPath = join(directory, 'request.json')
-      writeFileSync(requestPath, JSON.stringify(request({ forged: true })), { mode: 0o600 })
-      const result = spawnSync('/usr/bin/swift', [helperPath, requestPath], {
-        encoding: 'utf8',
-        timeout: 30_000
-      })
-      expect(result.status).toBe(2)
-      expect(result.stderr).toMatch(/missing or extra top-level keys/)
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
+  it.runIf(process.platform === 'darwin')(
+    'rejects extra request authority before inspecting a process or window',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'studio-endurance-window-control-'))
+      try {
+        const requestPath = join(directory, 'request.json')
+        writeFileSync(requestPath, JSON.stringify(request({ forged: true })), { mode: 0o600 })
+        const result = spawnSync('/usr/bin/swift', [helperPath, requestPath], {
+          encoding: 'utf8',
+          timeout: 30_000
+        })
+        expect(result.status).toBe(2)
+        expect(result.stderr).toMatch(/missing or extra top-level keys/)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     }
-  })
+  )
 })
