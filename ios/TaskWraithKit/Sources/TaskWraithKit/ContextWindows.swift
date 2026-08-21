@@ -108,6 +108,7 @@ public enum ContextWindows {
         "groq/qwen/qwen3-32b": 131_072,
         "cerebras/zai-glm-4.7": 131_072,
         "cerebras/gpt-oss-120b": 131_072,
+        "openrouter/stealth/ox-alpha": 1_048_576,
         // Kimi
         "kimi-k3": 256_000,
         "kimi-k2.7-code": 256_000,

@@ -51,6 +51,7 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('mistral/devstral-2512')?.hueClass).toBe('mistral')
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')
     expect(resolvePiUpstreamBrand('minimax/MiniMax-M3')?.label).toBe('MiniMax')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('OpenRouter')
   })
 
   it('maps qwen-token-plan to the EXISTING qwen hue, not a new one', () => {
@@ -71,6 +72,7 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2')
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
+    expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
   })
 
   it('keeps the disambiguating suffix on models two upstreams both serve', () => {

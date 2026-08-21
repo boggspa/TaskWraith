@@ -49,7 +49,8 @@ const PI_UPSTREAMS = new Set([
   'minimax',
   'mistral',
   'groq',
-  'cerebras'
+  'cerebras',
+  'openrouter'
 ])
 // Optional host CLIs TaskWraith can install/upgrade on the user's behalf. Must
 // mirror HOST_CLI_TOOL_IDS in src/shared/hostCliToolCatalog.ts (this module

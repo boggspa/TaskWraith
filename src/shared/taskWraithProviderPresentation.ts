@@ -35,7 +35,8 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   zai: '#177DAA',
   minimax: '#C044A4',
   cerebras: '#BB584A',
-  groq: '#088482'
+  groq: '#088482',
+  openrouter: '#E02948'
 } as const
 
 export const TASKWRAITH_PROVIDER_ACCENT_ALIASES = {
@@ -60,7 +61,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   ensemble: 'Ensemble',
   meta: 'Meta',
   cohere: 'Cohere',
-  essential: 'Essential AI'
+  essential: 'Essential AI',
+  openrouter: 'OpenRouter'
 }
 
 const PROVIDER_SHORT_CODES: Record<string, string> = {
@@ -93,7 +95,8 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   qwen: 'QWN',
   minimax: 'MMX',
   cerebras: 'CBR',
-  groq: 'GRQ'
+  groq: 'GRQ',
+  openrouter: 'ORR'
 }
 
 type ProviderAccentKey = keyof typeof TASKWRAITH_PROVIDER_ACCENTS

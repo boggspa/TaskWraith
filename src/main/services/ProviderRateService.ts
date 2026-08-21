@@ -1246,6 +1246,15 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://www.cerebras.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Most expensive wired Pi model by input rate — ~16x DeepSeek V4 Flash.'
+      },
+      {
+        modelId: 'openrouter/stealth/ox-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/ox-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'OpenRouter Ox Alpha is the Pi seat’s single-model, free-usage exception.'
       }
     ]
   },

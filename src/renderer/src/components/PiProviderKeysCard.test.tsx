@@ -29,17 +29,19 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
 }
 
 describe('PiProviderKeysCardView', () => {
-  it('lists exactly the allowlisted upstreams and no hosted providers', () => {
+  it('lists the allowlisted upstreams, including OpenRouter’s Ox Alpha-only lane', () => {
     const html = render()
     for (const upstream of PI_CARD_UPSTREAMS) {
       expect(html, upstream.id).toContain(upstream.label)
     }
     // The wall, restated as a UI invariant: the card must never offer a lane
-    // to a provider TaskWraith hosts first-party.
-    for (const forbidden of ['Anthropic', 'OpenAI', 'OpenRouter', 'GitHub Copilot', 'Kimi']) {
+    // to a provider TaskWraith hosts first-party. OpenRouter is the explicit
+    // one-model Ox Alpha exception and is asserted above through the card list.
+    for (const forbidden of ['Anthropic', 'OpenAI', 'GitHub Copilot', 'Kimi']) {
       expect(html, forbidden).not.toContain(`>${forbidden}<`)
     }
-    expect(PI_CARD_UPSTREAMS).toHaveLength(7)
+    expect(PI_CARD_UPSTREAMS).toHaveLength(8)
+    expect(html).toContain('Ox Alpha only')
   })
 
   it('reports the configured count and marks configured rows', () => {

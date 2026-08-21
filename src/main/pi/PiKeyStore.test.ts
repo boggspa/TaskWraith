@@ -82,12 +82,20 @@ describe('PiKeyStore', () => {
 
   it('refuses upstreams outside the policy allowlist', () => {
     const store = makeStore()
-    for (const upstream of ['anthropic', 'openai', 'openrouter', 'xai', '', 'DEEPSEEK']) {
+    for (const upstream of ['anthropic', 'openai', 'xai', '', 'DEEPSEEK']) {
       const result = store.setKey(upstream, 'k')
       expect(result.ok, upstream).toBe(false)
       expect(result.error).toBe('invalidUpstream')
     }
     expect(store.getStatus().configuredUpstreams).toEqual([])
+  })
+
+  it('stores an OpenRouter key through the same encrypted upstream store', () => {
+    const store = makeStore()
+
+    expect(store.setKey('openrouter', 'or-key').ok).toBe(true)
+    expect(store.getStatus().configuredUpstreams).toEqual(['openrouter'])
+    expect(store.loadKeys()).toEqual({ status: 'ok', keys: { openrouter: 'or-key' } })
   })
 
   it('refuses blank and oversized keys', () => {

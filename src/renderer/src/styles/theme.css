@@ -261,6 +261,8 @@
    *    from openbmb; it wears its OWN published SECONDARY cyan (#0AAFC8).
    *  - Z.ai ships an indigo (#3859FF) all but identical to DeepSeek's, so it
    *    moves to azure and DeepSeek keeps the royal blue it is known for.
+   *  - OpenRouter's multi-colour identity gets a distinct route rose, held at
+   *    the same AA-readable luminance as the rest of this palette.
    * `qwen-token-plan` maps to the EXISTING --provider-qwen-color, so Qwen
    * reads the same whether it arrives via Ollama or via Pi. */
   --provider-deepseek-color: #4E6AEE;
@@ -269,6 +271,7 @@
   --provider-mistral-color: #D44404;
   --provider-cerebras-color: #BB584A;
   --provider-groq-color: #088482;
+  --provider-openrouter-color: #E02948;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

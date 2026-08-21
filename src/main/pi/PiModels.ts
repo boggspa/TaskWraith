@@ -8,9 +8,9 @@
  * list can transiently be empty vanishes from every picker, so the seat
  * ships a bundled list rather than shelling out to `pi --list-models`.
  * Built-in metadata below is extracted from pi 0.82.1's bundled catalog
- * (@earendil-works/pi-ai providers/data). Newer Mistral deployments come from
- * Mistral's own model cards and are registered per run; re-check both sources
- * on pi upgrades.
+ * (@earendil-works/pi-ai providers/data). Newer Mistral deployments and the
+ * user-approved OpenRouter Ox Alpha exception are registered per run; re-check
+ * both sources on pi upgrades.
  *
  * Curation is deliberate: flagship coder models per allowed upstream. Resold
  * duplicates stay out unless they expose a distinct user-paid entitlement
@@ -71,7 +71,11 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   { wireId: 'groq/qwen/qwen3-32b', upstream: 'groq', modelId: 'qwen/qwen3-32b', label: 'Qwen3 32B (Groq)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
   // Cerebras — open-weights, ultra-fast
   { wireId: 'cerebras/zai-glm-4.7', upstream: 'cerebras', modelId: 'zai-glm-4.7', label: 'GLM-4.7 (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
-  { wireId: 'cerebras/gpt-oss-120b', upstream: 'cerebras', modelId: 'gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false }
+  { wireId: 'cerebras/gpt-oss-120b', upstream: 'cerebras', modelId: 'gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
+  // OpenRouter — exact Ox Alpha exception only. Pi 0.82.1 does not bundle
+  // this model, so PiOpenRouterModelRegistration writes its metadata in the
+  // selected run's isolated home before Pi starts.
+  { wireId: 'openrouter/stealth/ox-alpha', upstream: 'openrouter', modelId: 'stealth/ox-alpha', label: 'Ox Alpha', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true }
 ]
 
 export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'

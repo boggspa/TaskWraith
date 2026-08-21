@@ -208,6 +208,17 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('registers the scoped OpenRouter Ox Alpha model only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain("upstream === 'openrouter'")
+    expect(pi).toContain('writePiOpenRouterModelRegistration({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiOpenRouterModelRegistration({')).toBeLessThan(
+      pi.indexOf('await runCliProviderProcess(')
+    )
+  })
+
   it('applies compatibility redaction to explicitly supported Pi upstreams before launch', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 

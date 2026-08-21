@@ -65,7 +65,8 @@ const STATIC_PROVIDER_COLORS = {
   mistral: '#D44404',
   muse: '#1671EA',
   cerebras: '#BB584A',
-  groq: '#088482'
+  groq: '#088482',
+  openrouter: '#E02948'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -94,7 +95,8 @@ const IOS_PROVIDER_CASES = [
   ['case "essential"', '#8462CA'],
   ['case "nvidia"', '#538200'],
   ['case "openbmb"', '#E22B17'],
-  ['case "poolside"', '#0C8194']
+  ['case "poolside"', '#0C8194'],
+  ['case "openrouter"', '#E02948']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

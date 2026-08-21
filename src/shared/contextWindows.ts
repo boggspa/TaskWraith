@@ -85,6 +85,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'groq/qwen/qwen3-32b': 131_072,
   'cerebras/zai-glm-4.7': 131_072,
   'cerebras/gpt-oss-120b': 131_072,
+  'openrouter/stealth/ox-alpha': 1_048_576,
   // Codex
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises

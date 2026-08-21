@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import {
   PI_ALLOWED_UPSTREAMS,
+  PI_OPENROUTER_ALLOWED_MODEL_IDS,
   PI_UPSTREAM_KEY_ENV,
   buildPiCredentialEnv,
   isPiUpstreamAllowed,
@@ -10,13 +11,12 @@ import {
 import { PI_STATIC_MODELS, piModelsForConfiguredUpstreams, splitPiWireModelId } from './PiModels'
 
 describe('piModelPolicyVerdict', () => {
-  it('refuses every hosted/first-party upstream by name', () => {
+  it('refuses every hosted/first-party upstream except the scoped OpenRouter lane', () => {
     for (const upstream of [
       'anthropic',
       'openai',
       'google',
       'xai',
-      'openrouter',
       'github-copilot',
       'kimi-coding',
       'radius',
@@ -27,6 +27,22 @@ describe('piModelPolicyVerdict', () => {
       expect(verdict.allowed, upstream).toBe(false)
       expect(verdict.reason).toContain('allowlist')
     }
+  })
+
+  it('allows only Ox Alpha from OpenRouter', () => {
+    expect(piModelPolicyVerdict('openrouter', 'stealth/ox-alpha')).toEqual({ allowed: true })
+    for (const modelId of [
+      'openrouter/auto',
+      'anthropic/claude-opus-5',
+      'openai/gpt-5.6-terra',
+      'stealth/ox-alpha:free',
+      'stealth/another-model'
+    ]) {
+      const verdict = piModelPolicyVerdict('openrouter', modelId)
+      expect(verdict.allowed, modelId).toBe(false)
+      expect(verdict.reason).toContain('Ox Alpha')
+    }
+    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual(['stealth/ox-alpha'])
   })
 
   it('refuses resold hosted models inside allowed upstreams (kimi on qwen)', () => {
@@ -41,6 +57,7 @@ describe('piModelPolicyVerdict', () => {
     expect(piModelPolicyVerdict('deepseek', 'deepseek-v4-pro').allowed).toBe(true)
     expect(piModelPolicyVerdict('zai', 'glm-5.2').allowed).toBe(true)
     expect(piModelPolicyVerdict('groq', 'openai/gpt-oss-120b').allowed).toBe(true)
+    expect(piModelPolicyVerdict('openrouter', 'stealth/ox-alpha').allowed).toBe(true)
   })
 
   it('refuses Cerebras GLM-4.7 from its sunset without affecting Z.ai or GPT-OSS', () => {
@@ -145,5 +162,13 @@ describe('buildPiCredentialEnv (the env firewall)', () => {
   it('ignores blank configured keys', () => {
     const env = buildPiCredentialEnv({}, { deepseek: '   ' })
     expect(env.DEEPSEEK_API_KEY).toBeUndefined()
+  })
+
+  it('injects the configured OpenRouter key while stripping a parent-shell value', () => {
+    const env = buildPiCredentialEnv(
+      { OPENROUTER_API_KEY: 'parent-shell-value' },
+      { openrouter: 'configured-openrouter-key' }
+    )
+    expect(env.OPENROUTER_API_KEY).toBe('configured-openrouter-key')
   })
 })

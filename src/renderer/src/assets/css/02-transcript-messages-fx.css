@@ -5217,6 +5217,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-pi {
   color: var(--provider-pi-color) !important;
 }
+.message-meta.provider-openrouter {
+  color: var(--provider-openrouter-color) !important;
+}
 .message-meta.provider-deepseek {
   color: var(--provider-deepseek-color) !important;
 }
@@ -5322,6 +5325,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .message-group:has(.message-meta.provider-pi) {
   --message-working-accent: var(--provider-pi-color);
+}
+.message-group:has(.message-meta.provider-openrouter) {
+  --message-working-accent: var(--provider-openrouter-color);
 }
 .message-group:has(.message-meta.provider-deepseek) {
   --message-working-accent: var(--provider-deepseek-color);
@@ -6466,6 +6472,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .participant-health-chip.provider-pi {
   color: var(--provider-pi-color, var(--text-primary));
+}
+.participant-health-chip.provider-openrouter {
+  color: var(--provider-openrouter-color, var(--text-primary));
 }
 .participant-health-chip.provider-qwen {
   color: var(--provider-qwen-color, var(--text-primary));

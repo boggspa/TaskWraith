@@ -25,7 +25,8 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
   { id: 'minimax', label: 'MiniMax', keyHint: 'platform.minimax.io' },
   { id: 'mistral', label: 'Mistral', keyHint: 'console.mistral.ai' },
   { id: 'groq', label: 'Groq', keyHint: 'console.groq.com' },
-  { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' }
+  { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' },
+  { id: 'openrouter', label: 'OpenRouter', keyHint: 'Ox Alpha only · openrouter.ai/keys' }
 ]
 
 export interface PiKeyCardStatus {
@@ -98,8 +99,8 @@ export function PiProviderKeysCardView({
         <span>{statusText}</span>
       </div>
       <p>
-        Your own API keys for Pi&apos;s upstream models — DeepSeek, GLM, Qwen, MiniMax, Mistral,
-        and open-weights serving.
+        Your own API keys for Pi&apos;s curated upstream models — DeepSeek, GLM, Qwen, MiniMax,
+        Mistral, open-weights serving, and OpenRouter&apos;s Ox Alpha.
       </p>
       <div className="settings-provider-auth-command">
         <code>npm install -g @earendil-works/pi-coding-agent</code>

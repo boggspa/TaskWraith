@@ -721,6 +721,11 @@
   color: var(--provider-qwen-color);
 }
 
+.settings-model-comparison-dot.provider-openrouter,
+.settings-model-comparison-fill.provider-openrouter {
+  color: var(--provider-openrouter-color);
+}
+
 .settings-model-comparison-dot.provider-deepseek,
 .settings-model-comparison-fill.provider-deepseek {
   color: var(--provider-deepseek-color);
@@ -4509,6 +4514,9 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-pi {
   --run-card-provider-tint: var(--provider-pi-color);
 }
+.run-card-provider.provider-openrouter {
+  --run-card-provider-tint: var(--provider-openrouter-color);
+}
 .run-card-provider.provider-meta {
   --run-card-provider-tint: var(--provider-meta-color);
 }
@@ -4542,6 +4550,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .run-card-provider:is(
     .provider-pi,
+    .provider-openrouter,
     .provider-meta,
     .provider-cohere,
     .provider-essential,
@@ -4562,6 +4571,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .run-card-provider:is(
     .provider-pi,
+    .provider-openrouter,
     .provider-meta,
     .provider-cohere,
     .provider-essential,

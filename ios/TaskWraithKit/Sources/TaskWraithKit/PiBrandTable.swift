@@ -36,6 +36,7 @@ public enum PiBrandTable {
         "mistral": Brand(label: "Mistral", hueClass: "mistral"),
         "groq": Brand(label: "Groq", hueClass: "groq"),
         "cerebras": Brand(label: "Cerebras", hueClass: "cerebras"),
+        "openrouter": Brand(label: "OpenRouter", hueClass: "openrouter"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -76,6 +77,7 @@ public enum PiBrandTable {
         "groq/qwen/qwen3-32b": "Qwen3 32B (Groq)",
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
+        "openrouter/stealth/ox-alpha": "Ox Alpha",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

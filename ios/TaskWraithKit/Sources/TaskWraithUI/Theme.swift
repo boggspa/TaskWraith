@@ -200,6 +200,7 @@ public enum TWTheme {
         case "mistral": return 0xD44404
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
+        case "openrouter": return 0xE02948
         default: return chroma1Hex
         }
     }
@@ -238,7 +239,7 @@ public enum TWTheme {
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
-        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq"
+        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
@@ -288,6 +289,7 @@ public enum TWTheme {
         case "mistral": return "Mistral"
         case "groq": return "Groq"
         case "cerebras": return "Cerebras"
+        case "openrouter": return "OpenRouter"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()
         case nil: return "Agent"
         }

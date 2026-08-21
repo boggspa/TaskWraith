@@ -20,6 +20,15 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('accepts OpenRouter at the Pi key-management IPC gate', () => {
+    expect(() =>
+      validateIpcArgs('pi:set-upstream-key', ['openrouter', 'or-key'])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('pi:set-upstream-key', ['not-openrouter', 'or-key'])).toThrow(
+      /supported Pi upstream/
+    )
+  })
+
   it('runs renderer authorization before dispatching a validated invocation', async () => {
     type InvokeHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
     const handlers = new Map<string, InvokeHandler>()

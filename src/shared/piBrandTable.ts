@@ -33,7 +33,8 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   minimax: { label: 'MiniMax', hueClass: 'minimax' },
   mistral: { label: 'Mistral', hueClass: 'mistral' },
   groq: { label: 'Groq', hueClass: 'groq' },
-  cerebras: { label: 'Cerebras', hueClass: 'cerebras' }
+  cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
+  openrouter: { label: 'OpenRouter', hueClass: 'openrouter' }
 }
 
 /**
@@ -77,7 +78,8 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'groq/openai/gpt-oss-120b': 'GPT-OSS 120B (Groq)',
   'groq/qwen/qwen3-32b': 'Qwen3 32B (Groq)',
   'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
-  'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)'
+  'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)',
+  'openrouter/stealth/ox-alpha': 'Ox Alpha'
 }
 
 /**

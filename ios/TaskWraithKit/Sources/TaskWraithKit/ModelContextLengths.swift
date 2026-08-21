@@ -98,6 +98,7 @@ public enum ModelContextLengths {
                 (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
                 (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
+                (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
             ]
         case "grok":
             return [

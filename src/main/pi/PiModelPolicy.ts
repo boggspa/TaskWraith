@@ -6,7 +6,13 @@
  * GLM, Qwen, MiniMax, Mistral, open-weights serving) — never as a second
  * door to Claude/GPT/Gemini/Grok/Kimi, whose first-party seats carry the
  * subscription terms. Pi itself happily talks to Anthropic/OpenAI/Google/
- * xAI/OpenRouter, so the wall must live on OUR side and fail closed:
+ * xAI/OpenRouter, so the wall must live on OUR side and fail closed.
+ *
+ * The user-approved exception is OpenRouter's Ox Alpha only. It is a single
+ * model TaskWraith does not offer through another seat; admitting its whole
+ * upstream catalogue would reintroduce duplicate model pickers. The exception
+ * is therefore enforced as an exact model-id allowlist, not a broad upstream
+ * pass-through:
  *
  *  1. Upstream allowlist — only the upstreams below may be configured,
  *     surfaced, or passed to `--provider`.
@@ -29,6 +35,7 @@ export type PiUpstreamId =
   | 'mistral'
   | 'groq'
   | 'cerebras'
+  | 'openrouter'
 
 export const PI_ALLOWED_UPSTREAMS: readonly PiUpstreamId[] = [
   'deepseek',
@@ -37,7 +44,8 @@ export const PI_ALLOWED_UPSTREAMS: readonly PiUpstreamId[] = [
   'minimax',
   'mistral',
   'groq',
-  'cerebras'
+  'cerebras',
+  'openrouter'
 ]
 
 /** Upstream → the env var pi reads its API key from (docs/providers.md). */
@@ -48,7 +56,8 @@ export const PI_UPSTREAM_KEY_ENV: Readonly<Record<PiUpstreamId, string>> = {
   minimax: 'MINIMAX_API_KEY',
   mistral: 'MISTRAL_API_KEY',
   groq: 'GROQ_API_KEY',
-  cerebras: 'CEREBRAS_API_KEY'
+  cerebras: 'CEREBRAS_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY'
 }
 
 export const PI_UPSTREAM_LABELS: Readonly<Record<PiUpstreamId, string>> = {
@@ -58,8 +67,16 @@ export const PI_UPSTREAM_LABELS: Readonly<Record<PiUpstreamId, string>> = {
   minimax: 'MiniMax',
   mistral: 'Mistral',
   groq: 'Groq',
-  cerebras: 'Cerebras'
+  cerebras: 'Cerebras',
+  openrouter: 'OpenRouter'
 }
+
+/**
+ * OpenRouter is intentionally a one-model exception. Keep this exact list
+ * narrow: every additional id would become another duplicate cross-provider
+ * route in Pi's picker.
+ */
+export const PI_OPENROUTER_ALLOWED_MODEL_IDS = ['stealth/ox-alpha'] as const
 
 /**
  * Model-id deny patterns within otherwise-allowed upstreams. qwen-token-plan
@@ -92,6 +109,15 @@ export function piModelPolicyVerdict(
   const trimmed = modelId.trim()
   if (!trimmed) {
     return { allowed: false, reason: 'Pi model id is empty.' }
+  }
+  if (
+    upstream === 'openrouter' &&
+    !(PI_OPENROUTER_ALLOWED_MODEL_IDS as readonly string[]).includes(trimmed)
+  ) {
+    return {
+      allowed: false,
+      reason: `Pi's OpenRouter lane is limited to Ox Alpha (${PI_OPENROUTER_ALLOWED_MODEL_IDS[0]}).`
+    }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {
     if (pattern.test(trimmed)) {
@@ -133,7 +159,6 @@ const PI_FOREIGN_CREDENTIAL_ENV_VARS: readonly string[] = [
   'GOOGLE_API_KEY',
   'GOOGLE_APPLICATION_CREDENTIALS',
   'XAI_API_KEY',
-  'OPENROUTER_API_KEY',
   'RADIUS_API_KEY',
   'KIMI_API_KEY',
   'NVIDIA_API_KEY',

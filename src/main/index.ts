@@ -1699,6 +1699,7 @@ import {
   writePiCerebrasCompletionCapOverride
 } from './pi/PiCerebrasCompletionCap'
 import { writePiMistralModelRegistration } from './pi/PiMistralModelRegistration'
+import { writePiOpenRouterModelRegistration } from './pi/PiOpenRouterModelRegistration'
 import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
@@ -21998,7 +21999,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   const keyLoad = piKeyStoreRef?.loadKeys()
   if (!keyLoad || keyLoad.status !== 'ok' || Object.keys(keyLoad.keys).length === 0) {
     failFast(
-      'No Pi upstream API keys are configured. Add at least one key (DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq or Cerebras) in Settings → Providers → Pi.',
+      'No Pi upstream API keys are configured. Add at least one key (DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, Cerebras, or OpenRouter for Ox Alpha) in Settings → Providers → Pi.',
       true
     )
     return
@@ -22151,6 +22152,24 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       isolatedHomeLease.cleanup()
       failFast(
         `Could not prepare Pi's Mistral model registration: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        false
+      )
+      return
+    }
+  }
+
+  if (upstream === 'openrouter') {
+    try {
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: isolatedHomeLease.path,
+        modelId: split.modelId
+      })
+    } catch (error) {
+      isolatedHomeLease.cleanup()
+      failFast(
+        `Could not prepare Pi's OpenRouter model registration: ${
           error instanceof Error ? error.message : String(error)
         }`,
         false
