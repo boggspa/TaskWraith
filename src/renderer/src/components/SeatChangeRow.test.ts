@@ -482,3 +482,46 @@ describe('SeatRosterStack — the agent built a roster mid-round', () => {
     expect(block).not.toContain('color:')
   })
 })
+
+describe('SeatParticipantAddedRow — user added a participant mid-round', () => {
+  const start = rowSource.indexOf('function SeatParticipantAddedRow(')
+  const region = start >= 0 ? rowSource.slice(start) : ''
+
+  it('exists and is reached by narrowing the SHARED carrier', () => {
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(rowSource).toContain('isSeatParticipantAddedPayload')
+    expect(rowSource).toContain('SeatParticipantAddedPayload')
+  })
+
+  it('renders a single static seat strip — no roll, no before, no expand button', () => {
+    expect(region).toContain('<SeatClusterChip')
+    expect(region).toContain('<SeatPermissionChip')
+    expect(region).toContain('animate={false}')
+    expect(region).not.toContain('animate />')
+    expect(region).not.toContain('<button')
+    expect(region).not.toContain('onClick')
+    expect(region).not.toContain('seat-change-was')
+  })
+
+  it('shows the chair glyph and an "(Added)" note like seat-change chrome', () => {
+    expect(region).toContain('<SeatChairIcon />')
+    expect(region).toContain('(Added)')
+    expect(region).toContain('className="seat-change-added-note"')
+  })
+
+  it('keeps the timestamp as the row’s last element, after the added note', () => {
+    const noteAt = region.indexOf('className="seat-change-added-note"')
+    const timeAt = region.indexOf('className="seat-change-time"')
+    expect(noteAt).toBeGreaterThanOrEqual(0)
+    expect(timeAt).toBeGreaterThan(noteAt)
+  })
+
+  it('styles the added note as row chrome, not as a chip', () => {
+    const cssStart = cssSource.indexOf('.seat-change-added-note {')
+    expect(cssStart).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(cssStart, cssSource.indexOf('}', cssStart))
+    expect(block).toContain('var(--font-size-xs)')
+    expect(block).not.toContain('background:')
+    expect(block).not.toContain('border:')
+  })
+})

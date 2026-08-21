@@ -14,12 +14,8 @@ import { resolveProviderBrandLabel } from '../lib/ollamaDisplayBrand'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { reasoningDisplayLabel } from '../lib/composerChipFormat'
 import { composerPermissionOptions } from '../lib/planModeLabels'
-import { SEAT_CHANGE_COALESCE_WINDOW_MS, isSeatRosterPayload } from '../../../shared/seatChange'
-import type {
-  SeatChangeLink,
-  SeatChangePayload,
-  SeatRosterPayload
-} from '../../../shared/seatChange'
+import { SEAT_CHANGE_COALESCE_WINDOW_MS, isSeatParticipantAddedPayload, isSeatRosterPayload } from '../../../shared/seatChange'
+import type { SeatChangeLink, SeatChangePayload, SeatParticipantAddedPayload, SeatRosterPayload } from '../../../shared/seatChange'
 
 /**
  * SeatChangeRow — the authoritative seat-change transcript element (owner spec
@@ -362,9 +358,10 @@ export function SeatChangeInlineStrip({ link }: { link: SeatChangeLink }): JSX.E
 
 export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Element | null {
   const payload = message.metadata?.seatChange
-  // Both variants ride `metadata.seatChange`; narrow before touching a side.
+  // All variants ride `metadata.seatChange`; narrow before touching a side.
   const roster = isSeatRosterPayload(payload) ? payload : null
-  const seatChange = roster ? null : (payload as SeatChangePayload | undefined)
+  const added = roster ? null : isSeatParticipantAddedPayload(payload) ? payload : null
+  const seatChange = roster || added ? null : (payload as SeatChangePayload | undefined)
   // Fresh = still inside the coalescing window at MOUNT — gates only the HOP
   // (the coalesced-row reposition animation). The before->after ROLL replays
   // on every mount, by owner call 2026-08-05: the row is a record of a
@@ -383,6 +380,9 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
     return roster.seats.length > 0 ? (
       <SeatRosterStack roster={roster} timestamp={message.timestamp} fresh={fresh} />
     ) : null
+  }
+  if (added) {
+    return <SeatParticipantAddedRow added={added} timestamp={message.timestamp} fresh={fresh} />
   }
   if (!seatChange || !before) return null
 
@@ -411,6 +411,44 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
           {seatRoleLabel(before, false)}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * A user-added participant mid-round — first-class strip with no before side
+ * and no roll (owner request 2026-08-21). Rendered almost identically to a
+ * seat-change row: chair glyph, cluster + permission chips, role trailing in
+ * the provider accent, timestamp, and an "(Added)" note where the change row
+ * would show the animated odometer.
+ */
+function SeatParticipantAddedRow({
+  added,
+  timestamp,
+  fresh
+}: {
+  added: SeatParticipantAddedPayload
+  timestamp?: string
+  fresh: boolean
+}): JSX.Element {
+  const view = useMemo(() => seatSideView(added.seat), [added])
+  const time = formatSeatChangeTime(timestamp)
+  return (
+    <div
+      className={`message-group seat-change-message seat-participant-added-message${
+        fresh ? ' is-fresh' : ''
+      }`}
+    >
+      <div className="seat-change-row">
+        <span className="seat-change-icon" aria-hidden>
+          <SeatChairIcon />
+        </span>
+        <SeatClusterChip view={view} animate={false} />
+        <SeatPermissionChip view={view} animate={false} />
+        {seatRoleLabel(view, false)}
+        <span className="seat-change-added-note">(Added)</span>
+        {time && <span className="seat-change-time">{time}</span>}
+      </div>
     </div>
   )
 }

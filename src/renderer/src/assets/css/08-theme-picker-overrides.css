@@ -12172,6 +12172,15 @@
   color: color-mix(in srgb, var(--text-primary) 40%, transparent);
 }
 
+/* "(Added)" — the participant-added row's trailing chrome, matching the
+ * brief-note treatment so the timestamp and the note read as one trailing
+ * group. Not a chip: it denotes an EVENT, not a seat value. */
+.seat-change-added-note {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+
 /* Character wheels: widths are measured per character, and a width
  * transition carries old→new advances in lockstep with the roll. */
 .char-odometer__slot {
