@@ -403,6 +403,125 @@ function parseStudioTransportMutationText(text) {
   }
 }
 
+function validateStudioReviewRangeReceipt(observed) {
+  if (!isRecord(observed)) throw new Error('Studio UI driver review-range receipt is not an object')
+  const keys = Object.keys(observed).sort()
+  const expected = ['inPointTicks', 'index', 'loopingRange', 'outPointTicks', 'type']
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+    throw new Error('Studio UI driver review-range action receipt has missing or extra keys')
+  }
+  if (
+    observed.type !== 'read-review-range' ||
+    !Number.isSafeInteger(observed.index) ||
+    !Number.isSafeInteger(observed.inPointTicks) ||
+    observed.inPointTicks < 0 ||
+    !Number.isSafeInteger(observed.outPointTicks) ||
+    observed.outPointTicks <= observed.inPointTicks ||
+    typeof observed.loopingRange !== 'boolean'
+  ) {
+    throw new Error('Studio UI driver review-range receipt is invalid')
+  }
+  return observed
+}
+
+const ROUTE_RESOURCE_DETAIL_MAX_BYTES = 65_536
+const ROUTE_RESOURCE_DETAIL_MAX_SURFACE_IDS = 7_000
+const ROUTE_RESOURCE_DETAIL_FIELDS = ['route', 'active', 'retained', 'cap', 'surf', 'ids']
+
+/** Strict parser for the renderer-owned `rr1` route resource export. */
+function parseRouteResourceDetailExport(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { ok: false, reason: 'empty route resource receipt' }
+  }
+  if (Buffer.byteLength(text, 'utf8') > ROUTE_RESOURCE_DETAIL_MAX_BYTES) {
+    return { ok: false, reason: 'route resource receipt exceeds its bounded byte length' }
+  }
+  const parts = text.split(' ')
+  if (parts.length !== 7 || parts[0] !== 'rr1' || parts.some((part) => part.length === 0)) {
+    return { ok: false, reason: 'route resource receipt is not canonical whitespace' }
+  }
+  const fields = new Map()
+  for (const part of parts.slice(1)) {
+    const separator = part.indexOf('=')
+    if (separator <= 0 || separator !== part.lastIndexOf('=')) {
+      return { ok: false, reason: `malformed route resource field ${part}` }
+    }
+    const key = part.slice(0, separator)
+    if (fields.has(key)) return { ok: false, reason: `duplicate route resource field ${key}` }
+    fields.set(key, part.slice(separator + 1))
+  }
+  for (const key of ROUTE_RESOURCE_DETAIL_FIELDS) {
+    if (!fields.has(key)) return { ok: false, reason: `missing route resource field ${key}` }
+  }
+  for (const key of fields.keys()) {
+    if (!ROUTE_RESOURCE_DETAIL_FIELDS.includes(key)) {
+      return { ok: false, reason: `unknown route resource field ${key}` }
+    }
+  }
+  const route = fields.get('route')
+  if (route !== 'source' && route !== 'review') {
+    return { ok: false, reason: 'route resource route is not source or review' }
+  }
+  const exactNonNegativeInteger = (key) => {
+    const raw = fields.get(key)
+    if (!/^(?:0|[1-9]\d*)$/.test(raw)) return null
+    const value = Number(raw)
+    return Number.isSafeInteger(value) ? value : null
+  }
+  const activeSourceCount = exactNonNegativeInteger('active')
+  const retainedFrameCount = exactNonNegativeInteger('retained')
+  const capacity = exactNonNegativeInteger('cap')
+  const surfaceCount = exactNonNegativeInteger('surf')
+  if (
+    [activeSourceCount, retainedFrameCount, capacity, surfaceCount].some((value) => value === null)
+  ) {
+    return { ok: false, reason: 'route resource counts are not canonical non-negative integers' }
+  }
+  if (
+    surfaceCount > ROUTE_RESOURCE_DETAIL_MAX_SURFACE_IDS ||
+    retainedFrameCount > capacity ||
+    surfaceCount > capacity
+  ) {
+    return { ok: false, reason: 'route resource counts exceed capacity or export bounds' }
+  }
+  const rawIds = fields.get('ids')
+  if (rawIds === '!') {
+    return { ok: false, reason: 'route resource receipt declares an IOSurface export overflow' }
+  }
+  let ioSurfaceIds = []
+  if (rawIds === '-') {
+    if (surfaceCount !== 0) {
+      return { ok: false, reason: 'route resource ids are empty but surf is nonzero' }
+    }
+  } else {
+    const tokens = rawIds.split(',')
+    if (tokens.length !== surfaceCount || tokens.length === 0) {
+      return { ok: false, reason: 'route resource ids do not match surf' }
+    }
+    let previous = -1
+    for (const token of tokens) {
+      if (!/^[0-9A-F]{8}$/.test(token)) {
+        return { ok: false, reason: 'route resource IOSurface ids are not canonical 8-hex values' }
+      }
+      const id = Number.parseInt(token, 16)
+      if (id <= previous) {
+        return { ok: false, reason: 'route resource IOSurface ids are not strictly increasing' }
+      }
+      previous = id
+      ioSurfaceIds.push(token)
+    }
+  }
+  return {
+    ok: true,
+    route,
+    activeSourceCount,
+    retainedFrameCount,
+    capacity,
+    surfaceCount,
+    ioSurfaceIds
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -3708,6 +3827,15 @@ function buildStudioUiDriverRequest(options) {
         accessibilityLabel: 'Transport mutation detail'
       }
     }
+    if (action.type === 'read-review-range') {
+      return { type: 'read-review-range' }
+    }
+    if (action.type === 'read-route-resource') {
+      if (action.route !== 'source' && action.route !== 'review') {
+        throw new Error('read-route-resource requires an explicit source or review selector')
+      }
+      return { type: 'read-route-resource', route: action.route }
+    }
     if (action.type === 'read-workspace') {
       return { type: 'read-workspace' }
     }
@@ -4577,6 +4705,40 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         } catch (error) {
           throw new Error(
             `Studio UI driver transport-mutation receipt is invalid: ${error.message}`
+          )
+        }
+      }
+      if (action.type === 'read-review-range') {
+        validateStudioReviewRangeReceipt(observed)
+      }
+      if (action.type === 'read-route-resource') {
+        const routeActionKeys = Object.keys(observed).sort()
+        const expectedRouteActionKeys = [
+          'index',
+          'route',
+          'routeResourceDetailValue',
+          'routeResourceMatchCount',
+          'type'
+        ]
+        if (JSON.stringify(routeActionKeys) !== JSON.stringify(expectedRouteActionKeys)) {
+          throw new Error(
+            'Studio UI driver route-resource action receipt has missing or extra keys'
+          )
+        }
+        if (
+          observed.type !== 'read-route-resource' ||
+          observed.route !== action.route ||
+          (observed.route !== 'source' && observed.route !== 'review') ||
+          !Number.isSafeInteger(observed.index) ||
+          !Number.isSafeInteger(observed.routeResourceMatchCount) ||
+          observed.routeResourceMatchCount !== 1
+        ) {
+          throw new Error('Studio UI driver route-resource action receipt is invalid')
+        }
+        const routeResource = parseRouteResourceDetailExport(observed.routeResourceDetailValue)
+        if (!routeResource.ok) {
+          throw new Error(
+            `Studio UI driver route-resource receipt is invalid: ${routeResource.reason}`
           )
         }
       }
@@ -6271,6 +6433,8 @@ module.exports = {
   ACCEPTANCE_SCHEMA_VERSION,
   parseArgs,
   parseStudioTransportMutationText,
+  validateStudioReviewRangeReceipt,
+  parseRouteResourceDetailExport,
   buildStudioAcceptancePlan,
   adjudicateRecognizedTranscript,
   buildDetachedCoordinatorPaths,

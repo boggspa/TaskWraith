@@ -60,6 +60,7 @@ struct DriverAction: Codable {
     let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
+    let route: String?
 }
 
 struct DriverRequest: Codable {
@@ -179,6 +180,7 @@ struct ActionReceipt: Codable {
         case index, type, key, screenshotPath, byteLength, xFraction, yFraction, audioProbe
         case routeHealth, avSyncPeakValue, avSyncCurrentValue
         case resourceMatchCount, resourceDetailValue
+        case routeResourceMatchCount, routeResourceDetailValue
         case playheadTicks, playheadToleranceTicks, playheadMaximumForwardAdvanceTicks
         case playheadStepFrames, playheadTicksBefore, observedPlayheadTicks
         case accessibilityLabel, accessibilityIdentifier, pairedAccessibilityIdentifier
@@ -186,6 +188,8 @@ struct ActionReceipt: Codable {
         case accessibilityMatchCount, accessibilityValue, accessibilityAction
         case routeValueBefore, routeValueAfter, pairedRouteValueBefore, pairedRouteValueAfter
         case playbackValueBefore, playbackValueAfter
+        case route
+        case inPointTicks, outPointTicks, loopingRange
         case workspace
     }
 
@@ -202,6 +206,8 @@ struct ActionReceipt: Codable {
     let avSyncCurrentValue: String?
     let resourceMatchCount: Int?
     let resourceDetailValue: String?
+    let routeResourceMatchCount: Int?
+    let routeResourceDetailValue: String?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
     let playheadMaximumForwardAdvanceTicks: Int64?
@@ -221,6 +227,10 @@ struct ActionReceipt: Codable {
     let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
+    let route: String?
+    let inPointTicks: Int64?
+    let outPointTicks: Int64?
+    let loopingRange: Bool?
     let workspace: WorkspaceObservationReceipt?
 
     init(
@@ -237,6 +247,8 @@ struct ActionReceipt: Codable {
         avSyncCurrentValue: String? = nil,
         resourceMatchCount: Int? = nil,
         resourceDetailValue: String? = nil,
+        routeResourceMatchCount: Int? = nil,
+        routeResourceDetailValue: String? = nil,
         playheadTicks: Int64? = nil,
         playheadToleranceTicks: Int64? = nil,
         playheadMaximumForwardAdvanceTicks: Int64? = nil,
@@ -256,6 +268,10 @@ struct ActionReceipt: Codable {
         pairedRouteValueAfter: String? = nil,
         playbackValueBefore: String? = nil,
         playbackValueAfter: String? = nil,
+        route: String? = nil,
+        inPointTicks: Int64? = nil,
+        outPointTicks: Int64? = nil,
+        loopingRange: Bool? = nil,
         workspace: WorkspaceObservationReceipt? = nil
     ) {
         self.index = index
@@ -271,6 +287,8 @@ struct ActionReceipt: Codable {
         self.avSyncCurrentValue = avSyncCurrentValue
         self.resourceMatchCount = resourceMatchCount
         self.resourceDetailValue = resourceDetailValue
+        self.routeResourceMatchCount = routeResourceMatchCount
+        self.routeResourceDetailValue = routeResourceDetailValue
         self.playheadTicks = playheadTicks
         self.playheadToleranceTicks = playheadToleranceTicks
         self.playheadMaximumForwardAdvanceTicks = playheadMaximumForwardAdvanceTicks
@@ -290,6 +308,10 @@ struct ActionReceipt: Codable {
         self.pairedRouteValueAfter = pairedRouteValueAfter
         self.playbackValueBefore = playbackValueBefore
         self.playbackValueAfter = playbackValueAfter
+        self.route = route
+        self.inPointTicks = inPointTicks
+        self.outPointTicks = outPointTicks
+        self.loopingRange = loopingRange
         self.workspace = workspace
     }
 
@@ -308,6 +330,8 @@ struct ActionReceipt: Codable {
         try container.encodeIfPresent(avSyncCurrentValue, forKey: .avSyncCurrentValue)
         try container.encodeIfPresent(resourceMatchCount, forKey: .resourceMatchCount)
         try container.encodeIfPresent(resourceDetailValue, forKey: .resourceDetailValue)
+        try container.encodeIfPresent(routeResourceMatchCount, forKey: .routeResourceMatchCount)
+        try container.encodeIfPresent(routeResourceDetailValue, forKey: .routeResourceDetailValue)
         try container.encodeIfPresent(playheadTicks, forKey: .playheadTicks)
         try container.encodeIfPresent(playheadToleranceTicks, forKey: .playheadToleranceTicks)
         try container.encodeIfPresent(
@@ -333,6 +357,10 @@ struct ActionReceipt: Codable {
         try container.encodeIfPresent(pairedRouteValueAfter, forKey: .pairedRouteValueAfter)
         try container.encodeIfPresent(playbackValueBefore, forKey: .playbackValueBefore)
         try container.encodeIfPresent(playbackValueAfter, forKey: .playbackValueAfter)
+        try container.encodeIfPresent(route, forKey: .route)
+        try container.encodeIfPresent(inPointTicks, forKey: .inPointTicks)
+        try container.encodeIfPresent(outPointTicks, forKey: .outPointTicks)
+        try container.encodeIfPresent(loopingRange, forKey: .loopingRange)
         try container.encodeIfPresent(workspace, forKey: .workspace)
     }
 }
@@ -891,6 +919,208 @@ func readAccessibilityAvSync(
         )
     }
     return observed
+}
+
+let sourceRouteResourceDetailAccessibilityLabel = "Source route resource detail"
+let reviewRouteResourceDetailAccessibilityLabel = "Review route resource detail"
+let sourceRouteResourceDetailAccessibilityIdentifier = "studio.workspace.resource.source"
+let reviewRouteResourceDetailAccessibilityIdentifier = "studio.workspace.resource.review"
+
+struct RouteResourceAccessibilityRead {
+    let matchCount: Int
+    let value: String
+}
+
+/// Reads the renderer-owned route resource export. This is deliberately a
+/// separate AX identity from the process-wide `Resource detail` export: the
+/// latter cannot prove which route owns a decoder, retained frame, or surface.
+func readAccessibilityRouteResource(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication,
+    expectedRoute: String
+) throws -> RouteResourceAccessibilityRead {
+    guard expectedRoute == "source" || expectedRoute == "review" else {
+        throw DriverFailure.refused("route-resource read requires an explicit Source or Review route")
+    }
+    let expectedLabel =
+        expectedRoute == "source"
+            ? sourceRouteResourceDetailAccessibilityLabel
+            : reviewRouteResourceDetailAccessibilityLabel
+    let expectedIdentifier =
+        expectedRoute == "source"
+            ? sourceRouteResourceDetailAccessibilityIdentifier
+            : reviewRouteResourceDetailAccessibilityIdentifier
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background route-resource read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let identifier = stringAttribute(kAXIdentifierAttribute, of: element)
+        let label =
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole,
+           identifier == expectedIdentifier,
+           label == expectedLabel
+        {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused(
+                    "route-resource accessibility tree exceeds 512 elements"
+                )
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512,
+          matches.count == 1,
+          let value = stringAttribute(kAXValueAttribute, of: matches[0]),
+          value.hasPrefix("rr1 ") else {
+        throw DriverFailure.refused(
+            "exact (expectedLabel) AXStaticText identity is unavailable"
+        )
+    }
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "route-resource observation changed foreground, process, or executable identity"
+        )
+    }
+    return RouteResourceAccessibilityRead(matchCount: matches.count, value: value)
+}
+
+struct ReviewRangeAccessibilityRead {
+    let inPointTicks: Int64
+    let outPointTicks: Int64
+    let loopingRange: Bool
+}
+
+/// Reads the exact numeric In/Out descriptors already published by the live
+/// overlay. OCR or the generic transport mutation string is insufficient here:
+/// the review-loop acceptance bar needs actual half-open endpoints and loop
+/// state from one accessibility traversal.
+func readAccessibilityReviewRange(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> ReviewRangeAccessibilityRead {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background review-range read requires the exact inactive Companion"
+        )
+    }
+
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var inMatches: [AXUIElement] = []
+    var outMatches: [AXUIElement] = []
+    var loopMatches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let label =
+            stringAttribute(kAXIdentifierAttribute, of: element) ??
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole {
+            switch label {
+            case "In point": inMatches.append(element)
+            case "Out point": outMatches.append(element)
+            case "Loop marked range": loopMatches.append(element)
+            default: break
+            }
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("review-range accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+
+    guard visited < 512,
+          inMatches.count == 1,
+          outMatches.count == 1,
+          loopMatches.count == 1,
+          let inRaw = stringAttribute(kAXValueAttribute, of: inMatches[0]),
+          let outRaw = stringAttribute(kAXValueAttribute, of: outMatches[0]),
+          let inTicks = Int64(inRaw),
+          let outTicks = Int64(outRaw),
+          outTicks > inTicks,
+          let loopRaw = stringAttribute(kAXValueAttribute, of: loopMatches[0]),
+          loopRaw == "on" || loopRaw == "off" else {
+        throw DriverFailure.refused(
+            "exact review-range In/Out/Loop accessibility identities are unavailable"
+        )
+    }
+
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "review-range observation changed foreground, process, or executable identity"
+        )
+    }
+    return ReviewRangeAccessibilityRead(
+        inPointTicks: inTicks,
+        outPointTicks: outTicks,
+        loopingRange: loopRaw == "on"
+    )
 }
 
 func workspacePoint(of element: AXUIElement) -> CGPoint? {
@@ -2153,6 +2383,24 @@ do {
             expectedLabel: label
         )
     }
+    if request.actions.contains(where: { $0.type == "read-review-range" }) {
+        _ = try readAccessibilityReviewRange(
+            in: accessibilityWindow,
+            request: request,
+            application: application
+        )
+    }
+    if request.actions.contains(where: { $0.type == "read-route-resource" }) {
+        guard let route = request.actions.first(where: { $0.type == "read-route-resource" })?.route else {
+            throw DriverFailure.refused("route-resource read has no explicit route selector")
+        }
+        _ = try readAccessibilityRouteResource(
+            in: accessibilityWindow,
+            request: request,
+            application: application,
+            expectedRoute: route
+        )
+    }
     var foregroundToRestore: NSRunningApplication?
     if request.inputDelivery == "foreground-global-explicit" {
         guard let currentForeground = NSWorkspace.shared.frontmostApplication,
@@ -2284,6 +2532,54 @@ do {
                     accessibilityRole: observed.role,
                     accessibilityMatchCount: observed.matchCount,
                     accessibilityValue: observed.value
+                )
+            )
+        } else if action.type == "read-review-range",
+                  request.inputDelivery == "background-observation-only"
+        {
+            let observed = try readAccessibilityReviewRange(
+                in: accessibilityWindow,
+                request: request,
+                application: application
+            )
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-review-range",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    inPointTicks: observed.inPointTicks,
+                    outPointTicks: observed.outPointTicks,
+                    loopingRange: observed.loopingRange
+                )
+            )
+        } else if action.type == "read-route-resource",
+                  request.inputDelivery == "background-observation-only",
+                  let route = action.route
+        {
+            let observed = try readAccessibilityRouteResource(
+                in: accessibilityWindow,
+                request: request,
+                application: application,
+                expectedRoute: route
+            )
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-route-resource",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    routeResourceMatchCount: observed.matchCount,
+                    routeResourceDetailValue: observed.value,
+                    route: route
                 )
             )
         } else if action.type == "press-playback",

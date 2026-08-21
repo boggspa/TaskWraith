@@ -43,9 +43,11 @@ const {
   materializeIsolatedProviderGuards,
   materializeOwnedMedia,
   parseArgs,
+  parseRouteResourceDetailExport,
   parseResourceDetailExport,
   parseProcessTable,
   parseStudioTransportMutationText,
+  validateStudioReviewRangeReceipt,
   readDetachedCoordinatorStatus,
   runStudioAcceptanceBuild,
   runStudioUiDriver,
@@ -217,6 +219,8 @@ const {
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
   parseStudioTransportMutationText: (text: string) => Record<string, unknown>
+  parseRouteResourceDetailExport: (value: string) => Record<string, any>
+  validateStudioReviewRangeReceipt: (value: Record<string, any>) => Record<string, any>
   studioProposalInsertionEvidence: (
     entry: Record<string, any>,
     boundary: { assetId: string; durationSeconds: number }
@@ -398,6 +402,128 @@ afterEach(async () => {
   )
 })
 
+describe('buildStudioUiDriverRequest for read-review-range', () => {
+  it('normalizes the exact review-range observation action', () => {
+    const built = buildStudioUiDriverRequest({
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+      },
+      artifactRoot: '/virtual/acceptance/studioReviewRange01',
+      actions: [{ type: 'read-review-range', callerControlledValue: 'ignored' }]
+    })
+    expect(built).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [{ type: 'read-review-range' }]
+    })
+    expect(Object.keys(built.actions[0])).toEqual(['type'])
+  })
+})
+
+describe('buildStudioUiDriverRequest for read-route-resource', () => {
+  it('normalizes the exact route-owned observation action', () => {
+    const built = buildStudioUiDriverRequest({
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+      },
+      artifactRoot: '/virtual/acceptance/studioRouteResource01',
+      actions: [{ type: 'read-route-resource', route: 'review', callerCannotControl: true }]
+    })
+    expect(built.actions).toEqual([{ type: 'read-route-resource', route: 'review' }])
+    expect(Object.keys(built.actions[0])).toEqual(['type', 'route'])
+  })
+
+  it.each([undefined, 'timeline', ''])('rejects non-explicit selector %s', (route) => {
+    expect(() =>
+      buildStudioUiDriverRequest({
+        companion: {
+          pid: 7002,
+          ppid: 7001,
+          pgid: 7001,
+          command: '/virtual/TaskWraithStudioCompanion --viewer'
+        },
+        electronPgid: 7001,
+        window: {
+          pid: 7002,
+          visibleWindowCount: 1,
+          windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+        },
+        artifactRoot: '/virtual/acceptance/studioRouteResourceInvalid',
+        actions: [{ type: 'read-route-resource', route }]
+      })
+    ).toThrow(/explicit source or review selector/)
+  })
+})
+
+describe('validateStudioReviewRangeReceipt', () => {
+  it.each([
+    ['missing In', { index: 0, type: 'read-review-range', outPointTicks: 20, loopingRange: true }],
+    [
+      'reversed endpoints',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 20,
+        outPointTicks: 20,
+        loopingRange: true
+      }
+    ],
+    [
+      'non-boolean loop',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: 'on'
+      }
+    ],
+    [
+      'duplicate-shaped extra field',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: true,
+        matchCount: 2
+      }
+    ]
+  ])('rejects %s', (_label, value) => {
+    expect(() => validateStudioReviewRangeReceipt(value)).toThrow(/review-range/)
+  })
+
+  it('accepts one exact non-empty range receipt', () => {
+    expect(
+      validateStudioReviewRangeReceipt({
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: true
+      })
+    ).toMatchObject({ inPointTicks: 10, outPointTicks: 20, loopingRange: true })
+  })
+})
+
 async function temporaryRoot(label: string): Promise<string> {
   const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), label))
   roots.push(root)
@@ -569,6 +695,37 @@ describe('Studio acceptance harness', () => {
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002A').ok).toBe(false)
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002B,0000002A').ok).toBe(false)
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=0000002a').ok).toBe(false)
+  })
+  it('parses route-owned resource detail and rejects non-round-trippable identities', () => {
+    expect(
+      parseRouteResourceDetailExport(
+        'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A,0000002B'
+      )
+    ).toMatchObject({
+      ok: true,
+      route: 'review',
+      activeSourceCount: 2,
+      retainedFrameCount: 1,
+      capacity: 3,
+      surfaceCount: 2,
+      ioSurfaceIds: ['0000002A', '0000002B']
+    })
+    expect(
+      parseRouteResourceDetailExport('rr1 route=source active=0 retained=0 cap=0 surf=0 ids=-')
+    ).toMatchObject({ ok: true, route: 'source', ioSurfaceIds: [] })
+    for (const malformed of [
+      'rr1 route=review active=2 retained=1 cap=3 surf=1 ids=!',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002B,0000002A',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002a,0000002B',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A,0000002A',
+      'rr1 route=review active=2 retained=4 cap=3 surf=0 ids=-',
+      'rr1 route=review active=02 retained=1 cap=3 surf=0 ids=-',
+      'rr1 route=review active=2 retained=1 cap=3 surf=0 ids=- extra=x',
+      'rr1 route=review active=2 retained=1 cap=3 surf=0 ids= -'
+    ]) {
+      expect(parseRouteResourceDetailExport(malformed).ok).toBe(false)
+    }
   })
   it('supports a bounded explicit hydration timeout for large owner media', async () => {
     let openAttempts = 0
