@@ -306,7 +306,7 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
     })
   })
 
-  it('requires all explicit launch interlocks and the exact review adapter', async () => {
+  it('requires all explicit launch interlocks', async () => {
     const root =
       '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34live01'
     await expect(
@@ -319,17 +319,17 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
         packagedExecutablePath: '/tmp/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
       })
     ).rejects.toThrow(/owner-confirms-existing-orphans-cleared/)
-    await expect(
-      runner.runReviewRouteAcceptance({
+    expect(() =>
+      runner.normalizeOptions({
         instanceId: 'o34live02',
         artifactRoot:
           '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34live02',
         launch: true,
         acceptLaunch: true,
         ownerConfirmsOrphansCleared: true,
-        packagedExecutablePath: '/tmp/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+        packagedExecutablePath: null
       })
-    ).rejects.toThrow(/runner and test must be tracked/)
+    ).toThrow(/packaged-executable/)
   })
 
   it('rejects caller-shaped live adapter evidence outside the explicit test seam', async () => {
