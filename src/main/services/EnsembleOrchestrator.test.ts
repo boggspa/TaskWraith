@@ -11359,6 +11359,19 @@ Next action:
     })
     expect(added).toMatchObject({ ok: true, status: 'applied' })
 
+    const addedRow = harness.chat.messages.find(
+      (message) =>
+        message.metadata?.kind === 'ensembleSeatChange' &&
+        message.metadata?.seatChange &&
+        'seat' in (message.metadata.seatChange as object) &&
+        (message.metadata.seatChange as { participantId?: string }).participantId === 'kimi-added'
+    )
+    expect(addedRow).toBeDefined()
+    expect(addedRow!.content).toBe('Participant Added worker added to the live roster.')
+    expect((addedRow!.metadata!.seatChange as { seat: { provider: string } }).seat.provider).toBe(
+      'kimi'
+    )
+
     const reordered = harness.orchestrator.requestUserRosterMutation({
       chatId: 'ensemble-chat',
       action: 'reorder',

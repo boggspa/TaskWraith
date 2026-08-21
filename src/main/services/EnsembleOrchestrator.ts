@@ -123,10 +123,11 @@ import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import type { SeatChangeSeatState } from '../store/types'
 import {
   coalesceSeatChangeMessages,
+  coalesceSeatParticipantAddedMessages,
   coalesceSeatRosterMessages,
   resolveSeatAuthority
 } from '../../shared/seatChange'
-import type { SeatRosterSeat } from '../../shared/seatChange'
+import type { SeatParticipantAddedPayload, SeatRosterSeat } from '../../shared/seatChange'
 import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import { sideMessageLaneMetadataForAudience } from '../../shared/ensembleSideMessage'
@@ -8252,11 +8253,19 @@ export class EnsembleOrchestrator {
     }
     this.saveChatWithCheckpoint(updated, runtime ? 'round-updated' : 'participant-updated')
     if (runtime) {
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        this.userRosterMutationMessage(mutation, boundary)
-      )
+      const addedParticipant =
+        mutation.action === 'add' && mutation.affectedParticipantId
+          ? mutation.participants.find((candidate) => candidate.id === mutation.affectedParticipantId)
+          : undefined
+      if (addedParticipant) {
+        this.appendSeatParticipantAdded(runtime.chatId, runtime.roundId, addedParticipant)
+      } else {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          this.userRosterMutationMessage(mutation, boundary)
+        )
+      }
     }
     return this.deps.getChat(chat.appChatId) || updated
   }
@@ -21751,6 +21760,75 @@ export class EnsembleOrchestrator {
               kind: 'ensembleSeatChange',
               ensembleRoundId: roundId,
               seatChange: payload
+            }
+          }
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+    return id
+  }
+
+  /**
+   * A user added a participant to the live roster mid-round → ONE transcript
+   * row showing the new seat as a first-class strip (owner request 2026-08-21).
+   *
+   * Unlike the roster-created stack (agent-built Ensemble), this is a single
+   * deliberate user action for one specific seat, so it gets the same animated
+   * carrier as a seat change but with no "before" side: the seat did not exist
+   * a moment ago. The plain "Participant X added to the live roster." sentence
+   * is REPLACED by this row, exactly as `appendSeatChange` replaces its own
+   * status line.
+   */
+  private appendSeatParticipantAdded(
+    chatId: string,
+    roundId: string,
+    participant: EnsembleParticipant
+  ): string | null {
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return null
+    const grantsCount = chat.workspacePath
+      ? (this.deps.getSettings().agenticWorkspaceGrants || []).filter(
+          (grant) => grant.workspacePath === chat.workspacePath
+        ).length
+      : undefined
+    const authority = resolveSeatAuthority({
+      participantId: participant.id,
+      stageRole: participant.stageRole,
+      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      captainParticipantIds: chat.ensemble.captainParticipantIds
+    })
+    const timestamp = this.deps.nowIso()
+    const payload: SeatParticipantAddedPayload = {
+      participantId: participant.id,
+      label: participantLabel(participant),
+      seat: seatChangeSeatState(participant, grantsCount, authority),
+      appliedAt: timestamp
+    }
+    const { messages, payload: coalescedPayload } = coalesceSeatParticipantAddedMessages(
+      chat.messages,
+      payload,
+      this.deps.now()
+    )
+    // The plain sentence is what TUI / iOS / copy-paste read — the strip is a
+    // renderer promotion, so the add has to survive in prose too.
+    const content = `Participant ${participantLabel(participant)} added to the live roster.`
+    const id = `ensemble-seat-added-${roundId}-${this.deps.now()}-${this.nextStatusSeq()}`
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...messages,
+          {
+            id,
+            role: 'system',
+            content,
+            timestamp,
+            metadata: {
+              kind: 'ensembleSeatChange',
+              ensembleRoundId: roundId,
+              seatChange: coalescedPayload
             }
           }
         ],
