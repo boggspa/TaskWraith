@@ -793,6 +793,13 @@ describe('Outcome 7 plan and launch boundary', () => {
     expect(() => runner.parseCli(['--remote-debugging-port=80'])).toThrow(/port/)
   })
 
+  it('preserves the complete packaged executable in the equals-form CLI option', () => {
+    const executable = '/tmp/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+    expect(runner.parseCli([`--packaged-executable=${executable}`]).packagedExecutablePath).toBe(
+      executable
+    )
+  })
+
   it('forwards the bounded open timeout through the real harness option builder', () => {
     const artifactRoot = path.join(
       process.cwd(),

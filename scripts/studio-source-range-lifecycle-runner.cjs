@@ -253,7 +253,7 @@ function parseCli(argv = process.argv.slice(2)) {
     else if (argument.startsWith('--instance-id=')) parsed.instanceId = argument.slice(14)
     else if (argument === '--instance-id') parsed.instanceId = next()
     else if (argument.startsWith('--packaged-executable=')) {
-      parsed.packagedExecutablePath = argument.slice(23)
+      parsed.packagedExecutablePath = argument.slice('--packaged-executable='.length)
     } else if (argument === '--packaged-executable') parsed.packagedExecutablePath = next()
     else if (argument.startsWith('--media=')) parsed.mediaPath = argument.slice(8)
     else if (argument === '--media') parsed.mediaPath = next()
