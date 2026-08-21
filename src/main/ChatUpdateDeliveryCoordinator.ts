@@ -138,6 +138,18 @@ export interface ChatUpdateProtocolCounters {
   producerDeltaMissing: number
   /** Deliveries the transport recovered by diffing the baseline. */
   spliceRecoveries: number
+  /**
+   * Broadcasts discarded by the enqueue staleness guard (incoming
+   * persistenceRevision older than the newest known). Each drop is a stream
+   * frame the renderer will never see from this path; sustained increments
+   * during an active run present as a frozen transcript with healthy
+   * delivery counters.
+   */
+  staleEnqueueDrops: number
+  /** Total accepted deliveries whose ACK was rejected (applied=false). */
+  ackRejections: number
+  /** Rejected ACKs tallied by each failing validation check. */
+  ackRejectReasons: Record<string, number>
 }
 
 export interface ChatUpdateDeliveryCoordinatorOptions {
@@ -258,7 +270,10 @@ export class ChatUpdateDeliveryCoordinator {
     patches: 0,
     baselineDrops: 0,
     producerDeltaMissing: 0,
-    spliceRecoveries: 0
+    spliceRecoveries: 0,
+    staleEnqueueDrops: 0,
+    ackRejections: 0,
+    ackRejectReasons: {}
   }
 
   constructor(options: ChatUpdateDeliveryCoordinatorOptions = {}) {
@@ -323,6 +338,11 @@ export class ChatUpdateDeliveryCoordinator {
           }
         }
       }
+      // Observable staleness drop: this stream frame is discarded and the
+      // renderer will never receive it via enqueue. Sustained increments
+      // during a live run are the "frozen transcript, healthy counters"
+      // signature — see staleEnqueueDrops on ChatUpdateProtocolCounters.
+      this.counters.staleEnqueueDrops += 1
       this.maybeSend(state)
       this.pruneTarget(target.id)
       return
@@ -437,6 +457,13 @@ export class ChatUpdateDeliveryCoordinator {
       // hash did not match), so the baseline is gone and the next delivery must
       // be a full snapshot. This is the transition worth counting.
       if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
+      this.countAckRejection(ack, {
+        revisionMismatch,
+        recordHashMismatch,
+        transcriptHashMismatch,
+        deliveryEpochMismatch,
+        rendererEpochMismatch
+      })
       state.acknowledged = undefined
       state.baselineChat = undefined
       state.baselineRevision = undefined
@@ -532,7 +559,43 @@ export class ChatUpdateDeliveryCoordinator {
   /** Cumulative delivery mix for the whole coordinator. Cheap enough to read
    *  on every sample; a triage window diffs two reads. */
   protocolCounters(): ChatUpdateProtocolCounters {
-    return { ...this.counters }
+    return {
+      ...this.counters,
+      // Copy the reason map so callers cannot mutate internal tallies.
+      ackRejectReasons: { ...this.counters.ackRejectReasons }
+    }
+  }
+
+  /**
+   * Tally one rejected ACK under every failing validation check (an ACK can
+   * mismatch on more than one axis). A rejection where the renderer itself
+   * reported `applied: false` with no main-side mismatch is recorded as
+   * 'rendererApplyFailure' — the patch failed to apply in the renderer.
+   * Persistent single-reason counts during a live run point at the exact
+   * broken link (epoch rebinding, hash drift, revision skew).
+   */
+  private countAckRejection(
+    ack: ChatUpdateAck,
+    mismatches: {
+      revisionMismatch: boolean
+      recordHashMismatch: boolean
+      transcriptHashMismatch: boolean
+      deliveryEpochMismatch: boolean
+      rendererEpochMismatch: boolean
+    }
+  ): void {
+    this.counters.ackRejections += 1
+    const reasons: string[] = []
+    if (mismatches.revisionMismatch) reasons.push('revisionMismatch')
+    if (mismatches.recordHashMismatch) reasons.push('recordHashMismatch')
+    if (mismatches.transcriptHashMismatch) reasons.push('transcriptHashMismatch')
+    if (mismatches.deliveryEpochMismatch) reasons.push('deliveryEpochMismatch')
+    if (mismatches.rendererEpochMismatch) reasons.push('rendererEpochMismatch')
+    if (reasons.length === 0 && ack.applied !== true) reasons.push('rendererApplyFailure')
+    if (reasons.length === 0) reasons.push('unknown')
+    for (const reason of reasons) {
+      this.counters.ackRejectReasons[reason] = (this.counters.ackRejectReasons[reason] ?? 0) + 1
+    }
   }
 
   statsForTarget(targetId: number): ChatUpdateDeliveryStats {
@@ -690,6 +753,9 @@ export class ChatUpdateDeliveryCoordinator {
           // A renderer that cannot ACK cannot share a revision baseline. The
           // newest pending update will therefore repair itself as a snapshot.
           if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
+          this.counters.ackRejections += 1
+          this.counters.ackRejectReasons.ackTimeout =
+            (this.counters.ackRejectReasons.ackTimeout ?? 0) + 1
           state.acknowledged = undefined
           state.baselineChat = undefined
           state.baselineRevision = undefined

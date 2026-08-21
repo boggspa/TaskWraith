@@ -172,4 +172,66 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
     // totals for the whole coordinator, which is what a triage window needs.
     expect(coordinator.protocolCounters().snapshots).toBe(2)
   })
+
+  it('counts broadcasts discarded by the enqueue staleness guard', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    // Seed a fresh known revision, then rebroadcast an OLDER one — the exact
+    // late-arrival shape the staleness guard exists to reject. The frame is
+    // dropped silently; without this counter the transcript just freezes
+    // while snapshots/patches stay flat.
+    const [fresh] = projectSequence(chat(5, ['five']))
+    coordinator.enqueue(sink, fresh)
+    expect(coordinator.protocolCounters().staleEnqueueDrops).toBe(0)
+
+    const [stale] = projectSequence(chat(2, ['two']))
+    coordinator.enqueue(sink, stale)
+
+    expect(coordinator.protocolCounters()).toMatchObject({ staleEnqueueDrops: 1 })
+  })
+
+  it('tallies rejected ACKs by failing validation check', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first] = projectSequence(chat(1, ['one']))
+    coordinator.enqueue(sink, first)
+    // A nack with no main-side mismatch is a renderer apply failure.
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: false })
+    expect(coordinator.protocolCounters()).toMatchObject({
+      ackRejections: 1,
+      ackRejectReasons: { rendererApplyFailure: 1 }
+    })
+
+    // A revision mismatch is attributed to its own axis.
+    const [, second] = projectSequence(chat(1, ['one']), chat(2, ['two']))
+    coordinator.enqueue(sink, second)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[1].deliveryId,
+      applied: true,
+      revision: sink.deliveries[1].revision + 999
+    })
+    expect(coordinator.protocolCounters()).toMatchObject({
+      ackRejections: 2,
+      ackRejectReasons: { rendererApplyFailure: 1, revisionMismatch: 1 }
+    })
+  })
+
+  it('returns a copy of the reason map so callers cannot mutate internal tallies', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const snapshot = coordinator.protocolCounters()
+    snapshot.ackRejectReasons.rendererApplyFailure = 99
+    expect(coordinator.protocolCounters().ackRejectReasons).toEqual({})
+  })
 })
