@@ -7,26 +7,25 @@ const {
   hudContainsAsset,
   parseBytes,
   resourceSample
-} =
-  require('./studio-acceptance-session.cjs') as {
-    assertWindowServerSessionAvailable: (
-      sampleIndex: number,
-      phase: string,
-      state: Record<string, unknown>
-    ) => Record<string, unknown>
-    hudContainsAsset: (
-      hud: { observations: Array<{ text: string }> },
-      assetId: string
-    ) => Record<string, unknown>
-    hudAssetIdentityToken: (assetId: string) => string
-    parseBytes: (text: string) => number
-    resourceSample: (
-      pid: number,
-      index: number,
-      elapsedSeconds: number,
-      adapters: Record<string, unknown>
-    ) => Record<string, any>
-  }
+} = require('./studio-acceptance-session.cjs') as {
+  assertWindowServerSessionAvailable: (
+    sampleIndex: number,
+    phase: string,
+    state: Record<string, unknown>
+  ) => Record<string, unknown>
+  hudContainsAsset: (
+    hud: { observations: Array<{ text: string }> },
+    assetId: string
+  ) => Record<string, unknown>
+  hudAssetIdentityToken: (assetId: string) => string
+  parseBytes: (text: string) => number
+  resourceSample: (
+    pid: number,
+    index: number,
+    elapsedSeconds: number,
+    adapters: Record<string, unknown>
+  ) => Record<string, any>
+}
 
 describe('tracked Studio acceptance session', () => {
   it('requires an exact full HUD asset digest', () => {

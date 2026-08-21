@@ -244,31 +244,76 @@ function workspaceReceipt(
   ) => ({ identifier, visible, role, value, enabled, frame })
   return {
     inputDelivery: 'background-observation-only',
-    actions: [{
-      index: 0,
-      type: 'read-workspace',
-      workspace: {
-        elements: [
-          element('studio.workspace.root', true, 'AXGroup', null, null, {
-            x: 0, y: 0, width: 640, height: 400
-          }),
-          element('studio.workspace.route.source', true, 'AXCheckBox', sourceSelected ? 'selected' : 'not selected', true, {
-            x: 4, y: 4, width: 40, height: 20
-          }),
-          element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
-            x: 48, y: 4, width: 48, height: 20
-          }),
-          element('studio.workspace.viewer.source', sourceVisible, sourceVisible ? 'AXGroup' : null, null, null, sourceVisible ? sourceFrame : null),
-          element('studio.workspace.viewer.timeline', false, null, null, null, null),
-          element('studio.workspace.review-version.current', true, 'AXRadioButton', 'unavailable', false, {
-            x: 100, y: 4, width: 60, height: 20
-          }),
-          element('studio.workspace.review-version.proposed', true, 'AXRadioButton', 'unavailable', false, {
-            x: 164, y: 4, width: 80, height: 20
-          })
-        ]
+    actions: [
+      {
+        index: 0,
+        type: 'read-workspace',
+        workspace: {
+          elements: [
+            element('studio.workspace.root', true, 'AXGroup', null, null, {
+              x: 0,
+              y: 0,
+              width: 640,
+              height: 400
+            }),
+            element(
+              'studio.workspace.route.source',
+              true,
+              'AXCheckBox',
+              sourceSelected ? 'selected' : 'not selected',
+              true,
+              {
+                x: 4,
+                y: 4,
+                width: 40,
+                height: 20
+              }
+            ),
+            element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+              x: 48,
+              y: 4,
+              width: 48,
+              height: 20
+            }),
+            element(
+              'studio.workspace.viewer.source',
+              sourceVisible,
+              sourceVisible ? 'AXGroup' : null,
+              null,
+              null,
+              sourceVisible ? sourceFrame : null
+            ),
+            element('studio.workspace.viewer.timeline', false, null, null, null, null),
+            element(
+              'studio.workspace.review-version.current',
+              true,
+              'AXRadioButton',
+              'unavailable',
+              false,
+              {
+                x: 100,
+                y: 4,
+                width: 60,
+                height: 20
+              }
+            ),
+            element(
+              'studio.workspace.review-version.proposed',
+              true,
+              'AXRadioButton',
+              'unavailable',
+              false,
+              {
+                x: 164,
+                y: 4,
+                width: 80,
+                height: 20
+              }
+            )
+          ]
+        }
       }
-    }]
+    ]
   }
 }
 
@@ -413,7 +458,11 @@ describe('studio LUT acceptance runner contract', () => {
   })
 
   it('requires an exact visible Source workspace for checkpoints', async () => {
-    const target = { window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } }
+    const target = {
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
+    }
     await expect(
       readSourceWorkspaceObservation({}, target, async () => workspaceReceipt(false))
     ).rejects.toThrow(/Source selected and visibly presented/)
@@ -426,11 +475,25 @@ describe('studio LUT acceptance runner contract', () => {
   })
 
   it('rejects a forged Playback receipt and preserves exact transition identity', async () => {
-    const target = { window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } }
+    const target = {
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
+    }
     await expect(
       pressPlaybackTransition({}, target, 'paused', 'playing', async () => ({
         inputDelivery: 'background-observation-only',
-        actions: [{ index: 0, type: 'press-playback', accessibilityLabel: 'Playback', accessibilityAction: 'AXPress', playbackValueBefore: 'paused', playbackValueAfter: 'playing', forged: true }]
+        actions: [
+          {
+            index: 0,
+            type: 'press-playback',
+            accessibilityLabel: 'Playback',
+            accessibilityAction: 'AXPress',
+            playbackValueBefore: 'paused',
+            playbackValueAfter: 'playing',
+            forged: true
+          }
+        ]
       }))
     ).rejects.toThrow(/forged or malformed/)
   })
@@ -439,7 +502,9 @@ describe('studio LUT acceptance runner contract', () => {
     let attempts = 0
     const target = {
       asset: { sha256: 'asset' },
-      window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] }
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
     }
     const result = await waitForPausedMediaReadiness(
       {},
@@ -471,12 +536,24 @@ describe('studio LUT acceptance runner contract', () => {
 
   it.each([
     ['malformed workspace', async () => ({ actions: [] })],
-    ['capture error', async () => { throw new Error('capture failed') }]
+    [
+      'capture error',
+      async () => {
+        throw new Error('capture failed')
+      }
+    ]
   ])('fails immediately on %s during readiness', async (_label, readOrThrow) => {
     await expect(
       waitForPausedMediaReadiness(
         {},
-        { asset: { sha256: 'asset' }, window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } },
+        {
+          asset: { sha256: 'asset' },
+          window: {
+            windows: [
+              { title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }
+            ]
+          }
+        },
         'readiness-error',
         readOrThrow,
         { captureGuarded: async () => ({}) }
@@ -488,7 +565,14 @@ describe('studio LUT acceptance runner contract', () => {
     await expect(
       waitForPausedMediaReadiness(
         {},
-        { asset: { sha256: 'asset' }, window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } },
+        {
+          asset: { sha256: 'asset' },
+          window: {
+            windows: [
+              { title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }
+            ]
+          }
+        },
         'readiness-bracket',
         async () => workspaceReceipt(),
         { captureGuarded: async () => ({ transportMutationBracket: { ok: false } }) }
@@ -1048,9 +1132,7 @@ describe('studio LUT acceptance runner contract', () => {
       distance: 0,
       threshold: 0
     })
-    expect(token).toBe(
-      'KPPA2NPH32HHA22ACACD42M33XHNN34EPAP234KDPP3CT2X32FENDNXCA9ANDC9C'
-    )
+    expect(token).toBe('KPPA2NPH32HHA22ACACD42M33XHNN34EPAP234KDPP3CT2X32FENDNXCA9ANDC9C')
   })
 
   it('rejects the deterministic fuzzy OCR observation that previously false-greened', () => {
@@ -1142,7 +1224,10 @@ describe('studio LUT acceptance runner contract', () => {
   })
 
   it.each([
-    ['short fragment', hudAssetIdentityToken('rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU').slice(0, 48)],
+    [
+      'short fragment',
+      hudAssetIdentityToken('rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU').slice(0, 48)
+    ],
     ['no-media HUD', 'No media | PAUSE | 00:00:00:00']
   ])('rejects %s observations as full asset identities', (_name, text) => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
@@ -1201,7 +1286,12 @@ describe('studio LUT acceptance runner contract', () => {
       workspaceObservation: { sourceHostFrame: { x: 12, y: 34, width: 320, height: 180 } }
     }
     const seen: Record<string, any>[] = []
-    const comparator = (_capture: string, _reference: string, _bounds: Record<string, number>, options: Record<string, any>) => {
+    const comparator = (
+      _capture: string,
+      _reference: string,
+      _bounds: Record<string, number>,
+      options: Record<string, any>
+    ) => {
       seen.push(options)
       return {
         clean: true,
@@ -1210,7 +1300,13 @@ describe('studio LUT acceptance runner contract', () => {
         thresholds: {}
       }
     }
-    compareDecodedSample(sample, '/tmp/reference.png', { width: 320, height: 210 }, 'neutral', comparator)
+    compareDecodedSample(
+      sample,
+      '/tmp/reference.png',
+      { width: 320, height: 210 },
+      'neutral',
+      comparator
+    )
     const pure = evaluatePureRedSample(
       sample,
       '/tmp/reference.png',

@@ -205,8 +205,7 @@ async function armHydrationProbe(mainInspector) {
             (hit) => hit.kind === 'request-response' && hit.method === 'studio/getDocument'
           )
           const eventIndex = relevant.findIndex(
-            (hit) =>
-              hit.kind === 'hydration-served-event' && hit.method === 'studio/getDocument'
+            (hit) => hit.kind === 'hydration-served-event' && hit.method === 'studio/getDocument'
           )
           const event = eventIndex < 0 ? null : relevant[eventIndex]
           if (
@@ -384,15 +383,12 @@ function adjudicateLifecycleEvidence(evidence) {
     (hit) => hit?.kind === 'request-response' && hit?.method === 'studio/getDocument'
   )
   const eventIndex = relevantHydrationHits.findIndex(
-    (hit) =>
-      hit?.kind === 'hydration-served-event' && hit?.method === 'studio/getDocument'
+    (hit) => hit?.kind === 'hydration-served-event' && hit?.method === 'studio/getDocument'
   )
   const hydrationEvent = eventIndex < 0 ? null : relevantHydrationHits[eventIndex]
   const hydratedDocument = hydrationEvent?.document
   const hydratedAsset = Array.isArray(hydratedDocument?.assets)
-    ? hydratedDocument.assets.find(
-        (candidate) => candidate?.assetId === evidence.expectedAssetId
-      )
+    ? hydratedDocument.assets.find((candidate) => candidate?.assetId === evidence.expectedAssetId)
     : null
   if (
     typeof evidence.expectedAssetPath !== 'string' ||
@@ -422,9 +418,8 @@ function adjudicateLifecycleEvidence(evidence) {
   }
   const explicitJournalDelta = evidence.explicitPresentation?.journalDelta
   const appendedEntries = explicitJournalDelta?.appendedEntries
-  const appendedEntry = Array.isArray(appendedEntries) && appendedEntries.length === 1
-    ? appendedEntries[0]
-    : null
+  const appendedEntry =
+    Array.isArray(appendedEntries) && appendedEntries.length === 1 ? appendedEntries[0] : null
   if (
     !explicitJournalDelta ||
     !Array.isArray(appendedEntries) ||
@@ -439,7 +434,9 @@ function adjudicateLifecycleEvidence(evidence) {
     appendedEntry.op.asset?.assetId !== evidence.expectedAssetId ||
     path.resolve(String(appendedEntry.op.asset?.path || '')) !== expectedAssetPath
   ) {
-    throw new Error('Studio lifecycle explicit reopen journal delta is not one exact same-asset open_media')
+    throw new Error(
+      'Studio lifecycle explicit reopen journal delta is not one exact same-asset open_media'
+    )
   }
   return {
     ok: true,
@@ -500,8 +497,8 @@ function assertExplicitOpenJournalDelta(before, after, asset) {
   const entry = appended.length === 1 ? appended[0] : null
   const sameAssetOpenMedia = Boolean(
     entry?.op?.type === 'open_media' &&
-      entry.op.asset?.assetId === asset.sha256 &&
-      path.resolve(String(entry.op.asset?.path || '')) === path.resolve(asset.assetPath)
+    entry.op.asset?.assetId === asset.sha256 &&
+    path.resolve(String(entry.op.asset?.path || '')) === path.resolve(asset.assetPath)
   )
   if (appended.length !== 1 || !sameAssetOpenMedia) {
     throw new Error(
@@ -574,11 +571,7 @@ async function exactMediaObservation(plan, target, name, adapters = {}) {
     target.companion
   )
   const currentTarget = { ...target, window }
-  const capture = await (adapters.captureNative || session.captureNative)(
-    plan,
-    currentTarget,
-    name
-  )
+  const capture = await (adapters.captureNative || session.captureNative)(plan, currentTarget, name)
   const hud = (adapters.ocrScreenshot || session.ocrScreenshot)(capture.path)
   const assetMatch = (adapters.hudContainsAsset || session.hudContainsAsset)(
     hud,
@@ -670,11 +663,7 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         throw new Error('Studio lifecycle journal has no exact pre-replacement revision')
       }
       const beforeFocus = session.focusSnapshot(context.companion.pid)
-      const beforeMedia = await waitForExactMediaObservation(
-        plan,
-        beforeTarget,
-        'lifecycle-before'
-      )
+      const beforeMedia = await waitForExactMediaObservation(plan, beforeTarget, 'lifecycle-before')
       const beforeProcess = session.exactCompanionProcess(context.companion, context.session.pgid)
       if (beforeProcess.ppid !== context.session.pid) {
         throw new Error('original Companion is not the exact Electron child')
@@ -691,9 +680,11 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         await waitFor('old Studio Companion disappearance', () =>
           processExists(context.companion.pid) ? null : true
         )
-        replacement = await (
-          adapters.waitForReplacementCompanion || waitForReplacementCompanion
-        )(context.session.pid, context.session.pgid, context.companion.pid)
+        replacement = await (adapters.waitForReplacementCompanion || waitForReplacementCompanion)(
+          context.session.pid,
+          context.session.pgid,
+          context.companion.pid
+        )
         hydrationEvidence = await hydrationProbe.waitForHydration(
           replacement.candidate.pid,
           expectedHydratedRevision

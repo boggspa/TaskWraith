@@ -896,10 +896,7 @@ async function readSourceWorkspaceObservation(plan, target, windowBounds, adapte
   if (actions.length !== 1) {
     throw new Error('bounded diagnostics workspace read did not return exactly one action')
   }
-  const workspace = harness.validateStudioWorkspaceObservation(
-    actions[0].workspace,
-    windowBounds
-  )
+  const workspace = harness.validateStudioWorkspaceObservation(actions[0].workspace, windowBounds)
   if (
     workspace.sourceRoute?.value !== 'selected' ||
     workspace.sourceHost?.visible !== true ||
@@ -915,7 +912,11 @@ async function readSourceWorkspaceObservation(plan, target, windowBounds, adapte
 }
 
 async function pressPlaybackTransition(plan, target, before, after, adapters = {}) {
-  if (!['paused', 'playing'].includes(before) || !['paused', 'playing'].includes(after) || before === after) {
+  if (
+    !['paused', 'playing'].includes(before) ||
+    !['paused', 'playing'].includes(after) ||
+    before === after
+  ) {
     throw new Error('bounded diagnostics Playback transition is not an exact state change')
   }
   const runDriver = adapters.runStudioUiDriver || harness.runStudioUiDriver
@@ -930,10 +931,7 @@ async function pressPlaybackTransition(plan, target, before, after, adapters = {
     }
   )
   const actions = Array.isArray(receipt?.actions) ? receipt.actions : []
-  if (
-    receipt?.inputDelivery !== 'background-observation-only' ||
-    actions.length !== 1
-  ) {
+  if (receipt?.inputDelivery !== 'background-observation-only' || actions.length !== 1) {
     throw new Error('bounded diagnostics Playback transition receipt is not one background action')
   }
   const action = actions[0]
@@ -976,7 +974,13 @@ async function waitFor(label, probe, timeoutMs = 30_000, intervalMs = 100) {
   )
 }
 
-async function waitForPausedMediaReadiness(plan, target, windowBounds, adapters = {}, options = {}) {
+async function waitForPausedMediaReadiness(
+  plan,
+  target,
+  windowBounds,
+  adapters = {},
+  options = {}
+) {
   const runCapture = adapters.captureNative || acceptanceSession.captureNative
   const observe = async () => {
     const workspaceObservation = await readSourceWorkspaceObservation(
@@ -1002,7 +1006,11 @@ async function waitForPausedMediaReadiness(plan, target, windowBounds, adapters 
     ) {
       throw new Error(
         'bounded diagnostics media is not ready for playback: ' +
-          JSON.stringify({ observed, durationTicks, transportMutationBracket: capture.transportMutationBracket })
+          JSON.stringify({
+            observed,
+            durationTicks,
+            transportMutationBracket: capture.transportMutationBracket
+          })
       )
     }
     return { workspaceObservation, capture, hud, observed }
@@ -1048,12 +1056,7 @@ async function captureFreshPlayableSample(
   adapters = {},
   options = {}
 ) {
-  const workspaceObservation = await readSourceWorkspaceObservation(
-    plan,
-    target,
-    bounds,
-    adapters
-  )
+  const workspaceObservation = await readSourceWorkspaceObservation(plan, target, bounds, adapters)
   const sample = await capturePlayableSample(
     plan,
     target,
@@ -1120,10 +1123,7 @@ async function waitForFreshPlayableSample(
         retry: { attemptCount: attempts.length, attempts }
       }
     }
-    if (
-      reasons.length === 0 ||
-      reasons.some((reason) => !RETRYABLE_SAMPLE_REASONS.has(reason))
-    ) {
+    if (reasons.length === 0 || reasons.some((reason) => !RETRYABLE_SAMPLE_REASONS.has(reason))) {
       throw new Error(
         'bounded diagnostics sample failed with a non-retryable observation: ' +
           JSON.stringify({ index, attempt, reasons, observed: sample.observed })

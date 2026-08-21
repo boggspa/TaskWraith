@@ -31,7 +31,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
-    'bb7b2d5161066926f7d5dd457c49096997e246cc841a324b4ad25d1dd5e2244a',
+    'ac90199e7ea50c8ab83cc1054d4652b45fad389f8a591f90ec68a1d0f69936aa',
   'scripts/studio-hud-ocr.swift':
     'd3f1a7efc1189357252932518ed7d0b7ba799b19a3c68d9a32f134b076111a52',
   'scripts/studio-input-isolation-snapshot.swift':
@@ -41,9 +41,9 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-session.cjs':
     '9aced4b6f6143cb50802f074fadab62fb0ac9d3336e8169b0b5e27708283f79d',
   'scripts/studio-bounded-diagnostics-runner.cjs':
-    '9b1b59898a6708864c5e4ffdf28f9c930a94992303c0537b3dcf22869ab67266',
+    'fc2e9b7f9b5b5134d622b9f27f7547741666c88ce98dc45eb746e24a867e56f5',
   'scripts/studio-bounded-lifecycle-runner.cjs':
-    'f5c7a7c4c5b59d7f1fbbf93ed2319e92555eb55f84a5fe17af58f4fed77f7d8c',
+    'bc1538c91e38c43165d833db983fd36310c8362832bae2bb853f24430b2fb7dd',
   'scripts/studio-av-endurance-runner.cjs':
     'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
   'scripts/studio-av-endurance-acceptance-runner.cjs':
@@ -842,23 +842,18 @@ function requiredSampleSourceHostFrame(sample, label) {
   return sample.workspaceObservation.sourceHostFrame
 }
 
-function compareDecodedSample(sample, referencePath, windowBounds, label, comparator = compareWindowCaptureToReference) {
-  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
-  return comparator(
-    sample.capture.path,
-    referencePath,
-    windowBounds,
-    { sourceHostFrame }
-  )
-}
-
-function evaluatePureRedSample(
+function compareDecodedSample(
   sample,
   referencePath,
   windowBounds,
   label,
-  options = {}
+  comparator = compareWindowCaptureToReference
 ) {
+  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
+  return comparator(sample.capture.path, referencePath, windowBounds, { sourceHostFrame })
+}
+
+function evaluatePureRedSample(sample, referencePath, windowBounds, label, options = {}) {
   const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
   return evaluatePureRedCapture({
     capturePath: sample.capture.path,
@@ -1547,17 +1542,20 @@ async function readSourceWorkspaceObservation(plan, target, runDriver = harness.
   return { receipt, workspace, sourceHostFrame: workspace.sourceHost.frame }
 }
 
-async function pressPlaybackTransition(plan, target, before, after, runDriver = harness.runStudioUiDriver) {
+async function pressPlaybackTransition(
+  plan,
+  target,
+  before,
+  after,
+  runDriver = harness.runStudioUiDriver
+) {
   invariant(
-    (before === 'paused' && after === 'playing') ||
-      (before === 'playing' && after === 'paused'),
+    (before === 'paused' && after === 'playing') || (before === 'playing' && after === 'paused'),
     'LUT Playback transition is not exact'
   )
-  const receipt = await runDriver(
-    plan,
-    target,
-    [{ type: 'press-playback', playbackValueBefore: before, playbackValueAfter: after }]
-  )
+  const receipt = await runDriver(plan, target, [
+    { type: 'press-playback', playbackValueBefore: before, playbackValueAfter: after }
+  ])
   const action = Array.isArray(receipt?.actions) ? receipt.actions[0] : null
   const expectedKeys = [
     'accessibilityAction',
@@ -2035,12 +2033,7 @@ async function phaseOne(runtime, syntheticRedReference) {
       harness.runStudioUiDriver
     )
     const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
-    const playbackStart = await pressPlaybackTransition(
-      context.plan,
-      target,
-      'paused',
-      'playing'
-    )
+    const playbackStart = await pressPlaybackTransition(context.plan, target, 'paused', 'playing')
     const playbackStartFocus = focusSnapshot(context.companion.pid)
     const playbackStartIsolation = assertFocusIsolation(
       focusBeforePlaybackStart,
@@ -2168,12 +2161,7 @@ async function phaseOne(runtime, syntheticRedReference) {
     )
     invariant(invalidPixels.clean, 'invalid replacement changed the red video plane')
     const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
-    const playbackStop = await pressPlaybackTransition(
-      context.plan,
-      target,
-      'playing',
-      'paused'
-    )
+    const playbackStop = await pressPlaybackTransition(context.plan, target, 'playing', 'paused')
     const playbackStopFocus = focusSnapshot(context.companion.pid)
     const playbackStopIsolation = assertFocusIsolation(
       focusBeforePlaybackStop,
@@ -2262,12 +2250,7 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       harness.runStudioUiDriver
     )
     const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
-    const playbackStart = await pressPlaybackTransition(
-      context.plan,
-      target,
-      'paused',
-      'playing'
-    )
+    const playbackStart = await pressPlaybackTransition(context.plan, target, 'paused', 'playing')
     const playbackStartFocus = focusSnapshot(context.companion.pid)
     const playbackStartIsolation = assertFocusIsolation(
       focusBeforePlaybackStart,
@@ -2326,12 +2309,7 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       `cleared exact-frame comparison failed: ${JSON.stringify(clearedPixels.metrics)}`
     )
     const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
-    const playbackStop = await pressPlaybackTransition(
-      context.plan,
-      target,
-      'playing',
-      'paused'
-    )
+    const playbackStop = await pressPlaybackTransition(context.plan, target, 'playing', 'paused')
     const playbackStopFocus = focusSnapshot(context.companion.pid)
     const playbackStopIsolation = assertFocusIsolation(
       focusBeforePlaybackStop,

@@ -12,52 +12,51 @@ const {
   parseLifecycleCli,
   probeNativeWindowIncludingZero,
   waitForExactMediaObservation
-} =
-  require('./studio-bounded-lifecycle-runner.cjs') as {
-    adjudicateLifecycleEvidence: (evidence: Record<string, any>) => Record<string, any>
-    assertExplicitOpenJournalDelta: (
-      before: Array<Record<string, any>>,
-      after: Array<Record<string, any>>,
-      asset: Record<string, any>
-    ) => Record<string, any>
-    assertFocusHandoff: (
-      before: Record<string, any>,
-      after: Record<string, any>,
-      oldPid: number,
-      newPid: number
-    ) => Record<string, any>
-    assertHydrationEvidence: (
-      hydration: Record<string, any>,
-      expectedPid: number,
-      expectedRevision: number,
-      asset: Record<string, any>
-    ) => Record<string, any>
-    assertNoVisibleSourceWindow: (
-      companion: Record<string, any>,
-      probe: (pid: number) => Promise<Record<string, any>>
-    ) => Promise<Record<string, any>>
-    assertUnchangedJournalAcrossReplacement: (
-      before: Array<Record<string, any>>,
-      after: Array<Record<string, any>>
-    ) => Record<string, any>
-    exactMediaObservation: (
-      plan: Record<string, any>,
-      target: Record<string, any>,
-      name: string,
-      adapters: Record<string, any>
-    ) => Promise<Record<string, any>>
-    parseLifecycleCli: (argv: string[]) => Record<string, any>
-    probeNativeWindowIncludingZero: (
-      pid: number,
-      run: (command: string, args: string[], options: Record<string, any>) => Record<string, any>
-    ) => Record<string, any>
-    waitForExactMediaObservation: (
-      plan: Record<string, any>,
-      target: Record<string, any>,
-      name: string,
-      options: Record<string, any>
-    ) => Promise<Record<string, any>>
-  }
+} = require('./studio-bounded-lifecycle-runner.cjs') as {
+  adjudicateLifecycleEvidence: (evidence: Record<string, any>) => Record<string, any>
+  assertExplicitOpenJournalDelta: (
+    before: Array<Record<string, any>>,
+    after: Array<Record<string, any>>,
+    asset: Record<string, any>
+  ) => Record<string, any>
+  assertFocusHandoff: (
+    before: Record<string, any>,
+    after: Record<string, any>,
+    oldPid: number,
+    newPid: number
+  ) => Record<string, any>
+  assertHydrationEvidence: (
+    hydration: Record<string, any>,
+    expectedPid: number,
+    expectedRevision: number,
+    asset: Record<string, any>
+  ) => Record<string, any>
+  assertNoVisibleSourceWindow: (
+    companion: Record<string, any>,
+    probe: (pid: number) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
+  assertUnchangedJournalAcrossReplacement: (
+    before: Array<Record<string, any>>,
+    after: Array<Record<string, any>>
+  ) => Record<string, any>
+  exactMediaObservation: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    name: string,
+    adapters: Record<string, any>
+  ) => Promise<Record<string, any>>
+  parseLifecycleCli: (argv: string[]) => Record<string, any>
+  probeNativeWindowIncludingZero: (
+    pid: number,
+    run: (command: string, args: string[], options: Record<string, any>) => Record<string, any>
+  ) => Record<string, any>
+  waitForExactMediaObservation: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    name: string,
+    options: Record<string, any>
+  ) => Promise<Record<string, any>>
+}
 
 const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
 const assetPath = '/tmp/asset.mp4'
@@ -207,7 +206,8 @@ describe('bounded Studio lifecycle adjudication', () => {
       'fuzzy asset',
       (evidence: Record<string, any>) => {
         const token = evidence.after.hud.observations[0].text
-        evidence.after.hud.observations[0].text = token.slice(0, -1) + (token.endsWith('2') ? '3' : '2')
+        evidence.after.hud.observations[0].text =
+          token.slice(0, -1) + (token.endsWith('2') ? '3' : '2')
       }
     ],
     [
@@ -292,7 +292,10 @@ describe('bounded Studio lifecycle adjudication', () => {
     ['wrong replacement pid', { expectedPid: 7_004 }],
     ['wrong hydrated revision', { expectedRevision: 3 }],
     ['wrong callback order', { eventIndex: 1 }],
-    ['wrong hydrated asset', { hydratedDocument: { assets: [{ assetId: 'other', path: '/tmp/asset.mp4' }] } }]
+    [
+      'wrong hydrated asset',
+      { hydratedDocument: { assets: [{ assetId: 'other', path: '/tmp/asset.mp4' }] } }
+    ]
   ])('rejects %s hydration evidence', (_label, mutation) => {
     const hydration = {
       expectedPid: 7_003,
@@ -303,7 +306,9 @@ describe('bounded Studio lifecycle adjudication', () => {
       hydratedDocument: { assets: [{ assetId, path: '/tmp/asset.mp4' }] }
     }
     Object.assign(hydration, mutation)
-    expect(() => assertHydrationEvidence(hydration, 7_003, 4, { sha256: assetId, assetPath: '/tmp/asset.mp4' })).toThrow()
+    expect(() =>
+      assertHydrationEvidence(hydration, 7_003, 4, { sha256: assetId, assetPath: '/tmp/asset.mp4' })
+    ).toThrow()
   })
 
   it('requires exactly one same-asset open_media explicit reopen delta', () => {
@@ -324,14 +329,21 @@ describe('bounded Studio lifecycle adjudication', () => {
       assetId,
       sameAssetOpenMedia: true
     })
+    expect(() => assertExplicitOpenJournalDelta(before, [...after, after[1]], asset)).toThrow(
+      /exactly one same-asset open_media/
+    )
     expect(() =>
-      assertExplicitOpenJournalDelta(before, [...after, after[1]], asset)
-    ).toThrow(/exactly one same-asset open_media/)
-    expect(() =>
-      assertExplicitOpenJournalDelta(before, [
-        ...before,
-        { revision: 5, op: { type: 'open_media', asset: { assetId: 'other', path: asset.assetPath } } }
-      ], asset)
+      assertExplicitOpenJournalDelta(
+        before,
+        [
+          ...before,
+          {
+            revision: 5,
+            op: { type: 'open_media', asset: { assetId: 'other', path: asset.assetPath } }
+          }
+        ],
+        asset
+      )
     ).toThrow(/exactly one same-asset open_media/)
   })
 

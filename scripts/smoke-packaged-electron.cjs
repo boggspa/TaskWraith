@@ -593,12 +593,7 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
   }
   const bridgeApp = path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraith Bridge.app')
   const bridgeInfoPath = path.join(bridgeApp, 'Contents', 'Info.plist')
-  const bridgeDaemon = path.join(
-    bridgeApp,
-    'Contents',
-    'MacOS',
-    'TaskWraithBridgeDaemon'
-  )
+  const bridgeDaemon = path.join(bridgeApp, 'Contents', 'MacOS', 'TaskWraithBridgeDaemon')
   assertDir(bridgeApp, 'TaskWraith Bridge.app')
   assertFile(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')

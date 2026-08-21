@@ -80,18 +80,32 @@ function diagnosticsWorkspace(frame: Record<string, number>) {
       }),
       element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
       element('studio.workspace.viewer.timeline', false, null, null, null, null),
-      element('studio.workspace.review-version.current', true, 'AXRadioButton', 'unavailable', false, {
-        x: 204,
-        y: 204,
-        width: 60,
-        height: 20
-      }),
-      element('studio.workspace.review-version.proposed', true, 'AXRadioButton', 'unavailable', false, {
-        x: 268,
-        y: 204,
-        width: 80,
-        height: 20
-      })
+      element(
+        'studio.workspace.review-version.current',
+        true,
+        'AXRadioButton',
+        'unavailable',
+        false,
+        {
+          x: 204,
+          y: 204,
+          width: 60,
+          height: 20
+        }
+      ),
+      element(
+        'studio.workspace.review-version.proposed',
+        true,
+        'AXRadioButton',
+        'unavailable',
+        false,
+        {
+          x: 268,
+          y: 204,
+          width: 80,
+          height: 20
+        }
+      )
     ]
   }
 }
@@ -940,11 +954,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       {},
       {},
       {
-        waitFor: async (
-          _label: string,
-          _probe: () => Promise<unknown>,
-          timeoutMs: number
-        ) => {
+        waitFor: async (_label: string, _probe: () => Promise<unknown>, timeoutMs: number) => {
           readinessTimeout = timeoutMs
           return readinessSentinel
         }
@@ -1051,14 +1061,16 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         transitions.push(`${action.playbackValueBefore}->${action.playbackValueAfter}`)
         return {
           inputDelivery: 'background-observation-only',
-          actions: [{
-            index: 0,
-            type: 'press-playback',
-            accessibilityLabel: 'Playback',
-            accessibilityAction: 'AXPress',
-            playbackValueBefore: action.playbackValueBefore,
-            playbackValueAfter: action.playbackValueAfter
-          }]
+          actions: [
+            {
+              index: 0,
+              type: 'press-playback',
+              accessibilityLabel: 'Playback',
+              accessibilityAction: 'AXPress',
+              playbackValueBefore: action.playbackValueBefore,
+              playbackValueAfter: action.playbackValueAfter
+            }
+          ]
         }
       }
     }
@@ -1081,22 +1093,18 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     const workspace = {
       elements: [
         element('studio.workspace.root', true, 'AXGroup', null, null, bounds),
-        element(
-          'studio.workspace.route.source',
-          true,
-          'AXCheckBox',
-          'selected',
-          true,
-          { x: 104, y: 204, width: 40, height: 20 }
-        ),
-        element(
-          'studio.workspace.route.timeline',
-          true,
-          'AXCheckBox',
-          'not selected',
-          true,
-          { x: 148, y: 204, width: 48, height: 20 }
-        ),
+        element('studio.workspace.route.source', true, 'AXCheckBox', 'selected', true, {
+          x: 104,
+          y: 204,
+          width: 40,
+          height: 20
+        }),
+        element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+          x: 148,
+          y: 204,
+          width: 48,
+          height: 20
+        }),
         element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
         element('studio.workspace.viewer.timeline', false, null, null, null, null),
         element(
@@ -1123,7 +1131,12 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
       bounds,
       {
-        runStudioUiDriver: async (_plan: unknown, _target: unknown, _actions: unknown, options: Record<string, any>) => {
+        runStudioUiDriver: async (
+          _plan: unknown,
+          _target: unknown,
+          _actions: unknown,
+          options: Record<string, any>
+        ) => {
           receivedOptions = options
           return { actions: [{ index: 0, type: 'read-workspace', workspace }] }
         }
@@ -1172,7 +1185,17 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       }),
       captureNative: async () => ({ path: '/tmp/diagnostics-capture.png' }),
       ocrScreenshot: () => ({
-        texts: [`00:00:0${++ocrCount}.000`, 'PLAY', 'drop 0', 'held 0', 'shown 10', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+        texts: [
+          `00:00:0${++ocrCount}.000`,
+          'PLAY',
+          'drop 0',
+          'held 0',
+          'shown 10',
+          'cache 1',
+          'tex 2',
+          'play 1',
+          'rss 1 MB'
+        ],
         stdoutSha256: digestFor('ocr')
       }),
       hudContainsAsset: () => ({ matched: true, distance: 0 }),
@@ -1217,7 +1240,13 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       { x: 100, y: 200, width: 960, height: 640 },
       {
         runStudioUiDriver: async () => ({
-          actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+          actions: [
+            {
+              index: 0,
+              type: 'read-workspace',
+              workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+            }
+          ]
         }),
         captureNative: async () => {
           captures += 1
@@ -1239,7 +1268,9 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     )
     expect(captures).toBe(2)
     expect(readiness.observed).toMatchObject({ state: 'PAUSE', assetMatch: { distance: 0 } })
-    expect(readiness.capture.transportMutationBracket.after.parsedValue.afterDurationTicks).toBe('900')
+    expect(readiness.capture.transportMutationBracket.after.parsedValue.afterDurationTicks).toBe(
+      '900'
+    )
   })
 
   it('retries one-character asset/counter OCR misses without combining observations', async () => {
@@ -1248,14 +1279,30 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     const adapters = {
       assertWindowServerSessionAvailable: availableWindowServer,
       runStudioUiDriver: async () => ({
-        actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+        actions: [
+          {
+            index: 0,
+            type: 'read-workspace',
+            workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+          }
+        ]
       }),
       captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
         path: `/tmp/${name}.png`,
         sha256: `capture-${++captures}`
       }),
       ocrScreenshot: () => ({
-        texts: ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', captures === 1 ? 'shown x' : 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+        texts: [
+          '00:00:01.000',
+          'PLAY',
+          'drop 0',
+          'held 0',
+          captures === 1 ? 'shown x' : 'shown 1',
+          'cache 1',
+          'tex 2',
+          'play 1',
+          'rss 1 MB'
+        ],
         stdoutSha256: digestFor(`ocr-${captures}`)
       }),
       hudContainsAsset: () => ({ matched: captures > 1, distance: captures > 1 ? 0 : 1 }),
@@ -1293,16 +1340,33 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       {
         assertWindowServerSessionAvailable: availableWindowServer,
         runStudioUiDriver: async () => ({
-          actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+          actions: [
+            {
+              index: 0,
+              type: 'read-workspace',
+              workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+            }
+          ]
         }),
         captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
           path: `/tmp/${name}.png`,
           sha256: `pts-${++captures}`
         }),
         ocrScreenshot: () => ({
-          texts: captures === 1
-            ? ['PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB']
-            : ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+          texts:
+            captures === 1
+              ? ['PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB']
+              : [
+                  '00:00:01.000',
+                  'PLAY',
+                  'drop 0',
+                  'held 0',
+                  'shown 1',
+                  'cache 1',
+                  'tex 2',
+                  'play 1',
+                  'rss 1 MB'
+                ],
           stdoutSha256: digestFor(`pts-${captures}`)
         }),
         hudContainsAsset: () => ({ matched: true, distance: 0 }),
@@ -1333,11 +1397,27 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         {
           assertWindowServerSessionAvailable: availableWindowServer,
           runStudioUiDriver: async () => ({
-            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
           }),
           captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
           ocrScreenshot: () => ({
-            texts: ['00:00:02.000', state, 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+            texts: [
+              '00:00:02.000',
+              state,
+              'drop 0',
+              'held 0',
+              'shown 1',
+              'cache 1',
+              'tex 2',
+              'play 1',
+              'rss 1 MB'
+            ],
             stdoutSha256: digestFor('nonretry')
           }),
           hudContainsAsset: () => ({ matched: true, distance: 0 }),
@@ -1363,11 +1443,27 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         {
           assertWindowServerSessionAvailable: availableWindowServer,
           runStudioUiDriver: async () => ({
-            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
           }),
           captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
           ocrScreenshot: () => ({
-            texts: ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', captures === 1 ? 'shown x' : 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+            texts: [
+              '00:00:01.000',
+              'PLAY',
+              'drop 0',
+              'held 0',
+              captures === 1 ? 'shown x' : 'shown 1',
+              'cache 1',
+              'tex 2',
+              'play 1',
+              'rss 1 MB'
+            ],
             stdoutSha256: digestFor(`partial-${captures}`)
           }),
           hudContainsAsset: () => ({ matched: captures === 1, distance: captures === 1 ? 0 : 1 }),
@@ -1392,11 +1488,20 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         { x: 100, y: 200, width: 960, height: 640 },
         {
           runStudioUiDriver: async () => ({
-            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
           }),
           captureNative: async () => ({
             path: '/tmp/readiness.png',
-            transportMutationBracket: { ok: true, after: { parsedValue: { afterDurationTicks: durationTicks } } }
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: durationTicks } }
+            }
           }),
           ocrScreenshot: () => ({ texts, stdoutSha256: digestFor('readiness-fail') }),
           hudContainsAsset: () => match

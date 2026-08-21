@@ -307,9 +307,7 @@ function createProjectedWindowFixture(
           0,
           Math.min(
             255,
-            Math.round(
-              transforms[channel].scale * referenceValue + transforms[channel].offset
-            )
+            Math.round(transforms[channel].scale * referenceValue + transforms[channel].offset)
           )
         )
       }
@@ -691,9 +689,7 @@ describe('Studio pixel evidence verifier', () => {
         { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
       )
       expect(comparison.clean).toBe(false)
-      expect(comparison.registration.referenceProjection).toBe(
-        'logical-host-then-window'
-      )
+      expect(comparison.registration.referenceProjection).toBe('logical-host-then-window')
       expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
     } finally {
       fixture.cleanup()

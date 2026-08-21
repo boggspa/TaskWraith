@@ -112,8 +112,7 @@ function twiceBilinearChannel(
       channel
     )
   const topValue =
-    (1 - xWeight) * sampleIntermediate(left, top) +
-    xWeight * sampleIntermediate(left + 1, top)
+    (1 - xWeight) * sampleIntermediate(left, top) + xWeight * sampleIntermediate(left + 1, top)
   const bottomValue =
     (1 - xWeight) * sampleIntermediate(left, top + 1) +
     xWeight * sampleIntermediate(left + 1, top + 1)
@@ -254,16 +253,10 @@ function sourceHostWindowEdgeInsets(sourceHostFrame, windowBounds) {
   return {
     left: close(sourceHostFrame.x, windowBounds.x) ? 1 : 0,
     top: close(sourceHostFrame.y, windowBounds.y) ? 1 : 0,
-    right: close(
-      sourceHostFrame.x + sourceHostFrame.width,
-      windowBounds.x + windowBounds.width
-    )
+    right: close(sourceHostFrame.x + sourceHostFrame.width, windowBounds.x + windowBounds.width)
       ? 1
       : 0,
-    bottom: close(
-      sourceHostFrame.y + sourceHostFrame.height,
-      windowBounds.y + windowBounds.height
-    )
+    bottom: close(sourceHostFrame.y + sourceHostFrame.height, windowBounds.y + windowBounds.height)
       ? 1
       : 0
   }
@@ -354,15 +347,14 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
-  const canvasBackingScales = [1, 2, 3, 4]
-    .filter(
-      (backingScale) =>
-        capture.width === Math.round(windowWidth * backingScale) &&
-        capture.height === Math.round(windowHeight * backingScale)
-    )
+  const canvasBackingScales = [1, 2, 3, 4].filter(
+    (backingScale) =>
+      capture.width === Math.round(windowWidth * backingScale) &&
+      capture.height === Math.round(windowHeight * backingScale)
+  )
   const opaqueProjection = opaqueCaptureProjection(capture, windowWidth, windowHeight)
-  const exactCanvasCandidates = (opaqueProjection ? [] : canvasBackingScales)
-    .map((backingScale) => ({
+  const exactCanvasCandidates = (opaqueProjection ? [] : canvasBackingScales).map(
+    (backingScale) => ({
       backingScale,
       canvasBackingScale: backingScale,
       horizontalShadowPixels: 0,
@@ -374,66 +366,65 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       scaleY: backingScale,
       windowOriginX: 0,
       windowOriginY: 0
-    }))
-  const captureExtent =
-    opaqueProjection
-      ? opaqueProjection.extent
-      : exactCanvasCandidates.length > 0
+    })
+  )
+  const captureExtent = opaqueProjection
+    ? opaqueProjection.extent
+    : exactCanvasCandidates.length > 0
       ? { x: 0, y: 0, width: capture.width, height: capture.height }
       : boundedCaptureExtent(capture)
-  const scaleCandidates =
-    opaqueProjection
-      ? [
-          {
-            backingScale: (opaqueProjection.scaleX + opaqueProjection.scaleY) / 2,
-            canvasBackingScale:
-              canvasBackingScales.length === 1 ? canvasBackingScales[0] : null,
-            scaleX: opaqueProjection.scaleX,
-            scaleY: opaqueProjection.scaleY,
-            horizontalShadowPixels: 0,
-            verticalShadowPixels: 0,
-            valid: true,
-            shadowScore: 0,
-            captureMode: 'opaque-window-projection',
-            windowOriginX: opaqueProjection.extent.x,
-            windowOriginY: opaqueProjection.extent.y
-          }
-        ]
-      : exactCanvasCandidates.length > 0
+  const scaleCandidates = opaqueProjection
+    ? [
+        {
+          backingScale: (opaqueProjection.scaleX + opaqueProjection.scaleY) / 2,
+          canvasBackingScale: canvasBackingScales.length === 1 ? canvasBackingScales[0] : null,
+          scaleX: opaqueProjection.scaleX,
+          scaleY: opaqueProjection.scaleY,
+          horizontalShadowPixels: 0,
+          verticalShadowPixels: 0,
+          valid: true,
+          shadowScore: 0,
+          captureMode: 'opaque-window-projection',
+          windowOriginX: opaqueProjection.extent.x,
+          windowOriginY: opaqueProjection.extent.y
+        }
+      ]
+    : exactCanvasCandidates.length > 0
       ? exactCanvasCandidates
-      : [1, 2, 3, 4].map((backingScale) => {
-          const scaledWindowWidth = Math.round(windowWidth * backingScale)
-          const scaledWindowHeight = Math.round(windowHeight * backingScale)
-          const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
-          const verticalShadowPixels = captureExtent.height - scaledWindowHeight
-          const shadowless = verticalShadowPixels === 0
-          const boundedWindowShadow =
-            verticalShadowPixels >= 16 * backingScale &&
-            (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
-          const valid =
-            horizontalShadowPixels >= 0 &&
-            horizontalShadowPixels % (2 * backingScale) === 0 &&
-            verticalShadowPixels >= 0 &&
-            (shadowless || boundedWindowShadow)
-          return {
-            backingScale,
-            canvasBackingScale: backingScale,
-            horizontalShadowPixels,
-            verticalShadowPixels,
-            valid,
-            shadowScore: horizontalShadowPixels + verticalShadowPixels,
-            captureMode: 'bounded-alpha-extent',
-            scaleX: backingScale,
-            scaleY: backingScale,
-            windowOriginX: null,
-            windowOriginY: null
-          }
-        })
-    .filter((candidate) => candidate.valid)
-    .sort(
-      (left, right) =>
-        left.shadowScore - right.shadowScore || right.backingScale - left.backingScale
-    )
+      : [1, 2, 3, 4]
+          .map((backingScale) => {
+            const scaledWindowWidth = Math.round(windowWidth * backingScale)
+            const scaledWindowHeight = Math.round(windowHeight * backingScale)
+            const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
+            const verticalShadowPixels = captureExtent.height - scaledWindowHeight
+            const shadowless = verticalShadowPixels === 0
+            const boundedWindowShadow =
+              verticalShadowPixels >= 16 * backingScale &&
+              (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
+            const valid =
+              horizontalShadowPixels >= 0 &&
+              horizontalShadowPixels % (2 * backingScale) === 0 &&
+              verticalShadowPixels >= 0 &&
+              (shadowless || boundedWindowShadow)
+            return {
+              backingScale,
+              canvasBackingScale: backingScale,
+              horizontalShadowPixels,
+              verticalShadowPixels,
+              valid,
+              shadowScore: horizontalShadowPixels + verticalShadowPixels,
+              captureMode: 'bounded-alpha-extent',
+              scaleX: backingScale,
+              scaleY: backingScale,
+              windowOriginX: null,
+              windowOriginY: null
+            }
+          })
+          .filter((candidate) => candidate.valid)
+          .sort(
+            (left, right) =>
+              left.shadowScore - right.shadowScore || right.backingScale - left.backingScale
+          )
   invariant(
     scaleCandidates.length > 0,
     'WindowServer capture geometry is outside the bounded Companion shape'
@@ -474,26 +465,24 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
         // one-pixel border in its AX frame. That pixel is window chrome, not
         // decoded media; exclude exactly one backing pixel at each touching
         // edge while retaining the entire interior material surface.
-        left:
-          projectedHostPixelEdge(
-            sourceHostFrame.x,
-            Number(windowBounds.x),
-            scaleX,
-            windowEdgeInsets.left,
-            true,
-            geometry.captureMode === 'opaque-window-projection',
-            options.opaqueHostPixelEdgePolicy
-          ),
-        top:
-          projectedHostPixelEdge(
-            sourceHostFrame.y,
-            Number(windowBounds.y),
-            scaleY,
-            windowEdgeInsets.top,
-            true,
-            geometry.captureMode === 'opaque-window-projection',
-            options.opaqueHostPixelEdgePolicy
-          ),
+        left: projectedHostPixelEdge(
+          sourceHostFrame.x,
+          Number(windowBounds.x),
+          scaleX,
+          windowEdgeInsets.left,
+          true,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        ),
+        top: projectedHostPixelEdge(
+          sourceHostFrame.y,
+          Number(windowBounds.y),
+          scaleY,
+          windowEdgeInsets.top,
+          true,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        ),
         right: projectedHostPixelEdge(
           sourceHostFrame.x + sourceHostFrame.width,
           Number(windowBounds.x),
@@ -537,8 +526,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   const verticalShadowPixels = geometry.verticalShadowPixels
   const topShadowPixels =
     verticalShadowPixels === 0 ? 0 : (verticalShadowPixels - 16 * backingScale) / 2
-  const windowOriginX =
-    geometry.windowOriginX ?? captureExtent.x + horizontalShadowPixels / 2
+  const windowOriginX = geometry.windowOriginX ?? captureExtent.x + horizontalShadowPixels / 2
   const windowOriginY = geometry.windowOriginY ?? captureExtent.y + topShadowPixels
   const captureX = windowOriginX + (sourceHostFrame ? hostPixelEdges.left : 0)
   const captureY = windowOriginY + (sourceHostFrame ? hostPixelEdges.top : titleBarHeight)

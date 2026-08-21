@@ -112,9 +112,7 @@ describe('resource detail export parser', () => {
       liveIoSurfaceIds: []
     })
     expect(
-      parseResourceDetailExport(
-        'res1 dec=2 cap=8 surf=4 ids=0000000A,0000000B,0000000C,0000000D'
-      )
+      parseResourceDetailExport('res1 dec=2 cap=8 surf=4 ids=0000000A,0000000B,0000000C,0000000D')
     ).toEqual({
       ok: true,
       schema: 'res1',
