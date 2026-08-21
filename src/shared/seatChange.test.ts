@@ -6,10 +6,13 @@ import {
   decodeSeatChangeLink,
   encodeSeatChangeLink,
   coalesceSeatRosterMessages,
+  coalesceSeatParticipantAddedMessages,
+  isSeatParticipantAddedPayload,
   isSeatRosterPayload,
   resolveSeatAuthority,
   type SeatChangeCarrierMessage,
   type SeatChangePayload,
+  type SeatParticipantAddedPayload,
   type SeatRosterPayload
 } from './seatChange'
 
@@ -388,5 +391,96 @@ describe('coalesceSeatRosterMessages', () => {
     const result = coalesceSeatChangeMessages(messages, nextPayload, T0)
     expect(result.messages).toHaveLength(1)
     expect(result.payload).toEqual(nextPayload)
+  })
+})
+
+/* ── Participant-added strip ─────────────────────────────────────── */
+
+function addedMessage(
+  id: string,
+  participantId: string,
+  appliedAtMs: number,
+  overrides: Partial<SeatParticipantAddedPayload> = {}
+): SeatChangeCarrierMessage {
+  return {
+    id,
+    role: 'system',
+    content: 'Participant added.',
+    timestamp: new Date(appliedAtMs).toISOString(),
+    metadata: {
+      seatChange: {
+        participantId,
+        label: 'Added worker',
+        seat: seat('kimi', 'kimi-k2.7-code', 'read_only'),
+        appliedAt: new Date(appliedAtMs).toISOString(),
+        ...overrides
+      }
+    }
+  } as unknown as SeatChangeCarrierMessage
+}
+
+const nextAdded: SeatParticipantAddedPayload = {
+  participantId: 'p-added',
+  label: 'Added worker',
+  seat: seat('kimi', 'kimi-k2.7-code', 'read_only'),
+  appliedAt: new Date(T0).toISOString()
+}
+
+describe('isSeatParticipantAddedPayload', () => {
+  it('identifies an added seat by its single `seat` field', () => {
+    expect(isSeatParticipantAddedPayload(nextAdded)).toBe(true)
+  })
+
+  it('rejects a seat CHANGE (has `after`) and a roster (has array `seats`)', () => {
+    expect(isSeatParticipantAddedPayload(nextPayload)).toBe(false)
+    expect(isSeatParticipantAddedPayload(nextRoster)).toBe(false)
+  })
+
+  it('rejects malformed carriers', () => {
+    expect(isSeatParticipantAddedPayload(undefined)).toBe(false)
+    expect(isSeatParticipantAddedPayload({ participantId: 'p1', appliedAt: 'now' } as never)).toBe(
+      false
+    )
+    expect(
+      isSeatParticipantAddedPayload({
+        participantId: 'p1',
+        seat: [{ provider: 'x', model: 'm' }],
+        appliedAt: 'now'
+      } as never)
+    ).toBe(false)
+  })
+})
+
+describe('coalesceSeatParticipantAddedMessages', () => {
+  it('writes a fresh row when no in-window add for the same participant exists', () => {
+    const messages = [plain('m1'), addedMessage('a1', 'other', T0 - 5_000)]
+    const result = coalesceSeatParticipantAddedMessages(messages, nextAdded, T0)
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['m1', 'a1'])
+    expect(result.payload).toEqual(nextAdded)
+  })
+
+  it('coalesces an in-window row for the same participant', () => {
+    const prior = addedMessage('a1', 'p-added', T0 - 30_000)
+    const result = coalesceSeatParticipantAddedMessages(
+      [plain('m1'), prior, plain('m2')],
+      nextAdded,
+      T0
+    )
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['m1', 'm2'])
+    expect(result.payload).toEqual(nextAdded)
+  })
+
+  it('tombstones a row outside the window', () => {
+    const stale = addedMessage('a1', 'p-added', T0 - SEAT_CHANGE_COALESCE_WINDOW_MS - 1)
+    const result = coalesceSeatParticipantAddedMessages([stale], nextAdded, T0)
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['a1'])
+    expect(result.payload).toEqual(nextAdded)
+  })
+
+  it('never consumes a seat-change or roster row', () => {
+    const messages = [seatChangeMessage('s1', 'p-added', T0 - 1_000), rosterMessage('r1', T0 - 1_000)]
+    const result = coalesceSeatParticipantAddedMessages(messages, nextAdded, T0)
+    expect(result.messages).toHaveLength(2)
+    expect(result.payload).toEqual(nextAdded)
   })
 })

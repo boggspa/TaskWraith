@@ -126,9 +126,30 @@ export interface SeatRosterPayload {
   participantId?: undefined
 }
 
-/** What `metadata.seatChange` may hold: a single seat's change, or a whole
- * roster's creation. */
-export type SeatChangeRowPayload = SeatChangePayload | SeatRosterPayload
+/**
+ * A participant added to the live roster mid-round by the user. Like the
+ * roster-created variant, there is no "before" to roll from — the seat did
+ * not exist a moment ago — so it renders as a single static seat strip rather
+ * than an animated change. It rides the SAME `metadata.seatChange` carrier as
+ * the other variants; `seat` (a plain object, not an array) is the
+ * discriminator — see `isSeatParticipantAddedPayload`.
+ */
+export interface SeatParticipantAddedPayload {
+  participantId: string
+  /** Human seat label at emit time (role or provider). */
+  label: string
+  /** The newly added seat, captured at the moment it joined the roster. */
+  seat: SeatChangeSeatState
+  /** ISO timestamp of the latest coalesced adjustment. */
+  appliedAt: string
+}
+
+/** What `metadata.seatChange` may hold: a single seat's change, a whole
+ * roster's creation, or a user-added participant. */
+export type SeatChangeRowPayload =
+  | SeatChangePayload
+  | SeatRosterPayload
+  | SeatParticipantAddedPayload
 
 /**
  * Which variant a carrier holds. Checks `Array.isArray` rather than truthiness
@@ -140,6 +161,25 @@ export function isSeatRosterPayload(
   payload: SeatChangeRowPayload | undefined
 ): payload is SeatRosterPayload {
   return Array.isArray((payload as SeatRosterPayload | undefined)?.seats)
+}
+
+/**
+ * Whether the carrier holds a single user-added participant. Distinguishes
+ * from a seat CHANGE by the absence of `after` and from a roster by the
+ * absence of an array `seats`.
+ */
+export function isSeatParticipantAddedPayload(
+  payload: SeatChangeRowPayload | undefined
+): payload is SeatParticipantAddedPayload {
+  if (!payload || typeof payload !== 'object') return false
+  const candidate = payload as Record<string, unknown>
+  return (
+    'seat' in candidate &&
+    typeof candidate.seat === 'object' &&
+    candidate.seat !== null &&
+    !Array.isArray(candidate.seat) &&
+    !('after' in candidate)
+  )
 }
 
 /** Structural slice of ChatMessage the coalescer needs — keeps this module
@@ -262,6 +302,43 @@ export function coalesceSeatRosterMessages<T extends SeatChangeCarrierMessage>(
     }
   }
   return { messages: [...messages], payload: mode === 'create-or-refresh' ? next : null }
+}
+
+export interface SeatParticipantAddedCoalesceResult<T extends SeatChangeCarrierMessage> {
+  messages: T[]
+  payload: SeatParticipantAddedPayload
+}
+
+/**
+ * Fold rapid re-adds or post-add tweaks of the SAME participant into one row.
+ *
+ * A user can add a participant and then immediately edit its seat before the
+ * coalescing window closes. Rather than showing a stale "added" strip
+ * alongside the later change strip, replace the open add row with the latest
+ * seat snapshot so the transcript stays true. Adds of DIFFERENT participants
+ * are preserved as separate rows — each one is a deliberate user action.
+ */
+export function coalesceSeatParticipantAddedMessages<T extends SeatChangeCarrierMessage>(
+  messages: readonly T[],
+  next: SeatParticipantAddedPayload,
+  nowMs: number
+): SeatParticipantAddedCoalesceResult<T> {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]?.metadata?.seatChange
+    // Only consume rows of the same variant; changes and roster stacks must
+    // not hide an add row.
+    if (!candidate || !isSeatParticipantAddedPayload(candidate)) continue
+    if (candidate.participantId !== next.participantId) continue
+    const appliedAtMs = Date.parse(candidate.appliedAt ?? '')
+    if (!Number.isFinite(appliedAtMs) || nowMs - appliedAtMs > SEAT_CHANGE_COALESCE_WINDOW_MS) {
+      break
+    }
+    return {
+      messages: [...messages.slice(0, index), ...messages.slice(index + 1)],
+      payload: next
+    }
+  }
+  return { messages: [...messages], payload: next }
 }
 
 /* ── Close-out table links ──────────────────────────────────────────
