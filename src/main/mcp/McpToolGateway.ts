@@ -38,15 +38,15 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
  * Providers that stream their own row for a TaskWraith MCP call.
  *
  * Main synthesizes `tool_use`/`tool_result` for MCP invocations because some
- * providers never mention them. For the providers listed here the provider
- * already emits a row keyed on ITS OWN call id, so synthesizing a second one
+ * providers never mention them. Most providers listed here emit a
+ * self-sufficient row keyed on THEIR OWN call id, so synthesizing a second one
  * keyed on `<provider>-mcp-<tool>-<ts>-<rand>` renders TWO complete tool cards
  * for one invocation — the renderer pairs use→result by tool_id, and the two
  * ids never match. Codex was fixed when this was found (its app-server
  * `mcpToolCall` items); Pi followed (TaskWraith's managed tools are registered
  * as real Pi tools by the app-owned extension, so Pi reports each through
- * `toolcall_end`). Claude, Kimi and Ollama joined on the 2026-08-18
- * measurement, after the user-visible "every Edit shows twice" duplicate:
+ * `toolcall_end`). Claude, Kimi and Ollama joined the native-row measurement on
+ * 2026-08-18, after the user-visible "every Edit shows twice" duplicate:
  * over the 14-day run-event corpus their plain (non-gateway) brokered calls
  * carried a native twin at 4896/4897 (claude, 515 runs — `mcp__TaskWraith__
  * <tool>` tool_use blocks in the assistant envelope), 1095/1095 (kimi, 73
@@ -62,6 +62,15 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
  * does. When measuring, fold the control tool's two advertised spellings
  * (`ensemble_control` v2+ vs canonical `ensemble_bossman_control`) into one
  * name, or every control call reads as untwinned and drags the rate down.
+ *
+ * KIMI IS THE ENRICHMENT EXCEPTION. Its native ACP wrapper proves that a call
+ * happened, but Kimi Code currently omits the MCP arguments from that
+ * `session/update`: a real `replace` call persists as `parameters: {}` even
+ * though the governed host received `path` + `old_string` + `new_string`.
+ * TaskWraith must therefore keep the host receipt too. The renderer's
+ * `coalesceMirroredTaskWraithActivities` proves the nested mirror, keeps the
+ * enriched host activity (including +N/-N), and copies the native round-trip
+ * timing onto it, so the user still sees exactly one row.
  */
 const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
   'codex',
@@ -70,6 +79,8 @@ const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
   'kimi',
   'ollama'
 ]
+
+const PROVIDERS_REQUIRING_HOST_MCP_TRANSCRIPT_ENRICHMENT: readonly string[] = ['kimi']
 
 export function providerEmitsNativeMcpTranscriptRows(parentProvider: string): boolean {
   return PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS.includes(parentProvider)
@@ -84,7 +95,11 @@ export function shouldEmitCanonicalTargetTranscript(
   parentProvider: string,
   viaGateway: boolean
 ): boolean {
-  return !providerEmitsNativeMcpTranscriptRows(parentProvider) || viaGateway
+  return (
+    !providerEmitsNativeMcpTranscriptRows(parentProvider) ||
+    PROVIDERS_REQUIRING_HOST_MCP_TRANSCRIPT_ENRICHMENT.includes(parentProvider) ||
+    viaGateway
+  )
 }
 
 /** Return fresh definitions so a transport cannot mutate the shared profile. */

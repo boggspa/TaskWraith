@@ -37215,15 +37215,15 @@ async function executeGeminiMcpTool(
   // delivered to the agent via the function return — separate from
   // these renderer-only emissions — so suppression is purely visual
   // and does not affect what the provider sees. Pi (`toolcall_end`
-  // rows from the app-owned extension), then Claude
+  // rows from the app-owned extension), Claude
   // (`mcp__TaskWraith__<tool>` tool_use blocks in the assistant
-  // envelope), Kimi (wire-protocol ToolCall since the gateway
-  // migration) and Ollama (native function-call echo) were each added
-  // on run-event measurement — ~100% of their plain brokered calls
-  // carry a native twin, so the synthesised row rendered every call,
-  // most visibly every file Edit, twice. For Grok/Mistral/Cursor the
-  // synthetic emissions ARE the transcript (native-twin rates 0.2% /
-  // 1.8% / 0% on 2026-08-18) — see the measurement notes on
+  // envelope) and Ollama (native function-call echo) carry complete
+  // native rows, so another row would paint every call twice. Kimi also
+  // carries a native wrapper for every call, but its ACP projection omits
+  // MCP arguments; keep this enriched host receipt so the renderer can
+  // coalesce the pair into one row with path and +N/-N stats. For
+  // Grok/Mistral/Cursor the synthetic emissions ARE the transcript
+  // (native-twin rates 0.2% / 1.8% / 0% on 2026-08-18) — see the notes on
   // PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS before adding one here,
   // because suppressing a provider that does NOT report its own calls
   // deletes the row instead of deduplicating it. Gateway target

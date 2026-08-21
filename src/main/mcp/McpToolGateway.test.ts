@@ -105,13 +105,12 @@ describe('McpToolGateway virtual definitions', () => {
     expect(shouldEmitCanonicalTargetTranscript('grok', false)).toBe(true)
   })
 
-  it.each([['pi'], ['claude'], ['kimi'], ['ollama']])(
+  it.each([['pi'], ['claude'], ['ollama']])(
     'stops synthesizing a second %s row for a call the provider already reported',
     (provider) => {
       // Each of these streams its own row for every brokered TaskWraith call
       // (Pi via `toolcall_end`; Claude as a `mcp__TaskWraith__<tool>` tool_use
-      // block in its assistant envelope; Kimi via wire-protocol ToolCall since
-      // the gateway migration; Ollama via its native function-call echo).
+      // block in its assistant envelope; Ollama via its native function-call echo).
       // Synthesizing `<provider>-mcp-<tool>-<ts>-<rand>` on top rendered two
       // complete cards per call — the user-visible "every Edit shows twice"
       // pre-emptive-edit duplicate.
@@ -122,6 +121,16 @@ describe('McpToolGateway virtual definitions', () => {
       expect(shouldEmitCanonicalTargetTranscript(provider, true)).toBe(true)
     }
   )
+
+  it('keeps Kimi host receipts because its native ACP wrapper omits edit arguments', () => {
+    // Kimi still speaks for itself — the native row supplies the real call id
+    // and round-trip timing — but a captured replace call reached TaskWraith as
+    // `parameters: {}`. The host receipt carries path/old/new and the renderer
+    // coalesces the pair into one enriched row instead of painting a duplicate.
+    expect(providerEmitsNativeMcpTranscriptRows('kimi')).toBe(true)
+    expect(shouldEmitCanonicalTargetTranscript('kimi', false)).toBe(true)
+    expect(shouldEmitCanonicalTargetTranscript('kimi', true)).toBe(true)
+  })
 
   it.each([['gemini'], ['cursor'], ['grok'], ['mistral'], ['antigravity']])(
     'keeps synthesizing for %s, whose brokered calls it does not otherwise report',
