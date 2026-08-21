@@ -1690,6 +1690,66 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('seatParticipantAdded (user-added seat strip parity)', () => {
+    const addedRow = (seatChange: unknown, overrides = {}) =>
+      msg(1, {
+        id: 'ensemble-seat-added-r1',
+        role: 'system',
+        content: 'Participant Added worker added to the live roster.',
+        metadata: { kind: 'ensembleSeatChange', ensembleRoundId: 'r1', seatChange } as never,
+        ...overrides
+      })
+
+    const ADDED = {
+      participantId: 'p-added',
+      label: 'Added worker',
+      seat: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Added worker',
+        seatNumber: 3,
+        permissionPresetId: 'read_only'
+      },
+      appliedAt: '2026-08-05T12:00:00.000Z'
+    }
+
+    it('projects the single added seat and never as a change or roster row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [addedRow(ADDED)])
+      expect(snap.rows[0].seatParticipantAdded).toEqual(ADDED)
+      expect(snap.rows[0].seatChange).toBeUndefined()
+      expect(snap.rows[0].seatRoster).toBeUndefined()
+      // Still an ordinary system row carrying its sentence, so a client
+      // without the strip renders exactly what it always has.
+      expect(snap.rows[0].kind).toBe('system')
+      expect(snap.rows[0].preview).toContain('Participant Added worker added to the live roster.')
+    })
+
+    it('ignores a payload that looks like a change or a roster', () => {
+      const changeLike = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ ...ADDED, after: ADDED.seat })
+      ])
+      expect(changeLike.rows[0].seatParticipantAdded).toBeUndefined()
+
+      const rosterLike = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ label: 'Ensemble roster applied', seats: [ADDED.seat] })
+      ])
+      expect(rosterLike.rows[0].seatParticipantAdded).toBeUndefined()
+      expect(rosterLike.rows[0].seatRoster).toBeDefined()
+    })
+
+    it('projects nothing without the writer stamp or with no resolvable seat', () => {
+      const unstamped = project({ kind: 'latestN', n: 10 }, [
+        addedRow(ADDED, { metadata: { seatChange: ADDED } as never })
+      ])
+      expect(unstamped.rows[0].seatParticipantAdded).toBeUndefined()
+
+      const noSeat = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ ...ADDED, seat: { model: 'kimi-k2.7-code' } })
+      ])
+      expect(noSeat.rows[0].seatParticipantAdded).toBeUndefined()
+    })
+  })
+
   describe('agentQuestion', () => {
     const ask = (overrides = {}, runId?: string) =>
       msg(1, {

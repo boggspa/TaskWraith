@@ -704,6 +704,19 @@ export interface RemoteSeatRoster {
   appliedAt: string
 }
 
+/** User-added participant mid-round (desktop SeatParticipantAddedRow parity):
+ * a single seat with no before side, rendered as a first-class strip. Same
+ * carrier and degradation story as `seatChange`; mutually exclusive by payload
+ * shape. */
+export interface RemoteSeatParticipantAdded {
+  participantId: string
+  /** Human seat label at emit time (role or provider). */
+  label: string
+  seat: RemoteSeatChangeSeat
+  /** ISO timestamp of the LATEST coalesced adjustment. */
+  appliedAt: string
+}
+
 /** Seat attribution on a close-out Participants / Commits row (same seat strip). */
 export interface RemoteCloseoutSeatLink {
   participantId: string
@@ -1087,6 +1100,10 @@ export interface RemoteThreadRow {
    * (desktop SeatRosterStack parity). Same carrier and degradation story as
    * `seatChange`; the two are mutually exclusive by payload shape. */
   seatRoster?: RemoteSeatRoster
+  /** Present on a user-added-participant row — drives the remote added seat
+   * strip (desktop SeatParticipantAddedRow parity). Same carrier and
+   * degradation story as `seatChange`; mutually exclusive by payload shape. */
+  seatParticipantAdded?: RemoteSeatParticipantAdded
   /**
    * TaskWraith close-out Participants table for the Task-complete epic stack.
    * Absent on older Macs and non-close-out rows; the phone falls back to the
@@ -2441,6 +2458,30 @@ function buildSeatRoster(message: ChatMessage): RemoteSeatRoster | undefined {
   }
 }
 
+/**
+ * Project the user-added-participant strip from the SAME `metadata.seatChange`
+ * carrier. The discriminator is a single `seat` object (not an array and not
+ * an `after` side), so `buildSeatChange` and `buildSeatRoster` can never claim
+ * it.
+ */
+function buildSeatParticipantAdded(message: ChatMessage): RemoteSeatParticipantAdded | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (message.role !== 'system' || metadata?.kind !== 'ensembleSeatChange') return undefined
+  const raw = metadata.seatChange
+  if (!raw || typeof raw !== 'object') return undefined
+  const payload = raw as Record<string, unknown>
+  if (Array.isArray(payload.seats) || 'after' in payload) return undefined
+  const participantId = stringField(payload.participantId, REMOTE_SEAT_FIELD_MAX)
+  const seat = buildSeatChangeSeat(payload.seat)
+  if (!participantId || !seat) return undefined
+  return {
+    participantId,
+    label: stringField(payload.label, REMOTE_SEAT_FIELD_MAX) ?? seat.role ?? seat.provider,
+    seat,
+    appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp
+  }
+}
+
 function buildCloseoutSeatLink(raw: unknown): RemoteCloseoutSeatLink | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const payload = raw as Record<string, unknown>
@@ -3068,6 +3109,8 @@ function buildRow(
   if (seatChange) row.seatChange = seatChange
   const seatRoster = buildSeatRoster(message)
   if (seatRoster) row.seatRoster = seatRoster
+  const seatParticipantAdded = buildSeatParticipantAdded(message)
+  if (seatParticipantAdded) row.seatParticipantAdded = seatParticipantAdded
   if (metadata?.kind === 'contextCompaction') {
     // Mirror the renderer's mapping (ContextCompactionCard): 'failed' and
     // 'started' pass through, anything else — including record kinds a
