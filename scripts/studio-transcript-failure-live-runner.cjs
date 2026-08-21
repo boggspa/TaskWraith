@@ -65,13 +65,6 @@ function sha256Text(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex')
 }
 
-async function sha256File(filePath) {
-  const hash = crypto.createHash('sha256')
-  const stream = fs.createReadStream(filePath)
-  for await (const chunk of stream) hash.update(chunk)
-  return hash.digest('hex')
-}
-
 function fileIdentity(stat) {
   const mtimeNs =
     stat.mtimeNs !== undefined ? String(stat.mtimeNs) : String(Math.round(stat.mtimeMs * 1e6))
@@ -486,17 +479,12 @@ async function generateNoAudioFixture(options = {}, adapters = {}) {
     fixtureDirectoryIdentity,
     'fixture directory'
   )
-  try {
-    await runExecFile(ffmpegCommand[0], ffmpegCommand.slice(1), {
-      timeout: Math.min(10 * 60 * 1_000, Math.max(30_000, durationSeconds * 10_000)),
-      maxBuffer: 1 * 1024 * 1024
-    })
-  } catch (error) {
-    // Preserve every partial, including a raced regular owner file. The
-    // artifact is evidence of the failed external command and must not be
-    // unlinked by this runner.
-    throw error
-  }
+  // Preserve every partial, including a raced regular owner file. The artifact
+  // is evidence of a failed external command and is never unlinked here.
+  await runExecFile(ffmpegCommand[0], ffmpegCommand.slice(1), {
+    timeout: Math.min(10 * 60 * 1_000, Math.max(30_000, durationSeconds * 10_000)),
+    maxBuffer: 1 * 1024 * 1024
+  })
   await assertStableDirectoryIdentity(realArtifactRoot, artifactRootIdentity, 'artifactRoot')
   await assertStableDirectoryIdentity(
     realFixtureDirectory,

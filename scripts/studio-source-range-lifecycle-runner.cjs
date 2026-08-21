@@ -1476,7 +1476,7 @@ async function runSourceRangeJourney(plan, target, adapters = {}) {
     [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: true }],
     adapters
   )
-  const current = await waitWorkspace(
+  await waitWorkspace(
     plan,
     currentTarget,
     (workspace) =>

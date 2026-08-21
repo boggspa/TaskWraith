@@ -4,6 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+type AsyncThreeArg = (first: unknown, second: unknown, third: unknown) => Promise<unknown>
+
 /* eslint-disable @typescript-eslint/no-require-imports */
 const runner = require('./studio-transcript-failure-live-runner.cjs') as {
   FIXTURE_DURATION_SECONDS: number
@@ -941,11 +943,11 @@ describe('plan-only and launch parsing interlocks', () => {
           adapters: Record<string, unknown>
         ) => {
           const asset = { sourcePath: fixture.outputPath, sha256: assetId, assetPath }
-          await (adapters.invokeStudioOpen as Function)({}, asset, {})
+          await (adapters.invokeStudioOpen as AsyncThreeArg)({}, asset, {})
           return {
             launched: true,
             evidence: {
-              journey: await (adapters.driveUiJourney as Function)(
+              journey: await (adapters.driveUiJourney as AsyncThreeArg)(
                 { transcriptTimeoutMs: 1_000, profile: { userDataPath: '/tmp' } },
                 { asset },
                 {}
@@ -1073,7 +1075,7 @@ describe('plan-only and launch parsing interlocks', () => {
         ) => {
           capturedArgs = args
           const plan = { transcriptTimeoutMs: 1_000 }
-          const journey = adapters.driveUiJourney as Function
+          const journey = adapters.driveUiJourney as AsyncThreeArg
           return {
             launched: true,
             evidence: {

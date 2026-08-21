@@ -21,7 +21,6 @@ const {
   parseOcrInteger,
   parseStudioTimecodeText,
   parseVisibleHud,
-  captureFreshPlayableSample,
   pressPlaybackTransition,
   waitForPausedMediaReadiness,
   waitForFreshPlayableSample,

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
+const require = createRequire(import.meta.url)
 const runner =
   require('./studio-source-range-lifecycle-runner.cjs') as typeof import('./studio-source-range-lifecycle-runner.cjs')
 
@@ -362,10 +364,6 @@ function goodEvidence() {
     inspector: structuredClone(evidence.supervisorBundle)
   }
   return evidence
-}
-
-function clone<T>(value: T): T {
-  return structuredClone(value)
 }
 
 describe('Outcome 7 evidence validator', () => {

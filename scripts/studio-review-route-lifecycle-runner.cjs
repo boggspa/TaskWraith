@@ -1753,7 +1753,7 @@ async function defaultDriveReviewRouteJourney(plan, target, journeyAdapters, con
     [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: true }],
     journeyAdapters
   )
-  const reviewWorkspace = await waitWorkspace(
+  await waitWorkspace(
     plan,
     currentTarget,
     (workspace) =>
@@ -2059,8 +2059,8 @@ async function defaultDriveReviewRouteJourney(plan, target, journeyAdapters, con
     )
     return { screenshotPath, screenshotSha256: await sha256File(screenshotPath), observed }
   }
-  const primaryCrossing = await matchHud(beforeCrossing, target.asset.sha256)
-  const secondaryCrossing = await matchHud(afterCrossing, secondary.sha256)
+  await matchHud(beforeCrossing, target.asset.sha256)
+  await matchHud(afterCrossing, secondary.sha256)
   const routeTransitions = []
   const observeRoute = journeyAdapters.readRouteObservation || readRouteObservation
   const initialRoute = await observeRoute(
@@ -2380,7 +2380,7 @@ function buildPlan(options = {}) {
   }
 }
 
-async function writeRunnerEvidence(plan, result, fixtures, selfCustody, adapters = {}) {
+async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapters = {}) {
   const finalPath = path.join(plan.artifactRoot, 'review-route-lifecycle-evidence.json')
   await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
   await fsPromises.lstat(finalPath).then(

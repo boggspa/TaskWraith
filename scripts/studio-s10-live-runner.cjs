@@ -467,14 +467,6 @@ async function probeMediaDuration(mediaPath, adapters = {}) {
   }
 }
 
-function requireAdapter(adapters, name, phase) {
-  invariant(
-    typeof adapters[name] === 'function',
-    `S10 ${phase} requires adapter ${name}; plan-only blocker, never synthetic`
-  )
-  return adapters[name]
-}
-
 function exactCount(list, expected, label) {
   invariant(
     Array.isArray(list) && list.length === expected,

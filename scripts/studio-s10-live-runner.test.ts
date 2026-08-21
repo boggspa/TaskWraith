@@ -421,7 +421,13 @@ describe('S10 loop authenticity and exact phase controls', () => {
             plan: unknown,
             target: unknown,
             prepared: unknown,
-            adapters: Record<string, Function>
+            adapters: {
+              captureLoopSample: (
+                plan: unknown,
+                target: unknown,
+                entry: { index: number; plannedElapsedMs: number }
+              ) => Promise<unknown>
+            }
           ) => {
             for (let index = 0; index < 21; index += 1)
               await adapters.captureLoopSample(plan, target, {
