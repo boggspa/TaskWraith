@@ -48,7 +48,27 @@
   .ensemble-fanout-result-viewport.is-collapsed
   > .live-activity-viewport-scroll,
 .is-window-idle .chat-context-application-pill,
-.is-window-idle .transcript-jump-to-latest-pill {
+.is-window-idle .transcript-jump-to-latest-pill,
+.is-window-idle .activity-status-stamping,
+.is-window-idle .sidebar-new-menu,
+.is-window-idle .sidebar-settings-menu,
+.is-window-idle .sidebar-footer-popover,
+.is-window-idle .workspace-board-creator-sheet,
+.is-window-idle .bug-report-sheet-confirmation,
+.is-window-idle .bug-report-sheet-confirmation-check,
+.is-window-idle .composer-combined-picker-ladder-pulse,
+.is-window-idle .composer-combined-picker-ladder-shimmer,
+.is-window-idle .composer-combined-picker-ladder-sparkles {
+  animation-play-state: running !important;
+}
+
+/* The other stranding shape: an animation that opens OPAQUE and ends
+ * transparent exists to take something off the screen, so pausing its first
+ * frame leaves that something up. `taskwraith-boot-wipe` wipes the boot mask
+ * away from `opacity: 1`, and the mask covers the entire app — launching
+ * while the user is in another window would strand a blank app behind it. The
+ * `::after` wipe edge opens and closes invisible, so it stays paused. */
+.is-window-idle .app-boot-mask.is-leaving {
   animation-play-state: running !important;
 }
 
