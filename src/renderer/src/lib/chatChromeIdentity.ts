@@ -42,9 +42,19 @@ export function chatChromeIdentityEqual(
  * New chats (no previous) and chrome-field changes must commit; pure
  * transcript/`updatedAt` churn should not.
  *
- * Empty↔non-empty message transitions also commit: welcome / transcript
- * mount gates in App still read `currentChat.messages`, while the panel
- * subscribes to ChatTranscriptStore for mid-stream updates.
+ * A change in message COUNT always commits. Chrome identity ignores
+ * `messages`, so the old empty↔non-empty welcome gate was the only count
+ * check — and it cannot see 2 → 4. Measured 2026-08-21: a live Kimi run
+ * held `currentChat.messages` at 2 for eleven minutes while the same
+ * renderer grew the persisted chat from 105 KB to 1.5 MB; the user had
+ * to switch chats to see the rest.
+ *
+ * Same-count streaming (the trailing message growing token by token)
+ * still retains; ChatTranscriptStore carries that delta to the panel.
+ * A new row is rare next to per-token flushes and must reach every
+ * consumer of `currentChat.messages`. When in doubt, commit — a
+ * redundant render costs a frame, a retained stale list costs the
+ * transcript.
  */
 export function shouldRetainReactChatOnFlush(
   previous: ChatRecord | null | undefined,
@@ -54,6 +64,6 @@ export function shouldRetainReactChatOnFlush(
   if (previous.appChatId !== next.appChatId) return false
   const previousCount = previous.messages?.length ?? 0
   const nextCount = next.messages?.length ?? 0
-  if ((previousCount === 0) !== (nextCount === 0)) return false
+  if (previousCount !== nextCount) return false
   return chatChromeIdentityEqual(previous, next)
 }
