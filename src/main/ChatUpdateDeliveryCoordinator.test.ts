@@ -748,10 +748,57 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
 
     // What a human reads: the reply has to reach the renderer.
     expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('patch')
     const applied = applyChatUpdateDelivery(sink.deliveries[1], firstApplied.baseline)
     if (!applied.ok) throw new Error(applied.reason)
     expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain(
       'the answer is 42'
     )
+  })
+
+  it('snapshots before diffing from a retained baseline whose metadata mutated in place', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const first = {
+      ...chat(1, ['one']),
+      providerMetadata: { selectedModelType: 'gpt-5.6-luna' }
+    } as ChatRecord
+
+    coordinator.enqueue(sink, first)
+    // IPC gives the renderer a detached structured clone. Keeping the same
+    // object here would mask main-side baseline mutations in this unit test.
+    const firstApplied = applyChatUpdateDelivery(structuredClone(sink.deliveries[0]))
+    if (!firstApplied.ok) throw new Error(firstApplied.reason)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true,
+      recordHash: firstApplied.baseline.recordHash
+    })
+
+    // A later save/cache path mutates the coordinator's retained object. The
+    // revision stamp is expected and normalized; this metadata field is not.
+    first.persistenceRevision = 9
+    first.providerMetadata = {
+      ...first.providerMetadata,
+      codexGoalNativeAvailable: true
+    }
+    const second = {
+      ...chat(2, ['one', 'two']),
+      providerMetadata: first.providerMetadata
+    } as ChatRecord
+    coordinator.enqueue(sink, second)
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    const repaired = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]))
+    if (!repaired.ok) throw new Error(repaired.reason)
+    expect(repaired.baseline.chat).toEqual(second)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      baselineDrops: 1,
+      ackRejections: 0
+    })
   })
 })

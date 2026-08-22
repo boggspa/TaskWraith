@@ -224,6 +224,25 @@ function toPatchBaseline(
   }
 }
 
+/**
+ * AppStore stamps the server-owned persistence revision back onto its caller,
+ * and that caller may be the exact object retained here as the renderer's
+ * baseline. Normalize that one known scalar mutation before comparing hashes.
+ * Any other drift means main no longer holds the record the renderer ACKed, so
+ * diffing from it would omit fields and provoke a recordHashMismatch NACK.
+ */
+function retainedBaselineMatchesAcknowledged(
+  acknowledged: CompactChatUpdateBaseline,
+  baselineChat: ChatRecord,
+  baselineRevision: number | undefined
+): boolean {
+  const comparable =
+    baselineRevision !== undefined && baselineChat.persistenceRevision !== baselineRevision
+      ? { ...baselineChat, persistenceRevision: baselineRevision }
+      : baselineChat
+  return computeChatSubRevisions(comparable).recordHash === acknowledged.recordHash
+}
+
 function priorityForChatUpdate(chat: ChatRecord): ChatUpdateDeliveryPriority {
   const roundStatus = chat.ensemble?.activeRound?.status
   if (roundStatus === 'completed' || roundStatus === 'failed' || roundStatus === 'cancelled') {
@@ -687,10 +706,27 @@ export class ChatUpdateDeliveryCoordinator {
     const deliveryId = `chat-update-${++this.deliverySequence}`
     // Patch only when we still hold the baseline chat. Compact acknowledged
     // alone forces a snapshot — that is the byte-aware miss path (one retry).
-    const baseline: ChatUpdateBaseline | undefined =
-      state.acknowledged && state.baselineChat
-        ? toPatchBaseline(state.acknowledged, state.baselineChat)
-        : undefined
+    let baseline: ChatUpdateBaseline | undefined
+    if (state.acknowledged && state.baselineChat) {
+      if (
+        retainedBaselineMatchesAcknowledged(
+          state.acknowledged,
+          state.baselineChat,
+          state.baselineRevision
+        )
+      ) {
+        baseline = toPatchBaseline(state.acknowledged, state.baselineChat)
+      } else {
+        // A mutable store/cache caller changed the retained object after its
+        // ACK. The renderer never saw that state, so proactively snapshot the
+        // pending canonical chat instead of diffing from a counterfeit base.
+        this.counters.baselineDrops += 1
+        state.acknowledged = undefined
+        state.baselineChat = undefined
+        state.baselineRevision = undefined
+        state.lastAccepted = undefined
+      }
+    }
     const diagnostics: ChatUpdateDeliveryDiagnostics = {
       producerDeltaMissing: false,
       spliceRecovery: false
