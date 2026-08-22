@@ -8,6 +8,7 @@ import {
 } from './PiOpenRouterModelRegistration'
 import { PI_OPENROUTER_ALLOWED_MODEL_IDS } from './PiModelPolicy'
 import { findPiStaticModel } from './PiModels'
+import { resolvePiUpstreamBrand } from '../../shared/piBrandTable'
 
 const temporaryHomes: string[] = []
 
@@ -31,6 +32,27 @@ describe('writePiOpenRouterModelRegistration', () => {
   })
 
   it('keeps the OpenRouter model registrations in lockstep with picker metadata', () => {
+    for (const model of PI_OPENROUTER_CUSTOM_MODELS) {
+      expect(findPiStaticModel(`openrouter/${model.modelId}`)).toMatchObject({
+        modelId: model.modelId,
+        label: model.label,
+        contextWindow: model.contextWindow,
+        maxOutputTokens: model.maxTokens,
+        thinking: model.reasoning,
+        images: model.input.includes('image')
+      })
+    }
+  })
+
+  it('maps OpenRouter resold models to their original provider brands', () => {
+    // Test that Zai, Poolside, and NVIDIA models get their original branding
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.label).toBe('Z.ai')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.hueClass).toBe('zai')
+    expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
+    expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra')?.label).toBe('NVIDIA')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra')?.hueClass).toBe('nvidia')
+  })
     for (const model of PI_OPENROUTER_CUSTOM_MODELS) {
       expect(findPiStaticModel(`openrouter/${model.modelId}`)).toMatchObject({
         modelId: model.modelId,

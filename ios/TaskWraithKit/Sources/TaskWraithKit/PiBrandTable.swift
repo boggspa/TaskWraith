@@ -39,6 +39,8 @@ public enum PiBrandTable {
         "openrouter": Brand(label: "OpenRouter", hueClass: "openrouter"),
         // OpenRouter-specific overrides for models that should display with their original brand
         "openrouter/zai": Brand(label: "Z.ai", hueClass: "zai"),
+        "openrouter/poolside": Brand(label: "Poolside", hueClass: "poolside"),
+        "openrouter/nvidia": Brand(label: "NVIDIA", hueClass: "nvidia"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -81,6 +83,8 @@ public enum PiBrandTable {
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
         "openrouter/stealth/ox-alpha": "Ox Alpha",
         "openrouter/zai/glm-5.2": "GLM 5.2",
+        "openrouter/poolside/laguna-s-2.1": "Laguna S 2.1",
+        "openrouter/nvidia/nemotron-3-ultra": "Nemotron 3 Ultra",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

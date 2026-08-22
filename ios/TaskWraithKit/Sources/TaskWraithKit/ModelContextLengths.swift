@@ -100,6 +100,8 @@ public enum ModelContextLengths {
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
                 (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
                 (id: "openrouter/zai/glm-5.2",      label: "GLM 5.2"),
+                (id: "openrouter/poolside/laguna-s-2.1", label: "Laguna S 2.1"),
+                (id: "openrouter/nvidia/nemotron-3-ultra", label: "Nemotron 3 Ultra"),
             ]
         case "grok":
             return [

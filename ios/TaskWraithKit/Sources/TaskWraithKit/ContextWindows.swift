@@ -110,6 +110,8 @@ public enum ContextWindows {
         "cerebras/gpt-oss-120b": 131_072,
         "openrouter/stealth/ox-alpha": 1_048_576,
         "openrouter/zai/glm-5.2": 256_000,
+        "openrouter/poolside/laguna-s-2.1": 256_000,
+        "openrouter/nvidia/nemotron-3-ultra": 1_000_000,
         // Kimi
         "kimi-k3": 256_000,
         "kimi-k2.7-code": 256_000,

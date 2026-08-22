@@ -26,6 +26,9 @@ export interface PiOpenRouterCustomModelRegistration {
  * - `stealth/ox-alpha`: 1,048,576-token context, 131,072-token output cap,
  *   free input/output, text + image input, and OpenRouter reasoning support.
  * - `zai/glm-5.2`: 256,000-token context, free input/output, text-only input.
+ * - `poolside/laguna-s-2.1`: 256,000-token context, free input/output, text-only input.
+ * - `nvidia/nemotron-3-ultra`: 1,000,000-token context, 65,536-token output cap,
+ *   free input/output, text-only input.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
   {
@@ -44,6 +47,24 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     input: ['text'],
     contextWindow: 256_000,
     maxTokens: 131_072,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    modelId: 'poolside/laguna-s-2.1',
+    label: 'Laguna S 2.1',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 256_000,
+    maxTokens: 131_072,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    modelId: 'nvidia/nemotron-3-ultra',
+    label: 'Nemotron 3 Ultra',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 1_000_000,
+    maxTokens: 65_536,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }
 ]

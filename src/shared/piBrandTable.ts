@@ -36,7 +36,9 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
   openrouter: { label: 'OpenRouter', hueClass: 'openrouter' },
   // OpenRouter-specific overrides for models that should display with their original brand
-  'openrouter/zai': { label: 'Z.ai', hueClass: 'zai' }
+  'openrouter/zai': { label: 'Z.ai', hueClass: 'zai' },
+  'openrouter/poolside': { label: 'Poolside', hueClass: 'poolside' },
+  'openrouter/nvidia': { label: 'NVIDIA', hueClass: 'nvidia' }
 }
 
 /**
@@ -82,7 +84,9 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
   'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)',
   'openrouter/stealth/ox-alpha': 'Ox Alpha',
-  'openrouter/zai/glm-5.2': 'GLM 5.2'
+  'openrouter/zai/glm-5.2': 'GLM 5.2',
+  'openrouter/poolside/laguna-s-2.1': 'Laguna S 2.1',
+  'openrouter/nvidia/nemotron-3-ultra': 'Nemotron 3 Ultra'
 }
 
 /**

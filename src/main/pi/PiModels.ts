@@ -76,7 +76,9 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   // these models, so PiOpenRouterModelRegistration writes their metadata in the
   // selected run's isolated home before Pi starts.
   { wireId: 'openrouter/stealth/ox-alpha', upstream: 'openrouter', modelId: 'stealth/ox-alpha', label: 'Ox Alpha', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true },
-  { wireId: 'openrouter/zai/glm-5.2', upstream: 'openrouter', modelId: 'zai/glm-5.2', label: 'GLM 5.2', contextWindow: 256_000, maxOutputTokens: 131_072, thinking: false, images: false }
+  { wireId: 'openrouter/zai/glm-5.2', upstream: 'openrouter', modelId: 'zai/glm-5.2', label: 'GLM 5.2', contextWindow: 256_000, maxOutputTokens: 131_072, thinking: false, images: false },
+  { wireId: 'openrouter/poolside/laguna-s-2.1', upstream: 'openrouter', modelId: 'poolside/laguna-s-2.1', label: 'Laguna S 2.1', contextWindow: 256_000, maxOutputTokens: 131_072, thinking: false, images: false },
+  { wireId: 'openrouter/nvidia/nemotron-3-ultra', upstream: 'openrouter', modelId: 'nvidia/nemotron-3-ultra', label: 'Nemotron 3 Ultra', contextWindow: 1_000_000, maxOutputTokens: 65_536, thinking: false, images: false }
 ]
 
 export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
