@@ -1300,6 +1300,7 @@ export function CombinedModelPicker({
         cursorReasoningEffort,
         ollamaReasoningEffort: provider === 'ollama' ? selectedReasoning : undefined,
         mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
+        piReasoningEffort: provider === 'pi' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,
         museReasoningEffort:
@@ -1336,6 +1337,7 @@ export function CombinedModelPicker({
         cursorReasoningEffort,
         ollamaReasoningEffort: provider === 'ollama' ? selectedReasoning : undefined,
         mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
+        piReasoningEffort: provider === 'pi' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,
         museReasoningEffort:

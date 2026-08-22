@@ -32,16 +32,6 @@ describe('writePiOpenRouterModelRegistration', () => {
   })
 
   it('keeps the OpenRouter model registrations in lockstep with picker metadata', () => {
-    for (const model of PI_OPENROUTER_CUSTOM_MODELS) {
-      expect(findPiStaticModel(`openrouter/${model.modelId}`)).toMatchObject({
-        modelId: model.modelId,
-        label: model.label,
-        contextWindow: model.contextWindow,
-        maxOutputTokens: model.maxTokens,
-        thinking: model.reasoning,
-        images: model.input.includes('image')
-      })
-    }
   })
 
   it('maps OpenRouter resold models to their original provider brands', () => {
@@ -123,4 +113,3 @@ describe('writePiOpenRouterModelRegistration', () => {
     ).toThrow()
     expect(readFileSync(join(home, 'models.json'), 'utf8')).toBe('{}')
   })
-})

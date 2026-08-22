@@ -22235,6 +22235,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     upstream: split.upstream,
     modelId: split.modelId,
     writeCapable,
+    ...(payload.reasoningEffort ? { thinkingLevel: payload.reasoningEffort as import('./pi/PiCliArgs').PiThinkingLevel } : {}),
     sessionDir,
     ...(ephemeralSession
       ? { ephemeralSession: true }

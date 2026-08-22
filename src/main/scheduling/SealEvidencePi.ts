@@ -49,6 +49,7 @@ export interface PiSealEvidenceDeps {
   readonly hasher: SealEvidenceFileHasher
   readonly versionProbe: SealEvidenceVersionProbe
   readonly appVersion: string
+  readonly thinkingLevel?: import('../pi/PiCliArgs').PiThinkingLevel
   /**
    * The root capability retains the provider parameter. Evidence code supplies
    * the literal `pi` internally, so a caller cannot hand in a closure already
@@ -276,7 +277,7 @@ export async function resolvePiSealEvidence(
       transport: 'rpc',
       upstream: split.upstream,
       modelId: split.modelId,
-      thinkingMode: 'provider-default',
+      thinkingMode: facts.thinkingLevel ?? 'provider-default',
       writeCapable,
       nativeToolPolicySha256: tools.nativeToolPolicySha256,
       providerApprovalMode: 'disabled',

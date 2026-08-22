@@ -115,7 +115,8 @@ describe('createHostProductionContextResolvers', () => {
           provider: 'mistral',
           requestedModel: 'mistral-medium-3.5',
           providerMetadata: {
-            mistralReasoningEffort: 'high'
+            mistralReasoningEffort: 'high',
+            piReasoningEffort: 'high'
           }
         })
       ]

@@ -27,7 +27,7 @@ export interface PiLaunchControls {
   /** The id passed after `--model`, without the TaskWraith upstream prefix. */
   readonly modelId: string
   /** Production omits `--thinking`, leaving the selected model's default. */
-  readonly thinkingMode: 'provider-default'
+  readonly thinkingMode: 'provider-default' | import('./PiCliArgs').PiThinkingLevel
   /** Default mode after the signed read-only and shell/file deny clamps. */
   readonly writeCapable: boolean
   /** Must equal ProviderToolSurfaceAuthority.nativeToolPolicySha256. */
@@ -99,7 +99,7 @@ export function normalizePiLaunchControls(value: unknown): PiLaunchControls {
     transport: 'rpc',
     upstream: record.upstream,
     modelId: nonEmptyText(record.modelId, 'Pi model id'),
-    thinkingMode: exactLiteral(record.thinkingMode, 'provider-default', 'Pi thinking mode'),
+    thinkingMode: oneOf(record.thinkingMode, ['provider-default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'Pi thinking mode'),
     writeCapable: boolean(record.writeCapable, 'Pi write capability'),
     nativeToolPolicySha256: sha256(record.nativeToolPolicySha256, 'Pi native tool policy digest'),
     providerApprovalMode: exactLiteral(

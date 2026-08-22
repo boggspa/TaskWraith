@@ -746,6 +746,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     kimiFastMode,
     kimiReasoningEffort,
     mistralReasoningEffort,
+  piReasoningEffort,
     lastNonCustomModelType,
     liveRunOutputTokens,
     activeRunId,
