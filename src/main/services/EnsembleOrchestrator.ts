@@ -239,6 +239,15 @@ import {
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
+import {
+  mergeClaudeWorkflowTelemetry,
+  type ClaudeWorkflowTelemetry
+} from '../../shared/claudeWorkflow'
+import { mergeCodexReviewTelemetry, type CodexReviewTelemetry } from '../../shared/codexReview'
+import {
+  mergeCodexMultiAgentTelemetry,
+  type CodexMultiAgentTelemetry
+} from '../../shared/codexMultiAgent'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
 // corrections propagate to next round's prompts as a compact digest.
@@ -3226,6 +3235,43 @@ function buildEnsembleToolActivity(
       : {}),
     rawUseEvent: event
   }
+}
+
+type ProviderNativeTelemetry = { provider?: string }
+
+function providerNativeTelemetry<T extends ProviderNativeTelemetry>(
+  value: unknown,
+  provider: ProviderId
+): Partial<T> {
+  const telemetry: Partial<T> =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Partial<T>)
+      : ({} as Partial<T>)
+  const telemetryProvider = (telemetry as ProviderNativeTelemetry).provider
+  return (
+    typeof telemetryProvider === 'string' && telemetryProvider.trim()
+      ? telemetry
+      : { ...telemetry, provider }
+  ) as Partial<T>
+}
+
+function providerNativeTelemetryToolUseId(payload: any): string {
+  for (const candidate of [payload?.tool_id, payload?.toolUseId, payload?.tool_use_id]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return ''
+}
+
+function updateEnsembleToolActivity(
+  run: ActiveParticipantRun,
+  toolUseId: string,
+  update: (activity: ToolActivity) => ToolActivity
+): boolean {
+  if (!toolUseId || !run.toolActivities?.length) return false
+  const index = run.toolActivities.findIndex((activity) => activity.id === toolUseId)
+  if (index < 0) return false
+  run.toolActivities[index] = update(run.toolActivities[index])
+  return true
 }
 
 function upsertEnsembleToolUseActivity(
@@ -15111,6 +15157,60 @@ export class EnsembleOrchestrator {
         if (normalizedSignal.kind !== 'started') {
           this.appendContextCompactionCard(run, runId, normalizedSignal)
         }
+      }
+      return true
+    }
+    // Native orchestration telemetry updates the activity that originated the
+    // work. Like the solo renderer path, these frames never become separate
+    // generic tool rows; the ActivityStack card updates in place instead.
+    if (payload?.type === 'workflow_event') {
+      const toolUseId = providerNativeTelemetryToolUseId(payload)
+      if (
+        updateEnsembleToolActivity(run, toolUseId, (activity) => ({
+          ...activity,
+          workflowSummary: mergeClaudeWorkflowTelemetry(
+            activity.workflowSummary,
+            providerNativeTelemetry<ClaudeWorkflowTelemetry>(
+              payload.workflow,
+              run.participant.provider
+            )
+          )
+        }))
+      ) {
+        this.scheduleFlush(run)
+      }
+      return true
+    }
+    if (payload?.type === 'review_event') {
+      const toolUseId = providerNativeTelemetryToolUseId(payload)
+      if (
+        updateEnsembleToolActivity(run, toolUseId, (activity) => ({
+          ...activity,
+          reviewSummary: mergeCodexReviewTelemetry(
+            activity.reviewSummary,
+            providerNativeTelemetry<CodexReviewTelemetry>(payload.review, run.participant.provider)
+          )
+        }))
+      ) {
+        this.scheduleFlush(run)
+      }
+      return true
+    }
+    if (payload?.type === 'multi_agent_event') {
+      const toolUseId = providerNativeTelemetryToolUseId(payload)
+      if (
+        updateEnsembleToolActivity(run, toolUseId, (activity) => ({
+          ...activity,
+          multiAgentSummary: mergeCodexMultiAgentTelemetry(
+            activity.multiAgentSummary,
+            providerNativeTelemetry<CodexMultiAgentTelemetry>(
+              payload.multiAgent,
+              run.participant.provider
+            )
+          )
+        }))
+      ) {
+        this.scheduleFlush(run)
       }
       return true
     }

@@ -2162,6 +2162,96 @@ describe('EnsembleOrchestrator', () => {
     })
   })
 
+  it.each([
+    {
+      name: 'Claude workflow',
+      provider: 'claude' as const,
+      toolId: 'workflow-1',
+      toolName: 'Workflow',
+      telemetryEvent: {
+        type: 'workflow_event',
+        workflow: { status: 'running', workflowName: 'Repository audit' }
+      },
+      summary: (activity: NonNullable<ChatMessage['toolActivities']>[number]) =>
+        activity.workflowSummary,
+      expected: { provider: 'claude', status: 'running', workflowName: 'Repository audit' }
+    },
+    {
+      name: 'Codex review',
+      provider: 'codex' as const,
+      toolId: 'review-1',
+      toolName: 'codex_review',
+      telemetryEvent: {
+        type: 'review_event',
+        review: { status: 'completed', target: 'uncommitted changes' }
+      },
+      summary: (activity: NonNullable<ChatMessage['toolActivities']>[number]) =>
+        activity.reviewSummary,
+      expected: { provider: 'codex', status: 'completed', target: 'uncommitted changes' }
+    },
+    {
+      name: 'Codex multi-agent',
+      provider: 'codex' as const,
+      toolId: 'multi-agent-1',
+      toolName: 'codex_multi_agent',
+      telemetryEvent: {
+        type: 'multi_agent_event',
+        multiAgent: { status: 'working', coordinationEvents: 2 }
+      },
+      summary: (activity: NonNullable<ChatMessage['toolActivities']>[number]) =>
+        activity.multiAgentSummary,
+      expected: { provider: 'codex', status: 'working', coordinationEvents: 2 }
+    }
+  ])('persists $name telemetry on its existing ensemble tool activity', async (testCase) => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      {
+        id: `${testCase.provider}-seat`,
+        provider: testCase.provider,
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the native operation.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput(testCase.provider, route, {
+      type: 'tool_use',
+      tool_id: testCase.toolId,
+      tool_name: testCase.toolName
+    })
+    harness.orchestrator.handleProviderOutput(testCase.provider, route, {
+      ...testCase.telemetryEvent,
+      tool_id: testCase.toolId
+    })
+    harness.orchestrator.handleProviderOutput(testCase.provider, route, {
+      type: 'content',
+      text: 'Native operation completed.'
+    })
+    harness.orchestrator.handleProviderOutput(testCase.provider, route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const activity = harness.chat.messages
+      .flatMap((message) => message.toolActivities || [])
+      .find((candidate) => candidate.id === testCase.toolId)
+    expect(activity).toBeDefined()
+    expect(testCase.summary(activity!)).toMatchObject(testCase.expected)
+  })
+
   it('emits coalesced ephemeral usage snapshots for the active participant turn', async () => {
     let now = 1_000
     const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []
