@@ -16,10 +16,7 @@ export type RawLogEntry = {
 const deferredPayloadByEntry = new WeakMap<RawLogEntry, unknown>()
 
 /** Retain an unformatted provider payload until a visible consumer asks for it. */
-export function deferredRawLogEntry(
-  type: RawLogEntry['type'],
-  payload: unknown
-): RawLogEntry {
+export function deferredRawLogEntry(type: RawLogEntry['type'], payload: unknown): RawLogEntry {
   const entry: RawLogEntry = { type, content: '' }
   // Bound retained cumulative-thinking fields at ingest. This is the only
   // recursive wire-cadence work left; stringify and regex redaction stay lazy.

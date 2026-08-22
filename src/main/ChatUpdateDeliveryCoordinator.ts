@@ -446,17 +446,13 @@ export class ChatUpdateDeliveryCoordinator {
       ensembleRevision: contentSub.ensembleRevision,
       runsRevision: contentSub.runsRevision,
       retainedBytes: producer?.state.retainedBytes ?? estimateChatRecordBytes(chat),
-      ...(producer?.state.transcriptHash
-        ? { transcriptHash: producer.state.transcriptHash }
-        : {})
+      ...(producer?.state.transcriptHash ? { transcriptHash: producer.state.transcriptHash } : {})
     }
     if (state.lastAccepted) {
       state.lastAccepted = {
         ...state.lastAccepted,
         recordHash: contentSub.recordHash,
-        ...(producer?.state.transcriptHash
-          ? { transcriptHash: producer.state.transcriptHash }
-          : {})
+        ...(producer?.state.transcriptHash ? { transcriptHash: producer.state.transcriptHash } : {})
       }
     }
     state.lastTouchedAt = this.now()
