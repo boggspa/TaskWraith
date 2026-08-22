@@ -20,6 +20,8 @@ export type SettingsPanelUpdate = {
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']
   keyCommandBindings?: AppSettings['keyCommandBindings']
+  /** Settings → General behavior for messages submitted while a run is active. */
+  midRunInputBehavior?: AppSettings['midRunInputBehavior']
   funFxEnabled?: boolean
   funFxMode?: AppSettings['funFxMode']
   advancedFx?: AppSettings['advancedFx']

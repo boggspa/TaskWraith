@@ -7621,6 +7621,9 @@ function App(): React.JSX.Element {
       setChatContextTurns(nextChatContextTurns)
       settingsPatch.chatContextTurns = nextChatContextTurns
     }
+    if (next.midRunInputBehavior !== undefined) {
+      settingsPatch.midRunInputBehavior = next.midRunInputBehavior
+    }
 
     // 1.0.5-EW25 — Currency selection. No local state to mirror
     // (the `displayCurrency` const derives from `settings?.currency`

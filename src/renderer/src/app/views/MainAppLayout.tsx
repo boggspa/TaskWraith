@@ -1550,6 +1550,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               persistedComposerFontFamily={settings?.composerFontFamily ?? ''}
               onFontPreview={(partial) => appearance.applyPreview(partial)}
               keyCommandBindings={settings?.keyCommandBindings}
+              midRunInputBehavior={settings?.midRunInputBehavior}
               reduceTransparency={appearance.reduceTransparency}
               reduceMotion={appearance.reduceMotion}
               compactDensity={appearance.compactDensity}
