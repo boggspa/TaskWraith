@@ -897,6 +897,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminalSurfaceSignal])
 
+  // Handle Run button clicks from code blocks
+  useEffect(() => {
+    if (!canShowTerminal || !composerGitActionBasePath || !currentChat?.appChatId) return
+    const handler = (event: CustomEvent<{ command: string }>) => {
+      // Open the terminal for this chat
+      setTerminalOpenForChat(currentChat.appChatId, true)
+      // Send the command to the terminal after it mounts
+      // Use setTimeout to allow TerminalPanel to mount and start PTY
+      setTimeout(() => {
+        window.api.ptyWrite(event.detail.command, 'default')
+      }, 200)
+    }
+    window.addEventListener('runCodeBlockCommand', handler as EventListener)
+    return () => {
+      window.removeEventListener('runCodeBlockCommand', handler as EventListener)
+    }
+  }, [canShowTerminal, composerGitActionBasePath, currentChat?.appChatId, setTerminalOpenForChat])
+
   const [transcriptRoot, setTranscriptRoot] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
     if (transcriptRoot) return

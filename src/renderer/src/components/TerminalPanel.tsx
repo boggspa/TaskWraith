@@ -83,12 +83,12 @@ export function TerminalPanel({
     })
 
     const unsubscribePtyData = window.api.onPtyData((data, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId) return
+      if (eventSessionId && eventSessionId !== ptySessionId && eventSessionId !== 'default') return
       term.current?.write(data)
     })
 
     const unsubscribePtyExit = window.api.onPtyExit((code, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId) return
+      if (eventSessionId && eventSessionId !== ptySessionId && eventSessionId !== 'default') return
       term.current?.write(`\r\n\x1b[33mProcess exited with code ${code}\x1b[0m\r\n`)
     })
 

@@ -5550,6 +5550,18 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   color: var(--text-primary);
 }
 
+.message-code-action-run {
+  border-color: rgb(var(--agent-accent-rgb) / 0.24);
+  background: rgb(var(--agent-accent-rgb) / 0.12);
+  color: rgb(var(--agent-accent-rgb) / 0.9);
+}
+
+.message-code-action-run:hover {
+  border-color: rgb(var(--agent-accent-rgb) / 0.48);
+  background: rgb(var(--agent-accent-rgb) / 0.18);
+  color: rgb(var(--agent-accent-rgb) / 1);
+}
+
 /* Default: pre (no wrap). `.wrap` toggles pre-wrap — was tied to
  * `.cm-line` when the body was CodeMirror; static highlighter uses
  * `.message-code-static` so the toggle actually changes whitespace. */

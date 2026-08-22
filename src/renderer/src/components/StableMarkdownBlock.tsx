@@ -87,11 +87,36 @@ function MarkdownCodeBlock({ content, language }: { content: string; language?: 
   const { copiedId, copy } = useCopyFeedback()
   const displayLanguage = language?.trim() || 'text'
 
+  const isShellLanguage = (lang?: string): boolean => {
+    const normalized = (lang || '').trim().toLowerCase().replace(/^[.`]+|[.`]+$/g, '')
+    return ['sh', 'bash', 'zsh', 'shell', 'terminal'].includes(normalized)
+  }
+
+  const handleRunCommand = () => {
+    if (!isShellLanguage(language)) return
+    const command = content.trim()
+    if (!command) return
+    const event = new CustomEvent('runCodeBlockCommand', {
+      detail: { command: command + '\n' }
+    })
+    window.dispatchEvent(event)
+  }
+
   return (
     <div className={`message-code-shell ${wrap ? 'wrap' : ''}`}>
       <div className="message-code-header">
         <span className="message-code-language">{displayLanguage}</span>
         <div className="message-code-actions">
+          {isShellLanguage(language) && (
+            <button
+              type="button"
+              className="message-code-action message-code-action-run"
+              onClick={handleRunCommand}
+              title="Run this command in the workspace terminal"
+            >
+              Run
+            </button>
+          )}
           <button
             type="button"
             className="message-code-action"
