@@ -118,6 +118,48 @@ describe('chat update transport', () => {
     expect(applied.baseline.recordHash).not.toBe('deadbeef')
   })
 
+  it('repairs an incomplete producer record mask from the acknowledged baseline', () => {
+    const first = chat(1, [message('a', 'A')], {
+      providerMetadata: { selectedModelType: 'gpt-5.6-luna' }
+    })
+    const next = chat(2, [message('a', 'A'), message('b', 'B')], {
+      providerMetadata: {
+        selectedModelType: 'gpt-5.6-luna',
+        codexGoalNativeAvailable: true
+      }
+    })
+    const authored = producerDelta(first, next)
+    const incomplete: ChatUpdateProducerDelta = {
+      ...authored,
+      recordMask: ['updatedAt', 'persistenceRevision'],
+      recordDelta: {
+        updatedAt: next.updatedAt,
+        persistenceRevision: next.persistenceRevision
+      },
+      recordCleared: []
+    }
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'incomplete-record-mask',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      producerDelta: incomplete,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.recordMask).toContain('providerMetadata')
+
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat).toEqual(next)
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+  })
+
   it('nacks a patch whose transcript integrity chain does not match its accepted base', () => {
     const first = chat(1, [message('a', 'A')])
     const snapshot = buildChatUpdateDelivery({

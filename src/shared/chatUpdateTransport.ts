@@ -821,11 +821,17 @@ export function buildChatUpdateDelivery(input: {
     }
   }
 
-  // The v2 hot path is producer-only: an exact delta, already derived at the
-  // mutation seam, that needs no transcript walk at all. When a caller skips a
-  // mutation, revisions do not chain, or the change escapes the public
-  // append/update/delete vocabulary, the change is STILL recoverable without
-  // the whole record — the renderer's baseline is in hand, so diff it.
+  // The v2 transcript hot path is producer-authored and needs no transcript
+  // walk. Top-level record fields are deliberately diffed from the acknowledged
+  // baseline below: concurrent main-owned metadata can land outside a caller's
+  // authored mutation, and trusting that incomplete mask reconstructs a record
+  // whose content hash main must reject. The non-message record is already
+  // hashed for every ACK, so this adds no transcript-sized work.
+  //
+  // When a caller skips a transcript mutation, revisions do not chain, or the
+  // change escapes the public append/update/delete vocabulary, the change is
+  // STILL recoverable without the whole record — the renderer's baseline is in
+  // hand, so diff it.
   //
   // Shipping the full record here instead was the 2026-08-19 renderer OOM: a
   // producer that yields no delta (a swallowed incremental-persistence failure
@@ -883,6 +889,10 @@ export function buildChatUpdateDelivery(input: {
     producerDelta.transcriptHash,
     producerDelta.baseTranscriptHash
   )
+  const record = buildChatRecordDelta(
+    chatRecordWithoutMessages(baseline.chat),
+    chatRecordWithoutMessages(chat)
+  )
   const patch: ChatUpdatePatchDeliveryV2 = {
     protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
     kind: 'patch',
@@ -890,9 +900,9 @@ export function buildChatUpdateDelivery(input: {
     chatId: chat.appChatId,
     baseRevision: baseline.revision,
     revision,
-    recordMask: producerDelta.recordMask,
-    recordDelta: producerDelta.recordDelta,
-    ...(producerDelta.recordCleared?.length ? { recordCleared: producerDelta.recordCleared } : {}),
+    recordMask: record.recordMask,
+    recordDelta: record.recordDelta,
+    ...(record.recordCleared.length ? { recordCleared: record.recordCleared } : {}),
     transcriptOps: producerDelta.transcriptOps,
     ...sub,
     ...transcript
