@@ -72,10 +72,11 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   // Cerebras — open-weights, ultra-fast
   { wireId: 'cerebras/zai-glm-4.7', upstream: 'cerebras', modelId: 'zai-glm-4.7', label: 'GLM-4.7 (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
   { wireId: 'cerebras/gpt-oss-120b', upstream: 'cerebras', modelId: 'gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
-  // OpenRouter — exact Ox Alpha exception only. Pi 0.82.1 does not bundle
-  // this model, so PiOpenRouterModelRegistration writes its metadata in the
+  // OpenRouter — user-approved exceptions only. Pi 0.82.1 does not bundle
+  // these models, so PiOpenRouterModelRegistration writes their metadata in the
   // selected run's isolated home before Pi starts.
-  { wireId: 'openrouter/stealth/ox-alpha', upstream: 'openrouter', modelId: 'stealth/ox-alpha', label: 'Ox Alpha', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true }
+  { wireId: 'openrouter/stealth/ox-alpha', upstream: 'openrouter', modelId: 'stealth/ox-alpha', label: 'Ox Alpha', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true },
+  { wireId: 'openrouter/zai/glm-5.2', upstream: 'openrouter', modelId: 'zai/glm-5.2', label: 'GLM 5.2', contextWindow: 256_000, maxOutputTokens: 131_072, thinking: false, images: false }
 ]
 
 export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'

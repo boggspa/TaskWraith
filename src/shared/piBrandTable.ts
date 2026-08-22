@@ -34,7 +34,9 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   mistral: { label: 'Mistral', hueClass: 'mistral' },
   groq: { label: 'Groq', hueClass: 'groq' },
   cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
-  openrouter: { label: 'OpenRouter', hueClass: 'openrouter' }
+  openrouter: { label: 'OpenRouter', hueClass: 'openrouter' },
+  // OpenRouter-specific overrides for models that should display with their original brand
+  'openrouter/zai': { label: 'Z.ai', hueClass: 'zai' }
 }
 
 /**
@@ -79,7 +81,8 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'groq/qwen/qwen3-32b': 'Qwen3 32B (Groq)',
   'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
   'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)',
-  'openrouter/stealth/ox-alpha': 'Ox Alpha'
+  'openrouter/stealth/ox-alpha': 'Ox Alpha',
+  'openrouter/zai/glm-5.2': 'GLM 5.2'
 }
 
 /**
@@ -107,12 +110,28 @@ export function splitPiWireModelId(wireId: string): { upstream: string; modelId:
  * Brand for a Pi wire model id, or null when the id is malformed or names an
  * upstream this build does not surface. Callers fall back to the plain `pi`
  * hue, so an unknown upstream degrades to the seat colour rather than throwing.
+ *
+ * Special case: OpenRouter models that are resold from other providers (e.g.,
+ * `openrouter/zai/glm-5.2`) should display with the original provider's brand
+ * rather than the generic OpenRouter brand.
  */
 export function resolvePiUpstreamBrand(
   wireModelId: string | null | undefined
 ): PiUpstreamBrand | null {
-  const split = splitPiWireModelId(String(wireModelId || '').trim())
+  const wire = String(wireModelId || '').trim()
+  const split = splitPiWireModelId(wire)
   if (!split) return null
+
+  // Special case: OpenRouter resold models use original brand
+  if (split.upstream === 'openrouter') {
+    const nestedSplit = splitPiWireModelId(split.modelId)
+    if (nestedSplit) {
+      const openRouterBrandKey = `openrouter/${nestedSplit.upstream}`
+      const overrideBrand = PI_UPSTREAM_BRANDS[openRouterBrandKey]
+      if (overrideBrand) return overrideBrand
+    }
+  }
+
   return PI_UPSTREAM_BRANDS[split.upstream] ?? null
 }
 

@@ -99,6 +99,7 @@ public enum ModelContextLengths {
                 (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
                 (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
+                (id: "openrouter/zai/glm-5.2",      label: "GLM 5.2"),
             ]
         case "grok":
             return [

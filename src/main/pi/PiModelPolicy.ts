@@ -72,11 +72,11 @@ export const PI_UPSTREAM_LABELS: Readonly<Record<PiUpstreamId, string>> = {
 }
 
 /**
- * OpenRouter is intentionally a one-model exception. Keep this exact list
+ * OpenRouter is intentionally a narrow exception. Keep this exact list
  * narrow: every additional id would become another duplicate cross-provider
  * route in Pi's picker.
  */
-export const PI_OPENROUTER_ALLOWED_MODEL_IDS = ['stealth/ox-alpha'] as const
+export const PI_OPENROUTER_ALLOWED_MODEL_IDS = ['stealth/ox-alpha', 'zai/glm-5.2'] as const
 
 /**
  * Model-id deny patterns within otherwise-allowed upstreams. qwen-token-plan
@@ -116,7 +116,7 @@ export function piModelPolicyVerdict(
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to Ox Alpha (${PI_OPENROUTER_ALLOWED_MODEL_IDS[0]}).`
+      reason: `Pi's OpenRouter lane is limited to specific models (${PI_OPENROUTER_ALLOWED_MODEL_IDS.join(', ')}).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {

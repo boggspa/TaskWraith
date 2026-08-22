@@ -17,14 +17,15 @@ export interface PiOpenRouterCustomModelRegistration {
 }
 
 /**
- * The one user-approved OpenRouter model for Pi. Pi 0.82.1's bundled
- * OpenRouter catalog does not include Ox Alpha, and Pi starts offline in
- * TaskWraith, so register its current API metadata in the selected run's
+ * The user-approved OpenRouter models for Pi. Pi 0.82.1's bundled
+ * OpenRouter catalog does not include these models, and Pi starts offline in
+ * TaskWraith, so register their current API metadata in the selected run's
  * owner-only home instead of refreshing or exposing the aggregator catalog.
  *
- * Source: OpenRouter Models API, verified 2026-08-21 — model
- * `stealth/ox-alpha`, 1,048,576-token context, 131,072-token output cap,
- * free input/output, text + image input, and OpenRouter reasoning support.
+ * Sources: OpenRouter Models API, verified 2026-08-21:
+ * - `stealth/ox-alpha`: 1,048,576-token context, 131,072-token output cap,
+ *   free input/output, text + image input, and OpenRouter reasoning support.
+ * - `zai/glm-5.2`: 256,000-token context, free input/output, text-only input.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
   {
@@ -33,6 +34,15 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     reasoning: true,
     input: ['text', 'image'],
     contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    modelId: 'zai/glm-5.2',
+    label: 'GLM 5.2',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 256_000,
     maxTokens: 131_072,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }

@@ -30,7 +30,7 @@ describe('writePiOpenRouterModelRegistration', () => {
     )
   })
 
-  it('keeps the Ox Alpha registration in lockstep with picker metadata', () => {
+  it('keeps the OpenRouter model registrations in lockstep with picker metadata', () => {
     for (const model of PI_OPENROUTER_CUSTOM_MODELS) {
       expect(findPiStaticModel(`openrouter/${model.modelId}`)).toMatchObject({
         modelId: model.modelId,

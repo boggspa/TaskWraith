@@ -52,6 +52,8 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')
     expect(resolvePiUpstreamBrand('minimax/MiniMax-M3')?.label).toBe('MiniMax')
     expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('OpenRouter')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.label).toBe('Z.ai')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.hueClass).toBe('zai')
   })
 
   it('maps qwen-token-plan to the EXISTING qwen hue, not a new one', () => {

@@ -37,6 +37,8 @@ public enum PiBrandTable {
         "groq": Brand(label: "Groq", hueClass: "groq"),
         "cerebras": Brand(label: "Cerebras", hueClass: "cerebras"),
         "openrouter": Brand(label: "OpenRouter", hueClass: "openrouter"),
+        // OpenRouter-specific overrides for models that should display with their original brand
+        "openrouter/zai": Brand(label: "Z.ai", hueClass: "zai"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -78,6 +80,7 @@ public enum PiBrandTable {
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
         "openrouter/stealth/ox-alpha": "Ox Alpha",
+        "openrouter/zai/glm-5.2": "GLM 5.2",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.
@@ -97,8 +100,23 @@ public enum PiBrandTable {
     /// an upstream this build does not surface. Callers fall back to the plain
     /// `pi` hue and the "Pi" seat name, so an unknown upstream degrades to the
     /// seat rather than guessing.
+    ///
+    /// Special case: OpenRouter models that are resold from other providers (e.g.,
+    /// `openrouter/zai/glm-5.2`) should display with the original provider's brand
+    /// rather than the generic OpenRouter brand.
     public static func brand(forWireModelId wireId: String?) -> Brand? {
         guard let split = splitWireModelId(wireId) else { return nil }
+
+        // Special case: OpenRouter resold models use original brand
+        if split.upstream == "openrouter" {
+            if let nestedSplit = splitWireModelId(split.modelId) {
+                let openRouterBrandKey = "openrouter/\(nestedSplit.upstream)"
+                if let overrideBrand = upstreams[openRouterBrandKey] {
+                    return overrideBrand
+                }
+            }
+        }
+
         return upstreams[split.upstream]
     }
 
