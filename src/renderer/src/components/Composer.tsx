@@ -251,6 +251,7 @@ export interface ComposerProps {
   grokReasoningEffort: any
   museReasoningEffort: any
   mistralReasoningEffort: any
+  piReasoningEffort: any
   ollamaReasoningEffort: any
   cursorReasoningEffort: any
   cursorFastMode: any
@@ -507,6 +508,7 @@ export interface ComposerProps {
   setKimiFastMode: any
   setKimiReasoningEffort: any
   setMistralReasoningEffort: any
+  setPiReasoningEffort: any
   setOllamaReasoningEffort: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
@@ -746,7 +748,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     kimiFastMode,
     kimiReasoningEffort,
     mistralReasoningEffort,
-  piReasoningEffort,
+    piReasoningEffort,
     lastNonCustomModelType,
     liveRunOutputTokens,
     activeRunId,
@@ -829,6 +831,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setKimiFastMode,
     setKimiReasoningEffort,
     setMistralReasoningEffort,
+    setPiReasoningEffort,
     setOllamaReasoningEffort,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
@@ -3791,13 +3794,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ? soloPendingProviderMetadata.museReasoningEffort
                                 : museReasoningEffort
                           const effectiveMistralReasoning =
-                            ensembleResolved?.provider === 'mistral' ||
-                            ensembleResolved?.provider === 'pi'
+                            ensembleResolved?.provider === 'mistral'
                               ? ensembleResolved.reasoningEffort
                               : typeof soloPendingProviderMetadata?.mistralReasoningEffort ===
                                     'string'
                                 ? soloPendingProviderMetadata.mistralReasoningEffort
                                 : mistralReasoningEffort
+                          const effectivePiReasoning =
+                            ensembleResolved?.provider === 'pi'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.piReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.piReasoningEffort
+                                : piReasoningEffort
                           const effectiveOllamaReasoning =
                             ensembleResolved?.provider === 'ollama'
                               ? ensembleResolved.reasoningEffort
@@ -3972,9 +3981,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )
                             combinedSelectedReasoning =
                               combinedReasoningOptions.some(
-                                (option) => option.value === effectiveMistralReasoning
+                                (option) =>
+                                  option.value ===
+                                  (effectiveProvider === 'pi'
+                                    ? effectivePiReasoning
+                                    : effectiveMistralReasoning)
                               )
-                                ? effectiveMistralReasoning
+                                ? effectiveProvider === 'pi'
+                                  ? effectivePiReasoning
+                                  : effectiveMistralReasoning
                                 : combinedReasoningOptions[0]?.value ||
                                   ''
                           } else if (effectiveProvider === 'muse') {
@@ -4109,9 +4124,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? mistralModelOption.defaultReasoningEffort
                                   : reasoningOptions[0]?.value) || ''
                               if (shouldUpdateLiveComposerState) {
-                                setMistralReasoningEffort(nextReasoning)
+                                if (effectiveProvider === 'pi') {
+                                  setPiReasoningEffort(nextReasoning)
+                                } else {
+                                  setMistralReasoningEffort(nextReasoning)
+                                }
                               }
-                              metadataPatch.mistralReasoningEffort = nextReasoning
+                              if (effectiveProvider === 'pi') {
+                                metadataPatch.piReasoningEffort = nextReasoning
+                              } else {
+                                metadataPatch.mistralReasoningEffort = nextReasoning
+                              }
                             }
                             if (effectiveProvider === 'grok') {
                               if (isGrokReasoningModelId(nextModel)) {
@@ -4295,11 +4318,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               })
                             } else if (effectiveProvider === 'mistral' || effectiveProvider === 'pi') {
                               if (shouldUpdateLiveComposerState) {
-                                setMistralReasoningEffort(value)
+                                if (effectiveProvider === 'pi') {
+                                  setPiReasoningEffort(value)
+                                } else {
+                                  setMistralReasoningEffort(value)
+                                }
                               }
-                              rememberCurrentChatComposerSelection({
-                                mistralReasoningEffort: value
-                              })
+                              rememberCurrentChatComposerSelection(
+                                effectiveProvider === 'pi'
+                                  ? { piReasoningEffort: value }
+                                  : { mistralReasoningEffort: value }
+                              )
                             } else if (effectiveProvider === 'ollama') {
                               if (shouldUpdateLiveComposerState) {
                                 setOllamaReasoningEffort(value)

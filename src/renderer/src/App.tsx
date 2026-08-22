@@ -1905,6 +1905,7 @@ function App(): React.JSX.Element {
   )
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [mistralReasoningEffort, setMistralReasoningEffort] = useState<string>('medium')
+  const [piReasoningEffort, setPiReasoningEffort] = useState<string>('medium')
   const [ollamaReasoningEffort, setOllamaReasoningEffort] = useState<string>('on')
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
@@ -6579,6 +6580,11 @@ function App(): React.JSX.Element {
         providerReasoningEfforts.has(metadata.mistralReasoningEffort)
           ? metadata.mistralReasoningEffort
           : 'medium',
+      piReasoningEffort:
+        typeof metadata.piReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.piReasoningEffort)
+          ? metadata.piReasoningEffort
+          : 'medium',
       ollamaReasoningEffort:
         typeof metadata.ollamaReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.ollamaReasoningEffort)
@@ -6619,6 +6625,7 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return selection.grokReasoningEffort
     if (provider === 'muse') return selection.museReasoningEffort
     if (provider === 'mistral') return selection.mistralReasoningEffort
+    if (provider === 'pi') return selection.piReasoningEffort
     if (provider === 'ollama') return selection.ollamaReasoningEffort
     if (provider === 'cursor') return selection.cursorReasoningEffort
     return undefined
@@ -6643,6 +6650,7 @@ function App(): React.JSX.Element {
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setMuseReasoningEffort(selection.museReasoningEffort)
     setMistralReasoningEffort(selection.mistralReasoningEffort)
+    setPiReasoningEffort(selection.piReasoningEffort)
     setOllamaReasoningEffort(selection.ollamaReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
     setCursorFastMode(selection.cursorFastMode)
@@ -6770,6 +6778,7 @@ function App(): React.JSX.Element {
     'grokReasoningEffort',
     'museReasoningEffort',
     'mistralReasoningEffort',
+    'piReasoningEffort',
     'ollamaReasoningEffort',
     'cursorReasoningEffort',
     'cursorFastMode',
@@ -13312,6 +13321,9 @@ function App(): React.JSX.Element {
       ...(snapshot.mistralReasoningEffort !== undefined
         ? { mistralReasoningEffort: snapshot.mistralReasoningEffort }
         : {}),
+      ...(snapshot.piReasoningEffort !== undefined
+        ? { piReasoningEffort: snapshot.piReasoningEffort }
+        : {}),
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
@@ -13416,6 +13428,9 @@ function App(): React.JSX.Element {
       : {}),
     ...(request.mistralReasoningEffort !== undefined
       ? { mistralReasoningEffort: request.mistralReasoningEffort }
+      : {}),
+    ...(request.piReasoningEffort !== undefined
+      ? { piReasoningEffort: request.piReasoningEffort }
       : {}),
     ...(request.ollamaReasoningEffort !== undefined
       ? { ollamaReasoningEffort: request.ollamaReasoningEffort }
@@ -22140,6 +22155,8 @@ function App(): React.JSX.Element {
                 participant.provider === 'claude' ? participant.reasoningEffort : undefined,
               mistralReasoningEffort:
                 participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
+              piReasoningEffort:
+                participant.provider === 'pi' ? participant.reasoningEffort : undefined,
               kimiReasoningEffort:
                 participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
               kimiThinkingEnabled:
@@ -30101,6 +30118,8 @@ function App(): React.JSX.Element {
         viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
       const viewerMistralReasoning =
         viewerSelection.mistralReasoningEffort || 'medium'
+      const viewerPiReasoning =
+        viewerSelection.piReasoningEffort || 'medium'
       const viewerOllamaReasoning = viewerSelection.ollamaReasoningEffort || ''
       const viewerCursorReasoning =
         viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
@@ -30562,6 +30581,7 @@ function App(): React.JSX.Element {
         grokReasoningEffort: viewerGrokReasoning,
         museReasoningEffort: viewerMuseReasoning,
         mistralReasoningEffort: viewerMistralReasoning,
+        piReasoningEffort: viewerPiReasoning,
         ollamaReasoningEffort: viewerOllamaReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
         cursorFastMode: viewerCursorFastMode,
@@ -30690,6 +30710,7 @@ function App(): React.JSX.Element {
       setKimiFastMode: paneNoopSetter,
       setKimiReasoningEffort: paneNoopSetter,
       setMistralReasoningEffort: paneNoopSetter,
+      setPiReasoningEffort: paneNoopSetter,
       setOllamaReasoningEffort: paneNoopSetter,
       setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
@@ -30980,6 +31001,7 @@ function App(): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setMistralReasoningEffort,
+    setPiReasoningEffort,
     setOllamaReasoningEffort,
     setCodexServiceTier,
     setCustomModel,
