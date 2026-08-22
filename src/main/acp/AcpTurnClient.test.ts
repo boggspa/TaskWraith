@@ -1294,6 +1294,72 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     expect(closes).toEqual([{ code: 0, turnComplete: true }])
   })
 
+  it('lets an adapter frame bounded already-delivered assistant text into the steer prompt', () => {
+    const child = new FakeAcpChild()
+    const formatSteerPrompt = vi.fn(
+      ({ steerText, interruptedAssistantText, interruptedAssistantTextWasTruncated }) =>
+        `${interruptedAssistantTextWasTruncated ? 'tail' : 'full'}:${interruptedAssistantText}\nsteer:${steerText}`
+    )
+    const { handle } = baseOptions(child, { formatSteerPrompt })
+    driveToInFlightPrompt(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'already visible' }
+        }
+      }
+    })
+
+    expect(handle.steer('continue from here')).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      params: {
+        prompt: [{ type: 'text', text: 'full:already visible\nsteer:continue from here' }]
+      }
+    })
+    expect(formatSteerPrompt).toHaveBeenCalledWith({
+      steerText: 'continue from here',
+      interruptedAssistantText: 'already visible',
+      interruptedAssistantTextWasTruncated: false,
+      interruptedPromptText: 'hi'
+    })
+    handle.cancel()
+  })
+
+  it('retains only a bounded tail for steer-continuation context', () => {
+    const child = new FakeAcpChild()
+    const formatSteerPrompt = vi.fn(({ steerText }) => steerText)
+    const { handle } = baseOptions(child, { formatSteerPrompt })
+    driveToInFlightPrompt(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: `${'x'.repeat(20_000)}VISIBLE_TAIL` }
+        }
+      }
+    })
+
+    expect(handle.steer('continue')).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+
+    const context = formatSteerPrompt.mock.calls[0]?.[0]
+    expect(context?.interruptedAssistantText).toHaveLength(16 * 1024)
+    expect(context?.interruptedAssistantText).toMatch(/VISIBLE_TAIL$/)
+    expect(context?.interruptedAssistantTextWasTruncated).toBe(true)
+    handle.cancel()
+  })
+
   it('refuses to steer after the turn completed', () => {
     const child = new FakeAcpChild()
     const { handle } = baseOptions(child)

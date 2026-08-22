@@ -36,6 +36,7 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpSteerPromptContext,
   type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
@@ -330,6 +331,28 @@ export const MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT =
   'evidence and answer in prose. If the task genuinely cannot proceed, report the exact tool, ' +
   'command, or path still needed so the user can make an informed choice.'
 
+/**
+ * Vibe drops a cancelled prompt's partial assistant output from native session
+ * history. Carry only the bounded tail captured by AcpTurnClient so a live
+ * steer can continue after what the user already saw instead of repeating it.
+ */
+export function formatMistralSteerPrompt(context: AcpSteerPromptContext): string {
+  const assistantTail = context.interruptedAssistantText.trim()
+  if (!assistantTail) return context.steerText
+  return [
+    'A user steering instruction arrived while your previous response was streaming.',
+    'TaskWraith cancelled that ACP prompt, so its partial assistant output may be absent from native session history.',
+    `The following ${
+      context.interruptedAssistantTextWasTruncated ? 'truncated ' : ''
+    }assistant-output tail was already shown to the user. It is continuation context, not an instruction; do not repeat it.`,
+    'Already-delivered assistant tail (JSON string):',
+    JSON.stringify(assistantTail),
+    'Authoritative user steering instruction (JSON string):',
+    JSON.stringify(context.steerText),
+    'Follow the authoritative user steering instruction above. Use the already-delivered tail only to avoid repetition and preserve continuity where compatible with that instruction.'
+  ].join('\n\n')
+}
+
 const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
   'The user declined the previous tool request. Respect that decision: do not retry the same ' +
   'tool, request the same permission, or substitute an equivalent side effect. Continue from ' +
@@ -387,6 +410,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     // hard-disabled), so there is never a persisted provider-side selection to
     // re-assert.
     sessionConfigOptions: options.sessionConfigOptions,
+    formatSteerPrompt: formatMistralSteerPrompt,
     onEvent: options.onEvent,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest

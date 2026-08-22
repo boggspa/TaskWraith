@@ -2,12 +2,41 @@ import { describe, expect, it } from 'vitest'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
+  formatMistralSteerPrompt,
   normalizeMistralVibePermissionRequest,
   runMistralAcpTurn,
   type AcpChildProcess
 } from './MistralAcpClient'
 
 const MISTRAL_NAMESPACES = ['taskwraith-mistral', 'TaskWraith'] as const
+
+describe('formatMistralSteerPrompt', () => {
+  it('frames already-delivered output as non-authoritative continuation context', () => {
+    const prompt = formatMistralSteerPrompt({
+      steerText: 'continue at D178 and mark every fifth line',
+      interruptedAssistantText: 'D176. Visible sentence.\nD177. Visible sentence.',
+      interruptedAssistantTextWasTruncated: true,
+      interruptedPromptText: 'emit D001 through D300'
+    })
+
+    expect(prompt).toContain('truncated assistant-output tail was already shown')
+    expect(prompt).toContain(JSON.stringify('D176. Visible sentence.\nD177. Visible sentence.'))
+    expect(prompt).toContain(JSON.stringify('continue at D178 and mark every fifth line'))
+    expect(prompt).toContain('do not repeat it')
+    expect(prompt).toContain('Follow the authoritative user steering instruction')
+  })
+
+  it('keeps a steer verbatim when no assistant output preceded it', () => {
+    expect(
+      formatMistralSteerPrompt({
+        steerText: 'change course',
+        interruptedAssistantText: '',
+        interruptedAssistantTextWasTruncated: false,
+        interruptedPromptText: 'starting prompt'
+      })
+    ).toBe('change course')
+  })
+})
 
 class FakeAcpChild implements AcpChildProcess {
   private readonly writes: string[] = []
@@ -232,6 +261,46 @@ describe('normalizeMistralVibePermissionRequest', () => {
 
     expect(normalized).toBe(request)
     expect(resolveStructuredTaskWraithToolRequest(normalized, MISTRAL_NAMESPACES)).toBeNull()
+  })
+})
+
+describe('runMistralAcpTurn live steering continuity', () => {
+  it('re-prompts Vibe with the already-delivered assistant tail and user steer', async () => {
+    const child = new FakeAcpChild()
+    const handle = runMistralAcpTurn({
+      prompt: 'emit D001 through D300',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.6-test',
+      spawnProcess: () => child,
+      onEvent: () => {}
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'D176. Visible. D177. Visible.' }
+        }
+      }
+    })
+
+    expect(handle.steer('continue at D178')).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    const followUp = (prompts[1]?.params as { prompt?: Array<{ text?: string }> })?.prompt?.[0]
+      ?.text
+    expect(followUp).toContain(JSON.stringify('D176. Visible. D177. Visible.'))
+    expect(followUp).toContain(JSON.stringify('continue at D178'))
+    expect(followUp).toContain('do not repeat it')
+
+    handle.cancel()
+    await handle.closed
   })
 })
 

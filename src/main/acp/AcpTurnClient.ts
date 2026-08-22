@@ -123,6 +123,13 @@ export interface AcpTurnOptions {
    */
   onWirePrompt?: (text: string) => void
   /**
+   * Optional provider adapter for live-steer continuity. Some ACP servers roll
+   * a cancelled prompt's partial assistant output out of native history. The
+   * core supplies a bounded tail so that adapter can frame it as already-shown
+   * context alongside the authoritative user steer.
+   */
+  formatSteerPrompt?: (context: AcpSteerPromptContext) => string
+  /**
    * Provider-supported ACP config selections to re-assert after a successful
    * session/resume and before the prompt. Kimi persists model/thinking in its
    * native session, so process-level defaults alone cannot change them on a
@@ -287,10 +294,21 @@ export interface AcpSteerDeliveryHooks {
   onDelivered: () => void
 }
 
+export interface AcpSteerPromptContext {
+  /** User-authored steering text accepted by the live transport. */
+  readonly steerText: string
+  /** Bounded tail of assistant text already streamed for the interrupted prompt. */
+  readonly interruptedAssistantText: string
+  readonly interruptedAssistantTextWasTruncated: boolean
+  /** Exact prompt whose response was interrupted. */
+  readonly interruptedPromptText: string
+}
+
 // Keep prompt=3 for compatibility with existing protocol traces. Resume uses a
 // separate lifecycle id and completes before the prompt is dispatched.
 const ACP_ID = { initialize: 1, sessionNew: 2, prompt: 3, sessionResume: 4 } as const
 const ACP_CONFIG_RPC_START = 1_000
+const MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS = 16 * 1024
 
 function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -548,6 +566,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   // original, once recovery has taken over. A transient retry must re-send
   // whatever actually failed.
   let inFlightPromptText = ''
+  let activePromptAssistantText = ''
+  let activePromptAssistantTextWasTruncated = false
   let transientPromptRetries = 0
   let transientRetryTimer: ReturnType<typeof setTimeout> | null = null
   // Recent provider stderr, kept only long enough to explain a prompt failure
@@ -635,6 +655,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     if (nextPromptRpcId === ACP_ID.sessionResume) nextPromptRpcId += 1
     activePromptRpcId = promptRpcId
     inFlightPromptText = text
+    activePromptAssistantText = ''
+    activePromptAssistantTextWasTruncated = false
     if (options.onWirePrompt) {
       try {
         options.onWirePrompt(text)
@@ -653,7 +675,21 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     const pending = pendingSteer
     pendingSteer = null
     if (!pending || cancelRequested || closed || stdinClosed || !sessionId) return false
-    if (sendPrompt(pending.text) === null) return false
+    let followUpPrompt = pending.text
+    if (options.formatSteerPrompt) {
+      try {
+        const formatted = options.formatSteerPrompt({
+          steerText: pending.text,
+          interruptedAssistantText: activePromptAssistantText,
+          interruptedAssistantTextWasTruncated: activePromptAssistantTextWasTruncated,
+          interruptedPromptText: inFlightPromptText
+        })
+        if (formatted.trim()) followUpPrompt = formatted
+      } catch {
+        // A continuity aid must never lose an accepted steering instruction.
+      }
+    }
+    if (sendPrompt(followUpPrompt) === null) return false
     for (const hook of pending.hooks) {
       try {
         hook.onDelivered()
@@ -1073,6 +1109,13 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       for (const event of acpMessageToRunEvents(message)) {
         if (event.type === 'content' && event.text) {
           assistantTextSeen = true
+          activePromptAssistantText += event.text
+          if (activePromptAssistantText.length > MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS) {
+            activePromptAssistantText = activePromptAssistantText.slice(
+              -MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS
+            )
+            activePromptAssistantTextWasTruncated = true
+          }
         } else if (event.type === 'tool_use') {
           const toolName = nonEmptyString(event.toolName) || 'tool'
           lastObservedToolName = toolName
