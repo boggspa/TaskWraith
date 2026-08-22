@@ -75,6 +75,7 @@ import {
   collectExternalPathGrantsFromMetadata,
   externalPathGrantMetadataLists
 } from '../store/ExternalPathGrants'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 
 // Known ids for historical decode. New chat lifecycles use the shared live
 // admission predicate through `assertLiveProviderId` below.
@@ -206,7 +207,10 @@ export interface ChatServiceStore {
   ) => ChatRecord
   getChildChats: (parentChatId: string) => ChatRecord[]
   getSideChats: (parentChatId: string) => ChatRecord[]
-  saveChat: (chat: ChatRecord) => ChatRecord
+  saveChat: (
+    chat: ChatRecord,
+    options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
+  ) => ChatRecord
   deleteChat: (chatId: string) => void
   truncateChatHistory?: (chatId: string) => ChatRecord | null
   clearChats: (workspaceId?: string) => void
@@ -538,11 +542,18 @@ export class ChatService {
     return this.deps.appStore.getSideChats(requireSafeChatId(parentChatId, 'Parent chat id'))
   }
 
-  saveChat(chat: ChatRecord): ChatRecord {
-    return this.saveChatInternal(chat, false)
+  saveChat(
+    chat: ChatRecord,
+    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+  ): ChatRecord {
+    return this.saveChatInternal(chat, false, options)
   }
 
-  private saveChatInternal(chat: ChatRecord, allowWorkspaceTransition: boolean): ChatRecord {
+  private saveChatInternal(
+    chat: ChatRecord,
+    allowWorkspaceTransition: boolean,
+    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+  ): ChatRecord {
     const sanitizedInput = this.deps.sanitizeChatForSave(chat)
     assertSafeChatId(sanitizedInput.appChatId)
     const current = this.deps.appStore.getChat(sanitizedInput.appChatId)
@@ -575,7 +586,9 @@ export class ChatService {
       : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
     const importedTranscriptFenced = this.preserveExternalProviderThreadImport(continuityFenced)
     const sanitized = this.preserveCollaboratorComments(importedTranscriptFenced)
-    return this.deps.appStore.saveChat(sanitized)
+    return options.authoredTranscript && sanitized.messages === chat.messages
+      ? this.deps.appStore.saveChat(sanitized, options)
+      : this.deps.appStore.saveChat(sanitized)
   }
 
   /**

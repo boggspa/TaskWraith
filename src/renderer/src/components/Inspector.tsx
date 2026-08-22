@@ -2,6 +2,7 @@ import {
   Component,
   useEffect,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
   type RefObject
@@ -38,6 +39,8 @@ import {
 } from '../lib/DelegationAudit'
 import { buildDelegationTree, type DelegationTimelineNode } from '../lib/DelegationTree'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
+import { rawLogEntryContent } from '../lib/rawLogEntry'
+import { liveRunDiffStore } from '../lib/liveRunDiffStore'
 import { InspectorPromptTab } from './InspectorPromptTab'
 import { CommitsInspector } from './CommitsInspector'
 
@@ -378,6 +381,12 @@ function workspaceShortLabel(path: string): string {
 }
 
 function DiffTab(props: InspectorProps) {
+  const liveRunDiff = useSyncExternalStore(
+    (listener) => liveRunDiffStore.subscribe(props.currentChat?.appChatId, listener),
+    () => liveRunDiffStore.getSnapshot(props.currentChat?.appChatId),
+    () => null
+  )
+  const primaryRunDiff = props.runDiff ?? liveRunDiff
   // 1.0.6-TV8 — additional WRITE workspaces that recorded changes this
   // run. The selector + secondary-workspace rendering only engage when
   // there is at least one; otherwise the tab is byte-for-byte as before.
@@ -394,7 +403,9 @@ function DiffTab(props: InspectorProps) {
     Boolean(props.workspaceRunDiffByPath?.[selectedWorkspace])
   const effectiveDiff = showingSecondary
     ? { type: 'changes', summaries: props.workspaceRunDiffByPath![selectedWorkspace] }
-    : props.activeDiff
+    : props.diffView === 'this_run' && primaryRunDiff
+      ? { type: 'changes', summaries: primaryRunDiff }
+      : props.activeDiff
   const effectiveWorkspacePath = showingSecondary ? selectedWorkspace : props.workspacePath
   const [gitSnapshot, setGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [busyPath, setBusyPath] = useState('')
@@ -500,7 +511,7 @@ function DiffTab(props: InspectorProps) {
               {
                 value: 'this_run',
                 label: 'This run',
-                disabled: !props.runDiff && !hasWorkspaceDiffs
+                disabled: !primaryRunDiff && !hasWorkspaceDiffs
               },
               { value: 'workspace', label: 'Workspace' }
             ]}
@@ -587,7 +598,7 @@ function formatRawEventLine(log: InspectorProps['rawLogs'][number]): string {
   else if (log.spanId) meta.push(`span:${log.spanId}`)
   if (log.artifactCount) meta.push(`artifacts:${log.artifactCount}`)
   const prefix = `[${log.type.toUpperCase()}]${meta.length ? ` ${meta.join(' ')}` : ''}`
-  return `${prefix} ${log.content}`
+  return `${prefix} ${rawLogEntryContent(log)}`
 }
 
 function formatRawEventsForClipboard(logs: InspectorProps['rawLogs']): string {
@@ -804,7 +815,7 @@ function RawTab(props: InspectorProps) {
                     {log.artifactCount ? ` artifacts:${log.artifactCount}` : ''}
                   </span>
                 )}
-                {log.content}
+                {rawLogEntryContent(log)}
                 <button
                   type="button"
                   className={`message-actions-chip-button message-actions-chip-button--copy raw-log-line-copy${
@@ -1610,12 +1621,14 @@ function findProviderInValue(value: unknown, depth = 0): ProviderId | null {
 
 function extractEnsembleDelegationAuditItems(props: InspectorProps, providers: ProviderId[]) {
   const inferredProviderCount = props.rawLogs.filter((log) =>
-    inferProviderFromRawLogContent(log.content)
+    inferProviderFromRawLogContent(rawLogEntryContent(log))
   ).length
   const activities = providers.flatMap((provider) => {
     const providerLogs =
       inferredProviderCount > 0
-        ? props.rawLogs.filter((log) => inferProviderFromRawLogContent(log.content) === provider)
+        ? props.rawLogs.filter(
+            (log) => inferProviderFromRawLogContent(rawLogEntryContent(log)) === provider
+          )
         : provider === props.provider
           ? props.rawLogs
           : []

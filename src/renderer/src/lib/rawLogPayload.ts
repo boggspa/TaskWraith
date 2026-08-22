@@ -1,17 +1,13 @@
 /**
  * Bound the per-line cost of the renderer's raw-log lane.
  *
- * Every provider stdout line is pretty-printed (`JSON.stringify(_, null, 2)`)
- * and regex-redacted before it lands in the Raw panel's ring buffer. Thinking
- * deltas re-send the FULL accumulated trace per line (100KB+ at high
- * reasoning tiers), so stringify + redact costs grow linearly per delta —
- * quadratic over a stream — and the 1000-entry ring can retain ~100MB of
- * near-duplicate text. The raw panel is a debugging surface: truncating the
- * middle of pathologically long string FIELDS (head + tail preserved, with an
- * explicit elision marker) keeps it useful while bounding cost. Small
- * payloads (errors, exits, tool headers) pass through untouched, so
- * downstream string matching (quota markers, "Process exited with code")
- * still works.
+ * Thinking deltas can re-send the FULL accumulated trace per line (100KB+ at
+ * high reasoning tiers). Bound those retained fields before the parsed payload
+ * enters the ring; pretty-printing and regex redaction are deferred until a
+ * visible inspector consumer asks for the entry. The raw panel is a debugging
+ * surface: truncating only the middle (head + tail preserved, with an explicit
+ * elision marker) keeps it useful while bounding memory. Small payloads pass
+ * through untouched and allocate no replacement object.
  *
  * Pure and dependency-free.
  */

@@ -127,6 +127,8 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     broadcastThreadUpdate: vi.fn(),
     broadcastThreadList: vi.fn(),
     broadcastChatUpdated: vi.fn(),
+    adoptRendererChatMutation: vi.fn(() => true),
+    broadcastChatUpdatedExcept: vi.fn(),
     broadcastChatPopoutUpdate: vi.fn(),
     pushRemoteTaskCardDelta: vi.fn(),
     pushRemoteThreadSnapshot: vi.fn(),
@@ -164,6 +166,7 @@ describe('registerChatHandlers', () => {
     registerChatHandlers(createDeps())
 
     expect(handlerFor('save-chat')).toBeTypeOf('function')
+    expect(handlerFor('mutate-chat-transcript')).toBeTypeOf('function')
     expect(handlerFor('rebind-chat-workspace')).toBeTypeOf('function')
     expect(handlerFor('delete-chat')).toBeTypeOf('function')
     expect(handlerFor('reap-abandoned-chats')).toBeTypeOf('function')
@@ -786,6 +789,106 @@ describe('registerChatHandlers', () => {
       accepted: false
     })
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(canonical)
+  })
+
+  it('applies compact transcript operations and ACKs without echoing to the sender', () => {
+    const previous = chat('chat-1', {
+      persistenceRevision: 3,
+      messages: [
+        {
+          id: 'stream',
+          role: 'assistant',
+          content: 'hel',
+          timestamp: 'now'
+        }
+      ]
+    })
+    const nextMessage = { ...previous.messages[0], content: 'hello' }
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
+    vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
+      ...record,
+      persistenceRevision: 4,
+      updatedAt: 2
+    }))
+    registerChatHandlers(deps)
+    const event = { sender: { id: 41 } }
+
+    const result = handlerFor('mutate-chat-transcript')(event, {
+      version: 1,
+      chatId: 'chat-1',
+      baseRevision: 3,
+      transcriptOps: [{ op: 'update', id: 'stream', message: nextMessage }]
+    })
+
+    expect(result).toEqual({
+      version: 1,
+      accepted: true,
+      chatId: 'chat-1',
+      revision: 4,
+      updatedAt: 2,
+      messageCount: 1,
+      recordHash: expect.any(String)
+    })
+    expect(deps.chatService.saveChat).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [nextMessage] }),
+      expect.objectContaining({
+        authoredTranscript: expect.objectContaining({
+          transcriptOps: [{ op: 'update', id: 'stream', message: nextMessage }],
+          changedMessageCount: 1
+        })
+      })
+    )
+    expect(deps.broadcastChatUpdatedExcept).toHaveBeenCalledWith(
+      expect.objectContaining({ persistenceRevision: 4 }),
+      41
+    )
+    expect(deps.adoptRendererChatMutation).toHaveBeenCalledWith(
+      41,
+      expect.objectContaining({ persistenceRevision: 4 }),
+      3
+    )
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+  })
+
+  it('returns a full canonical record only for compact mutation recovery', () => {
+    const canonical = chat('chat-1', { persistenceRevision: 5 })
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(canonical)
+    registerChatHandlers(deps)
+
+    expect(
+      handlerFor('mutate-chat-transcript')(
+        { sender: { id: 41 } },
+        {
+          version: 1,
+          chatId: 'chat-1',
+          baseRevision: 4,
+          transcriptOps: [
+            {
+              op: 'append',
+              messages: [
+                {
+                  id: 'stream',
+                  role: 'assistant',
+                  content: 'hello',
+                  timestamp: 'now'
+                }
+              ]
+            }
+          ]
+        }
+      )
+    ).toEqual({
+      version: 1,
+      accepted: false,
+      chatId: 'chat-1',
+      revision: 5,
+      reason: 'revision-conflict',
+      canonical
+    })
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.broadcastChatUpdatedExcept).not.toHaveBeenCalled()
   })
 
   it('preserves main-owned graph transcript evidence across renderer saves', () => {

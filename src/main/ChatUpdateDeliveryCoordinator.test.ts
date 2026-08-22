@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
+  appliedChatUpdateBaseline,
   applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
+  chatUpdateProducerEnvelopeFor,
   computeChatSubRevisions,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
@@ -109,6 +111,46 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
+    })
+  })
+
+  it('advances an idle baseline for a renderer-authored compact mutation without an echo', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [seed, rendererMutation, laterMainUpdate] = projectSequence(
+      chat(1, ['h']),
+      chat(2, ['hello']),
+      chat(3, ['hello', 'later'])
+    )
+    coordinator.enqueue(sink, seed)
+    const seedDelivery = sink.deliveries[0]
+    const seedApplied = applyChatUpdateDelivery(seedDelivery)
+    expect(seedApplied.ok).toBe(true)
+    if (!seedApplied.ok) throw new Error(seedApplied.reason)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: seedDelivery.deliveryId,
+      applied: true
+    })
+
+    expect(coordinator.adoptRendererMutation(sink.id, rendererMutation, 1)).toBe(true)
+    expect(sink.deliveries).toHaveLength(1)
+
+    const rendererProducer = chatUpdateProducerEnvelopeFor(rendererMutation)
+    const rendererBaseline = appliedChatUpdateBaseline(
+      seedApplied.baseline.revision,
+      rendererMutation,
+      rendererProducer?.state.transcriptHash
+    )
+    coordinator.enqueue(sink, laterMainUpdate)
+    const delivery = sink.deliveries[1]
+    expect(delivery.kind).toBe('patch')
+    const applied = applyChatUpdateDelivery(delivery, rendererBaseline)
+    expect(applied).toMatchObject({
+      ok: true,
+      baseline: { chat: laterMainUpdate }
     })
   })
 

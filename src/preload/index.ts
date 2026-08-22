@@ -48,6 +48,10 @@ import type {
   GitUnpushedCommitStack
 } from '../shared/gitUnpushedCommits'
 import type {
+  RendererChatTranscriptMutationRequest,
+  RendererChatTranscriptMutationResult
+} from '../shared/rendererChatTranscriptMutation'
+import type {
   GitCommitGroupPullRequestResult,
   GitPullRequestLifecycleAction,
   GitPullRequestLifecycleResult,
@@ -2468,6 +2472,10 @@ const api = {
   humanCollaborationCollaboratorReconnect: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
   saveChat: (chat: ChatRecord) => serializedChatPersistence.save(chat),
+  mutateChatTranscript: (
+    request: RendererChatTranscriptMutationRequest
+  ): Promise<RendererChatTranscriptMutationResult> =>
+    ipcRenderer.invoke('mutate-chat-transcript', request),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
     protectedChatIds?: string[]

@@ -14,13 +14,14 @@ export interface RawLogPresentationSnapshot {
 
 export interface RawLogPresentationQueueOptions {
   present: (snapshot: RawLogPresentationSnapshot) => void
+  resolve: (chatId: string) => RawLogEntry[]
   schedule: (callback: () => void, delayMs: number) => unknown
   cancel: (handle: unknown) => void
   delayMs?: number
 }
 
 export class RawLogPresentationQueue {
-  private pending: RawLogPresentationSnapshot | null = null
+  private pendingChatId: string | null = null
   private scheduled = false
   private scheduledHandle: unknown
   private readonly delayMs: number
@@ -30,8 +31,8 @@ export class RawLogPresentationQueue {
     this.delayMs = Math.max(0, Number.isFinite(requestedDelay) ? requestedDelay : 0)
   }
 
-  enqueue(snapshot: RawLogPresentationSnapshot): void {
-    this.pending = snapshot
+  enqueue(chatId: string): void {
+    this.pendingChatId = chatId
     if (this.scheduled) return
 
     this.scheduled = true
@@ -50,11 +51,11 @@ export class RawLogPresentationQueue {
 
   cancelPending(): void {
     this.cancelScheduled()
-    this.pending = null
+    this.pendingChatId = null
   }
 
   hasPending(): boolean {
-    return this.pending !== null
+    return this.pendingChatId !== null
   }
 
   private cancelScheduled(): void {
@@ -65,8 +66,8 @@ export class RawLogPresentationQueue {
   }
 
   private drain(): void {
-    const pending = this.pending
-    this.pending = null
-    if (pending) this.options.present(pending)
+    const chatId = this.pendingChatId
+    this.pendingChatId = null
+    if (chatId) this.options.present({ chatId, logs: this.options.resolve(chatId) })
   }
 }

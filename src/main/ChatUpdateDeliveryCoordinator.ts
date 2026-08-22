@@ -401,6 +401,68 @@ export class ChatUpdateDeliveryCoordinator {
     this.pruneTarget(target.id)
   }
 
+  /**
+   * Advance an idle target's acknowledged baseline after that renderer authored
+   * and accepted a compact transcript mutation through invoke/reply. No
+   * chat-updated payload is needed; a busy or mismatched lane returns false so
+   * the caller can enqueue the ordinary recovery delivery instead.
+   */
+  adoptRendererMutation(
+    targetId: number,
+    chat: ChatRecord,
+    basePersistenceRevision: number
+  ): boolean {
+    const states = this.statesByTarget.get(targetId)
+    const state = states?.get(chat.appChatId)
+    // No transport state means the next main-authored update will seed one
+    // snapshot. The renderer already owns this mutation, so there is no echo.
+    if (!state) return true
+    if (
+      state.inFlight ||
+      state.pending ||
+      !state.acknowledged ||
+      !state.baselineChat ||
+      state.baselineRevision !== basePersistenceRevision ||
+      !retainedBaselineMatchesAcknowledged(
+        state.acknowledged,
+        state.baselineChat,
+        state.baselineRevision
+      )
+    ) {
+      return false
+    }
+
+    const contentSub = computeChatSubRevisions(chat)
+    const producer = chatUpdateProducerEnvelopeFor(chat)
+    const persistenceRevision = producer?.state.persistenceRevision ?? chat.persistenceRevision
+    state.baselineChat = chat
+    state.baselineRevision =
+      Number.isSafeInteger(persistenceRevision) && (persistenceRevision ?? -1) >= 0
+        ? persistenceRevision
+        : undefined
+    state.acknowledged = {
+      ...state.acknowledged,
+      recordHash: contentSub.recordHash,
+      ensembleRevision: contentSub.ensembleRevision,
+      runsRevision: contentSub.runsRevision,
+      retainedBytes: producer?.state.retainedBytes ?? estimateChatRecordBytes(chat),
+      ...(producer?.state.transcriptHash
+        ? { transcriptHash: producer.state.transcriptHash }
+        : {})
+    }
+    if (state.lastAccepted) {
+      state.lastAccepted = {
+        ...state.lastAccepted,
+        recordHash: contentSub.recordHash,
+        ...(producer?.state.transcriptHash
+          ? { transcriptHash: producer.state.transcriptHash }
+          : {})
+      }
+    }
+    state.lastTouchedAt = this.now()
+    return true
+  }
+
   acknowledge(targetId: number, ack: ChatUpdateAck): boolean {
     if (ack.phase === 'rendered') return this.acknowledgeRendered(targetId, ack)
     const indexed = this.deliveryIndex.get(ack.deliveryId)

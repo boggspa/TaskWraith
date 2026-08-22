@@ -19,16 +19,23 @@ function harness() {
     return callbacks.length
   })
   const cancel = vi.fn()
-  const queue = new RawLogPresentationQueue({ present, schedule, cancel })
-  return { callbacks, cancel, present, queue, schedule }
+  const latestByChat = new Map<string, RawLogEntry[]>()
+  const queue = new RawLogPresentationQueue({
+    present,
+    resolve: (chatId) => latestByChat.get(chatId) || [],
+    schedule,
+    cancel
+  })
+  return { callbacks, cancel, latestByChat, present, queue, schedule }
 }
 
 describe('RawLogPresentationQueue', () => {
   it('folds a provider-event burst into one latest-state presentation', () => {
-    const { callbacks, present, queue, schedule } = harness()
+    const { callbacks, latestByChat, present, queue, schedule } = harness()
 
     for (let index = 0; index < 1_000; index += 1) {
-      queue.enqueue({ chatId: 'chat-a', logs: logs(String(index)) })
+      latestByChat.set('chat-a', logs(String(index)))
+      queue.enqueue('chat-a')
     }
 
     expect(schedule).toHaveBeenCalledTimes(1)
@@ -42,11 +49,13 @@ describe('RawLogPresentationQueue', () => {
   })
 
   it('schedules a fresh presentation after the prior window drains', () => {
-    const { callbacks, present, queue, schedule } = harness()
-    queue.enqueue({ chatId: 'chat-a', logs: logs('first') })
+    const { callbacks, latestByChat, present, queue, schedule } = harness()
+    latestByChat.set('chat-a', logs('first'))
+    queue.enqueue('chat-a')
     callbacks[0]()
 
-    queue.enqueue({ chatId: 'chat-a', logs: logs('second') })
+    latestByChat.set('chat-a', logs('second'))
+    queue.enqueue('chat-a')
     expect(schedule).toHaveBeenCalledTimes(2)
     callbacks[1]()
 
@@ -57,9 +66,10 @@ describe('RawLogPresentationQueue', () => {
   })
 
   it('can flush interaction-driven state immediately and cancel the timer', () => {
-    const { cancel, present, queue } = harness()
+    const { cancel, latestByChat, present, queue } = harness()
     const snapshot = { chatId: 'chat-a', logs: logs('now') }
-    queue.enqueue(snapshot)
+    latestByChat.set('chat-a', snapshot.logs)
+    queue.enqueue('chat-a')
 
     queue.flushNow()
 
@@ -69,8 +79,9 @@ describe('RawLogPresentationQueue', () => {
   })
 
   it('drops a stale pending projection when selection or clearing takes ownership', () => {
-    const { callbacks, cancel, present, queue } = harness()
-    queue.enqueue({ chatId: 'chat-a', logs: logs('stale') })
+    const { callbacks, cancel, latestByChat, present, queue } = harness()
+    latestByChat.set('chat-a', logs('stale'))
+    queue.enqueue('chat-a')
 
     queue.cancelPending()
     callbacks[0]()

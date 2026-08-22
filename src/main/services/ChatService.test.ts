@@ -356,6 +356,24 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
   })
 
+  it('forwards an exact authored transcript mutation when sanitization preserves messages', () => {
+    const { deps, store } = makeDeps()
+    const service = new ChatService(deps)
+    const record = makeChat({ title: ' Chat ' })
+    const authoredTranscript = {
+      operations: [],
+      transcriptOps: [],
+      changedMessageCount: 0
+    }
+
+    service.saveChat(record, { authoredTranscript })
+
+    expect(store.saveChat).toHaveBeenCalledWith(
+      makeChat({ title: 'Chat' }),
+      { authoredTranscript }
+    )
+  })
+
   it('preserves imported transcript provenance across renderer whole-record saves', () => {
     const importedMetadata = {
       schemaVersion: 1 as const,

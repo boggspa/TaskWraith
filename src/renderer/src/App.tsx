@@ -2,6 +2,8 @@ import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef,
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
+import { RendererChatTranscriptPersistence } from './lib/RendererChatTranscriptPersistence'
+import { liveRunDiffStore } from './lib/liveRunDiffStore'
 import {
   getCachedRendererUsageRecords,
   invalidateRendererUsageRecords,
@@ -21,7 +23,6 @@ import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryMessages'
-import { rawLogPayloadForStringify } from './lib/rawLogPayload'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import {
@@ -57,7 +58,11 @@ import {
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
-import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
+import {
+  appliedChatUpdateBaseline,
+  applyChatUpdateDelivery,
+  type ChatUpdateBaseline
+} from '../../shared/chatUpdateTransport'
 import { buildChatUpdateAck } from './lib/chatUpdateAck'
 import {
   buildChatUpdateRenderedAck,
@@ -169,7 +174,6 @@ import type {
   RunQueueJobStatus,
   RunQueueRequestSnapshot,
   CapabilityLedgerSnapshot,
-  RunEventInput,
   RunEventRecord,
   RunRecoveryRecord,
   ProductOperationsStatus,
@@ -639,7 +643,14 @@ import {
   type ContextMeterModel
 } from './lib/contextMeter'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
-import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
+import {
+  deferredRawLogEntry,
+  materializeRawLogEntries,
+  rawLogEntryContent,
+  rawLogFromRunEvent,
+  type RawLogEntry
+} from './lib/rawLogEntry'
+import { RawLogRingBuffer } from './lib/rawLogRingBuffer'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
 import {
   createRunQueueLeaseClaims,
@@ -2233,6 +2244,8 @@ function App(): React.JSX.Element {
   // (Builder still accepts the range param so the lib stays flexible
   // for future surfaces; this is the single canonical caller.)
   const saveChatTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const rendererTranscriptPersistenceRef =
+    useRef<RendererChatTranscriptPersistence | null>(null)
   const lastUsageWindowsByProviderRef = useRef<Record<ProviderId, UsageWindowAggregate[]>>({
     gemini: [],
     codex: [],
@@ -3802,7 +3815,10 @@ function App(): React.JSX.Element {
   const chatFlushRafRef = useRef<number | null>(null)
   const chatFlushDeadlineRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
-  const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
+  const rawLogsByChatIdRef = useRef<Map<string, RawLogRingBuffer>>(new Map())
+  const rawLogPresentationVisibleRef = useRef(false)
+  rawLogPresentationVisibleRef.current =
+    rightTab === 'raw' || rightTab === 'delegation' || showGeminiTerminal
   const rawLogPresentationQueueRef = useRef<RawLogPresentationQueue | null>(null)
   if (!rawLogPresentationQueueRef.current) {
     rawLogPresentationQueueRef.current = new RawLogPresentationQueue({
@@ -3811,9 +3827,10 @@ function App(): React.JSX.Element {
         // immediately. A delayed provider burst may publish only while its
         // exact ref snapshot still belongs to the focused chat.
         if (currentChatIdRef.current !== chatId) return
-        if (rawLogsByChatIdRef.current.get(chatId) !== logs) return
+        if (!rawLogPresentationVisibleRef.current) return
         setRawLogs(logs)
       },
+      resolve: (chatId) => rawLogSnapshotForChat(chatId, true),
       schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
       cancel: (handle) => window.clearTimeout(handle as number)
     })
@@ -5397,16 +5414,24 @@ function App(): React.JSX.Element {
   // sendConfirmationTimeoutRef + isSendConfirming state, so each pane runs
   // its own send-confirm animation. It was never called from App-level code.
 
+  function rawLogSnapshotForChat(chatId: string, materialize = false): RawLogEntry[] {
+    const logs = rawLogsByChatIdRef.current.get(chatId)?.snapshot() || []
+    return materialize ? materializeRawLogEntries(logs) : logs
+  }
+
   const setThreadRawLogs = (chatId: string | null | undefined, logs: RawLogEntry[]) => {
-    const nextLogs = logs.slice(-1000)
     if (!chatId) {
-      setRawLogs(nextLogs)
+      setRawLogs(logs.slice(-1000))
       return
     }
-    rawLogsByChatIdRef.current.set(chatId, nextLogs)
+    const buffer = rawLogsByChatIdRef.current.get(chatId) || new RawLogRingBuffer()
+    buffer.replace(logs)
+    rawLogsByChatIdRef.current.set(chatId, buffer)
     if (currentChatIdRef.current === chatId) {
       rawLogPresentationQueueRef.current?.cancelPending()
-      setRawLogs(nextLogs)
+      setRawLogs(
+        rawLogSnapshotForChat(chatId, rawLogPresentationVisibleRef.current)
+      )
     }
   }
 
@@ -5415,23 +5440,22 @@ function App(): React.JSX.Element {
       setRawLogs((prev) => [...prev, log].slice(-1000))
       return
     }
-    const previous = rawLogsByChatIdRef.current.get(chatId) || []
-    const nextLogs = [...previous, log].slice(-1000)
+    const buffer = rawLogsByChatIdRef.current.get(chatId) || new RawLogRingBuffer()
+    buffer.append(log)
     // GeminiStreamAdapter emits one raw_event for every provider JSONL line.
     // Keep that audit buffer exact here, but do not call setThreadRawLogs:
     // its immediate setRawLogs used to re-render the entire App once per line
     // and could starve the separately-coalesced transcript until a chat switch.
-    rawLogsByChatIdRef.current.set(chatId, nextLogs)
-    if (currentChatIdRef.current === chatId) {
-      rawLogPresentationQueueRef.current?.enqueue({ chatId, logs: nextLogs })
+    rawLogsByChatIdRef.current.set(chatId, buffer)
+    if (
+      currentChatIdRef.current === chatId &&
+      rawLogPresentationVisibleRef.current
+    ) {
+      rawLogPresentationQueueRef.current?.enqueue(chatId)
     }
   }
   const appendThreadRawLogRef = useRef(appendThreadRawLog)
   appendThreadRawLogRef.current = appendThreadRawLog
-
-  const appendDurableRunEvent = (_event: RunEventInput) => {
-    // Durable event writes are main-owned; renderer keeps local raw logs only.
-  }
 
   const hydrateThreadRawLogsFromEvents = (chatId: string) => {
     if (
@@ -5797,6 +5821,79 @@ function App(): React.JSX.Element {
     [flushCoalescedChats]
   )
 
+  if (!rendererTranscriptPersistenceRef.current) {
+    const publishPersistedRecord = (chatId: string, record: ChatRecord): void => {
+      chatByIdRef.current.set(chatId, record)
+      if (activeRunChatIdRef.current === chatId) {
+        activeRunChatSnapshotRef.current = record
+      }
+      scheduleCoalescedChatFlush(chatId)
+    }
+    rendererTranscriptPersistenceRef.current = new RendererChatTranscriptPersistence({
+      mutate: (request) => window.api.mutateChatTranscript(request),
+      loadCanonical: (chatId) => window.api.getChat(chatId),
+      onAccepted: (chatId, baseRevision, _optimisticTarget, result) => {
+        const current = chatByIdRef.current.get(chatId)
+        const currentRevision =
+          Number.isSafeInteger(current?.persistenceRevision) &&
+          (current?.persistenceRevision ?? -1) >= 0
+            ? current!.persistenceRevision!
+            : 0
+        if (!current || currentRevision !== baseRevision) return
+        const persistedRecord = {
+          ...current,
+          persistenceRevision: result.revision,
+          updatedAt: result.updatedAt
+        }
+        const transportBaseline = chatUpdateBaselineByIdRef.current.get(chatId)
+        if (
+          transportBaseline &&
+          Number(transportBaseline.chat.persistenceRevision || 0) === baseRevision
+        ) {
+          const advanced = appliedChatUpdateBaseline(
+            transportBaseline.revision,
+            persistedRecord,
+            result.transcriptHash
+          )
+          if (!result.recordHash || advanced.recordHash === result.recordHash) {
+            chatUpdateBaselineByIdRef.current.set(chatId, advanced)
+          } else {
+            chatUpdateBaselineByIdRef.current.delete(chatId)
+          }
+        }
+        publishPersistedRecord(chatId, persistedRecord)
+      },
+      onRecovered: (chatId, _optimisticTarget, rebasedTarget) => {
+        chatUpdateBaselineByIdRef.current.delete(chatId)
+        const current = chatByIdRef.current.get(chatId)
+        publishPersistedRecord(
+          chatId,
+          current
+            ? {
+                ...current,
+                messages: rebasedTarget.messages,
+                persistenceRevision: rebasedTarget.persistenceRevision,
+                updatedAt: rebasedTarget.updatedAt
+              }
+            : rebasedTarget
+        )
+      },
+      onUnrecoverable: (chatId, canonical) => {
+        chatUpdateBaselineByIdRef.current.delete(chatId)
+        if (canonical) {
+          publishPersistedRecord(chatId, canonical)
+          return
+        }
+        const latest = chatByIdRef.current.get(chatId)
+        if (!latest) return
+        void window.api
+          .saveChat(latest)
+          .then((saved) => publishPersistedRecord(chatId, saved))
+          .catch(() => {})
+      }
+    })
+  }
+
   // `accepted` ACKs free main's one-slot transport queue immediately. This
   // later receipt is deliberately observational: React may be throttled or a
   // window may be hidden, but neither condition may stall a transcript lane.
@@ -5833,7 +5930,7 @@ function App(): React.JSX.Element {
     (
       chatId: string | null | undefined,
       updater: (chat: ChatRecord) => ChatRecord,
-      options?: { coalesce?: boolean }
+      options?: { coalesce?: boolean; persistence?: 'transcript-tail' }
     ): ChatRecord | null => {
       if (!chatId) return null
       if (!options?.coalesce && pendingMainChatUpdatesRef.current.has(chatId)) {
@@ -5905,12 +6002,27 @@ function App(): React.JSX.Element {
         pendingChatFlushRef.current.add(chatId)
         flushCoalescedChatsNow()
       }
+      const persistTranscriptTail =
+        options?.persistence === 'transcript-tail' &&
+        rendererTranscriptPersistenceRef.current!.queue(base, updated)
+      if (!persistTranscriptTail) {
+        rendererTranscriptPersistenceRef.current!.discardPending(chatId)
+      }
       const existingTimer = saveChatTimersRef.current.get(chatId)
       if (existingTimer) clearTimeout(existingTimer)
       const timer = setTimeout(() => {
         saveChatTimersRef.current.delete(chatId)
-        const latest = chatByIdRef.current.get(chatId) || updated
-        window.api.saveChat(latest).catch(() => {})
+        if (persistTranscriptTail) {
+          void rendererTranscriptPersistenceRef.current!.flush(chatId)
+          return
+        }
+        void rendererTranscriptPersistenceRef.current!
+          .whenIdle(chatId)
+          .then(() => {
+            const latest = chatByIdRef.current.get(chatId) || updated
+            return window.api.saveChat(latest)
+          })
+          .catch(() => {})
       }, 200)
       saveChatTimersRef.current.set(chatId, timer)
       return updated
@@ -6639,7 +6751,7 @@ function App(): React.JSX.Element {
             setRunCompleteNotice(
               deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
             )
-            setRawLogs(rawLogsByChatIdRef.current.get(resolved.appChatId) || [])
+            setRawLogs(rawLogSnapshotForChat(resolved.appChatId))
             syncThinkingForChat(resolved)
           })
         })
@@ -7059,42 +7171,14 @@ function App(): React.JSX.Element {
     }
   }
 
-  const upsertRunDiffFromTool = (activity: ToolActivity, workspacePath?: string | null) => {
+  const upsertRunDiffFromTool = (
+    chatId: string,
+    activity: ToolActivity,
+    workspacePath?: string | null
+  ) => {
     const change = summarizeWriteToolForDiff(activity, workspacePath)
     if (!change) return
-
-    setRunDiff((prev) => {
-      const next = [...(prev || [])]
-      const existingIndex = next.findIndex((item) => item.path === change.path)
-      if (existingIndex >= 0) {
-        const existing = next[existingIndex]
-        const mergedStatus =
-          existing.status === 'created'
-            ? 'created'
-            : change.status === 'created'
-              ? 'created'
-              : change.status === 'deleted'
-                ? 'deleted'
-                : 'modified'
-
-        next[existingIndex] = {
-          ...existing,
-          status: mergedStatus,
-          additions: (existing.additions || 0) + change.additions,
-          deletions: (existing.deletions || 0) + change.deletions,
-          previewKind: existing.previewKind || 'none'
-        }
-      } else {
-        next.push({
-          path: change.path,
-          status: change.status,
-          additions: change.additions,
-          deletions: change.deletions,
-          previewKind: 'none'
-        })
-      }
-      return next
-    })
+    liveRunDiffStore.upsert(chatId, { ...change, previewKind: 'none' })
   }
 
   const loadInitialDataRef = useRef<(() => Promise<void>) | null>(null)
@@ -7410,7 +7494,7 @@ function App(): React.JSX.Element {
         }
         void refreshUsageSummary(getUsageWorkspaceIdForChat(popoutChat), provider)
         void refreshProviderMetadata(provider, popoutChat.workspacePath)
-        setRawLogs(rawLogsByChatIdRef.current.get(popoutChat.appChatId) || [])
+        setRawLogs(rawLogSnapshotForChat(popoutChat.appChatId))
         hydrateThreadRawLogsFromEvents(popoutChat.appChatId)
         syncThinkingForChat(popoutChat)
         if (popoutHandoff?.scrollState) {
@@ -8611,7 +8695,7 @@ function App(): React.JSX.Element {
       void refreshProviderMetadata(provider, ws.path)
       setRunDiff(null)
       setRunCompleteNotice(null)
-      setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(chatWithLedger.appChatId))
       hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
       setSessionTrust(false)
       syncThinkingForChat(chatWithLedger)
@@ -8674,7 +8758,7 @@ function App(): React.JSX.Element {
     void refreshProviderMetadata(selectedProvider, ws.path)
     setRunDiff(null)
     setRunCompleteNotice(null)
-    setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
+    setRawLogs(rawLogSnapshotForChat(selectedChat.appChatId))
     scheduleAfterPaint(() => {
       hydrateThreadRawLogsFromEvents(selectedChat.appChatId)
     })
@@ -8809,7 +8893,7 @@ function App(): React.JSX.Element {
     setDiff(null)
     setRunDiff(null)
     setRunCompleteNotice(null)
-    setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
+    setRawLogs(rawLogSnapshotForChat(chatWithLedger.appChatId))
     hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
     setSessionTrust(false)
     syncThinkingForChat(chatWithLedger)
@@ -8903,7 +8987,7 @@ function App(): React.JSX.Element {
         setDiff(null)
         setRunDiff(null)
         setRunCompleteNotice(null)
-        setRawLogs(rawLogsByChatIdRef.current.get(chatId) || [])
+        setRawLogs(rawLogSnapshotForChat(chatId))
         hydrateThreadRawLogsFromEvents(chatId)
         setSessionTrust(false)
         syncThinkingForChat(chatWithLedger)
@@ -10175,7 +10259,7 @@ function App(): React.JSX.Element {
       }
       setRunDiff(null)
       setRunCompleteNotice(null)
-      setRawLogs(rawLogsByChatIdRef.current.get(newChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(newChat.appChatId))
       clearImagePermissions()
       syncThinkingForChat(newChat)
     })
@@ -10227,7 +10311,7 @@ function App(): React.JSX.Element {
       setCurrentChat(normalizedChat)
       applyChatComposerSelection(normalizedChat, provider)
       setChats((prev) => mergeChatRecord(prev, normalizedChat))
-      setRawLogs(rawLogsByChatIdRef.current.get(normalizedChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(normalizedChat.appChatId))
       clearImagePermissions()
       setCodexThreads([])
       syncThinkingForChat(normalizedChat)
@@ -10492,7 +10576,7 @@ function App(): React.JSX.Element {
       chatByIdRef.current.set(subThread.appChatId, subThread)
       setCurrentChat(subThread)
       applyChatComposerSelection(subThread, provider)
-      setRawLogs(rawLogsByChatIdRef.current.get(subThread.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(subThread.appChatId))
       hydrateThreadRawLogsFromEvents(subThread.appChatId)
     }
     // Pre-fill the composer for the new sub-thread (per-chat draft).
@@ -11038,7 +11122,7 @@ function App(): React.JSX.Element {
       setRunCompleteNotice(
         deriveChatRunCompleteNotice(selectedChat, runningChatIds.has(selectedChat.appChatId))
       )
-      setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(selectedChat.appChatId))
       syncThinkingForChat(selectedChat)
     })
     scheduleAfterPaint(() => {
@@ -11425,6 +11509,14 @@ function App(): React.JSX.Element {
   // present in the DOM and (b) re-bind cleanly when the user switches
   // tabs and back.
   useEffect(() => {
+    if (rightTab !== 'raw' && rightTab !== 'delegation' && !showGeminiTerminal) return
+    const chatId = currentChatIdRef.current
+    if (!chatId) return
+    rawLogPresentationQueueRef.current?.cancelPending()
+    setRawLogs(rawLogSnapshotForChat(chatId, true))
+  }, [rightTab, showGeminiTerminal, currentChat?.appChatId])
+
+  useEffect(() => {
     if (rightTab !== 'raw') return
     const scroller = rawLogsEndRef.current?.closest('.raw-events-body') as HTMLElement | null
     if (!scroller) return
@@ -11558,7 +11650,10 @@ function App(): React.JSX.Element {
 
     if (typeof geminiSessionApi.onGeminiSessionData === 'function') {
       geminiSessionApi.onGeminiSessionData((data: string) => {
-        setRawLogs((prev) => [...prev, { type: 'stdout', content: redactLog(String(data)) }])
+        appendThreadRawLogRef.current(currentChatIdRef.current, {
+          type: 'stdout',
+          content: redactLog(String(data))
+        })
       })
     }
 
@@ -11567,13 +11662,10 @@ function App(): React.JSX.Element {
         persistentSessionActiveRef.current = false
         setPersistentSessionStatus('exited')
         setIsPersistentSessionEnabled(false)
-        setRawLogs((prev) => [
-          ...prev,
-          {
-            type: 'info',
-            content: `Persistent Gemini session exited with code ${typeof code === 'number' ? code : 'unknown'}.`
-          }
-        ])
+        appendThreadRawLogRef.current(currentChatIdRef.current, {
+          type: 'info',
+          content: `Persistent Gemini session exited with code ${typeof code === 'number' ? code : 'unknown'}.`
+        })
       })
     }
 
@@ -12013,25 +12105,6 @@ function App(): React.JSX.Element {
         exitCode === 0 ? 'Provider run completed.' : `Provider run exited with code ${exitCode}.`,
         exitCode === 0 ? undefined : `Run exited with code ${exitCode}`
       )
-      appendDurableRunEvent({
-        runId: completedRunId,
-        chatId: completedRunChatId,
-        workspaceId: isGlobalCompletedRun
-          ? undefined
-          : chatByIdRef.current.get(completedRunChatId)?.workspaceId,
-        workspacePath: completedWorkspacePath || context.workspacePath || undefined,
-        provider,
-        kind: 'lifecycle',
-        phase: 'control',
-        source: 'renderer',
-        summary: `Renderer observed provider exit: ${exitCode}`,
-        payload: {
-          exitCode,
-          hasToolCalls,
-          diffUnavailable: completedRunDiffUnavailable,
-          scheduledTaskId: completedScheduledTaskId
-        }
-      })
       if (!suppressSteerSummary) {
         handlers.triggerFxBurst('run-complete')
       }
@@ -12126,7 +12199,7 @@ function App(): React.JSX.Element {
             payload && typeof payload === 'object'
               ? (payload as RunRouteEventPayload).error
               : undefined
-          const stderrLogs = rawLogsByChatIdRef.current.get(completedRunChatId) || []
+          const stderrLogs = rawLogSnapshotForChat(completedRunChatId, true)
           const roundParticipant = updated.ensemble?.activeRound?.participants?.find(
             (entry) => entry.runId === completedRunId
           )
@@ -12304,21 +12377,6 @@ function App(): React.JSX.Element {
                       .flatMap((message) => message.toolActivities ?? [])
                   )
                 )
-                appendDurableRunEvent({
-                  runId: completedRunId,
-                  chatId: completedRunChatId,
-                  workspaceId: chatByIdRef.current.get(completedRunChatId)?.workspaceId,
-                  workspacePath: completedWorkspacePath,
-                  provider,
-                  kind: 'diff',
-                  phase: 'artifact',
-                  source: 'renderer',
-                  summary: `Run diff: ${runDiffResult.createdFiles.length} created, ${runDiffResult.modifiedFiles.length} modified, ${runDiffResult.deletedFiles.length} deleted`,
-                  payload: {
-                    ...runDiffResult,
-                    workspaceChangeSetId: runDiffResult.changeSetId
-                  }
-                })
                 updateChatById(completedRunChatId, (source) => {
                   const runs = [...(source.runs || [])]
                   const targetIndex = runs.findIndex((run) => run.runId === completedRunId)
@@ -12336,6 +12394,7 @@ function App(): React.JSX.Element {
                   ...runDiffResult.deletedFiles
                 ]
                 if (isVisibleCompletedRun()) {
+                  liveRunDiffStore.clear(completedRunChatId)
                   setRunDiff(handlers.getRunFileDiffSummaries(allRunChanges))
                   setDiffView('this_run')
                 }
@@ -14680,7 +14739,6 @@ function App(): React.JSX.Element {
         composerMetadata.workflowMode || composedPayload.workflowMode || request.workflowMode
       const resumeSessionId = composedPayload.providerSessionId || undefined
       const geminiResumeSkippedReason = composerMetadata.geminiResumeSkippedReason
-      const contextTurnsForRun = composerMetadata.contextTurnsApplied
       const contextualPrompt = composedPayload.prompt
       const usagePromptText =
         discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
@@ -14696,6 +14754,7 @@ function App(): React.JSX.Element {
       }
       const selectedChatIdAtRunStart = currentChatIdRef.current || currentChat?.appChatId || null
       const isRunVisibleAtStart = selectedChatIdAtRunStart === chatToUpdate.appChatId
+      liveRunDiffStore.clear(chatToUpdate.appChatId)
       if (isRunVisibleAtStart) {
         setRunCompleteNotice(null)
         setRunDiff(null)
@@ -14851,32 +14910,6 @@ function App(): React.JSX.Element {
         return prev.map((chat) => (chat.appChatId === runChatId ? chatToUpdate : chat))
       })
       window.api.saveChat(chatToUpdate)
-      appendDurableRunEvent({
-        runId: currentRunId,
-        chatId: runChatId,
-        workspaceId: isGlobalRun ? undefined : chatToUpdate.workspaceId,
-        workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-        provider: effectiveRunProvider,
-        kind: 'lifecycle',
-        phase: 'control',
-        source: 'renderer',
-        summary: `Run requested for ${getProviderLabel(effectiveRunProvider)}`,
-        payload: {
-          promptMessageId,
-          requestedModel: modelToPass,
-          approvalMode: modeToPass,
-          workflowMode: workflowModeToPass || null,
-          contextTurns: contextTurnsForRun,
-          workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-          effectiveWorkspacePath: runDiffWorkspacePath,
-          diffUnavailable: runDiffUnavailable,
-          scheduledTaskId: request.scheduledTaskId || null,
-          runtimeProfileId: request.runtimeProfileId || null,
-          handoffSourceRunId: request.handoffSourceRunId || null,
-          providerReroute: composedPayload.providerReroute || null
-        }
-      })
-
       const promptLogContent =
         discordContextReads.length > 0
           ? `User prompt (pre-composition): ${displayFinalPrompt}\n\n[${discordContextReads.length} Discord context snapshot(s) supplied to provider; run-only Discord message content omitted from Inspector log.]`
@@ -14935,48 +14968,6 @@ function App(): React.JSX.Element {
 
       const isVisibleRunChat = () => currentChatIdRef.current === runChatId
       const runContext = {} as ActiveRunContext
-      const durableKindForAdapterEvent = (event: NormalizedEvent): RunEventInput['kind'] => {
-        if (event.type === 'run_item_event') return 'timeline'
-        if (event.type === 'tool_event') return 'tool'
-        if (event.type === 'assistant_message_complete') return 'final_message'
-        if (event.type === 'run_started' || event.type === 'run_finished') return 'lifecycle'
-        return 'timeline'
-      }
-      const durableSummaryForAdapterEvent = (event: NormalizedEvent): string => {
-        if (event.type === 'run_item_event') return `Run item event: ${event.event.kind}`
-        if (event.type === 'tool_event')
-          return `Tool ${event.isResult ? 'result' : 'event'}: ${event.name || event.data?.tool_name || event.data?.toolName || 'unknown'}`
-        if (event.type === 'assistant_message_complete') return 'Assistant final message'
-        if (event.type === 'assistant_message_delta') return 'Assistant message delta'
-        if (event.type === 'assistant_media_refs')
-          return `Assistant media refs: ${event.mediaRefs.length}`
-        if (event.type === 'run_started')
-          return `Provider run started${event.model ? `: ${event.model}` : ''}`
-        if (event.type === 'run_finished')
-          return `Provider run finished: ${event.status || 'unknown'}`
-        if (event.type === 'raw_event')
-          return `Raw event${event.data?.type ? `: ${event.data.type}` : ''}`
-        if (event.type === 'malformed_json') return 'Malformed provider JSON'
-        if (event.type === 'error') return event.message || 'Provider error'
-        return event.type
-      }
-      const durablePayloadForAdapterEvent = (event: NormalizedEvent): unknown => {
-        if (event.type === 'run_item_event') {
-          return { runItemEvent: event.event }
-        }
-        if (event.type === 'raw_event') {
-          return {
-            type: event.data?.type,
-            preview: redactLog(JSON.stringify(event.data, null, 2))
-          }
-        }
-        if (event.type === 'malformed_json') {
-          return {
-            text: redactLog(event.text)
-          }
-        }
-        return event
-      }
       const providerModelMetadataForAssistantDelta = (
         updated: ChatRecord,
         model?: string,
@@ -14996,19 +14987,6 @@ function App(): React.JSX.Element {
         }
       }
       const adapter = new GeminiStreamAdapter((event: NormalizedEvent) => {
-        appendDurableRunEvent({
-          runId: currentRunId,
-          chatId: runChatId,
-          workspaceId: isGlobalRun ? undefined : chatToUpdate.workspaceId,
-          workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-          provider: effectiveRunProvider,
-          kind: durableKindForAdapterEvent(event),
-          phase: 'normalized',
-          source: 'renderer',
-          summary: durableSummaryForAdapterEvent(event),
-          payload: durablePayloadForAdapterEvent(event)
-        })
-
         if (event.type === 'run_item_event') {
           const itemEvent = event.event
           runStreamMetricsByRunIdRef.current.set(
@@ -15045,7 +15023,7 @@ function App(): React.JSX.Element {
                 projection.input.incoming.length
               )
               return updated
-            }, { coalesce: true })
+            }, { coalesce: true, persistence: 'transcript-tail' })
           }
           const toolProjections = projectRunItemToolEvents(itemEvent, effectiveRunProvider).filter(
             (projection) => projection.chatId === runChatId
@@ -15082,7 +15060,11 @@ function App(): React.JSX.Element {
                   reduction.latestToolActivity &&
                   reduction.isResult
                 ) {
-                  upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+                  upsertRunDiffFromTool(
+                    runChatId,
+                    reduction.latestToolActivity,
+                    runContext.workspacePath
+                  )
                 }
               }
               updated.messages = nextMessages
@@ -15093,11 +15075,10 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'raw_event') {
-          // Truncate pathological string fields (100KB+ cumulative thinking
-          // re-sends) BEFORE the pretty stringify + redact pass — the raw
-          // panel keeps head+tail with an elision marker, and the per-line
-          // cost stops growing with accumulated trace length.
-          const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
+          // Keep the parsed payload unformatted in the bounded ring. Recursive
+          // truncation, pretty-printing and redaction happen only when a
+          // visible Raw Events/terminal consumer asks for this entry.
+          const deferredLog = deferredRawLogEntry('stdout', event.data)
           // This lane is heuristic text sniffing over EVERY raw event: any
           // tool output that merely contained "access denied" / "needs
           // access to" popped the attachment modal — Full Access runs
@@ -15136,7 +15117,10 @@ function App(): React.JSX.Element {
               : typeof rawEventRecord?.code === 'number'
                 ? rawEventRecord.code
                 : undefined
-          const exitMatch = isExitRawEvent ? redacted.match(/Process exited with code\s+(\d+)/i) : null
+          const exitMatch =
+            isExitRawEvent && rawExitCode === undefined
+              ? rawLogEntryContent(deferredLog).match(/Process exited with code\s+(\d+)/i)
+              : null
           const exitCode =
             rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
           if (isExitRawEvent && Number.isFinite(exitCode)) {
@@ -15169,13 +15153,14 @@ function App(): React.JSX.Element {
               'progress',
               'tool_progress'
             ].includes(String(event.data.type || ''))
-          appendThreadRawLog(runChatId, { type: isTool ? 'tool' : 'stdout', content: redacted })
+          deferredLog.type = isTool ? 'tool' : 'stdout'
+          appendThreadRawLog(runChatId, deferredLog)
           return
         }
         if (event.type === 'malformed_json') {
           appendThreadRawLog(runChatId, {
             type: 'stdout',
-            content: redactLog(rawLogPayloadForStringify(event.text) as string)
+            content: redactLog(event.text)
           })
           return
         }
@@ -15697,7 +15682,11 @@ function App(): React.JSX.Element {
               reduction.latestToolActivity &&
               reduction.isResult
             ) {
-              upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+              upsertRunDiffFromTool(
+                runChatId,
+                reduction.latestToolActivity,
+                runContext.workspacePath
+              )
             }
           } else if (event.type === 'workflow_telemetry') {
             // Claude-native Workflow live status. Merge onto the originating
@@ -15777,7 +15766,11 @@ function App(): React.JSX.Element {
           }
 
           return updated
-        }, { coalesce: event.type === 'assistant_message_delta' })
+        }, {
+          coalesce: event.type === 'assistant_message_delta',
+          persistence:
+            event.type === 'assistant_message_delta' ? 'transcript-tail' : undefined
+        })
         if (
           finalizedProviderChangeChat &&
           currentChatIdRef.current === finalizedProviderChangeChatId
@@ -28257,7 +28250,7 @@ function App(): React.JSX.Element {
         setRunCompleteNotice(
           deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
         )
-        setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
+        setRawLogs(rawLogSnapshotForChat(viewerChat.appChatId))
         syncThinkingForChat(viewerChat)
       })
     },
@@ -29123,7 +29116,7 @@ function App(): React.JSX.Element {
     const viewerQueuedRunCount = runQueueJobs.filter(
       (job) => job.chatId === viewerChatId && job.status === 'queued'
     ).length
-    const viewerRawEventCount = rawLogsByChatIdRef.current.get(viewerChatId)?.length ?? 0
+    const viewerRawEventCount = rawLogsByChatIdRef.current.get(viewerChatId)?.size ?? 0
     const viewerShowRunDataViz =
       isAdvancedFxActive &&
       appearance.advancedFx.dataViz &&

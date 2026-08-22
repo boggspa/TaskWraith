@@ -5,7 +5,6 @@ import {
   type ChatPinReason,
   type RetainChatsWithinByteBudgetResult
 } from './chatByteLru'
-import type { RawLogEntry } from './rawLogEntry'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 
 /**
@@ -21,7 +20,7 @@ export class RendererChatRetention {
   readonly transcriptStore: ChatTranscriptStore
 
   private transportBaselines: Map<string, ChatUpdateBaseline> | null = null
-  private rawLogs: Map<string, RawLogEntry[]> | null = null
+  private rawLogs: Pick<Map<string, unknown>, 'delete' | 'clear'> | null = null
 
   constructor(options: { byteLru: ChatByteLru; transcriptStore: ChatTranscriptStore }) {
     this.byteLru = options.byteLru
@@ -32,7 +31,7 @@ export class RendererChatRetention {
     this.transportBaselines = baselines
   }
 
-  attachRawLogs(rawLogs: Map<string, RawLogEntry[]>): void {
+  attachRawLogs(rawLogs: Pick<Map<string, unknown>, 'delete' | 'clear'>): void {
     this.rawLogs = rawLogs
   }
 

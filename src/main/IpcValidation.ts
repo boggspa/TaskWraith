@@ -164,6 +164,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'set-chat-kind': ['object'],
   'rebind-chat-workspace': ['object'],
   'save-chat': ['chatRecord'],
+  'mutate-chat-transcript': ['object'],
   'set-chat-git-workflow': ['object'],
   'delete-chat': ['chatId'],
   'unarchive-chat': ['nonEmptyString'],

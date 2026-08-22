@@ -1,5 +1,6 @@
 import type { RunEventRecord } from '../../../main/store/types'
 import { redactLog } from './ErrorClassifier'
+import { rawLogPayloadForStringify } from './rawLogPayload'
 
 export type RawLogEntry = {
   type: 'stdout' | 'stderr' | 'tool' | 'info'
@@ -10,6 +11,37 @@ export type RawLogEntry = {
   spanId?: string
   toolCallId?: string
   artifactCount?: number
+}
+
+const deferredPayloadByEntry = new WeakMap<RawLogEntry, unknown>()
+
+/** Retain an unformatted provider payload until a visible consumer asks for it. */
+export function deferredRawLogEntry(
+  type: RawLogEntry['type'],
+  payload: unknown
+): RawLogEntry {
+  const entry: RawLogEntry = { type, content: '' }
+  // Bound retained cumulative-thinking fields at ingest. This is the only
+  // recursive wire-cadence work left; stringify and regex redaction stay lazy.
+  deferredPayloadByEntry.set(entry, rawLogPayloadForStringify(payload))
+  return entry
+}
+
+export function rawLogEntryContent(entry: RawLogEntry): string {
+  if (!deferredPayloadByEntry.has(entry)) return entry.content
+  const payload = deferredPayloadByEntry.get(entry)
+  deferredPayloadByEntry.delete(entry)
+  try {
+    entry.content = redactLog(JSON.stringify(payload, null, 2))
+  } catch {
+    entry.content = redactLog(String(payload ?? ''))
+  }
+  return entry.content
+}
+
+export function materializeRawLogEntries(entries: readonly RawLogEntry[]): RawLogEntry[] {
+  for (const entry of entries) rawLogEntryContent(entry)
+  return entries as RawLogEntry[]
 }
 
 export const rawLogFromRunEvent = (event: RunEventRecord): RawLogEntry | null => {

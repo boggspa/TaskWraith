@@ -86,6 +86,10 @@ import {
   HydratedToolActivityDetail,
   ToolActivityDetailRef
 } from '../main/store/types'
+import type {
+  RendererChatTranscriptMutationRequest,
+  RendererChatTranscriptMutationResult
+} from '../shared/rendererChatTranscriptMutation'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
@@ -2648,6 +2652,9 @@ declare global {
         displayName: string
       }>
       saveChat: (chat: ChatRecord) => Promise<ChatRecord>
+      mutateChatTranscript: (
+        request: RendererChatTranscriptMutationRequest
+      ) => Promise<RendererChatTranscriptMutationResult>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {
         protectedChatIds?: string[]

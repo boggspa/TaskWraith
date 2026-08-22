@@ -10760,8 +10760,14 @@ let drainPendingExternalJoinConversion: ((chatId: string) => void) | null = null
 let resolveExternalCollaboratorSeatIds: ((chatId: string) => readonly string[] | null) | null = null
 
 function broadcastChatUpdated(chat: ChatRecord): void {
-  enqueueChatUpdated(mainWindow, chat)
-  broadcastChatPopoutUpdate(chat)
+  broadcastChatUpdatedExcept(chat)
+}
+
+function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number): void {
+  if (mainWindow?.webContents.id !== excludedSenderId) {
+    enqueueChatUpdated(mainWindow, chat)
+  }
+  broadcastChatPopoutUpdateExcept(chat, excludedSenderId)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
   markHumanCollaborationProjectionDirty?.(chat.appChatId)
 }
@@ -10826,10 +10832,17 @@ function sendTrustedRunMediaRefs(
 }
 
 function broadcastChatPopoutUpdate(chat: ChatRecord): void {
+  broadcastChatPopoutUpdateExcept(chat)
+}
+
+function broadcastChatPopoutUpdateExcept(
+  chat: ChatRecord,
+  excludedSenderId?: number
+): void {
   if (!chat?.appChatId || workspacePopoutWindows.size === 0) return
   const key = `chat:${chat.appChatId}`
   const win = workspacePopoutWindows.get(key)
-  if (!win || win.isDestroyed()) return
+  if (!win || win.isDestroyed() || win.webContents.id === excludedSenderId) return
   const owner = workspacePopoutOwners.get(key)
   if (owner?.kind === 'chat' && owner.chatId === chat.appChatId) {
     // Workspace rebind is persisted atomically while the chat is idle. Keep
@@ -53820,6 +53833,13 @@ if (isGeminiMcpBridgeProcess) {
       broadcastThreadUpdate,
       broadcastThreadList,
       broadcastChatUpdated,
+      adoptRendererChatMutation: (senderId, chat, basePersistenceRevision) =>
+        chatUpdateDeliveryCoordinator.adoptRendererMutation(
+          senderId,
+          chat,
+          basePersistenceRevision
+        ),
+      broadcastChatUpdatedExcept,
       broadcastChatPopoutUpdate,
       pushRemoteTaskCardDelta,
       pushRemoteThreadSnapshot,

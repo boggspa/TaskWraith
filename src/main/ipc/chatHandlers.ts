@@ -17,6 +17,18 @@ import type {
   RendererReapContext
 } from '../AbandonedChatReaper'
 import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
+import {
+  RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+  chatPersistenceRevision,
+  parseRendererChatTranscriptMutationRequest,
+  type RendererChatTranscriptMutationResult
+} from '../../shared/rendererChatTranscriptMutation'
+import {
+  chatUpdateProducerEnvelopeFor,
+  computeChatSubRevisions,
+  type ChatTranscriptOp
+} from '../../shared/chatUpdateTransport'
+import { ChatTranscriptMutationIndex } from '../store/ChatTranscriptMutationAuthoring'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
@@ -86,6 +98,13 @@ export interface ChatHandlerDeps {
   broadcastThreadUpdate: (chatId: string | undefined) => void
   broadcastThreadList: () => void
   broadcastChatUpdated: (chat: ChatRecord) => void
+  adoptRendererChatMutation: (
+    senderId: number,
+    chat: ChatRecord,
+    basePersistenceRevision: number
+  ) => boolean
+  /** Compact renderer saves are already reflected locally; notify only peers. */
+  broadcastChatUpdatedExcept: (chat: ChatRecord, senderId: number) => void
   broadcastChatPopoutUpdate: (chat: ChatRecord) => void
   pushRemoteTaskCardDelta: (chatId: string) => void
   pushRemoteThreadSnapshot: (chat: ChatRecord, workspaceId: string) => void
@@ -137,6 +156,7 @@ export interface ChatHandlerDeps {
       | 'create-side-chat'
       | 'set-chat-kind'
       | 'save-chat'
+      | 'mutate-chat-transcript'
       | 'delete-chat'
       | 'truncate-chat'
       | 'set-chat-git-workflow'
@@ -170,6 +190,44 @@ const runHasDiff = (run: ChatRun | undefined): boolean =>
 function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
   const revision = chat?.persistenceRevision
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
+
+function rendererMutationNeedsMediaNormalization(
+  operations: readonly ChatTranscriptOp[]
+): boolean {
+  for (const operation of operations) {
+    const changedMessages =
+      operation.op === 'append'
+        ? operation.messages
+        : operation.op === 'update'
+          ? [operation.message]
+          : []
+    for (const message of changedMessages) {
+      if (message.role !== 'assistant' && message.role !== 'system') continue
+      if (message.content.includes('![')) return true
+      if (Array.isArray(message.metadata?.mediaRefs)) return true
+    }
+  }
+  return false
+}
+
+function executionGraphOwnedRunIds(chat: ChatRecord): Set<string> {
+  return new Set(
+    (chat.runs ?? [])
+      .filter((run) => run.providerMetadata?.executionGraphAttempt !== undefined)
+      .map((run) => run.runId)
+  )
+}
+
+function messageClaimsExecutionGraphOwnership(
+  message: ChatRecord['messages'][number],
+  ownedRunIds: ReadonlySet<string>
+): boolean {
+  return Boolean(
+    (message.runId && ownedRunIds.has(message.runId)) ||
+      message.metadata?.kind === 'executionGraphAttempt' ||
+      message.metadata?.kind === 'executionGraphAttemptOutput'
+  )
 }
 
 function preserveExecutionGraphTranscript(
@@ -244,6 +302,7 @@ function assertReadableWorkspace(
 }
 
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
+  const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
   const observeNoHistoryChat = (chat: ChatRecord): void => {
     if (deps.getSettings().storeLocalChatHistory === false) {
       deps.observeSoloSteerTranscriptRows(chat)
@@ -504,6 +563,189 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         persistenceRevision(saved) > persistenceRevision(previous)
     }
   })
+
+  ipcMain.handle(
+    'mutate-chat-transcript',
+    (event, payload: unknown): RendererChatTranscriptMutationResult => {
+      const request = parseRendererChatTranscriptMutationRequest(payload)
+      const requestedChatId =
+        payload && typeof payload === 'object' && typeof (payload as { chatId?: unknown }).chatId === 'string'
+          ? (payload as { chatId: string }).chatId
+          : ''
+      if (!request) {
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: requestedChatId,
+          revision: 0,
+          reason: 'invalid-request',
+          canonical: null
+        }
+      }
+
+      deps.assertSenderChatScope(event, request.chatId, 'mutate-chat-transcript')
+      const previous = deps.chatService.getChat(request.chatId)
+      if (!previous) {
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: 0,
+          reason: 'chat-not-found',
+          canonical: null
+        }
+      }
+      if (chatPersistenceRevision(previous) !== request.baseRevision) {
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(previous),
+          reason: 'revision-conflict',
+          canonical: previous
+        }
+      }
+
+      let index = rendererTranscriptIndexes.get(request.chatId)
+      if (!index?.isCurrent(previous.persistenceRevision, previous.messages.length)) {
+        try {
+          index = new ChatTranscriptMutationIndex(
+            previous.messages,
+            previous.persistenceRevision
+          )
+          rendererTranscriptIndexes.set(request.chatId, index)
+          if (rendererTranscriptIndexes.size > 256) {
+            const oldestChatId = rendererTranscriptIndexes.keys().next().value
+            if (oldestChatId && oldestChatId !== request.chatId) {
+              rendererTranscriptIndexes.delete(oldestChatId)
+            }
+          }
+        } catch {
+          rendererTranscriptIndexes.delete(request.chatId)
+          return {
+            version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+            accepted: false,
+            chatId: request.chatId,
+            revision: chatPersistenceRevision(previous),
+            reason: 'operation-conflict',
+            canonical: previous
+          }
+        }
+      }
+
+      const transaction = index!.begin()
+      const messages = previous.messages.slice()
+      const graphOwnedRunIds = executionGraphOwnedRunIds(previous)
+      try {
+        for (const operation of request.transcriptOps) {
+          if (operation.op === 'append') {
+            if (
+              operation.messages.some((message) =>
+                messageClaimsExecutionGraphOwnership(message, graphOwnedRunIds)
+              )
+            ) {
+              throw new Error('Renderer cannot append main-owned graph transcript rows')
+            }
+            transaction.append(operation.messages)
+            messages.push(...operation.messages)
+            continue
+          }
+          const messageIndex = transaction.indexOf(operation.id)
+          if (messageIndex < 0) throw new Error('Transcript operation target is absent')
+          if (
+            messageClaimsExecutionGraphOwnership(
+              messages[messageIndex],
+              graphOwnedRunIds
+            ) ||
+            (operation.op === 'update' &&
+              messageClaimsExecutionGraphOwnership(operation.message, graphOwnedRunIds))
+          ) {
+            throw new Error('Renderer cannot mutate main-owned graph transcript rows')
+          }
+          if (operation.op === 'update') {
+            transaction.update(operation.message)
+            messages[messageIndex] = operation.message
+          } else {
+            transaction.splice(messageIndex, 1, [operation.id], [])
+            messages.splice(messageIndex, 1)
+          }
+        }
+      } catch {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(previous),
+          reason: 'operation-conflict',
+          canonical: previous
+        }
+      }
+
+      const candidate = { ...previous, messages }
+      const normalized = rendererMutationNeedsMediaNormalization(request.transcriptOps)
+        ? deps.normalizeTranscriptMarkdownMediaForChat(candidate)
+        : candidate
+      const authoredTranscript = transaction.finish()
+      const saved = deps.chatService.saveChat(
+        normalized,
+        normalized.messages === messages ? { authoredTranscript } : undefined
+      )
+      const accepted =
+        deps.getSettings().storeLocalChatHistory === false ||
+        chatPersistenceRevision(saved) > chatPersistenceRevision(previous)
+      if (!accepted) {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(saved),
+          reason: 'save-conflict',
+          canonical: saved
+        }
+      }
+
+      if (saved.messages.length === messages.length) {
+        transaction.commit(saved.persistenceRevision)
+      } else {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+      }
+      observeNoHistoryChat(saved)
+      if (
+        deps.adoptRendererChatMutation(
+          event.sender.id,
+          saved,
+          request.baseRevision
+        )
+      ) {
+        deps.broadcastChatUpdatedExcept(saved, event.sender.id)
+      } else {
+        deps.broadcastChatUpdated(saved)
+      }
+      deps.maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-mutate-chat-transcript')
+      deps.broadcastThreadUpdate(saved.appChatId)
+      const envelope = chatUpdateProducerEnvelopeFor(saved)
+      const contentSub = computeChatSubRevisions(saved)
+      return {
+        version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+        accepted: true,
+        chatId: saved.appChatId,
+        revision: chatPersistenceRevision(saved),
+        updatedAt: saved.updatedAt,
+        messageCount: saved.messages.length,
+        recordHash: contentSub.recordHash,
+        ...(envelope?.state.transcriptHash
+          ? { transcriptHash: envelope.state.transcriptHash }
+          : {})
+      }
+    }
+  )
 
   // Per-thread git workflow marker (sidebar git icon + "Git" section). The
   // field is MAIN-OWNED like watchedPr: reporters send a small observation and
