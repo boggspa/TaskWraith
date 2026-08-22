@@ -17902,13 +17902,6 @@ export class EnsembleOrchestrator {
       imagePathsForEnsembleAttachments(runtime.imageAttachments),
       providerLabel(participant.provider)
     )
-    if (resolved.warning) {
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `${PARTICIPANT_HEALTH_TAG} △ ${participantDisplayName(participant)}: ${resolved.warning}`
-      )
-    }
     return resolved.imagePaths
   }
 

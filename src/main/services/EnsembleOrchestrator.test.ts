@@ -4860,15 +4860,6 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('pi')
     expect(harness.dispatched[0].imagePaths).toEqual([])
-    expect(
-      harness.chat.messages.some(
-        (message) =>
-          typeof message.content === 'string' &&
-          message.content.includes('[participant-health]') &&
-          message.content.includes('cannot receive image attachments') &&
-          message.content.includes('Continuing without')
-      )
-    ).toBe(true)
 
     harness.orchestrator.handleProviderOutput(
       'pi',

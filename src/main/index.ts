@@ -7436,7 +7436,6 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
   if (resolvedImages.warning) {
     payload.imagePaths = []
     payload.imageAttachmentWarning = resolvedImages.warning
-    noteSoloImageAttachmentOmission(payload, resolvedImages.warning)
     return
   }
   const deliveredPaths = resolvedImages.imagePaths
@@ -7464,39 +7463,6 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
     seen.add(key)
     return true
   })
-}
-
-/** Solo transcript notice when images are stripped; Ensemble notes via orchestrator. */
-function noteSoloImageAttachmentOmission(payload: AgentRunPayload, warning: string): void {
-  if (payload.ensembleRun) return
-  const chatId = typeof payload.appChatId === 'string' ? payload.appChatId.trim() : ''
-  if (!chatId) {
-    console.warn(`[image-attachments] ${warning}`)
-    return
-  }
-  const chat = AppStore.getChat(chatId)
-  if (!chat) {
-    console.warn(`[image-attachments] ${warning}`)
-    return
-  }
-  const noticeId = `image-omit-${payload.appRunId || randomUUID()}`
-  if ((chat.messages || []).some((message) => message.id === noticeId)) return
-  const updated: ChatRecord = {
-    ...chat,
-    messages: [
-      ...(chat.messages || []),
-      {
-        id: noticeId,
-        role: 'assistant',
-        content: `△ ${warning}`,
-        timestamp: new Date().toISOString(),
-        metadata: { kind: 'imageAttachmentOmission' }
-      }
-    ],
-    updatedAt: Date.now()
-  }
-  AppStore.saveChat(updated)
-  broadcastChatUpdated(updated)
 }
 
 function isPathInsideRoot(rootPath: string | undefined, candidatePath: string): boolean {
