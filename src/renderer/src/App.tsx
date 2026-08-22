@@ -13576,7 +13576,6 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
       piReasoningEffort:
         queuedProviderSelection?.piReasoningEffort ?? request.piReasoningEffort,
-    piReasoningEffort,
       ollamaReasoningEffort:
         queuedProviderSelection?.ollamaReasoningEffort ?? request.ollamaReasoningEffort,
       cursorReasoningEffort:
@@ -14633,7 +14632,6 @@ function App(): React.JSX.Element {
           grokReasoningEffort: request.grokReasoningEffort,
           museReasoningEffort: request.museReasoningEffort,
           mistralReasoningEffort: request.mistralReasoningEffort,
-    piReasoningEffort,
           piReasoningEffort: request.piReasoningEffort,
           ollamaReasoningEffort: request.ollamaReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
@@ -17652,7 +17650,6 @@ function App(): React.JSX.Element {
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
       mistralReasoningEffort: request.mistralReasoningEffort,
-    piReasoningEffort,
           piReasoningEffort: request.piReasoningEffort,
       ollamaReasoningEffort: request.ollamaReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
@@ -18606,7 +18603,6 @@ function App(): React.JSX.Element {
       grokReasoningEffort: selection.grokReasoningEffort,
       museReasoningEffort: selection.museReasoningEffort,
       mistralReasoningEffort: selection.mistralReasoningEffort,
-    piReasoningEffort,
       piReasoningEffort: selection.piReasoningEffort,
       ollamaReasoningEffort: selection.ollamaReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,

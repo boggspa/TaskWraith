@@ -29,7 +29,7 @@ describe('piModelPolicyVerdict', () => {
     }
   })
 
-  it('allows only Ox Alpha from OpenRouter', () => {
+  it('allows only specific custom models from OpenRouter', () => {
     expect(piModelPolicyVerdict('openrouter', 'stealth/ox-alpha')).toEqual({ allowed: true })
     for (const modelId of [
       'openrouter/auto',
@@ -40,9 +40,9 @@ describe('piModelPolicyVerdict', () => {
     ]) {
       const verdict = piModelPolicyVerdict('openrouter', modelId)
       expect(verdict.allowed, modelId).toBe(false)
-      expect(verdict.reason).toContain('Ox Alpha')
+      expect(verdict.reason).toMatch(/Ox Alpha|GLM|Laguna|Nemotron/)
     }
-    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual(['stealth/ox-alpha'])
+    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual(['stealth/ox-alpha', 'zai/glm-5.2', 'poolside/laguna-s-2.1', 'nvidia/nemotron-3-ultra'])
   })
 
   it('refuses resold hosted models inside allowed upstreams (kimi on qwen)', () => {
