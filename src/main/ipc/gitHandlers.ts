@@ -108,6 +108,8 @@ export interface GitHandlersDeps {
     | 'createPullRequest'
     | 'ciStatus'
   >
+  /** Utility-process detailed snapshot reader; legacy/test composition may omit it. */
+  gitSnapshot?: (path: string) => Promise<GitResult<GitRepositorySnapshot>>
   workProvenanceService: Pick<WorkProvenanceQueryService, 'query'>
   gitSnapshotPublisher?: Pick<
     GitSnapshotPublisher,
@@ -433,7 +435,11 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
 
   ipcMain.handle('git:snapshot', async (event, payload?: GitIpcPayload) => {
     const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
-    return repo.ok ? deps.gitService.snapshot(repo.path) : repo
+    return repo.ok
+      ? deps.gitSnapshot
+        ? deps.gitSnapshot(repo.path)
+        : deps.gitService.snapshot(repo.path)
+      : repo
   })
 
   ipcMain.handle(

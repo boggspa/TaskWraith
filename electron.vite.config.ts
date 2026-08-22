@@ -60,6 +60,9 @@ export default defineConfig(({ mode }) => {
             // Bundle it as its own utilityProcess entry so the renderer's
             // 90-day heatmap only ever reads a main-process cache.
             workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts'),
+            // Detailed status/numstat parsing must not share Electron main's
+            // event loop with transcript delivery.
+            gitSnapshotWorker: resolve('src/main/workers/gitSnapshotWorker.ts'),
             // Work-provenance sampling brackets Git state and fingerprints
             // dirty paths. Keep that synchronous audited core out of main.
             workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts'),

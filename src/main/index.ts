@@ -943,6 +943,7 @@ import {
   setWorkspaceActivityUpdateListener
 } from './WorkspaceActivityBackground'
 import { createWorkspaceActivityWorkerDriver } from './WorkspaceActivityWorkerScan'
+import { GitSnapshotWorkerClient } from './GitSnapshotWorker'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -51198,6 +51199,7 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     app.on('will-quit', () => {
+      gitSnapshotWorker.dispose()
       tuiHeadlessHostSession.dispose()
       void studioProductionLifecycleRef?.dispose()
       studioProductionLifecycleRef = null
@@ -51647,6 +51649,9 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const gitService = new GitService()
+    const gitSnapshotWorker = new GitSnapshotWorkerClient(
+      join(__dirname, 'gitSnapshotWorker.js')
+    )
     const workProvenanceWorkerPath = [
       join(__dirname, 'workProvenanceWorker.js'),
       resolve(__dirname, '..', 'workProvenanceWorker.js')
@@ -51656,7 +51661,10 @@ if (isGeminiMcpBridgeProcess) {
         workProvenanceWorkerPath || join(__dirname, 'workProvenanceWorker.js')
       )
     )
-    const gitSnapshotPublisher = new GitSnapshotPublisher({ gitService })
+    const gitSnapshot = (path: string) => gitSnapshotWorker.snapshot(path)
+    const gitSnapshotPublisher = new GitSnapshotPublisher({
+      gitService: { snapshot: gitSnapshot }
+    })
     // Remote lane of the publisher: while ≥1 phone is connected, headless
     // subscriptions land every watcher/run recompute in the remote git
     // snapshot cache — terminal commits and other-session edits reach the
@@ -55382,6 +55390,7 @@ if (isGeminiMcpBridgeProcess) {
       resolvePath: (pathValue) => resolve(pathValue),
       pathSeparator: sep,
       gitService,
+      gitSnapshot,
       workProvenanceService,
       gitSnapshotPublisher,
       externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),

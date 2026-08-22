@@ -385,6 +385,25 @@ describe('registerGitHandlers', () => {
     )
   })
 
+  it('routes detailed snapshots through the injected utility-process reader', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    const gitSnapshot = vi.fn(async (path: string) => ({
+      ok: true as const,
+      data: { requestedPath: path } as GitRepositorySnapshot
+    }))
+    registerGitHandlers({ ...deps, gitSnapshot })
+
+    await expect(
+      handlerFor('git:snapshot')({}, { workspacePath: '/repo' })
+    ).resolves.toEqual({
+      ok: true,
+      data: { requestedPath: '/repo' }
+    })
+    expect(gitSnapshot).toHaveBeenCalledWith('/repo')
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
   it('resolves Workspace Stats only to a linked worktree under an authorized workspace', async () => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockImplementation((path: string) =>
