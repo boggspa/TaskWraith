@@ -38,6 +38,27 @@ function normalizeEffortToken(effort: string): ReasoningEffort {
 }
 
 /**
+ * Type guard for models with ultraTaskSupported property.
+ */
+function hasUltraTaskSupport(model: unknown): model is { ultraTaskSupported: boolean } {
+  return typeof model === 'object' && model !== null && 'ultraTaskSupported' in model
+}
+
+/**
+ * Type guard for models with supportedReasoningEfforts property.
+ */
+function hasSupportedReasoningEfforts(model: unknown): model is { supportedReasoningEfforts: Array<{ reasoningEffort: string; disabled?: boolean }> } {
+  return typeof model === 'object' && model !== null && 'supportedReasoningEfforts' in model
+}
+
+/**
+ * Type guard for models with defaultReasoningEffort property.
+ */
+function hasDefaultReasoningEffort(model: unknown): model is { defaultReasoningEffort: string } {
+  return typeof model === 'object' && model !== null && 'defaultReasoningEffort' in model
+}
+
+/**
  * Resolve the highest available reasoning effort for a given provider and model.
  *
  * Strategy:
@@ -54,14 +75,14 @@ export function resolveUltraTaskReasoningEffort(
   const normalizedModel = String(modelId || '').trim().toLowerCase()
   const normalizedProvider = (provider ? provider.toLowerCase() : '') as ProviderId
 
-  let models: ReturnType<typeof getStaticProviderModels> = []
+  let models: unknown[] = []
   try {
     models = getStaticProviderModels(normalizedProvider)
   } catch {
     models = []
   }
 
-  const model = models.find((m) => {
+  const model = models.find((m: any) => {
     const id = m.id.toLowerCase()
     return (
       id === normalizedModel ||
@@ -71,10 +92,10 @@ export function resolveUltraTaskReasoningEffort(
   })
 
   if (model) {
-    if (model.ultraTaskSupported === false) {
+    if (hasUltraTaskSupport(model) && model.ultraTaskSupported === false) {
       return 'none'
     }
-    if (Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0) {
+    if (hasSupportedReasoningEfforts(model) && model.supportedReasoningEfforts.length > 0) {
       let highestRank = -1
       let highestEffort: ReasoningEffort = 'none'
       for (const entry of model.supportedReasoningEfforts) {
@@ -90,7 +111,7 @@ export function resolveUltraTaskReasoningEffort(
         return highestEffort
       }
     }
-    if (model.defaultReasoningEffort) {
+    if (hasDefaultReasoningEffort(model)) {
       const norm = normalizeEffortToken(model.defaultReasoningEffort)
       if (norm !== 'none') {
         return norm
@@ -133,14 +154,14 @@ export function isUltraTaskSupported(provider: ProviderId, modelId: string): boo
   const normalizedModel = String(modelId || '').trim().toLowerCase()
   const normalizedProvider = (provider ? provider.toLowerCase() : '') as ProviderId
 
-  let models: ReturnType<typeof getStaticProviderModels> = []
+  let models: unknown[] = []
   try {
     models = getStaticProviderModels(normalizedProvider)
   } catch {
     models = []
   }
 
-  const model = models.find((m) => {
+  const model = models.find((m: any) => {
     const id = m.id.toLowerCase()
     return (
       id === normalizedModel ||
@@ -149,11 +170,13 @@ export function isUltraTaskSupported(provider: ProviderId, modelId: string): boo
     )
   })
   if (model) {
-    if (model.ultraTaskSupported === false) {
-      return false
-    }
-    if (model.ultraTaskSupported === true) {
-      return true
+    if (hasUltraTaskSupport(model)) {
+      if (model.ultraTaskSupported === false) {
+        return false
+      }
+      if (model.ultraTaskSupported === true) {
+        return true
+      }
     }
   }
 

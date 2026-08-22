@@ -6,7 +6,7 @@
  */
 import type { ProviderId } from '../store/types'
 import { resolveUltraTaskReasoningEffort, isUltraTaskSupported } from './UltraTaskReasoningResolver'
-import { buildUltraTaskWave, type UltraTaskWaveConfig, type BuiltUltraTaskWave } from './UltraTaskWaveBuilder'
+import { buildUltraTaskWave, buildCrossProviderUltraTaskWave, type UltraTaskWaveConfig, type BuiltUltraTaskWave } from './UltraTaskWaveBuilder'
 
 // Track running UltraTask instances
 const runningUltraTasks = new Map<string, { config: UltraTaskWaveConfig; wave: BuiltUltraTaskWave }>()
@@ -23,7 +23,7 @@ const runningUltraTasks = new Map<string, { config: UltraTaskWaveConfig; wave: B
  * Note: Actual delegation happens in src/main/index.ts via the ultra_task tool handler.
  */
 export function executeUltraTask(config: UltraTaskWaveConfig): BuiltUltraTaskWave {
-  const { baseProvider, baseModel, taskPrompt } = config
+  const { baseProvider, baseModel } = config
 
   // Validate UltraTask support
   if (!isUltraTaskSupported(baseProvider, baseModel)) {
@@ -62,7 +62,7 @@ export function executeCrossProviderUltraTask(
     reviewerModel?: string
   }
 ): BuiltUltraTaskWave {
-  const { baseProvider, baseModel, taskPrompt } = config
+  const { baseProvider, baseModel } = config
 
   // Validate base provider/model support
   if (!isUltraTaskSupported(baseProvider, baseModel)) {

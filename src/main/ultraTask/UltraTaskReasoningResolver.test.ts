@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import type { ProviderId } from '../store/types'
 import {
   resolveUltraTaskReasoningEffort,
   isUltraTaskSupported,
@@ -120,7 +121,7 @@ describe('resolveUltraTaskReasoningEffort', () => {
     })
 
     it('handles unknown provider', () => {
-      const result = resolveUltraTaskReasoningEffort('unknown' as any, 'model-1')
+      const result = resolveUltraTaskReasoningEffort('ollama' as ProviderId, 'model-1')
       expect(result).toBe('high')
     })
   })
@@ -147,8 +148,8 @@ describe('isUltraTaskSupported', () => {
     expect(isUltraTaskSupported('claude', 'claude-haiku-4-5')).toBe(false)
   })
 
-  it('returns false for none effort model', () => {
-    expect(isUltraTaskSupported('unknown', 'unknown-model')).toBe(true) // Falls back to high
+  it('returns true for ollama with unknown model', () => {
+    expect(isUltraTaskSupported('ollama' as ProviderId, 'unknown-model')).toBe(true) // Falls back to high
   })
 })
 
@@ -176,7 +177,7 @@ describe('getAvailableReasoningEfforts', () => {
   })
 
   it('returns at least high for any provider', () => {
-    const efforts = getAvailableReasoningEfforts('unknown', 'unknown-model')
+    const efforts = getAvailableReasoningEfforts('ollama' as ProviderId, 'unknown-model')
     expect(efforts).toContain('high')
   })
 
