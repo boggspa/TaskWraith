@@ -4064,6 +4064,37 @@ describe('parseOllamaToolRequest', () => {
     expect(validateOllamaToolArguments('blackboard_read', {})).toEqual({ ok: true })
   })
 
+  it('adds example arguments when a required field is missing', () => {
+    const missingContent = validateOllamaToolArguments('write_file', { path: 'a.ts', intent: 'write' })
+    expect(missingContent.ok).toBe(false)
+    if (!missingContent.ok) {
+      expect(missingContent.message).toContain('missing required argument: content')
+      expect(missingContent.message).toContain('(e.g. {"content": "example"})')
+    }
+  })
+
+  it('suggests the nearest real argument name for misspelled/unknown keys', () => {
+    const misspelled = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      start_line: 1,
+      intent: 'read'
+    })
+    expect(misspelled.ok).toBe(false)
+    if (!misspelled.ok) {
+      expect(misspelled.message).toContain('unknown argument "start_line"')
+      expect(misspelled.message).toContain('Did you mean "startLine"?')
+    }
+  })
+
+  it('silently ignores unknown arguments that are not close to any real arguments', () => {
+    const unknown = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      completely_unrelated: 'foo',
+      intent: 'read'
+    })
+    expect(unknown).toEqual({ ok: true })
+  })
+
   it('voices the retry-ceiling finalize differently for solo vs ensemble runs', () => {
     const solo = ollamaCeilingFinalizeContent()
     expect(solo).toContain('stopping instead of looping')

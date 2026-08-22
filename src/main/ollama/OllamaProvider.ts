@@ -3213,6 +3213,25 @@ export function canonicalizeOllamaToolArguments(
  * `reason:"…"` instead of `intent:"…"` must NOT be flagged, or we'd reject a call
  * the executor would happily run.
  */
+function ollamaArgEditDistance(a: string, b: string): number {
+  if (!a) return b.length
+  if (!b) return a.length
+  const matrix: number[][] = []
+  for (let i = 0; i <= a.length; i++) matrix[i] = [i]
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      )
+    }
+  }
+  return matrix[a.length][b.length]
+}
+
 export function validateOllamaToolArguments(
   toolName: string,
   args: Record<string, unknown>
@@ -3220,7 +3239,7 @@ export function validateOllamaToolArguments(
   if (toolName === OLLAMA_TOOL_HELP_NAME) return { ok: true }
   if (!OLLAMA_KNOWN_TOOL_NAMES.has(toolName as OllamaToolName)) return { ok: true }
   const typedToolName = toolName as OllamaToolName
-  const { required } = ollamaNativeToolParameters(typedToolName)
+  const { required, properties } = ollamaNativeToolParameters(typedToolName)
   const missing = required.filter((field) => {
     if (field === 'intent' && !ollamaToolIntent(args)) {
       args.intent = 'Local model action'
@@ -3229,13 +3248,72 @@ export function validateOllamaToolArguments(
   })
   if (missing.length > 0) {
     const fields = missing.join(', ')
+    const examples = missing
+      .slice(0, 2)
+      .map((field) => {
+        const prop = properties[field] as any
+        let val = '"..."'
+        if (prop?.type === 'string') val = '"example"'
+        if (prop?.type === 'number') val = '1'
+        if (prop?.type === 'boolean') val = 'true'
+        if (prop?.type === 'array') val = '["example"]'
+        return `"${field}": ${val}`
+      })
+      .join(', ')
+    const hint = examples ? ` (e.g. {${examples}})` : ''
     return {
       ok: false,
       message: `Your ${toolName} call is missing required argument${
         missing.length > 1 ? 's' : ''
       }: ${fields}. Re-issue the ${toolName} tool call with ${missing
         .map((field) => `"${field}"`)
-        .join(', ')} set.`
+        .join(', ')} set.${hint}`
+    }
+  }
+
+  const synonyms = OLLAMA_ARG_SYNONYMS_BY_TOOL[typedToolName] || {}
+  const synonymAliases = Object.values(synonyms).flat()
+  const validKeys = new Set([
+    ...Object.keys(properties),
+    ...synonymAliases,
+    'intent',
+    'summary',
+    'reason',
+    'description'
+  ])
+  const suppliedKeys = Object.keys(args)
+  const unknownKeys = suppliedKeys.filter((k) => !validKeys.has(k))
+
+  if (unknownKeys.length > 0) {
+    const validCanonicalKeys = Object.keys(properties)
+    for (const unknown of unknownKeys) {
+      let closestMatch = ''
+      let minDistance = Infinity
+      for (const valid of validCanonicalKeys) {
+        const distWithoutSeparators = ollamaArgEditDistance(
+          unknown.toLowerCase().replace(/[_-]/g, ''),
+          valid.toLowerCase().replace(/[_-]/g, '')
+        )
+        if (distWithoutSeparators < minDistance && distWithoutSeparators <= 2) {
+          minDistance = distWithoutSeparators
+          closestMatch = valid
+        }
+      }
+      if (!closestMatch) {
+        for (const valid of validCanonicalKeys) {
+          const dist = ollamaArgEditDistance(unknown.toLowerCase(), valid.toLowerCase())
+          if (dist < minDistance && dist <= 3) {
+            minDistance = dist
+            closestMatch = valid
+          }
+        }
+      }
+      if (closestMatch) {
+        return {
+          ok: false,
+          message: `Your ${toolName} call included an unknown argument "${unknown}". Did you mean "${closestMatch}"?`
+        }
+      }
     }
   }
   const typeChecks = OLLAMA_ARG_TYPE_CHECKS[typedToolName]
