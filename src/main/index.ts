@@ -888,6 +888,7 @@ import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
+import { shouldInvalidateLiveGitSnapshot } from './GitLiveSnapshotInvalidation'
 import { WorkProvenanceQueryService } from './workProvenance/WorkProvenanceQueryService'
 import { createWorkProvenanceWorkerDriver } from './workProvenance/WorkProvenanceWorkerScan'
 import { FanoutCandidateService } from './services/FanoutCandidateService'
@@ -51675,16 +51676,15 @@ if (isGeminiMcpBridgeProcess) {
       },
       log: (line) => console.log(line)
     })
-    const liveGitSnapshotLastInvalidation = new Map<string, number>()
     runEventBus.subscribe({
       id: 'desktop-git-live-snapshots',
       handle(event) {
-        if (
-          event.channel !== 'agent-output' &&
-          event.channel !== 'gemini-output' &&
-          event.channel !== 'agent-exit' &&
-          event.channel !== 'gemini-exit'
-        ) {
+        // Provider output is not evidence of a workspace mutation. Rebuilding
+        // a full Git snapshot every 500ms while an agent talks turns a large
+        // dirty tree (or long local-only history) into transcript hot-path
+        // contention. The repository watcher owns live filesystem changes;
+        // terminal refresh remains the fallback and settles final line stats.
+        if (!shouldInvalidateLiveGitSnapshot(event.channel)) {
           return
         }
         const threadId = extractThreadId(event.payload)
@@ -51692,17 +51692,9 @@ if (isGeminiMcpBridgeProcess) {
         const chat = AppStore.getChat(threadId)
         const workspacePath = chat?.workspacePath
         if (!workspacePath) return
-        if (event.channel === 'agent-exit' || event.channel === 'gemini-exit') {
-          setTimeout(() => {
-            gitSnapshotPublisher.invalidatePath(workspacePath, 'run-diff')
-          }, 100).unref?.()
-          return
-        }
-        const now = Date.now()
-        const last = liveGitSnapshotLastInvalidation.get(threadId) ?? 0
-        if (now - last < 500) return
-        liveGitSnapshotLastInvalidation.set(threadId, now)
-        gitSnapshotPublisher.invalidatePath(workspacePath, 'run-diff')
+        setTimeout(() => {
+          gitSnapshotPublisher.invalidatePath(workspacePath, 'run-diff')
+        }, 100).unref?.()
       }
     })
 

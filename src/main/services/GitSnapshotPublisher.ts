@@ -47,18 +47,26 @@ interface RepoSubscriptionState {
   pendingReason: GitSnapshotInvalidationReason | null
   lastStartedAt: number
   generation: number
+  /** Last authoritative read, including detail that may be held off the hot path. */
   lastGood: GitRepositorySnapshot | null
+  /** A filesystem tick changed file/line detail that terminal refresh must publish. */
+  detailPending: boolean
 }
 
 export interface GitSnapshotPublisherOptions {
   gitService: Pick<GitService, 'snapshot'>
   debounceMs?: number
   minIntervalMs?: number
+  /** Slower filesystem cadence once a repository is demonstrably expensive. */
+  heavyMinIntervalMs?: number
   watcherFactory?: WatcherFactory
 }
 
 const DEFAULT_DEBOUNCE_MS = 250
 const DEFAULT_MIN_INTERVAL_MS = 1200
+export const DEFAULT_HEAVY_MIN_INTERVAL_MS = 5000
+export const HEAVY_GIT_FILE_COUNT = 128
+export const HEAVY_GIT_COMMIT_COUNT = 64
 
 const IGNORED_PATH_SEGMENTS = new Set([
   'node_modules',
@@ -84,7 +92,7 @@ const GIT_SIGNAL_FILES = new Set([
 ])
 
 /** Requested path is subscriber presentation; every other field is repo state. */
-export function gitRepositorySnapshotsEqual(
+export function gitRepositorySnapshotPresentationEqual(
   left: GitRepositorySnapshot | null,
   right: GitRepositorySnapshot | null
 ): boolean {
@@ -100,13 +108,28 @@ export function gitRepositorySnapshotsEqual(
     left.remoteUrl !== right.remoteUrl ||
     left.ahead !== right.ahead ||
     left.behind !== right.behind ||
+    left.totalCommits !== right.totalCommits ||
     left.clean !== right.clean ||
     left.mergeState !== right.mergeState ||
     left.conflicts !== right.conflicts ||
     left.counts.changed !== right.counts.changed ||
     left.counts.staged !== right.counts.staged ||
     left.counts.unstaged !== right.counts.unstaged ||
-    left.counts.untracked !== right.counts.untracked ||
+    left.counts.untracked !== right.counts.untracked
+  ) {
+    return false
+  }
+  return true
+}
+
+/** Full detail equality for explicit/terminal refreshes and Git actions. */
+export function gitRepositorySnapshotsEqual(
+  left: GitRepositorySnapshot | null,
+  right: GitRepositorySnapshot | null
+): boolean {
+  if (!gitRepositorySnapshotPresentationEqual(left, right)) return false
+  if (!left || !right) return false
+  if (
     left.lineStats.additions !== right.lineStats.additions ||
     left.lineStats.deletions !== right.lineStats.deletions ||
     left.files.length !== right.files.length
@@ -128,10 +151,30 @@ export function gitRepositorySnapshotsEqual(
   })
 }
 
+/**
+ * Large dirty trees and long local-only commit stacks are valuable Git data,
+ * but recomputing them at stream cadence competes directly with transcript
+ * delivery. Keep their summary live on a measured trailing edge instead.
+ */
+export function gitSnapshotFilesystemRefreshInterval(
+  snapshot: GitRepositorySnapshot | null,
+  minIntervalMs: number,
+  heavyMinIntervalMs: number = DEFAULT_HEAVY_MIN_INTERVAL_MS
+): number {
+  if (!snapshot) return minIntervalMs
+  const topologyCount = snapshot.upstream
+    ? Math.max(snapshot.ahead, snapshot.behind)
+    : snapshot.totalCommits ?? Math.max(snapshot.ahead, snapshot.behind)
+  const isHeavy =
+    snapshot.counts.changed >= HEAVY_GIT_FILE_COUNT || topologyCount >= HEAVY_GIT_COMMIT_COUNT
+  return isHeavy ? Math.max(minIntervalMs, heavyMinIntervalMs) : minIntervalMs
+}
+
 export class GitSnapshotPublisher {
   private readonly gitService: Pick<GitService, 'snapshot'>
   private readonly debounceMs: number
   private readonly minIntervalMs: number
+  private readonly heavyMinIntervalMs: number
   private readonly watcherFactory: WatcherFactory
   private readonly subscriptions = new Map<string, GitSnapshotSubscription>()
   private readonly repoBySubscription = new Map<string, string>()
@@ -141,6 +184,7 @@ export class GitSnapshotPublisher {
     this.gitService = options.gitService
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS
     this.minIntervalMs = options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS
+    this.heavyMinIntervalMs = options.heavyMinIntervalMs ?? DEFAULT_HEAVY_MIN_INTERVAL_MS
     this.watcherFactory =
       options.watcherFactory ??
       ((repoRoot, onChange) =>
@@ -153,10 +197,16 @@ export class GitSnapshotPublisher {
     const snapshot = snapshotResult.data
     const repoRoot = snapshot.repoRoot
     const state = this.ensureRepoState(repoRoot, snapshot)
+    const hadSubscribers = state.subscriptions.size > 0
     this.subscriptions.set(subscription.subscriptionId, subscription)
     this.repoBySubscription.set(subscription.subscriptionId, repoRoot)
     state.subscriptions.add(subscription.subscriptionId)
     state.lastGood = snapshot
+    // A new subscriber receives this fresh snapshot directly in the subscribe
+    // result. Do not tell existing subscribers they received it too: they may
+    // still need a terminal detail refresh that their prior live projection
+    // intentionally suppressed.
+    if (!hadSubscribers) state.detailPending = false
     return {
       ok: true,
       data: {
@@ -205,6 +255,7 @@ export class GitSnapshotPublisher {
     const state = this.repos.get(snapshot.repoRoot)
     if (!state || state.subscriptions.size === 0) return
     state.lastGood = snapshot
+    state.detailPending = false
     state.generation += 1
     this.broadcast(state, snapshot, reason)
   }
@@ -232,7 +283,8 @@ export class GitSnapshotPublisher {
       pendingReason: null,
       lastStartedAt: 0,
       generation: 1,
-      lastGood: initialSnapshot
+      lastGood: initialSnapshot,
+      detailPending: false
     }
     try {
       state.watcher = this.watcherFactory(repoRoot, (filename) => {
@@ -253,8 +305,16 @@ export class GitSnapshotPublisher {
     const state = this.repos.get(repoRoot)
     if (!state || state.subscriptions.size === 0) return
     if (state.timer) clearTimeout(state.timer)
+    const intervalMs =
+      reason === 'filesystem'
+        ? gitSnapshotFilesystemRefreshInterval(
+            state.lastGood,
+            this.minIntervalMs,
+            this.heavyMinIntervalMs
+          )
+        : this.minIntervalMs
     const elapsed = Date.now() - state.lastStartedAt
-    const minIntervalDelay = Math.max(0, this.minIntervalMs - elapsed)
+    const minIntervalDelay = Math.max(0, intervalMs - elapsed)
     const delay = Math.max(this.debounceMs, minIntervalDelay)
     state.timer = setTimeout(() => {
       state.timer = null
@@ -279,9 +339,19 @@ export class GitSnapshotPublisher {
         result.data.repoRoot === state.repoRoot &&
         state.generation === startedGeneration
       ) {
-        const changed = !gitRepositorySnapshotsEqual(state.lastGood, result.data)
+        const detailChanged = !gitRepositorySnapshotsEqual(state.lastGood, result.data)
+        const presentationChanged = !gitRepositorySnapshotPresentationEqual(
+          state.lastGood,
+          result.data
+        )
         state.lastGood = result.data
+        if (reason === 'filesystem' && !presentationChanged) {
+          state.detailPending ||= detailChanged
+          return
+        }
+        const changed = presentationChanged || detailChanged || state.detailPending
         if (!changed) return
+        state.detailPending = false
         state.generation += 1
         this.broadcast(state, result.data, reason)
       }

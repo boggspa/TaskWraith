@@ -47,7 +47,7 @@ describe('Multiview focused workspace presentation', () => {
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryCiOwnerPathRef.current')
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(snapshot.requestedPath)')
 
-    const diffStats = slice('const workspaceDiffStats =', 'const liveGitInvalidationKey =')
+    const diffStats = slice('const workspaceDiffStats =', '// Welcome / search still read React chat messages.')
     expect(diffStats).toContain('if (focusedPrimaryGitSnapshot)')
     expect(diffStats).not.toContain('if (primaryGitSnapshot)')
 

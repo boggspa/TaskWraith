@@ -25050,27 +25050,6 @@ function App(): React.JSX.Element {
     focusedPrimaryGitSnapshot
   ])
 
-  const liveGitInvalidationKey = useMemo(
-    () =>
-      displayFileChangeSummaries
-        .map(
-          (item) =>
-            `${item.path}:${item.status}:${item.additions ?? ''}:${item.deletions ?? ''}`
-        )
-        .join('\n'),
-    [displayFileChangeSummaries]
-  )
-
-  useEffect(() => {
-    if (!currentGitPresentationPath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
-      return
-    }
-    void window.api.gitInvalidateSnapshot({
-      workspacePath: currentGitPresentationPath,
-      reason: 'run-diff'
-    })
-  }, [currentGitPresentationPath, liveGitInvalidationKey])
-
   // Welcome / search still read React chat messages. Stream flushes commit the
   // empty→non-empty boundary so welcome unmounts; mid-stream churn is retained
   // and TranscriptPanel reads ChatTranscriptStore instead.

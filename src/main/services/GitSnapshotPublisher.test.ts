@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_HEAVY_MIN_INTERVAL_MS,
   GitSnapshotPublisher,
+  gitRepositorySnapshotPresentationEqual,
+  gitSnapshotFilesystemRefreshInterval,
   gitRepositorySnapshotsEqual
 } from './GitSnapshotPublisher'
 import type { GitRepositorySnapshot, GitService } from './GitService'
@@ -60,6 +63,32 @@ describe('GitSnapshotPublisher', () => {
         lineStats: { additions: 1, deletions: 0 }
       })
     ).toBe(false)
+    expect(
+      gitRepositorySnapshotPresentationEqual(left, {
+        ...right,
+        files: [],
+        lineStats: { additions: 1, deletions: 0 }
+      })
+    ).toBe(true)
+  })
+
+  it('uses a slower filesystem cadence for heavy dirty trees and local-only histories', () => {
+    expect(
+      gitSnapshotFilesystemRefreshInterval(
+        makeSnapshot('/repo', {
+          clean: false,
+          counts: { changed: 128, staged: 0, unstaged: 128, untracked: 0 }
+        }),
+        1200
+      )
+    ).toBe(DEFAULT_HEAVY_MIN_INTERVAL_MS)
+    expect(
+      gitSnapshotFilesystemRefreshInterval(
+        makeSnapshot('/repo', { upstream: 'origin/main', ahead: 64 }),
+        1200
+      )
+    ).toBe(DEFAULT_HEAVY_MIN_INTERVAL_MS)
+    expect(gitSnapshotFilesystemRefreshInterval(makeSnapshot('/repo'), 1200)).toBe(1200)
   })
 
   it('subscribes by repo root and emits debounced authoritative refreshes', async () => {
@@ -245,6 +274,98 @@ describe('GitSnapshotPublisher', () => {
     expect(gitService.snapshot).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(gitService.snapshot).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses the heavy cadence after a large filesystem snapshot', async () => {
+    const heavy = makeSnapshot('/repo', {
+      clean: false,
+      counts: { changed: 256, staged: 0, unstaged: 256, untracked: 0 }
+    })
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async () => ({
+        ok: true,
+        data: heavy
+      }))
+    }
+    const watchers: Array<(filename: string) => void> = []
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 1200,
+      heavyMinIntervalMs: 5000,
+      watcherFactory: (_repoRoot, onChange) => {
+        watchers.push((filename) => onChange(filename))
+        return { on: vi.fn(), close: vi.fn() } as any
+      }
+    })
+    await publisher.subscribe({ subscriptionId: 'sub-1', requestedPath: '/repo', send: vi.fn() })
+
+    watchers[0]('src/first.ts')
+    await vi.advanceTimersByTimeAsync(25)
+    expect(gitService.snapshot).toHaveBeenCalledTimes(2)
+
+    watchers[0]('src/second.ts')
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(gitService.snapshot).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(gitService.snapshot).toHaveBeenCalledTimes(3)
+  })
+
+  it('holds filesystem-only file detail until a terminal or manual refresh', async () => {
+    const initial = makeSnapshot('/repo', {
+      clean: false,
+      files: [
+        {
+          path: 'src/App.tsx',
+          index: ' ',
+          workingTree: 'M',
+          kind: 'modified',
+          staged: false,
+          unstaged: true
+        }
+      ],
+      counts: { changed: 1, staged: 0, unstaged: 1, untracked: 0 },
+      lineStats: { additions: 1, deletions: 0 }
+    })
+    const detailOnly = {
+      ...initial,
+      files: [{ ...initial.files[0], workingTree: 'M' }],
+      lineStats: { additions: 400, deletions: 120 }
+    }
+    const snapshots = [initial, detailOnly, detailOnly, detailOnly]
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async () => ({
+        ok: true,
+        data: snapshots.shift() || detailOnly
+      }))
+    }
+    const watchers: Array<(filename: string) => void> = []
+    const send = vi.fn()
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 0,
+      watcherFactory: (_repoRoot, onChange) => {
+        watchers.push((filename) => onChange(filename))
+        return { on: vi.fn(), close: vi.fn() } as any
+      }
+    })
+    await publisher.subscribe({ subscriptionId: 'sub-1', requestedPath: '/repo', send })
+
+    watchers[0]('src/App.tsx')
+    await vi.advanceTimersByTimeAsync(25)
+    expect(send).not.toHaveBeenCalled()
+
+    // The second subscriber receives its snapshot directly. That must not
+    // overwrite the first subscriber's last-delivered baseline and make its
+    // later terminal detail refresh disappear.
+    await publisher.subscribe({ subscriptionId: 'sub-2', requestedPath: '/repo', send: vi.fn() })
+
+    publisher.invalidatePath('/repo', 'run-diff')
+    await vi.advanceTimersByTimeAsync(25)
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'run-diff', snapshot: detailOnly })
+    )
   })
 
   it('preserves the last good snapshot when a refresh fails', async () => {
