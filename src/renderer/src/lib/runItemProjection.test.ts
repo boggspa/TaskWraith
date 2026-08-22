@@ -201,6 +201,27 @@ describe('runItemProjection', () => {
     })
   })
 
+  it('omits provider warnings from transcript tool projections', () => {
+    const projections = projectRunItemToolEvents(
+      event({
+        kind: 'tool/progress',
+        itemKind: undefined,
+        channel: undefined,
+        delta: undefined,
+        itemId: 'provider-warning-1',
+        toolName: 'provider_warning',
+        data: {
+          type: 'provider_warning',
+          title: 'Provider warning',
+          message: 'The provider emitted a non-fatal warning.'
+        }
+      }),
+      'codex'
+    )
+
+    expect(projections).toEqual([])
+  })
+
   it('keeps the single-projection wrapper for callers that only need the first tool event', () => {
     const projection = projectRunItemToolEvent(
       event({

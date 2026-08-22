@@ -161,8 +161,13 @@ export function projectRunItemToolEvents(
   provider?: ProviderId
 ): RunItemToolProjection[] {
   if (event.kind === 'tool/progress') {
-    const toolId = event.toolCallId || event.itemId
     const compatType = visibleProgressCompatType(event)
+    // Warnings remain available on the provider event stream for diagnostics
+    // and runtime handling, but are not transcript tool calls. Without this
+    // boundary they surface as a synthetic "Used Provider warning" activity.
+    if (compatType === 'provider_warning') return []
+
+    const toolId = event.toolCallId || event.itemId
     const isVisibleProgress = LEGACY_VISIBLE_PROGRESS_TYPES.has(compatType)
     const toolName = isVisibleProgress ? compatType : event.toolName || event.title || 'tool'
     const data = event.data && typeof event.data === 'object' ? event.data : {}
