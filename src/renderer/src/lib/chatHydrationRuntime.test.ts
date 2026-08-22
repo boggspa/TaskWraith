@@ -7,6 +7,7 @@ import {
   ChatHydrationRequestPool,
   MAX_HYDRATED_BYTES_ENV_KEY,
   createChatHydrationRuntime,
+  getOrCreateChatHydrationRuntime,
   reconcileHydrationOptions,
   resolveMaxHydratedMessageBytes
 } from './chatHydrationRuntime'
@@ -75,6 +76,19 @@ describe('ChatHydrationRequestPool', () => {
     expect(pool.pendingChatIds()).toEqual([])
 
     await expect(pool.run('shared', async () => 'fresh-read')).resolves.toBe('fresh-read')
+  })
+})
+
+describe('getOrCreateChatHydrationRuntime', () => {
+  it('keeps one runtime when render-like callers resolve the ref repeatedly', () => {
+    const ref = { current: null }
+    const runtime = createChatHydrationRuntime({ maxBytes: 123 })
+    const createRuntime = vi.fn(() => runtime)
+
+    expect(getOrCreateChatHydrationRuntime(ref, createRuntime)).toBe(runtime)
+    expect(getOrCreateChatHydrationRuntime(ref, createRuntime)).toBe(runtime)
+    expect(createRuntime).toHaveBeenCalledTimes(1)
+    expect(ref.current).toBe(runtime)
   })
 })
 

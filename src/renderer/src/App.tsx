@@ -768,7 +768,11 @@ import {
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
-import { createChatHydrationRuntime, reconcileHydrationOptions } from './lib/chatHydrationRuntime'
+import {
+  getOrCreateChatHydrationRuntime,
+  reconcileHydrationOptions,
+  type ChatHydrationRuntime
+} from './lib/chatHydrationRuntime'
 import { shouldRetainReactChatOnFlush } from './lib/chatChromeIdentity'
 import { bindChatTranscriptStore } from './lib/useChatTranscript'
 import { RawLogPresentationQueue } from './lib/rawLogPresentationQueue'
@@ -3373,13 +3377,9 @@ function App(): React.JSX.Element {
   // Bind the hydration-runtime transcript store once. TranscriptPanel
   // subscribes by chat id; stream flushes ingest here and may retain React
   // chat identity so App chrome skips mid-stream re-renders.
-  const chatHydrationRuntimeRef = useRef(
-    (() => {
-      const runtime = createChatHydrationRuntime()
-      bindChatTranscriptStore(runtime.transcriptStore)
-      return runtime
-    })()
-  )
+  const chatHydrationRuntimeRef = useRef<ChatHydrationRuntime | null>(null)
+  const chatHydrationRuntime = getOrCreateChatHydrationRuntime(chatHydrationRuntimeRef)
+  bindChatTranscriptStore(chatHydrationRuntime.transcriptStore)
 
   // Focus is a residency lease, not a permanent property of every chat ever
   // visited. Pair ownership with React's chat-id lifecycle so the previous
@@ -3388,7 +3388,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
-    const retention = chatHydrationRuntimeRef.current.retention
+    const retention = chatHydrationRuntime.retention
     retention.pin(chatId, 'focused')
     return () => retention.unpin(chatId, 'focused')
   }, [currentChat?.appChatId])
@@ -3396,7 +3396,7 @@ function App(): React.JSX.Element {
   // A pending approval is a live surface even when its chat is not focused.
   // Keep every queue-owning transcript resident until the final card resolves.
   useEffect(() => {
-    const retention = chatHydrationRuntimeRef.current.retention
+    const retention = chatHydrationRuntime.retention
     const chatIds = new Set<string>()
     for (const [chatId, approval] of Object.entries(pendingAgentApprovalByChatId)) {
       if (approval) chatIds.add(chatId)
@@ -3835,10 +3835,8 @@ function App(): React.JSX.Element {
       cancel: (handle) => window.clearTimeout(handle as number)
     })
   }
-  chatHydrationRuntimeRef.current.retention.attachTransportBaselines(
-    chatUpdateBaselineByIdRef.current
-  )
-  chatHydrationRuntimeRef.current.retention.attachRawLogs(rawLogsByChatIdRef.current)
+  chatHydrationRuntime.retention.attachTransportBaselines(chatUpdateBaselineByIdRef.current)
+  chatHydrationRuntime.retention.attachRawLogs(rawLogsByChatIdRef.current)
   const activeRunChatSnapshotRef = useRef<ChatRecord | null>(null)
   const activeRunChatIdRef = useRef<string | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
@@ -5678,7 +5676,7 @@ function App(): React.JSX.Element {
     const pendingMainUpdates = pendingMainChatUpdatesRef.current
     pendingMainChatUpdatesRef.current = new Map()
     const byId = chatByIdRef.current
-    const transcriptStore = chatHydrationRuntimeRef.current.transcriptStore
+    const transcriptStore = chatHydrationRuntime.transcriptStore
     for (const chatId of dirty) {
       let updated = byId.get(chatId)
       const pendingMainUpdate = pendingMainUpdates.get(chatId)
@@ -6241,8 +6239,8 @@ function App(): React.JSX.Element {
       const merged = resolveHydratedChat(chat, request)
       const committed = commitHydratedChat({
         chat: merged,
-        transcriptStore: chatHydrationRuntimeRef.current.transcriptStore,
-        byteLru: chatHydrationRuntimeRef.current.byteLru
+        transcriptStore: chatHydrationRuntime.transcriptStore,
+        byteLru: chatHydrationRuntime.byteLru
       })
       chatByIdRef.current.set(committed.appChatId, committed)
       setChats((prev) => mergeChatRecord(prev, committed))
@@ -6255,7 +6253,7 @@ function App(): React.JSX.Element {
   const refreshSingleChat = useCallback(
     async (chatId: string | null | undefined): Promise<ChatRecord | null> => {
       if (!chatId) return null
-      return chatHydrationRuntimeRef.current.requestPool.run(chatId, async () => {
+      return chatHydrationRuntime.requestPool.run(chatId, async () => {
         const localAtRequestStart =
           chatByIdRef.current.get(chatId) ||
           (activeRunChatSnapshotRef.current?.appChatId === chatId
@@ -6278,8 +6276,8 @@ function App(): React.JSX.Element {
       resolveChat: (chatId) => chatByIdRef.current.get(chatId),
       isHydrated: (chat) => !isChatSummaryRecord(chat),
       hydrateChat: refreshSingleChat,
-      pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'pane'),
-      unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'pane')
+      pinChat: (chatId) => chatHydrationRuntime.retention.pin(chatId, 'pane'),
+      unpinChat: (chatId) => chatHydrationRuntime.retention.unpin(chatId, 'pane')
     }
   )
 
@@ -6311,8 +6309,8 @@ function App(): React.JSX.Element {
     resolveChat: (chatId) => chatByIdRef.current.get(chatId),
     isHydrated: (chat) => !isChatSummaryRecord(chat),
     hydrateChat: hydratePresentedSideChat,
-    pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'side'),
-    unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'side')
+    pinChat: (chatId) => chatHydrationRuntime.retention.pin(chatId, 'side'),
+    unpinChat: (chatId) => chatHydrationRuntime.retention.unpin(chatId, 'side')
   })
 
   const isValidModelForProvider = (
@@ -10024,7 +10022,7 @@ function App(): React.JSX.Element {
     }
     chatMutations.removeChat(chatId)
     chatByIdRef.current.delete(chatId)
-    chatHydrationRuntimeRef.current.retention.drop(chatId)
+    chatHydrationRuntime.retention.drop(chatId)
     if (currentChat?.appChatId === chatId) {
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
@@ -10097,7 +10095,7 @@ function App(): React.JSX.Element {
     await window.api.clearChats()
     const nextChats = await loadChatList().catch(() => [])
     chatByIdRef.current.clear()
-    chatHydrationRuntimeRef.current.retention.clear()
+    chatHydrationRuntime.retention.clear()
     queuedRunsRef.current = []
     runQueueJobsRef.current = []
     setCurrentChatIdForNavigation(null)
@@ -10213,7 +10211,7 @@ function App(): React.JSX.Element {
             saveChatTimersRef.current.delete(id)
           }
           chatByIdRef.current.delete(id)
-          chatHydrationRuntimeRef.current.retention.drop(id)
+          chatHydrationRuntime.retention.drop(id)
         }
         chatMutations.removeChats(reaped)
       })
@@ -11447,7 +11445,7 @@ function App(): React.JSX.Element {
       recentlyCompleted: recentlyCompletedChatIdsRef.current,
       now: Date.now(),
       recentlyCompletedWindowMs: RECENTLY_COMPLETED_WINDOW_MS,
-      ...reconcileHydrationOptions(chatHydrationRuntimeRef.current)
+      ...reconcileHydrationOptions(chatHydrationRuntime)
     })
   }, [chats, currentChat])
 
@@ -12783,7 +12781,7 @@ function App(): React.JSX.Element {
           while (baselines.size > 32) {
             const oldestChatId = baselines.keys().next().value
             if (typeof oldestChatId !== 'string') break
-            chatHydrationRuntimeRef.current.retention.dropTransportBaseline(oldestChatId)
+            chatHydrationRuntime.retention.dropTransportBaseline(oldestChatId)
           }
           if (
             clearedChatIdsRef.current.has(chat.appChatId) &&

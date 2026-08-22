@@ -118,9 +118,20 @@ describe('resolveChatHydration', () => {
       source.indexOf('const refreshSingleChat =')
     )
     expect(apply).toContain('commitHydratedChat({')
-    expect(apply).toContain('chatHydrationRuntimeRef.current.transcriptStore')
-    expect(apply).toContain('chatHydrationRuntimeRef.current.byteLru')
+    expect(apply).toContain('chatHydrationRuntime.transcriptStore')
+    expect(apply).toContain('chatHydrationRuntime.byteLru')
     expect(apply).not.toContain('pinReason: currentChatIdRef.current')
+  })
+
+  it('keeps the hook binding on the retained hydration runtime across App renders', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain('const chatHydrationRuntimeRef = useRef<ChatHydrationRuntime | null>(null)')
+    expect(source).toContain(
+      'const chatHydrationRuntime = getOrCreateChatHydrationRuntime(chatHydrationRuntimeRef)'
+    )
+    expect(source).toContain('bindChatTranscriptStore(chatHydrationRuntime.transcriptStore)')
+    expect(source).not.toContain('const chatHydrationRuntimeRef = useRef(\n    (() =>')
   })
 
   it('owns focused residency for exactly the focused chat lifecycle', () => {
