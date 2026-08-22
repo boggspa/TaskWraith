@@ -242,7 +242,7 @@ describe('buildEnsembleRoundCardRows', () => {
     expect(readEnsembleRoundHeader(result[1])?.expanded).toBe(true)
   })
 
-  it('collapses the most-recent idle round once its closeout row exists', () => {
+  it('keeps the most-recent idle round expanded even with a closeout row', () => {
     const display = [
       userPrompt('u1', 'r1'),
       message('a1', { roundId: 'r1' }),
@@ -261,8 +261,14 @@ describe('buildEnsembleRoundCardRows', () => {
       manualRoundExpansion: NO_OVERRIDES
     })
 
-    expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'closeout-r1'])
-    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
+    // Round is expanded, so header + body + closeout are all present
+    expect(result.map((m) => m.id)).toEqual([
+      ensembleRoundHeaderId('r1'),
+      'u1',
+      'a1',
+      'closeout-r1'
+    ])
+    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(true)
   })
 
   /* A question the agent asked and the user answered is a decision record —
@@ -415,11 +421,13 @@ describe('buildEnsembleRoundCardRows', () => {
       ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
     })
 
+    // With the fix, the most recent round stays expanded even with a closeout,
+    // so we need to manually collapse it to test the fan-out hiding behavior
     const collapsed = buildEnsembleRoundCardRows({
       chat: roundChat,
       displayMessages: display,
       collapseOlderRounds: true,
-      manualRoundExpansion: NO_OVERRIDES
+      manualRoundExpansion: new Map([[roundId, false]]) // manually collapse the round
     })
     expect(collapsed).toHaveLength(2)
     expect(collapsed[0].id).toBe(ensembleRoundHeaderId(roundId))

@@ -423,8 +423,10 @@ export function buildEnsembleRoundCardRowsWithRanges(
       continue
     }
 
-    const defaultExpanded =
-      !closeoutRoundIds.has(roundId) && !hasActiveRound && roundId === lastRoundId
+    // A round stays expanded until it is no longer the most recent round.
+    // This prevents collapsing immediately when a closeout appears; instead it
+    // collapses when the user starts a new turn (creating a new last round).
+    const defaultExpanded = !hasActiveRound && roundId === lastRoundId
     const override = manualRoundExpansion.get(roundId)
     const expanded = override === undefined ? defaultExpanded : override
 
