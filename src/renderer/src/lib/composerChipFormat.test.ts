@@ -630,3 +630,27 @@ describe('formatComposerModelChip', () => {
     ).toBe('K2.7 Coding · Thinking')
   })
 })
+
+describe('Pi reasoning display label', () => {
+  const base = { provider: 'pi' as const, composerStyle: 'terminal' as const, modelId: 'some-model', modelLabel: 'Some Model' }
+
+  it('maps pi thinking levels to display labels', () => {
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'low' })).toBe('Low')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'medium' })).toBe('Medium')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'high' })).toBe('High')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'xhigh' })).toBe('Extra High')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'max' })).toBe('Max')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'minimal' })).toBe('Minimal')
+  })
+
+  it('omits the suffix when unset or off', () => {
+    expect(reasoningDisplayLabel({ ...base })).toBe('')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'off' })).toBe('')
+  })
+
+  it('renders in the composer chip', () => {
+    expect(
+      formatComposerModelChip({ ...base, composerStyle: 'claude', piReasoningEffort: 'high' })
+    ).toBe('Some Model · High')
+  })
+})

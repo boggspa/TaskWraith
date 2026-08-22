@@ -48,6 +48,8 @@ export interface ComposerChipContext {
   museReasoningEffort?: string
   /** Mistral thinking effort token (off/low/medium/high/max). */
   mistralReasoningEffort?: string
+  /** Pi thinking level token (off/minimal/low/medium/high/xhigh/max). */
+  piReasoningEffort?: string
   /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
   ollamaReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
@@ -378,6 +380,22 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
   if (provider === 'pi' && isPiMistralThinkingCapableModel(modelId)) {
     return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
+  }
+
+  // General Pi API-key models: configurable thinking level (off, minimal,
+  // low, medium, high, xhigh, max) surfaced from piReasoningEffort.
+  if (provider === 'pi') {
+    const value = String(ctx.piReasoningEffort || '')
+      .trim()
+      .toLowerCase()
+    if (!value || value === 'off') return ''
+    if (value === 'minimal') return 'Minimal'
+    if (value === 'low') return 'Low'
+    if (value === 'medium') return 'Medium'
+    if (value === 'high') return 'High'
+    if (value === 'xhigh') return 'Extra High'
+    if (value === 'max') return 'Max'
+    return value.charAt(0).toUpperCase() + value.slice(1)
   }
 
   if (provider === 'muse') {
