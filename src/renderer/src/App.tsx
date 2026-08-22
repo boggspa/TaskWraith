@@ -760,6 +760,7 @@ import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMer
 import { createChatHydrationRuntime, reconcileHydrationOptions } from './lib/chatHydrationRuntime'
 import { shouldRetainReactChatOnFlush } from './lib/chatChromeIdentity'
 import { bindChatTranscriptStore } from './lib/useChatTranscript'
+import { RawLogPresentationQueue } from './lib/rawLogPresentationQueue'
 import {
   applyParticipantPermissionsToEnsemble,
   cloneParticipantPermissionPatch,
@@ -3802,6 +3803,21 @@ function App(): React.JSX.Element {
   const chatFlushDeadlineRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
+  const rawLogPresentationQueueRef = useRef<RawLogPresentationQueue | null>(null)
+  if (!rawLogPresentationQueueRef.current) {
+    rawLogPresentationQueueRef.current = new RawLogPresentationQueue({
+      present: ({ chatId, logs }) => {
+        // Selection and explicit clear/hydration writes take ownership
+        // immediately. A delayed provider burst may publish only while its
+        // exact ref snapshot still belongs to the focused chat.
+        if (currentChatIdRef.current !== chatId) return
+        if (rawLogsByChatIdRef.current.get(chatId) !== logs) return
+        setRawLogs(logs)
+      },
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (handle) => window.clearTimeout(handle as number)
+    })
+  }
   chatHydrationRuntimeRef.current.retention.attachTransportBaselines(
     chatUpdateBaselineByIdRef.current
   )
@@ -5389,6 +5405,7 @@ function App(): React.JSX.Element {
     }
     rawLogsByChatIdRef.current.set(chatId, nextLogs)
     if (currentChatIdRef.current === chatId) {
+      rawLogPresentationQueueRef.current?.cancelPending()
       setRawLogs(nextLogs)
     }
   }
@@ -5399,7 +5416,15 @@ function App(): React.JSX.Element {
       return
     }
     const previous = rawLogsByChatIdRef.current.get(chatId) || []
-    setThreadRawLogs(chatId, [...previous, log])
+    const nextLogs = [...previous, log].slice(-1000)
+    // GeminiStreamAdapter emits one raw_event for every provider JSONL line.
+    // Keep that audit buffer exact here, but do not call setThreadRawLogs:
+    // its immediate setRawLogs used to re-render the entire App once per line
+    // and could starve the separately-coalesced transcript until a chat switch.
+    rawLogsByChatIdRef.current.set(chatId, nextLogs)
+    if (currentChatIdRef.current === chatId) {
+      rawLogPresentationQueueRef.current?.enqueue({ chatId, logs: nextLogs })
+    }
   }
   const appendThreadRawLogRef = useRef(appendThreadRawLog)
   appendThreadRawLogRef.current = appendThreadRawLog
@@ -5792,6 +5817,7 @@ function App(): React.JSX.Element {
       summaryChatUpdateQueueRef.current.clear()
       pendingMainChatUpdatesRef.current.clear()
       pendingChatRenderReceiptsRef.current.clear()
+      rawLogPresentationQueueRef.current?.cancelPending()
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
