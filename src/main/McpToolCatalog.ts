@@ -3440,9 +3440,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'goal_update',
       description:
-        'Update the lifecycle status of the existing active TaskWraith goal without changing its objective. Use this for status transitions only; the user owns setting, replacing, and clearing the objective.',
+        'Update the lifecycle status of the existing active TaskWraith goal, or initialize a goal on first turn if unset. Use this for status transitions, or to set the objective when no active goal exists.',
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false
@@ -3454,6 +3454,14 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['active', 'paused', 'blocked', 'completed'],
             description: 'New lifecycle status for the existing active goal.'
+          },
+          objective: {
+            type: 'string',
+            description: 'The task objective to set or update if no active goal is currently set.'
+          },
+          description: {
+            type: 'string',
+            description: 'Alternative alias for objective.'
           },
           reason: {
             type: 'string',
@@ -3467,9 +3475,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'update_goal',
       description:
-        'Compatibility alias for goal_update. Grok Build official /goal requires an update_goal tool in the session toolset; this updates only the lifecycle status of the existing active TaskWraith goal.',
+        'Updates active goal status or initializes a goal on first turn if unset. Grok Build official /goal compatibility alias.',
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false
@@ -3482,13 +3490,20 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             enum: ['active', 'paused', 'blocked', 'completed'],
             description: 'New lifecycle status for the existing active goal.'
           },
+          objective: {
+            type: 'string',
+            description: 'The task objective to set or update if no active goal is currently set.'
+          },
+          description: {
+            type: 'string',
+            description: 'Alternative alias for objective.'
+          },
           reason: {
             type: 'string',
             maxLength: 800,
             description: 'Optional concise reason, blocker detail, or completion summary.'
           }
-        },
-        required: ['status']
+        }
       }
     },
     {
@@ -3751,6 +3766,67 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           }
         },
         required: ['workers']
+      }
+    },
+    {
+      name: 'ultra_task',
+      description:
+        'Execute an Ultra Task - highest reasoning with multi-agent orchestration. ' +
+        'Auto-selects the maximum available reasoning tier for the provider/model and ' +
+        'encourages delegate wave patterns (researcher/worker/reviewer) with automatic ' +
+        'result aggregation via ensemble_await. For providers with explicit Ultra/Ultracode ' +
+        'support, uses that tier; otherwise uses the highest available (max, xhigh, high, etc.).',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task: {
+            type: 'string',
+            description: 'The primary task to execute',
+            minLength: 1
+          },
+          provider: {
+            type: 'string',
+            description: 'Target provider for the Ultra Task. Omit to use the current provider.'
+          },
+          model: {
+            type: 'string',
+            description: 'Target model for the Ultra Task. Omit to use the current model.'
+          },
+          enableFanout: {
+            type: 'boolean',
+            description: 'Enable researcher/explorer fanout for complex tasks (default: true).',
+            default: true
+          },
+          enableReview: {
+            type: 'boolean',
+            description: 'Enable quality reviewer layer for validation (default: true).',
+            default: true
+          },
+          maxWorkers: {
+            type: 'number',
+            description: 'Maximum workers for fanout (2-64, default: 4).',
+            default: 4,
+            minimum: 2,
+            maximum: 64
+          },
+          reasoningEffort: {
+            type: 'string',
+            description: 'Optional: override the auto-resolved highest reasoning effort.',
+            enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode']
+          },
+          returnResult: {
+            type: 'boolean',
+            description: 'Persist typed terminal results in the parent mailbox (default: true).',
+            default: true
+          }
+        },
+        required: ['task']
       }
     },
     {

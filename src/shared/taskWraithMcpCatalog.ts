@@ -252,6 +252,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Full WS Access may skip the card); Ollama excluded like other
   // sub-thread tools.
   'delegate_wave',
+  // Ultra Task - highest reasoning with multi-agent orchestration.
+  // Auto-selects maximum available reasoning tier and encourages delegate wave patterns.
+  'ultra_task',
   // 1.0.4-AK6 — structured brief emitted by a participant at the
   // end of their parallel fan-out lane. Threaded into the
   // serial writer's prompt context so the writer can synthesize
