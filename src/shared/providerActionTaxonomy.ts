@@ -1704,6 +1704,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  ultra_task: tool(
+    'orchestration',
+    'subThreadDelegation',
+    'control.mutate',
+    'subthread-control',
+    'host-state',
+    'host-resource'
+  ),
   scout_brief: tool(
     'orchestration',
     'mcpTools',

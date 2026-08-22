@@ -23,6 +23,8 @@ export interface PreviewModelCatalogEntry {
   defaultReasoningEffort?: string | null
   /** Paid speed tiers this model exposes (e.g. ['fast']). Absent = standard only. */
   additionalSpeedTiers?: string[]
+  /** Whether this model supports UltraTask orchestration */
+  ultraTaskSupported?: boolean
 }
 
 export const PREVIEW_MODEL_ACCESS_REASON = 'Requires preview access'

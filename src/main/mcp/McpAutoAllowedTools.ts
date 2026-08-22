@@ -276,6 +276,7 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
       tool === 'canvas_render_chart' ||
       tool === 'delegate_to_subthread' ||
       tool === 'delegate_wave' ||
+      tool === 'ultra_task' ||
       tool === 'cancel_subthread' ||
       (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)

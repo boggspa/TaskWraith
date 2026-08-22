@@ -586,7 +586,8 @@ export const GATEWAY_V13_ADDED_TOOL_NAMES = Object.freeze([
   'scout_brief',
   'ensemble_await',
   'ensemble_lane_result',
-  'delegate_wave'
+  'delegate_wave',
+  'ultra_task'
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
 export const GATEWAY_V13_MCP_DIRECT_TOOLS = Object.freeze([

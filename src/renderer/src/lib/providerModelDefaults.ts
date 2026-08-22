@@ -29,6 +29,7 @@ interface CodexModelOption {
   /** Ollama `/api/show` capability names retained for model-aware controls. */
   capabilities?: string[]
   additionalSpeedTiers?: string[]
+  ultraTaskSupported?: boolean
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when this model is retired by the
    * provider. When set, the model picker renders a small clock + ordinal-
    * date pill on the row (red, !important-styled so theme/shell rules can't

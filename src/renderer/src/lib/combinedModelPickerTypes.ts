@@ -26,6 +26,7 @@ export interface CombinedModelPickerModelOption {
   /** Live provider capability names (currently used by Ollama reasoning). */
   capabilities?: string[]
   additionalSpeedTiers?: string[]
+  ultraTaskSupported?: boolean
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when the provider is retiring this
    * model. When present, the picker row renders a small clock + ordinal-
    * date pill in red to flag the deprecation without baking it into the

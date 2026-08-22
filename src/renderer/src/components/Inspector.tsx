@@ -160,6 +160,7 @@ interface InspectorProps {
     label?: string
     defaultReasoningEffort?: string | null
     additionalSpeedTiers?: string[]
+    ultraTaskSupported?: boolean
     supportedReasoningEfforts?: Array<{ reasoningEffort: string }>
   }>
   codexMcpStatus?: any

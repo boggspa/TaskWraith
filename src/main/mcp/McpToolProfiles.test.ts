@@ -199,7 +199,8 @@ describe('immutable v1 MCP profile snapshots', () => {
     // v18 receipt and spent no DIRECT slot. CORE was deliberately skipped: it
     // sits at 59/60 and does not advertise delegate_wave either.
     // 2026-08-20: five structured verbs + report/verify — 161 → 168.
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(168)
+    // 2026-08-23: ultra_task — 168 → 169.
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(169)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
       'af09570b636a13d8f87d2277bf5efa306f762e6e61f5dffbdd724fefef293442'
     )
@@ -881,7 +882,8 @@ describe('catalogue reachability', () => {
       'scout_brief',
       'ensemble_await',
       'ensemble_lane_result',
-      'delegate_wave'
+      'delegate_wave',
+      'ultra_task'
     ])
     expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toEqual([
       ...GATEWAY_V12_MCP_DIRECT_TOOLS,

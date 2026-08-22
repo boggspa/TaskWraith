@@ -218,6 +218,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'canvas_render_chart',
         'delegate_to_subthread',
         'delegate_wave',
+        'ultra_task',
         ...MESH_MCP_TOOL_NAMES,
         'simulator_boot',
         'simulator_button',
@@ -237,6 +238,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.service).toBe('mcpTools')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.ultra_task.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
     for (const tool of [
       'simulator_open',
@@ -356,14 +358,17 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
   it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
     expect(isReadOnlyAdvertisedTool('delegate_to_subthread')).toBe(true)
     expect(isReadOnlyAdvertisedTool('delegate_wave')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('ultra_task')).toBe(true)
     expect(isReadOnlyAdvertisedTool('cancel_subthread')).toBe(true)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_wave')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('ultra_task')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('cancel_subthread')).toBe(false)
     expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toEqual(
       expect.arrayContaining([
         'delegate_to_subthread',
         'delegate_wave',
+        'ultra_task',
         'cancel_subthread',
         'canvas_navigate'
       ])
@@ -488,8 +493,10 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
   it('inherits Ask sub-thread instruments on plan seats (modal-gated, not auto-allowed)', () => {
     expect(isPlanAdvertisedTool('delegate_to_subthread')).toBe(true)
     expect(isPlanAdvertisedTool('delegate_wave')).toBe(true)
+    expect(isPlanAdvertisedTool('ultra_task')).toBe(true)
     expect(isPlanAdvertisedTool('cancel_subthread')).toBe(true)
     expect(autoAllowedTools.has('delegate_to_subthread')).toBe(false)
     expect(autoAllowedTools.has('delegate_wave')).toBe(false)
+    expect(autoAllowedTools.has('ultra_task')).toBe(false)
   })
 })

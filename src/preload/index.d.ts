@@ -893,6 +893,7 @@ declare global {
           }>
           defaultReasoningEffort?: string | null
           additionalSpeedTiers?: string[]
+          ultraTaskSupported?: boolean
         }>
       >
       getAgentRateLimits: (provider: ProviderId, options?: { force?: boolean }) => Promise<any>

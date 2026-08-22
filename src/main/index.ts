@@ -39422,12 +39422,31 @@ async function executeGeminiMcpTool(
           error: 'Execution graph attempts cannot read or mutate root-task goal state.'
         })
       } else if (!chat || !goal) {
-        toolIsError = true
-        text = mcpJson({
-          ok: false,
-          tool: toolName,
-          error: 'No active TaskWraith goal is set for this chat.'
-        })
+        const isFirstTurn = (chat?.messages || []).length === 1
+        if (
+          chat &&
+          isFirstTurn &&
+          (toolName === 'goal_update' || toolName === 'update_goal')
+        ) {
+          const objective = String(
+            args.objective || args.description || chat.messages[0]?.content || 'Auto-created objective'
+          )
+          const { createActiveGoal } = require('./GoalState')
+          const newGoal = createActiveGoal(chat.provider, objective, {
+            objectiveSource: 'user'
+          })
+          const updatedChat = { ...chat, activeGoal: newGoal, updatedAt: Date.now() }
+          AppStore.saveChat(updatedChat)
+          broadcastChatUpdated(updatedChat)
+          text = mcpJson({ ok: true, tool: toolName, goal: newGoal })
+        } else {
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: toolName,
+            error: 'No active TaskWraith goal is set for this chat.'
+          })
+        }
       } else {
         const lifecycleStatus =
           toolName === 'goal_complete'
@@ -40348,13 +40367,33 @@ async function executeGeminiMcpTool(
             ? '; its final result will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +
           `\nReuse this id by passing subThreadId="${subThread.appChatId}" on the next delegate_to_subthread call if you want to continue the conversation with this same sub-agent.`
-    } else if (toolName === 'delegate_wave') {
+    } else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {
+      let waveArgs = args
+      if (toolName === 'ultra_task') {
+        const { buildUltraTaskWave } = require('./ultraTask/UltraTaskWaveBuilder')
+        const utArgs = args as Record<string, unknown>
+        const utConfig = {
+          baseProvider: parentProvider as any,
+          baseModel: (typeof utArgs.model === 'string' ? utArgs.model : undefined) || 'cli-default',
+          taskPrompt: String(utArgs.task),
+          enableResearcherFanout: utArgs.enableFanout !== false,
+          enableReviewerLayer: utArgs.enableReview !== false,
+          maxWorkers: typeof utArgs.maxWorkers === 'number' ? utArgs.maxWorkers : undefined
+        }
+        const wave = buildUltraTaskWave(utConfig)
+        waveArgs = {
+          workers: wave.workers,
+          join: wave.join,
+          lifecycle: wave.lifecycle,
+          allowMultiProvider: wave.allowMultiProvider
+        }
+      }
       markDispatchHandled('subthread-control')
       // Batch spawn-only wave. Business logic lives in SubThreadDelegateWave;
       // this branch is composition-root wiring (context, approval, spawn ports).
       if (parentProvider === 'ollama') {
         throw new Error(
-          'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_wave).'
+          `Ollama local mode cannot use TaskWraith sub-thread tools (${toolName}).`
         )
       }
       const parentChatId = context.appChatId
@@ -40416,7 +40455,7 @@ async function executeGeminiMcpTool(
       const delegationBudgetKey = context.appRunId || parentChatId
 
       const waveOutcome = await executeDelegateWaveTool({
-        args,
+        args: waveArgs,
         parentChatId,
         parentAppRunId: context.appRunId,
         parentProvider,
@@ -40447,7 +40486,7 @@ async function executeGeminiMcpTool(
             'subThreadDelegation',
             context.scope === 'global' ? undefined : context.workspacePath,
             {
-              method: `${parentProvider}-mcp/delegate_wave`,
+              method: `${parentProvider}-mcp/${toolName}`,
               title: preview.title,
               body: preview.body,
               preview: {
@@ -40596,7 +40635,7 @@ async function executeGeminiMcpTool(
                 requestedModel: workerSettings.requestedModel,
                 reasoningEffort: workerSettings.reasoningEffort,
                 kimiThinking: workerSettings.kimiThinking,
-                source: 'mcp:delegate_wave',
+                source: `mcp:${toolName}`,
                 recall: false
               }
             )
@@ -40851,7 +40890,7 @@ async function executeGeminiMcpTool(
             'subThreadDelegation',
             context.scope === 'global' ? undefined : context.workspacePath,
             {
-              method: `${parentProvider}-mcp/delegate_wave`,
+              method: `${parentProvider}-mcp/${toolName}`,
               title: `${parentProviderLabel} delegated a wave without a prompt card`,
               body: waveOutcome.text,
               preview: {
@@ -40872,7 +40911,7 @@ async function executeGeminiMcpTool(
               policy: 'allow',
               waveId: waveOutcome.result.waveId,
               workerCount: waveOutcome.result.children.length,
-              reason: 'delegate_wave_authority_skip'
+              reason: `${toolName}_authority_skip`
             }
           )
         } catch {
