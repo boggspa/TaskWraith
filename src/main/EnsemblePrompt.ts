@@ -1298,7 +1298,7 @@ export function buildEnsembleParticipantPromptProjection(
     input.participant.id
   )
   const canCompleteRootGoal = completionAuthority === 'root'
-  const workContract = buildAgentWorkContract({
+  let workContract = buildAgentWorkContract({
     activeGoal: rootGoal,
     completionAuthority,
     ...(goalAssignment
@@ -1312,6 +1312,16 @@ export function buildEnsembleParticipantPromptProjection(
         }
       : {})
   })
+  // First turn heuristic: if no active goal exists and first user prompt is actionable
+  if (!rootGoal && input.chat && (input.chat.messages || []).length === 1) {
+    const firstMsg = input.chat.messages[0]?.content || ''
+    // Heuristic: if it's over a few words and isn't just a greeting
+    if (firstMsg.length > 20 && !firstMsg.match(/^(hi|hello|hey|what's up|greetings)\b/i)) {
+      const hint =
+        'NOTE: No TaskWraith goal is set for this thread. Since your prompt appears to require action, you may call `update_goal` (with `objective` or `description`) to set the objective from your prompt. This allows task completion verification and prevents continuous mode loops.'
+      workContract = workContract ? `${workContract}\n\n${hint}` : hint
+    }
+  }
   const advisoryTurnBoundary = formatAdvisoryTurnBoundary(
     input.config,
     input.participant,

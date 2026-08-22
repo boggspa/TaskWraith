@@ -677,7 +677,7 @@ export function ollamaNoActiveGoalToolNudge(
     [
       prefix,
       'Do NOT call update_goal, goal_update, goal_complete, or goal_blocked again in this run.',
-      'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
+      'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools. Note: On the very first turn of a chat, you may call update_goal to create the initial goal.',
       ...ollamaEnsembleRetryReminder(options),
       options.ensembleRun
         ? 'Continue inside your assigned ensemble slice with the available workspace tools, or give a normal final answer with the next local step.'
@@ -1647,7 +1647,11 @@ function ollamaNativeToolParameters(
           ? 'Update your step checklist.'
           : 'Write or update a multi-step checklist to coordinate your run.',
         properties: {
-          merge: { type: 'boolean', description: 'When true, merges items into the existing list. When false, replaces the whole list.' },
+          merge: {
+            type: 'boolean',
+            description:
+              'When true, merges items into the existing list. When false, replaces the whole list.'
+          },
           todos: {
             type: 'array',
             description: 'Goal steps for this run.',
@@ -3244,7 +3248,9 @@ export function validateOllamaToolArguments(
     if (field === 'intent' && !ollamaToolIntent(args)) {
       args.intent = 'Local model action'
     }
-    return field === 'intent' ? !ollamaToolIntent(args) : !ollamaArgPresent(typedToolName, args, field)
+    return field === 'intent'
+      ? !ollamaToolIntent(args)
+      : !ollamaArgPresent(typedToolName, args, field)
   })
   if (missing.length > 0) {
     const fields = missing.join(', ')

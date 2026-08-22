@@ -1033,8 +1033,7 @@ export function planInstructionInjection(args: {
   const skippedNote = skippedLayers
     .map((layer) => `${layer.scope} instructions skipped (${layer.skipReason})`)
     .join('; ')
-  const withSkips = (log: string): string =>
-    [log, skippedNote].filter(Boolean).join('; ')
+  const withSkips = (log: string): string => [log, skippedNote].filter(Boolean).join('; ')
 
   if (args.conversationalTurn) {
     return {
@@ -1114,9 +1113,7 @@ const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
   'current_request'
 ]
 
-function orderEnvelopeLayers(
-  layers: PromptEnvelopeLayerSnapshot[]
-): PromptEnvelopeLayerSnapshot[] {
+function orderEnvelopeLayers(layers: PromptEnvelopeLayerSnapshot[]): PromptEnvelopeLayerSnapshot[] {
   return [...layers].sort(
     (a, b) => ENVELOPE_LAYER_ORDER.indexOf(a.id) - ENVELOPE_LAYER_ORDER.indexOf(b.id)
   )
@@ -1548,7 +1545,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       input.activeGoal.mode === 'claude_native' ||
       input.activeGoal.mode === 'grok_native')
   )
-  const workContractContext =
+  let workContractContext =
     provider === 'ollama' && ollamaPromptIntent !== 'workspace'
       ? ''
       : buildAgentWorkContract({
@@ -1556,6 +1553,16 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
           providerOwnsGoalSteering,
           completionAuthority: 'root'
         })
+
+  if (!input.activeGoal && (input.messages || []).length === 1) {
+    const firstMsg = input.messages[0]?.content || ''
+    // Heuristic: if it's over a few words and isn't just a greeting
+    if (firstMsg.length > 20 && !firstMsg.match(/^(hi|hello|hey|what's up|greetings)\b/i)) {
+      const hint =
+        'NOTE: No TaskWraith goal is set for this thread. Since your prompt appears to require action, you may call `update_goal` to set the objective from your prompt. This helps prevent continuous mode loops.'
+      workContractContext = workContractContext ? `${workContractContext}\n\n${hint}` : hint
+    }
+  }
   const injectWorkContractContext = (prompt: string): string => {
     if (!workContractContext) return prompt
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
@@ -1579,19 +1586,19 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
             ? `Context turns: ${contextTurnsApplied} (Mistral: appending compact conversation context because the Vibe ACP lane opens a fresh session each turn)`
             : museNeedsContextInjection
               ? `Context turns: ${contextTurnsApplied} (Muse: appending compact conversation context because opaque muse exec opens a fresh session each turn)`
-            : codexNeedsContextInjection
-              ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
-              : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-                ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
-                : ollamaNeedsContextInjection
-                  ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
-                  : claudeNeedsContextInjection
-                    ? `Context turns: ${contextTurnsApplied} (${providerLabel}: no resumable session — seeding compact conversation context)`
-                    : provider !== 'gemini'
-                      ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-                      : resumeSessionId
-                        ? 'Context turns: 0 (resuming Gemini CLI session context)'
-                        : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+              : codexNeedsContextInjection
+                ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
+                : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+                  ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
+                  : ollamaNeedsContextInjection
+                    ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
+                    : claudeNeedsContextInjection
+                      ? `Context turns: ${contextTurnsApplied} (${providerLabel}: no resumable session — seeding compact conversation context)`
+                      : provider !== 'gemini'
+                        ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+                        : resumeSessionId
+                          ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                          : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined

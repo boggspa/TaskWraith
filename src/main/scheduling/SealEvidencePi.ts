@@ -277,7 +277,7 @@ export async function resolvePiSealEvidence(
       transport: 'rpc',
       upstream: split.upstream,
       modelId: split.modelId,
-      thinkingMode: facts.thinkingLevel ?? 'provider-default',
+      thinkingMode: deps.thinkingLevel ?? 'provider-default',
       writeCapable,
       nativeToolPolicySha256: tools.nativeToolPolicySha256,
       providerApprovalMode: 'disabled',
