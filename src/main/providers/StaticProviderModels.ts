@@ -562,7 +562,8 @@ const CLAUDE_STATIC_MODELS = [
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
     description: 'Fast & efficient',
-    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS,
+    ultraTaskSupported: false // Haiku doesn't support max/ultracode
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
