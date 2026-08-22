@@ -6087,6 +6087,12 @@ export class EnsembleOrchestrator {
       if (stored) runtime.yieldRouting = stored
       if (routing?.ok && routing.action !== 'user') {
         this.markAuthorityRoutingDecision(run, 'redirected')
+      } else if (routing?.ok === false && routing.reason !== 'unresolved' && routing.reason !== 'ambiguous') {
+        // An explicit yield to a concrete target that was rejected for structural
+        // reasons (blocked_status, outside_scope, authority_precedence, hop_limit)
+        // still counts as a routing decision for checkpoint purposes. Otherwise a
+        // structurally-unable authority seat would be re-summoned indefinitely.
+        this.markAuthorityRoutingDecision(run, 'rejected_handoff')
       }
     }
 

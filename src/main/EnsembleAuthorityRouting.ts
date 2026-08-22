@@ -26,6 +26,7 @@ export type EnsembleAuthorityRoutingDecision =
   | 'fanout'
   | 'redirected'
   | 'mentioned'
+  | 'rejected_handoff'
 
 /**
  * Continuous acting Boss/Captain owns queue direction whenever ordinary

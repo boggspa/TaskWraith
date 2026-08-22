@@ -205,6 +205,18 @@ describe('Continuous Boss ownership helpers', () => {
     )
   })
 
+  it('suppresses re-summon when authority routing decision is rejected_handoff', () => {
+    // A rejected_handoff decision (e.g., explicit yield to a blocked target) satisfies
+    // the checkpoint, preventing indefinite re-summon loops.
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'continuous',
+        selectionRequired: true,
+        decision: 'rejected_handoff'
+      })
+    ).toBe(false)
+  })
+
   it('distinguishes a goal terminalized during this round from stale terminal context', () => {
     const activeGoal = {
       id: 'goal-live',
