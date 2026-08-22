@@ -4709,7 +4709,39 @@ export class EnsembleOrchestrator {
     discordContextSnapshots?: DiscordContextSnapshot[]
     projectReferenceContextSelection?: ProjectReferenceContextSelection
   }): EnsembleQueuedSteerResult {
-    return this.absorbMidRunSteeringWithReceipt(input).result
+    const { result, receipt } = this.absorbMidRunSteeringWithReceipt(input)
+    if (result.status === 'steered' && receipt) {
+      // Host-level interception paths (the run-ensemble-round handler, the
+      // remote steer handler, and the queue drain) absorb through THIS
+      // wrapper and return before beginRound's mode:'steer' branch — the
+      // only place that launched the User Fan-Out wave — can run. So a
+      // composer "@Seat do this" absorbed fine (transcript, steering,
+      // delivery all worked) but never opened the tagged seats' lanes.
+      // Re-open the wave here for explicitly tagged steers. The fallback
+      // (untagged steer → last foreground seat) stays entry-point-only so
+      // plain interjections keep their pinned no-wave behavior.
+      const runtime = this.roundsByChatId.get(input.chatId)
+      if (runtime && !runtime.cancelled) {
+        const prompt = input.text.trim()
+        const resolution = resolveEnsembleUserFanoutTargets({
+          text: prompt,
+          participants: this.deps.getChat(input.chatId)?.ensemble?.participants || [],
+          ...(input.dmTargetParticipantId
+            ? { exactTargetParticipantId: input.dmTargetParticipantId }
+            : {})
+        })
+        if (resolution.hasParticipantMention) {
+          this.launchUserFanoutForAbsorbedSteer(runtime, {
+            prompt,
+            ...(input.dmTargetParticipantId
+              ? { dmTargetParticipantId: input.dmTargetParticipantId }
+              : {}),
+            receipt
+          })
+        }
+      }
+    }
+    return result
   }
 
   private absorbMidRunSteeringWithReceipt(input: {
@@ -4760,6 +4792,7 @@ export class EnsembleOrchestrator {
   }
 
   /**
+
    * Open the additive User Fan-Out wave an absorbed steer asked for.
    *
    * Both steer entries reach this: the queued-row Steer and the composer's

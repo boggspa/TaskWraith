@@ -775,13 +775,16 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
+    // The run-ensemble-round handler absorbs eligible steers through the
+    // PUBLIC absorbMidRunSteering wrapper and returns before beginRound's
+    // mode:'steer' branch runs — so this entry, not just beginRound, must
+    // open the tagged seats' wave.
     const prompt = '@Reviewer try your slice again.'
     expect(
-      harness.orchestrator.startRound({
+      harness.orchestrator.absorbMidRunSteering({
         chatId: CHAT_ID,
-        prompt,
-        event: { sender: {} as Electron.WebContents },
-        mode: 'steer'
+        roundId: started.roundId!,
+        text: prompt
       })
     ).toEqual({ status: 'steered', roundId: started.roundId })
 
@@ -791,6 +794,33 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
     ).toBe(true)
     // Additive: the original speaker is never interrupted to make room.
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps an untagged public-wrapper steer on ordinary absorb semantics without a wave', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: 'plain interjection with no seat tag'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // No fallback lane: the interjection rides the next hop prompt only.
+    expect(harness.dispatched).toHaveLength(1)
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
