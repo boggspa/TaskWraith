@@ -965,9 +965,10 @@ describe('mistral configurable reasoning support', () => {
     ])
   })
 
-  it('mirrors the lock on the Pi BYOK lane and keeps every other Pi model honestly inert', () => {
-    // Pi's launch authority seals thinkingMode 'provider-default' — we keep
-    // this to a known model-specific ladder for Mistral-hosted options.
+  it('mirrors the Mistral-hosted lock on the Pi BYOK lane and gives general Pi models the full thinking ladder', () => {
+    // Pi-Mistral-hosted ids keep their known model-specific ladder; general
+    // Pi API-key models (DeepSeek, ZAI, Cerebras, OpenRouter…) now surface
+    // the piReasoningEffort ladder dispatched as Pi thinkingLevel.
     expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-3.5')).toEqual([
       { value: 'off', label: 'Off' },
       { value: 'low', label: 'Low' },
@@ -992,9 +993,38 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
-    expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
+  })
+
+  it('gives general Pi API-key models the full piReasoningEffort ladder', () => {
+    const PI_LADDER = [
+      { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'Extra High' },
+      { value: 'max', label: 'Max' }
+    ]
+    expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual(PI_LADDER)
+    expect(getEnsembleReasoningOptions('pi', 'zai/glm-5.2')).toEqual(PI_LADDER)
+    expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual(PI_LADDER)
+    expect(getEnsembleReasoningOptions('pi', 'openrouter/stealth/ox-alpha')).toEqual(PI_LADDER)
+    // Unset model still resolves to the provider-level Pi ladder.
+    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual(PI_LADDER)
+  })
+
+  it('seeds the Pi add-participant defaults with the full reasoning ladder and a medium default', () => {
+    const pi = getEnsembleModelDefaults('pi')
+    expect(pi.reasoningOptions.map((option) => option.value)).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    expect(pi.defaultReasoning).toBe('medium')
   })
 
   it('keeps legacy Mistral aliases configurable for picker continuity', () => {
@@ -1037,7 +1067,6 @@ describe('mistral configurable reasoning support', () => {
 
   it('keeps unsupported models on an empty reasoning set', () => {
     expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 })
 

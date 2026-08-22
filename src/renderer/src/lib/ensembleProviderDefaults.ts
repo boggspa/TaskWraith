@@ -155,6 +155,20 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: mistralReasoningDisplayLabel('max') }
 ]
 
+// General Pi API-key models (DeepSeek, ZAI, Qwen, MiniMax, Groq, Cerebras,
+// OpenRouter upstreams): full thinking-level ladder surfaced via
+// piReasoningEffort and dispatched as Pi thinkingLevel. Mirrors the display
+// labels in composerChipFormat's provider === 'pi' branch.
+const PI_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'minimal', label: 'Minimal' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra High' },
+  { value: 'max', label: 'Max' }
+]
+
 const OLLAMA_TOGGLE_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'on', label: 'On' }
@@ -529,7 +543,8 @@ export function getEnsembleReasoningOptions(
       return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
     case 'pi': {
-      return isPiMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
+      if (isPiMistralThinkingCapableModel(modelId)) return MISTRAL_THINKING_REASONING
+      return PI_REASONING
     }
     case 'ollama': {
       const support = resolveOllamaReasoningSupport({
@@ -1315,8 +1330,8 @@ export function getEnsembleModelDefaults(
     case 'pi':
       return {
         modelOptions: activePiModelRows(PI_MODELS, now),
-        reasoningOptions: [],
-        defaultReasoning: '',
+        reasoningOptions: PI_REASONING,
+        defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'deepseek/deepseek-v4-flash'
       }
