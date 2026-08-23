@@ -3521,20 +3521,13 @@ export const TranscriptPanel = memo(
     const lastDisplayMessageId =
       displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
     
-    // In solo provider chats, the entire current turn (everything after the last
-    // user message) stays open. In ensemble chats, only the trailing message stays open.
+    // All chats protect only the trailing message (the freshly-settled tail
+    // stays open, and the live row stays open via isLiveRow).
     const protectedFromCollapseMessageIds = useMemo(() => {
       const ids = new Set<string>()
       if (lastDisplayMessageId) ids.add(lastDisplayMessageId)
-      if (currentChat?.chatKind !== 'ensemble') {
-        for (let i = displayMessages.length - 1; i >= 0; i--) {
-          const msg = displayMessages[i]
-          if (msg.role === 'user') break
-          ids.add(msg.id)
-        }
-      }
       return ids
-    }, [displayMessages, lastDisplayMessageId, currentChat?.chatKind])
+    }, [lastDisplayMessageId])
 
     // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
     // same-participant settled stacks plus interleaved plain system notices —
