@@ -229,7 +229,7 @@ export function normalizeMistralThinkingLevel(
   if ((MISTRAL_THINKING_LEVELS as readonly string[]).includes(raw)) {
     return raw as MistralThinkingLevel
   }
-  if (raw === 'xhigh' || raw === 'ultra' || raw === 'maximum') return 'max'
+  if (raw === 'xhigh' || raw === 'ultra' || raw === 'maximum' || raw === 'ultratask') return 'max'
   if (raw === 'none' || raw === 'minimal') return 'off'
   return null
 }
