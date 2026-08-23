@@ -261,7 +261,7 @@ describe('notification registry', () => {
     expect(iosDemoSource).toContain(`"id":"${NEW_ADDITIONS_NOTIFICATION_ID}"`)
     expect(iosDemoSource).toContain(`"body":${JSON.stringify(newAdditions?.body)}`)
     expect(iosDemoSource).toContain('"provider":"mistral","label":"Mistral","models"')
-    expect(iosDemoSource).not.toContain('"provider":"pi","label":"Pi","models"')
+    expect(iosDemoSource).toContain('"provider":"pi","label":"Pi","models"')
     for (const group of newAdditions?.groups ?? []) {
       expect(iosDemoSource).toContain(
         `"provider":${JSON.stringify(group.provider)},"label":${JSON.stringify(group.label)}`

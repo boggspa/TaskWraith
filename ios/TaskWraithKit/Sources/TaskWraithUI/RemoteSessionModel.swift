@@ -2393,7 +2393,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-20","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-23","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, Pi BYOK models via DeepSeek, Z.ai, Qwen, Mistral, and others, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."},
               {"name":"Sonnet 4.6","blurb":"A top-tier model with better long-form reasoning and coding context."},
@@ -2433,6 +2433,15 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"North Mini Code 1.0","blurb":"Cohere's 500K agentic coder with tools and thinking — local, no cloud account.","accentProvider":"cohere"},
               {"name":"GLM-4.7-Flash","blurb":"Z.ai 30B-A3B local reasoner with tools and thinking (~203K).","accentProvider":"zai"},
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
+            ],
+            {"provider":"pi","label":"Pi","models":[
+              {"name":"DeepSeek V4 Flash","blurb":"DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.","accentProvider":"deepseek"},
+              {"name":"GLM-5.2","blurb":"Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.","accentProvider":"zai"},
+              {"name":"Qwen3.8 Max Preview","blurb":"Qwen3.8 Max Preview via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},
+              {"name":"Mistral Large 3","blurb":"Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.","accentProvider":"mistral"},
+              {"name":"GLM-4.7 (Cerebras)","blurb":"GLM-4.7 served via Cerebras on Pi — fast inference with a 262K context window.","accentProvider":"cerebras"},
+              {"name":"Laguna S 2.1","blurb":"Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.","accentProvider":"poolside"},
+              {"name":"Nemotron 3 Ultra","blurb":"NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.","accentProvider":"nvidia"}
             ]}
           ]}
          ],
