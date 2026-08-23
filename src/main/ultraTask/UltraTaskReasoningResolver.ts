@@ -20,7 +20,8 @@ const REASONING_EFFORT_HIERARCHY = [
   'high',
   'xhigh',
   'max',
-  'ultracode'
+  'ultracode',
+  'ultratask'
 ] as const
 
 export type ReasoningEffort = (typeof REASONING_EFFORT_HIERARCHY)[number]
