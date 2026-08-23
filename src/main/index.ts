@@ -10990,6 +10990,7 @@ async function composeDelegatedProviderPrompts(args: {
   approvalMode: string
   model?: string
   resumeSessionId?: string
+  providerMetadataPatch?: Record<string, unknown>
 }): Promise<{ prompt: string; resumeFallbackPrompt?: string }> {
   // Grok's default ACP transport opens a fresh session each turn. Legacy Kimi
   // seats also need host transcript injection, while marked Kimi Code 0.26+
@@ -11058,6 +11059,7 @@ async function composeDelegatedProviderPrompts(args: {
     nativeSubAgentRequests: settings.nativeSubAgentRequests,
     taskWraithMcpAdvertised,
     taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
+    reasoningEffort: typeof args.providerMetadataPatch?.reasoningEffort === 'string' ? args.providerMetadataPatch.reasoningEffort : null,
     openCanvasSessions: canvasService.list({ chatId: args.subThread.appChatId }),
     instructionContext: needsHostTranscriptInjection ? delegatedInstructionContext : null,
     ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
@@ -11576,7 +11578,8 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
           prompt: event.prompt,
           approvalMode,
           model: delegationSettings.requestedModel,
-          resumeSessionId
+          resumeSessionId,
+          providerMetadataPatch: delegationSettings.providerMetadataPatch
         })
       } catch (error) {
         failClaimedSubThreadWorker(
@@ -40250,7 +40253,8 @@ async function executeGeminiMcpTool(
         prompt: promptArg,
         approvalMode: delegatedApprovalMode,
         model: delegationSettings.requestedModel,
-        resumeSessionId: recalledProviderSessionId
+        resumeSessionId: recalledProviderSessionId,
+        providerMetadataPatch: delegationSettings.providerMetadataPatch
       })
       const subThreadRunId = seedAgentDrivenSubThreadTranscript({
         subThread,
@@ -40655,7 +40659,8 @@ async function executeGeminiMcpTool(
             subThread,
             prompt: framedPrompt,
             approvalMode: delegatedApprovalMode,
-            model: workerSettings.requestedModel
+            model: workerSettings.requestedModel,
+            providerMetadataPatch: workerSettings.providerMetadataPatch
           })
           const subThreadRunId = seedAgentDrivenSubThreadTranscript({
             subThread,

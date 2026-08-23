@@ -506,6 +506,8 @@ function buildTaskWraithRuntimePreamble(args: {
   gatewayMcpProfile: boolean
   /** True only when the seat's birth profile directly advertises delegate_wave. */
   advertiseDelegateWave: boolean
+  /** True when reasoningEffort is 'ultra' or 'ultracode' (UltraTask mode). */
+  isUltraTask?: boolean
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
@@ -538,6 +540,14 @@ function buildTaskWraithRuntimePreamble(args: {
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     crossProviderLine,
+    ...(args.isUltraTask
+      ? [
+          'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+          `Priority order: ${args.advertiseDelegateWave ? delegateWaveTool : 'N/A (Ensemble only)'} > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
+          'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+          `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
+        ]
+      : []),
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
@@ -1268,6 +1278,11 @@ export interface ComposeRunPromptInput {
    */
   instructionsDigestApplied?: string | null
   instructionsDigestProvider?: string | null
+  /**
+   * Reasoning effort level for the run (e.g., 'ultra', 'ultracode', 'high', etc.).
+   * Used to detect UltraTask mode and inject delegation enforcement.
+   */
+  reasoningEffort?: string | null
 }
 
 export interface ComposeRunPromptResult {
@@ -1756,7 +1771,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       nativeSubAgentInstruction,
       coreMcpProfile,
       gatewayMcpProfile,
-      advertiseDelegateWave
+      advertiseDelegateWave,
+      isUltraTask: input.reasoningEffort?.toLowerCase() === 'ultratask'
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
