@@ -132,8 +132,16 @@ export function normalizeOllamaReasoningEffort(
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
+  // TaskWraith's top-of-ladder tiers clamp to the model's maximum instead of
+  // silently falling back to the default effort.
+  const isTopTier =
+    normalized === 'ultra' ||
+    normalized === 'ultracode' ||
+    normalized === 'ultratask' ||
+    normalized === 'max'
   if (support.kind === 'toggle') {
     if (normalized === 'off' || normalized === 'false') return 'off'
+    if (isTopTier) return 'on'
     if (
       normalized === 'on' ||
       normalized === 'true' ||
@@ -146,6 +154,7 @@ export function normalizeOllamaReasoningEffort(
     return support.defaultEffort
   }
   if (support.kind === 'levels') {
+    if (isTopTier) return 'high'
     return support.efforts.includes(normalized as 'low' | 'medium' | 'high')
       ? (normalized as 'low' | 'medium' | 'high')
       : support.defaultEffort

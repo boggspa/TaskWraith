@@ -61,6 +61,10 @@ export function normalizeGrok45ReasoningEffort(
   fallback: string = GROK_45_DEFAULT_REASONING_EFFORT
 ): string {
   const effort = String(value || '').trim().toLowerCase()
+  // Top-of-ladder tiers clamp to Grok 4.5's 'high' ceiling.
+  if (effort === 'ultra' || effort === 'ultracode' || effort === 'ultratask' || effort === 'max') {
+    return 'high'
+  }
   return effort === 'low' || effort === 'medium' || effort === 'high' ? effort : fallback
 }
 
@@ -69,6 +73,10 @@ export function normalizeGrok46ReasoningEffort(
   fallback: string = GROK_46_DEFAULT_REASONING_EFFORT
 ): string {
   const effort = String(value || '').trim().toLowerCase()
+  // Top-of-ladder tiers clamp to Grok 4.6's 'xhigh' ceiling.
+  if (effort === 'ultra' || effort === 'ultracode' || effort === 'ultratask' || effort === 'max') {
+    return 'xhigh'
+  }
   return effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh'
     ? effort
     : fallback

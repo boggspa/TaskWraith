@@ -30,11 +30,15 @@ import {
 import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
 
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh'])
+// TaskWraith's top-of-ladder tiers (Ultra/Ultracode/UltraTask/Max) all clamp to
+// Grok's ceiling instead of being silently dropped to the model default.
+const GROK_TOP_TIER_EFFORTS = new Set(['ultra', 'ultracode', 'ultratask', 'max'])
 
 export function normalizeGrokEffortFlag(value: string | null | undefined): string | null {
   if (!value) return null
   const trimmed = String(value).trim().toLowerCase()
   if (!trimmed || trimmed === 'off') return null
+  if (GROK_TOP_TIER_EFFORTS.has(trimmed)) return 'xhigh'
   return GROK_EFFORT_LEVELS.has(trimmed) ? trimmed : null
 }
 

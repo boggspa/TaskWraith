@@ -47,7 +47,12 @@ describe('normalizeGrokEffortFlag', () => {
     }
     expect(normalizeGrokEffortFlag('HIGH')).toBe('high')
     expect(normalizeGrokEffortFlag('XHIGH')).toBe('xhigh')
-    expect(normalizeGrokEffortFlag('max')).toBeNull()
+  })
+
+  it('clamps TaskWraith top-of-ladder tiers to the xhigh ceiling', () => {
+    for (const tier of ['ultra', 'ultracode', 'ultratask', 'max', 'UltraTask']) {
+      expect(normalizeGrokEffortFlag(tier)).toBe('xhigh')
+    }
   })
 
   it('rejects unknown values rather than passing them to the CLI', () => {
