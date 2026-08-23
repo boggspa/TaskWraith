@@ -26511,7 +26511,7 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
       error: 'no_targets'
     })
     await expect(
-      harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: 'lane-1' })
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: 'lane-1' as any })
     ).resolves.toMatchObject({ ok: false, error: 'invalid_lane' })
 
     await dispatchLanes(harness, ownerRunId)
@@ -26578,7 +26578,7 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
     const { ownerRunId } = await startGraphRound(harness)
 
     await expect(
-      harness.orchestrator.awaitLanesForRun(ownerRunId, { subThreadIds: 'not-an-array' })
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { subThreadIds: 'not-an-array' as any })
     ).resolves.toMatchObject({ ok: false, error: 'invalid_sub_thread' })
   })
 
@@ -26587,7 +26587,7 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
     const { ownerRunId } = await startGraphRound(harness)
 
     await expect(
-      harness.orchestrator.awaitLanesForRun(ownerRunId, { waveIds: 'not-an-array' })
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { waveIds: 'not-an-array' as any })
     ).resolves.toMatchObject({ ok: false, error: 'invalid_wave' })
   })
 
