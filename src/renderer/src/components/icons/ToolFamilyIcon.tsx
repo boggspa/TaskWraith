@@ -392,6 +392,8 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'video'
     case 'mcp_tool':
     case 'dynamic_tool':
+    case 'capability_search':
+    case 'capability_invoke':
     // falls through: a bare `mcp` base means a brokered MCP call whose inner
     // tool name couldn't be unwrapped, plus the raw call wrappers.
     // eslint-disable-next-line no-fallthrough
