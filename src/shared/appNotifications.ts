@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, Pi BYOK models via DeepSeek, Z.ai, Qwen, Mistral, and others, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.'
+    body: 'AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, Pi BYOK models via DeepSeek, Z.ai, Qwen, Mistral, and others, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.',
     dismissible: true,
     groups: [
       {
