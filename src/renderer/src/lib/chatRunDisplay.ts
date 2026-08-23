@@ -83,32 +83,32 @@ export function deriveChatRunCompleteNotice(
   const runCompleted = lastRun?.endedAt
 
   if (roundCompleted && runCompleted) {
-    if (round.endedAt >= lastRun.endedAt) {
+    if (round!.endedAt! >= lastRun!.endedAt!) {
       return {
-        timestamp: round.endedAt,
-        exitCode: round.status === 'cancelled' ? 130 : round.status === 'failed' ? 1 : 0,
-        startedAt: round.startedAt || undefined,
-        roundId: round.roundId,
+        timestamp: round!.endedAt!,
+        exitCode: round!.status === 'cancelled' ? 130 : round!.status === 'failed' ? 1 : 0,
+        startedAt: round!.startedAt || undefined,
+        roundId: round!.roundId,
         suppressRunSummary: false
       }
     } else {
       if (isRunning) return null
       return {
-        timestamp: lastRun.endedAt,
-        exitCode: lastRun.exitCode ?? 0,
-        startedAt: lastRun.startedAt || undefined,
-        ...(lastRun.runId ? { runId: lastRun.runId } : {}),
-        suppressRunSummary: Boolean(lastRun.suppressRunSummary)
+        timestamp: lastRun!.endedAt!,
+        exitCode: lastRun!.exitCode ?? 0,
+        startedAt: lastRun!.startedAt || undefined,
+        ...(lastRun!.runId ? { runId: lastRun!.runId } : {}),
+        suppressRunSummary: Boolean(lastRun!.suppressRunSummary)
       }
     }
   }
 
   if (roundCompleted) {
     return {
-      timestamp: round.endedAt,
-      exitCode: round.status === 'cancelled' ? 130 : round.status === 'failed' ? 1 : 0,
-      startedAt: round.startedAt || undefined,
-      roundId: round.roundId,
+      timestamp: round!.endedAt!,
+      exitCode: round!.status === 'cancelled' ? 130 : round!.status === 'failed' ? 1 : 0,
+      startedAt: round!.startedAt || undefined,
+      roundId: round!.roundId,
       suppressRunSummary: false
     }
   }
@@ -117,11 +117,11 @@ export function deriveChatRunCompleteNotice(
 
   if (runCompleted) {
     return {
-      timestamp: lastRun.endedAt,
-      exitCode: lastRun.exitCode ?? 0,
-      startedAt: lastRun.startedAt || undefined,
-      ...(lastRun.runId ? { runId: lastRun.runId } : {}),
-      suppressRunSummary: Boolean(lastRun.suppressRunSummary)
+      timestamp: lastRun!.endedAt!,
+      exitCode: lastRun!.exitCode ?? 0,
+      startedAt: lastRun!.startedAt || undefined,
+      ...(lastRun!.runId ? { runId: lastRun!.runId } : {}),
+      suppressRunSummary: Boolean(lastRun!.suppressRunSummary)
     }
   }
 
