@@ -822,6 +822,10 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
     expect(result.contextualPrompt).toContain('Priority order:')
+    // The block must sit IMMEDIATELY before the current user request.
+    expect(result.contextualPrompt).toMatch(
+      /\[ULTRATASK CONTEXT END\]\n\nCurrent user request:\nDo a big refactor\./
+    )
     // Wire effort stays null-safe: no crash, preamble still present.
     expect(result.contextualPrompt).toContain(
       'this AntiGravity workspace run has access to the TaskWraith MCP server'

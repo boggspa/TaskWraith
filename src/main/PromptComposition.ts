@@ -188,7 +188,13 @@ export function resolveContextBudget(
 // sessions re-inject once alongside the generalized UltraTask detection fix:
 // kimi/gemini/mistral/pi runs now carry ultraTaskDetectionEffort, so those
 // seats learn the ULTRA-TASK delegation-enforcement block on their next turn.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v11'
+//
+// Bumped v11 -> v12 when the ULTRA-TASK lines moved OUT of this preamble into
+// a standalone block inserted immediately before the current user request
+// (per-turn, gate-free, adjacent to the decision point). Resumed sessions do
+// not need a version bump to receive the new placement — the standalone block
+// is injected every UltraTask turn regardless of preamble inheritance.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v12'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -521,13 +527,16 @@ function buildUltraTaskLines(provider: ProviderId): string[] {
   ]
 }
 
-/** Standalone UltraTask note for providers whose runs skip the full runtime
- * preamble (Pi: MCP attaches at launch; Claude without a pinned receipt or
- * the Gemini bridge; resumed history-bearing sessions past their one re-inject). */
+/** Standalone UltraTask note inserted immediately before the current user
+ * request — per-turn and gate-free (Pi: MCP attaches at launch; Claude without
+ * a pinned receipt or the Gemini bridge; resumed sessions past their one
+ * preamble re-inject). */
 function buildUltraTaskStandaloneNote(provider: ProviderId): string {
-  return ['[ULTRATASK CONTEXT BEGIN]', ...buildUltraTaskLines(provider), '[ULTRATASK CONTEXT END]'].join(
-    '\n'
-  )
+  return [
+    '[ULTRATASK CONTEXT BEGIN]',
+    ...buildUltraTaskLines(provider),
+    '[ULTRATASK CONTEXT END]'
+  ].join('\n')
 }
 
 function buildTaskWraithRuntimePreamble(args: {
@@ -539,8 +548,6 @@ function buildTaskWraithRuntimePreamble(args: {
   gatewayMcpProfile: boolean
   /** True only when the seat's birth profile directly advertises delegate_wave. */
   advertiseDelegateWave: boolean
-  /** True when reasoningEffort is 'ultra' or 'ultracode' (UltraTask mode). */
-  isUltraTask?: boolean
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
@@ -573,7 +580,9 @@ function buildTaskWraithRuntimePreamble(args: {
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     crossProviderLine,
-    ...(args.isUltraTask ? buildUltraTaskLines(args.provider) : []),
+    // UltraTask lines moved out of the preamble (v11 -> v12): they now ship
+    // standalone, inserted immediately before the current user request, so
+    // they stay per-turn and gate-free.
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
@@ -1808,8 +1817,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       nativeSubAgentInstruction,
       coreMcpProfile,
       gatewayMcpProfile,
-      advertiseDelegateWave,
-      isUltraTask
+      advertiseDelegateWave
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
@@ -1820,20 +1828,24 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       content: taskWraithRuntimePreamble
     })
   }
-  // UltraTask delegation enforcement must not depend on the runtime preamble's
-  // MCP-advertised gate. Pi hard-codes taskWraithMcpAdvertised=false at
-  // composer time (its coordination tools attach at launch), and Claude only
-  // advertises with a pinned receipt or the Gemini bridge — yet UltraTask is a
-  // reasoning-tier contract, so the block ships standalone whenever detection
-  // fires and the full preamble did not.
-  if (
-    !runtimePreambleInjected &&
-    isUltraTask &&
-    !isGlobalRun &&
-    approvalMode !== 'plan'
-  ) {
+  // UltraTask delegation enforcement ships as a standalone block inserted
+  // IMMEDIATELY BEFORE the current user request — the model's decision point —
+  // rather than inside the top-of-preamble runtime note. This makes it:
+  // - per-turn: not subject to the runtime preamble's once-per-session
+  //   suppression on resumed Claude/Codex/Gemini sessions;
+  // - gate-free: Pi hard-codes taskWraithMcpAdvertised=false (its coordination
+  //   tools attach at launch) and Claude only advertises with a pinned receipt
+  //   or the Gemini bridge, yet UltraTask is a reasoning-tier contract;
+  // - adjacent: recency at the moment the model chooses how to execute.
+  // The runtime preamble itself no longer carries these lines (v11 -> v12).
+  if (isUltraTask && !isGlobalRun && approvalMode !== 'plan') {
     const ultraTaskNote = buildUltraTaskStandaloneNote(provider)
-    contextualPrompt = `${ultraTaskNote}\n\n${contextualPrompt}`
+    const currentRequestMarker = `Current user request:\n${finalPrompt}`
+    const markerIndex = contextualPrompt.lastIndexOf(currentRequestMarker)
+    contextualPrompt =
+      markerIndex >= 0
+        ? `${contextualPrompt.slice(0, markerIndex)}${ultraTaskNote}\n\n${contextualPrompt.slice(markerIndex)}`
+        : `${contextualPrompt}\n\n${ultraTaskNote}`
     envelopeLayers.push({
       id: 'ultratask_note',
       label: 'UltraTask delegation enforcement',
