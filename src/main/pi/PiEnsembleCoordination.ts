@@ -31,7 +31,21 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'ensemble_control',
   'ensemble_bossman_control',
   'list_ensemble_participants',
-  'ensemble_propose_goal_complete'
+  'ensemble_propose_goal_complete',
+  // Sketch-canvas + browser parity additions (pass 2, Boss ruling
+  // `boss-canvas-browser-scope-ruling`): the sketch trio matches Ollama's
+  // proven tier posture, and the browser quartet is exactly the set the CORE
+  // MCP profile already advertises to constrained gateway providers. The full
+  // canvas_* render/chart/drive family stays out of scope. Interaction tools
+  // (canvas_sketch_update writes, browser_click) remain server-side
+  // posture-gated as for every other provider.
+  'canvas_sketch_open',
+  'canvas_sketch_get',
+  'canvas_sketch_update',
+  'browser_open',
+  'browser_click',
+  'browser_screenshot',
+  'browser_console'
 ] as const)
 
 /** Exact workspace mutation tools whose arguments can be locked and committed
@@ -514,6 +528,13 @@ function descriptionFor(name) {
     ensemble_bossman_control: 'Boss/Captain control surface (canonical name). Required: action; optional params plus flat action fields.',
     list_ensemble_participants: 'List Ensemble participants with roles, models, and availability.',
     ensemble_propose_goal_complete: 'Open a binding goal-complete poll for the active goal. Optional: goalId, summary, reason.',
+    canvas_sketch_open: 'Open or restore the chat-owned bidirectional Sketch Canvas. Optional: width, height.',
+    canvas_sketch_get: 'Return the current Sketch Canvas document (title, viewport, elements). Required: canvasId.',
+    canvas_sketch_update: 'Edit a Sketch Canvas with structured primitives. Modes: append/replace/clear/delete. Required: canvasId; optional mode, title, expectedUpdatedAt, elementIds, elements.',
+    browser_open: 'Open a URL or workspace file in the dedicated TaskWraith browser window. Optional: url, path, show, width, height.',
+    browser_click: 'Click in the dedicated TaskWraith browser window by selector or viewport coordinates. Optional: selector, x, y.',
+    browser_screenshot: 'Capture the dedicated TaskWraith browser window, optionally writing a workspace PNG. Optional: path.',
+    browser_console: 'Return recent browser or app console messages. Optional: target (browser/app/all), clear, limit.',
     write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
     replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
     apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.',
@@ -623,6 +644,44 @@ function parametersFor(name) {
         goalId: optionalText(),
         summary: optionalText(),
         reason: optionalText()
+      })
+    case 'canvas_sketch_open':
+      return object({
+        width: Type.Optional(Type.Number()),
+        height: Type.Optional(Type.Number())
+      })
+    case 'canvas_sketch_get':
+      return object({ canvasId: Type.String() })
+    case 'canvas_sketch_update':
+      return object({
+        canvasId: Type.String(),
+        mode: optionalText(),
+        title: optionalText(),
+        expectedUpdatedAt: optionalText(),
+        elementIds: Type.Optional(Type.Array(Type.String())),
+        elements: Type.Optional(Type.Array(Type.Any()))
+      })
+    case 'browser_open':
+      return object({
+        url: optionalText(),
+        path: optionalText(),
+        show: Type.Optional(Type.Boolean()),
+        width: Type.Optional(Type.Number()),
+        height: Type.Optional(Type.Number())
+      })
+    case 'browser_click':
+      return object({
+        selector: optionalText(),
+        x: Type.Optional(Type.Number()),
+        y: Type.Optional(Type.Number())
+      })
+    case 'browser_screenshot':
+      return object({ path: optionalText() })
+    case 'browser_console':
+      return object({
+        target: optionalText(),
+        clear: Type.Optional(Type.Boolean()),
+        limit: Type.Optional(Type.Number())
       })
     case 'write_file':
       return object({ path: Type.String(), content: Type.String() })

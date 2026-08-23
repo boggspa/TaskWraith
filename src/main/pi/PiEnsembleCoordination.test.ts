@@ -88,6 +88,40 @@ describe('Pi managed Ensemble coordination extension', () => {
     }
   })
 
+  it('admits the sketch-canvas trio and browser quartet without widening to the full canvas family', () => {
+    // Pass-2 Boss ruling (boss-canvas-browser-scope-ruling): minimal-plus —
+    // the sketch trio matches Ollama's tier posture and the browser quartet
+    // matches the CORE MCP profile exactly. The wider canvas_* render/chart/
+    // drive family stays out of scope.
+    const parityTools = [
+      'canvas_sketch_open',
+      'canvas_sketch_get',
+      'canvas_sketch_update',
+      'browser_open',
+      'browser_click',
+      'browser_screenshot',
+      'browser_console'
+    ] as const
+    for (const toolName of parityTools) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain(toolName)
+      expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+    for (const outOfScope of [
+      'canvas_open',
+      'canvas_render',
+      'canvas_chart',
+      'canvas_snapshot',
+      'canvas_drive_report',
+      'web_fetch',
+      'web_search'
+    ]) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).not.toContain(outOfScope)
+      expect(isPiTaskWraithToolName(outOfScope)).toBe(false)
+    }
+  })
+
   it('writes a fixed owner-only extension with exactly the narrow coordination tool set', () => {
     const home = createCanonicalHome()
 
@@ -114,8 +148,17 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain("case 'ensemble_fanout_all'")
     expect(source).toContain("case 'list_ensemble_participants'")
     expect(source).toContain("case 'ensemble_propose_goal_complete'")
+    expect(source).toContain("case 'canvas_sketch_open'")
+    expect(source).toContain("case 'canvas_sketch_get'")
+    expect(source).toContain("case 'canvas_sketch_update'")
+    expect(source).toContain("case 'browser_open'")
+    expect(source).toContain("case 'browser_click'")
+    expect(source).toContain("case 'browser_screenshot'")
+    expect(source).toContain("case 'browser_console'")
     expect(source).not.toContain("'delegate_wave'")
     expect(source).not.toContain("'delegate_to_subthread'")
+    expect(source).not.toContain("'canvas_render'")
+    expect(source).not.toContain("'canvas_drive_report'")
     expect(source).toContain('throw new Error(resultText(result))')
     expect(prepared.toolNames).not.toContain('run_shell_command')
     expect(source).toContain(
