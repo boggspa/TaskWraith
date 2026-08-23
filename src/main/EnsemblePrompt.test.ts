@@ -303,6 +303,23 @@ describe('Ensemble prompt composition', () => {
     ])
   })
 
+  it('injects the ULTRA-TASK delegation block when a seat carries an ultra effort', () => {
+    const ultraSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      reasoningEffort: 'ultraTask'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+      participant: ultraSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain('Priority order: ensemble_fanout')
+  })
+
   it('builds bounded tagged context with roster and role instructions', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
