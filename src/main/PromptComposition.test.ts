@@ -803,6 +803,31 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Create a test file.')
   })
 
+  it('injects UltraTask delegation enforcement for AntiGravity via the raw detection effort', () => {
+    // AntiGravity wire argv nulls 'ultraTask' (normalizeAgyReasoningEffort only
+    // accepts low/medium/high), so composition must consult the raw token.
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'antigravity',
+      finalPrompt: 'Do a big refactor.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'AntiGravity',
+      reasoningEffort: null,
+      ultraTaskDetectionEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('Priority order:')
+    // Wire effort stays null-safe: no crash, preamble still present.
+    expect(result.contextualPrompt).toContain(
+      'this AntiGravity workspace run has access to the TaskWraith MCP server'
+    )
+  })
+
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
     const result = composeRunPrompt({
       instructionContext: null,

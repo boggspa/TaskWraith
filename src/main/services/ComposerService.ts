@@ -726,11 +726,23 @@ export class ComposerService {
                     null
                   : provider === 'claude'
                     ? optionalStringOrNull(effectiveInput.claudeReasoningEffort) || null
-                    : provider === 'antigravity'
-                      ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
-                        optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
-                        null
-                      : null
+                      : provider === 'antigravity'
+                        ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
+                          optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
+                          null
+                        : null
+    // AntiGravity UltraTask is a presentation-only tier ('ultraTask') persisted
+    // verbatim in chat metadata and rejected by normalizeAgyReasoningEffort —
+    // wire argv only accepts low/medium/high, so `reasoningEffort` above is
+    // null under UltraTask and the delegation-enforcement runtime preamble
+    // would never fire. Preserve the raw token solely for UltraTask detection
+    // in prompt composition; the run payload keeps the normalized wire value.
+    const ultraTaskDetectionEffort =
+      provider === 'antigravity'
+        ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
+          optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
+          null
+        : null
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
@@ -756,6 +768,7 @@ export class ComposerService {
       taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
       taskWraithMcpAdvertised,
       reasoningEffort,
+      ultraTaskDetectionEffort,
       ...(openCanvasSessions.length > 0 ? { openCanvasSessions } : {}),
       ...(skillDiscoverySkills ? { skillDiscoverySkills } : {}),
       ...(sessionStartContext ? { sessionStartContext } : {}),

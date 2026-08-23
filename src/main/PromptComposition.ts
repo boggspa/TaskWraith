@@ -1288,6 +1288,14 @@ export interface ComposeRunPromptInput {
    * Used to detect UltraTask mode and inject delegation enforcement.
    */
   reasoningEffort?: string | null
+  /**
+   * Raw (un-normalized) reasoning tier preserved solely for UltraTask
+   * detection. Providers whose wire argv clamps effort to a narrow allowlist
+   * (e.g. AntiGravity low/medium/high, which nulls the presentation-only
+   * 'ultraTask' token) set this so prompt composition can still see UltraTask
+   * intent; `reasoningEffort` stays the wire value.
+   */
+  ultraTaskDetectionEffort?: string | null
 }
 
 export interface ComposeRunPromptResult {
@@ -1777,7 +1785,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       coreMcpProfile,
       gatewayMcpProfile,
       advertiseDelegateWave,
-      isUltraTask: ['ultra', 'ultracode', 'ultratask'].includes(input.reasoningEffort?.toLowerCase() || '')
+      isUltraTask: ['ultra', 'ultracode', 'ultratask'].includes(
+        (input.ultraTaskDetectionEffort ?? input.reasoningEffort)?.toLowerCase() || ''
+      )
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
