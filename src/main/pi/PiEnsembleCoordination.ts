@@ -523,7 +523,7 @@ function descriptionFor(name) {
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
     ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
     ensemble_await: 'Wait (bounded) for named fan-out lanes to finish. Optional: laneIds, timeoutMs, reason.',
-    ensemble_lane_result: 'Read one finished fan-out lane\'s structured output. Required: laneId; optional fanoutId.',
+    ensemble_lane_result: "Read one finished fan-out lane's structured output. Required: laneId; optional fanoutId.",
     ensemble_control: 'Compact Boss/Captain control surface. Required: action; optional params plus flat action fields (e.g. planSummary).',
     ensemble_bossman_control: 'Boss/Captain control surface (canonical name). Required: action; optional params plus flat action fields.',
     list_ensemble_participants: 'List Ensemble participants with roles, models, and availability.',
@@ -565,7 +565,7 @@ function parametersFor(name) {
       return object({ reason: optionalText(), target: optionalText() })
     case 'ensemble_send':
       return object({
-        to: Type.Union([Type.String(), Type.Array(Type.String())]),
+        to: Type.OneOf([Type.String(), Type.Array(Type.String())]),
         message: Type.String(),
         reason: optionalText()
       })
@@ -625,7 +625,7 @@ function parametersFor(name) {
       })
     case 'ensemble_await':
       return object({
-        laneIds: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+        laneIds: Type.Optional(Type.OneOf([Type.String(), Type.Array(Type.String())])),
         timeoutMs: Type.Optional(Type.Number()),
         reason: optionalText()
       })
