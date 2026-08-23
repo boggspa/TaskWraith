@@ -195,7 +195,7 @@ describe('iOS PiBrandTable twin', () => {
   })
 
   it('surfaces no upstream or model the desktop does not', () => {
-    const swiftUpstreams = [...swift.matchAll(/^\s{8}"([a-z0-9-]+)": Brand\(/gm)].map((m) => m[1])
+    const swiftUpstreams = [...swift.matchAll(/^\s{8}"([a-z0-9/-]+)": Brand\(/gm)].map((m) => m[1])
     expect(swiftUpstreams.sort()).toEqual(Object.keys(PI_UPSTREAM_BRANDS).sort())
     const swiftModels = [...swift.matchAll(/^\s{8}"([^"]+\/[^"]+)": "/gm)].map((m) => m[1])
     expect(swiftModels.sort()).toEqual(Object.keys(PI_MODEL_LABELS).sort())
