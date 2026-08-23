@@ -516,6 +516,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'import-ollama-web-session': [],
   'set-ollama-web-session': ['nonEmptyString'],
   'clear-ollama-web-session': [],
+  'get-kimi-web-session-status': [],
+  'import-kimi-web-session': [],
+  'clear-kimi-web-session': [],
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],

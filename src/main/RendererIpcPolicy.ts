@@ -402,6 +402,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mistral-web-session:import',
   'mistral-web-session:get-status',
   'mistral-web-session:clear',
+  'get-kimi-web-session-status',
+  'import-kimi-web-session',
+  'clear-kimi-web-session',
 
   // Canvas WebContentsView state belongs to the primary window. Popouts and
   // other secondary renderers must not create or reposition an overlay over it.
