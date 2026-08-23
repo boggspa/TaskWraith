@@ -419,22 +419,25 @@ describe('reasoningDisplayLabel', () => {
       reasoningDisplayLabel({ ...base, provider: 'claude', claudeReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({ ...base, provider: 'kimi', kimiReasoningEffort: 'ultratask' })
+      reasoningDisplayLabel({ ...base, provider: 'kimi', modelId: 'kimi-k3', kimiReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({ ...base, provider: 'grok', grokReasoningEffort: 'ultratask' })
+      reasoningDisplayLabel({ ...base, provider: 'grok', modelId: 'grok-4.6', grokReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({ ...base, provider: 'mistral', mistralReasoningEffort: 'ultratask' })
+      reasoningDisplayLabel({ ...base, provider: 'mistral', modelId: 'devstral-small', mistralReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({ ...base, provider: 'cursor', cursorReasoningEffort: 'ultratask' })
+      reasoningDisplayLabel({ ...base, provider: 'cursor', modelId: 'cursor-grok-4.6-low', cursorReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({ ...base, provider: 'ollama', ollamaReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({ ...base, provider: 'pi', piReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'muse', museReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
   })
 })
