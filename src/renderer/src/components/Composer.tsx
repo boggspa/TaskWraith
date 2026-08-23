@@ -3975,6 +3975,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 label:
                                   variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
                               }))
+                              // UltraTask maps onto the family's High variant:
+                              // selecting it swaps the wire model id to the
+                              // -high suffix (the highest real effort), then
+                              // the UltraTask delegate-wave principle applies
+                              // on top. See handleCombinedReasoningChange.
+                              if (
+                                combinedReasoningOptions.some(
+                                  (option) => option.value === 'high'
+                                ) &&
+                                !combinedReasoningOptions.some(
+                                  (option) => option.value === 'ultraTask'
+                                )
+                              ) {
+                                combinedReasoningOptions = [
+                                  ...combinedReasoningOptions,
+                                  { value: 'ultraTask', label: 'UltraTask' }
+                                ]
+                              }
                               combinedSelectedReasoning =
                                 antigravityEffortForModelId(effectiveSelectedModel) || ''
                             }
@@ -4017,14 +4035,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // UltraTask rides the top of every provider's ladder
                           // whose effort values are real persisted tokens
                           // (Grok/Cursor clamp to xhigh/high outbound, Mistral/
-                          // Pi/Muse to their max). Antigravity is excluded: its
-                          // option values are wire-model-id suffixes, not
-                          // efforts, so a synthetic token would break model
-                          // swapping.
+                          // Pi/Muse to their max). Antigravity injects its own
+                          // High-mapped option inside its branch above.
                           if (
                             Array.isArray(combinedReasoningOptions) &&
                             combinedReasoningOptions.length > 0 &&
-                            effectiveProvider !== 'antigravity' &&
                             !combinedReasoningOptions.some((option) => option.value === 'ultraTask')
                           ) {
                             combinedReasoningOptions = [
@@ -4390,13 +4405,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               // No separate effort state: the slider swaps
                               // which concrete variant id of the family is
                               // selected, so dispatch/persistence/pricing keep
-                              // seeing real wire ids.
+                              // seeing real wire ids. UltraTask maps onto the
+                              // family's High variant (its highest real
+                              // effort); the UltraTask delegate-wave principle
+                              // applies on top of that wire model.
                               const variantGroup = antigravityVariantGroupForModel(
                                 effectiveModelOptionsRaw,
                                 effectiveSelectedModel
                               )
                               const target = variantGroup?.variants.find(
-                                (variant) => variant.effort === value
+                                (variant) =>
+                                  variant.effort === (value === 'ultraTask' ? 'high' : value)
                               )
                               if (target && target.id !== effectiveSelectedModel) {
                                 handleCombinedModelChange(target.id)
