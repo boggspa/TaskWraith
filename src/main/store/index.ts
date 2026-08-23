@@ -1258,6 +1258,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     museReasoningEffort: input.museReasoningEffort,
     ollamaReasoningEffort: input.ollamaReasoningEffort,
     cursorReasoningEffort: input.cursorReasoningEffort,
+    antigravityReasoningEffort: input.antigravityReasoningEffort,
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
     kimiFastMode: input.kimiFastMode,
@@ -6700,6 +6701,8 @@ export class AppStore {
           derived.ollamaReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'cursor' && isCursorGrokModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'antigravity') {
+          derived.antigravityReasoningEffort = participant.reasoningEffort
         }
       }
       if (participant.provider === 'cursor' && participant.fastModeEnabled !== undefined) {
@@ -6789,6 +6792,7 @@ export class AppStore {
     museReasoningEffort?: string | null
     ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
+    antigravityReasoningEffort?: string | null
     cursorFastMode?: boolean
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
@@ -6848,6 +6852,9 @@ export class AppStore {
         : {}),
       ...(args.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: args.cursorReasoningEffort }
+        : {}),
+      ...(args.antigravityReasoningEffort !== undefined
+        ? { antigravityReasoningEffort: args.antigravityReasoningEffort }
         : {}),
       ...(args.cursorFastMode !== undefined ? { cursorFastMode: args.cursorFastMode } : {})
     }

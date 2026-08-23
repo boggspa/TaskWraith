@@ -111,6 +111,9 @@ export function buildRemoteComposerQueueDispatchAction(
       ...(remote.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: remote.cursorReasoningEffort }
         : {}),
+      ...(remote.antigravityReasoningEffort !== undefined
+        ? { antigravityReasoningEffort: remote.antigravityReasoningEffort }
+        : {}),
       ...(remote.cursorFastMode !== undefined ? { cursorFastMode: remote.cursorFastMode } : {}),
       ...(remote.claudeFastMode !== undefined ? { claudeFastMode: remote.claudeFastMode } : {}),
       ...(remote.codexServiceTier !== undefined

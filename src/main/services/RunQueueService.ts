@@ -733,6 +733,7 @@ export class RunQueueService {
         museReasoningEffort: optionalStringOrNull(value.museReasoningEffort),
         ollamaReasoningEffort: optionalStringOrNull(value.ollamaReasoningEffort),
         cursorReasoningEffort: optionalStringOrNull(value.cursorReasoningEffort),
+        antigravityReasoningEffort: optionalStringOrNull(value.antigravityReasoningEffort),
         codexServiceTier: optionalStringOrNull(value.codexServiceTier),
         geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
         guestParentChatId: optionalString(value.guestParentChatId),
@@ -1033,6 +1034,7 @@ function sanitizeRemoteComposer(
   const museReasoningEffort = optionalStringOrNull(value.museReasoningEffort)
   const ollamaReasoningEffort = optionalStringOrNull(value.ollamaReasoningEffort)
   const cursorReasoningEffort = optionalStringOrNull(value.cursorReasoningEffort)
+  const antigravityReasoningEffort = optionalStringOrNull(value.antigravityReasoningEffort)
   // Preserve an explicit "" (codex Fast-OFF sentinel) — optionalStringOrNull would
   // trim it to undefined and drop it, resurrecting a stale 'fast' on rehydration.
   const codexServiceTier =
@@ -1053,6 +1055,7 @@ function sanitizeRemoteComposer(
     ...(museReasoningEffort !== undefined ? { museReasoningEffort } : {}),
     ...(ollamaReasoningEffort !== undefined ? { ollamaReasoningEffort } : {}),
     ...(cursorReasoningEffort !== undefined ? { cursorReasoningEffort } : {}),
+    ...(antigravityReasoningEffort !== undefined ? { antigravityReasoningEffort } : {}),
     ...(typeof value.cursorFastMode === 'boolean' ? { cursorFastMode: value.cursorFastMode } : {}),
     ...(codexServiceTier !== undefined ? { codexServiceTier } : {}),
     ...(typeof value.claudeFastMode === 'boolean' ? { claudeFastMode: value.claudeFastMode } : {}),

@@ -300,6 +300,7 @@ export interface ProviderReroutePlan {
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
 }
 export interface ProviderRunPauseState {
@@ -4978,6 +4979,7 @@ export interface ScheduledTask {
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -5050,6 +5052,7 @@ export type WorkflowRunTemplate = Pick<
   | 'piReasoningEffort'
   | 'ollamaReasoningEffort'
   | 'cursorReasoningEffort'
+  | 'antigravityReasoningEffort'
   | 'cursorFastMode'
   | 'runtimeProfileId'
   | 'geminiAuthProfileId'
@@ -6042,6 +6045,7 @@ export interface RunQueueRequestSnapshot {
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string
   scheduledRunAt?: string
@@ -6070,6 +6074,7 @@ export interface RunQueueRequestSnapshot {
   piReasoningEffort?: string | null
     ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
     cursorFastMode?: boolean
     claudeFastMode?: boolean
     kimiFastMode?: boolean

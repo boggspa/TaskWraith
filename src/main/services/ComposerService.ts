@@ -142,6 +142,7 @@ export interface ComposerInput {
   projectReferenceContextSelection?: ProjectReferenceContextSelection
   geminiWorktree?: GeminiWorktreeLaunchOption
   codexReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
@@ -725,7 +726,11 @@ export class ComposerService {
                     null
                   : provider === 'claude'
                     ? optionalStringOrNull(effectiveInput.claudeReasoningEffort) || null
-                    : null
+                    : provider === 'antigravity'
+                      ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
+                        optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
+                        null
+                      : null
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
