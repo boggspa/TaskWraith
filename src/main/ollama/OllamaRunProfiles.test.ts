@@ -135,7 +135,6 @@ describe('OllamaRunProfiles', () => {
     ).toBe(true)
     expect(
       resolveOllamaThinkingLevel(
-        'ornith-1.5:9b',
         'ornith-1.5:35b',
         OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
         undefined,

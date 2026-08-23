@@ -164,9 +164,6 @@ export function resolveOllamaModelFamily(
   }
   if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) return 'ornith_35b'
   if (key === 'ornith-1.5:9b' || key.startsWith('ornith-1.5:9b-')) {
-    return 'Ornith 1.5 (9B Param)'
-  }
-  if (key === 'ornith-1.5:9b' || key.startsWith('ornith-1.5:9b-')) {
     return 'ornith_9b'
   }
   if (key === 'ornith-1.5:35b' || key.startsWith('ornith-1.5:35b-')) {
