@@ -567,6 +567,16 @@ function ComposerPrimaryStack({
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
 
+// UltraTask is a synthetic top-of-ladder token; it's selectable on every model
+// except those explicitly flagged unsupported (e.g. Claude Haiku).
+function ultraTaskSupportedForModel(
+  modelOptions: readonly { id: string; ultraTaskSupported?: boolean }[] | undefined,
+  modelId: string | undefined
+): boolean {
+  const model = modelOptions?.find((option) => option.id === modelId)
+  return model?.ultraTaskSupported !== false
+}
+
 // Air kept between the composer's bottom edge and the terminal's top edge when
 // the terminal is dragged tall. Covers `--workspace-terminal-bottom-gap` plus a
 // little breathing room, so the two surfaces never touch, let alone overlap.
@@ -4003,6 +4013,40 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               combinedSelectedReasoning =
                                 antigravityEffortForModelId(effectiveSelectedModel) || ''
+                            } else {
+                              // Fixed-effort quota-bound hardcoded rows
+                              // (gemini-3.1-pro-thinking, claude-sonnet-4-6,
+                              // gpt-oss-120b-medium): no -high/-medium/-low
+                              // variant family exists, but the model's own
+                              // effort IS the family ceiling. Offer that as
+                              // the base stop with UltraTask mapped onto it
+                              // so these models aren't left off the ladder.
+                              const antigravityFixedEffort =
+                                antigravityEffortForModelId(effectiveSelectedModel)
+                              if (
+                                antigravityFixedEffort &&
+                                ultraTaskSupportedForModel(
+                                  effectiveModelOptionsRaw,
+                                  effectiveSelectedModel
+                                )
+                              ) {
+                                combinedReasoningOptions = [
+                                  {
+                                    value: antigravityFixedEffort,
+                                    label:
+                                      antigravityFixedEffort === 'on'
+                                        ? 'Thinking'
+                                        : antigravityFixedEffort.charAt(0).toUpperCase() +
+                                          antigravityFixedEffort.slice(1)
+                                  },
+                                  { value: 'ultraTask', label: 'UltraTask' }
+                                ]
+                                // Selection lives in the wire id for
+                                // Antigravity; a fixed-effort model is already
+                                // at its ceiling, so UltraTask keeps the same
+                                // id (see handleCombinedReasoningChange).
+                                combinedSelectedReasoning = antigravityFixedEffort
+                              }
                             }
                           } else if (
                             effectiveProvider === 'mistral' ||
@@ -4015,17 +4059,25 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               effectiveProvider,
                               effectiveSelectedModel
                             )
+                            // 'ultraTask' is a synthetic top-of-ladder token
+                            // injected below; accept it here so a persisted
+                            // UltraTask selection doesn't elastic-snap back to
+                            // the first ladder stop (often Off/no-thinking).
+                            const desiredMistralPiReasoning =
+                              effectiveProvider === 'pi'
+                                ? effectivePiReasoning
+                                : effectiveMistralReasoning
+                            const mistralPiUltraTaskVisible =
+                              desiredMistralPiReasoning === 'ultraTask' &&
+                              ultraTaskSupportedForModel(
+                                effectiveModelOptionsRaw,
+                                effectiveSelectedModel
+                              )
                             combinedSelectedReasoning =
                               combinedReasoningOptions.some(
-                                (option) =>
-                                  option.value ===
-                                  (effectiveProvider === 'pi'
-                                    ? effectivePiReasoning
-                                    : effectiveMistralReasoning)
-                              )
-                                ? effectiveProvider === 'pi'
-                                  ? effectivePiReasoning
-                                  : effectiveMistralReasoning
+                                (option) => option.value === desiredMistralPiReasoning
+                              ) || mistralPiUltraTaskVisible
+                                ? desiredMistralPiReasoning
                                 : combinedReasoningOptions[0]?.value ||
                                   ''
                           } else if (effectiveProvider === 'muse') {
