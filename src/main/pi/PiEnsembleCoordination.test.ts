@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
 import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
@@ -61,6 +62,30 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(isPiEnsembleCoordinationToolName('run_shell_command')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('capability_invoke')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('write_file')).toBe(false)
+    // Delegate tools stay deliberately excluded from the coordination surface.
+    expect(isPiEnsembleCoordinationToolName('delegate_wave')).toBe(false)
+    expect(isPiEnsembleCoordinationToolName('delegate_to_subthread')).toBe(false)
+  })
+
+  it('admits the Boss/Captain orchestration parity tools without widening to delegates', () => {
+    const parityTools = [
+      'ensemble_fanout_all',
+      'ensemble_await',
+      'ensemble_lane_result',
+      'ensemble_control',
+      'ensemble_bossman_control',
+      'list_ensemble_participants',
+      'ensemble_propose_goal_complete'
+    ] as const
+    for (const toolName of parityTools) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain(toolName)
+      expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+    }
+    // Every admitted name must exist in the canonical TaskWraith MCP catalog.
+    for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
   })
 
   it('writes a fixed owner-only extension with exactly the narrow coordination tool set', () => {
@@ -82,6 +107,15 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain('@All remains roster-only')
     expect(source).toContain("case 'blackboard_post'")
     expect(source).toContain('ttlMinutes: Type.Optional(Type.Number())')
+    expect(source).toContain("case 'ensemble_control'")
+    expect(source).toContain("case 'ensemble_bossman_control'")
+    expect(source).toContain("case 'ensemble_await'")
+    expect(source).toContain("case 'ensemble_lane_result'")
+    expect(source).toContain("case 'ensemble_fanout_all'")
+    expect(source).toContain("case 'list_ensemble_participants'")
+    expect(source).toContain("case 'ensemble_propose_goal_complete'")
+    expect(source).not.toContain("'delegate_wave'")
+    expect(source).not.toContain("'delegate_to_subthread'")
     expect(source).toContain('throw new Error(resultText(result))')
     expect(prepared.toolNames).not.toContain('run_shell_command')
     expect(source).toContain(

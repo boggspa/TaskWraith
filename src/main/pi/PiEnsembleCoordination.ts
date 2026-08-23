@@ -19,7 +19,19 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'scout_brief',
   'blackboard_post',
   'blackboard_read',
-  'blackboard_delete'
+  'blackboard_delete',
+  // Parity additions (all read/control-only, still server-side policy-gated):
+  // Pi seats hold Boss/Captain roles on real panels, so they need the same
+  // orchestration primitives every full-MCP provider already gets. Delegate
+  // tools (`delegate_wave`, `delegate_to_subthread`) stay deliberately
+  // excluded, matching the Ollama posture.
+  'ensemble_fanout_all',
+  'ensemble_await',
+  'ensemble_lane_result',
+  'ensemble_control',
+  'ensemble_bossman_control',
+  'list_ensemble_participants',
+  'ensemble_propose_goal_complete'
 ] as const)
 
 /** Exact workspace mutation tools whose arguments can be locked and committed
@@ -495,6 +507,13 @@ function descriptionFor(name) {
     blackboard_post: 'Post a shared Ensemble entry. Required: key and value; optional attachmentIds, workspaceImagePaths, pollOptions, category, scope, ttlMinutes (whole minutes; omit for durable).',
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
+    ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
+    ensemble_await: 'Wait (bounded) for named fan-out lanes to finish. Optional: laneIds, timeoutMs, reason.',
+    ensemble_lane_result: 'Read one finished fan-out lane\'s structured output. Required: laneId; optional fanoutId.',
+    ensemble_control: 'Compact Boss/Captain control surface. Required: action; optional params plus flat action fields (e.g. planSummary).',
+    ensemble_bossman_control: 'Boss/Captain control surface (canonical name). Required: action; optional params plus flat action fields.',
+    list_ensemble_participants: 'List Ensemble participants with roles, models, and availability.',
+    ensemble_propose_goal_complete: 'Open a binding goal-complete poll for the active goal. Optional: goalId, summary, reason.',
     write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
     replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
     apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.',
@@ -575,6 +594,35 @@ function parametersFor(name) {
         keys: optionalTextArray(),
         category: optionalText(),
         all: Type.Optional(Type.Boolean())
+      })
+    case 'ensemble_fanout_all':
+      return object({
+        targets: optionalTextArray(),
+        prompt: Type.String(),
+        reason: optionalText(),
+        targetStage: optionalText()
+      })
+    case 'ensemble_await':
+      return object({
+        laneIds: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+        timeoutMs: Type.Optional(Type.Number()),
+        reason: optionalText()
+      })
+    case 'ensemble_lane_result':
+      return object({ laneId: Type.String(), fanoutId: optionalText() })
+    case 'ensemble_control':
+    case 'ensemble_bossman_control':
+      return object({
+        action: Type.String(),
+        params: Type.Optional(Type.Any())
+      })
+    case 'list_ensemble_participants':
+      return object({})
+    case 'ensemble_propose_goal_complete':
+      return object({
+        goalId: optionalText(),
+        summary: optionalText(),
+        reason: optionalText()
       })
     case 'write_file':
       return object({ path: Type.String(), content: Type.String() })
