@@ -4014,6 +4014,25 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               effectiveMuseReasoning || MUSE_DEFAULT_REASONING_EFFORT
                           }
 
+                          // UltraTask rides the top of every provider's ladder
+                          // whose effort values are real persisted tokens
+                          // (Grok/Cursor clamp to xhigh/high outbound, Mistral/
+                          // Pi/Muse to their max). Antigravity is excluded: its
+                          // option values are wire-model-id suffixes, not
+                          // efforts, so a synthetic token would break model
+                          // swapping.
+                          if (
+                            Array.isArray(combinedReasoningOptions) &&
+                            combinedReasoningOptions.length > 0 &&
+                            effectiveProvider !== 'antigravity' &&
+                            !combinedReasoningOptions.some((option) => option.value === 'ultraTask')
+                          ) {
+                            combinedReasoningOptions = [
+                              ...combinedReasoningOptions,
+                              { value: 'ultraTask', label: 'UltraTask' }
+                            ]
+                          }
+
                           const handleCombinedModelChange = (nextModel: string) => {
                             if (effectiveProvider === 'ollama') {
                               onOllamaModelSelected?.(
