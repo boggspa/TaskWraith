@@ -866,6 +866,39 @@ describe('ToolParser', () => {
     })
   })
 
+  describe('AntiGravity (TitleCase) argument shapes', () => {
+    it('counts a TitleCase string-replace edit', () => {
+      expect(estimateLineChanges({ OldString: 'a\nb', NewString: 'a\nb\nc' })).toEqual({
+        additions: 3,
+        deletions: 2
+      })
+    })
+
+    it('derives a string_replace summary with the TitleCase path', () => {
+      const summary = deriveToolDiffSummary('Edit main.py', {
+        filePath: 'src/main.py',
+        OldString: 'a\nb',
+        NewString: 'a\nb\nc',
+        replaceAll: false
+      })
+
+      expect(summary).toMatchObject({
+        additions: 3,
+        deletions: 2,
+        source: 'string_replace',
+        confidence: 'estimated',
+        files: [{ path: 'src/main.py', additions: 3, deletions: 2, status: 'modified' }]
+      })
+    })
+
+    it('counts TitleCase OldText/NewText variants', () => {
+      expect(estimateLineChanges({ OldText: 'x\ny', NewText: 'x\ny\nz' })).toEqual({
+        additions: 3,
+        deletions: 2
+      })
+    })
+  })
+
   describe('unwrapMcpEnvelope', () => {
     it('returns the empty / non-string input untouched (no-op)', () => {
       expect(unwrapMcpEnvelope('')).toBe('')
