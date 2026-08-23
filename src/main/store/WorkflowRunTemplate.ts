@@ -37,6 +37,7 @@ const WORKFLOW_RUN_TEMPLATE_FIELDS: Record<keyof WorkflowRunTemplate, true> = {
   cursorFastMode: true,
   runtimeProfileId: true,
   geminiAuthProfileId: true,
+  antigravityReasoningEffort: true,
   handoffSourceRunId: true,
   kind: true,
   ensembleSnapshot: true

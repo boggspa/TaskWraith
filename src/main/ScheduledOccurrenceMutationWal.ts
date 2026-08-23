@@ -196,6 +196,7 @@ const SCHEDULED_TASK_FIELDS = {
   cursorFastMode: true,
   runtimeProfileId: true,
   geminiAuthProfileId: true,
+  antigravityReasoningEffort: true,
   handoffSourceRunId: true,
   runAt: true,
   timezone: true,
@@ -279,6 +280,7 @@ const WORKFLOW_TEMPLATE_FIELDS = {
   cursorFastMode: true,
   runtimeProfileId: true,
   geminiAuthProfileId: true,
+  antigravityReasoningEffort: true,
   handoffSourceRunId: true,
   kind: true,
   ensembleSnapshot: true
