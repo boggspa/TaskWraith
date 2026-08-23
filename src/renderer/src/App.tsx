@@ -6511,6 +6511,10 @@ function App(): React.JSX.Element {
             .map((option) => option.reasoningEffort)
         : providerReasoningOptions.filter((option) => !option.disabled).map((option) => option.value)
     )
+    // UltraTask rides the top of the ladder as a synthetic token; outbound
+    // normalizers clamp it to each provider's real ceiling. Without this the
+    // persisted value is rejected on read-back and the slider snaps back.
+    providerReasoningEfforts.add('ultraTask')
     const providerDefaultReasoning =
       providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
     // Tier retirement (2026-07): Ollama chats resolve their permission role the
