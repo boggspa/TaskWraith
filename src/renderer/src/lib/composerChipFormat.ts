@@ -369,6 +369,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'low') return 'Low'
     if (value === 'medium') return 'Medium'
     if (value === 'high') return 'High'
+    if (value === 'ultratask') return 'UltraTask'
     return ''
   }
 
@@ -395,6 +396,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'high') return 'High'
     if (value === 'xhigh') return 'Extra High'
     if (value === 'max') return 'Max'
+    if (value === 'ultratask') return 'UltraTask'
     return value.charAt(0).toUpperCase() + value.slice(1)
   }
 
@@ -438,6 +440,7 @@ export function kimiReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'low') return 'Low'
   if (effort === 'high') return 'High'
   if (effort === 'max') return 'Max'
+  if (effort === 'ultratask') return 'UltraTask'
   return ''
 }
 
@@ -454,6 +457,7 @@ export function codexReasoningDisplayLabel(effortValue?: string | null): string 
   // "ultracode" ladder stop on the iOS reasoning slider.
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultra'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -466,6 +470,7 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
   if (effort === 'xhigh' || effort === 'extra') return 'Extra'
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultracode'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -476,6 +481,7 @@ export function grokReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
   if (effort === 'xhigh' || effort === 'extra') return 'Extra High'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -486,6 +492,7 @@ export function mistralReasoningDisplayLabel(effortValue?: string | null): strin
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
   if (effort === 'max') return 'Max'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 

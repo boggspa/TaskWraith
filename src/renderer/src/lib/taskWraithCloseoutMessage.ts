@@ -1604,10 +1604,14 @@ function formatParticipantReasoning(input: {
     return 'On'
   }
   if (input.provider === 'codex' || input.provider === 'claude') {
-    return input.reasoningEffort?.toLowerCase() === 'off' ? 'Off' : 'Default'
+    const effort = input.reasoningEffort?.toLowerCase()
+    if (effort === 'off') return 'Off'
+    if (effort === 'ultratask') return 'UltraTask'
+    return 'Default'
   }
   if ((input.provider === 'grok' || input.provider === 'cursor') && input.reasoningEffort) {
     if (input.reasoningEffort.toLowerCase() === 'off') return 'Off'
+    if (input.reasoningEffort.toLowerCase() === 'ultratask') return 'UltraTask'
     return input.reasoningEffort
       .replace(/[_-]+/g, ' ')
       .replace(/\b\w/g, (character) => character.toUpperCase())

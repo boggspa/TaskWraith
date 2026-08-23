@@ -404,6 +404,39 @@ describe('reasoningDisplayLabel', () => {
       })
     ).toBe('')
   })
+
+  it('UltraTask displays as UltraTask for all providers', () => {
+    const base = {
+      provider: 'codex' as const,
+      composerStyle: 'codex' as const,
+      modelId: 'gpt-5.6-terra',
+      modelLabel: 'GPT-5.6 Terra'
+    }
+    expect(
+      reasoningDisplayLabel({ ...base, codexReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'claude', claudeReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'kimi', kimiReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'grok', grokReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'mistral', mistralReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'cursor', cursorReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'ollama', ollamaReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'pi', piReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+  })
 })
 
 describe('formatComposerModelChip', () => {
