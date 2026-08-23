@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
-import { formatAssistantMessageLabel } from './assistantMessageLabel'
+import {
+  formatAssistantMessageLabel,
+  mostRecentSoloRunModel
+} from './assistantMessageLabel'
 
 const assistant = (metadata?: ChatMessage['metadata']): ChatMessage => ({
   id: 'm1',
@@ -368,5 +371,45 @@ describe('formatAssistantMessageLabel', () => {
       modelBadge: '5.5',
       agentAccent: '#06D6A0'
     })
+  })
+})
+
+describe('mostRecentSoloRunModel', () => {
+  it('returns the newest same-provider model, scanning backwards', () => {
+    expect(
+      mostRecentSoloRunModel(
+        [
+          { provider: 'pi', requestedModel: 'deepseek/deepseek-v4-flash' },
+          { provider: 'pi', actualModel: 'deepseek/deepseek-v4-pro' }
+        ],
+        'pi'
+      )
+    ).toBe('deepseek/deepseek-v4-pro')
+  })
+
+  it('skips other-provider runs but keeps them as a last resort (newest first)', () => {
+    const runs = [
+      { provider: 'claude', requestedModel: 'claude-opus-4.7' },
+      { provider: 'codex', requestedModel: 'gpt-5.5' }
+    ]
+    expect(mostRecentSoloRunModel(runs, 'pi')).toBe('gpt-5.5')
+  })
+
+  it('prefers a same-provider run found further back over a newer foreign one', () => {
+    expect(
+      mostRecentSoloRunModel(
+        [
+          { provider: 'pi', requestedModel: 'zai/glm-5.2' },
+          { provider: 'claude', requestedModel: 'claude-opus-4.7' }
+        ],
+        'pi'
+      )
+    ).toBe('zai/glm-5.2')
+  })
+
+  it('returns null for empty or model-less runs and tolerates undefined input', () => {
+    expect(mostRecentSoloRunModel([], 'pi')).toBeNull()
+    expect(mostRecentSoloRunModel([{ provider: 'pi' }], 'pi')).toBeNull()
+    expect(mostRecentSoloRunModel(undefined, 'pi')).toBeNull()
   })
 })

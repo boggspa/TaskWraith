@@ -40,7 +40,10 @@ import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
-import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
+import {
+  formatAssistantMessageLabel,
+  mostRecentSoloRunModel
+} from '../lib/assistantMessageLabel'
 import { formatEnsembleYieldContentForDisplay } from '../lib/EnsembleYieldPresentation'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
@@ -4782,7 +4785,17 @@ export const TranscriptPanel = memo(
                   : null
             const assistantRunProvider =
               providerIdFromUnknown(assistantRun?.provider) || currentProvider
-            const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
+            // Branding fallback: a follow-up row whose run lookup misses (or
+            // whose run record never carried a model) would otherwise resolve
+            // `resolveProviderHueClass(provider, '')` and drop the Pi/Ollama
+            // upstream override. Fall back to the chat's most recent
+            // model-bearing run so later turns keep the picked brand.
+            const assistantRunModel =
+              assistantRun?.actualModel ||
+              assistantRun?.requestedModel ||
+              (currentChat?.chatKind === 'ensemble'
+                ? null
+                : mostRecentSoloRunModel(currentChat?.runs, assistantRunProvider))
             const assistantRevealProvider =
               providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
               providerIdFromUnknown(msg.metadata?.guestProvider) ||

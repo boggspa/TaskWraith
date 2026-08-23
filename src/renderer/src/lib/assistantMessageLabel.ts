@@ -21,6 +21,44 @@ type AssistantMessageLabelPresentation = {
   pooledAgentIdentity?: PooledAgentIdentitySnapshot
 }
 
+interface RunModelCandidate {
+  provider?: string
+  requestedModel?: string
+  actualModel?: string
+}
+
+/**
+ * Solo-chat branding fallback. A follow-up assistant row whose run record is
+ * missing or never attached (`msg.runId` lookup misses, run lacks
+ * actualModel/requestedModel) leaves the brand resolvers without a wire id —
+ * for Pi that means `resolveProviderHueClass('pi', '')` paints the plain seat
+ * color and drops the upstream override (deepseek/qwen/…). Scan the chat's
+ * runs backwards for the most recent model-bearing record, preferring runs
+ * from the same provider, so later turns keep the brand the user picked.
+ */
+export function mostRecentSoloRunModel(
+  runs: ReadonlyArray<RunModelCandidate> | null | undefined,
+  provider?: string | null
+): string | null {
+  if (!Array.isArray(runs)) return null
+  let anyProviderModel: string | null = null
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const run = runs[index]
+    const model =
+      [run.actualModel, run.requestedModel].find(
+        (value): value is string => typeof value === 'string' && value.trim() !== ''
+      ) ?? null
+    if (!model) continue
+    if (provider && typeof run.provider === 'string' && run.provider && run.provider !== provider) {
+      // Keep scanning: a same-provider model may sit further back.
+      if (anyProviderModel === null) anyProviderModel = model
+      continue
+    }
+    return model
+  }
+  return anyProviderModel
+}
+
 type FormatAssistantMessageLabelOptions = {
   /**
    * Ensemble chats stamp each assistant bubble with `ensembleProvider`.
