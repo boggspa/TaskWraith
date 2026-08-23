@@ -577,6 +577,18 @@ function ultraTaskSupportedForModel(
   return model?.ultraTaskSupported !== false
 }
 
+// Appending UltraTask to an EMPTY base ladder would make it the ladder's only
+// enabled stop — which the picker renders as the model's locked default
+// ("UltraTask" pinned on models with no reasoning at all). Seed empty ladders
+// with an explicit Off bottom stop so UltraTask stays opt-in at the top of a
+// movable two-stop ladder instead of becoming a fake default.
+function withUltraTaskLadderBottom<
+  T extends { value: string; label: string }
+>(options: T[]): T[] {
+  if (options.length > 0) return options
+  return [{ value: 'off', label: 'Off' } as unknown as T, ...options]
+}
+
 // Air kept between the composer's bottom edge and the terminal's top edge when
 // the terminal is dragged tall. Covers `--workspace-terminal-bottom-gap` plus a
 // little breathing room, so the two surfaces never touch, let alone overlap.
@@ -1255,6 +1267,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     }
     // Inject UltraTask option for models that support it
     if (model?.ultraTaskSupported !== false) {
+      baseOptions = withUltraTaskLadderBottom(baseOptions)
       baseOptions.push({
         value: 'ultraTask',
         label: 'UltraTask'
@@ -4108,8 +4121,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             ultraTaskSelectedModel?.ultraTaskSupported !== false &&
                             !combinedReasoningOptions.some((option) => option.value === 'ultraTask')
                           ) {
+                            // Empty base ladder (Mistral/Cursor models without
+                            // thinking tiers): seed an Off bottom stop so the
+                            // injected UltraTask is opt-in, never the default.
                             combinedReasoningOptions = [
-                              ...combinedReasoningOptions,
+                              ...withUltraTaskLadderBottom(combinedReasoningOptions),
                               { value: 'ultraTask', label: 'UltraTask' }
                             ]
                           }
