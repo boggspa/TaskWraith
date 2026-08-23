@@ -1656,6 +1656,11 @@ import {
 } from './ollama/OllamaWebSessionStore'
 import { createMistralWebUsageLane } from './mistral/MistralWebUsage'
 import { createOllamaWebUsageFetcher } from './ollama/OllamaWebUsage'
+import {
+  configureKimiWebSessionStore,
+  kimiWebSessionStore
+} from './kimi/KimiWebSessionStore'
+import { createKimiWebUsageFetcher } from './kimi/KimiWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
   convertVendorAmountToUsd,
@@ -1947,6 +1952,7 @@ import {
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerOllamaAuthHandlers } from './ipc/ollamaAuthHandlers'
+import { registerKimiWebSessionHandlers } from './ipc/kimiWebSessionHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
@@ -43303,10 +43309,11 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       safeStorage
     })
-    // Import Web Session cookie envelopes (Mistral console + ollama.com).
+    // Import Web Session cookie envelopes (Mistral console + ollama.com + kimi.ai).
     // Same post-app-ready construction so safeStorage has settled.
     configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
+    configureKimiWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     // The lanes that turn those sessions into quota readings. Both read the
     // stores lazily, so construction order here is not load-bearing.
     const mistralWebUsageLane = createMistralWebUsageLane({
@@ -43315,6 +43322,10 @@ if (isGeminiMcpBridgeProcess) {
     })
     const fetchOllamaWebUsageSnapshot = createOllamaWebUsageFetcher({
       loadCookie: () => ollamaWebSessionStore()?.loadCookie() ?? { status: 'missing' }
+    })
+    const fetchKimiWebUsageSnapshot = createKimiWebUsageFetcher({
+      loadCookie: () => kimiWebSessionStore()?.loadCookie() ?? { status: 'missing' },
+      persistCookie: (value: string) => kimiWebSessionStore()?.setCookie(value) ?? { ok: false, status: { configured: false, encryptionAvailable: false } }
     })
     const mistralApiKeyStoreInst = configureMistralApiKeyStore({
       userDataPath: app.getPath('userData'),
@@ -55107,7 +55118,26 @@ if (isGeminiMcpBridgeProcess) {
         const provider = assertProviderId(rawProvider)
         const force = options?.force === true
         // gemini retired — no live account to meter (falls through to null below)
-        if (provider === 'kimi') return fetchKimiUsageSnapshot({ force })
+        if (provider === 'kimi') {
+          // Kimi can have both API-key meters (5H, Weekly) and web-session Monthly meter
+          const [apiKeySnapshot, webSnapshot] = await Promise.all([
+            fetchKimiUsageSnapshot({ force }),
+            fetchKimiWebUsageSnapshot({ force })
+          ])
+          // Merge windows from both sources
+          const mergedWindows = [
+            ...(apiKeySnapshot.windows || []),
+            ...(webSnapshot.windows || [])
+          ]
+          return {
+            ...apiKeySnapshot,
+            windows: mergedWindows,
+            // Mark as configured if either source is configured
+            configured: apiKeySnapshot.configured || webSnapshot.configured,
+            // Preserve error from API key if it exists, otherwise from web
+            error: apiKeySnapshot.error || webSnapshot.error
+          }
+        }
         if (provider === 'claude') return fetchClaudeUsageSnapshot({ force })
         // Cursor has no CLI usage command — read the editor dashboard token
         // and hit Cursor's period-usage RPC (same path as Limit Counter).
@@ -55498,6 +55528,14 @@ if (isGeminiMcpBridgeProcess) {
       webSessionStore: () => ollamaWebSessionStore(),
       // A fresh session must not sit behind the previous session's TTL.
       onWebSessionImported: () => fetchOllamaWebUsageSnapshot.invalidate()
+    })
+
+    registerKimiWebSessionHandlers({
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      isMainRendererSender,
+      webSessionStore: () => kimiWebSessionStore(),
+      // A fresh session must not sit behind the previous session's TTL.
+      onWebSessionImported: () => fetchKimiWebUsageSnapshot.invalidate()
     })
 
     registerGeminiAuthHandlers({
