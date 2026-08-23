@@ -506,6 +506,30 @@ function exampleDelegationProvider(provider: ProviderId): ProviderId {
   return 'codex'
 }
 
+/** The four ULTRA-TASK enforcement lines, shared by the full runtime preamble
+ * and the standalone note so their wording can never drift apart. */
+function buildUltraTaskLines(provider: ProviderId): string[] {
+  const fanoutTool = taskWraithToolNameForProvider(provider, 'ensemble_fanout')
+  const delegateWaveTool = taskWraithToolNameForProvider(provider, 'delegate_wave')
+  const delegateTool = taskWraithToolNameForProvider(provider, 'delegate_to_subthread')
+  const awaitTool = taskWraithToolNameForProvider(provider, 'ensemble_await')
+  return [
+    'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+    `Priority order: ${fanoutTool} (Ensemble only) > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
+    'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+    `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
+  ]
+}
+
+/** Standalone UltraTask note for providers whose runs skip the full runtime
+ * preamble (Pi: MCP attaches at launch; Claude without a pinned receipt or
+ * the Gemini bridge; resumed history-bearing sessions past their one re-inject). */
+function buildUltraTaskStandaloneNote(provider: ProviderId): string {
+  return ['[ULTRATASK CONTEXT BEGIN]', ...buildUltraTaskLines(provider), '[ULTRATASK CONTEXT END]'].join(
+    '\n'
+  )
+}
+
 function buildTaskWraithRuntimePreamble(args: {
   provider: ProviderId
   providerLabel: string
@@ -520,7 +544,6 @@ function buildTaskWraithRuntimePreamble(args: {
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
-  const fanoutTool = taskWraithToolNameForProvider(args.provider, 'ensemble_fanout')
   const awaitTool = taskWraithToolNameForProvider(args.provider, 'ensemble_await')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
   const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
@@ -550,14 +573,7 @@ function buildTaskWraithRuntimePreamble(args: {
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     crossProviderLine,
-    ...(args.isUltraTask
-      ? [
-          'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-          `Priority order: ${fanoutTool} (Ensemble only) > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
-          'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
-          `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
-        ]
-      : []),
+    ...(args.isUltraTask ? buildUltraTaskLines(args.provider) : []),
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
@@ -1770,6 +1786,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // Cold Kimi ACP/Grok keep injecting; resumed Kimi ACP behaves like the
   // other history-bearing sessions.
   let runtimePreambleInjected = false
+  const isUltraTask = ['ultra', 'ultracode', 'ultratask'].includes(
+    (input.ultraTaskDetectionEffort ?? input.reasoningEffort)?.toLowerCase() || ''
+  )
   if (
     shouldInjectTaskWraithRuntimePreamble({
       provider,
@@ -1790,9 +1809,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       coreMcpProfile,
       gatewayMcpProfile,
       advertiseDelegateWave,
-      isUltraTask: ['ultra', 'ultracode', 'ultratask'].includes(
-        (input.ultraTaskDetectionEffort ?? input.reasoningEffort)?.toLowerCase() || ''
-      )
+      isUltraTask
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
@@ -1801,6 +1818,27 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       label: `TaskWraith runtime preamble (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION})`,
       state: 'applied',
       content: taskWraithRuntimePreamble
+    })
+  }
+  // UltraTask delegation enforcement must not depend on the runtime preamble's
+  // MCP-advertised gate. Pi hard-codes taskWraithMcpAdvertised=false at
+  // composer time (its coordination tools attach at launch), and Claude only
+  // advertises with a pinned receipt or the Gemini bridge — yet UltraTask is a
+  // reasoning-tier contract, so the block ships standalone whenever detection
+  // fires and the full preamble did not.
+  if (
+    !runtimePreambleInjected &&
+    isUltraTask &&
+    !isGlobalRun &&
+    approvalMode !== 'plan'
+  ) {
+    const ultraTaskNote = buildUltraTaskStandaloneNote(provider)
+    contextualPrompt = `${ultraTaskNote}\n\n${contextualPrompt}`
+    envelopeLayers.push({
+      id: 'ultratask_note',
+      label: 'UltraTask delegation enforcement',
+      state: 'applied',
+      content: ultraTaskNote
     })
   }
   if (

@@ -93,6 +93,7 @@ export type PromptEnvelopeLayerId =
   | 'simulator_canvas_hint'
   | 'browser_canvas_hint'
   | 'runtime_preamble'
+  | 'ultratask_note'
   | 'recon_steer'
   | 'image_tools_note'
   | 'instructions_global'

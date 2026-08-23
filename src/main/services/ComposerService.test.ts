@@ -511,6 +511,48 @@ describe('ComposerService', () => {
     ).rejects.toThrow('gemini is unavailable for new runs.')
   })
 
+  it('injects UltraTask delegation enforcement for pi/muse/claude from raw metadata tokens', async () => {
+    for (const [provider, key] of [
+      ['pi', 'piReasoningEffort'],
+      ['muse', 'museReasoningEffort'],
+      ['claude', 'claudeReasoningEffort']
+    ] as const) {
+      const payload = await compose(
+        {
+          provider,
+          providerMetadata: { [key]: 'ultraTask' }
+        },
+        {},
+        {}
+      )
+      expect(payload.prompt, `${provider} should carry the ULTRA-TASK block`).toContain(
+        'ULTRA-TASK MODE ACTIVE'
+      )
+    }
+  })
+
+  it('injects UltraTask delegation enforcement for AntiGravity via the presentation marker', async () => {
+    // AntiGravity persists UltraTask as antigravityUltraTaskSelected=true with
+    // a real -high wire effort — the marker is the only ultra signal.
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const payload = await compose(
+        {
+          provider: 'antigravity',
+          providerMetadata: {
+            antigravityUltraTaskSelected: true,
+            antigravityReasoningEffort: 'high'
+          }
+        },
+        {},
+        {}
+      )
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
   it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', async () => {
     const payload = await compose(
       {

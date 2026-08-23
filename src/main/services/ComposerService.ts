@@ -731,38 +731,50 @@ export class ComposerService {
                           optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
                           null
                         : null
-    // Raw (un-normalized) reasoning tier per provider, preserved solely for
-    // UltraTask detection in prompt composition (`ultraTaskDetectionEffort`).
-    // Several wire paths clamp or remap the token so `reasoningEffort` above
-    // can never carry UltraTask intent:
-    // - AntiGravity: normalizeAgyReasoningEffort accepts only low/medium/high,
-    //   nulling the presentation-only 'ultraTask' tier.
-    // - Kimi K3: normalizeKimiReasoningEffort deliberately collapses unknown
-    //   tokens to 'max' (the CLI contract) — wire keeps that; detection reads raw.
-    // - Gemini / Mistral / Pi: no wire effort branch exists at all, though the
-    //   composer exposes an ultraTask selection persisted in chat metadata.
-    const ultraTaskDetectionEffort =
-      provider === 'antigravity'
-        ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
-          optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
-          null
-        : provider === 'kimi'
-          ? optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
-            optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort')) ||
-            null
-          : provider === 'gemini'
-            ? optionalStringOrNull(metadataString(chat, 'geminiReasoningEffort')) ||
-              optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
-              null
-            : provider === 'mistral'
-              ? optionalStringOrNull(metadataString(chat, 'mistralReasoningEffort')) ||
-                optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
-                null
-              : provider === 'pi'
-                ? optionalStringOrNull(metadataString(chat, 'piReasoningEffort')) ||
-                  optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
-                  null
-                : null
+    // Raw (un-normalized) reasoning tier, preserved solely for UltraTask
+    // detection in prompt composition (`ultraTaskDetectionEffort`). Several
+    // wire paths clamp or remap the token so `reasoningEffort` above can never
+    // carry UltraTask intent:
+    // - AntiGravity: normalizeAgyReasoningEffort accepts only low/medium/high;
+    //   picking UltraTask swaps the wire model to the family's -high variant
+    //   and persists a separate antigravityUltraTaskSelected marker instead.
+    // - Kimi K3: normalizeKimiReasoningEffort collapses unknowns to 'max'.
+    // - Gemini / Mistral / Pi: no wire effort branch exists at all.
+    // Detection is deliberately provider-uniform: scan every per-provider
+    // effort key (effectiveInput first, then chat metadata) plus the
+    // AntiGravity presentation marker. The composer persists 'ultraTask'
+    // verbatim into whichever key it owns; a run payload only populates its
+    // own provider's field, so scanning both surfaces closes the gap for
+    // providers whose queue path drops the token.
+    const ultraTaskRawEffortCandidates = [
+      optionalStringOrNull(effectiveInput.antigravityReasoningEffort),
+      optionalStringOrNull(effectiveInput.kimiReasoningEffort),
+      optionalStringOrNull(effectiveInput.claudeReasoningEffort),
+      optionalStringOrNull(effectiveInput.grokReasoningEffort),
+      optionalStringOrNull(effectiveInput.cursorReasoningEffort),
+      optionalStringOrNull(effectiveInput.museReasoningEffort),
+      optionalStringOrNull(effectiveInput.ollamaReasoningEffort),
+      metadataString(chat, 'antigravityReasoningEffort'),
+      metadataString(chat, 'kimiReasoningEffort'),
+      metadataString(chat, 'geminiReasoningEffort'),
+      metadataString(chat, 'mistralReasoningEffort'),
+      metadataString(chat, 'piReasoningEffort'),
+      metadataString(chat, 'museReasoningEffort'),
+      metadataString(chat, 'ollamaReasoningEffort'),
+      metadataString(chat, 'cursorReasoningEffort'),
+      metadataString(chat, 'grokReasoningEffort'),
+      metadataString(chat, 'claudeReasoningEffort'),
+      metadataString(chat, 'codexReasoningEffort'),
+      metadataString(chat, 'reasoningEffort')
+    ]
+    const ultraTaskDetectionEffort = ultraTaskRawEffortCandidates.some(
+      (candidate) =>
+        ['ultra', 'ultracode', 'ultratask'].includes((candidate ?? '').toLowerCase())
+    )
+      ? 'ultratask'
+      : metadataBoolean(chat, 'antigravityUltraTaskSelected') === true
+        ? 'ultratask'
+        : null
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
