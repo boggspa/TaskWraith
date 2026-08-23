@@ -929,28 +929,7 @@ export class ComposerService {
       appRunId,
       appChatId: chatId,
       model: requestedModel,
-      reasoningEffort:
-        provider === 'codex'
-          ? optionalStringOrNull(effectiveInput.codexReasoningEffort) || null
-          : provider === 'grok' && isGrokReasoningModelId(requestedModel)
-            ? optionalStringOrNull(effectiveInput.grokReasoningEffort) || null
-            : provider === 'cursor' && isCursorGrokModelId(requestedModel)
-              ? optionalStringOrNull(effectiveInput.cursorReasoningEffort) || null
-              : provider === 'kimi'
-                ? normalizeKimiReasoningEffort(
-                    requestedModel,
-                    optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
-                      optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
-                  )
-                : provider === 'ollama'
-                  ? optionalStringOrNull(effectiveInput.ollamaReasoningEffort) ||
-                    optionalStringOrNull(metadataString(chat, 'ollamaReasoningEffort')) ||
-                    null
-                  : provider === 'muse'
-                    ? optionalStringOrNull(effectiveInput.museReasoningEffort) ||
-                      optionalStringOrNull(metadataString(chat, 'museReasoningEffort')) ||
-                      null
-                    : null,
+      reasoningEffort: reasoningEffort === 'none' ? null : reasoningEffort,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null

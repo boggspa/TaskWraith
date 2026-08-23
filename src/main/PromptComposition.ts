@@ -470,7 +470,11 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
     (args.provider === 'kimi' && !args.nativeSessionResume) ||
     args.provider === 'grok' ||
     args.provider === 'cursor' ||
-    args.provider === 'mistral'
+    args.provider === 'mistral' ||
+    args.provider === 'antigravity' ||
+    args.provider === 'ollama' ||
+    args.provider === 'muse' ||
+    args.provider === 'pi'
   ) {
     return true
   }
