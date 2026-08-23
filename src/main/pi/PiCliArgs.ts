@@ -32,6 +32,37 @@ export const PI_WRITE_TOOLS: readonly string[] = PI_READ_ONLY_TOOLS
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+const PI_THINKING_LEVELS: ReadonlySet<string> = new Set([
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+])
+
+/**
+ * Sanitize a persisted/UI reasoning-effort token into pi's `--thinking-level`
+ * vocabulary. Above-`max` TaskWraith tiers ('ultra', 'ultracode', 'ultratask')
+ * clamp to 'max'; unknown tokens return undefined so pi keeps its model
+ * default instead of receiving an invalid flag value.
+ */
+export function piThinkingLevelForEffort(
+  effort: string | null | undefined
+): PiThinkingLevel | undefined {
+  const normalized = String(effort || '')
+    .trim()
+    .toLowerCase()
+  if (!normalized || normalized === 'off') {
+    return normalized === 'off' ? 'off' : undefined
+  }
+  if (normalized === 'ultra' || normalized === 'ultracode' || normalized === 'ultratask') {
+    return 'max'
+  }
+  return PI_THINKING_LEVELS.has(normalized) ? (normalized as PiThinkingLevel) : undefined
+}
+
 export interface PiRpcArgsInput {
   upstream: string
   modelId: string
@@ -71,7 +102,11 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   const args: string[] = ['--mode', 'rpc']
   args.push('--provider', input.upstream)
   args.push('--model', input.modelId)
-  if (input.thinkingLevel) args.push('--thinking', input.thinkingLevel)
+  // Sanitize here (not only at call sites): an untyped seam can hand us any
+  // persisted effort token. Unknown values are dropped so pi keeps its model
+  // default instead of receiving an invalid `--thinking` flag.
+  const thinkingLevel = piThinkingLevelForEffort(input.thinkingLevel)
+  if (thinkingLevel) args.push('--thinking', thinkingLevel)
   const nativeTools = input.writeCapable ? PI_WRITE_TOOLS : PI_READ_ONLY_TOOLS
   const coordinationToolNames = input.coordinationToolNames || []
   if (input.coordinationExtensionPath && coordinationToolNames.length === 0) {
