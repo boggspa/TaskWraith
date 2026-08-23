@@ -8992,6 +8992,9 @@
   .composer-combined-picker-trigger-suffix,
 [data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix,
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   animation: none;
   background-image: none;
@@ -9114,6 +9117,9 @@
   .composer-combined-picker-trigger-suffix,
 :is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
   .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   animation: none !important;
   color: color-mix(in srgb, var(--chip-accent, #b088e8) 80%, var(--text-primary) 20%) !important;

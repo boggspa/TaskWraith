@@ -233,7 +233,7 @@ describe('seat-change chrome strip CSS', () => {
     // "first selector only" regex would miss Muse `ultra` / `max` siblings.
     const sweptTiers = new Set<string>()
     const triggerRule =
-      /\.composer-combined-picker-trigger(?:\.seat-change-chip)?\[data-selected-reasoning="[a-z]+"\][\s\S]*?\{([^}]*)\}/g
+      /\.composer-combined-picker-trigger(?:\.seat-change-chip)?\[data-selected-reasoning="[a-zA-Z]+"\][\s\S]*?\{([^}]*)\}/g
     for (const match of cssSource.matchAll(triggerRule)) {
       const body = match[1] ?? ''
       if (!body.includes('background-clip')) continue
@@ -242,14 +242,14 @@ describe('seat-change chrome strip CSS', () => {
       // the swept set; seat-change rules are checked as the repaint set below.
       if (block.includes('.digit-odometer__cell')) continue
       if (!block.includes('.composer-combined-picker-trigger-suffix')) continue
-      for (const tier of block.matchAll(/data-selected-reasoning="([a-z]+)"/g)) {
+      for (const tier of block.matchAll(/data-selected-reasoning="([a-zA-Z]+)"/g)) {
         sweptTiers.add(tier[1]!)
       }
     }
     const repainted = new Set(
       [
         ...cssSource.matchAll(
-          /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
+          /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-zA-Z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
         )
       ].map(([, tier]) => tier)
     )

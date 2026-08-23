@@ -556,7 +556,12 @@ const LADDER_TRACK_INSET = 11
 
 // Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
 // the compact trigger chip. The ladder itself uses a separate Low→Ultra taper.
-const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode', 'ultra', 'ultraTask'])
+const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set([
+  'max',
+  'ultracode',
+  'ultra',
+  'ultratask'
+])
 // Extra (xhigh) wears the same treatment at a fraction of the intensity — a
 // gentler sweep (CSS, keyed off data-selected-reasoning) plus a smaller,
 // dimmer sparkle field. Tiers below it are hue-only (pure CSS, no overlay).
