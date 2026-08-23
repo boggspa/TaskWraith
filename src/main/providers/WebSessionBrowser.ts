@@ -4,6 +4,11 @@ import {
   type MistralWebSubscriptionResult
 } from '../mistral/MistralWebSubscriptionClient'
 import {
+  fetchKimiWebMonthlyUsage,
+  type KimiWebMonthlyReading
+} from '../kimi/KimiWebSubscriptionClient'
+import { serializeKimiWebSessionTokens } from '../kimi/KimiWebUsage'
+import {
   fetchOllamaWebSubscription,
   type OllamaWebSubscriptionResult
 } from '../ollama/OllamaWebSubscriptionClient'
@@ -149,6 +154,95 @@ export async function importMistralWebSession(): Promise<CapturedWebSession<Mist
     cookieDomainSuffixes: ['mistral.ai'],
     buildCookieHeader: (cookies) => (cookies.length ? joinCookies(cookies) : null),
     validate: (cookieHeader) => fetchMistralWebSubscription(cookieHeader)
+  })
+}
+
+/**
+ * Kimi's web session is NOT a cookie: the signed-in kimi.ai page keeps
+ * `access_token` / `refresh_token` in localStorage, and the membership stats
+ * endpoint authenticates with a Bearer token (Limit Counter parity). The same
+ * embedded-window hygiene applies — non-persistent partition, wiped when the
+ * capture settles — but the poll reads tokens via executeJavaScript and
+ * validates them against the live GetSubscriptionStats endpoint before the
+ * window closes.
+ */
+const KIMI_TOKEN_CAPTURE_SCRIPT = `JSON.stringify({
+  accessToken: window.localStorage.getItem('access_token'),
+  refreshToken: window.localStorage.getItem('refresh_token')
+})`
+
+export async function importKimiWebSession(): Promise<CapturedWebSession<KimiWebMonthlyReading> | null> {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 980,
+      height: 720,
+      title: 'Sign in to Kimi',
+      autoHideMenuBar: true,
+      webPreferences: {
+        partition: 'websession-import:kimi',
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    })
+
+    const startUrl = 'https://www.kimi.ai/membership/subscription?tab=quota'
+    let settled = false
+    let lastAttemptedKey: string | null = null
+
+    const settle = async (result: CapturedWebSession<KimiWebMonthlyReading> | null): Promise<void> => {
+      if (settled) return
+      settled = true
+      clearInterval(interval)
+      // Wipe the sign-in from the in-memory partition either way; on success
+      // the tokens now live in the encrypted store.
+      void electronSession.fromPartition('websession-import:kimi').clearStorageData().catch(() => {})
+      if (!win.isDestroyed()) win.close()
+      resolve(result)
+    }
+
+    const interval = setInterval(() => {
+      void (async () => {
+        if (settled) return
+        if (win.isDestroyed()) {
+          await settle(null)
+          return
+        }
+        try {
+          const raw = await win.webContents.executeJavaScript(KIMI_TOKEN_CAPTURE_SCRIPT, true)
+          const parsed = JSON.parse(String(raw)) as { accessToken?: unknown; refreshToken?: unknown }
+          const accessToken =
+            typeof parsed.accessToken === 'string' ? parsed.accessToken.trim() : ''
+          if (!accessToken) return
+          const refreshToken =
+            typeof parsed.refreshToken === 'string' && parsed.refreshToken.trim()
+              ? parsed.refreshToken.trim()
+              : undefined
+          const key = `${accessToken}:${refreshToken ?? ''}`
+          if (key === lastAttemptedKey) return
+          lastAttemptedKey = key
+          const result = await fetchKimiWebMonthlyUsage({ accessToken, ...(refreshToken ? { refreshToken } : {}) })
+          // A valid session may legitimately report zero usage at the start of
+          // a cycle — only a failed fetch (null reading) keeps polling.
+          if (result.reading) {
+            await settle({
+              cookieHeader: serializeKimiWebSessionTokens({
+                accessToken,
+                ...(result.tokens ?? { ...(refreshToken ? { refreshToken } : {}) })
+              }),
+              summary: result.reading
+            })
+          }
+        } catch {
+          // Page still loading or script unavailable; keep polling until closed.
+        }
+      })()
+    }, CAPTURE_POLL_MS)
+
+    win.on('closed', () => {
+      void settle(null)
+    })
+
+    void win.loadURL(startUrl)
   })
 }
 
