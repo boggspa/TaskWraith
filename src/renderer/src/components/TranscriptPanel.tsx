@@ -3520,6 +3520,21 @@ export const TranscriptPanel = memo(
     // message actually arrives below it).
     const lastDisplayMessageId =
       displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
+    
+    // In solo provider chats, the entire current turn (everything after the last
+    // user message) stays open. In ensemble chats, only the trailing message stays open.
+    const protectedFromCollapseMessageIds = useMemo(() => {
+      const ids = new Set<string>()
+      if (lastDisplayMessageId) ids.add(lastDisplayMessageId)
+      if (currentChat?.chatKind !== 'ensemble') {
+        for (let i = displayMessages.length - 1; i >= 0; i--) {
+          const msg = displayMessages[i]
+          if (msg.role === 'user') break
+          ids.add(msg.id)
+        }
+      }
+      return ids
+    }, [displayMessages, lastDisplayMessageId, currentChat?.chatKind])
 
     // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
     // same-participant settled stacks plus interleaved plain system notices —
@@ -3534,7 +3549,7 @@ export const TranscriptPanel = memo(
         pendingAgentQuestions.map((question) => question.messageId)
       )
       const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
-        if (msg.id === lastDisplayMessageId) return null
+        if (protectedFromCollapseMessageIds.has(msg.id)) return null
         if (typeof msg.metadata?.pinnedAt === 'number') return null
         // Mirrors `shouldAutoCollapseActivityStack`'s `isLiveRow`. A stack that
         // is live but whose own activities have momentarily all settled must
@@ -4573,7 +4588,7 @@ export const TranscriptPanel = memo(
               shouldAutoCollapseActivityStack({
                 activities: msg.toolActivities || [],
                 isLiveRow: liveViewportActive,
-                isLastRow: msg.id === lastDisplayMessageId
+                isLastRow: protectedFromCollapseMessageIds.has(msg.id)
               })
             const collapsedStackExpanded =
               stackAutoCollapsible && liveViewportStackKey
