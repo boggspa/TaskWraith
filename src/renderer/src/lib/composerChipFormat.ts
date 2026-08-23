@@ -411,8 +411,24 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'high') return 'High'
     if (value === 'xhigh' || value === 'extra') return 'Extra High'
     if (value === 'ultra' || value === 'ultracode') return 'Ultra'
+    if (value === 'ultratask') return 'UltraTask'
     return value.charAt(0).toUpperCase() + value.slice(1)
   }
+
+  // UltraTask is a provider-agnostic wrapper that auto-selects the highest
+  // reasoning tier; display it directly when any provider has ultraTask selected.
+  const ultraTaskValue = String(
+    ctx.codexReasoningEffort ||
+    ctx.claudeReasoningEffort ||
+    ctx.grokReasoningEffort ||
+    ctx.cursorReasoningEffort ||
+    ctx.kimiReasoningEffort ||
+    ctx.museReasoningEffort ||
+    ctx.mistralReasoningEffort ||
+    ctx.piReasoningEffort ||
+    ctx.ollamaReasoningEffort
+  ).trim().toLowerCase()
+  if (ultraTaskValue === 'ultratask') return 'UltraTask'
 
   return ''
 }
