@@ -76,7 +76,7 @@ export const PI_UPSTREAM_LABELS: Readonly<Record<PiUpstreamId, string>> = {
  * narrow: every additional id would become another duplicate cross-provider
  * route in Pi's picker.
  */
-export const PI_OPENROUTER_ALLOWED_MODEL_IDS = ['stealth/ox-alpha', 'zai/glm-5.2', 'poolside/laguna-s-2.1', 'nvidia/nemotron-3-ultra'] as const
+export const PI_OPENROUTER_ALLOWED_MODEL_IDS = ['stealth/ox-alpha', 'zai/glm-5.2', 'poolside/laguna-s-2.1', 'nvidia/nemotron-3-ultra-550b-a55b:free'] as const
 
 /**
  * Model-id deny patterns within otherwise-allowed upstreams. qwen-token-plan

@@ -42,7 +42,7 @@ describe('piModelPolicyVerdict', () => {
       expect(verdict.allowed, modelId).toBe(false)
       expect(verdict.reason).toMatch(/Ox Alpha|GLM|Laguna|Nemotron/)
     }
-    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual(['stealth/ox-alpha', 'zai/glm-5.2', 'poolside/laguna-s-2.1', 'nvidia/nemotron-3-ultra'])
+    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual(['stealth/ox-alpha', 'zai/glm-5.2', 'poolside/laguna-s-2.1', 'nvidia/nemotron-3-ultra-550b-a55b:free'])
   })
 
   it('refuses resold hosted models inside allowed upstreams (kimi on qwen)', () => {

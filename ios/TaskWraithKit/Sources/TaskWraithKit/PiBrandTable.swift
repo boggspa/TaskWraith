@@ -84,7 +84,7 @@ public enum PiBrandTable {
         "openrouter/stealth/ox-alpha": "Ox Alpha",
         "openrouter/zai/glm-5.2": "GLM 5.2",
         "openrouter/poolside/laguna-s-2.1": "Laguna S 2.1",
-        "openrouter/nvidia/nemotron-3-ultra": "Nemotron 3 Ultra",
+        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

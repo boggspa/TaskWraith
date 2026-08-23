@@ -372,7 +372,7 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
   { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' },
   { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
-  { id: 'openrouter/nvidia/nemotron-3-ultra', label: 'Nemotron 3 Ultra' }
+  { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' }
 ]
 
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [

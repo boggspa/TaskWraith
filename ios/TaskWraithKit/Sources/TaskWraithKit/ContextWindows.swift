@@ -111,7 +111,7 @@ public enum ContextWindows {
         "openrouter/stealth/ox-alpha": 1_048_576,
         "openrouter/zai/glm-5.2": 256_000,
         "openrouter/poolside/laguna-s-2.1": 256_000,
-        "openrouter/nvidia/nemotron-3-ultra": 1_000_000,
+        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": 1_000_000,
         // Kimi
         "kimi-k3": 256_000,
         "kimi-k2.7-code": 256_000,

@@ -27,7 +27,7 @@ export interface PiOpenRouterCustomModelRegistration {
  *   free input/output, text + image input, and OpenRouter reasoning support.
  * - `zai/glm-5.2`: 256,000-token context, free input/output, text-only input.
  * - `poolside/laguna-s-2.1`: 256,000-token context, free input/output, text-only input.
- * - `nvidia/nemotron-3-ultra`: 1,000,000-token context, 65,536-token output cap,
+ * - `nvidia/nemotron-3-ultra-550b-a55b:free`: 1,000,000-token context, 65,536-token output cap,
  *   free input/output, text-only input.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
@@ -59,7 +59,7 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   },
   {
-    modelId: 'nvidia/nemotron-3-ultra',
+    modelId: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     label: 'Nemotron 3 Ultra',
     reasoning: false,
     input: ['text'],

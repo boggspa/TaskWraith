@@ -50,8 +50,8 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra')?.label).toBe('NVIDIA')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra')?.hueClass).toBe('nvidia')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe('NVIDIA')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass).toBe('nvidia')
   })
 
   it.each(PI_OPENROUTER_CUSTOM_MODELS)('registers only $modelId in Pi’s isolated home', (model) => {
