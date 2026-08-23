@@ -1316,6 +1316,8 @@ export function CombinedModelPicker({
         kimiReasoningEffort,
         museReasoningEffort:
           provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined,
+        antigravityReasoningEffort:
+          provider === 'antigravity' ? selectedReasoning : undefined,
         shellFastModeActive: showShellFastLabel
       }),
     [
