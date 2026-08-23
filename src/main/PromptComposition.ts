@@ -183,7 +183,12 @@ export function resolveContextBudget(
 // Bumped v9 -> v10 so every resumed write-capable seat receives the commit-slice
 // contract: a logical filesystem slice lands through exact pathspecs or an
 // isolated private index, never through the shared index.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v10'
+//
+// Bumped v10 -> v11 so resumed Claude/Codex/Gemini (and Kimi-native-resume)
+// sessions re-inject once alongside the generalized UltraTask detection fix:
+// kimi/gemini/mistral/pi runs now carry ultraTaskDetectionEffort, so those
+// seats learn the ULTRA-TASK delegation-enforcement block on their next turn.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v11'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full

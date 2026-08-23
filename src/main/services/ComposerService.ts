@@ -731,18 +731,38 @@ export class ComposerService {
                           optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
                           null
                         : null
-    // AntiGravity UltraTask is a presentation-only tier ('ultraTask') persisted
-    // verbatim in chat metadata and rejected by normalizeAgyReasoningEffort —
-    // wire argv only accepts low/medium/high, so `reasoningEffort` above is
-    // null under UltraTask and the delegation-enforcement runtime preamble
-    // would never fire. Preserve the raw token solely for UltraTask detection
-    // in prompt composition; the run payload keeps the normalized wire value.
+    // Raw (un-normalized) reasoning tier per provider, preserved solely for
+    // UltraTask detection in prompt composition (`ultraTaskDetectionEffort`).
+    // Several wire paths clamp or remap the token so `reasoningEffort` above
+    // can never carry UltraTask intent:
+    // - AntiGravity: normalizeAgyReasoningEffort accepts only low/medium/high,
+    //   nulling the presentation-only 'ultraTask' tier.
+    // - Kimi K3: normalizeKimiReasoningEffort deliberately collapses unknown
+    //   tokens to 'max' (the CLI contract) — wire keeps that; detection reads raw.
+    // - Gemini / Mistral / Pi: no wire effort branch exists at all, though the
+    //   composer exposes an ultraTask selection persisted in chat metadata.
     const ultraTaskDetectionEffort =
       provider === 'antigravity'
         ? optionalStringOrNull(effectiveInput.antigravityReasoningEffort) ||
           optionalStringOrNull(metadataString(chat, 'antigravityReasoningEffort')) ||
           null
-        : null
+        : provider === 'kimi'
+          ? optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
+            optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort')) ||
+            null
+          : provider === 'gemini'
+            ? optionalStringOrNull(metadataString(chat, 'geminiReasoningEffort')) ||
+              optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
+              null
+            : provider === 'mistral'
+              ? optionalStringOrNull(metadataString(chat, 'mistralReasoningEffort')) ||
+                optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
+                null
+              : provider === 'pi'
+                ? optionalStringOrNull(metadataString(chat, 'piReasoningEffort')) ||
+                  optionalStringOrNull(metadataString(chat, 'reasoningEffort')) ||
+                  null
+                : null
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,

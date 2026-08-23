@@ -828,6 +828,27 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
   })
 
+  it('injects UltraTask delegation enforcement for Kimi via the raw detection effort', () => {
+    // normalizeKimiReasoningEffort collapses unknown tokens to 'max' on the
+    // wire (CLI contract), so composition must consult the raw token.
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'kimi',
+      finalPrompt: 'Do a big refactor.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      reasoningEffort: 'max',
+      ultraTaskDetectionEffort: 'ultratask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('Priority order:')
+  })
+
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
     const result = composeRunPrompt({
       instructionContext: null,
