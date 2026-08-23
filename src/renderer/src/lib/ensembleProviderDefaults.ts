@@ -387,6 +387,7 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gemma4:31b-mlx', label: 'Gemma 4 (31B-MLX)' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)' },
+  { id: 'ornith-1.5:9b', label: 'Ornith 1.5 (9B Param)' },
   { id: 'ornith-1.5:35b', label: 'Ornith 1.5 (35B Param)' },
   { id: 'laguna-xs-2.1:q8_0', label: 'Laguna XS 2.1 (33B-A3B Q8)' },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)' },

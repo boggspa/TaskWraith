@@ -208,6 +208,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'ornith:35b' || id.startsWith('ornith:35b-')) {
       return 'Ornith 1.0 (35B Param)'
     }
+    if (id === 'ornith-1.5:9b' || id.startsWith('ornith-1.5:9b-')) {
+      return 'Ornith 1.5 (9B Param)'
+    }
     if (id === 'ornith-1.5:35b' || id.startsWith('ornith-1.5:35b-')) {
       return 'Ornith 1.5 (35B Param)'
     }

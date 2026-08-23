@@ -820,6 +820,12 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) {
     return 'Ornith 1.0 (35B Param)'
   }
+  if (key === 'ornith-1.5:9b' || key.startsWith('ornith-1.5:9b-')) {
+    return 'Ornith 1.5 (9B Param)'
+  }
+  if (key === 'ornith-1.5:9b' || key.startsWith('ornith-1.5:9b-')) {
+    return 'ornith_9b'
+  }
   if (key === 'ornith-1.5:35b' || key.startsWith('ornith-1.5:35b-')) {
     return 'Ornith 1.5 (35B Param)'
   }

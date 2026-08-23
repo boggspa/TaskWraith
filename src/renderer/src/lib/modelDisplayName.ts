@@ -189,6 +189,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ornith:latest': 'Ornith 1.0 (9B Param)',
   'ornith:9b': 'Ornith 1.0 (9B Param)',
   'ornith:35b': 'Ornith 1.0 (35B Param)',
+  'ornith-1.5:9b': 'Ornith 1.5 (9B Param)',
   'ornith-1.5:35b': 'Ornith 1.5 (35B Param)',
   'laguna-xs-2.1:q8_0': 'Laguna XS 2.1 (33B-A3B Q8)',
   'gpt-oss': 'GPT OSS (20B Param)',
@@ -419,6 +420,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('ornith:35b-')) {
     return 'Ornith 1.0 (35B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('ornith-1.5:9b-')) {
+    return 'Ornith 1.5 (9B Param)'
   }
   if (provider === 'ollama' && key.startsWith('ornith-1.5:35b-')) {
     return 'Ornith 1.5 (35B Param)'

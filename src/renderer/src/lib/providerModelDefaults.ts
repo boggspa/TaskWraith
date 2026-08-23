@@ -463,6 +463,11 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
   },
   {
+    id: 'ornith-1.5:9b',
+    label: 'Ornith 1.5 (9B Param)',
+    description: 'Ornith 1.5 9B via Ollama · 262k context · agentic coding'
+  },
+  {
     id: 'ornith-1.5:35b',
     label: 'Ornith 1.5 (35B Param)',
     description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding'
