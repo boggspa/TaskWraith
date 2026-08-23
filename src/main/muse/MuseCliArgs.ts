@@ -144,6 +144,9 @@ export function normalizeMuseReasoningEffort(
   const raw = typeof effort === 'string' ? effort.trim().toLowerCase() : ''
   if (!raw) return MUSE_DEFAULT_REASONING_EFFORT
   if (raw === 'none' || raw === 'off') return 'minimal'
+  // TaskWraith's top-of-ladder tier clamps to Muse's highest effort rather
+  // than falling to the default (a silent downgrade).
+  if (raw === 'ultratask' || raw === 'ultracode' || raw === 'max') return 'ultra'
   if ((MUSE_REASONING_EFFORTS as readonly string[]).includes(raw)) {
     return raw as MuseReasoningEffort
   }
