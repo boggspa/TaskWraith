@@ -3240,15 +3240,6 @@ export function resolveToolDispatchContractStrict(
         `capability_invoke target "${rawTarget}" is not a declared concrete TaskWraith catalog action.`
       )
     }
-    if (target === 'capability_invoke') {
-      return unmapped(
-        null,
-        'taskwraith-catalog',
-        rawAction,
-        'gateway_target_not_declared',
-        'capability_invoke cannot invoke itself.'
-      )
-    }
     const metadata = TASKWRAITH_TOOL_ACTIONS[target]
     return {
       ok: true,
