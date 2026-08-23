@@ -216,6 +216,7 @@ import {
   shouldMintFreshGoalIdentity,
   updateActiveGoalLifecycle
 } from '../GoalState'
+import type { SubThreadMailbox, SubThreadMailboxOutcome } from '../SubThreadMailbox'
 import { projectRoundParticipantFromChatRun } from '../EnsembleRoundParticipantProjection'
 import { gateBlocksActiveGoal } from '../ReviewGateScope'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
@@ -832,7 +833,7 @@ export interface EnsembleOrchestratorDeps {
   listProjectReferences?: () => readonly ProjectReference[]
   projectReferenceExtractLoader?: ProjectReferenceExtractLoader
   getChildChats?: (chatId: string) => ChatRecord[]
-  getSubThreadMailbox?: (chatId: string) => any
+  getSubThreadMailbox?: (chatId: string) => SubThreadMailbox | undefined
 }
 
 /**
@@ -1254,6 +1255,19 @@ export interface EnsembleAwaitLaneStatus {
   reason?: string
 }
 
+export interface EnsembleAwaitSubThreadStatus {
+  subThreadId: string
+  settled: boolean
+  status: SubThreadMailboxOutcome | 'pending'
+}
+
+export interface EnsembleAwaitWaveStatus {
+  waveId: string
+  settled: boolean
+  childrenSpawned: number
+  childrenSettled: number
+}
+
 export interface EnsembleAwaitResult {
   ok: boolean
   tool: 'ensemble_await'
@@ -1263,8 +1277,8 @@ export interface EnsembleAwaitResult {
   message: string
   error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes' | 'invalid_sub_thread' | 'invalid_wave' | 'no_targets'
   lanes?: EnsembleAwaitLaneStatus[]
-  subThreads?: any[]
-  waves?: any[]
+  subThreads?: EnsembleAwaitSubThreadStatus[]
+  waves?: EnsembleAwaitWaveStatus[]
   settledCount?: number
   pendingCount?: number
 }
@@ -12170,6 +12184,7 @@ export class EnsembleOrchestrator {
         )
       )
     }
+    const runtime = this.roundsByChatId.get(run.chatId)
     const requestedLaneIds = normalizeLaneIdList(input.laneIds)
     const requestedSubThreadIds = normalizeLaneIdList(input.subThreadIds)
     const requestedWaveIds = normalizeLaneIdList(input.waveIds)
@@ -12194,6 +12209,12 @@ export class EnsembleOrchestrator {
       return invalid(
         'self_await',
         'ensemble_await: a lane cannot await itself — it would block until its own timeout.'
+      )
+    }
+    if (requestedSubThreadIds?.includes(run.chatId)) {
+      return invalid(
+        'self_await',
+        'ensemble_await: a sub-thread cannot await itself — it would block until its own timeout.'
       )
     }
 
@@ -12246,7 +12267,7 @@ export class EnsembleOrchestrator {
       })
 
     const getWaveChildren = (waveId: string) => 
-      childChats.filter((c: any) => c.delegationContext?.joinPolicy?.groupId === waveId)
+      childChats.filter((c: ChatRecord) => c.delegationContext?.joinPolicy?.groupId === waveId)
 
     const allSettled = (): boolean => {
       const lanesSettled = awaitedIds.every((laneId) => {
@@ -12254,12 +12275,12 @@ export class EnsembleOrchestrator {
         return Boolean(lane && isTerminalLaneStatus(lane.status))
       })
       const subThreadsSettled = !requestedSubThreadIds ? true : requestedSubThreadIds.every((id) => {
-        return mailboxEvents.some((e: any) => e.source?.subThreadId === id)
+        return mailboxEvents.some((e) => e.source?.subThreadId === id)
       })
       const wavesSettled = !requestedWaveIds ? true : requestedWaveIds.every((waveId) => {
         const children = getWaveChildren(waveId)
         if (children.length === 0) return false
-        return children.every((c: any) => mailboxEvents.some((e: any) => e.source?.subThreadId === c.appChatId))
+        return children.every((c: ChatRecord) => mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId))
       })
       return lanesSettled && subThreadsSettled && wavesSettled
     }
@@ -12274,13 +12295,13 @@ export class EnsembleOrchestrator {
     }
     
     const statuses = report()
-    const subThreadsReport = (requestedSubThreadIds || []).map(id => {
-      const event = mailboxEvents.find((e: any) => e.source?.subThreadId === id)
-      return { subThreadId: id, settled: !!event, status: event ? (event as any).outcome : 'pending' }
+    const subThreadsReport: EnsembleAwaitSubThreadStatus[] = (requestedSubThreadIds || []).map(id => {
+      const event = mailboxEvents.find((e) => e.source?.subThreadId === id)
+      return { subThreadId: id, settled: !!event, status: event?.outcome ?? 'pending' }
     })
-    const wavesReport = (requestedWaveIds || []).map(waveId => {
+    const wavesReport: EnsembleAwaitWaveStatus[] = (requestedWaveIds || []).map(waveId => {
       const children = getWaveChildren(waveId)
-      const settledCount = children.filter((c: any) => mailboxEvents.some((e: any) => e.source?.subThreadId === c.appChatId)).length
+      const settledCount = children.filter((c) => mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId)).length
       return { 
         waveId, 
         settled: children.length > 0 && settledCount === children.length,
