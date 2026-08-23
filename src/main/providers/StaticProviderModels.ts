@@ -619,6 +619,7 @@ function piStaticModelRows(now: Date = new Date()) {
       id: model.wireId,
       label: model.label,
       description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
+      ultraTaskSupported: true,
       ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
     })),
     now
@@ -642,6 +643,7 @@ const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = antigravityGeminiApiStaticModels().
   // marker in the text — the API lane carries its own glyph.
   label: model.label,
   description: 'Gemini API key lane · 1M context',
+  ultraTaskSupported: true,
   ...(model.id === ANTIGRAVITY_DEFAULT_MODEL_ID ? { isDefault: true } : {})
 }))
 
@@ -668,168 +670,199 @@ const OLLAMA_STATIC_MODELS = [
   {
     id: 'qwen3.5:9b',
     label: 'Qwen 3.5 (9B Param)',
-    description: 'Qwen 3.5 9B via Ollama · 262k context'
+    description: 'Qwen 3.5 9B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.6:35b',
     label: 'Qwen 3.6 (35B-A3B)',
-    description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking'
+    description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.8:27b-mlx',
     label: 'Qwen 3.8 (27B-MLX)',
-    description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking'
+    description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma3:4b',
     label: 'Gemma 3 (4B Param)',
-    description: 'Google Gemma 3 4B via Ollama · 131k context · vision'
+    description: 'Google Gemma 3 4B via Ollama · 131k context · vision',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma4:12b',
     label: 'Gemma 4 (12B Param)',
-    description: 'Google Gemma 4 12B via Ollama · 262k context'
+    description: 'Google Gemma 4 12B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma4:31b-mlx',
     label: 'Gemma 4 (31B-MLX)',
-    description: 'Google Gemma 4 31B-MLX via Ollama · 262k context'
+    description: 'Google Gemma 4 31B-MLX via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'ornith:9b',
     label: 'Ornith 1.0 (9B Param)',
-    description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding'
+    description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'ornith:35b',
     label: 'Ornith 1.0 (35B Param)',
-    description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
+    description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'ornith-1.5:35b',
     label: 'Ornith 1.5 (35B Param)',
-    description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding'
+    description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'laguna-xs-2.1:q8_0',
     label: 'Laguna XS 2.1 (33B-A3B Q8)',
-    description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking'
+    description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-oss:20b',
     label: 'GPT OSS (20B Param)',
-    description: 'OpenAI gpt-oss 20B via Ollama · 131k context'
+    description: 'OpenAI gpt-oss 20B via Ollama · 131k context',
+    ultraTaskSupported: true
   },
   {
     id: 'lfm2.5-thinking:1.2b',
     label: 'LFM 2.5 Thinking (1.2B Param)',
-    description: 'Liquid LFM2.5 Thinking 1.2B via Ollama · 128k context · tools/thinking'
+    description: 'Liquid LFM2.5 Thinking 1.2B via Ollama · 128k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'lfm2.5:8b',
     label: 'LFM 2.5 (8B-A1B)',
-    description: 'Liquid LFM2.5 8B-A1B via Ollama · 128k context · tools/thinking'
+    description: 'Liquid LFM2.5 8B-A1B via Ollama · 128k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'minicpm-v4.5:8b',
     label: 'MiniCPM-V 4.5 (8B Param)',
-    description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking'
+    description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4:3b',
     label: 'Granite 4.0 (3B Param)',
-    description: 'IBM Granite 4.0 3B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.0 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4.1:3b',
     label: 'Granite 4.1 (3B Param)',
-    description: 'IBM Granite 4.1 3B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.1 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4.1:30b',
     label: 'Granite 4.1 (30B Param)',
-    description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
-    description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'
+    description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron3:33b',
     label: 'Nemotron 3 Nano Omni (33B Param)',
-    description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking'
+    description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron-3.5-lightning:30b-mlx',
     label: 'Nemotron 3.5 Lightning (30B-MLX)',
     description:
-      'NVIDIA Nemotron 3.5 Lightning 30B-MLX via Ollama · 262k context · tools/thinking · 3B active · always-on agents'
+      'NVIDIA Nemotron 3.5 Lightning 30B-MLX via Ollama · 262k context · tools/thinking · 3B active · always-on agents',
+    ultraTaskSupported: true
   },
   {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     description:
-      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
+      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3:3b',
     label: 'Ministral 3 (3B Param)',
-    description: 'Mistral Ministral 3 3B via Ollama · 262k context · vision/tools'
+    description: 'Mistral Ministral 3 3B via Ollama · 262k context · vision/tools',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3:14b',
     label: 'Ministral 3 (14B Param)',
-    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
+    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools',
+    ultraTaskSupported: true
   },
   {
     id: 'muse-glimmer:30b-mlx',
     label: 'Muse Glimmer (30B-MLX)',
     description:
-      'Meta Muse Glimmer 30B-MLX via Ollama · 131k context · vision/tools/thinking · agentic'
+      'Meta Muse Glimmer 30B-MLX via Ollama · 131k context · vision/tools/thinking · agentic',
+    ultraTaskSupported: true
   },
   {
     id: 'llama3.1:8b',
     label: 'Llama 3.1 (8B Param)',
-    description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools'
+    description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'deepseek-r1:1.5b',
     label: 'DeepSeek R1 (1.5B Param)',
-    description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking'
+    description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'deepseek-r1:8b',
     label: 'DeepSeek R1 (8B Param)',
-    description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking'
+    description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'rnj-1',
     label: 'Rnj-1 (8B Param)',
-    description: 'Essential AI Rnj-1 8B via Ollama · 33k context · tools · agentic coding'
+    description: 'Essential AI Rnj-1 8B via Ollama · 33k context · tools · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'glm-4.7-flash:q4_K_M',
     label: 'GLM-4.7-Flash (30B-A3B Q4)',
-    description: 'Z.ai GLM-4.7-Flash 30B-A3B Q4 via Ollama · 203k context · tools/thinking'
+    description: 'Z.ai GLM-4.7-Flash 30B-A3B Q4 via Ollama · 203k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'north-mini-code-1.0:q4_K_M',
     label: 'North Mini Code 1.0 (30B-A3B Q4)',
-    description: 'Cohere North Mini Code 1.0 30B-A3B Q4 via Ollama · 500k context · tools/thinking'
+    description: 'Cohere North Mini Code 1.0 30B-A3B Q4 via Ollama · 500k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'llama3.2:3b',
     label: 'Llama 3.2 (3B Param)',
-    description: 'Meta Llama 3.2 3B via Ollama · 131k context · tools'
+    description: 'Meta Llama 3.2 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
 const GEMINI_STATIC_MODELS = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'pro', label: 'Pro' },
-  { id: 'flash', label: 'Flash' },
-  { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
+  { id: 'auto', label: 'Auto', ultraTaskSupported: true },
+  { id: 'pro', label: 'Pro', ultraTaskSupported: true },
+  { id: 'flash', label: 'Flash', ultraTaskSupported: true },
+  { id: 'flash-lite', label: 'Flash Lite', isDefault: true, ultraTaskSupported: true }
 ]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
 const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
@@ -895,57 +928,68 @@ const MISTRAL_STATIC_MODELS = [
   {
     id: 'zai-glm-5-2',
     label: 'GLM-5.2 (via Mistral)',
-    description: '1M context - $1.40/$4.40 per Mtok'
+    description: '1M context - $1.40/$4.40 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'codestral-2508',
     label: 'Codestral (Aug 2025)',
-    description: '131K context - coding-tuned, $0.30/$0.90 per Mtok'
+    description: '131K context - coding-tuned, $0.30/$0.90 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-small-2603',
     label: 'Mistral Small 4',
-    description: '256K context - $0.15/$0.60 per Mtok'
+    description: '256K context - $0.15/$0.60 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'devstral-2512',
     label: 'Devstral 2',
-    description: '262K context - $0.40/$2.00 per Mtok'
+    description: '262K context - $0.40/$2.00 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'labs-leanstral-1-5',
     label: 'Leanstral 1.5 (Labs)',
-    description: '262K context - free research tier'
+    description: '262K context - free research tier',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-latest',
     label: 'Mistral Medium (Latest)',
-    description: '262K context - flagship, $1.50/$7.50 per Mtok'
+    description: '262K context - flagship, $1.50/$7.50 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-2508',
     label: 'Mistral Medium 3.1',
-    description: '262K context - $0.40/$2.00 per Mtok'
+    description: '262K context - $0.40/$2.00 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-2505',
     label: 'Mistral Medium 3',
-    description: '131K context - $0.40/$2.00 per Mtok'
+    description: '131K context - $0.40/$2.00 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-14b-2512',
     label: 'Ministral 3 (14B)',
-    description: '262K context - $0.20/$0.20 per Mtok'
+    description: '262K context - $0.20/$0.20 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-8b-2512',
     label: 'Ministral 3 (8B)',
-    description: '262K context - $0.15/$0.15 per Mtok'
+    description: '262K context - $0.15/$0.15 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3b-2512',
     label: 'Ministral 3 (3B)',
-    description: '262K context - $0.10/$0.10 per Mtok'
+    description: '262K context - $0.10/$0.10 per Mtok',
+    ultraTaskSupported: true
   }
 ]
 // Muse Code CLI seat. Exactly one row on purpose: Meta withdrew Muse Spark 1.1
