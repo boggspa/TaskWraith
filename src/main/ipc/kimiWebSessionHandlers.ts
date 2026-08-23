@@ -59,12 +59,12 @@ function normalizeKimiWebSessionInput(raw: unknown): string | null {
 }
 
 export function registerKimiWebSessionHandlers(deps: KimiWebSessionHandlersDeps): void {
-  ipcMain.handle('get-kimi-web-session-status', async (): Promise<KimiAuthStatus> => {
+  ipcMain.handle('get-kimi-web-session-status', async (): Promise<WebSessionStatus> => {
     const webSession = webSessionStatusOf(deps.webSessionStore?.() ?? null)
     return {
+      configured: webSession.configured,
       encryptionAvailable: deps.isEncryptionAvailable(),
-      webSessionConfigured: webSession.configured,
-      ...(webSession.updatedAt ? { webSessionUpdatedAt: webSession.updatedAt } : {})
+      ...(webSession.updatedAt ? { updatedAt: webSession.updatedAt } : {})
     }
   })
 
