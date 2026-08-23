@@ -509,6 +509,7 @@ function buildTaskWraithRuntimePreamble(args: {
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
+  const awaitTool = taskWraithToolNameForProvider(args.provider, 'ensemble_await')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
   const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
   const statusTool = taskWraithToolNameForProvider(args.provider, 'git_status')
@@ -518,11 +519,11 @@ function buildTaskWraithRuntimePreamble(args: {
   const followupProvider = exampleDelegationProvider(args.provider)
   const wavePeerProvider = followupProvider === 'claude' ? 'codex' : 'claude'
   const exampleTools = args.advertiseDelegateWave
-    ? `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}, ${delegateWaveTool}`
-    : `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}`
+    ? `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}, ${delegateWaveTool}, ${awaitTool}`
+    : `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}, ${awaitTool}`
   const crossProviderLine = args.advertiseDelegateWave
-    ? `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) for a single spawn or recall, or ${delegateWaveTool}({ workers: [{ provider, prompt }, ...], join? }) for a batch spawn with one wave join; do not use provider-native multi-agent orchestration paths.`
-    : `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }); do not use provider-native multi-agent orchestration paths.`
+    ? `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) for a single spawn or recall, or ${delegateWaveTool}({ workers: [{ provider, prompt }, ...], join? }) for a batch spawn with one wave join; to block within this turn until completion, call ${awaitTool} with subThreadIds or waveIds. Do not use provider-native multi-agent orchestration paths.`
+    : `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }); to block within this turn until completion, call ${awaitTool} with subThreadIds. Do not use provider-native multi-agent orchestration paths.`
   const lines = [
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
@@ -543,11 +544,11 @@ function buildTaskWraithRuntimePreamble(args: {
 
   if (promptNeedsDelegationExpansion(args.finalPrompt)) {
     lines.push(
-      `Spawn example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Run a focused review and summarize findings.', returnResult: true }).`
+      `Spawn example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Run a focused review and summarize findings.', returnResult: true }). To block until completion within this turn, immediately call ${awaitTool}({ subThreadIds: ['<returned-subThreadId>'] }).`
     )
     if (args.advertiseDelegateWave) {
       lines.push(
-        `Batch wave example: ${delegateWaveTool}({ workers: [{ provider: '${followupProvider}', prompt: 'Review path A and summarize findings.' }, { provider: '${wavePeerProvider}', prompt: 'Review path B and summarize findings.' }], join: { quorum: 2 } }). Waves are spawn-only (no subThreadId); use ${delegateTool} with subThreadId to recall a worker.`,
+        `Batch wave example: ${delegateWaveTool}({ workers: [{ provider: '${followupProvider}', prompt: 'Review path A and summarize findings.' }, { provider: '${wavePeerProvider}', prompt: 'Review path B and summarize findings.' }], join: { quorum: 2 } }). Waves are spawn-only (no subThreadId); use ${delegateTool} with subThreadId to recall a worker. To block until all wave workers complete within this turn, immediately call ${awaitTool}({ waveIds: ['<returned-waveId>'] }).`,
         `IMPORTANT - RECALL: when following up on a completed or returned sub-thread you already spawned, pass the id from the first tool_result as \`subThreadId\` on ${delegateTool}. Omitting \`subThreadId\` always spawns a fresh isolated sub-thread with no memory of prior turns. Do not use ${delegateWaveTool} for recall — waves are spawn-only.`
       )
     } else {
@@ -556,7 +557,7 @@ function buildTaskWraithRuntimePreamble(args: {
       )
     }
     lines.push(
-      `Recall example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Continue from the previous result and report current status.', subThreadId: '<id-from-prior-result>', returnResult: true }).`,
+      `Recall example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Continue from the previous result and report current status.', subThreadId: '<id-from-prior-result>', returnResult: true }). To block until the recalled sub-thread completes, immediately call ${awaitTool}({ subThreadIds: ['<id-from-prior-result>'] }).`,
       'If recall is rejected or status is unclear, inspect lifecycle with list_subthreads or read_subthread_result before retrying.'
     )
   }
