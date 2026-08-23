@@ -573,7 +573,10 @@ async function setupHost(
   return { host, userDataPath }
 }
 
-function startTui(userDataPath: string, options: { projectionRefreshMs?: number } = {}) {
+function startTui(
+  userDataPath: string,
+  options: { projectionRefreshMs?: number } & Partial<ConstructorParameters<typeof TaskWraithTui>[0]> = {}
+) {
   const { input, output } = makeTty()
   const tui = new TaskWraithTui({
     clientVersion: '0.1.0-test',
@@ -1158,5 +1161,75 @@ describe('TaskWraithTui terminal restoration', () => {
     })
     await expect(tui.start()).rejects.toThrow(/alternate screen failed/)
     expect(input.isRawMode).toBe(false)
+  })
+})
+
+describe('TaskWraithTui reconnect revival', () => {
+  it('re-arms the Host launcher after repeated failures and reconnects to the relaunched Host', async () => {
+    const { host, userDataPath } = await setupHost()
+    let revives = 0
+    const { tui, output } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 20,
+      reviveFailureThreshold: 2,
+      reviveHost: async () => {
+        revives += 1
+        if (revives > 1) return
+        const revived = new FakeHostV2(userDataPath, {
+          snapshot: () =>
+            makeHostSnapshot({
+              threads: [
+                {
+                  id: 'thread-1',
+                  workspaceId: 'ws-1',
+                  title: 'Solo thread (relaunched)',
+                  chatKind: 'single',
+                  archived: false,
+                  pinned: false,
+                  updatedAt: 30,
+                  messageCount: 1,
+                  providerId: 'claude',
+                  latestPreview: 'Back online',
+                  previewTruncated: false
+                }
+              ]
+            }),
+          mutationMode: 'allow'
+        })
+        await revived.start()
+        cleanup.push(() => revived.stop())
+      }
+    })
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initially connected')
+
+    // Kill the live Host mid-session so the TUI enters the reconnecting state.
+    host.dropAllClients()
+    await host.stop()
+
+    await waitFor(
+      () => output.lastFrame.includes('Solo thread (relaunched)'),
+      'reconnected to the relaunched Host',
+      10_000
+    )
+    expect(revives).toBeGreaterThanOrEqual(1)
+  }, 15_000)
+
+  it('does not invoke the launcher when no session was ever established', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-revive-offline-'))
+    let revives = 0
+    const { tui } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 20,
+      reviveFailureThreshold: 1,
+      reviveHost: async () => {
+        revives += 1
+      }
+    })
+    await tui.start()
+    // No Host exists here, so the TUI stays "offline · retrying": the revive
+    // path requires everConnected and must never fire for a never-seen Host.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(revives).toBe(0)
+    tui.stop()
   })
 })

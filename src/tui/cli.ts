@@ -232,7 +232,17 @@ async function main(): Promise<void> {
     animationEnabled: options.animationEnabled,
     glyphs: resolveCliGlyphs(options),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
-    ...(options.userDataPath ? { userDataPath: options.userDataPath } : {})
+    ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
+    ...(!options.demo && options.startHost && options.userDataPath
+      ? {
+          reviveHost: async () => {
+            await ensureTuiHostAvailable({
+              userDataPath: options.userDataPath as string,
+              profile: options.hostLaunchProfile
+            })
+          }
+        }
+      : {})
   })
   await activeTui.start()
 }

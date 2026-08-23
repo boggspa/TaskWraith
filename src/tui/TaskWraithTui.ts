@@ -60,6 +60,17 @@ export interface TaskWraithTuiOptions {
   userDataPath?: string
   initialThreadId?: string
   demo?: boolean
+  /**
+   * Re-arms the windowless Host launcher (ensureTuiHostAvailable). Invoked by
+   * the reconnect loop once failures exceed HOST_REVIVE_FAILURE_THRESHOLD so a
+   * dead Host process is relaunched instead of retried forever. The TUI class
+   * itself stays launcher-agnostic; the CLI injects this.
+   */
+  reviveHost?: () => Promise<void>
+  /** Base reconnect delay; doubles per attempt up to RECONNECT_MAX_DELAY_MS. */
+  reconnectBaseDelayMs?: number
+  /** Failed reconnects before reviveHost is invoked. */
+  reviveFailureThreshold?: number
   colorMode: AnsiColorMode
   animationEnabled?: boolean
   /** Override glyph set; defaults to env/locale detection via detectTuiUnicode. */
@@ -72,6 +83,9 @@ export interface TaskWraithTuiOptions {
 }
 
 const RECONNECT_DELAY_MS = 1_800
+const RECONNECT_MAX_DELAY_MS = 15_000
+/** Consecutive failed reconnects before the loop re-arms the Host launcher. */
+const HOST_REVIVE_FAILURE_THRESHOLD = 5
 const ANIMATION_INTERVAL_MS = 120
 const TRANSCRIPT_PAGE_ROWS = 8
 const HOST_FULL_REFRESH_MS = 5_000
@@ -167,6 +181,8 @@ export class TaskWraithTui {
    *  "offline" state (App never found) from a "reconnecting" state (App was
    *  reachable and the connection dropped). */
   private everConnected = false
+  /** Consecutive failed connect attempts since the last successful welcome. */
+  private reconnectAttempts = 0
   private clientId = `tui-${randomUUID()}`
 
   constructor(options: TaskWraithTuiOptions) {
@@ -299,6 +315,7 @@ export class TaskWraithTui {
       this.state.hostVersion = welcome.hostVersion
       this.state.connection = 'connected'
       this.everConnected = true
+      this.reconnectAttempts = 0
       this.lastError = ''
       this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
       this.render()
@@ -313,11 +330,14 @@ export class TaskWraithTui {
       // The host was reachable before, so this is a drop-and-retry rather
       // than "the App was never found" — distinct terminal states.
       this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
+      this.reconnectAttempts += 1
       this.lastError = error?.message ?? 'TaskWraith Host disconnected.'
       this.markHostProjectionStale()
       this.setNotice(
         this.everConnected
-          ? 'TaskWraith Host disconnected · reconnecting'
+          ? this.revivePending()
+            ? 'TaskWraith Host unreachable · relaunching the TaskWraith app…'
+            : 'TaskWraith Host disconnected · reconnecting'
           : 'Electron Host offline · retrying',
         'warning'
       )
@@ -374,6 +394,7 @@ export class TaskWraithTui {
     try {
       const welcome = await this.client.connect()
       this.state.hostVersion = welcome.hostVersion
+      this.reconnectAttempts = 0
       await this.refreshHostSnapshot()
       const mapped = this.state.snapshot
       if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
@@ -401,12 +422,15 @@ export class TaskWraithTui {
         }
       } else {
         this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
+        this.reconnectAttempts += 1
         const message = error instanceof Error ? error.message : String(error)
         if (message !== this.lastError) {
           this.lastError = message
           this.setNotice(
             this.everConnected
-              ? 'TaskWraith Host disconnected · reconnecting'
+              ? this.revivePending()
+                ? 'TaskWraith Host unreachable · relaunching the TaskWraith app…'
+                : 'TaskWraith Host disconnected · reconnecting'
               : 'Electron Host offline · retrying locally',
             'warning'
           )
@@ -417,12 +441,41 @@ export class TaskWraithTui {
     }
   }
 
+  private revivePending(): boolean {
+    const threshold = this.options.reviveFailureThreshold ?? HOST_REVIVE_FAILURE_THRESHOLD
+    return this.everConnected && Boolean(this.options.reviveHost) && this.reconnectAttempts >= threshold
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer || this.stopped || !this.client) return
+    // Exponential backoff from the base delay up to RECONNECT_MAX_DELAY_MS so
+    // a permanently dead Host does not busy-spin an identical retry forever.
+    const baseMs = this.options.reconnectBaseDelayMs ?? RECONNECT_DELAY_MS
+    const attempt = Math.max(1, this.reconnectAttempts)
+    const delayMs = Math.min(RECONNECT_MAX_DELAY_MS, baseMs * 2 ** (attempt - 1))
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      void this.connect()
-    }, RECONNECT_DELAY_MS)
+      void this.reconnect()
+    }, delayMs)
+  }
+
+  /**
+   * One reconnect attempt. Once failures exceed the threshold and a launcher
+   * was injected, re-arm the windowless Host before the next plain connect.
+   * ensureTuiHostAvailable is a no-op while a live authenticating Host answers,
+   * so this only launches when the process is actually gone.
+   */
+  private async reconnect(): Promise<void> {
+    if (this.stopped || !this.client) return
+    if (this.revivePending() && this.options.reviveHost) {
+      try {
+        await this.options.reviveHost()
+      } catch {
+        // The launcher surfaces its own diagnostics; fall through to a plain
+        // reconnect attempt either way.
+      }
+    }
+    await this.connect()
   }
 
   private scheduleProjectionRefresh(): void {
