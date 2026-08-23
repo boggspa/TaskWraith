@@ -10,6 +10,8 @@ interface TerminalPanelProps {
   onClose?: () => void
   className?: string
   variant?: TerminalPanelVariant
+  onTerminalReady?: () => void
+  ptySessionId?: string
 }
 
 const TUI_TERMINAL_THEME = {
@@ -50,7 +52,9 @@ export function TerminalPanel({
   workspacePath,
   onClose,
   className,
-  variant = 'inspector'
+  variant = 'inspector',
+  onTerminalReady,
+  ptySessionId: propPtySessionId
 }: TerminalPanelProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
@@ -64,7 +68,8 @@ export function TerminalPanel({
     const host = terminalRef.current
     if (!host) return
     let disposed = false
-    const ptySessionId = `setup-${sessionId}`
+    // Use provided sessionId, or generate one
+    const effectivePtySessionId = propPtySessionId || `setup-${sessionId}`
 
     term.current = new Terminal({
       cursorBlink: true,
@@ -79,28 +84,33 @@ export function TerminalPanel({
     fitAddon.current.fit()
 
     term.current.onData((data) => {
-      window.api.ptyWrite(data, ptySessionId)
+      window.api.ptyWrite(data, effectivePtySessionId)
     })
 
     const unsubscribePtyData = window.api.onPtyData((data, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId && eventSessionId !== 'default') return
+      if (eventSessionId && eventSessionId !== effectivePtySessionId && eventSessionId !== 'default') return
       term.current?.write(data)
     })
 
     const unsubscribePtyExit = window.api.onPtyExit((code, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId && eventSessionId !== 'default') return
+      if (eventSessionId && eventSessionId !== effectivePtySessionId && eventSessionId !== 'default') return
       term.current?.write(`\r\n\x1b[33mProcess exited with code ${code}\x1b[0m\r\n`)
     })
 
-    window.api.startPty(workspacePath, ptySessionId).catch((error) => {
-      if (disposed) return
-      term.current?.write(`\r\n\x1b[31m${String(error)}\x1b[0m\r\n`)
-    })
+    window.api.startPty(workspacePath, effectivePtySessionId)
+      .then(() => {
+        if (disposed) return
+        onTerminalReady?.()
+      })
+      .catch((error) => {
+        if (disposed) return
+        term.current?.write(`\r\n\x1b[31m${String(error)}\x1b[0m\r\n`)
+      })
 
     const handleResize = () => {
       if (fitAddon.current && term.current) {
         fitAddon.current.fit()
-        window.api.ptyResize(term.current.cols, term.current.rows, ptySessionId)
+        window.api.ptyResize(term.current.cols, term.current.rows, effectivePtySessionId)
       }
     }
     window.addEventListener('resize', handleResize)
@@ -121,7 +131,7 @@ export function TerminalPanel({
 
     return () => {
       disposed = true
-      window.api.stopPty(ptySessionId).catch(() => {})
+      window.api.stopPty(effectivePtySessionId).catch(() => {})
       unsubscribePtyData()
       unsubscribePtyExit()
       term.current?.dispose()

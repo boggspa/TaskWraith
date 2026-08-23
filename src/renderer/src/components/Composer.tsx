@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
@@ -877,6 +877,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   // own terminal toggle; the state is keyed by THIS composer's chatId so
   // multiview panes never share or clobber each other's shell.
   const [terminalOpenByChatId, setTerminalOpenForChat] = usePerChatState(false)
+  const [pendingTerminalCommandByChatId, setPendingTerminalCommand] = usePerChatState<string | null>(null)
   const isTerminalOpen = Boolean(
     currentChat?.appChatId && terminalOpenByChatId[currentChat.appChatId]
   )
@@ -887,6 +888,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentWorkspace
   })
   const canShowTerminal = Boolean(composerGitActionBasePath && !isCurrentGlobalChat)
+
+  // Callback for when terminal is ready to receive commands
+  const handleTerminalReady = useCallback(() => {
+    const chatId = currentChat?.appChatId
+    const pendingCommand = chatId ? pendingTerminalCommandByChatId[chatId] : null
+    if (pendingCommand && chatId) {
+      window.api.ptyWrite(pendingCommand, chatId)
+      setPendingTerminalCommand(chatId, null)
+    }
+  }, [currentChat?.appChatId, pendingTerminalCommandByChatId, setPendingTerminalCommand])
 
   // `/terminal` toggles this composer's own shell, exactly like the icon. The
   // terminal is the one icon-row surface whose state lives here rather than in
@@ -907,17 +918,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     const handler = (event: CustomEvent<{ command: string }>) => {
       // Open the terminal for this chat
       setTerminalOpenForChat(currentChat.appChatId, true)
-      // Send the command to the terminal after it mounts
-      // Use setTimeout to allow TerminalPanel to mount and start PTY
-      setTimeout(() => {
-        window.api.ptyWrite(event.detail.command, 'default')
-      }, 200)
+      // Store the command to be sent when the terminal is ready
+      setPendingTerminalCommand(currentChat.appChatId, event.detail.command)
     }
     window.addEventListener('runCodeBlockCommand', handler as EventListener)
     return () => {
       window.removeEventListener('runCodeBlockCommand', handler as EventListener)
     }
-  }, [canShowTerminal, composerGitActionBasePath, currentChat?.appChatId, setTerminalOpenForChat])
+  }, [canShowTerminal, composerGitActionBasePath, currentChat?.appChatId, setTerminalOpenForChat, setPendingTerminalCommand])
 
   const [transcriptRoot, setTranscriptRoot] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
@@ -4037,9 +4045,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // (Grok/Cursor clamp to xhigh/high outbound, Mistral/
                           // Pi/Muse to their max). Antigravity injects its own
                           // High-mapped option inside its branch above.
+                          const ultraTaskSelectedModel = effectiveModelOptionsRaw?.find(
+                            (model) => model.id === effectiveSelectedModel
+                          )
+                          // Inject even when the base ladder is empty (Mistral/Cursor
+                          // models without thinking tiers) so UltraTask alone can be
+                          // selected; only models explicitly flagged unsupported opt out.
                           if (
                             Array.isArray(combinedReasoningOptions) &&
-                            combinedReasoningOptions.length > 0 &&
+                            ultraTaskSelectedModel?.ultraTaskSupported !== false &&
                             !combinedReasoningOptions.some((option) => option.value === 'ultraTask')
                           ) {
                             combinedReasoningOptions = [
@@ -6131,6 +6145,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     workspacePath={composerGitActionBasePath}
                     className="workspace-terminal-split"
                     variant="pane"
+                    ptySessionId={currentChat?.appChatId}
+                    onTerminalReady={handleTerminalReady}
                   />
                 </>,
                 transcriptRoot
