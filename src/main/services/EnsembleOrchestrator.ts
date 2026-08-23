@@ -831,6 +831,8 @@ export interface EnsembleOrchestratorDeps {
   listProjects?: () => readonly Project[]
   listProjectReferences?: () => readonly ProjectReference[]
   projectReferenceExtractLoader?: ProjectReferenceExtractLoader
+  getChildChats?: (chatId: string) => ChatRecord[]
+  getSubThreadMailbox?: (chatId: string) => any
 }
 
 /**
@@ -1236,13 +1238,15 @@ export interface EnsembleFanoutResult {
  * until named fan-out lanes settle, returning per-lane status either way. */
 export interface EnsembleAwaitInput {
   laneIds?: unknown
+  subThreadIds?: unknown
+  waveIds?: unknown
   timeoutSeconds?: unknown
 }
 
 export interface EnsembleAwaitLaneStatus {
   laneId: string
-  participantId: string
-  provider: ProviderId
+  participantId?: string
+  provider?: ProviderId
   /** ConcurrentLane status at return time ('pending'|'running'|...|terminal). */
   status: string
   settled: boolean
@@ -1253,14 +1257,16 @@ export interface EnsembleAwaitLaneStatus {
 export interface EnsembleAwaitResult {
   ok: boolean
   tool: 'ensemble_await'
-  /** 'settled' = every awaited lane terminal; 'timeout' = budget expired with
-   * lanes still running (partial results in `lanes`). */
+  /** 'settled' = every awaited target terminal; 'timeout' = budget expired with
+   * targets still running (partial results). */
   status?: 'settled' | 'timeout'
   message: string
+  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes' | 'invalid_sub_thread' | 'invalid_wave' | 'no_targets'
   lanes?: EnsembleAwaitLaneStatus[]
+  subThreads?: any[]
+  waves?: any[]
   settledCount?: number
   pendingCount?: number
-  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes'
 }
 
 /** `ensemble_lane_result` — structured read of one lane's transcript output,
@@ -12164,13 +12170,25 @@ export class EnsembleOrchestrator {
         )
       )
     }
-    const runtime = this.roundsByChatId.get(run.chatId)
-    if (!runtime || !this.deps.getChat(run.chatId)?.ensemble) {
-      return invalid('not_ensemble', 'ensemble_await: the active chat is not an Ensemble round.')
-    }
     const requestedLaneIds = normalizeLaneIdList(input.laneIds)
-    if (requestedLaneIds === null) {
+    const requestedSubThreadIds = normalizeLaneIdList(input.subThreadIds)
+    const requestedWaveIds = normalizeLaneIdList(input.waveIds)
+
+    const isEnsemble = Boolean(runtime && this.deps.getChat(run.chatId)?.ensemble)
+    const isSubThreadWait = Boolean(requestedSubThreadIds || requestedWaveIds)
+
+    if (!isEnsemble && !isSubThreadWait) {
+      return invalid('not_ensemble', 'ensemble_await: the active chat is not an Ensemble round and no sub-thread/wave targets were specified.')
+    }
+
+    if (input.laneIds !== undefined && requestedLaneIds === null) {
       return invalid('invalid_lane', 'ensemble_await: laneIds must be an array of lane id strings.')
+    }
+    if (input.subThreadIds !== undefined && requestedSubThreadIds === null) {
+      return invalid('invalid_sub_thread', 'ensemble_await: subThreadIds must be an array of strings.')
+    }
+    if (input.waveIds !== undefined && requestedWaveIds === null) {
+      return invalid('invalid_wave', 'ensemble_await: waveIds must be an array of strings.')
     }
     if (run.laneId && requestedLaneIds?.includes(run.laneId)) {
       return invalid(
@@ -12184,29 +12202,36 @@ export class EnsembleOrchestrator {
       return new Map(Object.entries(lanes))
     }
     const initial = laneSnapshot()
-    let awaitedIds: string[]
-    if (requestedLaneIds) {
-      const unknown = requestedLaneIds.filter((laneId) => !initial.has(laneId))
-      if (unknown.length > 0) {
-        return invalid(
-          'invalid_lane',
-          `ensemble_await: unknown lane id(s) in this round: ${unknown.join(', ')}.`
-        )
+    let awaitedIds: string[] = []
+    
+    if (isEnsemble) {
+      if (requestedLaneIds) {
+        const unknown = requestedLaneIds.filter((laneId) => !initial.has(laneId))
+        if (unknown.length > 0) {
+          return invalid(
+            'invalid_lane',
+            `ensemble_await: unknown lane id(s) in this round: ${unknown.join(', ')}.`
+          )
+        }
+        awaitedIds = requestedLaneIds
+      } else if (!requestedSubThreadIds && !requestedWaveIds) {
+        awaitedIds = [...initial.keys()].filter((laneId) => laneId !== run.laneId)
       }
-      awaitedIds = requestedLaneIds
-    } else {
-      awaitedIds = [...initial.keys()].filter((laneId) => laneId !== run.laneId)
     }
-    if (awaitedIds.length === 0) {
+    
+    if (awaitedIds.length === 0 && !requestedSubThreadIds && !requestedWaveIds) {
       return invalid(
-        'no_lanes',
-        'ensemble_await: this round has no fan-out lanes to await. Dispatch lanes with ensemble_fanout first.'
+        'no_targets',
+        'ensemble_await: no valid targets to await (lanes, sub-threads, or waves).'
       )
     }
 
     const timeoutSeconds = clampAwaitTimeoutSeconds(input.timeoutSeconds)
     const deadline = this.deps.now() + timeoutSeconds * 1_000
     let lanes = laneSnapshot()
+    let mailboxEvents = this.deps.getSubThreadMailbox?.(run.chatId)?.events || []
+    let childChats = this.deps.getChildChats?.(run.chatId) || []
+
     const report = (): EnsembleAwaitLaneStatus[] =>
       awaitedIds.map((laneId) => {
         const lane = lanes.get(laneId)
@@ -12219,30 +12244,71 @@ export class EnsembleOrchestrator {
           ...(lane?.reason ? { reason: lane.reason } : {})
         }
       })
-    const allSettled = (): boolean =>
-      awaitedIds.every((laneId) => {
+
+    const getWaveChildren = (waveId: string) => 
+      childChats.filter((c: any) => c.delegationContext?.joinPolicy?.groupId === waveId)
+
+    const allSettled = (): boolean => {
+      const lanesSettled = awaitedIds.every((laneId) => {
         const lane = lanes.get(laneId)
         return Boolean(lane && isTerminalLaneStatus(lane.status))
       })
+      const subThreadsSettled = !requestedSubThreadIds ? true : requestedSubThreadIds.every((id) => {
+        return mailboxEvents.some((e: any) => e.source?.subThreadId === id)
+      })
+      const wavesSettled = !requestedWaveIds ? true : requestedWaveIds.every((waveId) => {
+        const children = getWaveChildren(waveId)
+        if (children.length === 0) return false
+        return children.every((c: any) => mailboxEvents.some((e: any) => e.source?.subThreadId === c.appChatId))
+      })
+      return lanesSettled && subThreadsSettled && wavesSettled
+    }
 
-    while (!allSettled() && this.deps.now() < deadline && !runtime.cancelled) {
+    const isCancelled = () => runtime?.cancelled || false
+
+    while (!allSettled() && this.deps.now() < deadline && !isCancelled()) {
       await delayMs(ENSEMBLE_AWAIT_POLL_INTERVAL_MS)
       lanes = laneSnapshot()
+      mailboxEvents = this.deps.getSubThreadMailbox?.(run.chatId)?.events || []
+      childChats = this.deps.getChildChats?.(run.chatId) || []
     }
+    
     const statuses = report()
+    const subThreadsReport = (requestedSubThreadIds || []).map(id => {
+      const event = mailboxEvents.find((e: any) => e.source?.subThreadId === id)
+      return { subThreadId: id, settled: !!event, status: event ? (event as any).outcome : 'pending' }
+    })
+    const wavesReport = (requestedWaveIds || []).map(waveId => {
+      const children = getWaveChildren(waveId)
+      const settledCount = children.filter((c: any) => mailboxEvents.some((e: any) => e.source?.subThreadId === c.appChatId)).length
+      return { 
+        waveId, 
+        settled: children.length > 0 && settledCount === children.length,
+        childrenSpawned: children.length,
+        childrenSettled: settledCount
+      }
+    })
+
     const settledCount = statuses.filter((lane) => lane.settled).length
-    const pendingCount = statuses.length - settledCount
+      + subThreadsReport.filter(st => st.settled).length
+      + wavesReport.filter(w => w.settled).length
+
+    const totalTargets = statuses.length + subThreadsReport.length + wavesReport.length
+    const pendingCount = totalTargets - settledCount
     const settled = pendingCount === 0
+
     return {
       ok: true,
       tool: 'ensemble_await',
       status: settled ? 'settled' : 'timeout',
       message: settled
-        ? `All ${statuses.length} awaited lane(s) settled. Read outputs with ensemble_lane_result.`
-        : `${settledCount}/${statuses.length} lane(s) settled within ${timeoutSeconds}s${
-            runtime.cancelled ? ' (round cancelled)' : ''
-          }. Re-invoke ensemble_await to keep waiting, or proceed with the settled lanes.`,
-      lanes: statuses,
+        ? `All ${totalTargets} awaited target(s) settled.`
+        : `${settledCount}/${totalTargets} target(s) settled within ${timeoutSeconds}s${
+            isCancelled() ? ' (round cancelled)' : ''
+          }. Re-invoke ensemble_await to keep waiting, or proceed with the settled targets.`,
+      ...(statuses.length > 0 ? { lanes: statuses } : {}),
+      ...(subThreadsReport.length > 0 ? { subThreads: subThreadsReport } : {}),
+      ...(wavesReport.length > 0 ? { waves: wavesReport } : {}),
       settledCount,
       pendingCount
     }

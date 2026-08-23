@@ -2655,7 +2655,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_await',
       description:
-        'In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call. A lane cannot await itself.',
+        'Wait (bounded) for fan-out lanes, sub-threads, or waves to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, or waveIds to await specific targets. Returns per-target status either way: status=settled means every awaited target is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2670,6 +2670,18 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             items: { type: 'string' },
             description:
               'Optional lane ids (from a fan-out dispatch receipt). Omit to await every other lane in the current round.'
+          },
+          subThreadIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional sub-thread ids (from delegate_to_subthread) to wait for.'
+          },
+          waveIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional wave ids (from delegate_wave) to wait for.'
           },
           timeoutSeconds: {
             type: 'number',
@@ -3626,7 +3638,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Spawn a fresh context-isolated sub-thread on a selectable provider (subject to current runtime admission), or continue an existing one by passing subThreadId. ' +
         'Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. ' +
         'An idle recall requires a resumable matching-provider session; an active recall durably queues the follow-up behind the live child turn. ' +
-        'returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output, including assistant output when present. ' +
+        'returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output. ' +
+        'Call ensemble_await on the returned subThreadId immediately after delegating to keep your turn active and receive the result directly. ' +
         'Omit subThreadId to always spawn fresh.',
       annotations: {
         readOnlyHint: false,
@@ -3685,7 +3698,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). ' +
         'Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. ' +
         'Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. ' +
-        'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). ' +
+        'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum. ' +
+        'Call ensemble_await on the returned waveId immediately after delegating to keep your turn active and receive results directly. ' +
         `One approval covers the wave; sized by Settings → General → Max Wave Agents (default ${DEFAULT_MAX_WAVE_AGENTS}). ` +
         'An over-cap roster is REFUSED whole — never trimmed — and the refusal names the live cap, so size the wave once rather than splitting it pre-emptively.',
       annotations: {

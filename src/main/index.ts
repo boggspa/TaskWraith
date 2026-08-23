@@ -56887,6 +56887,8 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       getSettings: () => AppStore.getSettings(),
+      getChildChats: (chatId) => AppStore.getChildChats(chatId),
+      getSubThreadMailbox: (chatId) => AppStore.getSubThreadMailbox(chatId),
       // S16 — an approved external contribution is delivered at that person's
       // seat turn. BOTH of these are required for that to happen at all: the
       // orchestrator's delivery pass returns early when either is absent, so
