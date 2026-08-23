@@ -534,7 +534,12 @@ export const PROVIDER_ACTION_ADAPTERS = {
       'replace_file_content',
       'create_file',
       'delete_file',
-      'rename_file'
+      'rename_file',
+      'grep_search',
+      'view_file',
+      'read_file',
+      'capability_search',
+      'capability_invoke'
     ] as const,
     nativeActionMappings: {
       write_to_file: {
@@ -561,6 +566,31 @@ export const PROVIDER_ACTION_ADAPTERS = {
         aliases: ['rename_file'],
         catalogTool: 'rename_path',
         action: 'workspace.mutate'
+      },
+      grep_search: {
+        aliases: ['grep_search'],
+        catalogTool: 'workspace_search',
+        action: 'workspace.search'
+      },
+      view_file: {
+        aliases: ['view_file'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      read_file: {
+        aliases: ['read_file'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      capability_search: {
+        aliases: ['capability_search'],
+        catalogTool: 'capability_search',
+        action: 'control.read'
+      },
+      capability_invoke: {
+        aliases: ['capability_invoke'],
+        catalogTool: 'capability_invoke',
+        action: 'control.mutate'
       }
     }
   }),
@@ -1624,6 +1654,22 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'scheduler',
     'host-state',
     'host-resource'
+  ),
+  capability_search: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'capability-gateway',
+    'none',
+    'none'
+  ),
+  capability_invoke: tool(
+    'orchestration',
+    'mcpTools',
+    'control.mutate',
+    'capability-gateway',
+    'none',
+    'none'
   ),
   ask_user_question: tool(
     'ui_elicitation',
@@ -3177,7 +3223,7 @@ export function resolveToolDispatchContractStrict(
     // through the exact `resolveCatalogActionStrict`; an unfolded target is
     // fail-closed against that helper, a folded one would not be.
     const target = strictTaskWraithCatalogCanonicalName(rawTarget)
-    if (!target || !isTaskWraithCatalogAction(target)) {
+    if (!target || !isTaskWraithCatalogAction(target) || target === 'capability_invoke') {
       return unmapped(
         null,
         'taskwraith-catalog',

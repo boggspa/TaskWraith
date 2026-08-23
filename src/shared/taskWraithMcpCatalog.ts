@@ -223,6 +223,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   'list_ensemble_participants',
   'schedule_wakeup',
   'cancel_wakeup',
+  // Capability gateway tools for dynamic tool discovery and invocation.
+  'capability_search',
+  'capability_invoke',
   // QMOD (1.0.3): universal "ask the user" tool. Agents call this when
   // they need clarification mid-run instead of trying to emit a
   // question into the chat stream and hoping the user notices. Renderer
