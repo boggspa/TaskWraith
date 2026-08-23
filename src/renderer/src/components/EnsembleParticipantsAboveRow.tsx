@@ -374,14 +374,14 @@ export function getEnsembleAddReasoningOptions(
   const modelOptions =
     providerGroups.find((group) => group.provider === provider)?.modelOptions || []
   const modelOption = findEnsembleAddModelOption(provider, model, modelOptions)
+  let baseOptions: CombinedModelPickerReasoningOption[]
   if (provider === 'antigravity' && modelOption?.antigravityVariants) {
-    return modelOption.antigravityVariants.map((variant) => ({
+    baseOptions = modelOption.antigravityVariants.map((variant) => ({
       value: variant.effort,
       label: reasoningOptionLabel(provider, variant.effort)
     }))
-  }
-  if (modelOption?.supportedReasoningEfforts) {
-    return modelOption.supportedReasoningEfforts.map((option) => {
+  } else if (modelOption?.supportedReasoningEfforts) {
+    baseOptions = modelOption.supportedReasoningEfforts.map((option) => {
       const value = normalizeReasoningOptionValue(option.reasoningEffort)
       return {
         value,
@@ -390,8 +390,17 @@ export function getEnsembleAddReasoningOptions(
         ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
       }
     })
+  } else {
+    baseOptions = getEnsembleReasoningOptions(provider, model, modelOption)
   }
-  return getEnsembleReasoningOptions(provider, model, modelOption)
+  // Inject UltraTask option for models that support it
+  if (modelOption?.ultraTaskSupported !== false) {
+    baseOptions.push({
+      value: 'ultraTask',
+      label: 'UltraTask'
+    })
+  }
+  return baseOptions
 }
 
 /**

@@ -1207,11 +1207,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     models: CodexModelOption[]
   ): CombinedModelPickerReasoningOption[] => {
     const model = models.find((option) => option.id === modelId)
+    let baseOptions: CombinedModelPickerReasoningOption[]
     if (
       (targetProvider === 'codex' || targetProvider === 'claude') &&
       model?.supportedReasoningEfforts
     ) {
-      return model.supportedReasoningEfforts.map((option) => {
+      baseOptions = model.supportedReasoningEfforts.map((option) => {
         const rawValue = option.reasoningEffort.trim().toLowerCase()
         const value =
           rawValue === 'light'
@@ -1231,8 +1232,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
           ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
         }
       })
+    } else {
+      baseOptions = getEnsembleReasoningOptions(targetProvider, modelId, model)
     }
-    return getEnsembleReasoningOptions(targetProvider, modelId, model)
+    // Inject UltraTask option for models that support it
+    if (model?.ultraTaskSupported !== false) {
+      baseOptions.push({
+        value: 'ultraTask',
+        label: 'UltraTask'
+      })
+    }
+    return baseOptions
   }
 
   const hasVisibleScheduledCountdown =
