@@ -1596,6 +1596,8 @@ function formatParticipantReasoning(input: {
     kimiReasoningEffort: input.provider === 'kimi' ? input.reasoningEffort : undefined,
     grokReasoningEffort: input.provider === 'grok' ? input.reasoningEffort : undefined,
     cursorReasoningEffort: input.provider === 'cursor' ? input.reasoningEffort : undefined,
+    antigravityReasoningEffort:
+      input.provider === 'antigravity' ? input.reasoningEffort : undefined,
     kimiThinkingEnabled: input.provider === 'kimi' ? input.thinkingEnabled : undefined
   })
   if (label) return label

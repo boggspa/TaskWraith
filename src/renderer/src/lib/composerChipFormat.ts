@@ -52,6 +52,10 @@ export interface ComposerChipContext {
   piReasoningEffort?: string
   /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
   ollamaReasoningEffort?: string
+  /** Antigravity presentation-level reasoning (e.g. "high" | "ultraTask").
+   * Antigravity encodes real effort in the wire id; UltraTask is a
+   * presentation-only selection persisted in chat metadata. */
+  antigravityReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -354,7 +358,16 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   if (provider === 'antigravity') {
     // The reasoning level is encoded in the concrete wire id
     // (gemini-3.6-flash-high); the picker groups families and the slider
-    // swaps variants, so the chip suffix reads straight off the id.
+    // swaps variants, so the chip suffix reads straight off the id —
+    // except UltraTask, which is a presentation-only selection persisted
+    // in chat metadata and passed via antigravityReasoningEffort.
+    if (
+      String(ctx.antigravityReasoningEffort || '')
+        .trim()
+        .toLowerCase() === 'ultratask'
+    ) {
+      return 'UltraTask'
+    }
     const effort = antigravityEffortForModelId(ctx.modelId)
     if (effort === 'on') return 'Thinking On'
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''

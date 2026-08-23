@@ -1352,7 +1352,9 @@ export function CombinedModelPicker({
         kimiThinkingEnabled,
         kimiReasoningEffort,
         museReasoningEffort:
-          provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined
+          provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined,
+        antigravityReasoningEffort:
+          provider === 'antigravity' ? selectedReasoning : undefined
       }),
     [
       provider,
@@ -1373,9 +1375,13 @@ export function CombinedModelPicker({
   // (`gemini-3.6-flash-high`) rather than a separate persisted setting. The
   // text suffix already derives from that id; make the CSS hook do the same
   // so it never falls back to plain shell ink while the catalogue refreshes.
+  // UltraTask is presentation-only (persisted marker), so when selected it
+  // wins over the wire-id-derived effort for both label and CSS hook.
   const chipReasoningValue =
     provider === 'antigravity'
-      ? (antigravityEffortForModelId(selectedModelOption.id) ?? selectedReasoning)
+      ? String(selectedReasoning).toLowerCase() === 'ultratask'
+        ? 'ultraTask'
+        : (antigravityEffortForModelId(selectedModelOption.id) ?? selectedReasoning)
       : selectedReasoning
 
   // Split chip text into "model" and "reasoning" pieces so we can
