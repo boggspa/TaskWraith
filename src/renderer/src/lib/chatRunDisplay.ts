@@ -68,10 +68,42 @@ export function deriveChatRunCompleteNotice(
   isRunning: boolean
 ): RunCompleteNotice | null {
   const round = chat.ensemble?.activeRound
-  if (
+  const runs = chat.runs
+  const lastRun = Array.isArray(runs) && runs.length > 0 ? runs[runs.length - 1] : null
+
+  // If there's an active (unfinished) regular run, hide the notice
+  if (lastRun && !lastRun.endedAt) return null
+  // If there's an active (unfinished) ensemble round, hide the notice
+  if (round && !round.endedAt) return null
+
+  const roundCompleted =
     round?.endedAt &&
     (round.status === 'completed' || round.status === 'cancelled' || round.status === 'failed')
-  ) {
+
+  const runCompleted = lastRun?.endedAt
+
+  if (roundCompleted && runCompleted) {
+    if (round.endedAt >= lastRun.endedAt) {
+      return {
+        timestamp: round.endedAt,
+        exitCode: round.status === 'cancelled' ? 130 : round.status === 'failed' ? 1 : 0,
+        startedAt: round.startedAt || undefined,
+        roundId: round.roundId,
+        suppressRunSummary: false
+      }
+    } else {
+      if (isRunning) return null
+      return {
+        timestamp: lastRun.endedAt,
+        exitCode: lastRun.exitCode ?? 0,
+        startedAt: lastRun.startedAt || undefined,
+        ...(lastRun.runId ? { runId: lastRun.runId } : {}),
+        suppressRunSummary: Boolean(lastRun.suppressRunSummary)
+      }
+    }
+  }
+
+  if (roundCompleted) {
     return {
       timestamp: round.endedAt,
       exitCode: round.status === 'cancelled' ? 130 : round.status === 'failed' ? 1 : 0,
@@ -80,18 +112,18 @@ export function deriveChatRunCompleteNotice(
       suppressRunSummary: false
     }
   }
+
   if (isRunning) return null
-  const runs = chat.runs
-  if (!Array.isArray(runs) || runs.length === 0) return null
-  const lastRun = runs[runs.length - 1]
-  // A run with no endedAt is still in flight (or never recorded an end) — no
-  // completed outcome to show, even if the running set hasn't caught up yet.
-  if (!lastRun || !lastRun.endedAt) return null
-  return {
-    timestamp: lastRun.endedAt,
-    exitCode: lastRun.exitCode ?? 0,
-    startedAt: lastRun.startedAt || undefined,
-    ...(lastRun.runId ? { runId: lastRun.runId } : {}),
-    suppressRunSummary: Boolean(lastRun.suppressRunSummary)
+
+  if (runCompleted) {
+    return {
+      timestamp: lastRun.endedAt,
+      exitCode: lastRun.exitCode ?? 0,
+      startedAt: lastRun.startedAt || undefined,
+      ...(lastRun.runId ? { runId: lastRun.runId } : {}),
+      suppressRunSummary: Boolean(lastRun.suppressRunSummary)
+    }
   }
+
+  return null
 }
