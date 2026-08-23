@@ -565,7 +565,7 @@ function parametersFor(name) {
       return object({ reason: optionalText(), target: optionalText() })
     case 'ensemble_send':
       return object({
-        to: Type.OneOf([Type.String(), Type.Array(Type.String())]),
+        to: Type.Union([Type.String(), Type.Array(Type.String())]),
         message: Type.String(),
         reason: optionalText()
       })
@@ -625,7 +625,7 @@ function parametersFor(name) {
       })
     case 'ensemble_await':
       return object({
-        laneIds: Type.Optional(Type.OneOf([Type.String(), Type.Array(Type.String())])),
+        laneIds: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
         timeoutMs: Type.Optional(Type.Number()),
         reason: optionalText()
       })
