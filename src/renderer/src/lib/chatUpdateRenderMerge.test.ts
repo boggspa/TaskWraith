@@ -46,6 +46,24 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages[0].content).toBe('longer live answer')
   })
 
+  it('preserves a renderer-authored user follow-up message when the incoming transcript changed', () => {
+    const incomingMessages = [message('a', 'assistant answer')]
+    const liveMessages = [
+      message('a', 'assistant answer'),
+      { id: 'u1', role: 'user', content: 'follow-up', timestamp: '2' } as ChatMessage
+    ]
+    const merged = mergeChatUpdatedForRender(chat(incomingMessages), {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages).toHaveLength(2)
+    expect(merged.messages[1].role).toBe('user')
+    expect(merged.messages[1].content).toBe('follow-up')
+  })
+
   it('preserves a renderer-authored closeout outside the recent-run window', () => {
     const incoming = chat([message('a', 'answer')])
     const closeout: ChatMessage = {

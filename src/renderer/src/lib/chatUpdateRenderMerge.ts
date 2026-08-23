@@ -60,6 +60,9 @@ function mergeLiveMessages(
   const orphanedLiveAssistants = liveMessages.filter(
     (message) => message.role === 'assistant' && !incomingIds.has(message.id)
   )
+  const orphanedLiveUserMessages = liveMessages.filter(
+    (message) => message.role === 'user' && !incomingIds.has(message.id)
+  )
   const orphanedAgentQuestionMarkers = liveMessages.filter(
     (message) =>
       message.role === 'system' &&
@@ -81,6 +84,7 @@ function mergeLiveMessages(
   const orphanIds = new Set(
     [
       ...orphanedLiveAssistants,
+      ...orphanedLiveUserMessages,
       ...orphanedAgentQuestionMarkers,
       ...orphanedContextCompactionCards,
       ...orphanedTaskWraithCloseouts
