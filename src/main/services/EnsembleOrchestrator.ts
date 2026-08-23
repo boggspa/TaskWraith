@@ -1238,10 +1238,10 @@ export interface EnsembleFanoutResult {
 /** `ensemble_await` — join point for agent-programmed graphs: block (bounded)
  * until named fan-out lanes settle, returning per-lane status either way. */
 export interface EnsembleAwaitInput {
-  laneIds?: unknown
-  subThreadIds?: unknown
-  waveIds?: unknown
-  timeoutSeconds?: unknown
+  laneIds?: string[]
+  subThreadIds?: string[]
+  waveIds?: string[]
+  timeoutSeconds?: number
 }
 
 export interface EnsembleAwaitLaneStatus {

@@ -26508,7 +26508,7 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
 
     await expect(harness.orchestrator.awaitLanesForRun(ownerRunId, {})).resolves.toMatchObject({
       ok: false,
-      error: 'no_lanes'
+      error: 'no_targets'
     })
     await expect(
       harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: 'lane-1' })
@@ -26571,6 +26571,33 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
       ok: false,
       error: 'no_active_run'
     })
+  })
+
+  it('await validates subThreadIds must be an array', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { subThreadIds: 'not-an-array' })
+    ).resolves.toMatchObject({ ok: false, error: 'invalid_sub_thread' })
+  })
+
+  it('await validates waveIds must be an array', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { waveIds: 'not-an-array' })
+    ).resolves.toMatchObject({ ok: false, error: 'invalid_wave' })
+  })
+
+  it('await rejects self-await for sub-threads', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { subThreadIds: [harness.chat.appChatId] })
+    ).resolves.toMatchObject({ ok: false, error: 'self_await' })
   })
 })
 
