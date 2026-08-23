@@ -113,6 +113,20 @@ function preserveLiveTaskWraithCloseouts(
     : chat
 }
 
+function preserveLiveUserMessages(
+  chat: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  if (!liveChat || liveChat.messages.length === 0) return chat
+  const incomingIds = new Set(chat.messages.map((message) => message.id))
+  const missingUserMessages = liveChat.messages.filter(
+    (message) => message.role === 'user' && !incomingIds.has(message.id)
+  )
+  return missingUserMessages.length > 0
+    ? { ...chat, messages: [...chat.messages, ...missingUserMessages] }
+    : chat
+}
+
 /**
  * Merge a main-owned chat update with renderer-only live content. This is
  * deliberately a separate frame-time operation: the IPC callback can accept
@@ -144,6 +158,11 @@ export function mergeChatUpdatedForRender(
   // not only during the short active/recent-run merge window. Explicit chat
   // clearing is handled before this merge is called.
   merged = preserveLiveTaskWraithCloseouts(merged, liveChat)
+
+  // A user message is renderer-authored before the backend queues and persists
+  // it. Preserve that locally-authored row across every intervening main refresh,
+  // not only during the short active/recent-run merge window.
+  merged = preserveLiveUserMessages(merged, liveChat)
 
   merged = preserveOptimisticEnsembleQueue(merged, liveChat)
   const pendingMarkerIds = options.pendingMarkerIds

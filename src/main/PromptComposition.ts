@@ -548,7 +548,7 @@ function buildTaskWraithRuntimePreamble(args: {
     ...(args.isUltraTask
       ? [
           'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-          `Priority order: ensemble_fanout (Ensemble only) > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
+          `Priority order: ${fanoutTool} (Ensemble only) > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
           'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
           `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
         ]
