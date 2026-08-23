@@ -4026,6 +4026,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               combinedSelectedReasoning =
                                 antigravityEffortForModelId(effectiveSelectedModel) || ''
+                              // UltraTask has no dedicated wire id on
+                              // Antigravity: selecting it swaps to the family's
+                              // -high variant and persists an explicit marker
+                              // in chat metadata so presentation keeps showing
+                              // UltraTask instead of elastic-snapping back to
+                              // High on the next render/reload.
+                              if (
+                                currentChat?.providerMetadata?.antigravityUltraTaskSelected ===
+                                  true &&
+                                combinedSelectedReasoning === 'high' &&
+                                combinedReasoningOptions.some(
+                                  (option) => option.value === 'ultraTask'
+                                )
+                              ) {
+                                combinedSelectedReasoning = 'ultraTask'
+                              }
                             } else {
                               // Fixed-effort quota-bound hardcoded rows
                               // (gemini-3.1-pro-thinking, claude-sonnet-4-6,
@@ -4059,6 +4075,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 // at its ceiling, so UltraTask keeps the same
                                 // id (see handleCombinedReasoningChange).
                                 combinedSelectedReasoning = antigravityFixedEffort
+                                // Persisted UltraTask marker: the fixed-effort
+                                // model IS the family ceiling, so the wire id
+                                // never changes — presentation reads the marker
+                                // instead (see handleCombinedReasoningChange).
+                                if (
+                                  currentChat?.providerMetadata
+                                    ?.antigravityUltraTaskSelected === true
+                                ) {
+                                  combinedSelectedReasoning = 'ultraTask'
+                                }
                               }
                             }
                           } else if (
@@ -4162,6 +4188,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                             const metadataPatch: Record<string, unknown> = {
                               selectedModelType: nextModel
+                            }
+                            if (effectiveProvider === 'antigravity') {
+                              // Direct model picks resolve the effort from the
+                              // wire id; drop any stale UltraTask presentation
+                              // marker so it can't leak onto another family's
+                              // -high model. (The reasoning-change handler
+                              // re-persists it AFTER this call when UltraTask
+                              // itself is what was picked.)
+                              metadataPatch.antigravityUltraTaskSelected = false
                             }
                             if (effectiveProvider === 'codex') {
                               const modelOption = codexModels.find(
@@ -4502,6 +4537,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               if (target && target.id !== effectiveSelectedModel) {
                                 handleCombinedModelChange(target.id)
                               }
+                              // UltraTask lives only in presentation: swap the
+                              // wire id to -high above, then persist an explicit
+                              // marker so the ladder keeps showing UltraTask
+                              // instead of elastic-snapping back to High.
+                              // Picking a real effort clears it.
+                              rememberCurrentChatComposerSelection({
+                                antigravityUltraTaskSelected: value === 'ultraTask'
+                              })
                             }
                           }
 
