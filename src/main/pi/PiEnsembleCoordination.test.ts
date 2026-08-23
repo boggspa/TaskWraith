@@ -338,6 +338,32 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(prompt).toContain('same meshCanvas permission gate')
   })
 
+  it('generates extension sources compatible with Pi-bundled typebox 1.x', () => {
+    // Pi resolves `typebox` (not `@sinclair/typebox`) from its own runtime.
+    // typebox 1.x removed `Type.OneOf` in favor of `Type.Union`, and any use
+    // of the removed builder throws during module evaluation, which fails the
+    // ENTIRE extension load for the seat. Pin the generated source against
+    // removed builders so this cannot silently regress.
+    const homes = [
+      preparePiEnsembleCoordinationExtension({ isolatedHomeDir: createCanonicalHome() }),
+      preparePiTaskWraithExtension({
+        isolatedHomeDir: createCanonicalHome(),
+        toolNames: [
+          ...PI_EXACT_FILE_TOOL_NAMES,
+          ...PI_MANAGED_SHELL_TOOL_NAMES,
+          ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+          ...PI_MESH_TOOL_NAMES
+        ]
+      })
+    ]
+    for (const prepared of homes) {
+      const source = readFileSync(prepared.path, 'utf8')
+      expect(source).toContain("import { Type } from 'typebox'")
+      expect(source).not.toContain('Type.OneOf')
+      expect(source).toContain('Type.Union([Type.String(), Type.Array(Type.String())])')
+    }
+  })
+
   it('does not overwrite an unexpected pre-existing extension file', () => {
     const home = createCanonicalHome()
     preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })
