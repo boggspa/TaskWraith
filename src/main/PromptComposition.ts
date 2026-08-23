@@ -511,6 +511,7 @@ function buildTaskWraithRuntimePreamble(args: {
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
+  const fanoutTool = taskWraithToolNameForProvider(args.provider, 'ensemble_fanout')
   const awaitTool = taskWraithToolNameForProvider(args.provider, 'ensemble_await')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
   const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
@@ -543,7 +544,7 @@ function buildTaskWraithRuntimePreamble(args: {
     ...(args.isUltraTask
       ? [
           'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-          `Priority order: ${args.advertiseDelegateWave ? delegateWaveTool : 'N/A (Ensemble only)'} > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
+          `Priority order: ${fanoutTool} (Highest priority for Ensemble chats - N/A in single provider chats) > ${delegateWaveTool} (highest recommendation for single provider chats, second priority for Ensemble) > ${delegateTool} (Third priority but strongly recommended if the other two options do not fit the bill/cannot be called).`,
           'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
           `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
         ]
@@ -1772,7 +1773,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       coreMcpProfile,
       gatewayMcpProfile,
       advertiseDelegateWave,
-      isUltraTask: input.reasoningEffort?.toLowerCase() === 'ultratask'
+      isUltraTask: ['ultra', 'ultracode', 'ultratask'].includes(input.reasoningEffort?.toLowerCase() || '')
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
