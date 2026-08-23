@@ -13,16 +13,90 @@
  * ---------------------------------------------------------------------- */
 
 .workspace-terminal-split.terminal-panel--pane {
+  position: relative;
   background: #0a0e14;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Match the assistant code-block shell: high-contrast accent rim, harder
+   * corners, same stylistic family. */
+  border: 1px solid rgb(var(--agent-accent-rgb) / 0.36);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
+/* Subtle fanout-style rim chase — same masked conic-gradient technique as the
+ * assistant code-block rim (05-polish-fx-layouts.css `code-shell-rim-chase`)
+ * at the same very-low alphas, slower lap, so the terminal reads as part of
+ * the same "active surface" family without competing with the TUI content. */
 .workspace-terminal-split.terminal-panel--pane::after {
-  display: none;
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  contain: paint;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 186deg,
+    rgb(var(--agent-accent-rgb) / 0.1) 268deg,
+    rgb(var(--agent-accent-rgb) / 0.24) 330deg,
+    rgb(var(--agent-accent-rgb) / 0.38) 353deg,
+    transparent 360deg
+  );
+  transform: translateZ(0);
+  transform-origin: 50% 50%;
+  will-change: transform;
+  animation: terminal-pane-rim-chase 7s linear infinite;
+}
+
+@keyframes terminal-pane-rim-chase {
+  to {
+    transform: translateZ(0) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-terminal-split.terminal-panel--pane::after {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .workspace-terminal-split.terminal-panel--pane::after {
+  animation: none;
+}
+
+/* Light themes: the terminal bed stays dark (xterm palette), but the chrome
+ * rim lifts its accent stops slightly so the chase stays legible next to the
+ * brightened transcript shells. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .workspace-terminal-split.terminal-panel--pane {
+  border-color: rgb(var(--agent-accent-rgb) / 0.44);
+}
+
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .workspace-terminal-split.terminal-panel--pane::after {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 186deg,
+    rgb(var(--agent-accent-rgb) / 0.16) 268deg,
+    rgb(var(--agent-accent-rgb) / 0.34) 330deg,
+    rgb(var(--agent-accent-rgb) / 0.5) 353deg,
+    transparent 360deg
+  );
 }
 
 /* Reduce-transparency / high-contrast fallback stays honest: opaque bed. */
@@ -43,9 +117,9 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: 500;
