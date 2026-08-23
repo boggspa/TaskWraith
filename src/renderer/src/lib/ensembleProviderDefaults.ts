@@ -1229,13 +1229,15 @@ export function resolveEnsembleParticipantSettings(
       ? 'medium'
       : configuredModelDefaultReasoning
   const reasoningEffort =
-    enabledReasoningOptions.length === 0
-      ? ''
-      : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
-        ? participant.reasoningEffort
-        : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)
-          ? modelDefaultReasoning
-          : (enabledReasoningOptions[0]?.value ?? '')
+    participant.reasoningEffort === 'ultraTask'
+      ? 'ultraTask'
+      : enabledReasoningOptions.length === 0
+        ? ''
+        : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
+          ? participant.reasoningEffort
+          : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)
+            ? modelDefaultReasoning
+            : (enabledReasoningOptions[0]?.value ?? '')
   const fastModeEnabled =
     participant.provider === 'kimi' && model === 'kimi-k3'
       ? false

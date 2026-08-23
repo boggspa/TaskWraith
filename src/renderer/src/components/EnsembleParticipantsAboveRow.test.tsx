@@ -732,7 +732,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         getEnsembleAddReasoningOptions('codex', 'gpt-5.3-codex-spark', providerGroups).map(
           (option) => option.value
         )
-      ).toEqual(['low', 'medium', 'high', 'xhigh'])
+      ).toEqual(['low', 'medium', 'high', 'xhigh', 'ultraTask'])
     })
 
     it('keeps live models and honors their reasoning metadata', () => {
@@ -790,7 +790,8 @@ describe('EnsembleParticipantsAboveRow', () => {
       ).toEqual([
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
-        { value: 'high', label: 'High' }
+        { value: 'high', label: 'High' },
+        { value: 'ultraTask', label: 'UltraTask' }
       ])
       expect(
         createEnsembleParticipantAddConfiguration(

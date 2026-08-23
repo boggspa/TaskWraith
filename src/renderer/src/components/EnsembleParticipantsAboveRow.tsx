@@ -1681,7 +1681,9 @@ function EnsembleAddParticipantButton({
   )
   const selectedReasoning =
     draft.provider === 'antigravity'
-      ? (antigravityEffortForModelId(draft.model) ?? '')
+      ? draft.reasoningEffort === 'ultraTask'
+        ? 'ultraTask'
+        : (antigravityEffortForModelId(draft.model) ?? '')
       : draft.provider === 'kimi'
         ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
         : draft.reasoningEffort || ''
@@ -1745,6 +1747,9 @@ function EnsembleAddParticipantButton({
       setDuplicateSourceId(null)
       setDraft((current) => {
         if (current.provider === 'antigravity') {
+          if (value === 'ultraTask') {
+            return { ...current, reasoningEffort: value }
+          }
           const modelOptions =
             availableProviderGroups.find((group) => group.provider === 'antigravity')
               ?.modelOptions || []
@@ -1753,13 +1758,15 @@ function EnsembleAddParticipantButton({
             current.model,
             modelOptions
           )?.antigravityVariants?.find((variant) => variant.effort === value)
-          return target && target.id !== current.model
-            ? createEnsembleParticipantAddConfiguration(
-                'antigravity',
-                target.id,
-                availableProviderGroups
-              )
-            : current
+          if (target && target.id !== current.model) {
+            const nextConfig = createEnsembleParticipantAddConfiguration(
+              'antigravity',
+              target.id,
+              availableProviderGroups
+            )
+            return { ...nextConfig, reasoningEffort: '' }
+          }
+          return current.reasoningEffort === 'ultraTask' ? { ...current, reasoningEffort: '' } : current
         }
         return current.provider === 'kimi'
           ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }

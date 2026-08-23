@@ -160,11 +160,14 @@ export function ParticipantPickerCluster({
       : null
   const selectedReasoning =
     participant.provider === 'antigravity'
-      ? (antigravityEffortForModelId(selectedModelId) ?? '')
+      ? resolved.reasoningEffort === 'ultraTask'
+        ? 'ultraTask'
+        : (antigravityEffortForModelId(selectedModelId) ?? '')
       : participant.provider === 'kimi'
         ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
         : resolved.reasoningEffort
-  const reasoningOptions =
+  const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId)
+  const baseReasoningOptions =
     participant.provider === 'antigravity'
       ? (antigravityVariantGroup?.variants.map((variant) => ({
           value: variant.effort,
@@ -173,13 +176,26 @@ export function ParticipantPickerCluster({
       : getEnsembleReasoningOptions(
           participant.provider,
           selectedModelId,
-          modelOptions.find((option) => option.id === selectedModelId)
+          selectedModelOption
         )
+  const reasoningOptions = [...baseReasoningOptions]
+  if (selectedModelOption?.ultraTaskSupported !== false) {
+    if (reasoningOptions.length === 0) {
+      reasoningOptions.push({ value: 'off', label: 'Off' })
+    }
+    reasoningOptions.push({ value: 'ultraTask', label: 'UltraTask' })
+  }
   const onSelectReasoning = (value: string): void => {
     if (participant.provider === 'antigravity') {
-      const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)
-      if (target && target.id !== selectedModelId) {
-        onSelectProviderModel('antigravity', target.id)
+      if (value === 'ultraTask') {
+        onPatch({ reasoningEffort: value })
+      } else {
+        const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)
+        if (target && target.id !== selectedModelId) {
+          onPatch({ ...buildParticipantProviderModelPatch(participant, 'antigravity', target.id), reasoningEffort: '' })
+        } else if (participant.reasoningEffort === 'ultraTask') {
+          onPatch({ reasoningEffort: '' })
+        }
       }
     } else if (participant.provider === 'kimi') {
       onPatch(buildKimiReasoningPickerPatch(selectedModelId, value))
