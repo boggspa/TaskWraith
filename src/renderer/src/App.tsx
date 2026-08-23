@@ -12138,6 +12138,11 @@ function App(): React.JSX.Element {
         const runIndex = runs.findIndex((run) => run.runId === completedRunId)
         const targetRun = runIndex >= 0 ? runs[runIndex] : undefined
         if (targetRun) {
+          // Seal endedAt alongside status: deriveChatRunCompleteNotice treats
+          // an un-ended last run as still-active and suppresses the Task
+          // Complete card on every later re-derivation (chat switch, refresh,
+          // hydrate-after-paint), even though status was stamped here.
+          if (!targetRun.endedAt) targetRun.endedAt = new Date().toISOString()
           if (targetRun.status === 'success' && context.warnings.length > 0) {
             targetRun.status = 'success_with_warnings'
           } else if (!targetRun.status) {
