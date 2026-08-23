@@ -8941,6 +8941,8 @@
 .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix,
 .composer-combined-picker-trigger[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   position: relative;
   display: inline-block;
@@ -12331,6 +12333,9 @@
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell,
 .composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell,
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell {
   background-image: linear-gradient(
