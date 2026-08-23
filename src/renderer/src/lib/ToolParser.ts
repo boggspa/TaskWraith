@@ -828,8 +828,10 @@ function resolveReplacedText(parameters: Record<string, unknown>): string | unde
   return (
     (typeof parameters.old_string === 'string' && parameters.old_string) ||
     (typeof parameters.oldString === 'string' && parameters.oldString) ||
+    (typeof parameters.OldString === 'string' && parameters.OldString) ||
     (typeof parameters.old_text === 'string' && parameters.old_text) ||
     (typeof parameters.oldText === 'string' && parameters.oldText) ||
+    (typeof parameters.OldText === 'string' && parameters.OldText) ||
     (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
     (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
     (typeof parameters.target_content === 'string' && parameters.target_content) ||
@@ -842,8 +844,10 @@ function resolveReplacementText(parameters: Record<string, unknown>): string | u
   return (
     (typeof parameters.new_string === 'string' && parameters.new_string) ||
     (typeof parameters.newString === 'string' && parameters.newString) ||
+    (typeof parameters.NewString === 'string' && parameters.NewString) ||
     (typeof parameters.new_text === 'string' && parameters.new_text) ||
     (typeof parameters.newText === 'string' && parameters.newText) ||
+    (typeof parameters.NewText === 'string' && parameters.NewText) ||
     (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
     (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
     (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
