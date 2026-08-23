@@ -203,3 +203,44 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticServiceForRawName('some_other_tool')).toBeNull()
   })
 })
+
+// AGY (AntiGravity/Gemini) tool coalescing tests
+describe('Antigravity tool coalescing', () => {
+  it('resolves all AGY native tool names to TaskWraith catalog equivalents', () => {
+    // grep_search -> workspace_search
+    const grepResult = resolveStrictProviderNativeToolAction('antigravity', 'grep_search')
+    expect(grepResult).toMatchObject({
+      ok: true,
+      catalogTool: 'workspace_search',
+      action: 'workspace.search'
+    })
+    // view_file -> read_file
+    const viewResult = resolveStrictProviderNativeToolAction('antigravity', 'view_file')
+    expect(viewResult).toMatchObject({
+      ok: true,
+      catalogTool: 'read_file',
+      action: 'workspace.read'
+    })
+    // read_file -> read_file
+    const readResult = resolveStrictProviderNativeToolAction('antigravity', 'read_file')
+    expect(readResult).toMatchObject({
+      ok: true,
+      catalogTool: 'read_file',
+      action: 'workspace.read'
+    })
+    // capability_search -> capability_search
+    const capSearchResult = resolveStrictProviderNativeToolAction('antigravity', 'capability_search')
+    expect(capSearchResult).toMatchObject({
+      ok: true,
+      catalogTool: 'capability_search',
+      action: 'control.read'
+    })
+    // capability_invoke -> capability_invoke
+    const capInvokeResult = resolveStrictProviderNativeToolAction('antigravity', 'capability_invoke')
+    expect(capInvokeResult).toMatchObject({
+      ok: true,
+      catalogTool: 'capability_invoke',
+      action: 'control.mutate'
+    })
+  })
+})

@@ -523,7 +523,7 @@ export const PROVIDER_ACTION_ADAPTERS = {
     nativeActionMappings: {}
   }),
   antigravity: adapter({
-    nativeSurface: 'unobservable-native',
+    nativeSurface: 'closed-native',
     mcpAttachment: 'route-dependent',
     nativeMediation: 'route-dependent',
     structuredKindMappings: {},
@@ -3223,13 +3223,22 @@ export function resolveToolDispatchContractStrict(
     // through the exact `resolveCatalogActionStrict`; an unfolded target is
     // fail-closed against that helper, a folded one would not be.
     const target = strictTaskWraithCatalogCanonicalName(rawTarget)
-    if (!target || !isTaskWraithCatalogAction(target) || target === 'capability_invoke') {
+    if (!target || !isTaskWraithCatalogAction(target)) {
       return unmapped(
         null,
         'taskwraith-catalog',
         rawAction,
         'gateway_target_not_declared',
         `capability_invoke target "${rawTarget}" is not a declared concrete TaskWraith catalog action.`
+      )
+    }
+    if (target === 'capability_invoke') {
+      return unmapped(
+        null,
+        'taskwraith-catalog',
+        rawAction,
+        'gateway_target_not_declared',
+        'capability_invoke cannot invoke itself.'
       )
     }
     const metadata = TASKWRAITH_TOOL_ACTIONS[target]
