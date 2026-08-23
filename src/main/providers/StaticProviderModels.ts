@@ -375,7 +375,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'low',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.6-terra',
@@ -387,7 +388,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.6-luna',
@@ -399,7 +401,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: CODEX_DEFAULT_MODEL_ID,
@@ -412,7 +415,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.4',
@@ -423,7 +427,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.4-mini',
@@ -434,7 +439,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.3-codex-spark',
@@ -518,14 +524,16 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'claude-fable-5',
     label: 'Fable 5',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -533,14 +541,16 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'claude-sonnet-4-6',
     label: 'Sonnet 4.6 Legacy',
     description: '200K context window — legacy Sonnet',
     supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'claude-opus-4-8-1m',
@@ -548,7 +558,8 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'claude-opus-4-7-1m',
@@ -556,7 +567,8 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'claude-haiku-4-5',
@@ -577,7 +589,8 @@ const KIMI_STATIC_MODELS = [
     isDefault: true,
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
     defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
@@ -587,6 +600,7 @@ const KIMI_STATIC_MODELS = [
     label: 'K3',
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
+    ultraTaskSupported: true,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),
@@ -636,17 +650,20 @@ const OLLAMA_STATIC_MODELS = [
     id: 'qwen3:4b-instruct',
     label: 'Qwen 3 (4B Param)',
     description: 'Local Ollama model · 262k context',
-    isDefault: true
+    isDefault: true,
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:2b',
     label: 'Qwen 3.5 (2B Param)',
-    description: 'Qwen 3.5 2B via Ollama · 262k context · vision/tools/thinking'
+    description: 'Qwen 3.5 2B via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:4b',
     label: 'Qwen 3.5 (4B Param)',
-    description: 'Qwen 3.5 4B via Ollama · 262k context'
+    description: 'Qwen 3.5 4B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:9b',
@@ -825,16 +842,18 @@ const GROK_STATIC_MODELS = [
     description: '500K context - low/medium/high/extra-high reasoning',
     isDefault: true,
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
   },
   {
     id: GROK_45_MODEL_ID,
     label: 'Grok 4.5 Fast',
     description: '500K context - low/medium/high reasoning',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
   },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast', ultraTaskSupported: true }
 ]
 // Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
 // (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0), which exposes each
@@ -856,19 +875,22 @@ const MISTRAL_STATIC_MODELS = [
     description: '256K context - coding-tuned, $0.10/$0.30 per Mtok',
     isDefault: true,
     supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
   },
   {
     id: MISTRAL_MODEL_MEDIUM,
     label: 'Mistral Medium 3.5',
     description: '256K context - flagship, $1.50/$7.50 per Mtok',
     supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-large-2512',
     label: 'Mistral Large 3',
-    description: '262K context - flagship, $0.50/$1.50 per Mtok'
+    description: '262K context - flagship, $0.50/$1.50 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'zai-glm-5-2',
@@ -942,19 +964,21 @@ const MUSE_STATIC_MODELS = [
     id: 'muse-spark-1.2',
     label: 'Muse Spark 1.2',
     description: '1M context - $1.25/$4.25 per Mtok',
-    isDefault: true
+    isDefault: true,
+    ultraTaskSupported: true
   }
 ]
 const CURSOR_STATIC_MODELS = [
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
-  { id: 'composer-2.5', label: 'Composer 2.5' },
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true, ultraTaskSupported: true },
+  { id: 'composer-2.5', label: 'Composer 2.5', ultraTaskSupported: true },
   {
     id: CURSOR_GROK_46_BASE_MODEL_ID,
     label: 'Cursor Grok 4.6',
     description: 'First-party Cursor model pool - 256K context',
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: CURSOR_GROK_45_BASE_MODEL_ID,
@@ -962,7 +986,8 @@ const CURSOR_STATIC_MODELS = [
     description: 'First-party Cursor model pool - 500K context',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   }
 ]
 const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
