@@ -201,7 +201,15 @@ function explicitCodexWireReasoningEffort(effort?: string | null): CodexWireReas
   if (normalized === 'light') return 'low'
   if (normalized === 'extra') return 'xhigh'
   // Above-`xhigh` internal tiers are not in the API's reasoning.effort enum.
-  if (normalized === 'ultracode' || normalized === 'ultra' || normalized === 'max') {
+  // 'ultratask' is TaskWraith's top-of-ladder tier; like 'ultracode'/'ultra'
+  // it clamps to the API's highest wire effort instead of being dropped
+  // (a dropped token falls back to the model default — a silent downgrade).
+  if (
+    normalized === 'ultracode' ||
+    normalized === 'ultra' ||
+    normalized === 'max' ||
+    normalized === 'ultratask'
+  ) {
     return 'xhigh'
   }
   return CODEX_WIRE_REASONING_EFFORT_SET.has(normalized)
