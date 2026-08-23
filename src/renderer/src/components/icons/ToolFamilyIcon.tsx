@@ -176,6 +176,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'ci'
     case 'delegate_to_subthread':
     case 'delegate_wave':
+    case 'ultra_task':
       return 'delegate'
     case 'ensemble_yield':
       return 'yield'
