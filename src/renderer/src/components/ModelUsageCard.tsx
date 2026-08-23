@@ -393,6 +393,10 @@ function isWeeklyWindow(text: string): boolean {
   return text.includes('weekly') || text.includes('7 day') || text.includes('seven day')
 }
 
+function isMonthlyWindow(text: string): boolean {
+  return text.includes('monthly') || text.includes('month')
+}
+
 function isThirdPartyAgyWindow(text: string): boolean {
   return text.includes('agy') && (text.includes('3p') || text.includes('claude/gpt'))
 }
@@ -510,6 +514,7 @@ function compactCellsForEntry(
   if (provider === 'kimi') {
     assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
     assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    assign('extraOne', findCompactWindow(entry, isMonthlyWindow))
     return cells
   }
 

@@ -9344,10 +9344,8 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('claude', claudeWindows, claudeSnap))
     }
 
-    // Kimi — only 5H and Weekly
-    const kimiAllowed = new Set(['5H', 'Weekly'])
+    // Kimi — include all windows (5H, Weekly, Monthly)
     const kimiFresh = (Array.isArray(kimiSnap?.windows) ? kimiSnap.windows : [])
-      .filter((w: any) => kimiAllowed.has(String(w?.label || '').trim()))
       .map((w: any, i: number) => normalizeQuotaWindow('kimi', w, `kimi-quota-${i}`))
       .filter((w): w is UsageWindowAggregate => Boolean(w))
     const kimiWindows = resolveWithCache('kimi', kimiFresh)
