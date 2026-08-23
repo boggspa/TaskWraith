@@ -22,6 +22,7 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('codex', 'xhigh')).toBe(4)
     expect(ladderIndexForOption('codex', 'max')).toBe(5)
     expect(ladderIndexForOption('codex', 'ultracode')).toBe(6)
+    expect(ladderIndexForOption('codex', 'ultraTask')).toBe(7)
   })
 
   it('coalesces provider synonyms (extra→xhigh, light→low)', () => {
@@ -43,16 +44,18 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('codex', 'turbo')).toBeNull()
   })
 
-  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→ultra)', () => {
+  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→ultra→ultraTask)', () => {
     // Muse's CLI ladder is minimal|low|medium|high|xhigh|ultra. Minimal parks
     // at Off (0); ultra parks at the Ultracode stop (6) with value "ultra"
-    // (not Codex's "ultracode"); xhigh must not be dropped.
+    // (not Codex's "ultracode"); ultraTask parks at UltraTask stop (7).
+    // xhigh must not be dropped.
     expect(ladderIndexForOption('muse', 'minimal')).toBe(0)
     expect(ladderIndexForOption('muse', 'low')).toBe(1)
     expect(ladderIndexForOption('muse', 'medium')).toBe(2)
     expect(ladderIndexForOption('muse', 'high')).toBe(3)
     expect(ladderIndexForOption('muse', 'xhigh')).toBe(4)
     expect(ladderIndexForOption('muse', 'ultra')).toBe(6)
+    expect(ladderIndexForOption('muse', 'ultraTask')).toBe(7)
     // Muse-scoped synonyms must not remap a foreign provider's minimal/ultra.
     expect(ladderIndexForOption('codex', 'minimal')).toBeNull()
     expect(ladderIndexForOption('pi', 'minimal')).toBeNull()
@@ -258,7 +261,7 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuenow="1"')
     expect(markup).toContain('--ladder-accent:var(--provider-kimi-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(2)
   })
 
   it('enables configurable reasoning for Devstral Small and Mistral Medium 3.5', () => {
@@ -307,9 +310,9 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuetext="High"')
     expect(markup).toContain('--ladder-accent:var(--provider-mistral-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup).toContain('--ladder-fx-strength:0.5')
+    expect(markup).toContain('--ladder-fx-strength:0.42857142857142855')
     expect(markup).toContain('composer-combined-picker-ladder-sparkles')
-    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(7)
     expect(markup).not.toContain('data-disabled="true"')
     expect(markup).toContain('composer-combined-picker-ladder-shimmer-band')
   })
@@ -356,11 +359,11 @@ describe('unavailable reasoning presentation', () => {
 describe('reasoning ladder visual taper', () => {
   it('ramps intensity and density from Low/Thinking through Ultra', () => {
     expect(
-      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).sparkleCount)
-    ).toEqual([0, 3, 5, 8, 11, 13, 16])
+      Array.from({ length: 8 }, (_, index) => reasoningLadderFxProfile(index).sparkleCount)
+    ).toEqual([0, 2, 5, 7, 9, 11, 14, 16])
     expect(
-      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).shimmerBandCount)
-    ).toEqual([0, 1, 1, 2, 2, 3, 3])
+      Array.from({ length: 8 }, (_, index) => reasoningLadderFxProfile(index).shimmerBandCount)
+    ).toEqual([0, 1, 1, 1, 2, 2, 3, 3])
     expect(reasoningLadderFxProfile(0)).toEqual({
       active: false,
       strength: 0,
@@ -369,20 +372,20 @@ describe('reasoning ladder visual taper', () => {
     })
     expect(reasoningLadderFxProfile(1)).toEqual({
       active: true,
-      strength: 1 / 6,
-      sparkleCount: 3,
+      strength: 1 / 7,
+      sparkleCount: 2,
       shimmerBandCount: 1
     })
     expect(reasoningLadderFxProfile(3)).toEqual({
       active: true,
-      strength: 1 / 2,
-      sparkleCount: 8,
-      shimmerBandCount: 2
+      strength: 3 / 7,
+      sparkleCount: 7,
+      shimmerBandCount: 1
     })
     expect(reasoningLadderFxProfile(6)).toEqual({
       active: true,
-      strength: 1,
-      sparkleCount: 16,
+      strength: 6 / 7,
+      sparkleCount: 14,
       shimmerBandCount: 3
     })
   })
@@ -417,7 +420,7 @@ describe('reasoning ladder visual taper', () => {
     expect(low).toContain('data-fx-active="true"')
     expect(low).toContain('--ladder-fill-height:calc(')
     expect(low).toContain('composer-combined-picker-ladder-pulse')
-    expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
+    expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(2)
     expect(low.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
   })
 

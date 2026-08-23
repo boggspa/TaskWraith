@@ -531,12 +531,12 @@ function FastBoltIcon({ className }: { className?: string } = {}): React.JSX.Ele
 }
 
 /*
- * Reasoning ladder — a vertical 7-stop gradient slider that replaces the old
+ * Reasoning ladder — a vertical 8-stop gradient slider that replaces the old
  * hierarchical reasoning row list, ported from the iOS composer's
  * `ReasoningLadder` (ios/.../TWSharedViews.swift). Bottom (index 0, Off) climbs
- * to top (index 6, Ultracode); the thumb snaps only to the stops the current
- * model actually supports. Provider synonyms (extra→xhigh, light→low) and
- * Kimi's binary thinking flag (off/on → Off/Light) map onto the same ladder.
+ * to top (index 7, UltraTask); the thumb snaps only to the stops the current
+ * model actually supports. Provider synonyms (extra→xhigh, light→low, ultratask→ultraTask)
+ * and Kimi's binary thinking flag (off/on → Off/Light) map onto the same ladder.
  */
 const LADDER_STOPS: ReadonlyArray<{ index: number; effort: string; label: string }> = [
   { index: 0, effort: 'off', label: 'Off' },
@@ -545,9 +545,10 @@ const LADDER_STOPS: ReadonlyArray<{ index: number; effort: string; label: string
   { index: 3, effort: 'high', label: 'High' },
   { index: 4, effort: 'xhigh', label: 'Extra' },
   { index: 5, effort: 'max', label: 'Max' },
-  { index: 6, effort: 'ultracode', label: 'Ultracode' }
+  { index: 6, effort: 'ultracode', label: 'Ultracode' },
+  { index: 7, effort: 'ultraTask', label: 'UltraTask' }
 ]
-const LADDER_MAX_INDEX = 6
+const LADDER_MAX_INDEX = 7
 // Top/bottom padding of the track's usable travel. Kept a touch above the
 // thumb's half-height (15px thumb → 7.5px) so the extreme stops still leave a
 // little rail showing above/below the thumb.
@@ -555,7 +556,7 @@ const LADDER_TRACK_INSET = 11
 
 // Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
 // the compact trigger chip. The ladder itself uses a separate Low→Ultra taper.
-const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode', 'ultra'])
+const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode', 'ultra', 'ultraTask'])
 // Extra (xhigh) wears the same treatment at a fraction of the intensity — a
 // gentler sweep (CSS, keyed off data-selected-reasoning) plus a smaller,
 // dimmer sparkle field. Tiers below it are hue-only (pure CSS, no overlay).
@@ -651,6 +652,7 @@ function normalizeLadderEffort(effort: string): string {
   const value = effort.trim().toLowerCase()
   if (value === 'extra') return 'xhigh'
   if (value === 'light') return 'low'
+  if (value === 'ultratask') return 'ultraTask'
   return value
 }
 
@@ -658,8 +660,8 @@ function normalizeLadderEffort(effort: string): string {
  * Map a reasoning-option value onto a ladder index, or null when it doesn't
  * belong on the ladder. K2.7 Coding's fixed `on` value rides the first active
  * stop; K3's Low/High/Max values use the ordinary effort ladder. Muse Meta
- * `/effort` parks `minimal` at Off (0) and `ultra` at Ultracode (6) without
- * rewriting those wire tokens onto other providers' catalogs.
+ * `/effort` parks `minimal` at Off (0), `ultra` at Ultracode (6), and `ultratask` at UltraTask (7)
+ * without rewriting those wire tokens onto other providers' catalogs.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
   if (provider === 'kimi' || provider === 'ollama') {
@@ -671,6 +673,7 @@ export function ladderIndexForOption(provider: ProviderId, value: string): numbe
     const token = value.trim().toLowerCase()
     if (token === 'minimal') return 0
     if (token === 'ultra') return 6
+    if (token === 'ultratask') return 7
   }
   const normalized = normalizeLadderEffort(value)
   const stop = LADDER_STOPS.find((entry) => entry.effort === normalized)
@@ -897,15 +900,17 @@ export function ReasoningLadderSlider({
     LADDER_STOPS[displayIndex]?.label ??
     '—'
   // Provider hue, pulse, shimmer, and sparkles begin at Low/Thinking (index 1)
-  // and taper smoothly to full intensity/density at Ultra/Ultracode (index 6).
+  // and taper smoothly to full intensity/density at Ultra/UltraTask (index 7).
   const fxProfile = reasoningLadderFxProfile(showReasoningFx ? displayIndex : 0)
   const fillHeight = ladderStopBottom(displayIndex)
   const fxTier = showReasoningFx
     ? displayIndex === LADDER_MAX_INDEX
-      ? 'ultracode'
-      : displayIndex === 5
-        ? 'max'
-        : null
+      ? 'ultraTask'
+      : displayIndex === 6
+        ? 'ultracode'
+        : displayIndex === 5
+          ? 'max'
+          : null
     : null
 
   const indexFromClientY = (clientY: number): number | null => {
@@ -938,6 +943,7 @@ export function ReasoningLadderSlider({
       <div
         className="composer-combined-picker-ladder-value"
         data-ultracode={displayIndex === 6 ? 'true' : undefined}
+        data-ultratask={displayIndex === 7 ? 'true' : undefined}
         data-tier={fxTier ?? undefined}
       >
         {currentLabel}
