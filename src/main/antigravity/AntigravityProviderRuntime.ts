@@ -20,7 +20,10 @@ import {
   type ResolvedAgyCliBinary
 } from './AntigravityCli'
 import { parseAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
-import { withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
+import {
+  withAntigravityColdStartSteer,
+  withAntigravityLongTurnProgress
+} from './AntigravityLongTurnProgress'
 
 export interface PrepareAntigravityProviderLaunchInput {
   settings:
@@ -183,8 +186,14 @@ export async function prepareAntigravityProviderLaunch(
 
   const mode = writeCapableAgyMode(input) ? 'accept-edits' : 'plan'
   const resumedConversationId = parseAgyProjectBoundSessionId(input.conversationId)
+  // Fresh-project launches pair with the synthetic cold-start init emission:
+  // ask the model to narrate its plan before its first tool call. Host-side
+  // guidance only; never shown in the user's transcript.
+  const composedPrompt = resumedConversationId
+    ? withAntigravityLongTurnProgress(input.prompt)
+    : withAntigravityColdStartSteer(withAntigravityLongTurnProgress(input.prompt))
   const argsInput = {
-    prompt: withAntigravityLongTurnProgress(input.prompt),
+    prompt: composedPrompt,
     model: selectedAgyModel(input.model),
     reasoningEffort: input.reasoningEffort,
     ...(resumedConversationId ? { conversationId: resumedConversationId } : { newProject: true })

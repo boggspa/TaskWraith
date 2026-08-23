@@ -489,6 +489,20 @@ export function isReasoningToolName(toolName: string): boolean {
   )
 }
 
+/**
+ * Synthetic AntiGravity housekeeping activities that carry no user-facing
+ * value and are hidden from transcript presentation:
+ *   - `antigravity_init` — TaskWraith's own cold-start liveness emission.
+ *   - `generic` — agy brain-transcript steps whose native type is GENERIC
+ *     (unclassified model activity), which would otherwise render as a
+ *     meaningless "Used Generic" card.
+ */
+const HIDDEN_INFRASTRUCTURE_TOOL_NAMES = new Set(['antigravity_init', 'generic'])
+
+export function isHiddenInfrastructureToolName(toolName: string): boolean {
+  return HIDDEN_INFRASTRUCTURE_TOOL_NAMES.has(stripToolNamespace((toolName || '').toLowerCase()))
+}
+
 export function getToolCategory(toolName: string): ToolCategory {
   const name = (toolName || '').toLowerCase()
   const unqualifiedName = stripToolNamespace(name)

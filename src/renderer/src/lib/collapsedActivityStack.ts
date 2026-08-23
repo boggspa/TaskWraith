@@ -1,6 +1,6 @@
 import type { ToolActivity } from '../../../main/store/types'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
-import { isReasoningToolName } from './ToolParser'
+import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
 
 /**
  * Settled-stack auto-collapse (transcript tidy-up).
@@ -90,8 +90,11 @@ function thinkingDurationLabel(totalMs: number): string {
  * the expanded stack too); tool families follow in first-appearance order so
  * the summary reads in the same sequence as the work happened. */
 export function summarizeCollapsedActivityStack(
-  activities: readonly ToolActivity[]
+  rawActivities: readonly ToolActivity[]
 ): CollapsedStackSummary {
+  // Synthetic housekeeping rows (AntiGravity init, unclassified agy steps)
+  // never count toward the folded one-liner.
+  const activities = rawActivities.filter((a) => !isHiddenInfrastructureToolName(a.toolName || ''))
   let thinkingCount = 0
   let thinkingMs = 0
   let thinkingFailed = false

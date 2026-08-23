@@ -881,6 +881,18 @@ describe('ActivityStack compact tool groups', () => {
     expect(shouldDebounceActivityTimelineCollapse(first, appended)).toBe(false)
     expect(shouldDebounceActivityTimelineCollapse(running, warning)).toBe(false)
   })
+
+  it('drops hidden infrastructure activities (antigravity_init, generic) from the timeline', () => {
+    const items = buildTimelineItems([
+      makeReadActivity({ id: 'tool-init', toolName: 'antigravity_init' }),
+      makeReadActivity({ id: 'tool-generic', toolName: 'generic' }),
+      makeReadActivity({ id: 'tool-read-1' })
+    ])
+    const activityIds = items.flatMap((item) =>
+      item.type === 'activity' ? [item.activity.id] : item.activities.map((a) => a.id)
+    )
+    expect(activityIds).toEqual(['tool-read-1'])
+  })
 })
 
 describe('ActivityStack compactDensity routing', () => {

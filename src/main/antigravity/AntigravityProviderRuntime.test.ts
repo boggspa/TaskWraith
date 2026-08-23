@@ -4,7 +4,7 @@ import {
   prepareAntigravityProviderLaunch
 } from './AntigravityProviderRuntime'
 import { formatAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
-import { withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
+import { withAntigravityColdStartSteer, withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
 
 const OPTED_IN = {
   antigravityEnabled: true,
@@ -51,7 +51,7 @@ describe('prepareAntigravityProviderLaunch', () => {
       '--effort',
       'high',
       '-p',
-      withAntigravityLongTurnProgress('Review the failing test.')
+      withAntigravityColdStartSteer(withAntigravityLongTurnProgress('Review the failing test.'))
     ])
     expect(launch.env).toEqual({ PATH: '/usr/bin', KEEP: 'yes' })
     expect(launch.args).not.toContain('--dangerously-skip-permissions')

@@ -36,6 +36,17 @@ const write = (path: string, additions: number, deletions: number): ToolActivity
   })
 
 describe('summarizeCollapsedActivityStack', () => {
+  it('excludes hidden infrastructure activities (antigravity_init, generic) from the fold', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
+      activity({ toolName: 'generic', displayName: 'Used Generic' }),
+      write('src/a.ts', 3, 1)
+    ])
+    expect(summary.activityCount).toBe(1)
+    expect(summary.label).not.toContain('tool')
+    expect(summary.label).toContain('Edited')
+  })
+
   it('leads with thinking duration and follows tool families in first-appearance order', () => {
     const summary = summarizeCollapsedActivityStack([
       activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 8_000 }),

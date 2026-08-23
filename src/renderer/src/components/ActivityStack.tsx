@@ -25,6 +25,7 @@ import {
   extractMcpImageBlocks,
   getToolDisplayName,
   isErroredToolStatus,
+  isHiddenInfrastructureToolName,
   isReasoningToolName,
   isWriteLikeToolName,
   prettyPrintJson,
@@ -1925,6 +1926,9 @@ function isGroupableActivity(activity: ToolActivity): boolean {
 export function buildTimelineItems(activities: ToolActivity[]): ActivityTimelineItem[] {
   const items: ActivityTimelineItem[] = []
   let index = 0
+  // Synthetic housekeeping rows (AntiGravity cold-start init, unclassified
+  // agy "generic" steps) never render — skip before grouping.
+  activities = activities.filter((a) => !isHiddenInfrastructureToolName(a.toolName || ''))
   // A solitary terminal activity carries useful context (which file,
   // which command, the args) that a group header hides — so require
   // at least 2 consecutive same-family calls before grouping.
