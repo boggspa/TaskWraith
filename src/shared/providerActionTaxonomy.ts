@@ -3261,11 +3261,13 @@ export function resolveToolDispatchContractStrict(
   const metadata =
     canonical === 'capability_search'
       ? CAPABILITY_GATEWAY_ACTIONS.capability_search
-      : isTaskWraithCatalogAction(canonical)
-        ? TASKWRAITH_TOOL_ACTIONS[canonical]
-        : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
-  // capability_search is handled via CAPABILITY_GATEWAY_ACTIONS above and is
-  // never a TaskWraith catalog action — do not re-compare it here (TS2367).
+      : canonical === 'capability_invoke'
+        ? CAPABILITY_GATEWAY_ACTIONS.capability_invoke
+        : isTaskWraithCatalogAction(canonical)
+          ? TASKWRAITH_TOOL_ACTIONS[canonical]
+          : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
+  // capability_search and capability_invoke are handled via CAPABILITY_GATEWAY_ACTIONS
+  // above and are never TaskWraith catalog actions — do not re-compare them here (TS2367).
   const service = isTaskWraithCatalogAction(canonical)
     ? resolveCatalogToolAgenticService(canonical, args)
     : metadata.service
