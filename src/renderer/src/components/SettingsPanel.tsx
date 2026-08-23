@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MascotGhost } from './AppChromeSymbols'
 import { ComposerShellPreview } from './ComposerShellPreview'
@@ -4056,6 +4056,14 @@ export function SettingsPanel({
   }
   const [installedFontOptions, setInstalledFontOptions] = useState<TypefaceOption[]>([])
   const [installedFontStatus, setInstalledFontStatus] = useState('')
+  // Kimi web session state (self-contained, mirrors MistralQuotaCard)
+  const [kimiWebSessionBusy, setKimiWebSessionBusy] = useState(false)
+  const [kimiWebSessionStatus, setKimiWebSessionStatus] = useState<{
+    configured: boolean
+    encryptionAvailable: boolean
+    updatedAt?: string
+  } | null>(null)
+  const [kimiWebSessionError, setKimiWebSessionError] = useState<string | null>(null)
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
   const [mcpServerQuery, setMcpServerQuery] = useState('')
@@ -4083,6 +4091,53 @@ export function SettingsPanel({
   )
   const [runtimeProfileLoading, setRuntimeProfileLoading] = useState(false)
   const [runtimeProfileError, setRuntimeProfileError] = useState('')
+  // Kimi web session handlers (self-contained, mirrors MistralQuotaCard)
+  const loadKimiWebSessionStatus = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.getKimiWebSessionStatus !== 'function') return
+    try {
+      const status = await api.getKimiWebSessionStatus()
+      setKimiWebSessionStatus(status ?? null)
+    } catch {
+      setKimiWebSessionStatus(null)
+    }
+  }, [])
+  useEffect(() => {
+    void loadKimiWebSessionStatus()
+  }, [loadKimiWebSessionStatus])
+  const importKimiWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.importKimiWebSession !== 'function') return
+    setKimiWebSessionBusy(true)
+    setKimiWebSessionError(null)
+    try {
+      const outcome = await api.importKimiWebSession()
+      if (outcome?.ok) {
+        setKimiWebSessionStatus(outcome.status ?? { configured: true, encryptionAvailable: false })
+      } else if (outcome && outcome.reason !== 'cancelled') {
+        setKimiWebSessionError('Could not import the web session.')
+      }
+    } catch {
+      setKimiWebSessionError('Could not import the web session.')
+    } finally {
+      setKimiWebSessionBusy(false)
+    }
+  }, [])
+  const clearKimiWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.clearKimiWebSession !== 'function') return
+    setKimiWebSessionBusy(true)
+    setKimiWebSessionError(null)
+    try {
+      const result = await api.clearKimiWebSession()
+      if (result?.ok) setKimiWebSessionStatus({ configured: false, encryptionAvailable: false })
+      else setKimiWebSessionError('Could not clear the web session.')
+    } catch {
+      setKimiWebSessionError('Could not clear the web session.')
+    } finally {
+      setKimiWebSessionBusy(false)
+    }
+  }, [])
   const [runtimeProfileFormMode, setRuntimeProfileFormMode] = useState<
     'hidden' | 'create' | 'edit'
   >('hidden')
@@ -7350,6 +7405,32 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                     </div>
+                    <div className="settings-provider-auth-actions settings-web-session-actions">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={importKimiWebSession}
+                        disabled={kimiWebSessionBusy}
+                      >
+                        {kimiWebSessionStatus?.configured ? 'Re-import web session…' : 'Import web session…'}
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
+                        onClick={clearKimiWebSession}
+                        disabled={kimiWebSessionBusy || kimiWebSessionStatus?.configured !== true}
+                      >
+                        Clear session
+                      </PillButton>
+                    </div>
+                    {kimiWebSessionStatus?.configured ? (
+                      <p className="settings-provider-auth-footnote">
+                        Web session imported.
+                      </p>
+                    ) : null}
+                    {kimiWebSessionError ? (
+                      <p className="settings-provider-auth-error">{kimiWebSessionError}</p>
+                    ) : null}
                     {renderProviderUpgradeFootnote('kimi')}
                     {renderProviderPauseControls('kimi')}
                   </SettingsProviderAuthCard>

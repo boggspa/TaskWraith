@@ -1181,6 +1181,21 @@ declare global {
         error?: string
       }>
       clearKimiApiKey: () => Promise<void>
+      getKimiWebSessionStatus: () => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      }>
+      importKimiWebSession: () => Promise<{
+        ok: boolean
+        reason?: 'cancelled' | 'unavailable' | 'storeFailed'
+        status?: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
+      clearKimiWebSession: () => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
       importOllamaWebSession: () => Promise<{
         ok: boolean
