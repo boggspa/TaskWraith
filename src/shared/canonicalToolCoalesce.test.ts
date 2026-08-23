@@ -228,19 +228,47 @@ describe('Antigravity tool coalescing', () => {
       catalogTool: 'read_file',
       action: 'workspace.read'
     })
-    // capability_search -> capability_search
-    const capSearchResult = resolveStrictProviderNativeToolAction('antigravity', 'capability_search')
-    expect(capSearchResult).toMatchObject({
+    // list_dir -> list_directory
+    const listResult = resolveStrictProviderNativeToolAction('antigravity', 'list_dir')
+    expect(listResult).toMatchObject({
       ok: true,
-      catalogTool: 'capability_search',
-      action: 'control.read'
+      catalogTool: 'list_directory',
+      action: 'workspace.read'
     })
-    // capability_invoke -> capability_invoke
-    const capInvokeResult = resolveStrictProviderNativeToolAction('antigravity', 'capability_invoke')
-    expect(capInvokeResult).toMatchObject({
+    // find_by_name -> find_files
+    const findResult = resolveStrictProviderNativeToolAction('antigravity', 'find_by_name')
+    expect(findResult).toMatchObject({
       ok: true,
-      catalogTool: 'capability_invoke',
-      action: 'control.mutate'
+      catalogTool: 'find_files',
+      action: 'workspace.search'
+    })
+    // run_command -> run_shell_command
+    const runResult = resolveStrictProviderNativeToolAction('antigravity', 'run_command')
+    expect(runResult).toMatchObject({
+      ok: true,
+      catalogTool: 'run_shell_command',
+      action: 'shell.execute'
+    })
+    // read_url_content -> web_fetch
+    const fetchResult = resolveStrictProviderNativeToolAction('antigravity', 'read_url_content')
+    expect(fetchResult).toMatchObject({
+      ok: true,
+      catalogTool: 'web_fetch',
+      action: 'network.read'
+    })
+    // search_web -> web_search
+    const searchResult = resolveStrictProviderNativeToolAction('antigravity', 'search_web')
+    expect(searchResult).toMatchObject({
+      ok: true,
+      catalogTool: 'web_search',
+      action: 'network.read'
+    })
+    // ask_question -> ask_user_question
+    const askResult = resolveStrictProviderNativeToolAction('antigravity', 'ask_question')
+    expect(askResult).toMatchObject({
+      ok: true,
+      catalogTool: 'ask_user_question',
+      action: 'user.elicit'
     })
   })
 })

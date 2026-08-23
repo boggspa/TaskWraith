@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 215 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 216 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -191,11 +191,12 @@ Stage selected files or all changes in the active workspace.
 
 ## git_commit
 
-Create a git commit in the active workspace with the supplied message.
+Commit one verified logical slice without consuming the shared Git index. Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
-- Required args: message
-- Example: `{"taskwraith_tool":{"name":"git_commit","arguments":{"message":"text"}}}`
+- Required args: message, mode, paths
+- Optional args: patch
+- Example: `{"taskwraith_tool":{"name":"git_commit","arguments":{"message":"text","mode":"text","paths":[]}}}`
 
 ## git_push
 
@@ -886,11 +887,11 @@ In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged reader-in
 
 ## ensemble_await
 
-In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call. A lane cannot await itself.
+Wait (bounded) for fan-out lanes, sub-threads, or waves to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, or waveIds to await specific targets. Returns per-target status either way: status=settled means every awaited target is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call.
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Optional args: laneIds, timeoutSeconds
+- Optional args: laneIds, subThreadIds, waveIds, timeoutSeconds
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_await","arguments":{"laneIds":[]}}}}`
 
 ## ensemble_lane_result
@@ -926,7 +927,7 @@ In Ensemble Mode, allows the assigned Boss participant, or Captain only after Bo
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, targetRunId, participantIds, participantRoles, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
+- Optional args: roundId, targetParticipantId, targetRunId, participantIds, participantRoles, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, planSummary, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}}`
 
 ## ensemble_poll_response
@@ -1019,20 +1020,20 @@ Read the active TaskWraith thread goal. A goal is the persistent objective and s
 
 ## goal_update
 
-Update the lifecycle status of the existing active TaskWraith goal without changing its objective. Use this for status transitions only; the user owns setting, replacing, and clearing the objective.
+Update the lifecycle status of the existing active TaskWraith goal, or initialize a goal on first turn if unset. Use this for status transitions, or to set the objective when no active goal exists.
 
-- Access: read-only (no approval needed)
+- Access: governed by your run permission role
 - Required args: status
-- Optional args: reason
+- Optional args: objective, description, reason
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"goal_update","arguments":{"status":"text"}}}}`
 
 ## update_goal
 
-Compatibility alias for goal_update. Grok Build official /goal requires an update_goal tool in the session toolset; this updates only the lifecycle status of the existing active TaskWraith goal.
+Updates active goal status or initializes a goal on first turn if unset. Grok Build official /goal compatibility alias.
 
-- Access: read-only (no approval needed)
-- Required args: status
-- Optional args: reason
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: status, objective, description, reason
 - Example: `{"taskwraith_tool":{"name":"update_goal","arguments":{"status":"text"}}}`
 
 ## goal_complete
@@ -1054,7 +1055,7 @@ Mark the existing active TaskWraith goal blocked when meaningful progress requir
 
 ## todo_write
 
-Publish or update a structured goal-step checklist for the current run. Use this to break multi-step work into trackable items the user can follow in the transcript. Each todo needs a stable `id`, human-readable `content`, and `status` (`pending`, `in_progress`, `completed`, or `cancelled`). Keep exactly one item `in_progress` when actively working. When follow-up work appears after earlier steps complete, call this again with `merge: true` and add new `pending`/`in_progress` items instead of leaving the checklist all-complete. Set `merge: true` to patch existing steps by `id`; omit or set `merge: false` to replace the whole list. Prefer this over prose bullet lists when executing a plan with 3+ steps.
+Publish or update a structured goal-step checklist for the current run. Use this to break multi-step work into trackable items the user can follow in the transcript. Each todo needs a stable `id`, human-readable `content`, and `status` (`pending`, `in_progress`, `completed`, or `cancelled`). Keep exactly one item `in_progress` when actively working. When follow-up work appears after earlier steps complete, call this again with `merge: true` and add new `pending`/`in_progress` items instead of leaving the checklist all-complete. TaskWraith binds each item to the current root Goal and, in an Ensemble, the caller's current assignment. Completing every item completes only that plan/assignment contribution; it never completes or blocks the root Goal. Set `merge: true` to patch existing steps by `id`; omit or set `merge: false` to replace the whole list. Prefer this over prose bullet lists when executing a plan with 3+ steps.
 
 - Access: read-only (no approval needed)
 - Required args: todos
@@ -1063,7 +1064,7 @@ Publish or update a structured goal-step checklist for the current run. Use this
 
 ## delegate_to_subthread
 
-Spawn a fresh context-isolated sub-thread on a selectable provider (subject to current runtime admission), or continue an existing one by passing subThreadId. Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. An idle recall requires a resumable matching-provider session; an active recall durably queues the follow-up behind the live child turn. returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output, including assistant output when present. Omit subThreadId to always spawn fresh.
+Spawn a fresh context-isolated sub-thread on a selectable provider (subject to current runtime admission), or continue an existing one by passing subThreadId. Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. An idle recall requires a resumable matching-provider session; an active recall durably queues the follow-up behind the live child turn. returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output. Call ensemble_await on the returned subThreadId immediately after delegating to keep your turn active and receive the result directly. Omit subThreadId to always spawn fresh.
 
 - Access: governed by your run permission role
 - Required args: provider, prompt
@@ -1072,12 +1073,21 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). One approval covers the wave; sized by Settings → General → Max Wave Agents (default 12). An over-cap roster is REFUSED whole — never trimmed — and the refusal names the live cap, so size the wave once rather than splitting it pre-emptively.
+Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum. Call ensemble_await on the returned waveId immediately after delegating to keep your turn active and receive results directly. One approval covers the wave; sized by Settings → General → Max Wave Agents (default 12). An over-cap roster is REFUSED whole — never trimmed — and the refusal names the live cap, so size the wave once rather than splitting it pre-emptively.
 
 - Access: governed by your run permission role
 - Required args: workers
 - Optional args: lifecycle, allowMultiProvider, join
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"delegate_wave","arguments":{"workers":[]}}}}`
+
+## ultra_task
+
+Execute an Ultra Task - highest reasoning with multi-agent orchestration. Auto-selects the maximum available reasoning tier for the provider/model and encourages delegate wave patterns (researcher/worker/reviewer) with automatic result aggregation via ensemble_await. For providers with explicit Ultra/Ultracode support, uses that tier; otherwise uses the highest available (max, xhigh, high, etc.).
+
+- Access: governed by your run permission role
+- Required args: task
+- Optional args: provider, model, enableFanout, enableReview, maxWorkers, reasoningEffort, returnResult
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ultra_task","arguments":{"task":"text"}}}}`
 
 ## scout_brief
 

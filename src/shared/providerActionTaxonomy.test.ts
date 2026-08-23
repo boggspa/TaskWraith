@@ -302,7 +302,9 @@ describe('provider action taxonomy', () => {
     expect(TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
     expect(TAXONOMY_AUDIT_MCP_TOOL_NAMES).toEqual(AUDIT_MCP_TOOL_NAMES)
     expect(Object.keys(TASKWRAITH_OWNED_MCP_ACTIONS)).toEqual([
-      ...new Set([...TASKWRAITH_MCP_TOOLS, ...CAPABILITY_GATEWAY_TOOL_NAMES, ...AUDIT_MCP_TOOL_NAMES])
+      ...TASKWRAITH_MCP_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES,
+      ...AUDIT_MCP_TOOL_NAMES
     ])
     for (const profile of advertisedProfiles) {
       for (const toolName of profile) {

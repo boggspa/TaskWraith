@@ -538,59 +538,83 @@ export const PROVIDER_ACTION_ADAPTERS = {
       'grep_search',
       'view_file',
       'read_file',
-      'capability_search',
-      'capability_invoke'
+      'list_dir',
+      'find_by_name',
+      'run_command',
+      'read_url_content',
+      'search_web',
+      'ask_question'
     ] as const,
     nativeActionMappings: {
       write_to_file: {
-        aliases: ['write_to_file'],
+        aliases: ['write_to_file', 'writeToFile'],
         catalogTool: 'write_file',
         action: 'workspace.mutate'
       },
       replace_file_content: {
-        aliases: ['replace_file_content'],
+        aliases: ['replace_file_content', 'replaceFileContent'],
         catalogTool: 'replace',
         action: 'workspace.mutate'
       },
       create_file: {
-        aliases: ['create_file'],
+        aliases: ['create_file', 'createFile'],
         catalogTool: 'write_file',
         action: 'workspace.mutate'
       },
       delete_file: {
-        aliases: ['delete_file'],
+        aliases: ['delete_file', 'deleteFile'],
         catalogTool: 'delete_path',
         action: 'workspace.mutate'
       },
       rename_file: {
-        aliases: ['rename_file'],
+        aliases: ['rename_file', 'renameFile'],
         catalogTool: 'rename_path',
         action: 'workspace.mutate'
       },
       grep_search: {
-        aliases: ['grep_search'],
+        aliases: ['grep_search', 'grepSearch', 'grep'],
         catalogTool: 'workspace_search',
         action: 'workspace.search'
       },
       view_file: {
-        aliases: ['view_file'],
+        aliases: ['view_file', 'viewFile', 'view'],
         catalogTool: 'read_file',
         action: 'workspace.read'
       },
       read_file: {
-        aliases: ['read_file'],
+        aliases: ['read_file', 'readFile', 'read'],
         catalogTool: 'read_file',
         action: 'workspace.read'
       },
-      capability_search: {
-        aliases: ['capability_search'],
-        catalogTool: 'capability_search',
-        action: 'control.read'
+      list_dir: {
+        aliases: ['list_dir', 'listDir', 'list_directory'],
+        catalogTool: 'list_directory',
+        action: 'workspace.read'
       },
-      capability_invoke: {
-        aliases: ['capability_invoke'],
-        catalogTool: 'capability_invoke',
-        action: 'control.mutate'
+      find_by_name: {
+        aliases: ['find_by_name', 'findByName'],
+        catalogTool: 'find_files',
+        action: 'workspace.search'
+      },
+      run_command: {
+        aliases: ['run_command', 'runCommand'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      },
+      read_url_content: {
+        aliases: ['read_url_content', 'readUrlContent'],
+        catalogTool: 'web_fetch',
+        action: 'network.read'
+      },
+      search_web: {
+        aliases: ['search_web', 'searchWeb'],
+        catalogTool: 'web_search',
+        action: 'network.read'
+      },
+      ask_question: {
+        aliases: ['ask_question', 'askQuestion'],
+        catalogTool: 'ask_user_question',
+        action: 'user.elicit'
       }
     }
   }),
@@ -1654,22 +1678,6 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'scheduler',
     'host-state',
     'host-resource'
-  ),
-  capability_search: tool(
-    'orchestration',
-    'mcpTools',
-    'control.read',
-    'capability-gateway',
-    'none',
-    'none'
-  ),
-  capability_invoke: tool(
-    'orchestration',
-    'mcpTools',
-    'control.mutate',
-    'capability-gateway',
-    'none',
-    'none'
   ),
   ask_user_question: tool(
     'ui_elicitation',
@@ -3261,11 +3269,9 @@ export function resolveToolDispatchContractStrict(
   const metadata =
     canonical === 'capability_search'
       ? CAPABILITY_GATEWAY_ACTIONS.capability_search
-      : canonical === 'capability_invoke'
-        ? CAPABILITY_GATEWAY_ACTIONS.capability_invoke
-        : isTaskWraithCatalogAction(canonical)
-          ? TASKWRAITH_TOOL_ACTIONS[canonical]
-          : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
+      : isTaskWraithCatalogAction(canonical)
+        ? TASKWRAITH_TOOL_ACTIONS[canonical]
+        : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
   // capability_search and capability_invoke are handled via CAPABILITY_GATEWAY_ACTIONS
   // above and are never TaskWraith catalog actions — do not re-compare them here (TS2367).
   const service = isTaskWraithCatalogAction(canonical)
