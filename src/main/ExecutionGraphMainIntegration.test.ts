@@ -147,7 +147,7 @@ describe('execution graph main integration', () => {
     expect(graphRecovery).toBeGreaterThan(queueRecovery)
   })
 
-  it('delivers committed predecessor results as untrusted data before composition', () => {
+  it('delivers committed predecessor results as exact named data inputs before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',
       'const composeMainOwnedExecutionGraphAttempt ='
@@ -156,8 +156,31 @@ describe('execution graph main integration', () => {
     expect(composer).toContain("predecessorAttempt.state !== 'succeeded'")
     expect(composer).toContain('!predecessorAttempt.result')
     expect(composer).toContain('verifyExecutionGraphAttemptReceiptOnChat')
+    expect(composer).toContain("edge.kind === 'data'")
+    expect(composer).toContain('bindExecutionGraphInputsToRequest(')
+    expect(composer).toContain('Execution graph bound input prompt changed before composition.')
+    // Pre-data-edge linear Stacks retain their one-predecessor compatibility envelope.
     expect(composer).toContain('formatExecutionGraphPredecessorResults(')
     expect(composer).toContain("contextIsolation: 'execution_graph'")
+  })
+
+  it('signs and persists the bound prompt while retaining the reusable template proof', () => {
+    const initialization = between(
+      'materializePausedQueueJob: (input) => {',
+      'getQueueJob: (runId) => {'
+    )
+    const authority = between(
+      'const resolveExecutionGraphQueueAuthority =',
+      'const graphOwnedComposerInput ='
+    )
+
+    expect(initialization).toContain(
+      'const request = bindExecutionGraphInputsToRequest(templateRequest, input.inputs)'
+    )
+    expect(initialization).toContain('request: templateRequest')
+    expect(initialization).toContain('attemptRequest: request')
+    expect(initialization).toContain('request: { ...request, sessionTrust: false }')
+    expect(authority).toContain('request: { ...job.request, prompt: templateRequest.prompt }')
   })
 
   it('persists the exact adapter prompt and rechecks predecessor receipts before launch', () => {

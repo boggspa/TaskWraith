@@ -840,6 +840,7 @@ import {
   mintExecutionGraphAttemptPermissionPosture,
   resolveExecutionGraphQueuePermissionPosture
 } from './executionGraph/ExecutionGraphPermissionAuthority'
+import { bindExecutionGraphInputsToRequest } from './executionGraph/ExecutionGraphInputBinding'
 import type { JsonObject, StepAttempt } from './executionGraph/ExecutionGraphModel'
 import { stableExecutionGraphStringify } from './executionGraph/ExecutionGraphCompiler'
 import { executionGraphRunTemplatePermissionCeilingDigest } from './executionGraph/ExecutionGraphRunTemplateAuthority'
@@ -43342,7 +43343,8 @@ if (isGeminiMcpBridgeProcess) {
             throw new Error('Persisted graph run template chat is unavailable.')
           }
           validateChatWorkspaceIdentity(chat.appChatId, workspace)
-          const request = content.request as unknown as RunQueueRequestSnapshot
+          const templateRequest = content.request as unknown as RunQueueRequestSnapshot
+          const request = bindExecutionGraphInputsToRequest(templateRequest, input.inputs)
           if (request.scope !== 'workspace' || request.sessionTrust !== false) {
             throw new Error('Persisted graph run template cannot retain Full Access.')
           }
@@ -43384,7 +43386,7 @@ if (isGeminiMcpBridgeProcess) {
             provider: input.provider,
             workspacePath,
             chatId: input.rootChatId,
-            request,
+            request: templateRequest,
             ...(runtimeProfileId ? { runtimeProfileId } : {}),
             settings: runtimeSettings(AppStore.getSettings(), runtimeProfile),
             sign: signRunPosture
@@ -43398,7 +43400,8 @@ if (isGeminiMcpBridgeProcess) {
             provider: input.provider,
             workspacePath,
             chatId: input.rootChatId,
-            request,
+            request: templateRequest,
+            attemptRequest: request,
             ...(runtimeProfileId ? { runtimeProfileId } : {}),
             templatePosture: templatePermissionPosture,
             sign: signRunPosture,
@@ -52605,13 +52608,16 @@ if (isGeminiMcpBridgeProcess) {
         content.workspaceId !== job.workspaceId ||
         content.chatId !== job.chatId ||
         typeof content.workspacePath !== 'string' ||
+        !isRecord(content.request) ||
+        !isRecord(content.permissionPosture) ||
         canonicalPath(content.workspacePath) !== canonicalPath(job.workspacePath)
       ) {
         throw new Error('Execution graph run template target changed before dispatch.')
       }
+      const templateRequest = content.request as unknown as RunQueueRequestSnapshot
       const queuedTemplateContent = {
         ...template.content,
-        request: job.request,
+        request: { ...job.request, prompt: templateRequest.prompt },
         // The persisted template proof is reusable; the queue row carries a
         // separately signed, run-bound attempt proof. Compare the complete
         // request while retaining the original template proof here.
@@ -52670,7 +52676,7 @@ if (isGeminiMcpBridgeProcess) {
     const graphOwnedComposerInput = (appRunId: string): ComposerInput | null => {
       const candidate = AppStore.getRunQueueJob(appRunId)
       if (!candidate?.executionGraph) return null
-      const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+      const { job, template } = resolveExecutionGraphQueueAuthority(appRunId)
       if (job.status !== 'starting') {
         throw new Error('Execution graph queue run must hold an exact starting lease to compose.')
       }
@@ -52692,16 +52698,7 @@ if (isGeminiMcpBridgeProcess) {
       ) {
         throw new Error('Execution graph composer lost its exact activation identity.')
       }
-      const predecessorStepIds = projection.topology.edges
-        .filter(
-          (edge): edge is Extract<typeof edge, { kind: 'control' }> =>
-            edge.kind === 'control' && edge.toStepId === activation.stepId
-        )
-        .map((edge) => edge.fromStepId)
-      if (predecessorStepIds.length > 1) {
-        throw new Error('V1 Stack composition supports one immediate success predecessor.')
-      }
-      const predecessorResults = predecessorStepIds.map((stepId) => {
+      const verifiedPredecessorResult = (stepId: string) => {
         const predecessorActivation = Object.values(projection.activations).find(
           (candidate) => candidate.stepId === stepId
         )
@@ -52745,14 +52742,54 @@ if (isGeminiMcpBridgeProcess) {
           threadRef: chat.appChatId,
           result: predecessorAttempt.result
         }
-      })
+      }
+      const dataEdges = projection.topology.edges.filter(
+        (edge): edge is Extract<typeof edge, { kind: 'data' }> =>
+          edge.kind === 'data' && edge.to.stepId === activation.stepId
+      )
+      const dataInputNames = dataEdges.map((edge) => edge.to.port)
+      if (new Set(dataInputNames).size !== dataInputNames.length) {
+        throw new Error('Execution graph step has ambiguous data input bindings.')
+      }
+      let userInput: string
+      if (dataEdges.length > 0) {
+        const dataInputs = Object.fromEntries(
+          dataEdges.map((edge) => [edge.to.port, verifiedPredecessorResult(edge.from.stepId).result])
+        )
+        if (!isRecord(template.content.request)) {
+          throw new Error('Execution graph template request is unavailable for data binding.')
+        }
+        const expectedRequest = bindExecutionGraphInputsToRequest(
+          template.content.request as unknown as RunQueueRequestSnapshot,
+          dataInputs
+        )
+        if (
+          stableExecutionGraphStringify(expectedRequest) !==
+          stableExecutionGraphStringify(request)
+        ) {
+          throw new Error('Execution graph bound input prompt changed before composition.')
+        }
+        userInput = request.prompt
+      } else {
+        const predecessorStepIds = projection.topology.edges
+          .filter(
+            (edge): edge is Extract<typeof edge, { kind: 'control' }> =>
+              edge.kind === 'control' && edge.toStepId === activation.stepId
+          )
+          .map((edge) => edge.fromStepId)
+        if (predecessorStepIds.length > 1) {
+          throw new Error('Legacy Stack composition supports one immediate success predecessor.')
+        }
+        const predecessorResults = predecessorStepIds.map(verifiedPredecessorResult)
+        userInput = formatExecutionGraphPredecessorResults(request.prompt, predecessorResults)
+      }
       return {
         chatId: chat.appChatId,
         appRunId: job.runId,
         provider: job.provider,
         scope: 'workspace',
         workspace: job.workspacePath,
-        userInput: formatExecutionGraphPredecessorResults(request.prompt, predecessorResults),
+        userInput,
         selectedModelType: request.selectedModelType,
         customModel: request.customModel,
         approvalMode: request.approvalMode,
