@@ -781,7 +781,11 @@ import {
   type DiscordContextSnapshot
 } from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
-import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
+import {
+  clampAwaitTimeoutSeconds,
+  EnsembleOrchestrator,
+  type ParticipantProbeResult
+} from './services/EnsembleOrchestrator'
 import { cursorTransportLivenessFromRunSession } from './services/EnsembleCursorCompletionWatchdog'
 import {
   ensembleDmTargetResolutionError,
@@ -2137,6 +2141,7 @@ import {
   shouldSkipDelegateWaveApproval,
   stripParentWaveDelegationCard
 } from './SubThreadDelegateWave'
+import { dispatchEnsembleAwaitTool } from './EnsembleAwaitDispatch'
 import {
   buildEphemeralFleetRoleFrame,
   findLiveEphemeralFleetWave,
@@ -38617,16 +38622,28 @@ async function executeGeminiMcpTool(
       text = mcpJson(result)
     } else if (toolName === 'ensemble_await') {
       markDispatchHandled('ensemble-control')
-      const result = await (ensembleOrchestratorRef?.awaitLanesForRun(context.appRunId, {
-        laneIds: args.laneIds ?? args.lane_ids,
-        timeoutSeconds: args.timeoutSeconds ?? args.timeout_seconds
-      }) ??
-        Promise.resolve({
-          ok: false,
-          tool: 'ensemble_await' as const,
-          message: 'Ensemble orchestrator is not available.',
-          error: 'no_active_run' as const
-        }))
+      const result = await dispatchEnsembleAwaitTool(
+        {
+          runId: context.appRunId,
+          parentChatId: context.appChatId,
+          args
+        },
+        {
+          orchestrator: ensembleOrchestratorRef ?? undefined,
+          getChildChats: (parentChatId) => AppStore.getChildChats(parentChatId),
+          getSubThreadMailbox: (parentChatId) => AppStore.getSubThreadMailbox(parentChatId),
+          isParentRunActive: (runId, parentChatId) => {
+            const session = runManager.get(runId)
+            return Boolean(
+              session &&
+                session.appChatId === parentChatId &&
+                isActiveRunSessionStatus(session.status) &&
+                !runManager.getClaimedTerminalStatus(runId)
+            )
+          },
+          clampTimeoutSeconds: clampAwaitTimeoutSeconds
+        }
+      )
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_lane_result') {
