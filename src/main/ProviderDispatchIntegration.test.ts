@@ -243,7 +243,21 @@ describe('provider dispatch integration', () => {
     expect(pi.indexOf('issuePiTaskWraithCredential(')).toBeLessThan(
       pi.indexOf('await runCliProviderProcess(')
     )
-    expect(pi).toContain('PI_EXACT_FILE_TOOL_NAMES')
+    expect(pi).toContain('exactFileToolsExpected,')
+  })
+
+  it('materializes signed solo UltraTask consent in the real Pi launch allowlist', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(indexSource).toContain("from './pi/PiTaskWraithToolSelection'")
+    expect(pi).toContain('resolvePiTaskWraithToolSelection({')
+    expect(pi).toContain("workspaceScoped: payload.scope === 'workspace'")
+    expect(pi).toContain('effectivePermissions: payload.effectivePermissions')
+    expect(pi).toContain('ultraTaskDelegationExpected,')
+    expect(pi).toContain('toolNames: piTaskWraithToolNames')
+    expect(pi.indexOf('resolvePiTaskWraithToolSelection({')).toBeLessThan(
+      pi.indexOf('preparePiTaskWraithExtension({')
+    )
   })
 
   it('revokes a Pi credential before a readiness timeout writes the read-only fallback', () => {

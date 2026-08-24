@@ -1694,18 +1694,14 @@ import {
 import { PiLiveSteerTracker, parsePiQueueUpdate, piLiveSteerEnabled } from './pi/PiSteerDelivery'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
-  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
-  PI_EXACT_FILE_TOOL_NAMES,
-  PI_MANAGED_SHELL_TOOL_NAMES,
-  PI_MESH_TOOL_NAMES,
   PI_TASKWRAITH_TOOLS_READY_MARKER,
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
   preparePiTaskWraithExtension,
   preparePiToolCallRepairExtension,
-  type PiTaskWraithToolName,
   type PreparedPiTaskWraithExtension
 } from './pi/PiEnsembleCoordination'
+import { resolvePiTaskWraithToolSelection } from './pi/PiTaskWraithToolSelection'
 import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
 import { splitPiWireModelId } from './pi/PiModels'
 import { PiKeyStore } from './pi/PiKeyStore'
@@ -22439,19 +22435,27 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     payload.effectivePermissions?.agenticServices?.mcpTools ??
     AppStore.getSettings().agenticServices?.mcpTools
   const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
-  const exactFileToolsExpected = writeCapable
-  const shellToolsExpected = shellCapable
-  const coordinationExpected = ephemeralSession && piCoordinationAllowed
   const piMeshPolicy =
     payload.effectivePermissions?.agenticServices?.meshCanvas ??
     AppStore.getSettings().agenticServices?.meshCanvas
-  const meshToolsExpected = piMeshPolicy !== 'deny'
-  const piTaskWraithToolNames: PiTaskWraithToolName[] = [
-    ...(exactFileToolsExpected ? PI_EXACT_FILE_TOOL_NAMES : []),
-    ...(shellToolsExpected ? PI_MANAGED_SHELL_TOOL_NAMES : []),
-    ...(coordinationExpected ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : []),
-    ...(meshToolsExpected ? PI_MESH_TOOL_NAMES : [])
-  ]
+  const piTaskWraithToolSelection = resolvePiTaskWraithToolSelection({
+    writeCapable,
+    shellCapable,
+    ensembleRun: ephemeralSession,
+    workspaceScoped: payload.scope === 'workspace',
+    coordinationAllowed: piCoordinationAllowed,
+    meshAllowed: piMeshPolicy !== 'deny',
+    effectivePermissions: payload.effectivePermissions
+  })
+  const {
+    exactFileToolsExpected,
+    shellToolsExpected,
+    coordinationExpected,
+    ultraTaskDelegationExpected,
+    meshToolsExpected,
+    managedToolsExpected,
+    toolNames: piTaskWraithToolNames
+  } = piTaskWraithToolSelection
   if (piTaskWraithToolNames.length > 0) {
     try {
       await startGeminiMcpBroker()
@@ -22553,16 +22557,14 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       exactFileToolsExpected,
       shellToolsExpected,
       coordinationExpected,
+      ultraTaskDelegationExpected,
       meshToolsExpected,
       reason:
         taskWraithToolsPreparationFailure ||
         'extension readiness was not verified before this turn began'
     }
   )}`
-  if (
-    (exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected) &&
-    !preparedTaskWraithTools
-  ) {
+  if ((managedToolsExpected || ephemeralSession) && !preparedTaskWraithTools) {
     appendDurableRunEventForRoute(
       'pi',
       route,
@@ -22576,6 +22578,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         exactFileToolsExpected,
         shellToolsExpected,
         coordinationExpected,
+        ultraTaskDelegationExpected,
         meshToolsExpected,
         fallback: 'continue-and-request-visible-user-action'
       }
@@ -22585,7 +22588,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   if (!preparedTaskWraithTools) {
     // No readiness gate on this path — the stdin line below is the wire text.
     const piNoBrokerText =
-      exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected
+      managedToolsExpected || ephemeralSession
         ? managedToolsFallbackPrompt
         : payload.prompt
     emitWirePromptCapture({
@@ -22604,8 +22607,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
-    ...((exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected) &&
-    !preparedTaskWraithTools
+    ...((managedToolsExpected || ephemeralSession) && !preparedTaskWraithTools
       ? {
           warning: `Pi managed tools are unavailable for this turn. ${
             taskWraithToolsPreparationFailure ||
@@ -22671,7 +22673,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                         ]
                           .filter(Boolean)
                           .join('; ')}; native bash/edit/write and generic MCP remain unavailable.`
-                      : 'TaskWraith attached the fixed run-bound Pi coordination surface; native mutation tools and generic MCP remain unavailable.'
+                      : ultraTaskDelegationExpected
+                        ? 'TaskWraith attached the signed run-bound Pi UltraTask surface. The provider may launch one host-owned workflow; native mutation tools and generic MCP remain unavailable.'
+                        : 'TaskWraith attached the fixed run-bound Pi coordination surface; native mutation tools and generic MCP remain unavailable.'
                 },
                 route
               )
@@ -22712,6 +22716,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   exactFileToolsExpected,
                   shellToolsExpected,
                   coordinationExpected,
+                  ultraTaskDelegationExpected,
                   meshToolsExpected,
                   fallback: 'continue-and-request-visible-user-action'
                 }
