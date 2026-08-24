@@ -1382,6 +1382,14 @@
   gap: 6px;
 }
 
+.composer-blackboard-compose.is-drag-over,
+.pinned-blackboard-compose.is-drag-over {
+  border-radius: 6px;
+  outline: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
 .composer-blackboard-compose .blackboard-image-picker-button,
 .pinned-blackboard-compose .blackboard-image-picker-button {
   align-self: flex-start;

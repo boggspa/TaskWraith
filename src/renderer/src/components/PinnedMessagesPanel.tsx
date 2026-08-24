@@ -5,7 +5,10 @@ import type {
   PinnedMessageSummary
 } from '../../../main/store/types'
 import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
-import { BlackboardImageAttachmentPicker } from './BlackboardImageAttachmentPicker'
+import {
+  BlackboardImageAttachmentPicker,
+  useBlackboardImageDropZone
+} from './BlackboardImageAttachmentPicker'
 import { MarkdownMessage } from './MarkdownMessage'
 
 // Grouping/order/sort helpers moved to the shared BlackboardEntryCard module
@@ -138,6 +141,14 @@ function BlackboardSection({
   const grouped = buildBlackboardGroups(entries)
   const visibleCount = grouped.reduce((total, group) => total + group.entries.length, 0)
   const draftValue = draft.trim()
+  // Dropping image files anywhere in the compose form attaches them — the
+  // same merge/error path as the "Attach image" button.
+  const dropZone = useBlackboardImageDropZone({
+    paths: imagePaths,
+    disabled: posting,
+    onChange: setImagePaths,
+    onError: setActionError
+  })
   useEffect(() => {
     setImagePaths([])
     setActionError(null)
@@ -215,7 +226,11 @@ function BlackboardSection({
         )}
       </div>
       {canPost && (
-        <form className="pinned-blackboard-compose" onSubmit={submitPost}>
+        <form
+          className={`pinned-blackboard-compose${dropZone.isDragOver ? ' is-drag-over' : ''}`}
+          onSubmit={submitPost}
+          {...dropZone.dropHandlers}
+        >
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}

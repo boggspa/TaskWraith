@@ -25,7 +25,10 @@ import {
   buildBlackboardGroups,
   type BlackboardGroup
 } from './BlackboardEntryCard'
-import { BlackboardImageAttachmentPicker } from './BlackboardImageAttachmentPicker'
+import {
+  BlackboardImageAttachmentPicker,
+  useBlackboardImageDropZone
+} from './BlackboardImageAttachmentPicker'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
@@ -167,6 +170,14 @@ export function ComposerBlackboardPostForm(
   const chatId = props.chat?.appChatId
   const canPost = Boolean(chatId && props.chat?.ensemble && !props.disabled)
   const draftValue = draft.trim()
+  // Dropping image files anywhere in the compose form attaches them — the
+  // same merge/error path as the "Attach image" button.
+  const dropZone = useBlackboardImageDropZone({
+    paths: imagePaths,
+    disabled: posting,
+    onChange: setImagePaths,
+    onError: setPostError
+  })
 
   useEffect(() => {
     setImagePaths([])
@@ -201,9 +212,10 @@ export function ComposerBlackboardPostForm(
 
   return (
     <form
-      className="composer-blackboard-compose"
+      className={`composer-blackboard-compose${dropZone.isDragOver ? ' is-drag-over' : ''}`}
       aria-label="Post to Blackboard"
       onSubmit={submitPost}
+      {...dropZone.dropHandlers}
     >
       <textarea
         value={draft}
