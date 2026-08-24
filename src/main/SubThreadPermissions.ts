@@ -5,6 +5,7 @@ import type {
   EffectiveRunPermissions,
   ExternalPathGrant
 } from './store/types'
+import { stripUltraTaskDelegationAutoAllow } from './UltraTaskDelegationConsent'
 
 /**
  * The resolved permissions a delegated sub-thread should run under.
@@ -98,12 +99,12 @@ function cloneGrant(grant: ExternalPathGrant): ExternalPathGrant {
 }
 
 function clonePermissions(permissions: EffectiveRunPermissions): EffectiveRunPermissions {
-  return {
+  return stripUltraTaskDelegationAutoAllow({
     ...permissions,
     agenticServices: { ...permissions.agenticServices },
     externalPathGrants: permissions.externalPathGrants.map(cloneGrant),
     workspaceGrantServiceIds: [...permissions.workspaceGrantServiceIds]
-  }
+  })
 }
 
 function capAtReadOnly(

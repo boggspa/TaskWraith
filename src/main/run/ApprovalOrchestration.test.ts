@@ -235,6 +235,167 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
+  it.each([
+    { policy: 'deny', decision: 'deny', presetId: 'read_only' },
+    { policy: 'ask', decision: 'ask', presetId: 'plan' }
+  ])(
+    '(b2) exact UltraTask consent auto-allows delegation under $presetId/$policy',
+    async ({ policy, decision, presetId }) => {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy, decision })
+      vi.mocked(isPlanInstrumentGrantHold).mockReturnValue(true)
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
+              appChatId: 'chat-1',
+              status: 'running',
+              state: {
+                appChatId: 'chat-1',
+                effectivePermissions: {
+                  presetId,
+                  subThreadDelegationAutoAllowSource: 'ultratask'
+                }
+              }
+            }
+          : undefined) as never)
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'codex',
+          'subThreadDelegation',
+          '/repo',
+          request({
+            method: 'codex-mcp/delegate_wave',
+            preview: { toolName: 'delegate_wave', workers: [] }
+          })
+        )
+      ).resolves.toBe(true)
+
+      expect(order).toEqual([
+        'permissionService.resolvePermission',
+        'audit:autoAllow:explicit_user_request'
+      ])
+      expect(order).not.toContain('audit:autoDeny:policy')
+      expect(order).not.toContain('registerGeminiTool')
+      expect(deps.auditService.recordAutomaticApprovalDecision).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({ appRunId: 'run-1', appChatId: 'chat-1' }),
+        'subThreadDelegation',
+        '/repo',
+        expect.any(Object),
+        'autoAllow',
+        'explicit_user_request',
+        'request',
+        expect.objectContaining({
+          policy,
+          toolName: 'delegate_wave',
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        })
+      )
+    }
+  )
+
+  it.each(['delegate_wave', 'ultra_task', 'delegate_to_subthread'])(
+    '(b3) scopes the signed consent to exact route %s',
+    async (toolName) => {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
+              appChatId: 'chat-1',
+              status: 'running',
+              state: {
+                appChatId: 'chat-1',
+                effectivePermissions: {
+                  presetId: 'read_only',
+                  subThreadDelegationAutoAllowSource: 'ultratask'
+                }
+              }
+            }
+          : undefined) as never)
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          'subThreadDelegation',
+          '/repo',
+          request({ preview: { toolName } })
+        )
+      ).resolves.toBe(true)
+      expect(order).toContain('audit:autoAllow:explicit_user_request')
+    }
+  )
+
+  it('does not infer run consent from a worker UltraTask effort', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        'subThreadDelegation',
+        '/repo',
+        request({
+          preview: {
+            toolName: 'delegate_wave',
+            workers: [{ reasoningEffort: 'ultraTask' }]
+          }
+        })
+      )
+    ).resolves.toBe(false)
+
+    expect(order).toContain('audit:autoDeny:policy')
+    expect(order).not.toContain('audit:autoAllow:explicit_user_request')
+  })
+
+  it.each([
+    { service: 'subThreadDelegation' as const, toolName: 'cancel_subthread' },
+    { service: 'mcpTools' as const, toolName: 'delegate_wave' }
+  ])(
+    'does not broaden signed consent to $service/$toolName',
+    async ({ service, toolName }) => {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
+              appChatId: 'chat-1',
+              status: 'running',
+              state: {
+                appChatId: 'chat-1',
+                effectivePermissions: {
+                  presetId: 'read_only',
+                  subThreadDelegationAutoAllowSource: 'ultratask'
+                }
+              }
+            }
+          : undefined) as never)
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'codex',
+          service,
+          '/repo',
+          request({ preview: { toolName } })
+        )
+      ).resolves.toBe(false)
+      expect(order).toContain('audit:autoDeny:policy')
+      expect(order).not.toContain('audit:autoAllow:explicit_user_request')
+    }
+  )
+
   // (c) PLAN-ARTIFACT — invariant #3: the plan-artifact fast-path sits AFTER
   // resolve and BEFORE the plain deny. A denied decision + plan-artifact metadata
   // auto-allows (markdown plan write) and stamps the pending plan.

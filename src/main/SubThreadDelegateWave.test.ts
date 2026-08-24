@@ -264,6 +264,16 @@ describe('SubThreadDelegateWave pure helpers', () => {
     ).toBe(true)
   })
 
+  it('routes a signed UltraTask Boss through the central approval resolver', () => {
+    expect(
+      shouldSkipDelegateWaveApproval({
+        isBossOrCaptain: true,
+        permissionPresetId: 'full_access',
+        ultraTaskDelegationAutoAllow: true
+      })
+    ).toBe(false)
+  })
+
   it('prompts for Boss + read_only (Ask)', () => {
     expect(
       shouldSkipDelegateWaveApproval({ isBossOrCaptain: true, permissionPresetId: 'read_only' })
@@ -707,6 +717,59 @@ describe('SubThreadDelegateWave pure helpers', () => {
     // agent's only path to wave results (Cambridge fleet blindness, 08-19).
     expect(outcome.text).toContain('list_subthreads({waveId: "wave-skip-approval"})')
     expect(outcome.text).toMatch(/read_subthread_result/)
+  })
+
+  it('routes an UltraTask Boss through central approval even when local policy is deny', async () => {
+    let approvalCalls = 0
+    let spawnCalls = 0
+    const budget = trackingBudgetPorts()
+    const outcome = await executeDelegateWaveTool({
+      args: twoWorkers(),
+      parentChatId,
+      parentAppRunId,
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: true,
+      permissionPresetId: 'full_access',
+      ultraTaskDelegationAutoAllow: true,
+      budgetRemaining: 5,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
+      budgetCap: 20,
+      subThreadDelegationPolicy: 'deny',
+      requestApproval: async () => {
+        approvalCalls += 1
+        return true
+      },
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: {
+          requestedModel: 'cli-default',
+          runPayload: {},
+          providerMetadataPatch: {}
+        }
+      }),
+      spawnWorker: async ({ worker }) => {
+        spawnCalls += 1
+        return {
+          subThreadId: `sub-${worker.provider}-${spawnCalls}`,
+          provider: worker.provider,
+          title: `Sub-thread (${worker.provider})`,
+          runId: `run-${worker.provider}-${spawnCalls}`
+        }
+      },
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-ultratask-central',
+      nowMs
+    })
+    expect(outcome.ok).toBe(true)
+    expect(approvalCalls).toBe(1)
+    expect(spawnCalls).toBe(2)
+    expect(budget.netConsumed).toBe(2)
   })
 
   it('authority card-skip still honors subThreadDelegation deny (no spawn)', async () => {

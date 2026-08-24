@@ -357,6 +357,12 @@ export function buildRunPermissionPostureSnapshot(
           presetId: input.effectivePermissions.presetId,
           readOnly: input.effectivePermissions.readOnly,
           agenticServices: input.effectivePermissions.agenticServices,
+          ...(input.effectivePermissions.subThreadDelegationAutoAllowSource
+            ? {
+                subThreadDelegationAutoAllowSource:
+                  input.effectivePermissions.subThreadDelegationAutoAllowSource
+              }
+            : {}),
           networkAccess: input.effectivePermissions.networkAccess,
           workspaceGrantServiceIds: [...input.effectivePermissions.workspaceGrantServiceIds]
         }
@@ -533,6 +539,11 @@ function isEffectiveRunPermissions(value: unknown): value is EffectiveRunPermiss
   if (typeof record.presetId !== 'string') return false
   if (typeof record.approvalMode !== 'string') return false
   if (!isAgenticServicesRecord(record.agenticServices)) return false
+  if (
+    record.subThreadDelegationAutoAllowSource !== undefined &&
+    record.subThreadDelegationAutoAllowSource !== 'ultratask'
+  )
+    return false
   if (record.networkAccess !== 'allow' && record.networkAccess !== 'deny') return false
   if (!Array.isArray(record.externalPathGrants)) return false
   if (!Array.isArray(record.workspaceGrantServiceIds)) return false

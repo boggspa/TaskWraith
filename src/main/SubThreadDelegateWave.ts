@@ -46,12 +46,17 @@ export function clampMaxWaveAgents(value: unknown): number {
  * caller is a configured Ensemble Boss/Captain AND the seat permission tier
  * is Accept Edits (`default`), Full WS Access (`workspace_write`), or Full
  * Access (`full_access`). Plan / Ask (`read_only`) / custom always prompt —
- * even for Boss/Captain. Non-authority seats always prompt.
+ * even for Boss/Captain. Non-authority seats always prompt. Exact UltraTask
+ * consent also returns false deliberately: it must flow through the central
+ * resolver so its explicit-user-request auto-allow is audited rather than
+ * disappearing into this older Boss/Captain card-skip.
  */
 export function shouldSkipDelegateWaveApproval(input: {
   isBossOrCaptain: boolean
   permissionPresetId?: PermissionPresetId | string | null
+  ultraTaskDelegationAutoAllow?: boolean
 }): boolean {
+  if (input.ultraTaskDelegationAutoAllow === true) return false
   if (!input.isBossOrCaptain) return false
   const preset = typeof input.permissionPresetId === 'string' ? input.permissionPresetId : ''
   return preset === 'default' || preset === 'workspace_write' || preset === 'full_access'
@@ -544,6 +549,9 @@ export async function executeDelegateWaveTool(input: {
   allowedProvidersLabel?: string
   isBossOrCaptain: boolean
   permissionPresetId?: PermissionPresetId | string | null
+  /** Exact signed UltraTask selection. Forces the central audited resolver even
+   * when this caller would otherwise take the local Boss/Captain skip. */
+  ultraTaskDelegationAutoAllow?: boolean
   budgetRemaining: number
   tryConsumeBudgetSlot: () => 'allowed' | 'exhausted'
   /**
@@ -678,7 +686,8 @@ export async function executeDelegateWaveTool(input: {
 
   const skipApproval = shouldSkipDelegateWaveApproval({
     isBossOrCaptain: input.isBossOrCaptain,
-    permissionPresetId: input.permissionPresetId
+    permissionPresetId: input.permissionPresetId,
+    ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow
   })
   const workersForApproval = workers.map((worker, index) => ({
     provider: worker.provider,

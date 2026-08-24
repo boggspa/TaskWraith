@@ -67,6 +67,7 @@ describe('inheritedSubThreadPermissions', () => {
     const inherited = inheritedSubThreadPermissions({
       effectivePermissions: {
         ...readOnly,
+        subThreadDelegationAutoAllowSource: 'ultratask',
         externalPathGrants: [parentBoundReadGrant]
       }
     })
@@ -74,6 +75,7 @@ describe('inheritedSubThreadPermissions', () => {
     expect(inherited?.agenticServices.fileChanges).toBe('deny')
     expect(inherited?.readOnly).toBe(true)
     expect(inherited?.externalPathGrants).toEqual([])
+    expect(inherited?.subThreadDelegationAutoAllowSource).toBeUndefined()
   })
 
   it('returns undefined when the parent has no explicit posture', () => {
@@ -233,6 +235,7 @@ describe('capped_inherit isolation', () => {
     const decision = resolveSubThreadWorkerPermissions({
       parentPermissions: {
         ...fullAccess,
+        subThreadDelegationAutoAllowSource: 'ultratask',
         externalPathGrants: [parentBoundReadGrant]
       },
       readOnlyPermissions: readOnly,
@@ -244,5 +247,6 @@ describe('capped_inherit isolation', () => {
     expect(decision.effectivePermissions.presetId).toBe('workspace_write')
     expect(decision.effectivePermissions.externalPathGrants).toEqual([])
     expect(decision.effectivePermissions.readOnly).toBe(false)
+    expect(decision.effectivePermissions.subThreadDelegationAutoAllowSource).toBeUndefined()
   })
 })

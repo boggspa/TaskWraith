@@ -34,6 +34,7 @@ import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudi
 import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
 import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
 import { isAntigravityUserAuthorizedShellCommand } from '../antigravity/AntigravityShellApprovalPolicy'
+import { isUltraTaskDelegationAutoAllowRequest } from '../UltraTaskDelegationConsent'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
@@ -62,8 +63,9 @@ export interface ApprovalPromptReceipt {
  * prefix `requestAgenticServiceApprovalDeps.` → `deps.` differs), preserving the
  * five ordering invariants verbatim:
  *   1. NETWORK-BLOCK auto-deny fires BEFORE permission resolution.
- *   2. policy DENY is absolute — it sits BEFORE session-YOLO / standing-grant /
- *      bossman, so no later auto-allow can override an explicit deny.
+ *   2. policy DENY is absolute except for the exact HMAC-bound UltraTask
+ *      delegation consent — it sits BEFORE session-YOLO / standing-grant /
+ *      bossman, so no ambient auto-allow can override an explicit deny.
  *   3. the plan-artifact fast-path sits AFTER resolve and BEFORE the plain deny.
  *   4. `registerGeminiTool` (the terminal approval registration read live via
  *      `deps.getApprovalService()`) opens the prompt's REGISTER sequence.
@@ -468,6 +470,39 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       requestSurfaceId
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
+    // Selecting the exact synthetic UltraTask picker stop is main-minted,
+    // HMAC-bound consent for the three bounded delegation routes. It is the one
+    // deliberate exception to the ordinary policy-deny and Ask/Plan holds:
+    // those would make the promised delegated review impossible, while child
+    // permissions, depth, provider allowlists, budgets, and lifecycle guards
+    // remain independently enforced. Never infer this from prompt text, tool
+    // arguments, or a worker's requested reasoning effort.
+    if (
+      isUltraTaskDelegationAutoAllowRequest({
+        service,
+        toolName: previewToolName,
+        effectivePermissions
+      })
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'explicit_user_request',
+        'request',
+        {
+          policy,
+          toolName: previewToolName,
+          subThreadDelegationAutoAllowSource: 'ultratask',
+          rationale:
+            'The user selected UltraTask for this exact run, authorizing its delegated review route.'
+        }
+      )
+      return true
+    }
     // Universal read-only shell fast path: strict Git reads and commands the
     // canonical shell proof classifies as inspection-only are allowed under
     // EVERY posture (read_only / plan deny shell; default prompts). AntiGravity

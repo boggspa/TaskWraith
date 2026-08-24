@@ -766,6 +766,14 @@ export interface EffectiveRunPermissions {
   presetId: PermissionPresetId
   approvalMode: string
   agenticServices: Record<AgenticServiceId, AgenticServicePolicy>
+  /**
+   * Exact, main-minted user consent carried by an UltraTask reasoning
+   * selection. This is part of the HMAC-signed run posture and authorizes only
+   * the bounded sub-thread delegation routes resolved by
+   * UltraTaskDelegationConsent. It is intentionally separate from the
+   * long-lived Agentic Services policy so the consent is run-scoped.
+   */
+  subThreadDelegationAutoAllowSource?: 'ultratask'
   networkAccess: AgenticNetworkPolicy
   externalPathGrants: ExternalPathGrant[]
   workspaceGrantServiceIds: AgenticServiceId[]
@@ -779,6 +787,7 @@ export interface RunPermissionPostureSnapshot {
   presetId?: PermissionPresetId
   readOnly?: boolean
   agenticServices?: Record<AgenticServiceId, AgenticServicePolicy>
+  subThreadDelegationAutoAllowSource?: 'ultratask'
   networkAccess?: AgenticNetworkPolicy
   externalPathGrantCount: number
   externalPathGrantHash?: string
