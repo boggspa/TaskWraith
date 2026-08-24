@@ -24124,6 +24124,7 @@ function App(): React.JSX.Element {
       const durableEntries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
         .filter((job) => !job.executionGraph)
         .filter((job) => job.chatId === chatId)
+        .filter((job) => job.status !== 'steer_promoting')
         .map((job) => {
           const request = resolveQueuedDesktopRunRequest(job)
           return {
