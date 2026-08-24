@@ -40783,7 +40783,7 @@ async function executeGeminiMcpTool(
       ) {
         throw new Error('UltraTask model capability changed after request normalization.')
       }
-      const stageCount = 5 // two scouts + worker + reviewer + synthesis
+      const stageCount = resolved.scoutCount + 3 // scouts + worker + reviewer + synthesis
       if (delegationApprovalBudget.remaining(context.appRunId) < stageCount) {
         throw new Error(
           `ultra_task requires ${stageCount} stage slots but this parent run has only ` +
@@ -40799,7 +40799,7 @@ async function executeGeminiMcpTool(
           method: `${parentProvider}-mcp/ultra_task`,
           title: `${providerLabel(parentProvider)} wants to start a durable UltraTask workflow`,
           body:
-            `Task: ${resolved.task}\n\nTaskWraith will run two read-only scouts, one ` +
+            `Task: ${resolved.task}\n\nTaskWraith will run ${resolved.scoutCount} read-only scouts, one ` +
             `${context.effectivePermissions?.readOnly ? 'read-only' : 'workspace-scoped'} worker, ` +
             `one read-only reviewer, and one read-only synthesis stage using ` +
             `${resolved.provider}/${resolved.model}. The graph owns every join and continues if ` +
@@ -40808,7 +40808,7 @@ async function executeGeminiMcpTool(
             kind: 'subthread-delegation-wave',
             toolName: 'ultra_task',
             parentProvider,
-            workers: resolved.waveArgs.workers,
+            workers: resolved.approvalPreviewWorkers,
             workspacePath: context.workspacePath,
             params: args
           },
@@ -40853,7 +40853,7 @@ async function executeGeminiMcpTool(
           parentPermissionPresetId: context.effectivePermissions?.presetId || 'default',
           parentWorkflowMode: context.workflowMode,
           workerEffect: context.effectivePermissions?.readOnly ? 'read_only' : 'workspace_write',
-          scoutCount: 2
+          scoutCount: resolved.scoutCount
         })
       } catch (error) {
         delegationApprovalBudget.release(context.appRunId, stageCount)

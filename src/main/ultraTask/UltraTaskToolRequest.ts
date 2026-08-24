@@ -45,9 +45,6 @@ export interface ResolvedUltraTaskToolRequest {
   /** Presentation-only stage roster for the central approval preview. The
    * durable execution graph, not a provider-owned wave, performs the work. */
   approvalPreviewWorkers: DelegateWaveWorkerSpec[]
-  /** @deprecated Composition-root compatibility until every approval preview
-   * reads `approvalPreviewWorkers`; never pass this to the wave executor. */
-  waveArgs: { workers: DelegateWaveWorkerSpec[] }
 }
 
 export interface UltraTaskToolModelOption {
@@ -392,8 +389,7 @@ export function resolveUltraTaskToolRequest(
       scoutCount: maxWorkers.effective,
       maxWorkersClamped: maxWorkers.clamped,
       ...(notice ? { notice } : {}),
-      approvalPreviewWorkers,
-      waveArgs: { workers: approvalPreviewWorkers }
+      approvalPreviewWorkers
     }
   }
 }
