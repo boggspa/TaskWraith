@@ -3807,11 +3807,13 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           provider: {
             type: 'string',
-            description: 'Target provider for the Ultra Task. Omit to use the current provider.'
+            description:
+              'Target provider for the Ultra Task. Omit to use the current provider. A different provider requires an explicit concrete model; TaskWraith never guesses its default.'
           },
           model: {
             type: 'string',
-            description: 'Target model for the Ultra Task. Omit to use the current model.'
+            description:
+              'Exact concrete target model. Omit only to use the current run’s already-resolved concrete model. cli-default, default, and custom are refused; a refusal returns available concrete model ids.'
           },
           enableFanout: {
             type: 'boolean',

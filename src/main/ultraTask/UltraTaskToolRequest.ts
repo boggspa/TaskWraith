@@ -57,12 +57,26 @@ export interface ResolvedUltraTaskToolRequest {
   }
 }
 
+export interface UltraTaskToolModelOption {
+  id: string
+  label: string
+  isDefault: boolean
+  ultraTaskSupported: boolean
+}
+
 export type UltraTaskToolRequestResolution =
   | { ok: true; value: ResolvedUltraTaskToolRequest }
-  | { ok: false; message: string }
+  | { ok: false; message: string; models?: UltraTaskToolModelOption[] }
 
-function fail(message: string): UltraTaskToolRequestResolution {
-  return { ok: false, message: `ultra_task: ${message}` }
+function fail(
+  message: string,
+  models?: UltraTaskToolModelOption[]
+): UltraTaskToolRequestResolution {
+  return {
+    ok: false,
+    message: `ultra_task: ${message}`,
+    ...(models?.length ? { models } : {})
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,17 +88,36 @@ function isConcreteModelId(value: string): boolean {
   return Boolean(model) && model !== 'cli-default' && model !== 'default' && model !== 'custom'
 }
 
-function providerDefaultModel(provider: ProviderId): string | null {
+function providerModelOptions(provider: ProviderId): UltraTaskToolModelOption[] {
   const models = getStaticProviderModels(provider, { includePreviewModels: true }) as Array<{
     id: string
+    label?: string
     isDefault?: boolean
     disabled?: boolean
+    ultraTaskSupported?: boolean
   }>
-  const model =
-    models.find(
-      (candidate) => candidate.isDefault && !candidate.disabled && isConcreteModelId(candidate.id)
-    ) || models.find((candidate) => !candidate.disabled && isConcreteModelId(candidate.id))
-  return model?.id || null
+  return models
+    .filter((candidate) => !candidate.disabled && isConcreteModelId(candidate.id))
+    .map((candidate) => ({
+      id: candidate.id,
+      label: candidate.label?.trim() || candidate.id,
+      isDefault: candidate.isDefault === true,
+      ultraTaskSupported: candidate.ultraTaskSupported === true
+    }))
+    .sort(
+      (left, right) =>
+        Number(right.isDefault) - Number(left.isDefault) ||
+        left.label.localeCompare(right.label) ||
+        left.id.localeCompare(right.id)
+    )
+}
+
+function modelOptionsMessage(models: readonly UltraTaskToolModelOption[]): string {
+  if (models.length === 0) return 'No concrete models are currently listed for that provider.'
+  const visible = models.slice(0, 24).map((model) => model.id)
+  return `Available concrete models: ${visible.join(', ')}${
+    models.length > visible.length ? `, … (${models.length - visible.length} more)` : ''
+  }.`
 }
 
 function concreteCurrentModel(context: UltraTaskSignedRunContext): string | null {
@@ -120,35 +153,46 @@ function parseModel(
   value: unknown,
   provider: ProviderId,
   context: UltraTaskSignedRunContext
-): { ok: true; model: string } | { ok: false; message: string } {
+):
+  | { ok: true; model: string }
+  | { ok: false; message: string; models: UltraTaskToolModelOption[] } {
+  const models = providerModelOptions(provider)
   if (value !== undefined) {
     if (typeof value !== 'string' || !value.trim()) {
-      return { ok: false, message: 'model must be a non-empty string when provided.' }
+      return { ok: false, message: 'model must be a non-empty string when provided.', models }
     }
     const model = value.trim()
     if (!isConcreteModelId(model)) {
       return {
         ok: false,
         message:
-          'model must be a concrete model id; cli-default, default, and custom cannot run UltraTask.'
+          'model must be a concrete model id; cli-default, default, and custom cannot run UltraTask. ' +
+          modelOptionsMessage(models),
+        models
       }
     }
     if (model.length > MODEL_MAX_LENGTH) {
-      return { ok: false, message: `model must be ${MODEL_MAX_LENGTH} characters or fewer.` }
+      return {
+        ok: false,
+        message: `model must be ${MODEL_MAX_LENGTH} characters or fewer.`,
+        models
+      }
     }
     return { ok: true, model }
   }
 
-  const model =
-    provider === context.provider ? concreteCurrentModel(context) : providerDefaultModel(provider)
+  const model = provider === context.provider ? concreteCurrentModel(context) : null
   return model
     ? { ok: true, model }
     : {
         ok: false,
         message:
           provider === context.provider
-            ? 'the active run has no concrete model. Select a concrete model in the provider/model picker before calling ultra_task.'
-            : `model is required because ${provider} has no concrete default model.`
+            ? 'the active run has no concrete model. Select a concrete model in the provider/model picker before calling ultra_task. ' +
+              modelOptionsMessage(models)
+            : `model is required when UltraTask targets ${provider}; TaskWraith will not silently select that provider's default. ` +
+              modelOptionsMessage(models),
+        models
       }
 }
 
@@ -230,7 +274,7 @@ export function resolveUltraTaskToolRequest(
   const provider = providerResult.provider
 
   const modelResult = parseModel(args.model, provider, context)
-  if (!modelResult.ok) return fail(modelResult.message)
+  if (!modelResult.ok) return fail(modelResult.message, modelResult.models)
   const model = modelResult.model
 
   const returnResult = parseBoolean(args.returnResult, 'returnResult', true)

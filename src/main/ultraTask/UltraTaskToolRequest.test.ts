@@ -43,7 +43,7 @@ describe('resolveUltraTaskToolRequest', () => {
     )
   })
 
-  it('resolves a target provider default instead of leaking the current provider model', () => {
+  it('requires an explicit cross-provider model and returns concrete choices', () => {
     const result = resolveUltraTaskToolRequest(
       { task: 'Investigate this issue.', provider: 'claude' },
       {
@@ -54,13 +54,11 @@ describe('resolveUltraTaskToolRequest', () => {
     )
 
     expect(result).toMatchObject({
-      ok: true,
-      value: {
-        provider: 'claude',
-        model: 'claude-sonnet-5',
-        reasoningEffort: 'max',
-        waveArgs: { allowMultiProvider: true }
-      }
+      ok: false,
+      message: expect.stringMatching(/will not silently select.*default/i),
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: 'claude-sonnet-5', ultraTaskSupported: true })
+      ])
     })
   })
 
@@ -70,7 +68,8 @@ describe('resolveUltraTaskToolRequest', () => {
         resolveUltraTaskToolRequest({ task: 'Do work.' }, { provider: 'codex', model })
       ).toMatchObject({
         ok: false,
-        message: expect.stringMatching(/active run has no concrete model/i)
+        message: expect.stringMatching(/active run has no concrete model/i),
+        models: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.5' })])
       })
     }
   })
@@ -82,7 +81,11 @@ describe('resolveUltraTaskToolRequest', () => {
           { task: 'Do work.', model },
           { provider: 'codex', model: 'gpt-5.6-luna' }
         )
-      ).toMatchObject({ ok: false, message: expect.stringMatching(/concrete model id/i) })
+      ).toMatchObject({
+        ok: false,
+        message: expect.stringMatching(/concrete model id.*available concrete models/i),
+        models: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.5' })])
+      })
     }
   })
 

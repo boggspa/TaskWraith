@@ -95,4 +95,19 @@ describe('ultra_task MCP schema', () => {
       new RegExp(`default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}`)
     )
   })
+
+  it('requires concrete model identity and documents the model-list refusal', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ultra_task'
+    )
+    const schema = definition?.inputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined
+
+    expect(schema?.properties?.provider?.description).toMatch(/explicit concrete model/i)
+    expect(schema?.properties?.provider?.description).toMatch(/never guesses/i)
+    expect(schema?.properties?.model?.description).toMatch(/current run.*concrete model/i)
+    expect(schema?.properties?.model?.description).toMatch(/cli-default.*refused/i)
+    expect(schema?.properties?.model?.description).toMatch(/returns available concrete model ids/i)
+  })
 })
