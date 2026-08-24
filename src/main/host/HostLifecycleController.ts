@@ -14,7 +14,7 @@ import {
   type HostLifecycleReason,
   type HostLifecycleSnapshot
 } from '../../shared/hostLifecycle'
-import type { HostSupervisor } from '../../host-runtime/HostSupervisor'
+import type { HostSupervisor } from './HostSupervisor'
 
 export interface HostLifecycleControllerOptions {
   readonly createSupervisor: () => HostSupervisor

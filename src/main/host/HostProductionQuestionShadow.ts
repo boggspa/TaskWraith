@@ -25,7 +25,7 @@
  */
 
 import type { HostQuestionProjection } from '../../shared/hostProtocol'
-import type { HostProductionQuestionListPort } from '../../host-runtime/HostProductionSuppliers'
+import type { HostProductionQuestionListPort } from './HostProductionSuppliers'
 
 /** Wire id bound — matches hostProtocol HOST_PROTOCOL_MAX_ID. */
 const HOST_QUESTION_ID_MAX = 512

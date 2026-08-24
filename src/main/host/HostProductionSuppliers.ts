@@ -44,38 +44,26 @@ import type {
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
-} from '../shared/hostProtocol'
+} from '../../shared/hostProtocol'
 import type {
   AppStoreHostAuthoritySnapshotDonor,
   AppStoreHostAuthoritySnapshotDonorFamilies
-} from './AppStoreHostAuthority'
-import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../shared/hostProtocol'
-import type { HostWarningProjection } from '../shared/hostProtocol'
+} from '../../host-runtime/AppStoreHostAuthority'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
+import type { HostWarningProjection } from '../../shared/hostProtocol'
+import type { HostProductionArtifactListPort } from './HostProductionArtifactShadow'
+import type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+import type { HostProductionParticipantListPort } from './HostProductionParticipantShadow'
+import type { HostProductionRoundListPort } from './HostProductionRoundShadow'
+import type { HostProductionRunListPort } from './HostProductionRunShadow'
+import type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
 
-/** Structural ports implemented by main-owned shadow adapters. */
-export interface HostProductionArtifactListPort {
-  listArtifacts(): HostArtifactProjection[]
-}
-
-export interface HostProductionMissionListPort {
-  listMissions(): HostMissionProjection[]
-}
-
-export interface HostProductionParticipantListPort {
-  listParticipants(): HostParticipantProjection[]
-}
-
-export interface HostProductionRoundListPort {
-  listRounds(): HostRoundProjection[]
-}
-
-export interface HostProductionRunListPort {
-  listRuns(): HostRunProjection[]
-}
-
-export interface HostProductionScheduleListPort {
-  listSchedules(): HostScheduleProjection[]
-}
+export type { HostProductionArtifactListPort } from './HostProductionArtifactShadow'
+export type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+export type { HostProductionParticipantListPort } from './HostProductionParticipantShadow'
+export type { HostProductionRoundListPort } from './HostProductionRoundShadow'
+export type { HostProductionRunListPort } from './HostProductionRunShadow'
+export type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
 
 /* ------------------------------------------------------------------ */
 /*  Store ports — thin interfaces the composition root adapts         */

@@ -65,7 +65,7 @@ import {
 import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
 import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
-import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
+import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
 import {
   createHostProductionContextResolvers,
   type HostProductionContextResolverDeps
@@ -83,7 +83,7 @@ import {
   type HostProductionRoundListPort,
   type HostProductionRunListPort,
   type HostProductionScheduleListPort
-} from '../../host-runtime/HostProductionSuppliers'
+} from './HostProductionSuppliers'
 import type { HostChannelAdminPort } from './HostChannelCommandExecutor'
 import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from '../../host-runtime/HostSession'
@@ -91,7 +91,7 @@ import {
   createHostSupervisor,
   type HostSupervisor,
   type HostSupervisorInput
-} from '../../host-runtime/HostSupervisor'
+} from './HostSupervisor'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */

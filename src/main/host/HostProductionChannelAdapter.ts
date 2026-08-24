@@ -13,7 +13,7 @@ import type {
   HostChannelCloseResult,
   HostChannelMemberRevocationResult
 } from './HostChannelCommandExecutor'
-import type { HostProductionChannelListPort } from '../../host-runtime/HostProductionSuppliers'
+import type { HostProductionChannelListPort } from './HostProductionSuppliers'
 
 type ChannelServicePort = Pick<
   ChannelProductionService,

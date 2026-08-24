@@ -14,13 +14,13 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { projectHostSnapshot } from './HostSnapshotProjector'
+import { projectHostSnapshot } from '../../host-runtime/HostSnapshotProjector'
 import type {
   HostApprovalProjection,
   HostProviderModelProjection,
   HostQuestionProjection
-} from '../shared/hostProtocol'
-import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../shared/hostProtocol'
+} from '../../shared/hostProtocol'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,

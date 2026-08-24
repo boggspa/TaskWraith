@@ -19,13 +19,13 @@
  * untestable domain logic in a composition root, forbidden by the goal.
  */
 
-import type { HostClientClass, HostCommand, HostCommandName } from '../shared/hostProtocol'
+import type { HostClientClass, HostCommand, HostCommandName } from '../../shared/hostProtocol'
 
 import type {
   AppStoreHostAuthorityEvaluation,
   AppStoreHostAuthorityEvaluator
-} from './AppStoreHostAuthority'
-import type { HostDeferredChallengeKind } from './HostDeferredCommandBridge'
+} from '../../host-runtime/AppStoreHostAuthority'
+import type { HostDeferredChallengeKind } from '../../host-runtime/HostDeferredCommandBridge'
 
 /* ------------------------------------------------------------------ */
 /*  Ports (injected by composition root; never import engines)        */

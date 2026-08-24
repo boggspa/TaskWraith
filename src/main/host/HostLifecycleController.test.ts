@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { HostSupervisor } from '../../host-runtime/HostSupervisor'
+import type { HostSupervisor } from './HostSupervisor'
 import { HostLifecycleController } from './HostLifecycleController'
 
 function supervisor(overrides: Partial<HostSupervisor> = {}): HostSupervisor {

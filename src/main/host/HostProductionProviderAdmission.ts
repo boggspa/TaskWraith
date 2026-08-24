@@ -35,7 +35,7 @@ import {
 import type {
   HostProductionProviderListPort,
   HostProviderListRead
-} from '../../host-runtime/HostProductionSuppliers'
+} from './HostProductionSuppliers'
 
 /** Fixed admission notes only — never credentials or free-form source text. */
 export const HOST_PROVIDER_ADMISSION_NOTES = {

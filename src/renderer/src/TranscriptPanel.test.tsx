@@ -3,6 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import { TranscriptPanel } from './App'
 import {
+  collapsedSuperGroupLeadForRow,
+  closeoutScopedEvidenceMessages
+} from './components/TranscriptPanel'
+import {
   TranscriptHistoryPageBoundary,
   buildTranscriptHistoryPageBoundaryMessages
 } from './components/TranscriptHistoryPageBoundary'
@@ -870,6 +874,223 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('taskwraith-closeout-badge provider-cerebras')
     expect(html).not.toContain('taskwraith-closeout-badge provider-pi')
+  })
+
+  it('suppresses a persisted Task Complete card that matches a suppressed notice', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 130,
+            runId: 'steered-run',
+            suppressRunSummary: true
+          },
+          messages: [
+            {
+              id: 'closeout-steered',
+              role: 'system',
+              content: 'Steer handoff close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'steered-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).not.toContain('run-complete-card')
+  })
+
+  it('suppresses a persisted Task Complete card from the durable run flag after reload', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentChat: {
+            appChatId: 'suppressed-chat',
+            runs: [{ runId: 'steered-run', suppressRunSummary: true }]
+          },
+          messages: [
+            {
+              id: 'closeout-steered-reload',
+              role: 'system',
+              content: 'Steer handoff close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'steered-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).not.toContain('run-complete-card')
+  })
+
+  it('uses durable failed and cancelled statuses for historical Task Complete cards', () => {
+    const epic = {
+      closeoutParticipantTable: {
+        rows: [
+          {
+            participantId: 'p1',
+            seatText: 'Worker',
+            workLabel: '1 Turn',
+            status: 'failed',
+            statusGlyphMarkdown: '[Failed](ensemble-status://failed)'
+          }
+        ]
+      }
+    }
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'closeout-failed-history',
+              role: 'system',
+              content: 'Failed close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutStatus: 'failed',
+                ...epic
+              }
+            },
+            {
+              id: 'closeout-cancelled-history',
+              role: 'system',
+              content: 'Cancelled close-out.',
+              timestamp: '2026-01-01T00:01:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutStatus: 'cancelled',
+                ...epic
+              }
+            },
+            {
+              id: 'history-tail',
+              role: 'assistant',
+              content: 'Later response.',
+              timestamp: '2026-01-01T00:02:10.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Task failed')
+    expect(html).toContain('Run cancelled')
+    expect(html).not.toContain('Task complete')
+  })
+
+  it('does not fold later live files into a historical close-out card', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          displayFileChangeSummaries: [
+            { path: 'src/later-run.ts', status: 'modified', additions: 8, deletions: 1 }
+          ],
+          messages: [
+            {
+              id: 'closeout-history-files',
+              role: 'system',
+              content: 'Historical close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'old-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              id: 'later-run-tool',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-01-01T00:01:10.000Z',
+              runId: 'later-run'
+            },
+            {
+              id: 'history-tail',
+              role: 'assistant',
+              content: 'Later response.',
+              timestamp: '2026-01-01T00:02:10.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('run-complete-card')
+    expect(html).not.toContain('src/later-run.ts')
+  })
+
+  it('limits a tombstoned close-out preview to durable run evidence', () => {
+    const scoped = closeoutScopedEvidenceMessages(
+      [
+        {
+          id: 'old-run-edit',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          runId: 'old-run'
+        },
+        {
+          id: 'later-run-edit',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-01-01T00:01:01.000Z',
+          runId: 'later-run'
+        }
+      ],
+      {
+        runId: undefined,
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: { kind: TASKWRAITH_CLOSEOUT_KIND, sourceRunId: 'old-run' }
+      } as ChatMessage
+    )
+
+    expect(scoped?.map((message) => message.id)).toEqual(['old-run-edit'])
   })
 
   it('renders persisted closeout epic stack from message metadata without runCompleteNotice', () => {
@@ -2961,6 +3182,57 @@ describe('collapsed one-liner super-groups', () => {
     expect(html).toContain('collapsed-activity-stack-summary')
   })
 
+  it('resolves a hidden jump target to its super-group lead before focus', () => {
+    const groups = new Map<string, { leadId: string }>([
+      ['super-lead', { leadId: 'super-lead' }],
+      ['super-member', { leadId: 'super-lead' }]
+    ])
+
+    expect(
+      collapsedSuperGroupLeadForRow(groups, { id: 'super-member' } as { id: string })
+    ).toBe('super-lead')
+    expect(collapsedSuperGroupLeadForRow(groups, null)).toBeNull()
+  })
+
+  it('does not absorb all-hidden infrastructure into an empty super-group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'hidden-infrastructure',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'hidden-infrastructure-tool',
+            toolName: 'antigravity_init',
+            displayName: 'Used AntiGravity Init',
+            category: 'unknown',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'infrastructure-notice',
+        role: 'system',
+        content: 'INFRASTRUCTURE_NOTICE_MARKER retained.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html).toContain('INFRASTRUCTURE_NOTICE_MARKER retained.')
+    expect(html).not.toContain('Activity · 1 system notice')
+  })
+
   it('leaves a lone settled stack as an ordinary one-liner', () => {
     const loneStack = [
       superGroupMessages[0],
@@ -3028,6 +3300,70 @@ describe('context-compaction transcript rows', () => {
     expect(html).toContain('Claude')
     // The full row body only mounts when expanded.
     expect(html).not.toContain('context-compaction-row')
+  })
+
+  it('keeps a failed compaction visible instead of laundering it into a neutral super-group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'before-failed-compaction',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'before-failed-compaction-tool',
+            toolName: 'bash',
+            displayName: 'Ran command',
+            category: 'shell',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'failed-compaction',
+        role: 'system',
+        content: 'Context compaction failed · Claude',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          provider: 'claude',
+          contextCompaction: {
+            kind: 'failed',
+            telemetry: { provider: 'claude', error: 'Compaction quota exhausted.' }
+          }
+        }
+      } as ChatMessage,
+      {
+        id: 'after-failed-compaction',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:03.000Z',
+        toolActivities: [
+          {
+            id: 'after-failed-compaction-tool',
+            toolName: 'bash',
+            displayName: 'Ran command',
+            category: 'shell',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Continuing after the failure.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html).toContain('context-compaction-row is-failed')
+    expect(html).toContain('Context compaction failed')
+    expect(html).toContain('Compaction quota exhausted.')
+    expect(html).not.toContain('Ran 2 commands')
   })
 })
 

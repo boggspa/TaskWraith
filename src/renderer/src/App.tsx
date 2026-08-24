@@ -1010,6 +1010,7 @@ import { FILE_DIFF_STATUSES } from './lib/fileDiffStatuses'
 import { RUN_WRITE_TOOLS } from './lib/runWriteTools'
 import {
   deriveVisibleRunCompleteNotice,
+  shouldSuppressRunCompleteSummary,
   type RunCompleteNotice
 } from './lib/runCompleteNotice'
 import type { PersistentSessionStatus } from './lib/persistentSessionStatus'
@@ -25739,7 +25740,12 @@ function App(): React.JSX.Element {
   closeoutChildChatsRef.current = closeoutChildChats
   const closeoutRoundSummaryRefreshKey = roundSummaryRefreshKeyForCloseout(currentChat)
   const closeoutSubagentRefreshKey = useMemo(() => {
-    if (!currentChat || !visibleRunCompleteNotice || settings?.showRunCompleteSummary === false) {
+    if (
+      !currentChat ||
+      !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
+      settings?.showRunCompleteSummary === false
+    ) {
       return ''
     }
     const completedAt = visibleRunCompleteNotice.timestamp
@@ -25786,6 +25792,7 @@ function App(): React.JSX.Element {
       !currentChat?.appChatId ||
       isWelcomeChat ||
       !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
       settings?.showRunCompleteSummary === false
     ) {
       return
@@ -25930,6 +25937,7 @@ function App(): React.JSX.Element {
       !currentChat?.appChatId ||
       isWelcomeChat ||
       !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
       settings?.showRunCompleteSummary === false ||
       settings?.closeoutAiSummaryEnabled === false
     ) {

@@ -21,7 +21,6 @@ import type {
   ToolActivity
 } from '../../../main/store/types'
 import {
-  activityStackHasLiveWork,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
   summarizeCollapsedSuperGroup
@@ -60,7 +59,8 @@ import {
   buildRunCompleteBlockers,
   formatWorkDurationMs,
   resolveRunCompleteStatus,
-  runCompleteProducedWork
+  runCompleteProducedWork,
+  type RunCompleteStatus
 } from '../lib/runCompleteSummary'
 import type {
   CloseoutCommit,
@@ -964,11 +964,11 @@ export function liveViewportKindKey(stackKey: string, kind: ActivityTimelineSegm
  * highlight target) is applied by each caller.
  */
 function plainSystemNoticeMessage(msg: ChatMessage): boolean {
-  // NOTE: `contextCompaction` records deliberately QUALIFY as plain notices —
-  // they fold into settled one-liners / super-groups like every other
-  // transcript row (their `content` is the pre-formatted summary line). The
-  // per-row render special-cases them back to `ContextCompactionCard` when
-  // un-collapsed or expanded.
+  // Successful `contextCompaction` records deliberately qualify as plain
+  // notices: they fold into settled one-liners / super-groups like every other
+  // transcript row (their `content` is the pre-formatted summary line). A
+  // FAILED compaction remains a full warning row; reducing it to a neutral
+  // "system notice" in a super-group would conceal the failure and its error.
   return (
     msg.role === 'system' &&
     msg.metadata?.kind !== 'transcriptHistoryPageBoundary' &&
@@ -991,6 +991,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
     msg.metadata?.kind !== 'providerRunFailure' &&
+    !contextCompactionMessageFailed(msg) &&
     msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
     msg.metadata?.kind !== 'ensembleBossmanPoll' &&
     // An ANSWERED question keeps its full card (AgentQuestionTombstoneCard), so
@@ -1035,6 +1036,87 @@ interface CollapsedSuperGroupInfo {
   firstSystemPreview: string
   /** First stack member — supplies the speaker header; null = all-system. */
   headerMessage: ChatMessage | null
+}
+
+/**
+ * Resolve the lead that owns a projected row's collapsed super-group. Jumps
+ * resolve their row before scrolling, so disclosure must use that projected
+ * identity rather than assume the row is already visibly mounted.
+ */
+export function collapsedSuperGroupLeadForRow(
+  groups: ReadonlyMap<string, { leadId: string }>,
+  row: Pick<VirtualRow, 'id'> | null
+): string | null {
+  return row ? groups.get(row.id)?.leadId || null : null
+}
+
+/**
+ * File-change tombstones intentionally do not persist diff text. When a card
+ * asks for a fallback tool-edit snapshot, only inspect evidence from the
+ * close-out's durable run/round scope. A historical card must never turn a
+ * later edit to the same path into its own preview.
+ */
+export function closeoutScopedEvidenceMessages(
+  messages: ChatMessage[],
+  closeout: Pick<ChatMessage, 'runId' | 'timestamp' | 'metadata'>
+): ChatMessage[] | null {
+  // The close-out object normally comes from `messages`, so array order is a
+  // stronger boundary than wall time (same-millisecond rows are possible).
+  // Fall back to its durable timestamp for projected/legacy records that are
+  // not referentially identical to the visible transcript row.
+  const closeoutIndex = messages.indexOf(closeout as ChatMessage)
+  const completedAt = Date.parse(closeout.timestamp)
+  const evidenceBeforeCloseout =
+    closeoutIndex >= 0
+      ? messages.slice(0, closeoutIndex)
+      : Number.isFinite(completedAt)
+        ? messages.filter((message) => {
+            const timestamp = Date.parse(message.timestamp)
+            return Number.isFinite(timestamp) && timestamp <= completedAt
+          })
+        : null
+  if (!evidenceBeforeCloseout) return null
+  const roundId =
+    typeof closeout.metadata?.closeoutRoundId === 'string'
+      ? closeout.metadata.closeoutRoundId
+      : ''
+  if (roundId) {
+    return evidenceBeforeCloseout.filter(
+      (message) => message.metadata?.ensembleRoundId === roundId
+    )
+  }
+  const runId =
+    typeof closeout.metadata?.sourceRunId === 'string'
+      ? closeout.metadata.sourceRunId
+      : closeout.runId || ''
+  if (!runId) return null
+  return evidenceBeforeCloseout.filter((message) => message.runId === runId)
+}
+
+function durableCloseoutCardStatus(
+  status: unknown,
+  options: { isGlobal: boolean; producedWork: boolean }
+): RunCompleteStatus | null {
+  if (status === 'cancelled') {
+    return resolveRunCompleteStatus({
+      exitCode: 130,
+      isGlobal: options.isGlobal,
+      producedWork: options.producedWork
+    })
+  }
+  if (status === 'failed') {
+    // Unlike a live notice, a historical close-out records a durable outcome
+    // but not necessarily its precise process exit code. Do not invent one.
+    const label = options.isGlobal ? "Couldn't finish" : 'Task failed'
+    return {
+      kind: 'exit-failure',
+      label,
+      srLabel: label,
+      tone: options.producedWork ? 'warning' : 'danger',
+      detail: ''
+    }
+  }
+  return null
 }
 
 function useProjectedTranscriptRows(
@@ -2595,18 +2677,25 @@ export const TranscriptPanel = memo(
       byPath: Map<string, string | null>
     }>({ messages: null, byPath: new Map() })
     const resolveFileChangeDiffText = useCallback(
-      (summary: DiffFileSummary): { diffText?: string; snapshot?: boolean } => {
+      (
+        summary: DiffFileSummary,
+        evidenceMessages: ChatMessage[] | null = visibleMessages
+      ): { diffText?: string; snapshot?: boolean } => {
         if (summary.diffText?.trim()) return { diffText: summary.diffText }
+        // Tombstoned historical close-outs may not have a durable evidence
+        // scope (legacy records). With no provable scope, omit a synthetic
+        // preview rather than borrowing a later run's edit to the same path.
+        if (!evidenceMessages) return {}
         const cache = toolEditSnapshotCacheRef.current
-        if (cache.messages !== visibleMessages) {
-          cache.messages = visibleMessages
+        if (cache.messages !== evidenceMessages) {
+          cache.messages = evidenceMessages
           cache.byPath.clear()
         }
         if (!cache.byPath.has(summary.path)) {
           cache.byPath.set(
             summary.path,
             buildToolEditDiffSnapshotForPath(
-              visibleMessages,
+              evidenceMessages,
               summary.path,
               currentWorkspacePath || currentChat?.workspacePath
             )
@@ -2621,12 +2710,13 @@ export const TranscriptPanel = memo(
       (
         event: { currentTarget: HTMLElement },
         summary: DiffFileSummary,
-        options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean }
+        options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean },
+        evidenceMessages?: ChatMessage[] | null
       ) => {
         const anchorElement = event.currentTarget
         const produce = (): DiffHoverPreviewState | null => {
           if (!anchorElement.isConnected) return null
-          const resolved = resolveFileChangeDiffText(summary)
+          const resolved = resolveFileChangeDiffText(summary, evidenceMessages)
           if (!resolved.diffText && !onOpenFileChangeInWorkbench) return null
           return {
             anchor: anchorElement.getBoundingClientRect(),
@@ -2673,9 +2763,13 @@ export const TranscriptPanel = memo(
       ]
     )
     const activateFileChangeSummary = useCallback(
-      (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
+      (
+        event: React.MouseEvent<HTMLElement>,
+        summary: DiffFileSummary,
+        evidenceMessages?: ChatMessage[] | null
+      ) => {
         if (!onOpenFileChangeInWorkbench) {
-          openFileChangeDiffPreview(event, summary, { immediate: true })
+          openFileChangeDiffPreview(event, summary, { immediate: true }, evidenceMessages)
           return
         }
         closeFileChangeDiffPreview()
@@ -2804,6 +2898,13 @@ export const TranscriptPanel = memo(
       }
     }, [resolvedMessages, runCompleteNotice])
     const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
+    // Only the close-out matched to the currently visible completion may use
+    // live file evidence. Without this, the most recent *historical* close-out
+    // can absorb a later run's session-level file list after reload or while a
+    // new run is active.
+    const latestCloseoutMatchesVisibleRun = Boolean(
+      runCompleteNotice && latestCloseoutMessageId
+    )
     const latestCloseoutHasParticipants = Boolean(
       runCompleteCloseoutTables.participantTable?.rows?.length
     )
@@ -2843,6 +2944,7 @@ export const TranscriptPanel = memo(
     // card when that close-out has epic tables but no file tombstone.
     const latestCloseoutShowsLiveFileChanges =
       latestCloseoutHostsTaskComplete &&
+      latestCloseoutMatchesVisibleRun &&
       !latestCloseoutHasFileChanges &&
       (!isGlobal || displayFileChangeSummaries.length > 0) &&
       displayFileChangeSummaries.length > 0
@@ -3548,14 +3650,19 @@ export const TranscriptPanel = memo(
       const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
         if (protectedFromCollapseMessageIds.has(msg.id)) return null
         if (typeof msg.metadata?.pinnedAt === 'number') return null
-        // Mirrors `shouldAutoCollapseActivityStack`'s `isLiveRow`. A stack that
-        // is live but whose own activities have momentarily all settled must
-        // not be hidden here — the per-row branch keeps it rendering, so
-        // without this the two disagree and the row is hidden as a member
-        // while it believes it is still open.
-        if (liveMeasurementMessageIdSet.has(msg.id)) return null
         if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
-          return activityStackHasLiveWork(msg.toolActivities || []) ? null : 'stack'
+          // This deliberately calls the same predicate as the row renderer,
+          // not a looser "all settled" check. In particular, a stack made
+          // only of hidden infrastructure has no visible one-liner to merge;
+          // admitting it here created an empty super-group member and an
+          // "Activity · N system notices" summary that hid real notices.
+          return shouldAutoCollapseActivityStack({
+            activities: msg.toolActivities || [],
+            isLiveRow: liveMeasurementMessageIdSet.has(msg.id),
+            isLastRow: protectedFromCollapseMessageIds.has(msg.id)
+          })
+            ? 'stack'
+            : null
         }
         if (
           plainSystemNoticeMessage(msg) &&
@@ -3899,6 +4006,22 @@ export const TranscriptPanel = memo(
       },
       [projectedRowLookup]
     )
+    /**
+     * A jump target can be a hidden non-lead member of a collapsed super-group.
+     * Open its owner before any DOM lookup: the hidden wrapper deliberately has
+     * zero height and no content, so focusing it first would pulse an empty
+     * gap instead of the requested transcript row.
+     */
+    const ensureSuperGroupExpandedForMessage = useCallback(
+      (messageId: string, rowKey?: string): boolean => {
+        const row = findProjectedRowForMessage(messageId, rowKey)
+        const leadId = collapsedSuperGroupLeadForRow(superGroupByMessageId, row)
+        if (!leadId || expandedSuperGroups.has(leadId)) return false
+        setSuperGroupExpanded(leadId, true)
+        return true
+      },
+      [expandedSuperGroups, findProjectedRowForMessage, setSuperGroupExpanded, superGroupByMessageId]
+    )
     const pendingFocusRowIndex = useMemo(() => {
       if (!pendingFocusTarget) return null
       const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
@@ -4172,6 +4295,13 @@ export const TranscriptPanel = memo(
         // first; the pending-focus retry loop below then finds the row
         // once it re-renders into the window.
         ensureRoundExpandedForMessage(messageId)
+        // Super-folds preserve hidden member wrappers for scroll geometry, but
+        // the wrapper has no visible content. Open the owning fold before
+        // focusing so the jump lands on the actual requested row.
+        if (ensureSuperGroupExpandedForMessage(messageId, effectiveRowKey)) {
+          setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+          return
+        }
         if (focusMessageBlock(messageId, effectiveRowKey)) return
 
         setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
@@ -4180,6 +4310,7 @@ export const TranscriptPanel = memo(
       [
         chatId,
         ensureRoundExpandedForMessage,
+        ensureSuperGroupExpandedForMessage,
         estimateScrollToMessage,
         focusMessageBlock,
         prepareManualTranscriptJump,
@@ -4292,6 +4423,14 @@ export const TranscriptPanel = memo(
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return
       ensureRoundExpandedForMessage(pendingFocusTarget.messageId)
+      if (
+        ensureSuperGroupExpandedForMessage(
+          pendingFocusTarget.messageId,
+          pendingFocusTarget.rowKey
+        )
+      ) {
+        return
+      }
       // While a glide toward this target is in flight, hold the retry loop:
       // don't burn attempts or issue competing scroll writes. The effect
       // re-runs naturally each glide frame (renderedRows changes as the
@@ -4324,6 +4463,7 @@ export const TranscriptPanel = memo(
       return () => window.cancelAnimationFrame(frame)
     }, [
       ensureRoundExpandedForMessage,
+      ensureSuperGroupExpandedForMessage,
       estimateScrollToMessage,
       focusMessageBlock,
       pendingFocusTarget,
@@ -5910,6 +6050,32 @@ export const TranscriptPanel = memo(
                     {isTaskWraithCloseout &&
                       showRunCompleteSummary !== false &&
                       (() => {
+                        const matchesVisibleRun = Boolean(
+                          runCompleteNotice &&
+                            closeoutMatchesRunCompleteNotice(msg, runCompleteNotice)
+                        )
+                        const closeoutRunId =
+                          typeof msg.metadata?.sourceRunId === 'string'
+                            ? msg.metadata.sourceRunId
+                            : msg.runId
+                        const persistedRunSummarySuppressed = Boolean(
+                          closeoutRunId &&
+                            currentChat?.runs?.some(
+                              (run) =>
+                                run.runId === closeoutRunId && run.suppressRunSummary === true
+                            )
+                        )
+                        // A Steer handoff deliberately suppresses the run
+                        // summary. Honor it for an already-persisted card as
+                        // well as the ephemeral footer, including after a
+                        // reload when the flag is re-derived from the run.
+                        if (
+                          (shouldSuppressRunCompleteSummary(runCompleteNotice) &&
+                            matchesVisibleRun) ||
+                          persistedRunSummarySuppressed
+                        ) {
+                          return null
+                        }
                         const participantTable = (msg.metadata?.closeoutParticipantTable ||
                           null) as CloseoutParticipantTable | null
                         const commits = (Array.isArray(msg.metadata?.closeoutCommits)
@@ -5950,18 +6116,38 @@ export const TranscriptPanel = memo(
                         // footer card entirely when this card hosts the epic.
                         const showLatestActions =
                           isLatestCloseout && shouldShowRunCompleteNotice && !isGlobal
+                        const closeoutProducedWork =
+                          Boolean(fileChanges?.length) ||
+                          Boolean(
+                            participantTable?.rows?.some(
+                              (row) => row.status === 'answered' || row.status === 'yielded'
+                            )
+                          )
+                        // A historical close-out no longer has a live notice
+                        // to resolve. Its persisted status is the durable
+                        // truth, so never call a failed/cancelled run "Task
+                        // complete" merely because the reader opened it later.
+                        const durableCloseoutStatus = durableCloseoutCardStatus(
+                          msg.metadata?.closeoutStatus,
+                          { isGlobal, producedWork: closeoutProducedWork }
+                        )
+                        const cardStatus =
+                          showLatestActions && runCompleteStatus
+                            ? runCompleteStatus
+                            : durableCloseoutStatus
                         const titleLabel =
-                          showLatestActions && runCompleteStatus?.label
-                            ? runCompleteStatus.label
-                            : 'Task complete'
+                          cardStatus?.label || 'Task complete'
                         const titleTone =
-                          showLatestActions &&
-                          runCompleteStatus &&
-                          runCompleteStatus.tone !== 'neutral'
-                            ? `tone-${runCompleteStatus.tone}`
+                          cardStatus && cardStatus.tone !== 'neutral'
+                            ? `tone-${cardStatus.tone}`
                             : undefined
+                        // Live file evidence belongs ONLY to the close-out
+                        // matched to the visible completion. Historical cards
+                        // retain their tombstone list but never merge later
+                        // session summaries or their diff text.
+                        const canUseLiveFileEvidence = isLatestCloseout && matchesVisibleRun
                         const liveFallbackFileChanges =
-                          isLatestCloseout &&
+                          canUseLiveFileEvidence &&
                           latestCloseoutShowsLiveFileChanges &&
                           !(fileChanges && fileChanges.length > 0)
                             ? displayFileChangeSummaries.map((item) => ({
@@ -5975,9 +6161,13 @@ export const TranscriptPanel = memo(
                           fileChanges && fileChanges.length > 0
                             ? fileChanges
                             : liveFallbackFileChanges
-                        const liveSummaryByPath = isLatestCloseout
+                        const liveSummaryByPath = canUseLiveFileEvidence
                           ? new Map(displayFileChangeSummaries.map((item) => [item.path, item]))
                           : null
+                        const closeoutEvidenceMessages = closeoutScopedEvidenceMessages(
+                          visibleMessages,
+                          msg
+                        )
                         const resolveCloseoutFileChangeSummary = (
                           change: CloseoutFileChange
                         ): DiffFileSummary => {
@@ -5998,8 +6188,21 @@ export const TranscriptPanel = memo(
                                   ? `Open Workbench diff for ${summary.path}`
                                   : `Preview diff for ${summary.path}`
                               }
-                              onActivateChange={activateFileChangeSummary}
-                              onOpenPreview={openFileChangeDiffPreview}
+                              onActivateChange={(event, summary) =>
+                                activateFileChangeSummary(
+                                  event,
+                                  summary,
+                                  closeoutEvidenceMessages
+                                )
+                              }
+                              onOpenPreview={(event, summary, options) =>
+                                openFileChangeDiffPreview(
+                                  event,
+                                  summary,
+                                  options,
+                                  closeoutEvidenceMessages
+                                )
+                              }
                               onScheduleClosePreview={scheduleCloseFileChangeDiffPreview}
                               previewPath={fileChangeDiffPreview?.summary.path}
                               resolveSummary={resolveCloseoutFileChangeSummary}
@@ -6023,11 +6226,7 @@ export const TranscriptPanel = memo(
                               <div className="run-complete-metadata">
                                 <strong
                                   className={titleTone}
-                                  title={
-                                    showLatestActions
-                                      ? runCompleteStatus?.detail || undefined
-                                      : undefined
-                                  }
+                                  title={cardStatus?.detail || undefined}
                                 >
                                   {titleLabel}
                                 </strong>
