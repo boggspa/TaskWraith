@@ -170,18 +170,28 @@ export interface RebindChatWorkspaceOptions {
 
 /** Narrow Host setup creation input; it cannot carry a renderer-authored ChatRecord. */
 export type CreateSingleThreadInput =
-  | { readonly scope: 'global' }
-  | { readonly scope: 'workspace'; readonly workspaceId: string; readonly workspacePath: string }
+  | { readonly scope: 'global'; readonly title?: unknown }
+  | {
+      readonly scope: 'workspace'
+      readonly workspaceId: string
+      readonly workspacePath: string
+      readonly title?: unknown
+    }
 
-/** Bounded configuration patch; grants, permission posture, and metadata are not accepted. */
+/** Bounded Host configuration patch; never accepts an effective permission body. */
 export interface ConfigureThreadInput {
   readonly chatId: string
   readonly provider?: ProviderId
   readonly selectedModelType?: unknown
+  readonly reasoningId?: unknown
+  readonly postureId?: 'read_only' | 'plan' | 'default' | 'workspace_write'
+  readonly title?: unknown
 }
 
 export interface ArchiveThreadInput {
   readonly chatId: string
+  /** Undefined retains legacy archive-only callers; Host passes explicit state. */
+  readonly archived?: boolean
 }
 
 type ResolvedChatWorkspaceRebindTarget =
@@ -329,16 +339,21 @@ export class ChatService {
   /** Creates exactly one canonical single thread in global or registered-workspace scope. */
   createSingleThread(input: CreateSingleThreadInput): ChatRecord {
     if (!input || typeof input !== 'object') throw new Error('Thread creation input is required.')
-    if (input.scope === 'global') return this.createGlobalChat()
+    const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
+    if (input.scope === 'global') {
+      const chat = this.createGlobalChat()
+      return title === undefined ? chat : this.saveChat({ ...chat, title, updatedAt: Date.now() })
+    }
     if (input.scope !== 'workspace') throw new Error('Thread scope must be global or workspace.')
-    return this.createChat(
+    const chat = this.createChat(
       requireNonEmptyString(input.workspaceId, 'Workspace id'),
       requireNonEmptyString(input.workspacePath, 'Workspace path')
     )
+    return title === undefined ? chat : this.saveChat({ ...chat, title, updatedAt: Date.now() })
   }
 
   /**
-   * Applies only a current provider/model selection to a canonical idle thread.
+   * Applies a current provider/model/reasoning/posture or title patch to an idle thread.
    * The shared provider-change helper clears stale linked sessions on a real
    * provider switch and preserves them for a same-provider model adjustment.
    */
@@ -351,28 +366,54 @@ export class ChatService {
     assertHostSetupThreadIdle(current)
     this.deps.assertThreadSetupIdle?.(current)
 
+    const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
+    const selectedModelType = sanitizeThreadModel(input.selectedModelType)
+    const reasoningId = input.reasoningId === undefined ? undefined : sanitizeThreadModel(input.reasoningId)
+    const posture = input.postureId === undefined ? undefined : hostSetupPosture(input.postureId)
+    const changesProviderState =
+      input.provider !== undefined ||
+      selectedModelType !== undefined ||
+      reasoningId !== undefined ||
+      posture !== undefined
+    if (!changesProviderState) {
+      if (title === undefined) throw new Error('Thread configuration is empty.')
+      return this.saveChat({ ...current, title, updatedAt: Date.now() })
+    }
     const provider =
       input.provider === undefined ? current.provider : assertLiveProviderId(input.provider)
     if (!provider) throw new Error('Thread provider is required for configuration.')
     this.deps.assertProviderOfferedForThread?.(provider, current)
-    const selectedModelType = sanitizeThreadModel(input.selectedModelType)
+    const metadata = {
+      ...(selectedModelType ? { selectedModelType } : {}),
+      ...(reasoningId ? { reasoningEffort: reasoningId } : {}),
+      ...(posture ? { approvalMode: posture.approvalMode, permissionPresetId: posture.permissionPresetId } : {})
+    }
     const configured = applyProviderChange(current, {
       provider,
-      ...(selectedModelType ? { providerMetadata: { selectedModelType } } : {})
+      ...(Object.keys(metadata).length > 0 ? { providerMetadata: metadata } : {})
     })
-    return this.saveChat({ ...configured, updatedAt: Date.now() })
+    return this.saveChat({
+      ...configured,
+      ...(title !== undefined ? { title } : {}),
+      ...(posture ? { workflowMode: posture.workflowMode } : {}),
+      updatedAt: Date.now()
+    })
   }
 
-  /** Archives a canonical idle thread without accepting a full mutable chat payload. */
+  /** Archives or restores a canonical idle thread without accepting a full mutable chat payload. */
   archiveThread(input: ArchiveThreadInput): ChatRecord {
     if (!input || typeof input !== 'object') throw new Error('Thread archive input is required.')
     const chatId = requireSafeChatId(input.chatId, 'Chat id')
     const current = this.deps.appStore.getChat(chatId)
     if (!current) throw new Error('Chat not found.')
-    if (current.archived) return current
+    if (input.archived !== undefined && typeof input.archived !== 'boolean') {
+      throw new Error('Thread archive state is invalid.')
+    }
+    const archived = input.archived ?? true
+    if (current.archived === archived) return current
     assertHostSetupThreadIdle(current)
     this.deps.assertThreadSetupIdle?.(current)
-    return this.saveChat({ ...current, archived: true, updatedAt: Date.now() })
+    return this.saveChat({ ...current, archived, updatedAt: Date.now() })
   }
 
   createEnsembleChat(args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>): ChatRecord {
@@ -2291,6 +2332,29 @@ function sanitizeThreadModel(value: unknown): string | undefined {
   const model = value.trim()
   if (model.length > 200) throw new Error('Selected model is too long.')
   return model
+}
+
+function hostSetupPosture(value: unknown): {
+  approvalMode: string
+  permissionPresetId: 'read_only' | 'default' | 'workspace_write'
+  workflowMode: 'normal' | 'plan'
+} {
+  switch (value) {
+    case 'read_only':
+      return { approvalMode: 'plan', permissionPresetId: 'read_only', workflowMode: 'normal' }
+    case 'plan':
+      return { approvalMode: 'plan', permissionPresetId: 'read_only', workflowMode: 'plan' }
+    case 'default':
+      return { approvalMode: 'default', permissionPresetId: 'default', workflowMode: 'normal' }
+    case 'workspace_write':
+      return {
+        approvalMode: 'default',
+        permissionPresetId: 'workspace_write',
+        workflowMode: 'normal'
+      }
+    default:
+      throw new Error('Thread permission posture is invalid.')
+  }
 }
 
 function assertHostSetupThreadIdle(chat: ChatRecord): void {

@@ -278,6 +278,32 @@ describe('ChatService Host setup methods', () => {
     expect(result.linkedGeminiSessionId).toBeUndefined()
   })
 
+  it('persists bounded Host title/reasoning/posture and permits explicit unarchive while idle', () => {
+    const store = makeStatefulStore(makeChat({ archived: true, provider: 'codex' }))
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+    const restored = service.archiveThread({ chatId: 'chat-1', archived: false })
+    expect(restored.archived).toBe(false)
+    const configured = service.configureThread({
+      chatId: 'chat-1',
+      provider: 'codex',
+      selectedModelType: 'gpt-5.6',
+      reasoningId: 'high',
+      postureId: 'workspace_write',
+      title: 'Configured thread'
+    })
+    expect(configured).toMatchObject({
+      title: 'Configured thread',
+      workflowMode: 'normal',
+      providerMetadata: {
+        selectedModelType: 'gpt-5.6',
+        reasoningEffort: 'high',
+        approvalMode: 'default',
+        permissionPresetId: 'workspace_write'
+      }
+    })
+  })
+
   it('refuses configure/archive while a run or round is active', () => {
     const active = makeChat({
       runs: [{ runId: 'run-1', status: 'running' }] as ChatRecord['runs'],

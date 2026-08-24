@@ -108,6 +108,24 @@ describe('createHostProductionContextResolvers', () => {
     })
   })
 
+  it('forwards only setup-persistable permission presets to the signed Bridge context', async () => {
+    const accepted = open({
+      chats: [chat({ providerMetadata: { permissionPresetId: 'workspace_write' } })]
+    })
+    await expect(accepted.resolvers.resolveComposerSend('thread-1')).resolves.toMatchObject({
+      ok: true,
+      value: { permissionPresetId: 'workspace_write' }
+    })
+
+    const rejected = open({
+      chats: [chat({ providerMetadata: { permissionPresetId: 'full_access' } })]
+    })
+    await expect(rejected.resolvers.resolveComposerSend('thread-1')).resolves.toMatchObject({
+      ok: true,
+      value: expect.not.objectContaining({ permissionPresetId: expect.anything() })
+    })
+  })
+
   it('reads Mistral default reasoning from metadata keys', async () => {
     const { resolvers } = open({
       chats: [

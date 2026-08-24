@@ -234,6 +234,13 @@ function approvalModeForChat(chat: HostProductionResolverChat): string | undefin
   return nonEmptyString(chat.providerMetadata?.approvalMode, chat.settingsSnapshot?.approvalMode)
 }
 
+function permissionPresetIdForChat(chat: HostProductionResolverChat): string | undefined {
+  const value = nonEmptyString(chat.providerMetadata?.permissionPresetId)
+  return value === 'read_only' || value === 'default' || value === 'workspace_write'
+    ? value
+    : undefined
+}
+
 function readChat(
   getChat: HostProductionContextResolverDeps['getChat'],
   threadId: string
@@ -367,6 +374,7 @@ export function createHostProductionContextResolvers(
         return fail<HostBridgeComposerSendContext>('Thread has no canonical provider.')
       }
       const approvalMode = approvalModeForChat(chat)
+      const permissionPresetId = permissionPresetIdForChat(chat)
       const defaultModel = modelForChat(chat)
       const defaultReasoningEffort = reasoningForProvider(provider, chat)
       let selected: TaskWraithThreadSelection = {}
@@ -382,6 +390,7 @@ export function createHostProductionContextResolvers(
         workspaceId: workspace.value,
         provider,
         ...(approvalMode ? { approvalMode } : {}),
+        ...(permissionPresetId ? { permissionPresetId } : {}),
         ...(chat.workflowMode ? { workflowMode: chat.workflowMode } : {}),
         ...(selected.model
           ? { model: selected.model }

@@ -79,6 +79,8 @@ export type HostBridgeComposerSendContext =
       readonly workspaceId: string
       readonly provider: string
       readonly approvalMode?: string
+      /** Persisted Host-selected posture; main re-derives and signs it. */
+      readonly permissionPresetId?: string
       readonly workflowMode?: 'normal' | 'plan'
       /** Final Host-resolved values. Never copied directly from command args. */
       readonly model?: string
@@ -432,6 +434,7 @@ export class HostBridgeCommandExecutor {
       text,
       provider: ctx.provider,
       ...(ctx.approvalMode ? { approvalMode: ctx.approvalMode } : {}),
+      ...(ctx.permissionPresetId ? { permissionPresetId: ctx.permissionPresetId } : {}),
       ...(ctx.workflowMode ? { workflowMode: ctx.workflowMode } : {}),
       ...(ctx.model ? { model: ctx.model } : {}),
       ...(ctx.reasoningEffort ? { reasoningEffort: ctx.reasoningEffort } : {})

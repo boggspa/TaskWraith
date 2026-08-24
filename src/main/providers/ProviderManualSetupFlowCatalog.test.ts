@@ -33,6 +33,30 @@ describe('ProviderManualSetupFlowCatalog', () => {
       managedRunReady: false
     })
     expect(providerManualSetupNotice('kimi')).toContain('user-owned Kimi setup')
-    expect(providerManualSetupNotice('codex')).toBeNull()
+    expect(providerManualSetupNotice('codex')).toContain('resolved Codex CLI')
+  })
+
+  it('admits the bounded Host login/logout catalog and rejects unbounded provider flows', () => {
+    for (const provider of ['codex', 'claude', 'cursor', 'ollama', 'muse'] as const) {
+      expect(buildProviderManualSetupFlow(provider, 'login')).toMatchObject({
+        provider,
+        action: 'login'
+      })
+      expect(buildProviderManualSetupFlow(provider, 'logout')).toMatchObject({
+        provider,
+        action: 'logout'
+      })
+    }
+    for (const provider of ['kimi', 'mistral', 'antigravity'] as const) {
+      expect(buildProviderManualSetupFlow(provider, 'login')).toMatchObject({
+        provider,
+        action: 'login'
+      })
+      expect(buildProviderManualSetupFlow(provider, 'logout')).toBeNull()
+    }
+    for (const provider of ['gemini', 'grok', 'pi'] as const) {
+      expect(buildProviderManualSetupFlow(provider, 'login')).toBeNull()
+      expect(buildProviderManualSetupFlow(provider, 'logout')).toBeNull()
+    }
   })
 })

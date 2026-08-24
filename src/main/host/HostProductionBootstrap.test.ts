@@ -176,6 +176,55 @@ describe('HostProductionBootstrap options validation', () => {
     ).toThrow('HostProductionBootstrap requires an options object')
   })
 
+  it('advertises setup/provider/history only with their complete injected adapters in canonical order', () => {
+    const { compositionInput } = captureSupervisorInput({
+      setup: {
+        workspace: {
+          getWorkspaces: () => [],
+          registerWorkspace: () => ({ id: 'workspace-1' })
+        },
+        chat: {
+          createSingleThread: () => ({ appChatId: 'thread-1' }),
+          configureThread: () => ({ appChatId: 'thread-1' }),
+          archiveThread: () => ({ appChatId: 'thread-1' })
+        },
+        terminal: {
+          begin: ({ provider, operationId }) => ({ provider, operationId }),
+          cancel: () => ({ outcome: 'not_cancellable' })
+        },
+        providers: () => []
+      },
+      history: { getChat: () => null }
+    })
+    expect(compositionInput.hostCapabilityOffer).toEqual([
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'model-offers',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health',
+      'approvals',
+      'compact-export',
+      'recovery'
+    ])
+    expect(compositionInput.setupExecutor).toBeDefined()
+    expect(compositionInput.providerStatusesProvider).toBeDefined()
+    expect(compositionInput.threadHistoryProvider).toBeDefined()
+  })
+
+  it('rejects an incomplete history option before advertising the history capability', () => {
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({ history: {} as HostProductionBootstrapOptions['history'] })
+      )
+    ).toThrow('history.getChat')
+  })
+
   it('rejects null options', () => {
     expect(() =>
       createHostProductionBootstrap(null as unknown as HostProductionBootstrapOptions)

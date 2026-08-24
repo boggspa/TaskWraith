@@ -369,6 +369,23 @@ describe('composer.send', () => {
     })
   })
 
+  it('carries only the main-resolved permission preset into the signed composer action', async () => {
+    const { executor, bridge } = open({}, {
+      resolveComposerSend: () =>
+        ok({
+          mode: 'solo',
+          workspaceId: 'ws-1',
+          provider: 'codex',
+          permissionPresetId: 'workspace_write'
+        })
+    })
+    await executor.execute(command('composer.send', { threadId: 'thread-1' }, { text: 'hello' }))
+    expect(bridge.calls[0]?.action).toMatchObject({
+      kind: 'composerPrompt',
+      permissionPresetId: 'workspace_write'
+    })
+  })
+
   it('maps ensemble context to executeEnsembleSteer without inventing provider', async () => {
     const { executor, bridge } = open(
       {},

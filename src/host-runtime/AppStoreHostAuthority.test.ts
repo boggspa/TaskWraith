@@ -298,6 +298,108 @@ describe('AppStoreHostAuthority', () => {
     expect(runtime.receiptStore.size).toBe(0)
   })
 
+  it('serves injected setup/history reads only after the exact context gate and strict decode', async () => {
+    const authority = open({
+      ports: {
+        providerStatusesProvider: () => [{ providerId: 'codex', status: 'ready', label: 'Codex' }],
+        providerOffersProvider: (providerId) => ({
+          providerId,
+          offerRevision: 'revision-1',
+          models: [],
+          postures: []
+        }),
+        providerAuthFlowsProvider: () => [],
+        providerAuthStatusProvider: (providerId) => ({ providerId, state: 'authenticated' }),
+        threadHistoryProvider: (request) => ({
+          threadId: request.threadId,
+          generation: 1,
+          cursor: 0,
+          entries: []
+        }),
+        historySinceProvider: (request) => ({
+          kind: 'full_resnapshot_required',
+          threadId: request.threadId,
+          generation: 1,
+          cursor: 0,
+          clientGeneration: request.since.generation,
+          clientCursor: request.since.cursor,
+          reason: 'retention_gap'
+        })
+      }
+    })
+    const context = contextFor(ACTOR_A, CLIENT_A)
+    await expect(authority.providerStatuses(context)).resolves.toMatchObject({
+      ok: true,
+      value: [{ providerId: 'codex' }]
+    })
+    await expect(authority.providerOffers(context, 'codex')).resolves.toMatchObject({
+      ok: true,
+      value: { providerId: 'codex', offerRevision: 'revision-1' }
+    })
+    await expect(
+      authority.threadHistory(context, { threadId: 'thread-1', limit: 10 })
+    ).resolves.toMatchObject({ ok: true, value: { threadId: 'thread-1' } })
+    await expect(
+      authority.historySince(context, { threadId: 'thread-1', since: { generation: 1, cursor: 0 } })
+    ).resolves.toMatchObject({ ok: true, value: { kind: 'full_resnapshot_required' } })
+    await expect(
+      authority.providerOffers(contextFor(ACTOR_A, { ...CLIENT_A, clientId: 'wrong' }), 'codex')
+    ).resolves.toEqual({
+      ok: false,
+      error: 'invalid_lookup'
+    })
+  })
+
+  it('fails closed on invalid or identity-mismatched read provider output while preserving shutdown', async () => {
+    const authority = open({
+      ports: {
+        providerStatusesProvider: () => [
+          { providerId: 'codex', status: 'invented', label: 'Codex' }
+        ],
+        providerOffersProvider: () => ({
+          providerId: 'different-provider',
+          offerRevision: 'revision-1',
+          models: [],
+          postures: []
+        }),
+        providerAuthFlowsProvider: () => [],
+        providerAuthStatusProvider: (providerId) => ({ providerId, state: 'authenticated' }),
+        threadHistoryProvider: () => ({
+          threadId: 'different-thread',
+          generation: 1,
+          cursor: 0,
+          entries: []
+        }),
+        historySinceProvider: (request) => ({
+          kind: 'full_resnapshot_required',
+          threadId: request.threadId,
+          generation: 1,
+          cursor: 0,
+          clientGeneration: request.since.generation,
+          clientCursor: request.since.cursor,
+          reason: 'retention_gap'
+        })
+      }
+    })
+    const context = contextFor(ACTOR_A, CLIENT_A)
+    await expect(authority.providerStatuses(context)).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    await expect(authority.providerOffers(context, 'codex')).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    await expect(
+      authority.threadHistory(context, { threadId: 'thread-1', limit: 10 })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
+    await expect(authority.shutdown(context)).resolves.toMatchObject({ ok: true })
+    await expect(authority.providerStatuses(context)).resolves.toEqual({
+      ok: false,
+      error: 'shutting_down'
+    })
+  })
+
   it('refuses setup before receipt begin when no dedicated setup executor is injected', async () => {
     const authority = open()
     const result = await authority.command(

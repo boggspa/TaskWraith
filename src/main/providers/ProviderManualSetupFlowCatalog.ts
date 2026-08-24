@@ -36,13 +36,28 @@ const MUSE_USER_OWNED_UPGRADE_NOTICE =
 const OLLAMA_USER_OWNED_SETUP_NOTICE =
   'This invokes the resolved official Ollama CLI for account sign-in or sign-out. Ollama owns the browser flow and credentials; TaskWraith stores neither. The same local Ollama daemon then authenticates Ollama Cloud model requests.'
 
+const CODEX_USER_OWNED_SETUP_NOTICE =
+  'This opens the resolved Codex CLI for a user-owned sign-in or sign-out. TaskWraith does not read, copy, or store Codex credentials.'
+
+const CLAUDE_USER_OWNED_SETUP_NOTICE =
+  'This opens the resolved Claude CLI account flow. TaskWraith does not read, copy, or store Claude credentials.'
+
+const CURSOR_USER_OWNED_SETUP_NOTICE =
+  'This opens the resolved Cursor Agent account flow. TaskWraith does not read, copy, or store Cursor credentials.'
+
 const FLOWS: Readonly<Record<string, ProviderManualSetupFlow>> = {
+  'codex:login': flow('codex', 'login', CODEX_USER_OWNED_SETUP_NOTICE),
+  'codex:logout': flow('codex', 'logout', CODEX_USER_OWNED_SETUP_NOTICE),
+  'claude:login': flow('claude', 'login', CLAUDE_USER_OWNED_SETUP_NOTICE),
+  'claude:logout': flow('claude', 'logout', CLAUDE_USER_OWNED_SETUP_NOTICE),
   'kimi:login': flow('kimi', 'login', KIMI_USER_OWNED_SETUP_NOTICE),
   'kimi:upgrade': flow('kimi', 'upgrade', KIMI_USER_OWNED_SETUP_NOTICE),
   'antigravity:login': flow('antigravity', 'login', ANTIGRAVITY_USER_OWNED_SETUP_NOTICE),
   'antigravity:upgrade': flow('antigravity', 'upgrade', ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE),
   'ollama:login': flow('ollama', 'login', OLLAMA_USER_OWNED_SETUP_NOTICE),
   'ollama:logout': flow('ollama', 'logout', OLLAMA_USER_OWNED_SETUP_NOTICE),
+  'cursor:login': flow('cursor', 'login', CURSOR_USER_OWNED_SETUP_NOTICE),
+  'cursor:logout': flow('cursor', 'logout', CURSOR_USER_OWNED_SETUP_NOTICE),
   'mistral:login': flow('mistral', 'login', MISTRAL_USER_OWNED_SETUP_NOTICE),
   'mistral:upgrade': flow('mistral', 'upgrade', MISTRAL_USER_OWNED_SETUP_NOTICE),
   'muse:login': flow('muse', 'login', MUSE_USER_OWNED_SETUP_NOTICE),

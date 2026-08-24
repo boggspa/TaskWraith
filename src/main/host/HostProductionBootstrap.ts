@@ -71,6 +71,14 @@ import {
   type HostProductionContextResolverDeps
 } from './HostProductionContextResolvers'
 import {
+  createHostProductionHistoryAdapter,
+  type HostProductionHistoryAdapterOptions
+} from './HostProductionHistoryAdapter'
+import {
+  createHostProductionSetupAdapter,
+  type HostProductionSetupAdapterOptions
+} from './HostProductionSetupAdapter'
+import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
   type HostProductionArtifactListPort,
@@ -204,6 +212,10 @@ export interface HostProductionBootstrapOptions {
    * canonical store/service callbacks, never Host domain logic.
    */
   readonly contextSources: HostProductionContextResolverDeps
+  /** Complete main-backed provider/setup ports; omitted means no setup capabilities. */
+  readonly setup?: HostProductionSetupAdapterOptions
+  /** Complete canonical history ports; omitted means history remains unavailable. */
+  readonly history?: Omit<HostProductionHistoryAdapterOptions, 'getPosition'>
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: () => void | Promise<void>
   /** Optional diagnostic logger. */
@@ -224,18 +236,19 @@ export interface HostProductionBootstrapOptions {
   readonly createSupervisor?: (input: HostSupervisorInput) => HostSupervisor
 }
 
-function hostProductionCapabilityOffer(
-  options: HostProductionBootstrapOptions
-): readonly HostCapability[] {
-  const capabilities: HostCapability[] = [
-    'bootstrap',
-    'snapshot',
-    'deltas',
-    'model-offers',
-    'commands',
-    'receipts',
-    'health'
-  ]
+function hostProductionCapabilityOffer(input: {
+  readonly options: HostProductionBootstrapOptions
+  readonly setupAvailable: boolean
+  readonly historyAvailable: boolean
+}): readonly HostCapability[] {
+  const { options } = input
+  const capabilities: HostCapability[] = ['bootstrap', 'snapshot', 'deltas', 'model-offers']
+  if (input.setupAvailable) {
+    capabilities.push('provider-catalog', 'provider-auth')
+  }
+  if (input.historyAvailable) capabilities.push('history')
+  if (input.setupAvailable) capabilities.push('setup')
+  capabilities.push('commands', 'receipts', 'health')
   if (options.missions) capabilities.push('missions')
   if (options.rounds && options.participants) capabilities.push('ensemble')
   // Deferred Host commands always project their own approval challenges even
@@ -327,6 +340,9 @@ export function createHostProductionBootstrap(
   }
   if (typeof options.contextSources.getQuestion !== 'function') {
     throw new Error('HostProductionBootstrap requires contextSources.getQuestion')
+  }
+  if (options.history !== undefined && typeof options.history.getChat !== 'function') {
+    throw new Error('HostProductionBootstrap requires history.getChat to be a function')
   }
   if (options.providers !== undefined && typeof options.providers.getProviders !== 'function') {
     throw new Error('HostProductionBootstrap requires providers.getProviders to be a function')
@@ -430,6 +446,10 @@ export function createHostProductionBootstrap(
     }
     return bridgeExecutor.execute(command, context)
   }
+  // Setup is a separate Host executor. Construction validates every backing
+  // service/terminal port before any corresponding capability is advertised.
+  const setupAdapter = options.setup ? createHostProductionSetupAdapter(options.setup) : null
+  let historyAdapter: ReturnType<typeof createHostProductionHistoryAdapter> | null = null
 
   /* ---- 2. healthProvider circularity ---- */
   // The supervisor owns the honest health projection (it alone knows whether
@@ -458,6 +478,12 @@ export function createHostProductionBootstrap(
   let compositionRef: HostMainComposition | null = null
 
   const pipelineFactory = (runtime: HostRuntimeBootstrap): HostDeferredAllowPipeline => {
+    if (options.history) {
+      historyAdapter = createHostProductionHistoryAdapter({
+        ...options.history,
+        getPosition: () => runtime.getPosition()
+      })
+    }
     const resolver = new HostDeferredCommandEnvelopeResolver({
       envelopeStore: runtime.envelopeStore,
       receiptStore: runtime.receiptStore,
@@ -512,8 +538,39 @@ export function createHostProductionBootstrap(
     authorityEvaluator,
     healthProvider,
     threadOffersProvider,
+    ...(setupAdapter
+      ? {
+          setupExecutor: setupAdapter.setupExecutor,
+          providerStatusesProvider: () => setupAdapter.providerStatuses(),
+          providerOffersProvider: (providerId: string) => setupAdapter.providerOffers(providerId),
+          providerAuthFlowsProvider: (providerId: string) =>
+            setupAdapter.providerAuthFlows(providerId),
+          providerAuthStatusProvider: (providerId: string) =>
+            setupAdapter.providerAuthStatus(providerId)
+        }
+      : {}),
+    ...(options.history
+      ? {
+          threadHistoryProvider: (
+            request: Parameters<NonNullable<HostMainCompositionInput['threadHistoryProvider']>>[0]
+          ) => {
+            if (!historyAdapter) throw new Error('Host history adapter is unavailable')
+            return historyAdapter.threadHistory(request)
+          },
+          historySinceProvider: (
+            request: Parameters<NonNullable<HostMainCompositionInput['historySinceProvider']>>[0]
+          ) => {
+            if (!historyAdapter) throw new Error('Host history adapter is unavailable')
+            return historyAdapter.historySince(request)
+          }
+        }
+      : {}),
     host: options.host,
-    hostCapabilityOffer: hostProductionCapabilityOffer(options),
+    hostCapabilityOffer: hostProductionCapabilityOffer({
+      options,
+      setupAvailable: setupAdapter !== null,
+      historyAvailable: options.history !== undefined
+    }),
     pipelineFactory,
     ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
     ...(options.nowIso ? { now: options.nowIso } : {})

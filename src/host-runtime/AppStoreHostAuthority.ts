@@ -22,6 +22,26 @@ import {
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import {
+  decodeHostHistorySinceRequest,
+  decodeHostHistorySinceResult,
+  decodeHostThreadHistoryPage,
+  decodeHostThreadHistoryRequest,
+  type HostHistorySinceRequest,
+  type HostHistorySinceResult,
+  type HostThreadHistoryPage,
+  type HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
+import {
+  decodeHostProviderAuthFlows,
+  decodeHostProviderAuthStatusProjection,
+  decodeHostProviderOffersProjection,
+  decodeHostProviderStatuses,
+  type HostProviderAuthFlowProjection,
+  type HostProviderAuthStatusProjection,
+  type HostProviderOffersProjection,
+  type HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
+import {
   hostAuthorityCommandActorMatchesContext,
   isExactHostActorIdentity,
   parseHostAuthorityReceiptLookup,
@@ -141,6 +161,25 @@ export type AppStoreHostAuthorityThreadOffersProvider = (
   threadId: string
 ) => TaskWraithControlThreadOffers | Promise<TaskWraithControlThreadOffers>
 
+export type AppStoreHostAuthorityProviderStatusesProvider = () =>
+  | readonly HostProviderStatusProjection[]
+  | Promise<readonly HostProviderStatusProjection[]>
+export type AppStoreHostAuthorityProviderOffersProvider = (
+  providerId: string
+) => HostProviderOffersProjection | Promise<HostProviderOffersProjection>
+export type AppStoreHostAuthorityProviderAuthFlowsProvider = (
+  providerId: string
+) => readonly HostProviderAuthFlowProjection[] | Promise<readonly HostProviderAuthFlowProjection[]>
+export type AppStoreHostAuthorityProviderAuthStatusProvider = (
+  providerId: string
+) => HostProviderAuthStatusProjection | Promise<HostProviderAuthStatusProjection>
+export type AppStoreHostAuthorityThreadHistoryProvider = (
+  request: HostThreadHistoryRequest
+) => HostThreadHistoryPage | Promise<HostThreadHistoryPage>
+export type AppStoreHostAuthorityHistorySinceProvider = (
+  request: HostHistorySinceRequest
+) => HostHistorySinceResult | Promise<HostHistorySinceResult>
+
 export type AppStoreHostAuthorityShutdownCallback = () => void | Promise<void>
 
 /**
@@ -182,6 +221,12 @@ export interface AppStoreHostAuthorityPorts {
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
+  readonly providerStatusesProvider?: AppStoreHostAuthorityProviderStatusesProvider
+  readonly providerOffersProvider?: AppStoreHostAuthorityProviderOffersProvider
+  readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
+  readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
+  readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   /** Optional only for pre-cutover compatibility; present enables S2–S5. */
   readonly deferredAsk?: HostDeferredAskPorts
@@ -216,6 +261,17 @@ function contextActorMatchesClient(context: HostAuthorityCallContext): boolean {
     context.actor.clientClass === context.client.clientClass &&
     typeof context.client.clientVersion === 'string' &&
     context.client.clientVersion.length > 0
+  )
+}
+
+function isBoundedHostId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= HOST_PROTOCOL_MAX_ID &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- Host protocol IDs reject terminal controls.
+    !/[\u0000-\u001f\u007f]/.test(value)
   )
 }
 
@@ -310,6 +366,12 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
+  private readonly providerStatusesProvider?: AppStoreHostAuthorityProviderStatusesProvider
+  private readonly providerOffersProvider?: AppStoreHostAuthorityProviderOffersProvider
+  private readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
+  private readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
+  private readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  private readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly domainPublisher: HostDomainDeltaPublisher
@@ -342,6 +404,18 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.healthProvider !== 'function' ||
       (ports.threadOffersProvider !== undefined &&
         typeof ports.threadOffersProvider !== 'function') ||
+      (ports.providerStatusesProvider !== undefined &&
+        typeof ports.providerStatusesProvider !== 'function') ||
+      (ports.providerOffersProvider !== undefined &&
+        typeof ports.providerOffersProvider !== 'function') ||
+      (ports.providerAuthFlowsProvider !== undefined &&
+        typeof ports.providerAuthFlowsProvider !== 'function') ||
+      (ports.providerAuthStatusProvider !== undefined &&
+        typeof ports.providerAuthStatusProvider !== 'function') ||
+      (ports.threadHistoryProvider !== undefined &&
+        typeof ports.threadHistoryProvider !== 'function') ||
+      (ports.historySinceProvider !== undefined &&
+        typeof ports.historySinceProvider !== 'function') ||
       typeof ports.onShutdown !== 'function' ||
       (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk))
     ) {
@@ -354,6 +428,12 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.setupExecutor = ports.setupExecutor
     this.healthProvider = ports.healthProvider
     this.threadOffersProvider = ports.threadOffersProvider
+    this.providerStatusesProvider = ports.providerStatusesProvider
+    this.providerOffersProvider = ports.providerOffersProvider
+    this.providerAuthFlowsProvider = ports.providerAuthFlowsProvider
+    this.providerAuthStatusProvider = ports.providerAuthStatusProvider
+    this.threadHistoryProvider = ports.threadHistoryProvider
+    this.historySinceProvider = ports.historySinceProvider
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
@@ -450,6 +530,129 @@ export class AppStoreHostAuthority implements HostAuthority {
         return { ok: false, error: 'host_unavailable' }
       }
       return { ok: true, value: offers }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async providerStatuses(
+    context: HostAuthorityCallContext
+  ): Promise<HostAuthorityResult<readonly HostProviderStatusProjection[]>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    if (!this.providerStatusesProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostProviderStatuses(await this.providerStatusesProvider())
+      return decoded.ok
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async providerOffers(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<HostProviderOffersProjection>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    if (!isBoundedHostId(providerId) || !this.providerOffersProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostProviderOffersProjection(
+        await this.providerOffersProvider(providerId)
+      )
+      return decoded.ok && decoded.value.providerId === providerId
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async providerAuthFlows(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<readonly HostProviderAuthFlowProjection[]>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    if (!isBoundedHostId(providerId) || !this.providerAuthFlowsProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostProviderAuthFlows(await this.providerAuthFlowsProvider(providerId))
+      return decoded.ok
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async providerAuthStatus(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<HostProviderAuthStatusProjection>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    if (!isBoundedHostId(providerId) || !this.providerAuthStatusProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostProviderAuthStatusProjection(
+        await this.providerAuthStatusProvider(providerId)
+      )
+      return decoded.ok && decoded.value.providerId === providerId
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async threadHistory(
+    context: HostAuthorityCallContext,
+    request: HostThreadHistoryRequest
+  ): Promise<HostAuthorityResult<HostThreadHistoryPage>> {
+    const gate = this.gate(context)
+    const decodedRequest = decodeHostThreadHistoryRequest(request)
+    if (!gate.ok) return gate
+    if (!decodedRequest.ok || !this.threadHistoryProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostThreadHistoryPage(
+        await this.threadHistoryProvider(decodedRequest.value)
+      )
+      return decoded.ok && decoded.value.threadId === decodedRequest.value.threadId
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async historySince(
+    context: HostAuthorityCallContext,
+    request: HostHistorySinceRequest
+  ): Promise<HostAuthorityResult<HostHistorySinceResult>> {
+    const gate = this.gate(context)
+    const decodedRequest = decodeHostHistorySinceRequest(request)
+    if (!gate.ok) return gate
+    if (!decodedRequest.ok || !this.historySinceProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostHistorySinceResult(
+        await this.historySinceProvider(decodedRequest.value)
+      )
+      return decoded.ok && decoded.value.threadId === decodedRequest.value.threadId
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
     } catch {
       return { ok: false, error: 'host_unavailable' }
     }

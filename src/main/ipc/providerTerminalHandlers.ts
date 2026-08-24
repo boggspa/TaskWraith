@@ -16,6 +16,7 @@ import {
   buildProviderManualSetupFlow,
   providerManualSetupNotice
 } from '../providers/ProviderManualSetupFlowCatalog'
+import { createProviderTerminalSetupController } from '../providers/ProviderTerminalSetupController'
 
 /** Best-effort realpath. A failure classifies as 'unknown', which refuses to
  *  guess rather than upgrading the wrong copy. */
@@ -92,7 +93,7 @@ function psWriteStatusLine(value: string): string {
   )})`
 }
 
-async function openProviderAuthTerminal(
+export async function openProviderAuthTerminal(
   deps: ProviderTerminalHandlersDeps,
   provider: ProviderId,
   action: TerminalAction
@@ -429,16 +430,19 @@ async function openProviderAuthTerminal(
 }
 
 export function registerProviderTerminalHandlers(deps: ProviderTerminalHandlersDeps): void {
+  const controller = createProviderTerminalSetupController({
+    launch: (provider, action) => openProviderAuthTerminal(deps, provider, action)
+  })
   ipcMain.handle('provider:open-login-terminal', async (_e, provider: ProviderId) =>
-    openProviderAuthTerminal(deps, provider, 'login')
+    controller.open(provider, 'login')
   )
   ipcMain.handle('provider:open-logout-terminal', async (_e, provider: ProviderId) =>
-    openProviderAuthTerminal(deps, provider, 'logout')
+    controller.open(provider, 'logout')
   )
   ipcMain.handle('provider:open-upgrade-terminal', async (_e, provider: ProviderId) =>
-    openProviderAuthTerminal(deps, provider, 'upgrade')
+    controller.open(provider, 'upgrade')
   )
   ipcMain.handle('provider:open-kimi-upgrade-terminal', async () =>
-    openProviderAuthTerminal(deps, 'kimi', 'upgrade')
+    controller.open('kimi', 'upgrade')
   )
 }
