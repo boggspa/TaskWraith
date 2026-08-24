@@ -82,35 +82,51 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
  * fresh gateway session sees. The full catalogue remains callable through the
  * two capability gateway tools, with Ollama's legacy `tool_help` kept
  * alongside. Resumed seats pass their pinned profile id to retain older direct
- * membership. Sub-thread tools (including `delegate_wave`) are stripped below.
+ * membership. Delegation/sub-thread tools are stripped below unless the
+ * signed run posture carries the exact UltraTask auto-allow source.
  */
 export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V17_MCP_DIRECT_TOOLS
 
 /**
- * Sub-thread control is a remote/brokered seat capability. Ollama's local tool
- * loop must never advertise or execute these — including via capability_invoke —
- * even though they remain in the shared gateway direct catalog for other
- * providers. Capability UI already reports Ollama cannot spawn sub-threads.
+ * Delegation/sub-thread tools conditionally unlocked by the main-issued,
+ * HMAC-signed UltraTask run posture. This is the complete local lifecycle:
+ * spawn, wait/read, cancel, and advisory wave ownership. `ultra_task` belongs
+ * here too because it lowers to `delegate_wave`; leaving it in the ordinary
+ * surface would be a second door around the conditional grant.
  */
-export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
+export const OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES = Object.freeze([
   'delegate_to_subthread',
   'delegate_wave',
+  'ultra_task',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
   'claim_fleet_wave'
 ] as const satisfies readonly OllamaToolName[])
 
-const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(
-  OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES
+const OLLAMA_ULTRATASK_DELEGATION_TOOL_NAME_SET = new Set<string>(
+  OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES
 )
 
-export function isOllamaExcludedSubthreadTool(toolName: string): boolean {
-  return OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET.has(toolName)
+export function isOllamaUltraTaskDelegationTool(toolName: string): boolean {
+  return OLLAMA_ULTRATASK_DELEGATION_TOOL_NAME_SET.has(toolName)
 }
 
-function withoutOllamaExcludedSubthreadTools(names: readonly OllamaToolName[]): OllamaToolName[] {
-  return names.filter((toolName) => !isOllamaExcludedSubthreadTool(toolName))
+function filterOllamaUltraTaskDelegationTools(
+  names: readonly OllamaToolName[],
+  ultraTaskDelegationAutoAllow: boolean
+): OllamaToolName[] {
+  if (!ultraTaskDelegationAutoAllow) {
+    return names.filter((toolName) => !isOllamaUltraTaskDelegationTool(toolName))
+  }
+  // The immutable gateway direct profile does not include every lifecycle
+  // reader/cancel verb. UltraTask consent is an explicit run-scoped overlay,
+  // so add the fixed lifecycle set without mutating or pretending to advance
+  // the underlying provider-session profile receipt.
+  return [
+    ...names,
+    ...OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES.filter((toolName) => !names.includes(toolName))
+  ]
 }
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
@@ -130,6 +146,8 @@ export function ollamaAdvertisedToolNames(
     readOnly?: boolean
     plan?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
   } = {}
 ): OllamaToolName[] {
   // Ollama's local parser has one compact callable-name grammar. Keep Mesh on
@@ -162,7 +180,11 @@ export function ollamaAdvertisedToolNames(
   const directNames = localProfileId
     ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
     : OLLAMA_ADVERTISED_TOOL_NAMES
-  let names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(directNames)
+  // Start from the ordinary posture surface. The signed UltraTask lifecycle
+  // overlay is added only AFTER generic read-only/Plan intersection below;
+  // otherwise those generic sets would strip lifecycle readers that this exact
+  // consent intentionally enables.
+  let names: OllamaToolName[] = filterOllamaUltraTaskDelegationTools(directNames, false)
   if (options.networkAccess === 'deny') {
     names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
   }
@@ -172,7 +194,7 @@ export function ollamaAdvertisedToolNames(
       : READ_ONLY_MCP_ADVERTISE_TOOL_SET
     names = names.filter((toolName) => postureNames.has(toolName))
   }
-  return names
+  return filterOllamaUltraTaskDelegationTools(names, options.ultraTaskDelegationAutoAllow === true)
 }
 
 /** Is this tool part of the immutable gateway direct set (vs the discovered tail)? */
@@ -186,9 +208,16 @@ export function isOllamaAdvertisedTool(toolName: string): boolean {
  * `name` argument of capability_invoke and do not widen the grammar.
  */
 export function ollamaCallableToolNames(
-  options: { networkAccess?: string | null } = {}
+  options: {
+    networkAccess?: string | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
+  } = {}
 ): OllamaToolName[] {
-  const names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
+  const names: OllamaToolName[] = filterOllamaUltraTaskDelegationTools(
+    OLLAMA_ADVERTISED_TOOL_NAMES,
+    options.ultraTaskDelegationAutoAllow === true
+  )
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names
@@ -217,13 +246,20 @@ export function isOllamaToolControlTier(value: unknown): value is OllamaToolCont
 
 export function ollamaToolNamesForTier(
   _tier: OllamaToolControlTier | string | undefined | null,
-  options: { networkAccess?: string | null } = {}
+  options: {
+    networkAccess?: string | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
+  } = {}
 ): OllamaToolName[] {
   // The retired tier argument no longer changes membership. Ollama shares the
-  // compact gateway direct profile (minus hard-excluded sub-thread tools);
-  // hidden capabilities are invoked through the gateway and retain their
-  // standard run-role policy at main's executor.
-  const names = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
+  // compact gateway direct profile. Delegation joins it only for a signed
+  // UltraTask run; hidden capabilities are invoked through the gateway and
+  // retain their standard run-role policy at main's executor.
+  const names = filterOllamaUltraTaskDelegationTools(
+    OLLAMA_ADVERTISED_TOOL_NAMES,
+    options.ultraTaskDelegationAutoAllow === true
+  )
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names

@@ -24,6 +24,7 @@ const BASE_INPUT: ResolveOllamaFinalLaunchPlanInput = {
   effectiveNetworkAccess: 'deny',
   readOnly: true,
   plan: true,
+  ultraTaskDelegationAutoAllow: false,
   ollamaRunProfile: 'provider_parity',
   taskWraithMcpAdvertised: true,
   taskWraithMcpProfileId: 'taskwraith-gateway-v8',
@@ -99,13 +100,22 @@ describe('OllamaFinalLaunchPlan', () => {
         networkAccess,
         readOnly,
         plan,
+        ultraTaskDelegationAutoAllow,
         taskWraithMcpProfileId
       }) => {
-        expect({ compact, networkAccess, readOnly, plan, taskWraithMcpProfileId }).toEqual({
+        expect({
+          compact,
+          networkAccess,
+          readOnly,
+          plan,
+          ultraTaskDelegationAutoAllow,
+          taskWraithMcpProfileId
+        }).toEqual({
           compact: true,
           networkAccess: 'deny',
           readOnly: true,
           plan: true,
+          ultraTaskDelegationAutoAllow: false,
           taskWraithMcpProfileId: 'taskwraith-gateway-v8'
         })
         return nativeDefinitions
@@ -135,6 +145,7 @@ describe('OllamaFinalLaunchPlan', () => {
       networkAccess: 'deny',
       readOnly: true,
       plan: true,
+      ultraTaskDelegationAutoAllow: false,
       availableToolNames: ['read_file'],
       formatToolNames: ['read_file'],
       temperature: 0.25,
@@ -171,6 +182,52 @@ describe('OllamaFinalLaunchPlan', () => {
     expect(Object.isFrozen(plan?.nativeToolDefinitions)).toBe(true)
     expect(Object.isFrozen(plan?.sessionMemory)).toBe(true)
     expect(Object.isFrozen(plan?.openingMessages[0])).toBe(true)
+  })
+
+  it('threads signed UltraTask delegation into native definitions and the opening prompt', async () => {
+    const buildNativeToolDefinitions = vi.fn(() => [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'delegate_wave',
+          description: 'Delegate a wave.',
+          parameters: { type: 'object' as const, properties: {} }
+        }
+      }
+    ])
+    const buildOpeningMessages = vi.fn(({ userPrompt }) => [
+      { role: 'system' as const, content: 'UltraTask delegation ready.' },
+      { role: 'user' as const, content: userPrompt }
+    ])
+    const plan = await resolveOllamaFinalLaunchPlan(
+      {
+        ...BASE_INPUT,
+        ultraTaskDelegationAutoAllow: true,
+        taskWraithMcpProfileId: 'taskwraith-gateway-v17',
+        ensemble: { enabled: false }
+      },
+      {
+        ...minimalLaunchDeps('qwen3:4b-instruct:latest', {
+          capabilities: ['completion', 'tools']
+        }),
+        buildNativeToolDefinitions,
+        buildOpeningMessages
+      }
+    )
+
+    expect(buildNativeToolDefinitions).toHaveBeenCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+    expect(buildOpeningMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+    expect(plan?.ultraTaskDelegationAutoAllow).toBe(true)
+    expect(plan?.availableToolNames).toContain('delegate_wave')
+    expect(plan?.firstRequest).toMatchObject({
+      tools: [
+        expect.objectContaining({ function: expect.objectContaining({ name: 'delegate_wave' }) })
+      ]
+    })
   })
 
   it('records the effective wire fallback temperature', async () => {

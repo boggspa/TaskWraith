@@ -90,7 +90,7 @@ describe('createOllamaMainRuntime', () => {
     )
   })
 
-  it('hard-denies sub-thread tools on the local loop, including capability_invoke', async () => {
+  it('denies sub-thread tools without UltraTask consent, including capability_invoke', async () => {
     const deps = dependencies()
     const runtime = createOllamaMainRuntime(deps)
 
@@ -102,7 +102,7 @@ describe('createOllamaMainRuntime', () => {
       appChatId: 'chat-1'
     })
     expect(direct.ok).toBe(false)
-    expect(direct.output).toMatch(/cannot use TaskWraith sub-thread tools/i)
+    expect(direct.output).toMatch(/only when this run was started from the UltraTask/i)
     expect(deps.executeMcpTool).not.toHaveBeenCalled()
 
     const viaInvoke = await runtime.executeLocalTool({
@@ -116,8 +116,54 @@ describe('createOllamaMainRuntime', () => {
       appChatId: 'chat-1'
     })
     expect(viaInvoke.ok).toBe(false)
-    expect(viaInvoke.output).toMatch(/cannot invoke TaskWraith sub-thread tools/i)
+    expect(viaInvoke.output).toMatch(/unless this run was started from the UltraTask/i)
     expect(deps.executeMcpTool).not.toHaveBeenCalled()
+  })
+
+  it('routes direct and capability-invoked delegation with UltraTask auto-allow', async () => {
+    const deps = dependencies()
+    const runtime = createOllamaMainRuntime(deps)
+
+    const direct = await runtime.executeLocalTool({
+      toolName: 'delegate_wave',
+      arguments: {
+        lifecycle: 'ephemeral',
+        workers: [{ role: 'reviewer', prompt: 'Review the focused change.' }]
+      },
+      workspacePath: '/repo',
+      appRunId: 'run-ultratask',
+      appChatId: 'chat-ultratask',
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(direct.ok).toBe(true)
+    expect(deps.executeMcpTool).toHaveBeenCalledWith(
+      'delegate_wave',
+      expect.objectContaining({ workers: expect.any(Array) }),
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      'ollama'
+    )
+
+    const viaInvoke = await runtime.executeLocalTool({
+      toolName: 'capability_invoke',
+      arguments: {
+        name: 'delegate_to_subthread',
+        arguments: { provider: 'codex', prompt: 'Inspect one focused area.' }
+      },
+      workspacePath: '/repo',
+      appRunId: 'run-ultratask',
+      appChatId: 'chat-ultratask',
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(viaInvoke.ok).toBe(true)
+    expect(deps.executeMcpTool).toHaveBeenCalledWith(
+      'capability_invoke',
+      {
+        name: 'delegate_to_subthread',
+        arguments: { provider: 'codex', prompt: 'Inspect one focused area.' }
+      },
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      'ollama'
+    )
   })
 
   it('formats workspace search results without bypassing the scoped executor', async () => {
@@ -245,6 +291,36 @@ describe('createOllamaMainRuntime', () => {
       appRunId: 'run-1',
       appChatId: 'chat-1'
     })
+  })
+
+  it('records the signed UltraTask delegation source as local run context', async () => {
+    const registerRunSession = vi.fn(() => ({}))
+    const runProvider = vi.fn<OllamaMainRuntimeDependencies['runProvider']>(async () => {})
+    const runtime = createOllamaMainRuntime(dependencies({ registerRunSession, runProvider }))
+
+    await runtime.runProviderAdapter(
+      { sender: {} as Electron.WebContents } as Electron.IpcMainInvokeEvent,
+      {
+        provider: 'ollama',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'Delegate an independent review.',
+        appRunId: 'run-ultratask',
+        appChatId: 'chat-ultratask',
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        } as any
+      }
+    )
+
+    expect(registerRunSession).toHaveBeenCalledWith(
+      'ollama',
+      expect.anything(),
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      '/repo',
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+    expect(runProvider).toHaveBeenCalledOnce()
   })
 
   it('does not start transport when run-session registration is refused', async () => {

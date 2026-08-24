@@ -16,6 +16,7 @@ import {
 } from '../mcp/McpToolGateway'
 import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
 import { formatSteeringInjection } from '../steering/BrokerSteerTransport'
@@ -411,6 +412,8 @@ export interface OllamaToolExecutionRequest {
   appChatId?: string
   appRunId?: string
   toolControlTier?: OllamaToolControlTier
+  /** Main-derived from the HMAC-signed UltraTask delegation consent. */
+  ultraTaskDelegationAutoAllow?: boolean
   /** Immutable MCP catalogue receipt for profile-aware tool_help lookup. */
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
 }
@@ -462,6 +465,8 @@ export interface OllamaOpeningMessagesInput {
   networkAccess?: string | null
   readOnly?: boolean
   plan?: boolean
+  /** Main-derived from the HMAC-signed UltraTask delegation consent. */
+  ultraTaskDelegationAutoAllow?: boolean
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   model: string
   workspaceIndexBlock: string
@@ -483,6 +488,7 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
             networkAccess: input.networkAccess,
             readOnly: input.readOnly,
             plan: input.plan,
+            ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow,
             taskWraithMcpProfileId: input.taskWraithMcpProfileId
           }),
           OLLAMA_CAPABILITY_GATEWAY_PROMPT
@@ -2117,6 +2123,156 @@ function ollamaNativeToolParameters(
         },
         required: ['canvasId']
       }
+    case 'delegate_to_subthread':
+      return {
+        description: compact
+          ? 'Spawn or recall one isolated worker; returns subThreadId.'
+          : 'Spawn one context-isolated TaskWraith worker, or recall a prior worker by subThreadId. UltraTask selection pre-authorizes the delegation route; call ensemble_await with the returned subThreadId.',
+        properties: {
+          provider: { ...STRING, description: 'Selectable target provider.' },
+          prompt: { ...STRING, description: 'Focused worker task.' },
+          model: { ...STRING, description: 'Optional spawn-only target model.' },
+          reasoningEffort: {
+            ...STRING,
+            enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+            description: 'Optional spawn-only target reasoning effort.'
+          },
+          kimiThinking: { type: 'boolean', description: 'Optional legacy Kimi thinking flag.' },
+          returnResult: { type: 'boolean', description: 'Return the typed result to this parent.' },
+          subThreadId: {
+            ...STRING,
+            description: 'Optional prior worker id for recall; omit to spawn fresh.'
+          }
+        },
+        required: ['provider', 'prompt']
+      }
+    case 'delegate_wave':
+      return {
+        description: compact
+          ? 'Spawn an isolated worker wave; returns waveId.'
+          : 'Spawn an ephemeral or durable wave of isolated TaskWraith workers. UltraTask selection pre-authorizes the delegation route; call ensemble_await with the returned waveId.',
+        properties: {
+          lifecycle: {
+            ...STRING,
+            enum: ['ephemeral', 'durable'],
+            description: 'Ephemeral workers die on return; durable workers remain recallable.'
+          },
+          allowMultiProvider: {
+            type: 'boolean',
+            description: 'Set true only when the user requested a multi-provider fleet.'
+          },
+          workers: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 64,
+            description: 'Fresh worker specifications.',
+            items: {
+              type: 'object',
+              properties: {
+                provider: { type: 'string', description: 'Optional target provider.' },
+                prompt: { type: 'string', description: 'Focused worker task.' },
+                role: { type: 'string', enum: ['scout', 'worker', 'reviewer'] },
+                label: { type: 'string', description: 'Optional short display label.' },
+                model: { type: 'string', description: 'Optional target model.' },
+                reasoningEffort: {
+                  type: 'string',
+                  enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode']
+                },
+                kimiThinking: { type: 'boolean' }
+              },
+              required: ['prompt']
+            }
+          },
+          join: {
+            type: 'object',
+            description: 'Optional quorum/deadline policy; TaskWraith binds the waveId.',
+            properties: {
+              required: { type: 'boolean' },
+              quorum: { type: 'number' },
+              deadlineMs: { type: 'number' },
+              debounceMs: { type: 'number' }
+            }
+          }
+        },
+        required: ['workers']
+      }
+    case 'ultra_task':
+      return {
+        description: compact
+          ? 'Build and launch an UltraTask worker wave.'
+          : 'Build and launch the standard UltraTask researcher/worker/reviewer wave, using the highest supported reasoning tier.',
+        properties: {
+          task: { ...STRING, minLength: 1, description: 'Primary task for the worker wave.' },
+          provider: { ...STRING, description: 'Optional target provider.' },
+          model: { ...STRING, description: 'Optional target model.' },
+          enableFanout: { type: 'boolean', description: 'Enable researcher fan-out.' },
+          enableReview: { type: 'boolean', description: 'Enable the reviewer layer.' },
+          maxWorkers: { type: 'number', minimum: 2, maximum: 64 },
+          reasoningEffort: {
+            ...STRING,
+            enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode']
+          },
+          returnResult: { type: 'boolean' }
+        },
+        required: ['task']
+      }
+    case 'list_subthreads':
+      return {
+        description: compact
+          ? 'List child workers or poll a wave.'
+          : 'List lifecycle-aware child workers; pass waveId to poll a delegated wave.',
+        properties: {
+          parentChatId: { ...STRING, description: 'Optional parent chat id.' },
+          includeArchived: { type: 'boolean' },
+          includePrompt: { type: 'boolean' },
+          waveId: { ...STRING, description: 'Optional delegated wave id.' }
+        },
+        required: []
+      }
+    case 'read_subthread_result':
+      return {
+        description: compact
+          ? 'Read one child worker result.'
+          : 'Read lifecycle, result, bounded transcript, or events from one child worker.',
+        properties: {
+          subThreadId: { ...STRING, description: 'Child worker id.' },
+          depth: {
+            ...STRING,
+            enum: ['summary', 'final-only', 'full', 'events-only'],
+            description: 'Requested result detail.'
+          },
+          includeRuns: { type: 'boolean' },
+          includeMessages: { type: 'boolean' },
+          includeEvents: { type: 'boolean' },
+          messageLimit: { type: 'number' },
+          eventLimit: { type: 'number' }
+        },
+        required: ['subThreadId']
+      }
+    case 'cancel_subthread':
+      return {
+        description: compact
+          ? 'Cancel one owned child worker.'
+          : 'Cancel queued follow-ups and the active run for one child worker owned by this parent.',
+        properties: {
+          subThreadId: { ...STRING, description: 'Child worker id.' },
+          reason: { ...STRING, description: 'Optional cancellation reason.' }
+        },
+        required: ['subThreadId']
+      }
+    case 'claim_fleet_wave':
+      return {
+        description: compact
+          ? 'Claim, release, or inspect a wave lease.'
+          : 'Manage the advisory ownership lease for a delegated wave so panel seats do not double-adopt results.',
+        properties: {
+          waveId: { ...STRING, description: 'Delegated wave id.' },
+          action: { ...STRING, enum: ['claim', 'release', 'status'] },
+          takeover: { type: 'boolean' },
+          ttlMinutes: { type: 'number' }
+        },
+        required: ['waveId']
+      }
     case 'list_active_runs':
       return {
         description: compact
@@ -2279,6 +2435,8 @@ export function ollamaNativeToolDefinitions(
     networkAccess?: string | null
     readOnly?: boolean
     plan?: boolean
+    /** Main-derived from the HMAC-signed UltraTask delegation consent. */
+    ultraTaskDelegationAutoAllow?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   }
 ): OllamaNativeToolDefinition[] {
@@ -2291,6 +2449,7 @@ export function ollamaNativeToolDefinitions(
     networkAccess: options?.networkAccess,
     readOnly: options?.readOnly,
     plan: options?.plan,
+    ultraTaskDelegationAutoAllow: options?.ultraTaskDelegationAutoAllow,
     taskWraithMcpProfileId: options?.taskWraithMcpProfileId
   }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
@@ -3132,6 +3291,12 @@ const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'str
     rename_path: { path: 'string', newName: 'string' },
     run_shell_command: { command: 'string' },
     workspace_search: { query: 'string' },
+    delegate_to_subthread: { provider: 'string', prompt: 'string', subThreadId: 'string' },
+    delegate_wave: { workers: 'array' },
+    ultra_task: { task: 'string' },
+    read_subthread_result: { subThreadId: 'string' },
+    cancel_subthread: { subThreadId: 'string' },
+    claim_fleet_wave: { waveId: 'string' },
     todo_write: { todos: 'array' },
     blackboard_post: {
       key: 'string',
@@ -3555,6 +3720,7 @@ export async function runOllamaProvider(
   route: AgentRunRoute
 ): Promise<void> {
   const settings = deps.getSettings()
+  const ultraTaskDelegationAutoAllow = hasUltraTaskDelegationAutoAllow(payload.effectivePermissions)
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   const cloudApiKey = deps.getCloudApiKey?.() || null
   const controller = new AbortController()
@@ -3594,6 +3760,7 @@ export async function runOllamaProvider(
         effectiveNetworkAccess: payload.effectivePermissions?.networkAccess,
         readOnly: payload.effectivePermissions?.readOnly === true,
         plan: payload.effectivePermissions?.presetId === 'plan',
+        ultraTaskDelegationAutoAllow,
         ollamaRunProfile: payload.ollamaRunProfile,
         reasoningEffort: payload.reasoningEffort,
         taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
@@ -3654,6 +3821,7 @@ export async function runOllamaProvider(
       runProfile,
       nativeToolsSupported,
       oneToolAtATime,
+      ultraTaskDelegationAutoAllow: plannedUltraTaskDelegationAutoAllow,
       nativeToolDefinitions: nativeToolDefs,
       availableToolNames,
       formatToolNames,
@@ -4181,6 +4349,7 @@ export async function runOllamaProvider(
           appChatId: route.appChatId || payload.appChatId,
           appRunId: route.appRunId || payload.appRunId,
           toolControlTier,
+          ultraTaskDelegationAutoAllow: plannedUltraTaskDelegationAutoAllow,
           taskWraithMcpProfileId: payload.taskWraithMcpProfileId
         }
         const hostCommandProjection = deps.createHostCommandProjection?.(toolExecutionRequest)

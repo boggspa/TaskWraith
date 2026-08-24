@@ -3091,6 +3091,91 @@ describe('runOllamaProvider streaming', () => {
     expect(enumNames).not.toContain('skill_read')
   })
 
+  it('derives the local delegation request flag from signed UltraTask posture', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    let chatCall = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-ultratask',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        chatCall += 1
+        if (chatCall === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'delegate_wave',
+                      arguments: {
+                        lifecycle: 'ephemeral',
+                        workers: [{ role: 'reviewer', prompt: 'Review the focused change.' }]
+                      }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Review wave returned.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 3 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'wave-1 spawned' }))
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: 'Delegate an independent review of the focused change.',
+        model: 'gpt_oss_20b',
+        effectivePermissions: {
+          readOnly: true,
+          presetId: 'read_only',
+          networkAccess: 'deny',
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        } as any
+      },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(2)
+    const firstToolNames = (chatBodies[0].tools || []).map((tool: any) => tool.function?.name)
+    expect(firstToolNames).toContain('delegate_to_subthread')
+    expect(firstToolNames).toContain('delegate_wave')
+    expect(firstToolNames).toContain('ultra_task')
+    expect(chatBodies[0].messages?.[0]?.content).toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+    expect(executeTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'delegate_wave',
+        ultraTaskDelegationAutoAllow: true
+      })
+    )
+  })
+
   it('does not advertise edit/shell native tools to a read-only seat', async () => {
     const chatBodies: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -4394,6 +4479,54 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(names).not.toContain('skill_list')
     expect(names).not.toContain('skill_read')
     expect(names.slice(direct.length)).toEqual([...CAPABILITY_GATEWAY_TOOL_NAMES, 'tool_help'])
+  })
+
+  it('adds delegation definitions with real schemas only for signed UltraTask auto-allow', () => {
+    const ordinaryNames = ollamaNativeToolDefinitions('read_only', { readOnly: true }).map(
+      (definition) => definition.function.name
+    )
+    expect(ordinaryNames).not.toContain('delegate_to_subthread')
+    expect(ordinaryNames).not.toContain('delegate_wave')
+    expect(ordinaryNames).not.toContain('ultra_task')
+
+    const definitions = ollamaNativeToolDefinitions('read_only', {
+      readOnly: true,
+      ultraTaskDelegationAutoAllow: true
+    })
+    const names = definitions.map((definition) => definition.function.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'delegate_to_subthread',
+        'delegate_wave',
+        'ultra_task',
+        'list_subthreads',
+        'read_subthread_result',
+        'cancel_subthread'
+      ])
+    )
+    expect(
+      definitions.find((definition) => definition.function.name === 'delegate_to_subthread')
+        ?.function.parameters
+    ).toMatchObject({
+      required: ['provider', 'prompt'],
+      properties: {
+        provider: { type: 'string' },
+        prompt: { type: 'string' },
+        subThreadId: { type: 'string' }
+      }
+    })
+    expect(
+      definitions.find((definition) => definition.function.name === 'delegate_wave')?.function
+        .parameters
+    ).toMatchObject({
+      required: ['workers'],
+      properties: {
+        workers: {
+          type: 'array',
+          items: { required: ['prompt'] }
+        }
+      }
+    })
   })
 
   it('declares a compact action-plus-params shape for portable Ensemble control', () => {

@@ -72,6 +72,8 @@ export interface OllamaFinalLaunchPlan {
   readonly networkAccess: AgenticNetworkPolicy
   readonly readOnly: boolean
   readonly plan: boolean
+  /** Exact run-scoped delegation exception derived from the signed posture. */
+  readonly ultraTaskDelegationAutoAllow: boolean
   readonly nativeToolDefinitions: OllamaNativeToolDefinition[]
   readonly availableToolNames: string[]
   readonly formatToolNames: string[]
@@ -104,6 +106,8 @@ export interface ResolveOllamaFinalLaunchPlanInput {
   readonly effectiveNetworkAccess: string | null | undefined
   readonly readOnly: boolean
   readonly plan: boolean
+  /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+  readonly ultraTaskDelegationAutoAllow?: boolean
   readonly ollamaRunProfile: OllamaRunProfileId | string | null | undefined
   readonly reasoningEffort?: string | null
   readonly taskWraithMcpAdvertised: boolean | null | undefined
@@ -133,6 +137,7 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     networkAccess: AgenticNetworkPolicy
     readOnly: boolean
     plan: boolean
+    ultraTaskDelegationAutoAllow: boolean
     taskWraithMcpProfileId: TaskWraithMcpProfileId | null
   }): OllamaNativeToolDefinition[]
   getSessionMemory(chatId: string, memoryKey?: string): OllamaSessionMemory | null | undefined
@@ -154,6 +159,7 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     networkAccess: AgenticNetworkPolicy
     readOnly: boolean
     plan: boolean
+    ultraTaskDelegationAutoAllow: boolean
     taskWraithMcpProfileId: TaskWraithMcpProfileId | null
     model: string
     workspaceIndexBlock: string
@@ -230,6 +236,7 @@ export async function resolveOllamaFinalLaunchPlan(
     input.configuredNetworkAccess === 'deny' || input.effectiveNetworkAccess === 'deny'
       ? 'deny'
       : 'allow'
+  const ultraTaskDelegationAutoAllow = input.ultraTaskDelegationAutoAllow === true
   const nativeToolDefinitions =
     toolProtocolEnabled && nativeToolsSupported && runProfile.protocolMode !== 'json_only'
       ? deps.buildNativeToolDefinitions({
@@ -237,6 +244,7 @@ export async function resolveOllamaFinalLaunchPlan(
           networkAccess,
           readOnly: input.readOnly,
           plan: input.plan,
+          ultraTaskDelegationAutoAllow,
           taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null
         })
       : []
@@ -249,6 +257,7 @@ export async function resolveOllamaFinalLaunchPlan(
               networkAccess,
               readOnly: input.readOnly,
               plan: input.plan,
+              ultraTaskDelegationAutoAllow,
               taskWraithMcpProfileId: input.taskWraithMcpProfileId
             }),
             ...CAPABILITY_GATEWAY_TOOL_NAMES,
@@ -292,6 +301,7 @@ export async function resolveOllamaFinalLaunchPlan(
     networkAccess,
     readOnly: input.readOnly,
     plan: input.plan,
+    ultraTaskDelegationAutoAllow,
     taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null,
     model,
     workspaceIndexBlock,
@@ -371,6 +381,7 @@ export async function resolveOllamaFinalLaunchPlan(
     networkAccess,
     readOnly: input.readOnly,
     plan: input.plan,
+    ultraTaskDelegationAutoAllow,
     nativeToolDefinitions: cloneJson(nativeToolDefinitions),
     availableToolNames: [...availableToolNames],
     formatToolNames,

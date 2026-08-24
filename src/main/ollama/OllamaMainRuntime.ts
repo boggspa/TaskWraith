@@ -24,6 +24,7 @@ import type { GeminiToolContext } from '../runStateTypes'
 import type { RunManager } from '../RunManager'
 import type { AppSettings, ChatRecord, ExternalPathGrant } from '../store/types'
 import type { TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { buildOllamaToolDocSection } from './OllamaToolsDoc'
 import {
@@ -34,7 +35,7 @@ import {
   type OllamaToolExecutionRequest,
   type OllamaToolExecutionResult
 } from './OllamaProvider'
-import { isOllamaExcludedSubthreadTool } from './OllamaToolTiers'
+import { isOllamaUltraTaskDelegationTool } from './OllamaToolTiers'
 import {
   normalizeOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
@@ -318,21 +319,25 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
       // caller-owned request (tool_use / trajectory keep model-emitted args).
       request = { ...request, arguments: canonicalArguments }
 
-      if (isOllamaExcludedSubthreadTool(request.toolName)) {
-        return {
-          ok: false,
-          output:
-            'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_to_subthread / delegate_wave / list_subthreads / read_subthread_result / cancel_subthread).'
-        }
-      }
       if (
-        request.toolName === 'capability_invoke' &&
-        isOllamaExcludedSubthreadTool(String(request.arguments.name ?? ''))
+        isOllamaUltraTaskDelegationTool(request.toolName) &&
+        request.ultraTaskDelegationAutoAllow !== true
       ) {
         return {
           ok: false,
           output:
-            'Ollama local mode cannot invoke TaskWraith sub-thread tools through capability_invoke.'
+            'Ollama sub-thread delegation is available only when this run was started from the UltraTask reasoning selection.'
+        }
+      }
+      if (
+        request.toolName === 'capability_invoke' &&
+        isOllamaUltraTaskDelegationTool(String(request.arguments.name ?? '').trim()) &&
+        request.ultraTaskDelegationAutoAllow !== true
+      ) {
+        return {
+          ok: false,
+          output:
+            'Ollama cannot invoke sub-thread delegation through capability_invoke unless this run was started from the UltraTask reasoning selection.'
         }
       }
 
@@ -628,6 +633,9 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     event: IpcMainInvokeEvent,
     payload: AgentRunPayload
   ): Promise<void> {
+    const ultraTaskDelegationAutoAllow = hasUltraTaskDelegationAutoAllow(
+      payload.effectivePermissions
+    )
     const graphOwnedOllamaAttempt = Boolean(
       payload.appRunId && deps.store.getRunQueueJob(payload.appRunId)?.executionGraph
     )
@@ -660,6 +668,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         externalPathGrants: payload.externalPathGrants,
         runtimeProfileId: payload.runtimeProfileId,
         taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+        ultraTaskDelegationAutoAllow,
         effectivePermissions: payload.effectivePermissions,
         effectivePermissionsSignature: payload.effectivePermissionsSignature,
         ensembleRun: payload.ensembleRun,

@@ -292,6 +292,29 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(plan).toContain('This run is PLAN-scoped')
     expect(plan).toContain('approval modal')
   })
+
+  it('teaches the delegated-wave lifecycle only for signed UltraTask auto-allow', () => {
+    const ordinary = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', {
+      readOnly: true
+    })
+    expect(ordinary).not.toContain('delegate_to_subthread')
+    expect(ordinary).not.toContain('delegate_wave')
+    expect(ordinary).not.toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+
+    const ultraTask = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', {
+      readOnly: true,
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(ultraTask).toContain('- delegate_to_subthread:')
+    expect(ultraTask).toContain('- delegate_wave:')
+    expect(ultraTask).toContain('list_subthreads')
+    expect(ultraTask).toContain('read_subthread_result')
+    expect(ultraTask).toContain('cancel_subthread')
+    expect(ultraTask).toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+    expect(ultraTask).toContain('ensemble_await')
+    expect(ultraTask).not.toContain('write_file')
+    expect(ultraTask).not.toContain('run_shell_command')
+  })
 })
 
 describe('workflow hints', () => {

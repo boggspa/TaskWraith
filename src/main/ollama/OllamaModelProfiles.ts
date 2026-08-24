@@ -254,7 +254,9 @@ const OLLAMA_PREAMBLE_DETAILED_TOOLS = new Set<OllamaToolName>([
   'workspace_search',
   'write_file',
   'replace',
-  'run_shell_command'
+  'run_shell_command',
+  'delegate_to_subthread',
+  'delegate_wave'
 ])
 
 function describeTool(toolName: OllamaToolName): string | null {
@@ -339,6 +341,12 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'run_task') {
     return '- run_task: {"task":"test","intent":"verify the focused change"} — run a configured task/test through TaskWraith policy.'
   }
+  if (toolName === 'delegate_to_subthread') {
+    return '- delegate_to_subthread: {"provider":"codex","prompt":"Inspect one focused area and report findings.","returnResult":true} — spawn one isolated worker, then call ensemble_await with its returned subThreadId.'
+  }
+  if (toolName === 'delegate_wave') {
+    return '- delegate_wave: {"lifecycle":"ephemeral","workers":[{"role":"scout","prompt":"Inspect area A."},{"role":"reviewer","prompt":"Review area B."}]} — spawn an isolated fleet, then call ensemble_await with its returned waveId.'
+  }
   if (toolName === 'get_diagnostics') {
     return '- get_diagnostics: {"source":"typescript","path":"src","intent":"check focused diagnostics"} — run fixed workspace diagnostics through TaskWraith policy.'
   }
@@ -360,6 +368,8 @@ export function ollamaLocalToolSystemPrompt(
     networkAccess?: string | null
     readOnly?: boolean
     plan?: boolean
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   } = {}
 ): string {
@@ -373,6 +383,7 @@ export function ollamaLocalToolSystemPrompt(
     networkAccess: options.networkAccess,
     readOnly: options.readOnly,
     plan: options.plan,
+    ultraTaskDelegationAutoAllow: options.ultraTaskDelegationAutoAllow,
     taskWraithMcpProfileId: options.taskWraithMcpProfileId
   })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
@@ -417,6 +428,11 @@ export function ollamaLocalToolSystemPrompt(
   if (hasWebTools) {
     lines.push(
       'For current events, weather, prices, or anything outside your knowledge: web_search to find sources, then web_fetch a chosen URL and summarize its readable text.'
+    )
+  }
+  if (options.ultraTaskDelegationAutoAllow) {
+    lines.push(
+      'ULTRATASK DELEGATION IS AUTO-ALLOWED FOR THIS RUN because the user selected UltraTask. Use delegate_wave for parallel scouts/workers/reviewers, or delegate_to_subthread for one focused worker; TaskWraith still validates route, budget, provider, and workspace constraints. Immediately call ensemble_await with the returned waveId or subThreadId, then read the returned result before concluding.'
     )
   }
   lines.push(

@@ -3,10 +3,10 @@ import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/
 import { GATEWAY_V17_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
-  OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES,
+  OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES,
   isOllamaToolControlTier,
   isOllamaAdvertisedTool,
-  isOllamaExcludedSubthreadTool,
+  isOllamaUltraTaskDelegationTool,
   normalizeOllamaToolControlTier,
   ollamaAdvertisedToolNames,
   ollamaCallableToolNames,
@@ -34,21 +34,31 @@ describe('Ollama tool surface governance', () => {
     expect(isOllamaAdvertisedTool('canvas_render_chart')).toBe(false)
   })
 
-  it('hard-excludes sub-thread tools from the live Ollama advertise/callable surface', () => {
+  it('keeps delegation tools out of the ordinary Ollama advertise/callable surface', () => {
     const advertised = ollamaAdvertisedToolNames()
-    const excludedDirectCount = OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES.filter((name) =>
+    const excludedDirectCount = OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES.filter((name) =>
       (GATEWAY_V17_MCP_DIRECT_TOOLS as readonly string[]).includes(name)
     ).length
-    expect(advertised).not.toContain('delegate_to_subthread')
-    expect(advertised).not.toContain('delegate_wave')
-    expect(advertised).not.toContain('list_subthreads')
-    expect(advertised).not.toContain('read_subthread_result')
-    expect(advertised).not.toContain('cancel_subthread')
+    for (const toolName of OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES) {
+      expect(advertised).not.toContain(toolName)
+    }
     expect(advertised).toHaveLength(GATEWAY_V17_MCP_DIRECT_TOOLS.length - excludedDirectCount)
-    expect(isOllamaExcludedSubthreadTool('delegate_to_subthread')).toBe(true)
-    expect(isOllamaExcludedSubthreadTool('delegate_wave')).toBe(true)
+    expect(isOllamaUltraTaskDelegationTool('delegate_to_subthread')).toBe(true)
+    expect(isOllamaUltraTaskDelegationTool('delegate_wave')).toBe(true)
+    expect(isOllamaUltraTaskDelegationTool('ultra_task')).toBe(true)
     expect(ollamaCallableToolNames()).not.toContain('delegate_to_subthread')
     expect(ollamaCallableToolNames()).not.toContain('delegate_wave')
+  })
+
+  it('unlocks the complete delegation lifecycle only for signed UltraTask auto-allow', () => {
+    const options = { ultraTaskDelegationAutoAllow: true }
+    const advertised = ollamaAdvertisedToolNames(options)
+    const callable = ollamaCallableToolNames(options)
+
+    for (const toolName of OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES) {
+      expect(advertised, toolName).toContain(toolName)
+      expect(callable, toolName).toContain(toolName)
+    }
   })
 
   it('does not drift a pinned v7 Ollama receipt when v8 promotes Sketch', () => {
@@ -82,7 +92,7 @@ describe('Ollama tool surface governance', () => {
   it('intersects the gateway set with the shared safe set for read-only runs', () => {
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
     const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
-      (name) => safeNames.has(name) && !isOllamaExcludedSubthreadTool(name)
+      (name) => safeNames.has(name) && !isOllamaUltraTaskDelegationTool(name)
     )
     const actual = ollamaAdvertisedToolNames({ readOnly: true })
     expect(actual).toEqual(expected)
@@ -103,7 +113,7 @@ describe('Ollama tool surface governance', () => {
   it('adds approval-gated Sketch mutation for Plan without exposing general writes', () => {
     const planNames = new Set(PLAN_MCP_ADVERTISE_TOOLS)
     const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
-      (name) => planNames.has(name) && !isOllamaExcludedSubthreadTool(name)
+      (name) => planNames.has(name) && !isOllamaUltraTaskDelegationTool(name)
     )
     const actual = ollamaAdvertisedToolNames({ readOnly: true, plan: true })
     expect(actual).toEqual(expected)
@@ -114,6 +124,23 @@ describe('Ollama tool surface governance', () => {
     expect(actual).not.toContain('run_shell_command')
     expect(actual).not.toContain('delegate_to_subthread')
     expect(actual).not.toContain('delegate_wave')
+  })
+
+  it('keeps UltraTask delegation available on both Ask and Plan advertise subsets', () => {
+    for (const options of [
+      { readOnly: true, ultraTaskDelegationAutoAllow: true },
+      { readOnly: true, plan: true, ultraTaskDelegationAutoAllow: true }
+    ]) {
+      const actual = ollamaAdvertisedToolNames(options)
+      expect(actual).toContain('delegate_to_subthread')
+      expect(actual).toContain('delegate_wave')
+      expect(actual).toContain('ultra_task')
+      expect(actual).toContain('list_subthreads')
+      expect(actual).toContain('read_subthread_result')
+      expect(actual).toContain('cancel_subthread')
+      expect(actual).not.toContain('write_file')
+      expect(actual).not.toContain('run_shell_command')
+    }
   })
 
   it('keeps the legacy tier parser tolerant for compatibility', () => {
@@ -138,7 +165,7 @@ describe('Ollama tool surface governance', () => {
     const shell = ollamaToolNamesForTier('approved_shell')
     const parity = ollamaToolNamesForTier('provider_parity')
     const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
-      (name) => !isOllamaExcludedSubthreadTool(name)
+      (name) => !isOllamaUltraTaskDelegationTool(name)
     )
 
     expect(edits).toEqual(readOnly)
@@ -149,6 +176,15 @@ describe('Ollama tool surface governance', () => {
     expect(readOnly).not.toContain('delegate_wave')
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
+  })
+
+  it('threads the UltraTask delegation option through the legacy tier facade', () => {
+    const names = ollamaToolNamesForTier('read_only', {
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(names).toContain('delegate_to_subthread')
+    expect(names).toContain('delegate_wave')
+    expect(names).toContain('ultra_task')
   })
 
   it('does not widen the direct profile when the run posture denies network access', () => {
