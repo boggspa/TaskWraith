@@ -5,6 +5,8 @@ import { HostNodeProductionServer } from './HostNodeProductionServer'
 function harness(overrides: Record<string, unknown> = {}) {
   const order: string[] = []
   let eventPublish: (() => void) | null = null
+  let authenticatedShutdown: (() => Promise<void> | void) | undefined
+  let capabilityOffer: readonly string[] = []
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -66,12 +68,14 @@ function harness(overrides: Record<string, unknown> = {}) {
       eventPublish = () => input.events.publish({} as never, {} as never)
       return domain as never
     },
-    createComposition: () => {
+    createComposition: (input) => {
       order.push('composition')
+      capabilityOffer = input.hostCapabilityOffer
       return composition as never
     },
-    createListener: () => {
+    createListener: (input) => {
       order.push('listener')
+      authenticatedShutdown = input.onAuthenticatedShutdown
       return listener
     },
     ...overrides
@@ -84,6 +88,8 @@ function harness(overrides: Record<string, unknown> = {}) {
     composition,
     domain,
     signalListeners,
+    capabilityOffer: () => capabilityOffer,
+    authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.()
   }
 }
@@ -111,6 +117,23 @@ describe('HostNodeProductionServer', () => {
       'lease.release'
     ])
     await expect(h.server.stop()).resolves.toBeUndefined()
+  })
+
+  it('offers lifecycle only from production and routes authenticated shutdown through full cleanup', async () => {
+    const h = harness()
+    await h.server.start()
+    expect(h.capabilityOffer()).toContain('host-lifecycle')
+    const shutdown = h.authenticatedShutdown()
+    expect(shutdown).toBeTypeOf('function')
+    await shutdown?.()
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+    expect(h.order.slice(-4)).toEqual([
+      'listener.stop',
+      'domain.shutdown',
+      'composition.shutdown',
+      'lease.release'
+    ])
   })
 
   it('fails a second profile owner before identity/store/domain creation', async () => {

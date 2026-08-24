@@ -236,6 +236,7 @@ export class HostNodeProductionServer {
         hostVersion: this.identity.hostVersion,
         session: this.composition.session,
         authority: this.composition.authority,
+        onAuthenticatedShutdown: () => this.stop(),
         subscribeDeltas: (listener) =>
           this.composition!.subscribeDeltas((event) => listener(event.record.envelope))
       })
@@ -366,6 +367,7 @@ export class HostNodeProductionServer {
       'provider-auth',
       'history',
       'setup',
+      'host-lifecycle',
       'commands',
       'receipts',
       'health'

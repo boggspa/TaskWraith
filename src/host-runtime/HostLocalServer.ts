@@ -84,6 +84,7 @@ const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, Ho
 
 const HANDSHAKE_TIMEOUT_MS = 5_000
 const MAX_CLIENTS_DEFAULT = 6
+const SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT = 1_000
 const MAX_LINE_BYTES = 256_000
 const MAX_COMPACT_EXPORT_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 
@@ -113,6 +114,8 @@ export interface HostLocalServerOptions {
   platform?: NodeJS.Platform
   /** Maximum concurrent client connections; defaults to 6. */
   maxClients?: number
+  /** Bounded grace for in-flight dispatch and client socket drain during stop. */
+  shutdownDrainTimeoutMs?: number
   /** Optional diagnostic logger. */
   log?: (line: string) => void
   /** Injectable clock for tests. */
@@ -123,6 +126,7 @@ export interface HostLocalServerOptions {
    * store itself.
    */
   subscribeDeltas?: (listener: (delta: HostDeltaEnvelope) => void) => () => void
+  onAuthenticatedShutdown?: () => Promise<void> | void
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +151,11 @@ function safeTokenEquals(expected: string, received: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function socketWrite(socket: Socket, frame: HostLocalTransportHostFrame): boolean {
+function socketWrite(
+  socket: Socket,
+  frame: HostLocalTransportHostFrame,
+  callback?: (error?: Error | null) => void
+): boolean {
   if (socket.destroyed || !socket.writable) return false
   let line = `${JSON.stringify(frame)}\n`
   let bytes = Buffer.byteLength(line, 'utf8')
@@ -175,7 +183,7 @@ function socketWrite(socket: Socket, frame: HostLocalTransportHostFrame): boolea
     socket.destroy(new Error('Host local client is not draining responses.'))
     return false
   }
-  socket.write(line)
+  socket.write(line, callback)
   return true
 }
 
@@ -214,6 +222,23 @@ async function settleCleanup(tasks: readonly (() => Promise<unknown> | unknown)[
   if (failure) throw failure.reason
 }
 
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    void promise.then(
+      () => finish(true),
+      () => finish(true)
+    )
+  })
+}
+
 /** Map HostAuthority operational error codes to closed transport error codes. */
 function authorityErrorToTransportCode(
   code: 'host_unavailable' | 'shutting_down' | 'invalid_lookup'
@@ -222,7 +247,7 @@ function authorityErrorToTransportCode(
     case 'host_unavailable':
       return 'host_unavailable'
     case 'shutting_down':
-      return 'host_unavailable'
+      return 'shutting_down'
     case 'invalid_lookup':
       return 'invalid_payload'
   }
@@ -234,15 +259,19 @@ function authorityErrorToTransportCode(
 
 export class HostLocalServer {
   private readonly options: Required<
-    Pick<HostLocalServerOptions, 'maxClients' | 'now' | 'platform'>
+    Pick<HostLocalServerOptions, 'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs'>
   > &
-    Omit<HostLocalServerOptions, 'maxClients' | 'now' | 'platform'>
+    Omit<HostLocalServerOptions, 'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs'>
   private readonly token: string
   private readonly clients = new Set<ClientState>()
   private server: Server | null = null
+  private ownsSocket = false
+  private stopPromise: Promise<void> | null = null
+  private readonly inFlightDispatches = new Set<Promise<void>>()
   private started = false
   private eventSequence = 0
   private deltaUnsubscribe: (() => void) | null = null
+  private shutdownState: 'running' | 'stopping' | 'stopped' = 'running'
   private tokenArtifact: HostLocalControlArtifactOwnership | null = null
   private discoveryArtifact: HostLocalControlArtifactOwnership | null = null
 
@@ -255,7 +284,14 @@ export class HostLocalServer {
       ...options,
       platform: options.platform ?? process.platform,
       maxClients: options.maxClients ?? MAX_CLIENTS_DEFAULT,
+      shutdownDrainTimeoutMs: options.shutdownDrainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT,
       now: options.now ?? (() => Date.now())
+    }
+    if (
+      !Number.isSafeInteger(this.options.shutdownDrainTimeoutMs) ||
+      this.options.shutdownDrainTimeoutMs < 1
+    ) {
+      throw new Error('Host local shutdown drain timeout is invalid.')
     }
     this.token = randomBytes(32).toString('hex')
     const canonicalUserDataPath = realpathSync(options.userDataPath)
@@ -278,6 +314,9 @@ export class HostLocalServer {
    */
   async start(): Promise<void> {
     if (this.server) return
+    if (this.shutdownState !== 'running' || this.stopPromise) {
+      throw new Error('Host local server is one-shot after shutdown.')
+    }
 
     await mkdir(this.options.userDataPath, { recursive: true, mode: 0o700 })
     if (this.options.platform !== 'win32') {
@@ -308,6 +347,7 @@ export class HostLocalServer {
         server.listen(this.socketPath)
       })
       ownsSocket = true
+      this.ownsSocket = true
       if (this.options.platform !== 'win32') {
         await chmod(this.socketPath, 0o600)
       }
@@ -364,6 +404,7 @@ export class HostLocalServer {
           await rmdir(dirname(this.socketPath)).catch(() => {})
         }
       }
+      this.ownsSocket = false
       throw error
     }
   }
@@ -374,6 +415,19 @@ export class HostLocalServer {
    * Idempotent when already stopped.
    */
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    this.shutdownState = 'stopping'
+    const operation = this.stopOnce()
+    this.stopPromise = operation
+    try {
+      await operation
+    } catch (error) {
+      if (this.stopPromise === operation) this.stopPromise = null
+      throw error
+    }
+  }
+
+  private async stopOnce(): Promise<void> {
     const server = this.server
     this.server = null
     const closePromise = server?.listening
@@ -383,17 +437,23 @@ export class HostLocalServer {
     // ordering matters for Windows named pipes, where closing the last
     // connection can otherwise race the close callback and leave stop() pending.
     this.clearDeltaSubscription()
-    this.disconnectClients()
+    await this.drainInFlightDispatches()
+    await this.disconnectClients()
     await closePromise
     await settleCleanup([
       () => removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact),
       () => removeOwnedPrivateLocalControlArtifact(this.tokenArtifact),
-      () => (this.options.platform === 'win32' ? undefined : rm(this.socketPath, { force: true }))
+      () =>
+        this.options.platform === 'win32' || !this.ownsSocket
+          ? undefined
+          : rm(this.socketPath, { force: true })
     ])
-    if (this.options.platform !== 'win32') {
+    if (this.options.platform !== 'win32' && this.ownsSocket) {
       await rmdir(dirname(this.socketPath)).catch(() => {})
     }
     this.started = false
+    this.shutdownState = 'stopped'
+    this.ownsSocket = false
     this.discoveryArtifact = null
     this.tokenArtifact = null
   }
@@ -407,8 +467,9 @@ export class HostLocalServer {
    * the desired state and do not throw.
    */
   stopSync(): void {
+    this.shutdownState = 'stopping'
     this.clearDeltaSubscription()
-    this.disconnectClients()
+    this.disconnectClientsSync()
     const server = this.server
     this.server = null
     if (server?.listening) server.close()
@@ -422,14 +483,16 @@ export class HostLocalServer {
         }`
       )
     }
-    for (const path of this.options.platform === 'win32' ? [] : [this.socketPath]) {
+    for (const path of this.options.platform === 'win32' || !this.ownsSocket
+      ? []
+      : [this.socketPath]) {
       try {
         unlinkSync(path)
       } catch {
         // Missing/stale artifacts are already the desired state.
       }
     }
-    if (this.options.platform !== 'win32') {
+    if (this.options.platform !== 'win32' && this.ownsSocket) {
       try {
         unlinkSync(dirname(this.socketPath))
       } catch {
@@ -437,6 +500,8 @@ export class HostLocalServer {
       }
     }
     this.started = false
+    this.shutdownState = 'stopped'
+    this.ownsSocket = false
     this.discoveryArtifact = null
     this.tokenArtifact = null
   }
@@ -455,9 +520,28 @@ export class HostLocalServer {
   // Connection handling
   // -----------------------------------------------------------------------
 
-  private disconnectClients(): void {
+  private async drainInFlightDispatches(): Promise<void> {
+    if (this.inFlightDispatches.size === 0) return
+    const drained = await settlesWithin(
+      Promise.allSettled([...this.inFlightDispatches]),
+      this.options.shutdownDrainTimeoutMs
+    )
+    if (!drained) {
+      this.options.log?.('[host-local-server] timed out draining in-flight requests')
+    }
+  }
+
+  private async disconnectClients(): Promise<void> {
+    const clients = [...this.clients]
     const sequence = this.nextEventSequence()
-    for (const client of this.clients) {
+    const closed = clients.map(
+      (client) =>
+        new Promise<void>((resolve) => {
+          if (client.socket.destroyed) resolve()
+          else client.socket.once('close', () => resolve())
+        })
+    )
+    for (const client of clients) {
       const event: HostLocalTransportHostFrame = {
         type: 'event',
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
@@ -468,6 +552,28 @@ export class HostLocalServer {
       clearTimeout(client.handshakeTimer)
       if (wroteClosingEvent) client.socket.end()
       else client.socket.destroy()
+    }
+    if (!(await settlesWithin(Promise.all(closed), this.options.shutdownDrainTimeoutMs))) {
+      for (const client of clients) {
+        if (!client.socket.destroyed) client.socket.destroy()
+      }
+      await settlesWithin(Promise.all(closed), this.options.shutdownDrainTimeoutMs)
+    }
+    this.clients.clear()
+  }
+
+  private disconnectClientsSync(): void {
+    const sequence = this.nextEventSequence()
+    for (const client of this.clients) {
+      const event: HostLocalTransportHostFrame = {
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        event: 'host.closing',
+        sequence
+      }
+      socketWrite(client.socket, event)
+      clearTimeout(client.handshakeTimer)
+      client.socket.destroy()
     }
     this.clients.clear()
   }
@@ -597,7 +703,61 @@ export class HostLocalServer {
       return
     }
 
-    await this.dispatch(state, decoded.value)
+    if (decoded.value.kind === 'host.shutdown') {
+      const client = state.binding?.authenticatedClient
+      if (
+        client?.clientClass !== 'host-cli' ||
+        client.clientId !== 'taskwraith-host-cli' ||
+        !state.binding?.welcome.capabilities.includes('host-lifecycle') ||
+        typeof this.options.onAuthenticatedShutdown !== 'function'
+      ) {
+        socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'unauthorized' }))
+        return
+      }
+      const stateName = this.shutdownState === 'running' ? 'stopping' : 'already_stopping'
+      this.shutdownState = 'stopping'
+      const wrote = socketWrite(
+        state.socket,
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: decoded.value.id,
+          ok: true,
+          result: { kind: 'host.shutdown', state: stateName }
+        },
+        (error) => {
+          if (stateName !== 'stopping') return
+          if (error) {
+            this.shutdownState = 'running'
+            this.options.log?.(
+              `[host-local-server] shutdown acknowledgement failed: ${String(error)}`
+            )
+            return
+          }
+          void Promise.resolve()
+            .then(() => this.options.onAuthenticatedShutdown?.())
+            .catch((error) => {
+              this.options.log?.(
+                `[host-local-server] authenticated shutdown failed: ${String(error)}`
+              )
+            })
+        }
+      )
+      if (!wrote && stateName === 'stopping') this.shutdownState = 'running'
+      return
+    }
+    if (this.shutdownState !== 'running') {
+      socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'shutting_down' }))
+      return
+    }
+
+    const operation = this.dispatch(state, decoded.value)
+    this.inFlightDispatches.add(operation)
+    try {
+      await operation
+    } finally {
+      this.inFlightDispatches.delete(operation)
+    }
   }
 
   // -----------------------------------------------------------------------

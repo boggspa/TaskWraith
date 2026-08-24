@@ -28,6 +28,7 @@ import {
   HOST_PROJECTION_VERSION,
   type HostCommand,
   type HostCapability,
+  type HostClientClass,
   type HostCommandReceipt,
   type HostCursorPosition,
   type HostDeltaEnvelope,
@@ -54,7 +55,12 @@ function tmpUserDataPath(): string {
 
 function makeClientHello(
   token: string,
-  capabilities: readonly HostCapability[] = ['bootstrap', 'snapshot', 'health']
+  capabilities: readonly HostCapability[] = ['bootstrap', 'snapshot', 'health'],
+  client: { clientId: string; clientClass: HostClientClass; clientVersion: string } = {
+    clientId: 'test-client',
+    clientClass: 'test',
+    clientVersion: '1.0.0'
+  }
 ): HostLocalTransportClientFrame {
   return {
     type: 'hello',
@@ -64,11 +70,7 @@ function makeClientHello(
       type: 'host.hello',
       protocolVersion: HOST_PROTOCOL_VERSION,
       projectionVersion: HOST_PROJECTION_VERSION,
-      client: {
-        clientId: 'test-client',
-        clientClass: 'test',
-        clientVersion: '1.0.0'
-      },
+      client,
       capabilities: [...capabilities]
     }
   }
@@ -95,8 +97,25 @@ function mockHostSession(
   // Each bind call mints a fresh binding with a unique sessionId so that
   // concurrent clients get distinct sessions per contract.
   bind.mockImplementation(
-    (request: { clientCapabilityRequest?: readonly HostCapability[] } | undefined) => {
+    (
+      request:
+        | {
+            verifiedContext?: { clientClass?: HostClientClass; clientId?: string; actorId?: string }
+            authenticatedClient?: {
+              clientClass: HostClientClass
+              clientId: string
+              clientVersion: string
+            }
+            clientCapabilityRequest?: readonly HostCapability[]
+          }
+        | undefined
+    ) => {
       const sid = randomUUID()
+      const authenticatedClient = request?.authenticatedClient ?? {
+        clientId: 'test-client',
+        clientClass: 'test' as const,
+        clientVersion: '1.0.0'
+      }
       const offered: readonly HostCapability[] = [
         'bootstrap',
         'snapshot',
@@ -105,8 +124,9 @@ function mockHostSession(
         'provider-catalog',
         'provider-auth',
         'history',
-        'commands',
         'setup',
+        'host-lifecycle',
+        'commands',
         'health'
       ]
       const capabilities = (request?.clientCapabilityRequest ?? []).filter((capability) =>
@@ -114,12 +134,12 @@ function mockHostSession(
       )
       const binding: HostSessionBinding = {
         sessionId: sid,
-        actor: { actorId: 'test-client', clientId: 'test-client', clientClass: 'test' },
-        authenticatedClient: {
-          clientId: 'test-client',
-          clientClass: 'test',
-          clientVersion: '1.0.0'
+        actor: {
+          actorId: request?.verifiedContext?.actorId ?? authenticatedClient.clientId,
+          clientId: authenticatedClient.clientId,
+          clientClass: authenticatedClient.clientClass
         },
+        authenticatedClient,
         welcome: {
           type: 'host.welcome',
           protocolVersion: HOST_PROTOCOL_VERSION,
@@ -130,11 +150,7 @@ function mockHostSession(
           sessionId: sid,
           generation: 0,
           cursor: 1,
-          authenticatedClient: {
-            clientId: 'test-client',
-            clientClass: 'test',
-            clientVersion: '1.0.0'
-          },
+          authenticatedClient,
           capabilities,
           freshness: 'live'
         },
@@ -599,6 +615,217 @@ describe('HostLocalServer', () => {
 
       expect(session.bind).toHaveBeenCalledTimes(0)
     })
+  })
+
+  it.each([
+    ['desktop', 'desktop-client', ['host-lifecycle']],
+    ['tui', 'tui-client', ['host-lifecycle']],
+    ['ios', 'ios-client', ['host-lifecycle']],
+    ['host-cli', 'wrong-id', ['host-lifecycle']],
+    ['host-cli', 'taskwraith-host-cli', ['bootstrap']],
+    ['host-cli', 'taskwraith-host-cli', ['host-lifecycle']]
+  ] as const)(
+    'rejects unauthorized host.shutdown identity %s/%s',
+    async (clientClass, clientId, capabilities) => {
+      await server.start()
+      const client = await connectClient(server.socketPath)
+      client.writeLine(
+        JSON.stringify(
+          makeClientHello(
+            readFileSync(server.tokenPath, 'utf8').trim(),
+            capabilities as HostCapability[],
+            { clientId, clientClass, clientVersion: '1.0.0' }
+          )
+        )
+      )
+      expect((await client.readFrame()).type).toBe('welcome')
+      client.writeLine(JSON.stringify(makeRequest('host.shutdown' as never, 'shutdown-1', {})))
+      await expect(client.readFrame()).resolves.toMatchObject({
+        type: 'response',
+        ok: false,
+        error: { code: 'unauthorized' }
+      })
+      client.close()
+    }
+  )
+
+  it('acknowledges an authorized shutdown before broadcasting host.closing', async () => {
+    server = new HostLocalServer({
+      userDataPath,
+      hostId: 'test-host',
+      hostVersion: 'node-host-v1',
+      session: session as unknown as HostSession,
+      authority: authority as unknown as HostAuthority,
+      onAuthenticatedShutdown: () => server.stop(),
+      shutdownDrainTimeoutMs: 50
+    })
+    await server.start()
+    const client = await connectClient(server.socketPath)
+    client.writeLine(
+      JSON.stringify(
+        makeClientHello(
+          readFileSync(server.tokenPath, 'utf8').trim(),
+          ['bootstrap', 'host-lifecycle'],
+          {
+            clientId: 'taskwraith-host-cli',
+            clientClass: 'host-cli',
+            clientVersion: '1.0.0'
+          }
+        )
+      )
+    )
+    expect((await client.readFrame()).type).toBe('welcome')
+    client.writeLine(JSON.stringify(makeRequest('host.shutdown', 'shutdown-1', {})))
+    await expect(client.readFrame()).resolves.toMatchObject({
+      type: 'response',
+      id: 'shutdown-1',
+      ok: true,
+      result: { kind: 'host.shutdown', state: 'stopping' }
+    })
+    await expect(client.readFrame()).resolves.toMatchObject({
+      type: 'event',
+      event: 'host.closing'
+    })
+    await vi.waitFor(() => expect(server.isStarted).toBe(false))
+    client.close()
+  })
+
+  it('coalesces concurrent lifecycle requests and rejects later work as shutting_down', async () => {
+    let releaseShutdown!: () => void
+    const shutdown = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseShutdown = resolve
+        })
+    )
+    server = new HostLocalServer({
+      userDataPath,
+      hostId: 'test-host',
+      hostVersion: 'node-host-v1',
+      session: session as unknown as HostSession,
+      authority: authority as unknown as HostAuthority,
+      onAuthenticatedShutdown: shutdown
+    })
+    await server.start()
+    const token = readFileSync(server.tokenPath, 'utf8').trim()
+    const clients = await Promise.all([
+      connectClient(server.socketPath),
+      connectClient(server.socketPath)
+    ])
+    for (const client of clients) {
+      client.writeLine(
+        JSON.stringify(
+          makeClientHello(token, ['bootstrap', 'host-lifecycle', 'health'], {
+            clientId: 'taskwraith-host-cli',
+            clientClass: 'host-cli',
+            clientVersion: '1.0.0'
+          })
+        )
+      )
+      expect((await client.readFrame()).type).toBe('welcome')
+    }
+    clients[0].writeLine(JSON.stringify(makeRequest('host.shutdown', 'shutdown-1', {})))
+    await expect(clients[0].readFrame()).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'host.shutdown', state: 'stopping' }
+    })
+    clients[1].writeLine(JSON.stringify(makeRequest('host.shutdown', 'shutdown-2', {})))
+    await expect(clients[1].readFrame()).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'host.shutdown', state: 'already_stopping' }
+    })
+    clients[1].writeLine(JSON.stringify(makeRequest('health.get', 'health-after-stop', {})))
+    await expect(clients[1].readFrame()).resolves.toEqual({
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: 'health-after-stop',
+      ok: false,
+      error: { code: 'shutting_down' }
+    })
+    expect(shutdown).toHaveBeenCalledOnce()
+    releaseShutdown()
+    clients.forEach((client) => client.close())
+  })
+
+  it('drains an admitted request before closing clients', async () => {
+    let finishHealth!: () => void
+    authority.health.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishHealth = () => resolve({ ok: true, value: makeHealth() })
+        })
+    )
+    let stopping: Promise<void> | null = null
+    server = new HostLocalServer({
+      userDataPath,
+      hostId: 'test-host',
+      hostVersion: 'node-host-v1',
+      session: session as unknown as HostSession,
+      authority: authority as unknown as HostAuthority,
+      onAuthenticatedShutdown: () => {
+        stopping = server.stop()
+        return stopping
+      },
+      shutdownDrainTimeoutMs: 250
+    })
+    await server.start()
+    const token = readFileSync(server.tokenPath, 'utf8').trim()
+    const regular = await connectClient(server.socketPath)
+    regular.writeLine(JSON.stringify(makeClientHello(token, ['bootstrap', 'health'])))
+    await regular.readFrame()
+    const admin = await connectClient(server.socketPath)
+    admin.writeLine(
+      JSON.stringify(
+        makeClientHello(token, ['bootstrap', 'host-lifecycle'], {
+          clientId: 'taskwraith-host-cli',
+          clientClass: 'host-cli',
+          clientVersion: '1.0.0'
+        })
+      )
+    )
+    await admin.readFrame()
+    regular.writeLine(JSON.stringify(makeRequest('health.get', 'health-in-flight', {})))
+    await vi.waitFor(() => expect(authority.health).toHaveBeenCalledOnce())
+    admin.writeLine(JSON.stringify(makeRequest('host.shutdown', 'shutdown-drain', {})))
+    await expect(admin.readFrame()).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'host.shutdown', state: 'stopping' }
+    })
+    await vi.waitFor(() => expect(stopping).not.toBeNull())
+    expect(server.isStarted).toBe(true)
+    finishHealth()
+    await expect(regular.readFrame()).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'health.get' }
+    })
+    await stopping
+    expect(server.isStarted).toBe(false)
+    regular.close()
+    admin.close()
+  })
+
+  it('coalesces stop cleanup and bounds a paused client drain', async () => {
+    const unsubscribe = vi.fn()
+    server = new HostLocalServer({
+      userDataPath,
+      hostId: 'test-host',
+      hostVersion: 'node-host-v1',
+      session: session as unknown as HostSession,
+      authority: authority as unknown as HostAuthority,
+      subscribeDeltas: () => unsubscribe,
+      shutdownDrainTimeoutMs: 10
+    })
+    await server.start()
+    const client = await connectClient(server.socketPath)
+    client.writeLine(
+      JSON.stringify(makeClientHello(readFileSync(server.tokenPath, 'utf8').trim(), ['bootstrap']))
+    )
+    await client.readFrame()
+    client.pause()
+    await Promise.all([server.stop(), server.stop()])
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(server.isStarted).toBe(false)
+    client.close()
   })
 
   // -----------------------------------------------------------------------
@@ -1152,7 +1379,7 @@ describe('HostLocalServer', () => {
       if (frame.type === 'response') {
         expect(frame.ok).toBe(false)
         if (!frame.ok) {
-          expect(frame.error.code).toBe('host_unavailable')
+          expect(frame.error.code).toBe('shutting_down')
         }
       }
       client.close()
