@@ -312,7 +312,10 @@ function terminalReceipt(
   })
 }
 
-function structuredJoinRevision(h: Harness): ExecutionGraphRevision {
+function structuredJoinRevision(
+  h: Harness,
+  firstScoutAuthority?: { ceilingReferenceId: string; authorityDigest: string }
+): ExecutionGraphRevision {
   const outputSchema = { type: 'object', additionalProperties: true } as const
   const compiled = compileExecutionGraphRevision({
     graphId: 'structured-join-graph',
@@ -321,7 +324,7 @@ function structuredJoinRevision(h: Harness): ExecutionGraphRevision {
     name: 'Structured join graph',
     createdAt: '2026-07-18T11:00:00.000Z',
     steps: [
-      ...['scout-one', 'scout-two'].map((id) => ({
+      ...['scout-one', 'scout-two'].map((id, index) => ({
         id,
         kind: 'solo_agent' as const,
         title: id,
@@ -329,6 +332,16 @@ function structuredJoinRevision(h: Harness): ExecutionGraphRevision {
         effect: 'read_only' as const,
         outputs: [{ name: 'report', schema: outputSchema, required: true }],
         retry: { maxAttempts: 1 },
+        ...(index === 0 && firstScoutAuthority
+          ? {
+              permissionRequestRef: {
+                schemaVersion: 1 as const,
+                referenceId: 'scout-one-permission',
+                ceilingReferenceId: firstScoutAuthority.ceilingReferenceId,
+                authorityDigest: firstScoutAuthority.authorityDigest
+              }
+            }
+          : {}),
         agent: {
           provider: 'codex',
           model: 'gpt-5.5',
@@ -1566,6 +1579,52 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
 })
 
 describe('ExecutionGraphCoordinator structured graph scheduling', () => {
+  it('binds a narrower per-step permission digest under the execution ceiling', () => {
+    const h = harness()
+    const stepAuthorityDigest = 'b'.repeat(64)
+    const revision = structuredJoinRevision(h, {
+      ceilingReferenceId: h.ceiling.referenceId,
+      authorityDigest: stepAuthorityDigest
+    })
+    h.coordinator.startExecutionGraph({
+      executionId: 'step-authority-execution',
+      title: 'Step authority execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      revision,
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionCeilingAuthorityDigest: stepAuthorityDigest })
+    )
+    expect([...h.jobs.values()][0]?.executionGraph?.permissionCeilingAuthorityDigest).toBe(
+      stepAuthorityDigest
+    )
+  })
+
+  it('rejects a step permission request that is not under the execution ceiling', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h, {
+      ceilingReferenceId: 'another-ceiling',
+      authorityDigest: 'b'.repeat(64)
+    })
+
+    expect(() =>
+      h.coordinator.startExecutionGraph({
+        executionId: 'wrong-ceiling-execution',
+        title: 'Wrong ceiling execution',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        tenant: { kind: 'workflow' },
+        revision,
+        permissionCeilingRef: h.ceiling
+      })
+    ).toThrow(/invalid permission request binding/i)
+    expect(h.jobs.size).toBe(0)
+  })
+
   it('executes an all-join and binds exact predecessor results into the worker', () => {
     const h = harness()
     const revision = structuredJoinRevision(h)

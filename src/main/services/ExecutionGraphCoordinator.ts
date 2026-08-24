@@ -395,6 +395,17 @@ export class ExecutionGraphCoordinator {
    */
   startExecutionGraph(input: StartExecutionGraphInput): ExecutionRunProjection {
     assertBoundExecutionGraphSupported(input.revision)
+    for (const step of input.revision.steps) {
+      if (
+        step.permissionRequestRef &&
+        (step.permissionRequestRef.ceilingReferenceId !== input.permissionCeilingRef.referenceId ||
+          !step.permissionRequestRef.authorityDigest?.trim())
+      ) {
+        throw new Error(
+          `Execution graph step "${step.id}" has an invalid permission request binding.`
+        )
+      }
+    }
     const baseRevision = executionGraphRevisionRef(input.revision)
     const timestamp = this.now()
     const activations = input.revision.steps.map((step) => ({
@@ -1426,6 +1437,15 @@ export class ExecutionGraphCoordinator {
     }
     const attemptId = this.id('attempt')
     const runId = this.id('graph-run')
+    const permissionAuthorityDigest = this.permissionAuthorityDigestForStep(projection, step)
+    if (!permissionAuthorityDigest) {
+      this.requireActivationAction(
+        projection,
+        activation,
+        'Graph step permission request is unavailable or exceeds the execution ceiling.'
+      )
+      return
+    }
 
     // Persist the exact graph <-> queue run correlation before touching the
     // queue store. A crash can leave a claimed attempt without a job, which is
@@ -1472,7 +1492,7 @@ export class ExecutionGraphCoordinator {
         provider: step.agent.provider as ProviderId,
         runTemplate: template,
         ...(Object.keys(boundInputs.inputs).length > 0 ? { inputs: boundInputs.inputs } : {}),
-        permissionCeilingAuthorityDigest: projection.permissionCeilingRef!.authorityDigest
+        permissionCeilingAuthorityDigest: permissionAuthorityDigest
       })
     } catch (error) {
       this.requireAction(
@@ -1559,6 +1579,23 @@ export class ExecutionGraphCoordinator {
     return { ok: true, inputs }
   }
 
+  private permissionAuthorityDigestForStep(
+    projection: ExecutionRunProjection,
+    step: ExecutionStepDefinition
+  ): string | null {
+    const ceiling = projection.permissionCeilingRef
+    if (!ceiling) return null
+    const request = step.permissionRequestRef
+    if (!request) return ceiling.authorityDigest
+    if (
+      request.ceilingReferenceId !== ceiling.referenceId ||
+      !request.authorityDigest?.trim()
+    ) {
+      return null
+    }
+    return request.authorityDigest
+  }
+
   private appendAttemptQueued(projection: ExecutionRunProjection, attempt: StepAttempt): void {
     const activation = projection.activations[attempt.activationId]
     this.append(projection, [
@@ -1619,7 +1656,8 @@ export class ExecutionGraphCoordinator {
       binding.activationId === activation.id &&
       binding.attemptId === attempt.id &&
       binding.runTemplateRef === step.agent.runTemplateRef &&
-      binding.permissionCeilingAuthorityDigest === projection.permissionCeilingRef.authorityDigest
+      binding.permissionCeilingAuthorityDigest ===
+        this.permissionAuthorityDigestForStep(projection, step)
     )
   }
 
