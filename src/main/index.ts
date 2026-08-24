@@ -1966,7 +1966,11 @@ import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
 import { createOutlookToolExecutors, isOutlookMcpToolName } from './mcp/OutlookToolExecutors'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
-import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
+import {
+  openProviderAuthTerminal,
+  registerProviderTerminalHandlers
+} from './ipc/providerTerminalHandlers'
+import { createProviderTerminalSetupController } from './providers/ProviderTerminalSetupController'
 import { registerHostToolTerminalHandlers } from './ipc/hostToolTerminalHandlers'
 import { registerInstallCommandTerminalHandlers } from './ipc/installCommandTerminalHandlers'
 import { publishCliPathDirectories } from './CliPathDirectoriesPublisher'
@@ -51478,6 +51482,27 @@ if (isGeminiMcpBridgeProcess) {
           getService: () => channelProductionBootstrap?.service ?? null
         })
       : undefined
+    const providerTerminalHandlersDeps = {
+      resolveCliProviderBinary,
+      getUserDataPath: () => app.getPath('userData'),
+      openPath: (path: string) => shell.openPath(path),
+      mkdirSync: (path: string, options: { recursive: boolean; mode?: number }) =>
+        fsSync.mkdirSync(path, options),
+      lstatSync: (path: string) => fsSync.lstatSync(path),
+      writeFileSync: (path: string, data: string, options?: { mode?: number }) =>
+        fsSync.writeFileSync(path, data, options),
+      chmodSync: (path: string, mode: number) => fsSync.chmodSync(path, mode),
+      getPlatform: () => process.platform,
+      realpathSync: (path: string) => fsSync.realpathSync(path)
+    }
+    const hostProviderTerminalSetup = createProviderTerminalSetupController({
+      launch: (provider, action) =>
+        openProviderAuthTerminal(providerTerminalHandlersDeps, provider, action)
+    })
+    let publishHostSetupChatService!: (service: ChatService) => void
+    const hostSetupChatServiceReady = new Promise<ChatService>((resolveService) => {
+      publishHostSetupChatService = resolveService
+    })
     const createProductionHost = () =>
       createHostProductionBootstrap({
         userDataPath: app.getPath('userData'),
@@ -51498,6 +51523,41 @@ if (isGeminiMcpBridgeProcess) {
               ?.listProjectionCards()
               .find((card) => card.toolCallId === approvalId) ?? null,
           getQuestion: (questionId) => remoteQuestionRegistry.get(questionId)
+        },
+        setup: {
+          workspace: {
+            registerWorkspace: (input) => workspaceService.registerWorkspace(input),
+            getWorkspaces: () => AppStore.getWorkspaces()
+          },
+          chat: {
+            createSingleThread: async (input) =>
+              (await hostSetupChatServiceReady).createSingleThread(input),
+            configureThread: async (input) =>
+              (await hostSetupChatServiceReady).configureThread(input),
+            archiveThread: async (input) =>
+              (await hostSetupChatServiceReady).archiveThread(input)
+          },
+          terminal: {
+            begin: (input) => hostProviderTerminalSetup.begin(input),
+            cancel: (input) => hostProviderTerminalSetup.cancel(input)
+          },
+          providerSource: {
+            listProviderIds: () => [
+              ...LIVE_SELECTABLE_PROVIDER_IDS,
+              ...(isConditionallyDispatchableRemoteProvider(ANTIGRAVITY_PROVIDER_ID)
+                ? [ANTIGRAVITY_PROVIDER_ID]
+                : [])
+            ],
+            getStatus: (providerId) => providerAdapters.require(providerId).getStatus(),
+            getModels: (providerId) => getStaticProviderModels(providerId),
+            getLabel: (providerId) => providerLabel(providerId)
+          },
+          isConditionallyAdmitted: (providerId) =>
+            providerId === ANTIGRAVITY_PROVIDER_ID &&
+            isConditionallyDispatchableRemoteProvider(providerId)
+        },
+        history: {
+          getChat: (threadId) => AppStore.getChat(threadId)
         },
         // Step 5b-wire. THE ARROW IS LOAD-BEARING — DO NOT "SIMPLIFY" IT AWAY.
         // `getConfiguredProviderSnapshot` is a `const` arrow declared ~3,900
@@ -53137,6 +53197,7 @@ if (isGeminiMcpBridgeProcess) {
       closeCollaborationRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId),
       externalContributionQueue
     })
+    publishHostSetupChatService(chatService)
     let humanCollaborationRuntime: HumanCollaborationRuntime<
       HumanShareProjection,
       ReturnType<typeof chatService.appendCollaboratorComment>
@@ -56152,17 +56213,7 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender
     })
 
-    registerProviderTerminalHandlers({
-      resolveCliProviderBinary,
-      getUserDataPath: () => app.getPath('userData'),
-      openPath: (path) => shell.openPath(path),
-      mkdirSync: (path, options) => fsSync.mkdirSync(path, options),
-      lstatSync: (path) => fsSync.lstatSync(path),
-      writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
-      chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
-      getPlatform: () => process.platform,
-      realpathSync: (path) => fsSync.realpathSync(path)
-    })
+    registerProviderTerminalHandlers(providerTerminalHandlersDeps)
 
     registerHostToolTerminalHandlers({
       // Same augmented search-dir probe every other CLI uses, so the popover's

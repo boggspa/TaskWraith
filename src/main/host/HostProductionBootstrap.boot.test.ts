@@ -46,6 +46,7 @@ import {
 
 import type { BridgeQuestionReplyAction } from '../BridgeActionPayload'
 import { RemoteQuestionRegistry } from '../RemoteQuestionRegistry'
+import type { ProviderId } from '../store/types'
 import { HostProjectionClient } from './HostProjectionClient'
 import {
   createHostProductionBootstrap,
@@ -160,6 +161,141 @@ function questionMutationClient(): HostProjectionClient {
     connectTimeoutMs: 5_000,
     requestTimeoutMs: 5_000
   })
+}
+
+function setupMutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: MUTATION_CLIENT_ID,
+      clientClass: 'desktop',
+      clientVersion: HOST_VERSION
+    },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
+function productionSetupOptions(): HostProductionBootstrapOptions {
+  const workspaces: Array<{ id: string; path: string; realPath?: string }> = []
+  const chats = new Map<
+    string,
+    {
+      appChatId: string
+      workspaceId: string
+      workspacePath: string
+      provider?: ProviderId
+      title: string
+      archived: boolean
+      updatedAt: number
+      messages: Array<{
+        id: string
+        role: 'assistant'
+        content: string
+        timestamp: string
+      }>
+    }
+  >()
+  const getChat = (threadId: string) => chats.get(threadId) ?? null
+  return {
+    ...productionOptions(),
+    chatList: {
+      getChatList: () =>
+        [...chats.values()].map((chat) => ({
+          ...chat,
+          scope: 'workspace' as const,
+          chatKind: 'single' as const,
+          pinned: false,
+          messageCount: chat.messages.length
+        }))
+    },
+    contextSources: {
+      getChat,
+      getApproval: () => null,
+      getQuestion: () => null
+    },
+    setup: {
+      workspace: {
+        registerWorkspace: ({ selectedPath }) => {
+          const existing = workspaces.find((workspace) => workspace.path === selectedPath)
+          if (existing) return existing
+          const workspace = { id: 'workspace-setup', path: selectedPath, realPath: selectedPath }
+          workspaces.push(workspace)
+          return workspace
+        },
+        getWorkspaces: () => workspaces
+      },
+      chat: {
+        createSingleThread: (input) => {
+          if (input.scope !== 'workspace') throw new Error('workspace setup expected')
+          const chat = {
+            appChatId: 'thread-setup',
+            workspaceId: input.workspaceId,
+            workspacePath: input.workspacePath,
+            title: 'Setup thread',
+            archived: false,
+            updatedAt: 1,
+            messages: [
+              {
+                id: 'history-setup',
+                role: 'assistant' as const,
+                content: 'Host setup history is available.',
+                timestamp: '2026-08-24T00:00:00.000Z'
+              }
+            ]
+          }
+          chats.set(chat.appChatId, chat)
+          return chat
+        },
+        configureThread: (input) => {
+          const chat = chats.get(input.chatId)
+          if (!chat) throw new Error('thread unavailable')
+          chat.provider = input.provider
+          chat.title = input.title ?? chat.title
+          chat.updatedAt += 1
+          return chat
+        },
+        archiveThread: ({ chatId, archived }) => {
+          const chat = chats.get(chatId)
+          if (!chat) throw new Error('thread unavailable')
+          chat.archived = archived
+          chat.updatedAt += 1
+          return chat
+        }
+      },
+      terminal: {
+        begin: ({ provider, operationId }) => ({ provider, operationId }),
+        cancel: () => ({ outcome: 'not_cancellable' as const })
+      },
+      providers: () => [
+        {
+          providerId: 'codex' as const,
+          label: 'Codex',
+          status: 'ready' as const,
+          models: [
+            {
+              modelId: 'gpt-5.6',
+              label: 'GPT-5.6',
+              default: true,
+              reasoning: [{ reasoningId: 'high', label: 'High' }]
+            }
+          ]
+        }
+      ]
+    },
+    history: { getChat }
+  }
 }
 
 function mutationCommand(input: {
@@ -453,6 +589,93 @@ describe('Wave 4.4 serve — a real client completes a real authenticated round 
     // come back holding command/receipt authority it never asked for.
     expect(welcome.capabilities).not.toContain('commands')
     expect(welcome.capabilities).not.toContain('receipts')
+  }, 20_000)
+
+  it('serves setup, durable result refs, provider offers, and history over the real Host', async () => {
+    supervisor = createHostProductionBootstrap(productionSetupOptions())
+    await supervisor.start()
+
+    client = setupMutationClient()
+    const welcome = await client.connect()
+    expect(welcome.capabilities).toEqual(
+      expect.arrayContaining([
+        'provider-catalog',
+        'provider-auth',
+        'history',
+        'setup',
+        'commands',
+        'receipts'
+      ])
+    )
+    await expect(client.getProviderStatuses()).resolves.toEqual([
+      { providerId: 'codex', status: 'ready', label: 'Codex' }
+    ])
+    const offers = await client.getProviderOffers('codex')
+    expect(offers.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ modelId: 'gpt-5.6', available: true })])
+    )
+
+    const workspaceReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000001',
+        idempotencyKey: 'desktop:setup:workspace',
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: join(userDataPath, 'workspace') }
+      })
+    )
+    expect(workspaceReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'workspace', workspaceId: 'workspace-setup' }
+    })
+
+    const threadReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000002',
+        idempotencyKey: 'desktop:setup:thread',
+        name: 'thread.create',
+        target: {},
+        arguments: { scope: 'workspace', workspaceId: 'workspace-setup' }
+      })
+    )
+    expect(threadReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-setup' }
+    })
+
+    const configureReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000003',
+        idempotencyKey: 'desktop:setup:configure',
+        name: 'thread.configure',
+        target: { threadId: 'thread-setup' },
+        arguments: {
+          providerId: 'codex',
+          modelId: 'gpt-5.6',
+          reasoningId: 'high',
+          postureId: 'default',
+          offerRevision: offers.offerRevision,
+          title: 'Configured through Host'
+        }
+      })
+    )
+    expect(configureReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-setup' }
+    })
+
+    await expect(
+      client.getThreadHistory({ threadId: 'thread-setup', limit: 10 })
+    ).resolves.toMatchObject({
+      threadId: 'thread-setup',
+      entries: [
+        {
+          entryId: 'history-setup',
+          role: 'assistant',
+          text: 'Host setup history is available.'
+        }
+      ]
+    })
   }, 20_000)
 
   it('executes a governed mutation through challenge, allow, Bridge, and receipt', async () => {
