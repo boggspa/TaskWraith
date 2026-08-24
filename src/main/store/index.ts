@@ -438,8 +438,7 @@ const legacyStoreCanWrite = (): boolean => legacyStoreWriterGate.allowsCurrentWr
 const usageJournalStore = new UsageJournalStore({
   checkpointPath: usagePath,
   journalPath: usageJournalPath,
-  archivePath: usageArchivePath,
-  canWrite: legacyStoreCanWrite
+  archivePath: usageArchivePath
 })
 
 /** Main-owned Project registry (Work surface). Constructed against the
@@ -2789,9 +2788,6 @@ function hostOwnedReadRepairPathFamily(filePath: string): boolean {
   if (filePath === workspacesPath) return true
   const chatDirectory = path.join(userDataPath, 'chats')
   if (path.dirname(filePath) === chatDirectory && path.extname(filePath) === '.json') return true
-  if (filePath === usagePath || filePath === usageJournalPath || filePath === usageArchivePath) {
-    return true
-  }
   const listIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
   const legacyListIndexPath = path.join(userDataPath, 'chat-list-index.json')
   const listSummariesDirectory = path.join(userDataPath, 'chat-list-summaries')

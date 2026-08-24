@@ -32,6 +32,7 @@ function snapshotTree(root: string): unknown[] {
       for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
     }
   }
+  if (!fs.existsSync(root)) return [{ relative: '.', kind: 'missing' }]
   visit(root)
   return rows
 }
@@ -94,8 +95,6 @@ it('imports Host-owned legacy data in read-only mode without repairing any profi
   fs.writeFileSync(path.join(userDataPath, 'workspaces.json'), '{corrupt-workspaces', 'utf8')
   fs.writeFileSync(path.join(userDataPath, 'chats', 'corrupt-chat.json'), '{corrupt-chat', 'utf8')
   fs.writeFileSync(path.join(userDataPath, 'chats', `${chat.appChatId}.json`), JSON.stringify(chat))
-  fs.writeFileSync(path.join(userDataPath, 'usage.json'), '{corrupt-usage', 'utf8')
-  fs.writeFileSync(path.join(userDataPath, 'usage-journal.jsonl'), '{corrupt-usage-journal', 'utf8')
   fs.writeFileSync(
     path.join(userDataPath, 'chat-journal', `${chat.appChatId}.jsonl`),
     `${JSON.stringify({ savedAt: checkpoint.savedAt, record: chat })}\n{"torn`,
@@ -121,7 +120,16 @@ it('imports Host-owned legacy data in read-only mode without repairing any profi
     `${JSON.stringify(fatIndexEntry)}\n`,
     'utf8'
   )
-  const before = snapshotTree(userDataPath)
+  const hostOwnedPaths = [
+    path.join(userDataPath, 'workspaces.json'),
+    path.join(userDataPath, 'chats'),
+    path.join(userDataPath, 'chat-journal'),
+    path.join(userDataPath, 'chat-journal-v2'),
+    path.join(userDataPath, 'chat-list-index.json'),
+    path.join(userDataPath, 'chat-list-index.jsonl'),
+    path.join(userDataPath, 'chat-list-summaries')
+  ]
+  const before = hostOwnedPaths.map(snapshotTree)
 
   const { configureHostStoreRuntime } = await import('../../host-runtime/HostStoreRuntime')
   configureHostStoreRuntime({
@@ -147,11 +155,10 @@ it('imports Host-owned legacy data in read-only mode without repairing any profi
   expect(AppStore.getWorkspaces()).toEqual([])
   expect(AppStore.getChat('corrupt-chat')).toBeNull()
   expect(AppStore.getChat(chat.appChatId)?.appChatId).toBe(chat.appChatId)
-  expect(AppStore.getUsage()).toEqual([])
   expect(() => AppStore.getChatList()).not.toThrow()
   expect(AppStore.flushChatSave(chat.appChatId)).toBe(false)
   AppStore.flushAllChatSaves()
   await vi.advanceTimersByTimeAsync(15_000)
 
-  expect(snapshotTree(userDataPath)).toEqual(before)
+  expect(hostOwnedPaths.map(snapshotTree)).toEqual(before)
 })
