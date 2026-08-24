@@ -48,14 +48,26 @@ export interface HostNodeProductionSignalTarget {
 export interface HostNodeProductionServerOptions {
   readonly profilePath: string
   readonly mode: 'production'
-  readonly domainOptions: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
+  readonly domainOptions?: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
+  /** Lease-late resource assembly; runs only after lease → identity → store. */
+  readonly createDomainResources?: (input: {
+    readonly profilePath: string
+    readonly identity: HostSessionHostIdentity
+    readonly store: HostProfileDomainStore
+  }) => Promise<{
+    readonly domainOptions: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
+    readonly dispose?: () => boolean | Promise<boolean>
+  }>
   readonly runtimePath?: (profilePath: string) => string
   readonly health?: () => HostHealthProjection
   readonly threadOffersProvider?: HostStandaloneCompositionInput['threadOffersProvider']
   readonly signalTarget?: HostNodeProductionSignalTarget
   readonly acquireLease?: (profilePath: string) => HostNodeProductionLease
   /** Required production-owned identity port; never reuse diagnostic identity. */
-  readonly resolveIdentity: (profilePath: string) => HostSessionHostIdentity
+  readonly resolveIdentity: (
+    profilePath: string,
+    lease: HostNodeProductionLease
+  ) => HostSessionHostIdentity
   readonly createStore?: (input: {
     profilePath: string
     authority: { assertProfileAuthority(): void }
@@ -102,14 +114,18 @@ export class HostNodeProductionServer {
   private domain: HostNodeDomainPorts | null = null
   private composition: HostStandaloneComposition | null = null
   private listener: HostNodeProductionListener | null = null
+  private disposeResources: (() => boolean | Promise<boolean>) | null = null
   identity: HostSessionHostIdentity | null = null
 
   constructor(options: HostNodeProductionServerOptions) {
     if (!options || options.mode !== 'production') {
       throw new Error('HostNodeProductionServer requires production mode')
     }
-    if (!options.domainOptions || typeof options.domainOptions !== 'object') {
-      throw new Error('HostNodeProductionServer requires domainOptions')
+    if (
+      (!options.domainOptions || typeof options.domainOptions !== 'object') &&
+      typeof options.createDomainResources !== 'function'
+    ) {
+      throw new Error('HostNodeProductionServer requires domainOptions or createDomainResources')
     }
     if (typeof options.resolveIdentity !== 'function') {
       throw new Error('HostNodeProductionServer requires resolveIdentity')
@@ -125,6 +141,13 @@ export class HostNodeProductionServer {
   }
 
   async start(): Promise<void> {
+    if (
+      this.phaseValue === 'stopping' ||
+      this.phaseValue === 'stopped' ||
+      this.phaseValue === 'failed'
+    ) {
+      throw new Error('HostNodeProductionServer is one-shot and cannot be started again')
+    }
     if (this.startPromise) return this.startPromise
     this.phaseValue = 'starting'
     this.startPromise = this.startOnce()
@@ -154,7 +177,7 @@ export class HostNodeProductionServer {
       this.installSignals()
       if (this.stopRequested) return
 
-      this.identity = this.options.resolveIdentity(this.lease.path)
+      this.identity = this.options.resolveIdentity(this.lease.path, this.lease)
       const store = (this.options.createStore ?? ((input) => new HostProfileDomainStore(input)))({
         profilePath: this.lease.path,
         authority: { assertProfileAuthority: () => this.lease!.assertHeld() }
@@ -162,8 +185,19 @@ export class HostNodeProductionServer {
       const events = {
         publish: () => this.queueReconciliation()
       }
+      const resources = this.options.createDomainResources
+        ? await this.options.createDomainResources({
+            profilePath: this.lease.path,
+            identity: this.identity,
+            store
+          })
+        : null
+      const domainOptions = resources?.domainOptions ?? this.options.domainOptions
+      this.disposeResources = resources?.dispose ?? null
+      if (!domainOptions) throw new Error('Production Host domain resources are unavailable')
+      if (this.stopRequested) return
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
-        ...this.options.domainOptions,
+        ...domainOptions,
         store,
         events
       })
@@ -183,7 +217,7 @@ export class HostNodeProductionServer {
         commandExecutor: (command, context) =>
           this.domain!.executeCommand(context, command, { id: context.client.clientId }),
         setupExecutor: this.domain.setupExecutor,
-        healthProvider: this.options.health ?? this.options.domainOptions.health,
+        healthProvider: this.options.health ?? domainOptions.health,
         ...(this.options.threadOffersProvider
           ? { threadOffersProvider: this.options.threadOffersProvider }
           : {}),
@@ -225,27 +259,37 @@ export class HostNodeProductionServer {
 
   private async stopOnce(): Promise<void> {
     this.phaseValue = 'stopping'
+    let started = false
     try {
       await this.startPromise
+      started = true
       this.clearSignals()
       await this.cleanup()
       this.phaseValue = 'stopped'
       this.shutdown.resolve()
     } catch (error) {
+      // A cleanup failure after a live start is retryable: retain the lease and
+      // resources, keep waitForShutdown pending, and restore signal retry.
+      if (started) {
+        this.phaseValue = 'failed'
+        this.stopPromise = null
+        this.installSignals()
+        throw error
+      }
       this.phaseValue = 'failed'
       this.shutdown.reject(asError(error))
+      this.stopPromise = null
       throw error
     }
   }
 
   private async cleanup(): Promise<void> {
+    let listenerFailure: Error | null = null
     if (this.listener) {
       try {
         await this.listener.stop()
       } catch (error) {
-        throw new Error('Production Host listener cleanup failed; retaining profile authority.', {
-          cause: error
-        })
+        listenerFailure = asError(error)
       }
     }
     try {
@@ -262,12 +306,27 @@ export class HostNodeProductionServer {
         cause: error
       })
     }
+    try {
+      if (this.disposeResources && (await this.disposeResources()) !== true) {
+        throw new Error('resource disposal was not proven')
+      }
+    } catch (error) {
+      throw new Error('Production Host resource cleanup failed; retaining profile authority.', {
+        cause: error
+      })
+    }
+    if (listenerFailure) {
+      throw new Error('Production Host listener cleanup failed; retaining profile authority.', {
+        cause: listenerFailure
+      })
+    }
     if (this.lease && this.lease.release() !== true) {
       throw new Error('Production Host could not prove profile authority release.')
     }
     this.listener = null
     this.domain = null
     this.composition = null
+    this.disposeResources = null
     this.lease = null
   }
 
@@ -280,8 +339,13 @@ export class HostNodeProductionServer {
   }
 
   private clearSignals(): void {
-    for (const [signal, listener] of this.signals)
-      this.options.signalTarget.removeListener(signal, listener)
+    for (const [signal, listener] of this.signals) {
+      try {
+        this.options.signalTarget.removeListener(signal, listener)
+      } catch {
+        // Signal handler removal is advisory; cleanup authority must continue.
+      }
+    }
     this.signals.clear()
   }
 

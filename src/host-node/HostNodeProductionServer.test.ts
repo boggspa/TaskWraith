@@ -133,6 +133,8 @@ describe('HostNodeProductionServer', () => {
     unsafe.listener.start.mockRejectedValueOnce(new Error('listen failed'))
     unsafe.listener.stop.mockRejectedValueOnce(new Error('stop failed'))
     await expect(unsafe.server.start()).rejects.toThrow('listener cleanup failed')
+    expect(unsafe.domain.shutdown).toHaveBeenCalledOnce()
+    expect(unsafe.composition.shutdown).toHaveBeenCalledOnce()
     expect(unsafe.lease.release).not.toHaveBeenCalled()
   })
 
@@ -172,5 +174,124 @@ describe('HostNodeProductionServer', () => {
     expect(h.order.indexOf('domain.shutdown.settled')).toBeLessThan(
       h.order.indexOf('lease.release')
     )
+  })
+
+  it('builds domain resources only after lease/identity/store and disposes after runtime before release', async () => {
+    const h = harness({
+      domainOptions: undefined,
+      createDomainResources: async () => {
+        h.order.push('resources')
+        return {
+          domainOptions: {} as never,
+          dispose: () => {
+            h.order.push('resources.dispose')
+            return true
+          }
+        }
+      }
+    })
+    await h.server.start()
+    expect(h.order.indexOf('resources')).toBeGreaterThan(h.order.indexOf('store'))
+    expect(h.order.indexOf('resources')).toBeGreaterThan(h.order.indexOf('identity'))
+    await h.server.stop()
+    expect(h.order.indexOf('composition.shutdown')).toBeLessThan(
+      h.order.indexOf('resources.dispose')
+    )
+    expect(h.order.indexOf('resources.dispose')).toBeLessThan(h.order.indexOf('lease.release'))
+  })
+
+  it('stops during resource assembly without constructing domain/runtime and still disposes/releases', async () => {
+    let resolveResources!: (value: { domainOptions: never; dispose: () => boolean }) => void
+    const h = harness({
+      domainOptions: undefined,
+      createDomainResources: () =>
+        new Promise((resolve) => {
+          resolveResources = resolve
+        })
+    })
+    const starting = h.server.start()
+    await vi.waitFor(() => expect(h.order).toContain('store'))
+    const stopping = h.server.stop()
+    resolveResources({
+      domainOptions: {} as never,
+      dispose: () => {
+        h.order.push('resources.dispose')
+        return true
+      }
+    })
+    await starting
+    await stopping
+    expect(h.order).not.toContain('domain')
+    expect(h.order).not.toContain('composition')
+    expect(h.order).toContain('resources.dispose')
+    expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
+  it('permits a retry after transient listener cleanup failure while retaining the lease', async () => {
+    const h = harness()
+    await h.server.start()
+    h.listener.stop.mockRejectedValueOnce(new Error('transient stop'))
+    await expect(h.server.stop()).rejects.toThrow('listener cleanup failed')
+    expect(h.lease.release).not.toHaveBeenCalled()
+    await expect(h.server.start()).rejects.toThrow('one-shot')
+    await expect(h.server.stop()).resolves.toBeUndefined()
+    expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a second start after terminal lifecycle state', async () => {
+    const h = harness()
+    await h.server.start()
+    await h.server.stop()
+    await expect(h.server.start()).rejects.toThrow('one-shot')
+  })
+
+  it('keeps shutdown pending and restores SIGTERM retry after transient cleanup failure', async () => {
+    const h = harness()
+    await h.server.start()
+    h.listener.stop.mockRejectedValueOnce(new Error('transient stop'))
+    const waiting = h.server.waitForShutdown()
+    h.signalListeners.get('SIGTERM')?.()
+    await vi.waitFor(() => expect(h.listener.stop).toHaveBeenCalledOnce())
+    expect(h.lease.release).not.toHaveBeenCalled()
+    expect(h.signalListeners.has('SIGTERM')).toBe(true)
+    let settled = false
+    void waiting.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    h.signalListeners.get('SIGTERM')?.()
+    await waiting
+    expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
+  it('classifies concurrent stop plus startup resource failure as terminal startup failure', async () => {
+    let rejectResources!: (error: Error) => void
+    const h = harness({
+      domainOptions: undefined,
+      createDomainResources: () =>
+        new Promise((_, reject) => {
+          rejectResources = reject
+        })
+    })
+    const starting = h.server.start()
+    await vi.waitFor(() => expect(h.order).toContain('store'))
+    const stopping = h.server.stop()
+    rejectResources(new Error('resource startup failed'))
+    await expect(starting).rejects.toThrow('resource startup failed')
+    await expect(stopping).rejects.toThrow('resource startup failed')
+    expect(h.server.phase).toBe('failed')
+    expect(h.signalListeners.has('SIGTERM')).toBe(false)
+  })
+
+  it('disposes a malformed resource result before releasing its lease', async () => {
+    const dispose = vi.fn(() => true)
+    const h = harness({
+      domainOptions: undefined,
+      createDomainResources: async () => ({ domainOptions: undefined as never, dispose })
+    })
+    await expect(h.server.start()).rejects.toThrow('domain resources are unavailable')
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(h.lease.release).toHaveBeenCalledOnce()
   })
 })

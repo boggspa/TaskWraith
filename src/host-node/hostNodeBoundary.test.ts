@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
@@ -9,11 +9,17 @@ const REPO_ROOT = resolve(process.cwd())
 const HOST_NODE_ROOT = resolve(REPO_ROOT, 'src/host-node')
 const HOST_RUNTIME_ROOT = resolve(REPO_ROOT, 'src/host-runtime')
 const SHARED_ROOT = resolve(REPO_ROOT, 'src/shared')
+const HOST_SHARED_ROOT = resolve(REPO_ROOT, 'src/host-shared')
 const MAIN_MUSE_ROOT = resolve(REPO_ROOT, 'src/main/muse')
 const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeProfileRunPort.ts'),
-  resolve(HOST_NODE_ROOT, 'HostNodeDomainPorts.ts')
+  resolve(HOST_NODE_ROOT, 'HostNodeDomainPorts.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProductionServer.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProductionFactory.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeMuseResources.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeMuseCatalog.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeMuseAuthHandoff.ts')
 ]
 
 /** Deliberate production closure required by the Node Muse adapter. */
@@ -21,7 +27,6 @@ const PURE_MUSE_CLOSURE = new Set([
   'MuseCliArgs.ts',
   'MuseCronAssert.ts',
   'MuseExecJson.ts',
-  'MuseIpcBridge.ts',
   'MuseIsolatedHome.ts',
   'MuseProbe.ts',
   'MuseRun.ts',
@@ -40,7 +45,7 @@ function isWithin(path: string, root: string): boolean {
 function resolveRelativeModule(containingFile: string, specifier: string): string {
   const base = resolve(dirname(containingFile), specifier)
   for (const candidate of [base, `${base}.ts`, `${base}.tsx`, resolve(base, 'index.ts')]) {
-    if (existsSync(candidate)) return candidate
+    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
   }
   throw new Error(`Host Node boundary could not resolve ${specifier} from ${containingFile}`)
 }
@@ -105,7 +110,8 @@ describe('HostNode import boundary', () => {
         if (
           isWithin(target, HOST_NODE_ROOT) ||
           isWithin(target, HOST_RUNTIME_ROOT) ||
-          isWithin(target, SHARED_ROOT)
+          isWithin(target, SHARED_ROOT) ||
+          isWithin(target, HOST_SHARED_ROOT)
         ) {
           pending.push(target)
           continue

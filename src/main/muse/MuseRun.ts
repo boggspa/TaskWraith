@@ -498,6 +498,3 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
 /** Alias matching wave-1 F naming (`MuseRun` lifecycle entry). */
 export const runMuseOpaqueExecTurn = runMuseProvider
-
-/** IPC bridge entry — implemented in MuseIpcBridge (deps-injected spawn/binary). */
-export { runMuseProviderFromIpc } from './MuseIpcBridge'
