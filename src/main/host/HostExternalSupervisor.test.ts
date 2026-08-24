@@ -66,7 +66,7 @@ describe('HostExternalSupervisor', () => {
       resolveLaunch: async () => null,
       spawn
     })
-    await expect(supervisor.ensureAvailable()).resolves.toEqual({ kind: 'existing' })
+    await expect(supervisor.ensureAvailable()).resolves.toEqual({ kind: 'existing', welcome })
     expect(spawn).not.toHaveBeenCalled()
   })
 
@@ -91,8 +91,8 @@ describe('HostExternalSupervisor', () => {
     await expect(
       Promise.all([supervisor.ensureAvailable(), supervisor.ensureAvailable()])
     ).resolves.toEqual([
-      { kind: 'launched', pid: 42 },
-      { kind: 'launched', pid: 42 }
+      { kind: 'launched', pid: 42, welcome },
+      { kind: 'launched', pid: 42, welcome }
     ])
     const incompatible = new HostExternalSupervisor({
       profilePath: '/p',

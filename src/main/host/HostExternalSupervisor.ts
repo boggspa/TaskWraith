@@ -29,8 +29,12 @@ export type HostExternalSupervisorStatus =
   | 'failed'
   | 'closed'
 export type HostExternalEnsureResult =
-  | { readonly kind: 'existing' }
-  | { readonly kind: 'launched'; readonly pid: number | null }
+  | { readonly kind: 'existing'; readonly welcome: HostBootstrapWelcome }
+  | {
+      readonly kind: 'launched'
+      readonly pid: number | null
+      readonly welcome: HostBootstrapWelcome
+    }
 
 export class HostExternalProductionModeError extends HostProjectionIncompatibleProtocolError {
   constructor() {
@@ -141,10 +145,11 @@ export class HostExternalSupervisor {
     const probeTimeout = this.options.probeTimeoutMs ?? 1_500
     this.statusValue = 'probing'
     try {
-      assertProduction(await probe(probeTimeout))
+      const welcome = await probe(probeTimeout)
+      assertProduction(welcome)
       assertOpen()
       this.statusValue = 'attached-existing'
-      return { kind: 'existing' }
+      return { kind: 'existing', welcome }
     } catch (error) {
       if (error instanceof HostProjectionIncompatibleProtocolError) {
         this.statusValue = 'failed'
@@ -206,10 +211,11 @@ export class HostExternalSupervisor {
         throw new Error(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
       }
       try {
-        assertProduction(await probe(probeTimeout))
+        const welcome = await probe(probeTimeout)
+        assertProduction(welcome)
         assertOpen()
         this.statusValue = 'attached-launched'
-        return { kind: 'launched', pid: child.pid ?? null }
+        return { kind: 'launched', pid: child.pid ?? null, welcome }
       } catch (error) {
         if (error instanceof HostProjectionIncompatibleProtocolError) {
           this.statusValue = 'failed'
