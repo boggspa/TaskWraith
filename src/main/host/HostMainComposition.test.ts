@@ -21,7 +21,7 @@ import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthoritySnapshotDonorFamilies
 } from './AppStoreHostAuthority'
-import type { HostAuthorityCallContext } from './HostAuthority'
+import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
 import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandBridge } from './HostDeferredCommandBridge'

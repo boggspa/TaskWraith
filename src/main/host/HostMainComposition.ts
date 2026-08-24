@@ -45,7 +45,7 @@ import {
   type AppStoreHostAuthoritySnapshotDonor,
   type AppStoreHostAuthorityThreadOffersProvider
 } from './AppStoreHostAuthority'
-import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
+import type { HostAuthority, HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
 import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import {
   captureTwMissionFromHostSnapshot,
@@ -66,7 +66,11 @@ import {
   HostProjectionReconciler,
   type HostProjectionReconcileResult
 } from './HostProjectionReconciler'
-import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
+import {
+  HostSession,
+  type HostSessionHostIdentity,
+  type HostSessionIdFactory
+} from '../../host-runtime/HostSession'
 
 /**
  * Durable Host state lives in its own deterministic subdirectory of the

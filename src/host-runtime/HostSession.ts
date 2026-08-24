@@ -6,8 +6,8 @@
  * - Require verified context fields to exactly match the protocol-visible
  *   authenticated client identity (spoof / mismatch fail closed)
  * - Mint HostActorIdentity only via hostActorIdentityFromVerifiedContext
- * - Source welcome generation/cursor only from HostRuntimeBootstrap.getPosition
- *   (sole journal — never a second position counter)
+ * - Source welcome generation/cursor only from an injected sole-journal
+ *   position port (never a second position counter)
  * - Intersect capabilities only (via buildHostBootstrapWelcome)
  * - Issue session IDs from an injected bounded factory (default randomUUID);
  *   clients cannot select or invent session ids
@@ -34,19 +34,18 @@ import {
   type HostCursorPosition,
   type HostDecodeResult,
   type HostProjectionFreshness
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 import {
   hostActorIdentityFromVerifiedContext,
   isHostUuid,
   isSafeHostIdentifier,
   type HostTransportVerifiedClientContext,
   type HostUuidFactory
-} from './HostCommandIdentity'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+} from '../host-shared/HostCommandIdentity'
 
 export type HostSessionIdFactory = HostUuidFactory
 
-/** Minimal sole-journal position port (HostRuntimeBootstrap satisfies this). */
+/** Minimal sole-journal position port supplied by the Host runtime. */
 export interface HostSessionPositionPort {
   getPosition(): HostCursorPosition
 }
@@ -58,8 +57,8 @@ export interface HostSessionHostIdentity {
 
 export interface HostSessionOptions {
   readonly host: HostSessionHostIdentity
-  /** Sole journal position source. Prefer HostRuntimeBootstrap. */
-  readonly runtime: HostSessionPositionPort | Pick<HostRuntimeBootstrap, 'getPosition'>
+  /** Sole journal position source. */
+  readonly runtime: HostSessionPositionPort
   readonly hostCapabilityOffer: readonly HostCapability[]
   /** Injected for tests; default randomUUID. Never taken from the client. */
   readonly sessionIdFactory?: HostSessionIdFactory

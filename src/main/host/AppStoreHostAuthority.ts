@@ -30,7 +30,7 @@ import {
   type HostAuthorityReceiptResult,
   type HostAuthorityResult,
   type HostAuthorityShutdownResult
-} from './HostAuthority'
+} from '../../host-runtime/HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
 import { parseGovernedMutationCommandName } from './HostCommandRouting'
 import { projectHostCommandReceipt } from './HostCommandReceiptProjection'

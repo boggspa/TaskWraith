@@ -26,7 +26,10 @@ import type {
   HostProductionProviderListPort
 } from './HostProductionSuppliers'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
-import type { HostLocalServer, HostLocalServerOptions } from './HostLocalServer'
+import type {
+  HostLocalServer,
+  HostLocalServerOptions
+} from '../../host-runtime/HostLocalServer'
 import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from './HostSupervisor'

@@ -18,7 +18,10 @@ import {
   type AppStoreHostAuthoritySnapshotDonorFamilies,
   type HostDeferredAskPorts
 } from './AppStoreHostAuthority'
-import { hostAuthorityReceiptResultHasBody, type HostAuthorityCallContext } from './HostAuthority'
+import {
+  hostAuthorityReceiptResultHasBody,
+  type HostAuthorityCallContext
+} from '../../host-runtime/HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 

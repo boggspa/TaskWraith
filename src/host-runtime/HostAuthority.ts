@@ -1,5 +1,5 @@
 /**
- * Host-internal Authority contract (Wave 2B Subwave 4B).
+ * Standalone Host Authority contract (Wave 2B Subwave 4B).
  *
  * Transport-neutral interface only. Implementations inject runtime ports
  * elsewhere (AppStoreHostAuthority / dedicated Host process). This module
@@ -17,8 +17,8 @@ import type {
   HostDeltasSinceResult,
   HostHealthProjection,
   HostSnapshot
-} from '../../shared/hostProtocol'
-import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
+} from '../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 
 /** Authenticated call context required on every Authority operation. */
 export interface HostAuthorityCallContext {

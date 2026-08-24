@@ -32,7 +32,7 @@ import {
   taskWraithHostSocketPath,
   taskWraithHostTokenPath,
   type TaskWraithHostDiscovery
-} from '../../shared/taskWraithHostPaths.node'
+} from '../shared/taskWraithHostPaths.node'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
   decodeHostLocalTransportClientFrame,
@@ -41,20 +41,20 @@ import {
   type HostLocalTransportHostFrame,
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportSuccessResult
-} from '../../shared/hostProtocolTransport'
+} from '../shared/hostProtocolTransport'
 import {
   HOST_PROTOCOL_VERSION,
   type HostCommand,
   type HostCursorPosition,
   type HostDeltaEnvelope
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 import type { HostSession, HostSessionBindRequest, HostSessionBinding } from './HostSession'
 import {
   type HostAuthority,
   type HostAuthorityCallContext,
   parseHostAuthorityReceiptLookup
 } from './HostAuthority'
-import { TW_MISSION_MAX_BUNDLE_BYTES } from './twmission'
+import { TW_MISSION_MAX_BUNDLE_BYTES } from '../host-shared/twmission'
 
 // ---------------------------------------------------------------------------
 // Constants

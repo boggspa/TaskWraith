@@ -11,6 +11,11 @@ const FORBIDDEN_SOURCE_ROOTS = [
   resolve(REPO_ROOT, 'src/renderer'),
   resolve(REPO_ROOT, 'src/tui')
 ]
+const AUTHENTICATED_TRANSPORT_CORE = [
+  resolve(HOST_RUNTIME_ROOT, 'HostAuthority.ts'),
+  resolve(HOST_RUNTIME_ROOT, 'HostSession.ts'),
+  resolve(HOST_RUNTIME_ROOT, 'HostLocalServer.ts')
+]
 
 function isProductionSource(name: string): boolean {
   return name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.endsWith('.spec.ts')
@@ -71,6 +76,12 @@ function forbiddenImport(importer: string, specifier: string): boolean {
 }
 
 describe('standalone Host runtime boundary', () => {
+  it('includes the authenticated transport core in the standalone import audit', async () => {
+    expect(await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)).toEqual(
+      expect.arrayContaining(AUTHENTICATED_TRANSPORT_CORE)
+    )
+  })
+
   it('does not import Electron or presentation/composition roots', async () => {
     const files = await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)
     const violations = (

@@ -49,14 +49,14 @@ import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthorityHealthProvider
 } from './AppStoreHostAuthority'
-import type { HostAuthorityCallContext } from './HostAuthority'
+import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
 import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
 import { HostChannelCommandExecutor } from './HostChannelCommandExecutor'
 import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
-import { HostLocalServer, type HostLocalServerOptions } from './HostLocalServer'
+import { HostLocalServer, type HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import {
   createHostMainComposition,
   hostRuntimeDataDir,
@@ -86,7 +86,7 @@ import {
 } from './HostProductionSuppliers'
 import type { HostChannelAdminPort } from './HostChannelCommandExecutor'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
-import type { HostSessionHostIdentity } from './HostSession'
+import type { HostSessionHostIdentity } from '../../host-runtime/HostSession'
 import {
   createHostSupervisor,
   type HostSupervisor,
