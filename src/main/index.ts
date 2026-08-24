@@ -25322,6 +25322,7 @@ async function withUnownedCodexClientLifecycle<T>(
     runtimeProfile?: RuntimeProfile | null
     taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
     borrowActiveProviderClient?: boolean
+    signal?: AbortSignal
   } = {}
 ): Promise<T> {
   const borrowed = options.borrowActiveProviderClient
@@ -25334,7 +25335,7 @@ async function withUnownedCodexClientLifecycle<T>(
       await borrowed.release()
     }
   }
-  const lease = await acquireCodexClientLifecycleLease(label)
+  const lease = await acquireCodexClientLifecycleLease(label, options.signal)
   let client: CodexAppServerClient | null = null
   try {
     await disposeCodexClientForOwnerTransition(lease)
@@ -55814,6 +55815,18 @@ if (isGeminiMcpBridgeProcess) {
 
     registerCodexThreadHandlers({
       getCodexClient: createSerializedCodexThreadClientFacade,
+      listCodexThreads: (params, timeoutMs) =>
+        withUnownedCodexClientLifecycle(
+          'thread-list',
+          async (client) => {
+            await client.ensureStarted(app.getVersion())
+            return client.request('thread/list', params, timeoutMs)
+          },
+          {
+            borrowActiveProviderClient: true,
+            signal: AbortSignal.timeout(timeoutMs)
+          }
+        ),
       getAppVersion: () => app.getVersion(),
       providerDisplayName,
       resolveSenderAgentThreadScope,

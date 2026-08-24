@@ -177,6 +177,27 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
     )
   })
 
+  it('borrows the active cohort for automatic thread listing without fencing later runs', () => {
+    const helper = section(
+      'async function withUnownedCodexClientLifecycle<T>(',
+      'function createSerializedCodexThreadClientFacade()'
+    )
+    const registration = section(
+      'registerCodexThreadHandlers({',
+      "ipcMain.handle(\n      'start-agent-review'"
+    )
+
+    expect(helper).toContain('codexProviderClientCohorts.tryBorrow(')
+    expect(helper).toContain('acquireCodexClientLifecycleLease(label, options.signal)')
+    expect(helper).not.toContain('codexProviderClientCohorts.stopAccepting()')
+    expect(collapse(registration)).toContain(
+      "listCodexThreads: (params, timeoutMs) => withUnownedCodexClientLifecycle( 'thread-list'"
+    )
+    expect(registration).toContain('borrowActiveProviderClient: true')
+    expect(registration).toContain('signal: AbortSignal.timeout(timeoutMs)')
+    expect(registration).toContain("return client.request('thread/list', params, timeoutMs)")
+  })
+
   it('keeps ensemble reachability probing outside the client lifecycle queue', () => {
     const probe = section(
       'async function probeCodexParticipant(',
