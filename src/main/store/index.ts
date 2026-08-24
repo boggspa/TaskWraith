@@ -6946,6 +6946,9 @@ export class AppStore {
     title?: string
     /** Ensemble participant id of the calling seat; omitted on solo chats. */
     spawnedBy?: string
+    /** App run id of the parent run issuing the delegation (for
+     * terminalization cascade). Omitted when the caller has no run id. */
+    parentAppRunId?: string
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
     if (!parent) {
@@ -7002,6 +7005,9 @@ export class AppStore {
         ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {}),
         ...(typeof args.spawnedBy === 'string' && args.spawnedBy.trim()
           ? { spawnedBy: args.spawnedBy.trim() }
+          : {}),
+        ...(typeof args.parentAppRunId === 'string' && args.parentAppRunId.trim()
+          ? { parentAppRunId: args.parentAppRunId.trim() }
           : {})
       }
     }

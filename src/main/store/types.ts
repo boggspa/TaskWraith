@@ -4283,6 +4283,12 @@ export interface ChatRecord {
      * attached to its parent as an async worker, never as an Ensemble seat. */
     workerControl?: SubThreadWorkerControl
     /**
+     * App run id of the parent run that spawned this sub-thread. Written once
+     * at creation so the runManager terminal handler can cascade cancellation
+     * and settlement to wave children when the parent's round/turn terminalizes.
+     */
+    parentAppRunId?: string
+    /**
      * Ephemeral fleet lifecycle. `'ephemeral'` → archive-on-typed-return
      * (die-on-return). Omit / `'durable'` keeps recallable sub-threads.
      */

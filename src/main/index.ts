@@ -9080,6 +9080,26 @@ runManager.onChange((event) => {
       })
     }
   }
+  // Parent-terminalization cascade: see cascadeWaveChildrenOnParentTerminal.
+  // Guarded against background sub-thread runs — those are CHILD runs whose
+  // own terminal event is handled above; only a parent run's terminal event
+  // may cancel the wave it spawned.
+  if (
+    event.type === 'updated' &&
+    (event.session.status === 'completed' ||
+      event.session.status === 'failed' ||
+      event.session.status === 'cancelled') &&
+    !backgroundSubThreadTranscripts.has(event.session.runId)
+  ) {
+    void cascadeWaveChildrenOnParentTerminal(event.session.runId, event.session.status).catch(
+      (err) => {
+        console.warn(
+          '[SubThreadWave] parent-terminalization cascade failed:',
+          err instanceof Error ? err.message : String(err)
+        )
+      }
+    )
+  }
 })
 
 /**
@@ -9760,6 +9780,81 @@ async function failHungEphemeralFleetWorkersOnJoinDeadline(
       // path will never flush a typed return, so settle + propagate here —
       // propagation alone runs worktree settle, archive, and the mailbox
       // enqueue.
+      settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
+      await maybePropagateLinkedChildResult(subThreadId, {
+        outcome: 'cancelled',
+        sourceRunId: runId,
+        errorMessage: reason
+      })
+    }
+  }
+}
+
+/**
+ * Parent-terminalization cascade. Wave workers are dispatched from inside
+ * the parent run's tool-call context; when the parent run/turn terminalizes
+ * (notably in single-provider threads), the children's provider streams can
+ * go down with it without ever reaching their adapter terminal flush —
+ * leaving sub-threads stuck "running" with zero activity. Mirror the join
+ * deadline reaper: cancel + settle any still-running child whose
+ * delegationContext.parentAppRunId matches the terminal parent run.
+ *
+ * Scope guards:
+ * - Only fires on PARENT terminal events — never on child completion, so the
+ *   Cambridge no-auto-drain regression guard is preserved.
+ * - Durable (`lifecycle: 'durable'`) children stay recallable and are skipped;
+ *   ephemeral die-BY-deadline semantics are untouched.
+ */
+async function cascadeWaveChildrenOnParentTerminal(
+  parentRunId: string,
+  parentStatus: 'completed' | 'failed' | 'cancelled'
+): Promise<void> {
+  const children = AppStore.getChats().filter(
+    (chat) =>
+      chat.delegationContext?.parentAppRunId === parentRunId &&
+      chat.delegationContext?.lifecycle !== 'durable'
+  )
+  for (const child of children) {
+    const subThreadId = child.appChatId
+    const reason = `Parent run ${parentRunId} terminalised (${parentStatus}); cancelling wave worker.`
+    // Resolve the run to stop using the same precedence as the join deadline
+    // reaper: live background-transcript run first, then a registered
+    // RunManager session, then the last persisted row.
+    const backgroundRunId = [...backgroundSubThreadTranscripts.entries()].find(
+      ([, state]) => state.chatId === subThreadId && state.status === 'running'
+    )?.[0]
+    const sessionRunId = child.provider
+      ? runManager
+          .getActiveByProvider(child.provider)
+          .find((session) => session.appChatId === subThreadId)?.runId
+      : undefined
+    const runId = backgroundRunId || sessionRunId || (child.runs || []).at(-1)?.runId
+    if (!runId) continue
+    const latestRow = (child.runs || []).at(-1)
+    if (latestRow && latestRow.runId === runId && latestRow.status !== 'running') continue
+    // Stamp `cancelled` on the persisted row BEFORE aborting (same flusher
+    // contract as the reaper).
+    saveAndBroadcastChat({
+      ...child,
+      runs: (child.runs || []).map((run) =>
+        run.runId === runId
+          ? {
+              ...run,
+              status: 'cancelled' as const,
+              cancelled: true,
+              endedAt: run.endedAt || new Date().toISOString()
+            }
+          : run
+      ),
+      updatedAt: Date.now()
+    })
+    let cancelled = false
+    try {
+      cancelled = child.provider ? await cancelProviderRun(child.provider, runId) : false
+    } catch {
+      cancelled = false
+    }
+    if (!cancelled) {
       settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
       await maybePropagateLinkedChildResult(subThreadId, {
         outcome: 'cancelled',
@@ -40064,6 +40159,7 @@ async function executeGeminiMcpTool(
         recalledChat ??
         AppStore.createSubThread({
           parentChatId,
+          parentAppRunId: context.appRunId,
           provider: providerArg,
           delegationPrompt: promptArg,
           returnResultToParent: returnResult,
@@ -40577,6 +40673,7 @@ async function executeGeminiMcpTool(
           const subThread = AppStore.createSubThread({
             parentChatId,
             provider: worker.provider,
+            parentAppRunId: context.appRunId,
             delegationPrompt: worker.prompt,
             returnResultToParent: true,
             joinPolicy,
