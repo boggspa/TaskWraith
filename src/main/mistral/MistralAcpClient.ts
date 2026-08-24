@@ -42,10 +42,13 @@ import {
 } from '../acp/AcpTurnClient'
 import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
+import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import {
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
   MISTRAL_SCOPED_MCP_SERVER_NAME
 } from '../index.constants'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
+import type { EffectiveRunPermissions } from '../store/types'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -236,6 +239,37 @@ export function normalizeMistralVibePermissionRequest(
       rawInput: nextRawInput
     }
   }
+}
+
+/**
+ * Exact provider-side broker admission. Vibe's ACP permission is only the hop
+ * into TaskWraith: the authenticated broker still applies the signed service
+ * policy, audit ledger, workspace guards, and mutation transaction.
+ */
+export function mistralTaskWraithBrokerToolRequested(request: AcpPermissionRequest): boolean {
+  const normalized = normalizeMistralVibePermissionRequest(request)
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(normalized, [
+      MISTRAL_SCOPED_MCP_SERVER_NAME,
+      MISTRAL_BROKER_MCP_TOOL_NAMESPACE
+    ])
+  )
+}
+
+/**
+ * Resolve the per-run attach decision. A signed UltraTask selection is an
+ * explicit user opt-in even when the ordinary Mistral advertise preference is
+ * off; absent consent preserves the existing two-gate behavior.
+ */
+export function shouldAdvertiseTaskWraithMcpToMistral(input: {
+  taskWraithMcpAdvertised: boolean
+  advertiseEnabled: boolean
+  effectivePermissions?: EffectiveRunPermissions | null
+}): boolean {
+  return (
+    hasUltraTaskDelegationAutoAllow(input.effectivePermissions) ||
+    (input.taskWraithMcpAdvertised && input.advertiseEnabled)
+  )
 }
 
 /**

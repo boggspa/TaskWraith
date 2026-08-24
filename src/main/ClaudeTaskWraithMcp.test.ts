@@ -6,8 +6,10 @@ import {
   buildClaudeTaskWraithAllowedToolNames,
   buildClaudeTaskWraithMcpConfigJson,
   buildClaudeTaskWraithMcpServers,
+  claudeTaskWraithMcpEnabled,
   extendClaudeCliArgsWithTaskWraithMcp
 } from './ClaudeTaskWraithMcp'
+import type { EffectiveRunPermissions } from './store/types'
 import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
@@ -49,6 +51,30 @@ describe('buildClaudeTaskWraithMcpServers', () => {
 
   it('returns null when disabled so the caller can omit the SDK option entirely', () => {
     expect(buildClaudeTaskWraithMcpServers({ ...fixture, enabled: false })).toBeNull()
+  })
+
+  it('attaches only the TaskWraith broker when signed UltraTask consent is present', () => {
+    const effectivePermissions = {
+      subThreadDelegationAutoAllowSource: 'ultratask'
+    } as EffectiveRunPermissions
+    const input = {
+      ...fixture,
+      enabled: false,
+      bridgeAvailable: true,
+      effectivePermissions,
+      profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    }
+    expect(claudeTaskWraithMcpEnabled(input)).toBe(true)
+    expect(Object.keys(buildClaudeTaskWraithMcpServers(input) || {})).toEqual(['TaskWraith'])
+    expect(claudeTaskWraithMcpEnabled({ ...input, bridgeAvailable: false })).toBe(false)
+    expect(
+      claudeTaskWraithMcpEnabled({
+        ...input,
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultra'
+        } as unknown as EffectiveRunPermissions
+      })
+    ).toBe(false)
   })
 
   it('emits a single TaskWraith stdio entry with the parentProvider env stamp', () => {
@@ -184,9 +210,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args).not.toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
 
-    const allowed = buildClaudeTaskWraithAllowedToolNames(
-      TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
-    )
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID)
     expect(allowed).toHaveLength(GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS.length * 2)
     expect(allowed).toContain('mesh_scene_present')
     expect(allowed).toContain('mcp__TaskWraith__mesh_scene_present')
@@ -233,12 +257,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
   it('strips stale subset flags when the pinned profile is full', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
-      bridgeArgs: [
-        ...fixture.bridgeArgs,
-        '--core-subset',
-        '--gateway-subset',
-        '--sketch-direct'
-      ]
+      bridgeArgs: [...fixture.bridgeArgs, '--core-subset', '--gateway-subset', '--sketch-direct']
     })
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
@@ -421,7 +440,9 @@ describe('buildClaudeTaskWraithAllowedToolNames', () => {
   })
 
   it('always includes delegate_to_subthread (the headline Phase I tool)', () => {
-    expect(buildClaudeTaskWraithAllowedToolNames()).toContain('mcp__TaskWraith__delegate_to_subthread')
+    expect(buildClaudeTaskWraithAllowedToolNames()).toContain(
+      'mcp__TaskWraith__delegate_to_subthread'
+    )
     expect(buildClaudeTaskWraithAllowedToolNames()).toContain('delegate_to_subthread')
   })
 })
@@ -447,6 +468,24 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(out).not.toBe(baseArgs)
     expect(out).not.toContain('--mcp-config')
     expect(out).not.toContain('--allowedTools')
+  })
+
+  it('pre-approves the UltraTask delegation routes when signed consent enables the broker', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      enabled: false,
+      bridgeAvailable: true,
+      profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+      effectivePermissions: {
+        subThreadDelegationAutoAllowSource: 'ultratask'
+      } as EffectiveRunPermissions
+    })
+    expect(out).toContain('--mcp-config')
+    const allowed = out[out.indexOf('--allowedTools') + 1].split(',')
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(allowed).toContain(toolName)
+      expect(allowed).toContain(`mcp__TaskWraith__${toolName}`)
+    }
   })
 
   it('appends --mcp-config <path> and --allowedTools <comma-joined-names> after the base args', () => {

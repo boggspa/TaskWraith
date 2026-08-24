@@ -3,10 +3,13 @@ import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise
 import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
   formatMistralSteerPrompt,
+  mistralTaskWraithBrokerToolRequested,
   normalizeMistralVibePermissionRequest,
   runMistralAcpTurn,
+  shouldAdvertiseTaskWraithMcpToMistral,
   type AcpChildProcess
 } from './MistralAcpClient'
+import type { EffectiveRunPermissions } from '../store/types'
 
 const MISTRAL_NAMESPACES = ['taskwraith-mistral', 'TaskWraith'] as const
 
@@ -94,6 +97,23 @@ function permissionRequest(rawToolCall: Record<string, unknown>): AcpPermissionR
 }
 
 describe('normalizeMistralVibePermissionRequest', () => {
+  it('admits every exact UltraTask delegation route into the host-gated broker', () => {
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(
+        mistralTaskWraithBrokerToolRequested(
+          permissionRequest({
+            toolCallId: `delegation-${toolName}`,
+            title: 'Delegation request',
+            kind: 'other',
+            rawInput: {},
+            _meta: { tool_name: `TaskWraith_${toolName}`, effect_kind: 'tool' }
+          })
+        ),
+        toolName
+      ).toBe(true)
+    }
+  })
+
   it('translates Vibe structured MCP metadata into the strict TaskWraith spelling', () => {
     const request = permissionRequest({
       toolCallId: 'write-1',
@@ -261,6 +281,32 @@ describe('normalizeMistralVibePermissionRequest', () => {
 
     expect(normalized).toBe(request)
     expect(resolveStructuredTaskWraithToolRequest(normalized, MISTRAL_NAMESPACES)).toBeNull()
+  })
+})
+
+describe('shouldAdvertiseTaskWraithMcpToMistral', () => {
+  it('lets signed UltraTask consent opt into the broker without changing ordinary runs', () => {
+    expect(
+      shouldAdvertiseTaskWraithMcpToMistral({
+        taskWraithMcpAdvertised: false,
+        advertiseEnabled: false,
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        } as EffectiveRunPermissions
+      })
+    ).toBe(true)
+    expect(
+      shouldAdvertiseTaskWraithMcpToMistral({
+        taskWraithMcpAdvertised: false,
+        advertiseEnabled: false
+      })
+    ).toBe(false)
+    expect(
+      shouldAdvertiseTaskWraithMcpToMistral({
+        taskWraithMcpAdvertised: true,
+        advertiseEnabled: true
+      })
+    ).toBe(true)
   })
 })
 

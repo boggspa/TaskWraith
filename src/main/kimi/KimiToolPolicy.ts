@@ -12,7 +12,8 @@ import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
-import type { AgenticServiceId } from '../store/types'
+import { isUltraTaskDelegationAutoAllowRequest } from '../UltraTaskDelegationConsent'
+import type { AgenticServiceId, EffectiveRunPermissions } from '../store/types'
 
 const KIMI_NATIVE_DENY_NAMES = new Set(KIMI_ACP_DENY_TOOLS.map((name) => name.toLowerCase()))
 const KIMI_BROKER_DEFERRED_MESH_TOOLS: ReadonlySet<string> = new Set(MESH_MCP_TOOL_NAMES)
@@ -72,16 +73,18 @@ function resolveKimiTaskWraithMcpTool(request: {
 }
 
 /**
- * Strip the `mcp__<server>__` namespace Kimi puts on MCP tools (the standard
- * MCP convention; our server is "taskwraith", with a capitalized alias). The
- * isolated home guarantees the only configured MCP server is TaskWraith. The
- * resolver still requires that exact namespace; an unqualified name passes
- * through unchanged for ACP builds that omit the prefix.
+ * Strip either Kimi spelling for the app-owned server: current HTTP MCP seats
+ * emit `TaskWraith__<tool>`, while some ACP/CLI builds use the standard
+ * `mcp__TaskWraith__<tool>` form. An unqualified name passes through unchanged
+ * for builds that omit the prefix. Foreign namespaces remain unresolved by the
+ * strict catalog resolver above.
  */
 export function unqualifyKimiMcpToolName(value: unknown): string | null {
   if (typeof value !== 'string' || !value) return null
   const match = value.match(/^mcp__[A-Za-z0-9_-]+?__(.+)$/)
-  return match ? match[1] : value
+  if (match) return match[1]
+  const kimiMatch = value.match(/^TaskWraith__(.+)$/i)
+  return kimiMatch ? kimiMatch[1] : value
 }
 
 /**
@@ -233,6 +236,12 @@ export interface KimiToolPolicyRequest {
 export interface KimiToolPolicyOptions {
   /** False for a plan / read-only seat: mutating tools are denied, not admitted. */
   writeCapable: boolean
+  /**
+   * Main-resolved, signature-verified run posture. The exact UltraTask source
+   * admits only TaskWraith's delegation tools through Kimi's outer ACP wall;
+   * the authenticated broker remains the policy/audit authority.
+   */
+  effectivePermissions?: EffectiveRunPermissions | null
   /** True for a read-only / safe TaskWraith MCP tool (or capability gateway). */
   isSafeMcpTool: (request: KimiToolPolicyRequest) => boolean
   /** Exact mutator admitted only so TaskWraith's inner signed service gate can decide. */
@@ -276,8 +285,19 @@ export function classifyKimiToolPermission(
   options: KimiToolPolicyOptions
 ): KimiToolDecision {
   if (isKimiDeniedNativeTool(request)) return 'deny'
+  const taskWraithToolName = resolveKimiTaskWraithMcpTool(request)
+  const taskWraithService = taskWraithToolName ? resolveKimiTaskWraithMcpToolService(request) : null
+  if (
+    isUltraTaskDelegationAutoAllowRequest({
+      service: taskWraithService,
+      toolName: taskWraithToolName,
+      effectivePermissions: options.effectivePermissions
+    })
+  ) {
+    return 'allow'
+  }
   if (options.isSafeMcpTool(request)) return 'allow'
-  if (options.writeCapable && resolveKimiTaskWraithMcpToolService(request) === 'fileChanges') {
+  if (options.writeCapable && taskWraithService === 'fileChanges') {
     return 'allow'
   }
   if (options.isBrokerDeferredMcpTool?.(request)) return 'gate'

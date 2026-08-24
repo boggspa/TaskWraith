@@ -2,6 +2,8 @@ import { grokWriteCapable } from './GrokCliArgs'
 import { GROK_BROKER_MCP_TOOL_NAMESPACE, GROK_SCOPED_MCP_SERVER_NAME } from '../index.constants'
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
+import type { EffectiveRunPermissions } from '../store/types'
 import {
   resolveProviderNativeActionStrict,
   resolveToolDispatchContractStrict,
@@ -158,16 +160,14 @@ export function resolveStructuredTaskWraithToolRequest(
     typeof nestedToolInput?.name === 'string' && nestedToolInput.name.trim().length > 0
       ? nestedToolInput.name
       : null
-  if (
-    rootTargetArgument &&
-    nestedTargetArgument &&
-    rootTargetArgument !== nestedTargetArgument
-  ) {
+  if (rootTargetArgument && nestedTargetArgument && rootTargetArgument !== nestedTargetArgument) {
     return null
   }
   const targetArgument = nestedTargetArgument || rootTargetArgument
   const identities =
-    gatewayEnvelope || !targetArgument ? envelopeIdentities : [...envelopeIdentities, targetArgument]
+    gatewayEnvelope || !targetArgument
+      ? envelopeIdentities
+      : [...envelopeIdentities, targetArgument]
   if (identities.length === 0) return null
   const resolved = identities.map((candidate) => {
     const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)
@@ -200,7 +200,9 @@ export function grokTaskWraithSafeToolRequested(request: StructuredTaskWraithToo
 export function grokTaskWraithBrokerToolRequested(
   request: StructuredTaskWraithToolRequest
 ): boolean {
-  return Boolean(resolveStructuredTaskWraithToolRequest(request, GROK_TASKWRAITH_MCP_TOOL_NAMESPACES))
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(request, GROK_TASKWRAITH_MCP_TOOL_NAMESPACES)
+  )
 }
 
 /**
@@ -237,9 +239,13 @@ export function shouldAdvertiseTaskWraithMcpToGrok(input: {
   approvalMode?: string | null
   bridgeEnabled: boolean
   readOnlyAdvertiseEnabled: boolean
+  /** Main-resolved, signature-verified run posture. */
+  effectivePermissions?: EffectiveRunPermissions | null
 }): boolean {
   if (!input.acpEnabled) return false
   return (
-    grokWriteCapable(input.approvalMode) || (input.bridgeEnabled && input.readOnlyAdvertiseEnabled)
+    grokWriteCapable(input.approvalMode) ||
+    hasUltraTaskDelegationAutoAllow(input.effectivePermissions) ||
+    (input.bridgeEnabled && input.readOnlyAdvertiseEnabled)
   )
 }

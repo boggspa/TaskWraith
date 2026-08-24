@@ -5,6 +5,7 @@ import {
   resolveCursorPathBBrokerPolicy,
   type CursorPathBLaunchPlanInput
 } from './CursorPathBLaunchPlan'
+import type { EffectiveRunPermissions } from '../store/types'
 
 const WORKSPACE = '/Users/test/repo'
 const PROMPT = 'Review the workspace.'
@@ -118,6 +119,35 @@ describe('CursorPathBLaunchPlan', () => {
       safeSubset: false,
       planSubset: false
     })
+    expect(readOnlyPlan.allowRules.some((rule) => rule.includes('delegate_wave'))).toBe(false)
+  })
+
+  it('adds exact delegation allow rules only for signed UltraTask Ask/Plan runs', () => {
+    const effectivePermissions = {
+      subThreadDelegationAutoAllowSource: 'ultratask'
+    } as EffectiveRunPermissions
+    for (const planSeat of [false, true]) {
+      const policy = resolveCursorPathBBrokerPolicy({
+        writeCapable: false,
+        planSeat,
+        taskWraithMcpProfileId: 'taskwraith-gateway-v17',
+        effectivePermissions
+      })
+      expect(policy.bridgeMode).toBe(planSeat ? 'plan-subset' : 'safe-subset')
+      for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker-${toolName})`)
+      }
+      expect(policy.allowRules).not.toContain('Mcp(taskwraith-broker:*)')
+      expect(policy.denyRules).toEqual(['Shell(**)', 'Write(**)'])
+    }
+
+    const ordinary = resolveCursorPathBBrokerPolicy({
+      writeCapable: false,
+      planSeat: true,
+      taskWraithMcpProfileId: 'taskwraith-gateway-v17'
+    })
+    expect(ordinary.allowRules.some((rule) => rule.includes('delegate_wave'))).toBe(false)
   })
 
   it('selects a visible native-only degradation before argv construction', () => {

@@ -1,8 +1,12 @@
-import type { TaskWraithMcpProfileId } from '../store/types'
+import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
+import {
+  hasUltraTaskDelegationAutoAllow,
+  ULTRATASK_DELEGATION_TOOL_NAMES
+} from '../UltraTaskDelegationConsent'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import { isCursorGrokModelId, resolveCursorGrokCliModelId } from '../../shared/grok45Models'
@@ -37,6 +41,8 @@ export interface CursorPathBLaunchPlanInput {
   readonly brokerRequested: boolean
   readonly brokerOutcome: CursorPathBBrokerOutcome
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** Main-resolved, signature-verified run posture. */
+  readonly effectivePermissions?: EffectiveRunPermissions | null
   readonly workspaceMcpAliasesGlobalRegistry: boolean
 }
 
@@ -84,6 +90,8 @@ export function resolveCursorPathBBrokerPolicy(input: {
   readonly writeCapable: boolean
   readonly planSeat: boolean
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** Main-resolved, signature-verified run posture. */
+  readonly effectivePermissions?: EffectiveRunPermissions | null
   /** True only after broker setup failed or was not requested and no transient
    * broker policy remains installed for this process. */
   readonly nativeWriteFallback?: boolean
@@ -108,17 +116,46 @@ export function resolveCursorPathBBrokerPolicy(input: {
   if (input.planSeat) {
     return Object.freeze({
       bridgeMode: 'plan-subset',
-      allowRules: Object.freeze([...CURSOR_BROKER_PLAN_MCP_ALLOW_RULES]),
+      allowRules: Object.freeze(
+        cursorUltraTaskDelegationAllowRules(
+          CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
+          input.effectivePermissions
+        )
+      ),
       denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
       ...common
     })
   }
   return Object.freeze({
     bridgeMode: 'safe-subset',
-    allowRules: Object.freeze([...CURSOR_BROKER_READONLY_MCP_ALLOW_RULES]),
+    allowRules: Object.freeze(
+      cursorUltraTaskDelegationAllowRules(
+        CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
+        input.effectivePermissions
+      )
+    ),
     denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
     ...common
   })
+}
+
+/**
+ * Cursor's immutable gateway-v1 allow-rule arrays predate delegate_wave and
+ * ultra_task. A signed UltraTask selection adds only the three delegation
+ * routes to the transient run overlay; the scoped bridge still performs its
+ * own tools/list + tools/call ceiling and TaskWraith remains the host gate.
+ */
+function cursorUltraTaskDelegationAllowRules(
+  baseRules: readonly string[],
+  effectivePermissions: EffectiveRunPermissions | null | undefined
+): string[] {
+  if (!hasUltraTaskDelegationAutoAllow(effectivePermissions)) return [...baseRules]
+  const rules = new Set(baseRules)
+  for (const toolName of ULTRATASK_DELEGATION_TOOL_NAMES) {
+    rules.add(`Mcp(${CURSOR_MCP_SERVER_NAME}:${toolName})`)
+    rules.add(`Mcp(${CURSOR_MCP_SERVER_NAME}-${toolName})`)
+  }
+  return [...rules]
 }
 
 /**

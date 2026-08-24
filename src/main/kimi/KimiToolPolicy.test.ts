@@ -10,6 +10,7 @@ import {
 } from './KimiToolPolicy'
 import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
+import type { EffectiveRunPermissions } from '../store/types'
 
 const never = () => false
 const opts = (over: Partial<Parameters<typeof classifyKimiToolPermission>[1]> = {}) => ({
@@ -23,6 +24,7 @@ describe('unqualifyKimiMcpToolName', () => {
   it('strips the mcp__<server>__ namespace (incl. capitalized alias)', () => {
     expect(unqualifyKimiMcpToolName('mcp__taskwraith__capability_search')).toBe('capability_search')
     expect(unqualifyKimiMcpToolName('mcp__TaskWraith__ask_user_question')).toBe('ask_user_question')
+    expect(unqualifyKimiMcpToolName('TaskWraith__delegate_wave')).toBe('delegate_wave')
   })
   it('passes an already-unqualified name through', () => {
     expect(unqualifyKimiMcpToolName('capability_search')).toBe('capability_search')
@@ -296,6 +298,10 @@ describe('isKimiSafeMcpTool', () => {
 })
 
 describe('classifyKimiToolPermission', () => {
+  const ultraTaskPermissions = {
+    subThreadDelegationAutoAllowSource: 'ultratask'
+  } as EffectiveRunPermissions
+
   it('auto-allows a safe / read-only MCP tool', () => {
     const req: KimiToolPolicyRequest = {
       toolName: 'mcp__taskwraith__capability_search',
@@ -381,6 +387,63 @@ describe('classifyKimiToolPermission', () => {
       classifyKimiToolPermission(
         { toolName: 'mcp__taskwraith__write_file', toolKind: 'edit' },
         opts({ writeCapable: false })
+      )
+    ).toBe('deny')
+  })
+
+  it('admits exact UltraTask delegation tools through the read-only ACP wall', () => {
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(
+        classifyKimiToolPermission(
+          {
+            toolName: `TaskWraith__${toolName}`,
+            toolKind: 'execute',
+            rawToolCall: {
+              kind: 'execute',
+              rawInput: { tool_name: `TaskWraith__${toolName}` }
+            }
+          },
+          opts({ writeCapable: false, effectivePermissions: ultraTaskPermissions })
+        ),
+        toolName
+      ).toBe('allow')
+    }
+  })
+
+  it('keeps ordinary, foreign, and non-delegation Kimi requests unchanged', () => {
+    const waveRequest: KimiToolPolicyRequest = {
+      toolName: 'TaskWraith__delegate_wave',
+      toolKind: 'execute',
+      rawToolCall: {
+        kind: 'execute',
+        rawInput: { tool_name: 'TaskWraith__delegate_wave' }
+      }
+    }
+    expect(classifyKimiToolPermission(waveRequest, opts({ writeCapable: false }))).toBe('deny')
+    expect(
+      classifyKimiToolPermission(
+        {
+          toolName: 'mcp__evil__delegate_wave',
+          toolKind: 'execute',
+          rawToolCall: {
+            kind: 'execute',
+            rawInput: { tool_name: 'mcp__evil__delegate_wave' }
+          }
+        },
+        opts({ writeCapable: false, effectivePermissions: ultraTaskPermissions })
+      )
+    ).toBe('deny')
+    expect(
+      classifyKimiToolPermission(
+        {
+          toolName: 'mcp__taskwraith__cancel_subthread',
+          toolKind: 'execute',
+          rawToolCall: {
+            kind: 'execute',
+            rawInput: { tool_name: 'mcp__taskwraith__cancel_subthread' }
+          }
+        },
+        opts({ writeCapable: false, effectivePermissions: ultraTaskPermissions })
       )
     ).toBe('deny')
   })
