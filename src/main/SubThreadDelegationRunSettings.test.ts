@@ -49,7 +49,7 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
-  it('maps the shared effort argument to Claude\'s provider-specific payload field', () => {
+  it("maps the shared effort argument to Claude's provider-specific payload field", () => {
     expect(
       resolveSubThreadDelegationRunSettings({
         provider: 'claude',
@@ -113,10 +113,21 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
-  it('rejects provider-incompatible or unknown controls before dispatch', () => {
+  it('normalizes K2.7 to its fixed On setting and rejects unknown controls before dispatch', () => {
     expect(
       resolveSubThreadDelegationRunSettings({ provider: 'kimi', reasoningEffort: 'high' })
-    ).toMatchObject({ ok: false, message: expect.stringMatching(/default.*does not expose/i) })
+    ).toEqual({
+      ok: true,
+      requestedModel: 'cli-default',
+      reasoningEffort: 'on',
+      kimiThinking: true,
+      runPayload: { model: 'cli-default', reasoningEffort: 'on', kimiThinking: true },
+      providerMetadataPatch: {
+        selectedModelType: 'cli-default',
+        kimiReasoningEffort: 'on',
+        kimiThinkingEnabled: true
+      }
+    })
     expect(
       resolveSubThreadDelegationRunSettings({ provider: 'codex', reasoningEffort: 'warp' })
     ).toMatchObject({ ok: false, message: expect.stringMatching(/reasoningEffort.*codex/i) })
@@ -125,25 +136,29 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     ).toMatchObject({ ok: false, message: expect.stringMatching(/only supported for kimi/i) })
   })
 
-  it('rejects a reasoning tier for a known model that does not expose reasoning controls', () => {
+  it('omits reasoning for Grok/Cursor models that do not expose an effort axis', () => {
     expect(
       resolveSubThreadDelegationRunSettings({
         provider: 'grok',
         model: 'grok-composer-2.5-fast',
         reasoningEffort: 'high'
       })
-    ).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/grok-composer-2\.5-fast.*does not expose/i)
+    ).toEqual({
+      ok: true,
+      requestedModel: 'grok-composer-2.5-fast',
+      runPayload: { model: 'grok-composer-2.5-fast' },
+      providerMetadataPatch: { selectedModelType: 'grok-composer-2.5-fast' }
     })
     expect(
       resolveSubThreadDelegationRunSettings({
         provider: 'cursor',
         reasoningEffort: 'high'
       })
-    ).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/default.*does not expose/i)
+    ).toEqual({
+      ok: true,
+      requestedModel: 'cli-default',
+      runPayload: { model: 'cli-default' },
+      providerMetadataPatch: { selectedModelType: 'cli-default' }
     })
   })
 
@@ -179,9 +194,108 @@ describe('resolveSubThreadDelegationRunSettings', () => {
         reasoningEffort: 'xhigh'
       })
     ).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/grok-4\.5.*does not expose/i)
+      ok: true,
+      requestedModel: 'grok-4.5',
+      reasoningEffort: 'high',
+      runPayload: { model: 'grok-4.5', reasoningEffort: 'high' }
     })
+  })
+
+  it('max-maps delegated reasoning through each provider wire vocabulary', () => {
+    const cases = [
+      {
+        request: {
+          provider: 'mistral' as const,
+          model: 'devstral-small',
+          reasoningEffort: 'ultracode'
+        },
+        effort: 'max',
+        metadataKey: 'mistralReasoningEffort'
+      },
+      {
+        request: {
+          provider: 'pi' as const,
+          model: 'deepseek/deepseek-v4-flash',
+          reasoningEffort: 'ultratask'
+        },
+        effort: 'max',
+        metadataKey: 'piReasoningEffort'
+      },
+      {
+        request: {
+          provider: 'muse' as const,
+          model: 'muse-spark-1.2',
+          reasoningEffort: 'max'
+        },
+        effort: 'ultra',
+        metadataKey: 'museReasoningEffort'
+      },
+      {
+        request: {
+          provider: 'antigravity' as const,
+          model: 'gemini-3.6-flash-medium',
+          reasoningEffort: 'ultratask'
+        },
+        effort: 'high',
+        metadataKey: 'antigravityReasoningEffort'
+      },
+      {
+        request: {
+          provider: 'ollama' as const,
+          model: 'qwen3.5:9b',
+          reasoningEffort: 'ultratask'
+        },
+        effort: 'on',
+        metadataKey: 'ollamaReasoningEffort'
+      },
+      {
+        request: {
+          provider: 'ollama' as const,
+          model: 'gpt-oss:20b',
+          reasoningEffort: 'max'
+        },
+        effort: 'high',
+        metadataKey: 'ollamaReasoningEffort'
+      }
+    ]
+
+    for (const { request, effort, metadataKey } of cases) {
+      const result = resolveSubThreadDelegationRunSettings(request)
+      expect(result).toMatchObject({
+        ok: true,
+        requestedModel: request.model,
+        reasoningEffort: effort,
+        runPayload: { model: request.model, reasoningEffort: effort },
+        providerMetadataPatch: { [metadataKey]: effort }
+      })
+    }
+  })
+
+  it('omits an effort for known non-thinking Pi, Mistral, and Ollama models', () => {
+    for (const request of [
+      {
+        provider: 'pi' as const,
+        model: 'mistral/mistral-large-2512',
+        reasoningEffort: 'max'
+      },
+      {
+        provider: 'mistral' as const,
+        model: 'mistral-large-2512',
+        reasoningEffort: 'max'
+      },
+      {
+        provider: 'ollama' as const,
+        model: 'gemma3:4b',
+        reasoningEffort: 'max'
+      }
+    ]) {
+      expect(resolveSubThreadDelegationRunSettings(request)).toEqual({
+        ok: true,
+        requestedModel: request.model,
+        runPayload: { model: request.model },
+        providerMetadataPatch: { selectedModelType: request.model }
+      })
+    }
   })
 
   it('inherits the latest seat settings on recall', () => {
@@ -211,9 +325,7 @@ describe('resolveSubThreadDelegationRunSettings', () => {
       ]
     })
 
-    expect(
-      resolveSubThreadDelegationRunSettings({ provider: 'codex', recallChat })
-    ).toEqual({
+    expect(resolveSubThreadDelegationRunSettings({ provider: 'codex', recallChat })).toEqual({
       ok: true,
       requestedModel: 'gpt-5.6-sol',
       reasoningEffort: 'max',
@@ -225,19 +337,18 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
-  it.each([
-    { model: 'gpt-5.6-terra' },
-    { reasoningEffort: 'high' },
-    { kimiThinking: false }
-  ])('rejects mutable model controls on recall: %o', (controls) => {
-    const result = resolveSubThreadDelegationRunSettings({
-      provider: 'codex',
-      recallChat: makeSubThread({}),
-      ...controls
-    })
-    expect(result).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/spawn-only.*session continuity/i)
-    })
-  })
+  it.each([{ model: 'gpt-5.6-terra' }, { reasoningEffort: 'high' }, { kimiThinking: false }])(
+    'rejects mutable model controls on recall: %o',
+    (controls) => {
+      const result = resolveSubThreadDelegationRunSettings({
+        provider: 'codex',
+        recallChat: makeSubThread({}),
+        ...controls
+      })
+      expect(result).toMatchObject({
+        ok: false,
+        message: expect.stringMatching(/spawn-only.*session continuity/i)
+      })
+    }
+  )
 })
