@@ -47,8 +47,8 @@ Options:
   --width <columns>      Snapshot/replay width (default: terminal or 80)
   --height <rows>        Snapshot/replay height (default: terminal or 24)
   --thread <id>          Open a specific TaskWraith thread
-  --user-data <path>     Override Electron's TaskWraith userData directory
-  --no-start-host        Connect only; do not start the app Host when offline
+  --user-data <path>     Use this standalone Node Host profile directory
+  --no-start-host        Connect only; do not launch a Node Host when offline
   --no-color             Disable ANSI colour
   --color <mode>         truecolor, ansi256, or none
   --ascii                Force ASCII chrome (also: TASKWRAITH_TUI_ASCII=1)

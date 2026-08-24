@@ -1,244 +1,119 @@
-# TaskWraith TUI + windowless Host
+# TaskWraith TUI + Independent Node Host
 
-The TaskWraith TUI is a local terminal client that can start and supervise the
-TaskWraith Host without opening the desktop window. It is a separate executable
-and presentation target; the windowless Electron main process remains the one
-authority for chats, providers, models, permissions, approvals, run dispatch,
-cancellation, persistence, and audit.
-
-The operational shape is deliberately GUI-independent, not Electron-free:
+The TUI is a first-class authenticated `HostProjectionClient`, not an Electron
+or App-dependent presentation. It connects to a production Node Host directly.
 
 ```text
-taskwraith / tw (raw ANSI Node client)
-  ├─ authenticate + attach to an existing Host, or
-  └─ directly launch the TaskWraith app executable in windowless Host mode
-       └─ same-user local control socket
+tw / taskwraith
+  ├─ reuse an authenticated production Host for the selected profile
+  └─ start `taskwraith-host serve --mode production --profile <profile>`
+       └─ profile lease → stable identity → private discovery/token/socket
 ```
 
-It does not scrape renderer state, read AppStore files, or load provider
-credentials. The host projects a small versioned contract and routes mutations
-through the same main-owned action executor used by TaskWraith's other remote
-surfaces. The lifecycle and authority closeout is pinned in
-[`WINDOWLESS_HOST.md`](./WINDOWLESS_HOST.md).
+The Host is profile-owned, not connection-owned: disconnecting the TUI never
+stops provider work. Its profile lease prevents duplicate owners and its
+persisted `host-runtime/host-install-identity.json` prevents identity churn.
+Discovery, token, and local transport artifacts are owner-only. The TUI fences
+`node-host-v1` and negotiated production capabilities before treating a Host as
+live. Desktop writer handoff remains a separate cutover concern.
 
-## Try it
-
-From the repository:
-
-```sh
-npm run tui:demo
-```
-
-The self-contained demo is safe when TaskWraith is not running. To connect to
-the repository's normal `TaskWraith Dev` app:
+## Launch and reconnect
 
 ```sh
 npm run tui
+tw --user-data /absolute/profile
+tw --no-start-host --user-data /absolute/profile
 ```
 
-For a deterministic, non-interactive 80x24 frame:
+`--user-data` is the standalone Node Host profile. Normal startup reuses an
+existing Host or starts production Node Host; `--no-start-host` is connect-only
+and never launches one. Reconnect uses ordered deltas when valid, otherwise a
+coherent snapshot. History has its own bounded cursor.
+
+## Cold setup, history, and receipts
+
+Production capability negotiation provides bounded provider/model/posture and
+manual-auth metadata, workspace/thread setup, history pages, and durable
+command receipts/result references. Credentials, permission bodies, and raw
+provider payloads are not projected. Provider runs use the authenticated client
+id only as a transport-neutral delivery target.
+
+## Packages
+
+Packages ship `tw`/`taskwraith` in `Resources/bin` and
+`taskwraith-host` in `Resources/host-bin` (`.cmd`/`.ps1` on Windows). These
+launchers use bundled `Resources/tui-runtime` Node, never Electron or
+`ELECTRON_RUN_AS_NODE`; production payload is `Resources/host` with the exact
+pure Muse closure.
 
 ```sh
+taskwraith-host --profile /absolute/profile
+```
+
+The launcher fixes `serve --mode production`; callers provide a profile and
+optionally an absolute Muse executable. An existing Host is reused, while a
+held lease fails cleanly.
+
+## Diagnostic rollback
+
+Diagnostic mode is explicit, not the default TUI authority:
+
+```sh
+npm run host:serve:diagnostic -- --profile /absolute/profile
+```
+
+It is limited to recovery/diagnostics and does not advertise production setup,
+provider, history, or command capabilities.
+
+`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
+`--no-animation` change presentation only. `.twmission` replay is detached and
+cannot mutate a live Host.
+
+## User guide
+
+```sh
+npm run tui:demo
 npm run tui:snapshot
-```
-
-Machine-readable projection output uses the same authenticated Host snapshot:
-
-```sh
-tw --dev --json
-```
-
-Capture and replay a bounded, privacy-safe mission flight recorder:
-
-```sh
-tw --dev --export ./incident.twmission
+tw --json
+tw --export ./incident.twmission --force
 tw --replay ./incident.twmission --width 100 --height 30
-tw --replay ./incident.twmission --json
 ```
 
-Export refuses to replace an existing file unless `--force` is explicit.
-Replay validates the schema, protocol/projection versions, size ceiling and
-integrity digest before rendering. It is detached: replay cannot connect to or
-mutate live Host state.
+The demo is self-contained. Snapshot and JSON use the authenticated Host
+projection. Export writes a bounded integrity-checked `.twmission` recorder;
+replay is detached and cannot write a live Host. Export requires `--force` to
+replace a file.
 
-Build only the sidecar with `npm run tui:build`. It first clears the exact
-generated `out/tui` tree, preventing obsolete Electron-main modules from a
-previous compile from reaching the package. The compiled entry point is
-`out/tui/tui/cli.js`, exposed as both `taskwraith` and `tw` when the package is
-linked or installed. `NO_COLOR=1` and `--no-animation` provide static
-fallbacks.
+Packaged TUI launchers are under `Resources/bin` and production Host launchers
+are under `Resources/host-bin` (`.cmd`/`.ps1` on Windows). The package's
+`tui-runtime` Node binary runs both; no system Node, Electron executable, or
+windowless parent process is required.
 
-The installed `taskwraith` / `tw` binary defaults to the release app. If its
-authenticated Host is offline, the TUI starts the app executable with no
-window, waits for an authenticated Host-v2 handshake, then connects. Use
-`--dev` to target a built `TaskWraith Dev`; it honours
-`TASKWRAITH_INSTANCE_ID` for parallel dev hosts. `--no-start-host` preserves a
-connect-only posture. If automatic discovery is not the desired one, pass
-`--user-data <path>` or set `TASKWRAITH_USER_DATA`; explicit profiles may be
-attached to, but are never auto-launched because the TUI cannot safely infer
-their private-profile launch authority.
+### Controls and layout
 
-### Packaged Developer Preview
+`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
+`--no-animation` change presentation only. Solo threads use compact HUD plus
+composer; ensemble threads add a baton row. Provider identity carries colour,
+while transcript prose stays neutral and detail remains in transient lenses.
 
-Invoke the sidecar directly from the package; the desktop App does not need to
-be open first:
+| Key                                              | Action                                     |
+| ------------------------------------------------ | ------------------------------------------ |
+| `Enter`                                          | Send/open selected thread                  |
+| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune, commands |
+| `Page Up` / `Page Down`                          | Scroll transcript/history                  |
+| `Esc`, `Ctrl+U`, `Ctrl+C`                        | Close lens, clear composer, clear/quit     |
 
-| Platform | Launcher                                                 |
-| -------- | -------------------------------------------------------- |
-| macOS    | `/Applications/TaskWraith.app/Contents/Resources/bin/tw` |
-| Linux    | `<TaskWraith install>/resources/bin/tw`                  |
-| Windows  | `<TaskWraith install>\resources\bin\tw.cmd` or `tw.ps1`  |
+Slash commands include `/context`, `/threads`, `/missions`, `/history`,
+`/model`, `/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. Every setup,
+approval, cancellation, and configuration action remains a bounded Host command
+with capability, actor, offer, and receipt validation.
 
-`taskwraith` aliases are alongside each `tw` launcher. The package ships its
-own Node runtime under `tui-runtime`; the launchers neither require system Node
-nor use `ELECTRON_RUN_AS_NODE`. The App executable remains the authoritative
-Host process, but it can remain windowless for the whole TUI session. This is
-not an installed daemon or login item.
+### Current boundary
 
-## Colour and ASCII fallbacks
-
-Presentation degrades TrueColor → `NO_COLOR` → ASCII. Details and the
-width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
-
-| Control                     | Effect                                                           |
-| --------------------------- | ---------------------------------------------------------------- |
-| `--ascii`                   | Force the ASCII glyph set for the process                        |
-| `TASKWRAITH_TUI_ASCII=1`    | Same force via environment                                       |
-| Auto-detect                 | `TERM=linux` / `TERM=dumb`, or a non-UTF-8 locale, selects ASCII |
-| `NO_COLOR=1` / `--no-color` | Colour off; glyphs and layout unchanged                          |
-| `--no-animation`            | Static working indicator (also off under `NO_COLOR` / non-TTY)   |
-
-## Interaction
-
-| Key                       | Action                                               |
-| ------------------------- | ---------------------------------------------------- |
-| `Enter`                   | Send the composer prompt or open the selected thread |
-| `←` / `→`, `Home` / `End` | Move through the one-line composer                   |
-| `Ctrl+A` / `Ctrl+E`       | Jump to the start / end of the composer              |
-| `Ctrl+O`                  | Toggle the context lens                              |
-| `Ctrl+K`                  | Toggle the thread picker                             |
-| `Ctrl+R`                  | Toggle live/historical mission control               |
-| `Ctrl+G`                  | Toggle the tune lens (model/reasoning, or seats)     |
-| `Ctrl+P`                  | Toggle the command reference                         |
-| `Page Up` / `Page Down`   | Scroll the transcript                                |
-| `Esc`                     | Close the active lens                                |
-| `Ctrl+U`                  | Clear the composer                                   |
-| `Ctrl+C`                  | Clear a non-empty composer; press again to leave     |
-
-Slash commands are `/context`, `/threads`, `/missions`, `/history`, `/model`,
-`/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. `/dismiss` rejects the
-open question for the selected thread. Mission control filters Active,
-History, or All and shows the selected mission's round, routing/fan-out,
-provider outcomes, and paged participant cast at the Host generation/cursor.
-Cancellation is always an explicit command and is still validated by Host.
-
-The tune lens is a deliberately narrow preview surface. On a solo thread it
-stages a model/reasoning switch **within the thread's current provider**: the
-host projects the same curated rows the App picker falls back to, the staged
-choice is shown beside the HUD identity, and it rides the next send through the
-canonical composer action, where the host validates it against its own offers.
-On an ensemble thread the same lens lists the roster and `Enter` toggles a
-seat's enabled flag immediately through the same main-owned roster action the
-paired-device surfaces use; disabled seats stay listed so they can be
-re-enabled. Providers whose catalogues are machine- or key-dependent (Ollama
-installs, Pi upstreams) report themselves locked and hand back to the App. Bracketed paste is enabled: a multi-line code block stays one prompt,
-with preserved line breaks shown as `↵` inside the one-row composer viewport.
-
-## Terminal layout
-
-The transcript is the canvas; there is no persistent masthead.
-
-- Solo threads reserve two rows: compact HUD, then composer.
-- Ensemble threads reserve three rows: baton, compact HUD, then composer.
-- The baton preserves current seat, next seat, roster count, and continuation
-  budget. The full preset, stages, fan-out, and participant cast live in one
-  transient context lens.
-- At 100 columns and above, identity labels expand. From 72–99 columns the TUI
-  uses the normal compact form. Below 72 columns it becomes a short semantic
-  checksum rather than wrapping the composer vertically.
-- Empty/offline state may use a sparse static sky and monoline ghost. It
-  disappears as soon as a transcript exists.
-
-The persistent rows retain the five details most useful during a run:
-workspace, provider/model/reasoning, wall time, cost, and composer text. Full
-primary/secondary workspace grants and ensemble roster distinctions remain one
-keystroke away instead of consuming most of an 80x24 terminal.
-
-## Presentation fidelity
-
-Provider identity carries the colour; transcript prose stays neutral. The ANSI
-palette is pinned to `src/renderer/src/styles/theme.css` by a drift test.
-
-The runtime and display brands remain distinct:
-
-- Ollama models use the shared `ollamaBrandTable` so Qwen, Gemma, Nemotron, and
-  other curated models wear their upstream label and hue.
-- Pi models use the shared `piBrandTable` so DeepSeek, Mistral, Groq, Cerebras,
-  and the other upstreams remain visually legible.
-
-During a live run, the provider-accented ghost and `Working…` label receive a
-small ANSI shimmer sweep. The provider/role/model/reasoning identity, elapsed
-time, and approximate tokens match the desktop working indicator's information
-hierarchy. Nothing animates while idle.
-
-Mistral Vibe is the layout precedent: strong provider names, sparse rhythm,
-content-area selectors, and an anchored prompt. The Electron app is the final
-reference for TaskWraith semantics and branding.
-
-## Local-control boundary
-
-The host writes a discovery document and random session token with owner-only
-permissions inside Electron `userData`. POSIX uses an owner-only Unix socket in
-a short private temp directory; Windows uses a per-user-data named pipe. The
-token is read from its file, never passed in command-line arguments or logged.
-Messages are bounded newline-delimited JSON with a versioned handshake.
-
-The client can currently:
-
-- list workspaces and threads;
-- select a thread and receive transcript/run updates;
-- send a prompt to an existing solo thread through the normal composer action;
-- request the host's model/reasoning offers for a solo thread and stage one
-  offered pair on the next send;
-- steer/start an existing ensemble through the ensemble action path;
-- enable/disable an existing ensemble seat through the main-owned roster
-  action;
-- cancel a solo run or an ensemble round through their respective main-owned
-  action paths.
-- accept or decline the oldest pending approval for the selected thread by its
-  exact projected identity;
-- answer the oldest open question for the selected thread through the composer,
-  or explicitly dismiss it;
-- resume ordered Host deltas and resnapshot on generation/cursor discontinuity;
-- browse live and historical missions, rounds, routing and participant state;
-- print the coherent Host projection as JSON;
-- export integrity-checked `.twmission` bundles and render them as detached,
-  command-free replays.
-
-The facade derives workspace, provider, model, reasoning, and live run identity
-from canonical AppStore records. Client input cannot nominate a different
-provider, permission posture, workspace, or run id. Model/reasoning selection
-is offer-bound: the wire format carries no provider field, the facade validates
-every selection against the offers it would project for that thread right now,
-and a seat toggle can only reference an existing participant id — the client
-can never compose roster entries.
-
-## Intentional v1 omissions
-
-The TUI does not imitate desktop glass, blur, refraction, floating shadows,
-hover previews, drag-and-drop, persistent animated backgrounds, stacked
-modals, canvas/media, or rich documents. It also does not switch providers,
-edit permissions or grants, compose or reorder rosters, manage roster presets,
-or create threads. The 2026-07-28 tune-lens amendment admitted exactly two
-mutations because they are pure projections of existing main-owned paths —
-staged model/reasoning within the current provider, and seat enable/disable —
-while everything renderer-owned (roster presets) or authority-expanding
-(workspace grants, permissions, provider switching) stays in the Electron UI
-until it has a purpose-built terminal interaction and an equally strong
-authority contract.
-
-This boundary leaves a clean future route: production composition can be
-extracted from Electron main into a pure-Node Host without rewriting the
-terminal renderer. That larger migration still requires AppStore, provider,
-approval, credential, and single-writer extraction; the current implementation
-does not claim it has happened.
+The Node Host owns private discovery/token/socket artifacts and the versioned
+local protocol. Standalone production currently supports Muse through its
+Node-owned resource/run ports. The TUI supports cold workspace registration,
+thread creation/configuration/archive, provider offers/auth metadata, bounded
+history, and receipt replay through that Host. It deliberately omits arbitrary
+AppStore writes, permission bodies, credentials, raw provider payloads,
+desktop-only drag/drop/canvas/glass surfaces, and unbounded terminal control.

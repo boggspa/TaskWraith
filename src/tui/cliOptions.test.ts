@@ -54,6 +54,8 @@ describe('TaskWraith TUI CLI options', () => {
     expect(usage).toContain('--export <file>')
     expect(usage).toContain('--replay <file>')
     expect(usage).toContain('--no-start-host')
+    expect(usage).toContain('standalone Node Host profile')
+    expect(usage).toContain('do not launch a Node Host')
     expect(usage).toContain('Ctrl+R missions')
     expect(usage).toContain('detached replay')
   })
