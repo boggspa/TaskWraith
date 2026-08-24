@@ -35281,75 +35281,6 @@ async function userDataDirectoryExists(): Promise<boolean> {
   }
 }
 
-/**
- * One-time migration for the AGBench -> TaskWraith rebrand. The rebrand changed
- * the app name + appId, which moves Electron's userData dir from
- * `<appData>/AGBench` to `<appData>/TaskWraith` — so an existing install's
- * chats / settings / usage / signing secret would be orphaned and TaskWraith
- * would launch into a fresh, empty profile.
- *
- * On first launch, if TaskWraith has no settings yet AND an old AGBench userData
- * dir exists alongside it, copy the legacy data across (skipping volatile
- * Chromium caches + sockets). Safe by construction:
- *   - runs at most once (a marker file gates re-checks),
- *   - never touches an already-established TaskWraith profile (settings.json
- *     present) and `force: false` never overwrites an existing file,
- *   - is fully best-effort — any failure is swallowed so startup never blocks.
- * Must run before the store performs its first (lazy) read.
- */
-function migrateLegacyUserDataSync(): void {
-  try {
-    const newDir = app.getPath('userData')
-    const marker = join(newDir, '.taskwraith-userdata-migration')
-    if (fsSync.existsSync(marker)) return
-    // A profile counts as "real" if it has ANY of these — broader than
-    // settings.json alone, so a user who has chats but never changed a setting
-    // is still detected (and fully migrated) rather than silently skipped.
-    const profileMarkers = ['settings.json', 'chats', 'usage.json', 'workspaces.json']
-    const hasProfile = (dir: string): boolean =>
-      profileMarkers.some((name) => fsSync.existsSync(join(dir, name)))
-    // Only seed a FRESH TaskWraith profile — never migrate over real data.
-    if (!hasProfile(newDir)) {
-      const parent = dirname(newDir)
-      // Volatile Chromium/runtime state that should regenerate, not carry over.
-      const skipTop = new Set([
-        'Cache',
-        'Code Cache',
-        'GPUCache',
-        'DawnCache',
-        'DawnGraphiteCache',
-        'DawnWebGPUCache',
-        'blob_storage',
-        'Crashpad',
-        'Network Persistent State'
-      ])
-      // Packaged productName was "AGBench"; the dev/electron-vite name was "agbench".
-      for (const legacyName of ['AGBench', 'agbench']) {
-        const oldDir = join(parent, legacyName)
-        if (oldDir === newDir) continue
-        if (!hasProfile(oldDir)) continue
-        fsSync.cpSync(oldDir, newDir, {
-          recursive: true,
-          force: false,
-          errorOnExist: false,
-          filter: (src) => {
-            const rel = relative(oldDir, src)
-            if (!rel) return true
-            if (skipTop.has(rel.split(sep)[0])) return false
-            return !src.endsWith('.sock')
-          }
-        })
-        console.log(`[rebrand-migration] copied legacy userData ${oldDir} -> ${newDir}`)
-        break
-      }
-    }
-    fsSync.mkdirSync(newDir, { recursive: true })
-    fsSync.writeFileSync(marker, `checked ${new Date().toISOString()}\n`)
-  } catch (error) {
-    console.warn('[rebrand-migration] legacy userData migration skipped:', error)
-  }
-}
-
 function recordProductCrash(input: ProductCrashInput): void {
   try {
     AppStore.recordProductCrash(input)
@@ -42641,9 +42572,6 @@ if (isGeminiMcpBridgeProcess) {
     }
   })
   app.whenReady().then(async () => {
-    // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
-    // AGBench install BEFORE the store performs its first lazy read.
-    migrateLegacyUserDataSync()
     try {
       const recovered = await recoverInterruptedAntigravityPermissionLease(
         antigravityCliSettingsPath()

@@ -13,15 +13,14 @@ function between(start: string, end: string): string {
 
 describe('regenerable history-byte main integration', () => {
   it('initializes and recovers the store before any media protocol or run-queue work', () => {
-    const migration = source.indexOf('migrateLegacyUserDataSync()')
     const initialize = source.indexOf('await regenerableHistoryByteStore.initializeStrict(')
     const mediaProtocol = source.indexOf('session.defaultSession.webRequest.onBeforeRequest(')
     const runQueue = source.indexOf('const runQueueService = new RunQueueService({')
 
-    expect(migration).toBeGreaterThanOrEqual(0)
-    expect(initialize).toBeGreaterThan(migration)
+    expect(initialize).toBeGreaterThanOrEqual(0)
     expect(initialize).toBeLessThan(mediaProtocol)
     expect(mediaProtocol).toBeLessThan(runQueue)
+    expect(source).not.toContain('migrateLegacyUserDataSync')
     expect(source).not.toContain('sweepMediaStagingDir')
   })
 
