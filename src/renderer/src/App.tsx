@@ -198,6 +198,11 @@ import type {
   TranscriptMediaRef,
   ToolActivityDetailRef
 } from '../../main/store/types'
+// Canonical active-ChatRun-status vocabulary (running/queued/starting/
+// cancelling/steer_promoting/active/paused) — shared with main's
+// sealChatRunTerminalFields so the renderer's provider-exit seal repairs the
+// same ghost shapes main's reconciler does.
+import { isActiveChatRunStatus } from '../../main/ChatRunReconciler'
 import type { NormalizedProviderUsageSnapshot } from '../../main/ProviderQuotaSnapshots'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import {
@@ -12216,9 +12221,22 @@ function App(): React.JSX.Element {
           // Complete card on every later re-derivation (chat switch, refresh,
           // hydrate-after-paint), even though status was stamped here.
           if (!targetRun.endedAt) targetRun.endedAt = new Date().toISOString()
-          if (targetRun.status === 'success' && context.warnings.length > 0) {
-            targetRun.status = 'success_with_warnings'
-          } else if (!targetRun.status) {
+          // Stamp over ANY non-terminal status, not just a missing one. A
+          // premature Wire `result` (status 'running' — a turn boundary, not
+          // completion) used to seal endedAt + status:'running' here-adjacent
+          // in the run_finished handler, and this seal then fell through BOTH
+          // branches ('success' upgrade / falsy stamp) and left the ghost
+          // status 'running' on a finished run — the close-out read "The run
+          // ended with status running" and the Task Complete receipts lost
+          // their run-scoped window. Mirrors sealChatRunTerminalFields'
+          // isActiveChatRunStatus semantics plus the adapter's 'unknown'
+          // fallback; 'sleeping' is deliberately untouched (a parked wakeup
+          // run is not an exit).
+          if (
+            !targetRun.status ||
+            targetRun.status === 'unknown' ||
+            isActiveChatRunStatus(targetRun.status)
+          ) {
             targetRun.status = wasIntentionalCancel
               ? 'cancelled'
               : exitCode === 0
@@ -12226,6 +12244,8 @@ function App(): React.JSX.Element {
                   ? 'success_with_warnings'
                   : 'success'
                 : 'failed'
+          } else if (targetRun.status === 'success' && context.warnings.length > 0) {
+            targetRun.status = 'success_with_warnings'
           }
           if (wasIntentionalCancel) {
             targetRun.cancelled = true

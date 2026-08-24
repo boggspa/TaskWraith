@@ -84,6 +84,20 @@ export type NormalizedEvent =
   | { type: 'raw_event'; data: any }
   | { type: 'malformed_json'; text: string }
 
+/**
+ * Wire `result` lines are NOT always terminal. The Pi/host lane emits
+ * `{"type":"result","status":"running"}` as a NON-terminal turn boundary
+ * (mirror of `ChannelAgentRunEventCollector.resultStatus`, which returns
+ * null — "keep waiting" — for a running result). Emitting `run_finished`
+ * for those sealed the ChatRun with `endedAt` + a literal
+ * `status: 'running'` — the endedAt-set-but-still-running ghost that made
+ * the close-out read "The run ended with status running", blanked the Task
+ * Complete receipts, and (after main's unsealed copy clobbered the seal on
+ * broadcast) vanished the card on thread switch. Only a genuinely terminal
+ * status may emit `run_finished`; the provider-exit seal owns the rest.
+ */
+const NON_TERMINAL_RESULT_STATUSES = new Set(['running', 'starting', 'cancelling'])
+
 export class GeminiStreamAdapter {
   private buffer = ''
 
@@ -336,7 +350,14 @@ export class GeminiStreamAdapter {
           }
         }
         break
-      case 'result':
+      case 'result': {
+        // Non-terminal Wire result (running/starting/cancelling) — a turn
+        // boundary, not completion. Drop it silently; the provider-exit lane
+        // (agent-exit → handleProviderExit) owns the real seal.
+        const resultStatus = String(parsed.status ?? '')
+          .trim()
+          .toLowerCase()
+        if (NON_TERMINAL_RESULT_STATUSES.has(resultStatus)) break
         this.onEvent({
           type: 'run_finished',
           status: parsed.status || 'unknown',
@@ -349,6 +370,7 @@ export class GeminiStreamAdapter {
             parsed.sessionId
         })
         break
+      }
       case 'error':
         this.onEvent({
           type: 'error',

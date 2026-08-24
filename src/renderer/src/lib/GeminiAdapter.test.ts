@@ -649,6 +649,47 @@ describe('GeminiStreamAdapter', () => {
     )
   })
 
+  // A Wire `result` line with a non-terminal status is a turn boundary, not
+  // completion (mirror of ChannelAgentRunEventCollector.resultStatus). Sealing
+  // the run on it produced the endedAt-set-but-still-running ghost that broke
+  // solo close-outs and Task Complete receipts.
+  it.each(['running', 'starting', 'cancelling'])(
+    'does not emit run_finished for a non-terminal %s result',
+    (status) => {
+      const onEvent = vi.fn()
+      const adapter = new GeminiStreamAdapter(onEvent)
+
+      adapter.appendChunk(`{"type":"result","status":"${status}","stats":{"total_tokens":5}}\n`)
+      adapter.end()
+
+      expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'run_finished' }))
+    }
+  )
+
+  it('emits run_finished for a terminal result after an earlier running result', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk('{"type":"result","status":"running"}\n')
+    adapter.appendChunk('{"type":"result","status":"success","stats":{"total_tokens":7}}\n')
+    adapter.end()
+
+    const finished = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.type === 'run_finished')
+    expect(finished).toEqual([expect.objectContaining({ type: 'run_finished', status: 'success' })])
+  })
+
+  it('normalizes case and whitespace when guarding non-terminal results', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk('{"type":"result","status":" Running "}\n')
+    adapter.end()
+
+    expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'run_finished' }))
+  })
+
   it('keeps Codex parent to Claude sub-thread delegation streaming paired', () => {
     const onEvent = vi.fn()
     const adapter = new GeminiStreamAdapter(onEvent)

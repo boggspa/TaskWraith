@@ -7973,6 +7973,59 @@ function sealSoloCodexRunOnCompletion(args: {
 }
 
 /**
+ * Seal a SOLO Pi run's persisted `ChatRun` at turn completion — the Pi-lane
+ * port of `sealSoloCodexRunOnCompletion`.
+ *
+ * The pi subprocess is spawned per run, but its result line and its process
+ * exit are NOT atomic: the TaskWraith extension broker keeps streaming after
+ * `agent_settled`, and every `runManager.onChange` re-persists +
+ * `broadcastChatUpdated`s main's AppStore copy (see
+ * `persistRunPermissionPostureOnChatRun` /
+ * `persistChatRunRunningFromSession`). Until main's copy carries terminal
+ * fields, each of those broadcasts can clobber the renderer's live
+ * `run_finished` seal within its save debounce — the run lands on disk (and
+ * back in the renderer on chat switch) unsealed, `deriveChatRunCompleteNotice`
+ * returns null, and the Task Complete card vanishes from a finished thread.
+ *
+ * Sealing main's own copy the moment the pi reducer reports the turn settled
+ * — status + usage already in hand from `applyPiRunEvent` — makes main
+ * authoritative, so both the persist and the broadcast carry the seal.
+ * Fill-only via `sealChatRunTerminalFields`: an already-sealed run (the
+ * renderer got there first, or the process-exit finalize ran) is left
+ * untouched, and the Cerebras auto-retry re-dispatches under a NEW run id, so
+ * a failed-run seal never blocks the retry.
+ */
+function sealSoloPiRunOnCompletion(args: {
+  appChatId?: string
+  runId?: string
+  failed: boolean
+  stats: unknown
+  endedAt: string
+}): void {
+  if (!args.appChatId || !args.runId) return
+  // A terminal result landing during an in-flight erasure of this chat must
+  // skip cleanly — the saveChat fence would otherwise throw out of
+  // applyPiRunEvent.
+  if (historyClearAdmissionBlocked(args.runId, undefined, args.appChatId)) return
+  const chat = AppStore.getChat(args.appChatId)
+  if (!chat?.runs?.length) return
+  const runIndex = chat.runs.findIndex((run) => run.runId === args.runId)
+  if (runIndex < 0) return
+  const sealed = sealChatRunTerminalFields(chat.runs[runIndex], {
+    status: args.failed ? 'failed' : 'success',
+    endedAt: args.endedAt,
+    ...(args.stats !== undefined ? { stats: args.stats } : {}),
+    ...(args.failed ? { exitCode: 1 } : {})
+  })
+  if (!sealed) return
+  const runs = [...chat.runs]
+  runs[runIndex] = sealed
+  const updated: ChatRecord = { ...chat, runs, updatedAt: Date.now() }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+}
+
+/**
  * Direct-seal fallback for a bridge-owned ChatRun whose terminal flush could
  * not run (the flush threw — fence, decorator, store failure). Fill-only via
  * `sealChatRunTerminalFields`, so racing a flush that did land is harmless,
@@ -18944,6 +18997,20 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
     }
     state.terminalResultFailed = failed
     state.completed = true
+    // Solo lanes only: ensemble seats are stamped by the orchestrator at
+    // round finalization, and an early seal could pre-empt its verdict.
+    // Solo seal: fill main's AppStore copy NOW (idempotent) so every
+    // runManager.onChange re-persist + broadcast carries the terminal
+    // fields instead of clobbering the renderer's live run_finished seal.
+    if (!state.ensembleRun) {
+      sealSoloPiRunOnCompletion({
+        appChatId: state.appChatId,
+        runId: state.appRunId,
+        failed,
+        stats: state.tokenUsage,
+        endedAt: new Date().toISOString()
+      })
+    }
     sendAgentCompatLine(
       state.sender,
       'pi',
