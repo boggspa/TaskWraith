@@ -91,6 +91,7 @@ describe('resolvePiModelLabel', () => {
   it('drops the redundant upstream prefix for an uncatalogued model', () => {
     // The upstream is already rendered beside the label as the brand name.
     expect(resolvePiModelLabel('mistral/some-future-model')).toBe('some-future-model')
+    expect(resolvePiModelLabel('openrouter/zai/some-future-model')).toBe('some-future-model')
   })
 
   it.each([null, undefined, '', 'noslash', 'anthropic/claude-opus'])(

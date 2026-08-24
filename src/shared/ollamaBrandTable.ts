@@ -168,9 +168,13 @@ export function matchOllamaBrand(
 ): OllamaBrandMatch | null {
   const id = String(modelId || '').trim()
   const label = String(modelLabel || '').trim()
-  const key = `${id} ${label}`.trim().toLowerCase()
-  if (!key) return null
-  const definition = OLLAMA_DISPLAY_BRANDS.find((brand) => includesAny(key, brand.needles))
+  const match = (value: string): OllamaDisplayBrandDefinition | undefined =>
+    value ? OLLAMA_DISPLAY_BRANDS.find((brand) => includesAny(value, brand.needles)) : undefined
+  // Provider events may arrive with a stale human label while their wire model
+  // id is current. The id is the authoritative identity; considering the
+  // concatenated label first let an earlier table entry (e.g. Qwen) hijack a
+  // later DeepSeek run mid-stream.
+  const definition = match(id.toLowerCase()) || match(label.toLowerCase())
   if (!definition) return null
   return {
     providerLabel: definition.providerLabel,

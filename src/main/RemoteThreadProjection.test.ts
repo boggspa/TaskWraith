@@ -3903,7 +3903,37 @@ describe('RemoteThreadProjection', () => {
         } as import('./store/types').ChatRun
       ])
       const message = msg(1, { runId: 'run-1' })
-      expect(labeler(message)).toBe('Codex · gpt-5.4-medium')
+      expect(labeler(message)).toBe('Codex · GPT-5.4 Medium')
+    })
+
+    it('uses the frozen bridge or run provider before the later chat provider', () => {
+      const labeler = soloSpeakerForMessage('codex', [
+        {
+          runId: 'pi-run',
+          provider: 'pi',
+          actualModel: 'deepseek/deepseek-v4-pro',
+          status: 'completed'
+        } as import('./store/types').ChatRun,
+        {
+          runId: 'ollama-run',
+          provider: 'ollama',
+          actualModel: 'glm-5.2:cloud',
+          status: 'completed'
+        } as import('./store/types').ChatRun
+      ])
+
+      expect(labeler(msg(1, { runId: 'pi-run' }))).toBe('DeepSeek · DeepSeek V4 Pro')
+      expect(labeler(msg(3, { runId: 'ollama-run' }))).toBe('Z.ai · GLM 5.2')
+      expect(
+        labeler(
+          msg(5, {
+            metadata: {
+              assistantProvider: 'ollama',
+              providerModel: 'glm-5.2:cloud'
+            }
+          })
+        )
+      ).toBe('Z.ai · GLM 5.2')
     })
 
     it('freezes a solo Pi assistant hue from its linked run model', () => {

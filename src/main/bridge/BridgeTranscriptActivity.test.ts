@@ -7,7 +7,7 @@ import {
 } from './BridgeTranscriptActivity'
 
 describe('BridgeTranscriptActivity', () => {
-  it('extracts Ollama model metadata and maps it to assistant message metadata', () => {
+  it('freezes the bridge assistant provider and model identity', () => {
     const metadata = bridgeModelMetadataFromEvent({
       type: 'content',
       model: 'qwen3.5:9b',
@@ -25,19 +25,24 @@ describe('BridgeTranscriptActivity', () => {
         modelLabel: metadata.modelLabel
       })
     ).toEqual({
+      assistantProvider: 'ollama',
       providerModel: 'qwen3.5:9b',
       providerModelLabel: 'Qwen 3.5 (9B Param)'
     })
   })
 
-  it('does not add provider model metadata to non-Ollama bridge assistant messages', () => {
+  it('stamps non-Ollama bridge assistant provider and model metadata too', () => {
     expect(
       bridgeAssistantMessageMetadata({
         provider: 'codex',
         actualModel: 'gpt-5.5',
         modelLabel: 'GPT-5.5'
       })
-    ).toBeUndefined()
+    ).toEqual({
+      assistantProvider: 'codex',
+      providerModel: 'gpt-5.5',
+      providerModelLabel: 'GPT-5.5'
+    })
   })
 
   it('builds bridge tool activities with provider attribution and tool_kind category parity', () => {

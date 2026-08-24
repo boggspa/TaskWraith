@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   formatAssistantMessageLabel,
@@ -274,6 +274,75 @@ describe('formatAssistantMessageLabel', () => {
     }
   })
 
+  it('keeps a frozen solo speaker identity when the chat later selects another provider', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          assistantProvider: 'pi',
+          providerModel: 'qwen-token-plan/qwen3.7-max',
+          assistantReasoningEffort: 'ultratask'
+        }),
+        'Claude',
+        'claude'
+      )
+    ).toEqual({
+      label: 'Qwen',
+      provider: 'pi',
+      providerClass: 'qwen',
+      modelBadge: 'Qwen3.7 Max UltraTask'
+    })
+  })
+
+  it('shows selected effort for every adjustable ensemble provider', () => {
+    const cases: Array<{
+      provider: ProviderId
+      model: string
+      expected: string
+    }> = [
+      { provider: 'grok', model: 'grok-4.6', expected: 'Grok 4.6 Fast UltraTask' },
+      { provider: 'cursor', model: 'cursor-grok-4.6-low', expected: 'Grok 4.6 UltraTask' },
+      { provider: 'pi', model: 'deepseek/deepseek-v4-pro', expected: 'DeepSeek V4 Pro UltraTask' },
+      { provider: 'mistral', model: 'devstral-small', expected: 'Devstral Small UltraTask' },
+      { provider: 'muse', model: 'muse-spark-1.2', expected: 'Spark 1.2 UltraTask' },
+      {
+        provider: 'antigravity',
+        model: 'gemini-api:gemini-2.5-flash',
+        expected: '2.5 Flash UltraTask'
+      }
+    ]
+
+    for (const entry of cases) {
+      expect(
+        formatAssistantMessageLabel(
+          assistant({
+            ensembleProvider: entry.provider,
+            ensembleRole: 'Specialist',
+            ensembleModel: entry.model,
+            ensembleReasoningEffort: 'ultratask'
+          }),
+          'Codex',
+          'codex',
+          { isEnsembleChat: true }
+        ).modelBadge
+      ).toBe(entry.expected)
+    }
+  })
+
+  it('normalizes legacy default sentinels before rendering an assistant model badge', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'cli-default'
+        }),
+        'Claude',
+        'claude',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('Sonnet 5')
+  })
+
   it('recovers K3 effort from a captured seat snapshot for older transcript rows', () => {
     expect(
       formatAssistantMessageLabel(
@@ -375,7 +444,7 @@ describe('formatAssistantMessageLabel', () => {
 })
 
 describe('mostRecentSoloRunModel', () => {
-  it('returns the newest same-provider model, scanning backwards', () => {
+  it('uses a same-provider fallback only when the history is unambiguous', () => {
     expect(
       mostRecentSoloRunModel(
         [
@@ -384,15 +453,15 @@ describe('mostRecentSoloRunModel', () => {
         ],
         'pi'
       )
-    ).toBe('deepseek/deepseek-v4-pro')
+    ).toBeNull()
   })
 
-  it('skips other-provider runs but keeps them as a last resort (newest first)', () => {
+  it('never borrows another provider model as a fallback', () => {
     const runs = [
       { provider: 'claude', requestedModel: 'claude-opus-4.7' },
       { provider: 'codex', requestedModel: 'gpt-5.5' }
     ]
-    expect(mostRecentSoloRunModel(runs, 'pi')).toBe('gpt-5.5')
+    expect(mostRecentSoloRunModel(runs, 'pi')).toBeNull()
   })
 
   it('prefers a same-provider run found further back over a newer foreign one', () => {

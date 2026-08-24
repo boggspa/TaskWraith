@@ -13,6 +13,7 @@ import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -2900,6 +2901,9 @@ export function ensembleSpeakerForMessage(
   participants: readonly EnsembleParticipant[] | undefined
 ): (message: ChatMessage) => string | undefined {
   const modelLabels = buildDupProviderModelLabels(participants)
+  const participantsById = new Map(
+    (participants || []).map((participant) => [participant.id, participant])
+  )
   return (message) => {
     if (message.role !== 'assistant') return undefined
     const provider = message.metadata?.ensembleProvider as ProviderId | undefined
@@ -2910,8 +2914,18 @@ export function ensembleSpeakerForMessage(
       typeof message.metadata?.ensembleParticipantId === 'string'
         ? message.metadata.ensembleParticipantId
         : ''
-    const modelLabel = participantId ? modelLabels.get(participantId) : undefined
-    return `${providerLabel(provider)}${role ? ` / ${role}` : ''}${modelLabel ? ` (${modelLabel})` : ''}`
+    const participant = participantId ? participantsById.get(participantId) : undefined
+    const model =
+      typeof message.metadata?.ensembleModel === 'string'
+        ? message.metadata.ensembleModel
+        : participant?.model
+    const presentation = resolveTaskWraithProviderPresentation(provider, model)
+    const duplicateModelLabel = participantId ? modelLabels.get(participantId) : undefined
+    const modelLabel =
+      duplicateModelLabel && (provider === 'ollama' || provider === 'pi')
+        ? presentation.modelLabel || duplicateModelLabel
+        : duplicateModelLabel
+    return `${presentation.displayProvider}${role ? ` / ${role}` : ''}${modelLabel ? ` (${modelLabel})` : ''}`
   }
 }
 

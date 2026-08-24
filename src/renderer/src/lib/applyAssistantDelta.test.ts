@@ -72,6 +72,29 @@ describe('applyAssistantDelta — basic accumulation', () => {
     expect(trailingAssistant(m1)?.runId).toBe('run-existing')
   })
 
+  it('freezes the speaker provider, model, and chosen effort on every streamed segment', () => {
+    let messages = [msg('user', 'q')]
+    const speaker = {
+      assistantProvider: 'pi' as const,
+      providerModel: 'qwen-token-plan/qwen3.7-max',
+      providerModelLabel: 'Qwen3.7 Max',
+      assistantReasoningEffort: 'ultratask',
+      assistantThinkingEnabled: true
+    }
+    messages = applyAssistantDelta(
+      messages,
+      { incoming: 'First', runId: 'run-pi', providerModelMetadata: speaker },
+      deps
+    )
+    messages = applyAssistantDelta(
+      messages,
+      { incoming: ' second', runId: 'run-pi', providerModelMetadata: speaker },
+      deps
+    )
+
+    expect(trailingAssistant(messages)?.metadata).toMatchObject(speaker)
+  })
+
   it('does not mutate the input array', () => {
     const input = [msg('user', 'q'), msg('assistant', 'a')]
     const frozen = JSON.stringify(input)

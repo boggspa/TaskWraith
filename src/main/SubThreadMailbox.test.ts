@@ -121,6 +121,27 @@ describe('SubThreadMailbox', () => {
     )
   })
 
+  it.each(['antigravity', 'muse'] as const)(
+    'preserves the returned %s seat through enqueue and durable decode',
+    (provider) => {
+      const subThreadSeat = {
+        provider,
+        model: provider === 'antigravity' ? 'gemini-3-pro-high' : 'muse-spark-1.2',
+        reasoningEffort: 'high'
+      }
+      const result = enqueueSubThreadMailboxEvent(
+        undefined,
+        eventInput({ subThreadProvider: provider, subThreadSeat })
+      )
+
+      expect(result.event.source).toMatchObject({ subThreadProvider: provider, subThreadSeat })
+      expect(
+        normalizeSubThreadMailbox(JSON.parse(JSON.stringify(result.mailbox)), parentChatId)
+          .events[0].source
+      ).toMatchObject({ subThreadProvider: provider, subThreadSeat })
+    }
+  )
+
   it('caps durable payload size while retaining the original length', () => {
     const content = 'x'.repeat(MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS + 73)
     const result = enqueueSubThreadMailboxEvent(undefined, eventInput({ content }))

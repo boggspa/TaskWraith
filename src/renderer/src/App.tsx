@@ -15123,17 +15123,45 @@ function App(): React.JSX.Element {
         model?: string,
         modelLabel?: string
       ) => {
-        if (effectiveRunProvider !== 'ollama') return undefined
+        const currentRun =
+          updated.runs?.find((run) => run.runId === currentRunId) ||
+          updated.runs?.[updated.runs.length - 1]
         const resolvedModel =
           model ||
-          updated.runs?.[updated.runs.length - 1]?.actualModel ||
-          updated.runs?.[updated.runs.length - 1]?.requestedModel ||
+          currentRun?.actualModel ||
+          currentRun?.requestedModel ||
           ''
-        const resolvedLabel = modelLabel || humaniseModelId('ollama', resolvedModel)
-        if (!resolvedModel && !resolvedLabel) return undefined
+        const resolvedLabel = modelLabel || humaniseModelId(effectiveRunProvider, resolvedModel)
+        const reasoningEffort =
+          effectiveRunProvider === 'codex'
+            ? request.codexReasoningEffort
+            : effectiveRunProvider === 'claude'
+              ? request.claudeReasoningEffort
+              : effectiveRunProvider === 'kimi'
+                ? request.kimiReasoningEffort
+                : effectiveRunProvider === 'grok'
+                  ? request.grokReasoningEffort
+                  : effectiveRunProvider === 'cursor'
+                    ? request.cursorReasoningEffort
+                    : effectiveRunProvider === 'ollama'
+                      ? request.ollamaReasoningEffort
+                      : effectiveRunProvider === 'pi'
+                        ? request.piReasoningEffort
+                        : effectiveRunProvider === 'mistral'
+                          ? request.mistralReasoningEffort
+                          : effectiveRunProvider === 'muse'
+                            ? request.museReasoningEffort
+                            : effectiveRunProvider === 'antigravity'
+                              ? request.antigravityReasoningEffort
+                              : undefined
         return {
+          assistantProvider: effectiveRunProvider,
           ...(resolvedModel ? { providerModel: resolvedModel } : {}),
-          ...(resolvedLabel ? { providerModelLabel: resolvedLabel } : {})
+          ...(resolvedLabel ? { providerModelLabel: resolvedLabel } : {}),
+          ...(reasoningEffort ? { assistantReasoningEffort: reasoningEffort } : {}),
+          ...(effectiveRunProvider === 'kimi' && typeof request.kimiThinkingEnabled === 'boolean'
+            ? { assistantThinkingEnabled: request.kimiThinkingEnabled }
+            : {})
         }
       }
       const adapter = new GeminiStreamAdapter((event: NormalizedEvent) => {
@@ -15448,6 +15476,7 @@ function App(): React.JSX.Element {
             }
           } else if (event.type === 'assistant_message_complete') {
             if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
+            const providerModelMetadata = providerModelMetadataForAssistantDelta(updated)
             const lastRun = updated.runs?.[updated.runs.length - 1]
             const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
             const isPlanMode =
@@ -15503,7 +15532,15 @@ function App(): React.JSX.Element {
                   completeTarget.action === 'replaceText' ? completeTarget.text : event.content
                 updated.messages = [
                   ...updated.messages.slice(0, completeTargetIdx),
-                  { ...completeTargetMsg, content: nextContent, runId: completeTargetMsg.runId ?? currentRunId },
+                  {
+                    ...completeTargetMsg,
+                    content: nextContent,
+                    runId: completeTargetMsg.runId ?? currentRunId,
+                    metadata: {
+                      ...(completeTargetMsg.metadata || {}),
+                      ...providerModelMetadata
+                    }
+                  },
                   ...updated.messages.slice(completeTargetIdx + 1)
                 ]
               } else {
@@ -15516,7 +15553,8 @@ function App(): React.JSX.Element {
                     role: 'assistant',
                     content,
                     runId: currentRunId,
-                    timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString(),
+                    metadata: providerModelMetadata
                   }
                 ]
               }

@@ -69,6 +69,7 @@ import {
   matchOllamaBrand,
   resolveHealthEntryPresentation
 } from '../shared/ollamaBrandTable'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
@@ -443,32 +444,31 @@ export function soloSpeakerForMessage(
   return (message) => {
     if (message.role !== 'assistant' && message.role !== 'tool') return undefined
     if (message.metadata?.ensembleProvider) return undefined
-    const provider =
-      (message.metadata?.ensembleProvider as ProviderId | undefined) ?? chatProvider
-    if (!provider) return undefined
-    let label = PROVIDER_LABELS[provider] ?? provider
     const run = typeof message.runId === 'string' ? runById.get(message.runId) : undefined
+    const metadata = message.metadata as Record<string, unknown> | undefined
+    const provider =
+      (typeof metadata?.assistantProvider === 'string' ? metadata.assistantProvider : undefined) ??
+      (typeof metadata?.provider === 'string' ? metadata.provider : undefined) ??
+      run?.provider ??
+      chatProvider
+    if (!provider) return undefined
     const model =
-      (typeof message.metadata?.providerModel === 'string'
-        ? message.metadata.providerModel
+      (typeof metadata?.providerModel === 'string'
+        ? metadata.providerModel
         : undefined) ||
       (typeof message.metadata?.ensembleModel === 'string'
         ? message.metadata.ensembleModel
         : undefined) ||
       run?.actualModel ||
       run?.requestedModel
-    // Ollama-backed display brands spoof their upstream provider name on the
-    // phone transcript header (e.g. "Alibaba · Qwen 3.5"), mirroring the
-    // desktop assistant header so iOS reads as the same product.
-    if (provider === 'ollama' && model) {
-      const brand = matchOllamaBrand(model)
-      if (brand) label = brand.providerLabel
+    const modelLabel =
+      typeof metadata?.providerModelLabel === 'string' ? metadata.providerModelLabel : undefined
+    const presentation = resolveTaskWraithProviderPresentation(provider, model, modelLabel)
+    if (presentation.modelLabel) {
+      const short = shortModelLabel(presentation.modelLabel)
+      return short ? `${presentation.displayProvider} · ${short}` : presentation.displayProvider
     }
-    if (model) {
-      const short = shortModelLabel(model)
-      return short ? `${label} · ${short}` : label
-    }
-    return label
+    return presentation.displayProvider
   }
 }
 

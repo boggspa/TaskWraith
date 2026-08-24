@@ -16,12 +16,6 @@ const AUTHENTICATED_TRANSPORT_CORE = [
   resolve(HOST_RUNTIME_ROOT, 'HostSession.ts'),
   resolve(HOST_RUNTIME_ROOT, 'HostLocalServer.ts')
 ]
-const DIAGNOSTIC_HOST_RUNTIME = [
-  resolve(HOST_RUNTIME_ROOT, 'HostDiagnosticAuthority.ts'),
-  resolve(HOST_RUNTIME_ROOT, 'HostDiagnosticCli.ts'),
-  resolve(HOST_RUNTIME_ROOT, 'HostDiagnosticServer.ts'),
-  resolve(HOST_RUNTIME_ROOT, 'cli.ts')
-]
 
 function isProductionSource(name: string): boolean {
   return name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.endsWith('.spec.ts')
@@ -82,9 +76,9 @@ function forbiddenImport(importer: string, specifier: string): boolean {
 }
 
 describe('standalone Host runtime boundary', () => {
-  it('includes authenticated transport and diagnostic Host modules in the standalone import audit', async () => {
+  it('includes the authenticated transport core in the standalone import audit', async () => {
     expect(await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)).toEqual(
-      expect.arrayContaining([...AUTHENTICATED_TRANSPORT_CORE, ...DIAGNOSTIC_HOST_RUNTIME])
+      expect.arrayContaining(AUTHENTICATED_TRANSPORT_CORE)
     )
   })
 

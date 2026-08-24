@@ -3641,6 +3641,80 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
     ).toBeUndefined()
   })
 
+  it('uses shared Pi and Ollama presentation for remote Ensemble speakers', () => {
+    const speakerFor = buildEnsembleSpeaker([
+      {
+        id: 'ollama-glm',
+        provider: 'ollama',
+        enabled: true,
+        role: 'Cloud',
+        instructions: 'Inspect cloud output.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        model: 'glm-5.2:cloud'
+      },
+      {
+        id: 'ollama-qwen',
+        provider: 'ollama',
+        enabled: true,
+        role: 'Local',
+        instructions: 'Inspect local output.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        model: 'qwen3.5:9b'
+      },
+      {
+        id: 'pi-deepseek',
+        provider: 'pi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research the issue.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        model: 'deepseek/deepseek-v4-pro'
+      },
+      {
+        id: 'pi-zai',
+        provider: 'pi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review the issue.',
+        order: 4,
+        permissionPresetId: 'read_only',
+        model: 'zai/glm-5.2'
+      }
+    ])
+
+    expect(
+      speakerFor({
+        id: 'ollama-row',
+        role: 'assistant',
+        content: 'x',
+        timestamp: 't',
+        metadata: {
+          ensembleProvider: 'ollama',
+          ensembleModel: 'glm-5.2:cloud',
+          ensembleRole: 'Cloud',
+          ensembleParticipantId: 'ollama-glm'
+        }
+      })
+    ).toBe('Z.ai / Cloud (GLM 5.2)')
+    expect(
+      speakerFor({
+        id: 'pi-row',
+        role: 'assistant',
+        content: 'x',
+        timestamp: 't',
+        metadata: {
+          ensembleProvider: 'pi',
+          ensembleModel: 'deepseek/deepseek-v4-pro',
+          ensembleRole: 'Researcher',
+          ensembleParticipantId: 'pi-deepseek'
+        }
+      })
+    ).toBe('DeepSeek / Researcher (DeepSeek V4 Pro)')
+  })
+
   it('buildDupProviderModelLabels maps only duplicated providers, skipping cli-default', () => {
     const labels = buildDupProviderModelLabels([
       ...dupEnsemble.participants,

@@ -26,8 +26,10 @@ const event = (overrides: Partial<RunItemEvent> & Record<string, unknown>): RunI
 describe('runItemProjection', () => {
   it('projects assistant item deltas into the existing assistant delta shape', () => {
     const projection = projectRunItemAssistantDelta(event({ cumulative: true }), {
+      assistantProvider: 'ollama',
       providerModel: 'qwen3:4b-instruct',
-      providerModelLabel: 'Qwen 3 (4B Param)'
+      providerModelLabel: 'Qwen 3 (4B Param)',
+      assistantReasoningEffort: 'ultratask'
     })
 
     expect(projection).toEqual({
@@ -42,8 +44,10 @@ describe('runItemProjection', () => {
         trustedIncremental: true,
         itemId: 'item-1',
         providerModelMetadata: {
+          assistantProvider: 'ollama',
           providerModel: 'qwen3:4b-instruct',
-          providerModelLabel: 'Qwen 3 (4B Param)'
+          providerModelLabel: 'Qwen 3 (4B Param)',
+          assistantReasoningEffort: 'ultratask'
         }
       }
     })

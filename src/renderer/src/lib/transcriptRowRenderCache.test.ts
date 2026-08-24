@@ -118,6 +118,53 @@ describe('transcriptRowRenderCache', () => {
     )
   })
 
+  it('invalidates when an assistant speaker snapshot arrives after the bubble mounts', () => {
+    const first: ChatMessage = {
+      ...message,
+      metadata: { assistantProvider: 'pi', providerModel: 'deepseek/deepseek-v4-flash' }
+    }
+    const changed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        providerModelLabel: 'DeepSeek V4 Flash',
+        assistantReasoningEffort: 'ultratask'
+      }
+    }
+
+    expect(transcriptMessageRenderSignature(changed)).not.toBe(
+      transcriptMessageRenderSignature(first)
+    )
+  })
+
+  it('invalidates when a captured ensemble seat adds effort or thinking state', () => {
+    const first: ChatMessage = {
+      ...message,
+      metadata: {
+        ensembleProvider: 'kimi',
+        ensembleModel: 'kimi-k2.7-code',
+        ensembleSeatSnapshot: { provider: 'kimi', model: 'kimi-k2.7-code' }
+      }
+    }
+    const changed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        ensembleThinkingEnabled: true,
+        ensembleSeatSnapshot: {
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          reasoningEffort: 'ultratask',
+          thinkingEnabled: true
+        }
+      }
+    }
+
+    expect(transcriptMessageRenderSignature(changed)).not.toBe(
+      transcriptMessageRenderSignature(first)
+    )
+  })
+
   it('invalidates when any per-kind live-viewport expansion toggles', () => {
     expect(
       transcriptRowRenderSignatureEqual(

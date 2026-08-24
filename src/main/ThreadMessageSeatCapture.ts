@@ -36,11 +36,70 @@ export interface ThreadMessageSeatChat {
   /** What actually ran, preferred over what was merely selected. */
   lastActualModel?: string
   requestedModel?: string
+  runs?: readonly ThreadMessageSeatRun[]
   ensemble?: { participants?: readonly ThreadMessageSeatParticipant[] } | undefined
+}
+
+/** Immutable run fields usable for a child-return identity. */
+export interface ThreadMessageSeatRun {
+  runId?: string
+  provider?: string
+  requestedModel?: string
+  actualModel?: string
+  providerMetadata?: Record<string, unknown>
 }
 
 function trimmed(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function firstMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  keys: readonly string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = trimmed(metadata?.[key])
+    if (value) return value
+  }
+  return undefined
+}
+
+function firstMetadataBoolean(
+  metadata: Record<string, unknown> | undefined,
+  keys: readonly string[]
+): boolean | undefined {
+  for (const key of keys) {
+    const value = metadata?.[key]
+    if (typeof value === 'boolean') return value
+  }
+  return undefined
+}
+
+function reasoningMetadataKeys(provider: string): readonly string[] {
+  switch (provider) {
+    case 'codex':
+      return ['codexReasoningEffort', 'reasoningEffort']
+    case 'claude':
+      return ['claudeReasoningEffort', 'reasoningEffort']
+    case 'kimi':
+      return ['kimiReasoningEffort', 'reasoningEffort']
+    case 'grok':
+      return ['grokReasoningEffort', 'reasoningEffort']
+    case 'mistral':
+      return ['mistralReasoningEffort', 'reasoningEffort']
+    case 'pi':
+      return ['piReasoningEffort', 'reasoningEffort']
+    case 'muse':
+      return ['museReasoningEffort', 'reasoningEffort']
+    case 'ollama':
+      return ['ollamaReasoningEffort', 'reasoningEffort']
+    case 'cursor':
+      return ['cursorReasoningEffort', 'reasoningEffort']
+    case 'antigravity':
+      return ['antigravityReasoningEffort', 'reasoningEffort']
+    default:
+      return ['reasoningEffort']
+  }
 }
 
 /**
@@ -102,6 +161,40 @@ export function seatFromSoloChat(
   const model = trimmed(chat.lastActualModel) || trimmed(chat.requestedModel)
   if (!provider || !model) return null
   return { provider, model }
+}
+
+/**
+ * Capture the immutable seat that produced one exact solo child run.
+ *
+ * Child returns supply a source run id, and the selected model/controls live
+ * on that run. Deliberately do not fall back to the mutable chat fields here:
+ * a later recall or configuration change must not rewrite the attribution of
+ * the result already being returned.
+ */
+export function seatFromSoloChatRun(
+  chat: ThreadMessageSeatChat | null | undefined,
+  sourceRunId: string | null | undefined
+): SeatChangeSeatState | null {
+  const runId = trimmed(sourceRunId)
+  if (!chat || !runId) return null
+  const run = chat.runs?.find((candidate) => trimmed(candidate?.runId) === runId)
+  if (!run) return null
+  const provider = trimmed(run.provider)
+  const model = trimmed(run.actualModel) || trimmed(run.requestedModel)
+  if (!provider || !model) return null
+  const reasoningEffort = firstMetadataString(run.providerMetadata, reasoningMetadataKeys(provider))
+  const thinkingEnabled = firstMetadataBoolean(
+    run.providerMetadata,
+    provider === 'kimi'
+      ? ['kimiThinkingEnabled', 'kimiThinking', 'thinkingEnabled']
+      : ['thinkingEnabled']
+  )
+  return {
+    provider,
+    model,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingEnabled !== undefined ? { thinkingEnabled } : {})
+  }
 }
 
 /**

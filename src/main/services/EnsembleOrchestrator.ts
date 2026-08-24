@@ -21303,6 +21303,11 @@ export class EnsembleOrchestrator {
           ensembleOrder: run.participant.order,
           ensembleStatus: visibleStatus,
           ensembleModel: run.participant.model,
+          // Status rows are assistant-level attribution in the transcript.
+          // Carry the same immutable dispatch snapshot as content/tool rows so
+          // every provider's model, reasoning choice, and thinking toggle stay
+          // available after the live roster changes.
+          ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
           ...pooledAgentTranscriptMetadata(run.participant),
           ...ensembleReasoningMetadata(run.participant)
         }

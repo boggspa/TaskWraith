@@ -121,10 +121,9 @@ export function bridgeAssistantMessageMetadata(input: {
   provider: ProviderId
   actualModel?: string
   modelLabel?: string
-}): ChatMessage['metadata'] | undefined {
-  if (input.provider !== 'ollama') return undefined
-  if (!input.actualModel && !input.modelLabel) return undefined
+}): ChatMessage['metadata'] {
   return {
+    assistantProvider: input.provider,
     ...(input.actualModel ? { providerModel: input.actualModel } : {}),
     ...(input.modelLabel ? { providerModelLabel: input.modelLabel } : {})
   }

@@ -7181,6 +7181,41 @@ Next action:
     )
   })
 
+  it('captures the immutable seat snapshot on a participant status row', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants[0] = {
+      ...harness.chat.ensemble!.participants[0],
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash-high',
+      reasoningEffort: 'ultraTask',
+      permissionPresetId: 'read_only'
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review this independently.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Done.'))
+
+    const status = harness.chat.messages.find(
+      (message) => message.metadata?.kind === 'ensembleParticipantStatus'
+    )
+    expect(status?.metadata).toMatchObject({
+      ensembleProvider: 'antigravity',
+      ensembleModel: 'gemini-3.6-flash-high',
+      ensembleSeatSnapshot: {
+        schemaVersion: 1,
+        provider: 'antigravity',
+        model: 'gemini-3.6-flash-high',
+        reasoningEffort: 'ultraTask',
+        configuredPermissionPresetId: 'read_only'
+      }
+    })
+  })
+
   it('reaps a lingering provider transport after the grace once its run is superseded', async () => {
     // Production dispatch settles at process exit + adapter teardown, not at
     // the yield. A seat that yields and then keeps streaming parks the serial

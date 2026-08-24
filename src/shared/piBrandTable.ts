@@ -156,6 +156,11 @@ export function resolvePiModelLabel(wireModelId: string | null | undefined): str
   const known = PI_MODEL_LABELS[wire]
   if (known) return known
   const split = splitPiWireModelId(wire)
-  if (!split || !PI_UPSTREAM_BRANDS[split.upstream]) return null
+  if (!split || !resolvePiUpstreamBrand(wire)) return null
+  if (split.upstream === 'openrouter') {
+    const nestedSplit = splitPiWireModelId(split.modelId)
+    const brandKey = nestedSplit ? `openrouter/${nestedSplit.upstream}` : ''
+    if (nestedSplit && PI_UPSTREAM_BRANDS[brandKey]) return nestedSplit.modelId
+  }
   return split.modelId
 }

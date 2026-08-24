@@ -1,4 +1,5 @@
 import { matchOllamaBrand } from './ollamaBrandTable'
+import { ollamaCloudModelDisplayName } from './ollamaModelAvailability'
 import { cursorGrokBaseModelId, isGrokReasoningModelId } from './grok45Models'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
@@ -153,6 +154,8 @@ function titleWords(value: string): string {
 }
 
 function ollamaModelLabel(model: string): string | undefined {
+  const cloudLabel = ollamaCloudModelDisplayName(model)
+  if (cloudLabel) return cloudLabel
   const key = model.trim().toLowerCase()
   const known: Array<[RegExp, string]> = [
     [/^qwen3\.8:27b-mlx(?:-|$)/, 'Qwen 3.8 (27B-MLX)'],

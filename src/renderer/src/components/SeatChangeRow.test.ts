@@ -33,6 +33,13 @@ describe('SeatChangeRow composer-parity contract', () => {
     expect(rowSource).toContain('`var(--provider-${view.hue}-color, var(--accent))`')
   })
 
+  it('forwards Muse and Ollama return-seat effort into the shared formatter', () => {
+    const start = rowSource.indexOf('function seatSideView(')
+    const region = rowSource.slice(start, rowSource.indexOf('function formatSeatChangeTime('))
+    expect(region).toContain('museReasoningEffort: state.reasoningEffort')
+    expect(region).toContain('ollamaReasoningEffort: state.reasoningEffort')
+  })
+
   it('renders the role right-aligned in the provider accent, with the #N seat number', () => {
     expect(rowSource).toContain('className="seat-change-role"')
     // The tint lives in `seatRoleLabel`, the one function every seat surface

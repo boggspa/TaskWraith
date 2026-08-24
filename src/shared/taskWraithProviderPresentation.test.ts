@@ -83,6 +83,12 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(taskWraithModelLabel('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
+    expect(taskWraithModelLabel('ollama', 'glm-5.2:cloud')).toBe('GLM 5.2')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'glm-5.2:cloud')).toMatchObject({
+      displayProvider: 'Z.ai',
+      hueKey: 'zai',
+      modelLabel: 'GLM 5.2'
+    })
     expect(taskWraithModelLabel('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'
     )

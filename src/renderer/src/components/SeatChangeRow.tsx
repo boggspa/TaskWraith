@@ -67,6 +67,8 @@ function seatSideView(state: SeatChangeSeatState): SeatSideView {
           cursorReasoningEffort: state.reasoningEffort,
           mistralReasoningEffort: state.reasoningEffort,
           piReasoningEffort: state.reasoningEffort,
+          museReasoningEffort: state.reasoningEffort,
+          ollamaReasoningEffort: state.reasoningEffort,
           antigravityReasoningEffort:
             provider === 'antigravity' ? state.reasoningEffort : undefined,
           kimiReasoningEffort: state.reasoningEffort,

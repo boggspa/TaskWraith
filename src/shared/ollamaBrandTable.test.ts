@@ -58,6 +58,22 @@ describe('resolveHealthEntryPresentation', () => {
 })
 
 describe('matchOllamaBrand', () => {
+  it('treats the wire model id as authoritative over a stale display label', () => {
+    expect(matchOllamaBrand('deepseek-r1:8b', 'Qwen 3.5 (9B Param)')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek'
+    })
+  })
+
+  it('uses a display label only when the wire model id has no known brand', () => {
+    expect(matchOllamaBrand('private/local-model', 'Qwen 3.5 (9B Param)')).toMatchObject({
+      providerLabel: 'Alibaba',
+      providerClass: 'alibaba'
+    })
+  })
+})
+
+describe('matchOllamaBrand', () => {
   it('matches OpenBMB models', () => {
     expect(matchOllamaBrand('minicpm-v4.5:8b')?.providerLabel).toBe('OpenBMB')
   })
