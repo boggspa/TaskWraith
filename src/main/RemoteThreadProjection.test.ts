@@ -724,9 +724,84 @@ describe('RemoteThreadProjection', () => {
       )
       const closeoutRow = snap.rows.find((row) => row.id === 'closeout-round-1')
       expect(closeoutRow?.speaker).toBe('TaskWraith')
+      expect(closeoutRow?.isCloseout).toBe(true)
+      // Older persisted close-outs may not have the explicit scope stamp;
+      // their immutable closeoutRoundId is still enough to identify round
+      // authority for the mobile completion card.
+      expect(closeoutRow?.closeoutScope).toBe('ensembleRound')
+      expect(closeoutRow?.closeoutRoundId).toBe('round-1')
       // Inherits the round id from closeoutRoundId → it is the round's last
       // tagged row, so iOS anchors the Task-complete card after the close-out.
       expect(closeoutRow?.ensembleRoundId).toBe('round-1')
+    })
+
+    it('keeps explicit round-close authority when generic metadata is stale', () => {
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            id: 'authoritative-closeout',
+            role: 'system',
+            content: 'Close-out.',
+            metadata: {
+              kind: 'taskWraithCloseout',
+              closeoutScope: 'ensembleRound',
+              closeoutRoundId: 'round-authoritative',
+              closeoutStatus: 'cancelled',
+              closeoutDurationMs: 42_000,
+              // A stale generic field must never redirect a close-out card to
+              // another round after a resumed/reconciled transcript.
+              ensembleRoundId: 'round-stale'
+            }
+          })
+        ]
+      )
+
+      expect(snap.rows[0]).toMatchObject({
+        isCloseout: true,
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-authoritative',
+        closeoutStatus: 'cancelled',
+        closeoutDurationMs: 42_000,
+        ensembleRoundId: 'round-authoritative'
+      })
+    })
+
+    it('keeps the closeout marker when byte pressure strips epic tables', () => {
+      const snap = project(
+        { kind: 'latestN', n: 1 },
+        [
+          msg(1, {
+            id: 'heavy-closeout',
+            role: 'system',
+            content: 'x'.repeat(4_000),
+            metadata: {
+              kind: 'taskWraithCloseout',
+              closeoutScope: 'ensembleRound',
+              closeoutRoundId: 'round-1',
+              closeoutStatus: 'cancelled',
+              closeoutDurationMs: 42_000,
+              closeoutCommits: Array.from({ length: 24 }, (_, index) => ({
+                hash: `hash-${index}`,
+                subject: 'x'.repeat(240)
+              }))
+            }
+          })
+        ],
+        [],
+        { previewMaxChars: 4_000 }
+      )
+
+      const fitted = fitRemoteThreadSnapshotToByteBudget(snap, 1_000)
+      expect(fitted.rows).toHaveLength(1)
+      expect(fitted.rows[0]).toMatchObject({
+        isCloseout: true,
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-1',
+        closeoutStatus: 'cancelled',
+        closeoutDurationMs: 42_000
+      })
+      expect(fitted.rows[0].closeoutCommits).toBeUndefined()
     })
 
     it('projects closeout Participant/Commit tables for the iOS Task-complete epic stack', () => {

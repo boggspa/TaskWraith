@@ -110,6 +110,22 @@ struct TranscriptStackCollapseTests {
         #expect(!twIsPlainSystemNoticeRow(assistant))
     }
 
+    @Test func durableCloseoutsNeverFoldIntoSystemOneLiners() throws {
+        // The desktop excludes taskWraithCloseout even when its epic tables
+        // are empty. The explicit marker preserves that standing after a
+        // byte-limited mobile projection has stripped table payloads.
+        let closeout = try row(
+            """
+            {"id":"closeout-1","role":"system","kind":"system","speaker":"TaskWraith",
+             "isCloseout":true,"closeoutScope":"ensembleRound","closeoutRoundId":"round-1",
+             "closeoutStatus":"cancelled","preview":"Worked for 42 seconds."}
+            """
+        )
+
+        #expect(!twIsPlainSystemNoticeRow(closeout))
+        #expect(!twCanCollapseIntoStack(closeout))
+    }
+
     @Test func peopleContributionsNeverFoldToAnonymousSystemNotices() throws {
         // Desktop parity (TranscriptPanel `plainSystemNoticeMessage`): a
         // DELIVERED contribution is a person's words, not app chrome. Folded,

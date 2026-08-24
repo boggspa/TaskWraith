@@ -1120,6 +1120,24 @@ export interface RemoteThreadRow {
   /** TaskWraith close-out Sub-threads rows — the last epic-stack section that
    * was desktop-only. Bounded at 24 (the desktop caps its own display). */
   closeoutSubThreads?: RemoteCloseoutSubThread[]
+  /**
+   * True for the durable TaskWraith close-out carrier itself. Close-outs may
+   * have no epic-table payload (or lose those payloads under wire pressure),
+   * but they must still stay distinct from foldable system chrome on mobile.
+   */
+  isCloseout?: true
+  /** Scope stamped by the close-out author. An ensemble-round close-out is
+   * authoritative for the round outcome; a run-scoped close-out is not. */
+  closeoutScope?: 'run' | 'ensembleRound'
+  /** Exact round identity stamped on an ensemble-round close-out. Kept
+   * separately from `ensembleRoundId` so stale generic metadata cannot
+   * redirect the card to another round. */
+  closeoutRoundId?: string
+  /** Authoritative close-out outcome, including e.g. a cancelled round whose
+   * final participant lane happened to succeed. */
+  closeoutStatus?: string
+  /** Authoritative close-out wall-clock duration in milliseconds. */
+  closeoutDurationMs?: number
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -1433,6 +1451,11 @@ function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
     // it under pressure and the degraded row folds into anonymous chrome —
     // the same reason `peopleContribution` is preserved here.
     ...(row.noticeKind ? { noticeKind: row.noticeKind } : {}),
+    ...(row.isCloseout ? { isCloseout: true } : {}),
+    ...(row.closeoutScope ? { closeoutScope: row.closeoutScope } : {}),
+    ...(row.closeoutRoundId ? { closeoutRoundId: row.closeoutRoundId } : {}),
+    ...(row.closeoutStatus ? { closeoutStatus: row.closeoutStatus } : {}),
+    ...(row.closeoutDurationMs ? { closeoutDurationMs: row.closeoutDurationMs } : {}),
     ...(row.speaker ? { speaker: row.speaker } : {}),
     ...(row.threadMessage ? { threadMessage: row.threadMessage } : {}),
     ...(row.peopleContribution ? { peopleContribution: row.peopleContribution } : {}),
@@ -2975,7 +2998,22 @@ function buildRow(
       : undefined)
   if (providerHueClass) row.providerHueClass = providerHueClass
   if (metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) {
+    row.isCloseout = true
     row.speaker = 'TaskWraith'
+    const closeoutRoundId = stringField(metadata.closeoutRoundId, 160)
+    if (closeoutRoundId) row.closeoutRoundId = closeoutRoundId
+    const closeoutScope = metadata.closeoutScope
+    if (closeoutScope === 'run' || closeoutScope === 'ensembleRound') {
+      row.closeoutScope = closeoutScope
+    } else if (closeoutRoundId) {
+      // Historical round close-outs predate the explicit scope stamp, but
+      // `closeoutRoundId` itself is unambiguous round authority.
+      row.closeoutScope = 'ensembleRound'
+    }
+    const closeoutStatus = stringField(metadata.closeoutStatus, 80)
+    if (closeoutStatus) row.closeoutStatus = closeoutStatus
+    const closeoutDurationMs = positiveNumber(metadata.closeoutDurationMs)
+    if (closeoutDurationMs) row.closeoutDurationMs = closeoutDurationMs
     // Associate an ensemble-ROUND close-out with its round so the iOS
     // completion (Task-complete) card anchors AFTER the close-out, not before
     // it. A round close-out carries `closeoutRoundId` (not `ensembleRoundId`),
@@ -2983,8 +3021,8 @@ function buildRow(
     // round's last *tagged* row, and an untagged close-out then renders after
     // the card. Run-scoped close-outs already carry the run's `runId`, so they
     // are the run's last row and need no help here.
-    if (typeof metadata.closeoutRoundId === 'string' && metadata.closeoutRoundId.trim()) {
-      row.ensembleRoundId = metadata.closeoutRoundId.trim()
+    if (closeoutRoundId) {
+      row.ensembleRoundId = closeoutRoundId
     }
     // Epic-stack tables live on the close-out row so Task-complete can render
     // Participants → File changes → Commits without reparsing markdown.
@@ -3004,7 +3042,11 @@ function buildRow(
   if (rowMedia.length > 0) {
     row.media = rowMedia
   }
-  if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
+  if (
+    !row.closeoutRoundId &&
+    typeof metadata?.ensembleRoundId === 'string' &&
+    metadata.ensembleRoundId.trim()
+  ) {
     row.ensembleRoundId = metadata.ensembleRoundId
   }
   const pooledAgentIdentity =

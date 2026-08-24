@@ -1915,6 +1915,24 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         }
         public let runFailure: RunFailure?
 
+        /// Durable TaskWraith close-out marker. It survives even when the
+        /// tombstoned epic tables are absent or stripped under wire pressure,
+        /// so mobile never folds a close-out into generic system chrome.
+        public let isCloseout: Bool?
+        /// `ensembleRound` close-outs are authoritative for a whole round;
+        /// `run` close-outs describe only one participant/run. A String keeps
+        /// newer scope values decode-safe on older phones.
+        public let closeoutScope: String?
+        /// Exact round identity stamped by the close-out author. This remains
+        /// separate from `ensembleRoundId`, which can be stale generic row
+        /// metadata on historical transcripts.
+        public let closeoutRoundId: String?
+        /// Authoritative close-out result (for example a cancelled round even
+        /// when its final participant lane succeeded).
+        public let closeoutStatus: String?
+        /// Authoritative close-out wall-clock duration in milliseconds.
+        public let closeoutDurationMs: Int?
+
         /// TaskWraith close-out Participants table for the Task-complete epic
         /// stack (desktop RunCompleteEpicStack parity). Absent on older Macs
         /// and non-close-out rows — the card falls back to the legacy Run
@@ -2001,6 +2019,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let provider: String?
         public let model: String?
         public let status: String?
+        /// Mirrors the remote summary's terminal exit evidence. In particular,
+        /// exit 130 is a deliberate user cancellation even on legacy rows that
+        /// predate a `cancelled` status stamp.
+        public let exitCode: Int?
         public let startedAt: String?
         public let endedAt: String?
         public let durationMs: Int?
@@ -2030,6 +2052,44 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
                 public let deletions: Int?
                 public var id: String { path }
             }
+        }
+
+        public init(
+            runId: String? = nil,
+            ensembleRoundId: String? = nil,
+            ensembleParticipantId: String? = nil,
+            ensembleRole: String? = nil,
+            ensembleOrder: Int? = nil,
+            provider: String? = nil,
+            model: String? = nil,
+            status: String? = nil,
+            exitCode: Int? = nil,
+            startedAt: String? = nil,
+            endedAt: String? = nil,
+            durationMs: Int? = nil,
+            totalTokens: Int? = nil,
+            tokensIn: Int? = nil,
+            tokensOut: Int? = nil,
+            costText: String? = nil,
+            fileChanges: FileChanges? = nil
+        ) {
+            self.runId = runId
+            self.ensembleRoundId = ensembleRoundId
+            self.ensembleParticipantId = ensembleParticipantId
+            self.ensembleRole = ensembleRole
+            self.ensembleOrder = ensembleOrder
+            self.provider = provider
+            self.model = model
+            self.status = status
+            self.exitCode = exitCode
+            self.startedAt = startedAt
+            self.endedAt = endedAt
+            self.durationMs = durationMs
+            self.totalTokens = totalTokens
+            self.tokensIn = tokensIn
+            self.tokensOut = tokensOut
+            self.costText = costText
+            self.fileChanges = fileChanges
         }
     }
     public struct BlackboardEntry: Codable, Sendable, Identifiable, Equatable {

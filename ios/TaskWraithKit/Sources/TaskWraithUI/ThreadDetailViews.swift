@@ -1499,6 +1499,14 @@ struct ThreadDetailView: View {
         snapshot?.runSummaries ?? [snapshot?.runSummary].compactMap { $0 }
     }
 
+    /// `runSummary` is the Mac's current round aggregate (summed tokens/cost,
+    /// unioned files, full wall-clock span). `runSummaries` stays per-lane so
+    /// the participant table can enumerate individual contributors without
+    /// double-counting the aggregate.
+    private var headlineRunSummary: RemoteThreadSnapshot.RunSummary? {
+        snapshot?.runSummary
+    }
+
     private var runSummaryById: [String: RemoteThreadSnapshot.RunSummary] {
         var out: [String: RemoteThreadSnapshot.RunSummary] = [:]
         for summary in runSummaries {
@@ -1514,16 +1522,18 @@ struct ThreadDetailView: View {
     }
 
     private func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
-        let status = summary.status ?? ""
-        return !status.isEmpty && status != "running"
+        twIsTerminalRunSummary(summary)
     }
 
     private func ensembleRoundIsActive(_ roundId: String) -> Bool {
         guard let state = ensembleState, state.roundId == roundId else {
             return false
         }
-        let status = state.status ?? ""
-        return !["idle", "completed", "cancelled", "failed", "error"].contains(status)
+        let status = (state.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ![
+            "canceled", "cancelled", "complete", "completed", "done", "error", "failed", "idle",
+            "success", "success_with_warnings"
+        ].contains(status)
     }
 
     /// Does the loaded window carry this run's failure explanation? Drives the
@@ -1541,40 +1551,37 @@ struct ThreadDetailView: View {
         return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
     }
 
-    /// Tombstoned Participants / File changes / Commits tables from the
-    /// matching close-out row (desktop RunCompleteEpicStack). Prefer round
-    /// close-out, then run-scoped close-out. Absent on older Macs —
-    /// TaskCompleteCard keeps the legacy Run-details token grid.
+    /// Tombstoned Participants / File changes / Commits tables plus the
+    /// authoritative close-out outcome. A round close-out outranks any final
+    /// participant lane: the latter can succeed while the round was cancelled
+    /// or failed later by orchestration.
     private func closeoutEpicTables(for summary: RemoteThreadSnapshot.RunSummary) -> (
         RemoteThreadSnapshot.Row.CloseoutParticipantTable?,
         [RemoteThreadSnapshot.Row.CloseoutCommit]?,
         [RemoteThreadSnapshot.Row.CloseoutFileChange]?,
-        [RemoteThreadSnapshot.Row.CloseoutSubThread]?
+        [RemoteThreadSnapshot.Row.CloseoutSubThread]?,
+        String?,
+        Int?
     ) {
         let rows = snapshot?.rows ?? []
-        func hasEpicTables(_ row: RemoteThreadSnapshot.Row) -> Bool {
-            (row.closeoutParticipantTable?.rows?.isEmpty == false)
-                || (row.closeoutCommits?.isEmpty == false)
-                || (row.closeoutFileChanges?.isEmpty == false)
-                || (row.closeoutSubThreads?.isEmpty == false)
-        }
-        if let roundId = summary.ensembleRoundId, !roundId.isEmpty,
-            let row = rows.last(where: { $0.ensembleRoundId == roundId && hasEpicTables($0) })
-        {
+        if let row = twPreferredCloseoutRow(for: summary, rows: rows) {
             return (
                 row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
-                row.closeoutSubThreads
+                row.closeoutSubThreads, row.closeoutStatus, row.closeoutDurationMs
             )
         }
-        if let runId = summary.runId, !runId.isEmpty,
-            let row = rows.last(where: { $0.runId == runId && hasEpicTables($0) })
-        {
-            return (
-                row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
-                row.closeoutSubThreads
-            )
+        return (nil, nil, nil, nil, nil, nil)
+    }
+
+    private func headlineSummary(forRound roundId: String) -> RemoteThreadSnapshot.RunSummary? {
+        guard let summary = headlineRunSummary, summary.ensembleRoundId == roundId else { return nil }
+        return summary
+    }
+
+    private func terminalParticipantSummary(forRound roundId: String) -> RemoteThreadSnapshot.RunSummary? {
+        runSummaries.reversed().first {
+            $0.ensembleRoundId == roundId && isTerminalRunSummary($0)
         }
-        return (nil, nil, nil, nil)
     }
 
     /// The terminal summary to show after this row, if it's a run's last row.
@@ -1582,11 +1589,29 @@ struct ThreadDetailView: View {
         -> RemoteThreadSnapshot.RunSummary?
     {
         if card?.isEnsemble == true, let roundId = ensembleRoundId(for: row) {
+            let rows = snapshot?.rows ?? []
+            if let closeout = twAuthoritativeRoundCloseoutRow(roundId: roundId, rows: rows) {
+                // A durable round close-out is the terminal anchor. It can
+                // legitimately arrive before stale participant summaries have
+                // updated, so do not let an arbitrary lane suppress it.
+                guard closeout.id == row.id, twIsTerminalCloseoutStatus(closeout.closeoutStatus)
+                else { return nil }
+                if let headline = headlineSummary(forRound: roundId) { return headline }
+                if let participant = terminalParticipantSummary(forRound: roundId) { return participant }
+                return twSyntheticRoundCloseoutSummary(roundId: roundId, closeout: closeout)
+            }
+
+            // Legacy fallback: without an explicit close-out, never infer a
+            // terminal card from a page that may continue below this window.
             guard ensembleRoundLastRowIds[roundId] == row.id else { return nil }
+            guard snapshot?.hasMoreBelow != true else { return nil }
             guard !ensembleRoundIsActive(roundId) else { return nil }
             let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
-            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
-            return summaries.last(where: isTerminalRunSummary)
+            guard !summaries.contains(where: { !isTerminalRunSummary($0) }) else { return nil }
+            if let headline = headlineSummary(forRound: roundId), isTerminalRunSummary(headline) {
+                return headline
+            }
+            return terminalParticipantSummary(forRound: roundId)
         }
 
         guard let runId = row.runId, runLastRowIds[runId] == row.id else { return nil }
@@ -1596,13 +1621,21 @@ struct ThreadDetailView: View {
     }
 
     private var unanchoredRunCardSummary: RemoteThreadSnapshot.RunSummary? {
-        guard let run = snapshot?.runSummary, !isRunning else { return nil }
+        guard let run = headlineRunSummary, !isRunning else { return nil }
         if card?.isEnsemble == true, let roundId = run.ensembleRoundId {
             guard ensembleRoundLastRowIds[roundId] == nil else { return nil }
+            if let closeout = twAuthoritativeRoundCloseoutRow(
+                roundId: roundId, rows: snapshot?.rows ?? []
+            ) {
+                guard twIsTerminalCloseoutStatus(closeout.closeoutStatus) else { return nil }
+                return run
+            }
+            guard snapshot?.hasMoreBelow != true else { return nil }
             guard !ensembleRoundIsActive(roundId) else { return nil }
             let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
-            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
-            return summaries.last(where: isTerminalRunSummary)
+            guard !summaries.contains(where: { !isTerminalRunSummary($0) }) else { return nil }
+            guard isTerminalRunSummary(run) else { return terminalParticipantSummary(forRound: roundId) }
+            return run
         }
         guard runLastRowIds[run.runId ?? ""] == nil else { return nil }
         guard isTerminalRunSummary(run) else { return nil }
@@ -1849,7 +1882,9 @@ struct ThreadDetailView: View {
                             closeoutCommits: epic.1,
                             closeoutFileChanges: epic.2,
                             closeoutSubThreads: epic.3,
-                            hasFailureDetail: runCardHasFailureDetail(runCard)
+                            hasFailureDetail: runCardHasFailureDetail(runCard),
+                            closeoutStatus: epic.4,
+                            closeoutDurationMs: epic.5
                         )
                         .listRowInsets(
                             EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1907,7 +1942,9 @@ struct ThreadDetailView: View {
                                 closeoutCommits: epic.1,
                                 closeoutFileChanges: epic.2,
                                 closeoutSubThreads: epic.3,
-                                hasFailureDetail: runCardHasFailureDetail(runCard)
+                                hasFailureDetail: runCardHasFailureDetail(runCard),
+                                closeoutStatus: epic.4,
+                                closeoutDurationMs: epic.5
                             )
                             .listRowInsets(
                                 EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1960,7 +1997,10 @@ struct ThreadDetailView: View {
                         closeoutParticipantTable: epic.0,
                         closeoutCommits: epic.1,
                         closeoutFileChanges: epic.2,
-                        hasFailureDetail: runCardHasFailureDetail(run)
+                        closeoutSubThreads: epic.3,
+                        hasFailureDetail: runCardHasFailureDetail(run),
+                        closeoutStatus: epic.4,
+                        closeoutDurationMs: epic.5
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)

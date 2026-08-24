@@ -67,6 +67,13 @@ struct TaskCompleteCard: View {
     /// card sent the user looking for details that were never written.
     /// Defaults to the historical copy so fixtures/previews are unaffected.
     var hasFailureDetail: Bool = true
+    /// The durable close-out owns a whole ensemble round's outcome. A final
+    /// participant lane can have a different status, so it is only a fallback
+    /// when the Mac did not project close-out evidence.
+    var closeoutStatus: String? = nil
+    /// Same authority rule as `closeoutStatus`: use the round close-out span
+    /// rather than the arbitrary representative participant duration.
+    var closeoutDurationMs: Int? = nil
 
     private var usesEpicStack: Bool {
         (closeoutParticipantTable?.rows?.isEmpty == false)
@@ -75,7 +82,15 @@ struct TaskCompleteCard: View {
             || (closeoutSubThreads?.isEmpty == false)
     }
 
-    private var failed: Bool { run.status == "failed" || run.status == "error" }
+    private var effectiveStatus: String? {
+        twTaskCompleteEffectiveStatus(
+            closeoutStatus: closeoutStatus,
+            runStatus: run.status,
+            exitCode: run.exitCode
+        )
+    }
+
+    private var failed: Bool { twTaskCompleteIsFailure(effectiveStatus) }
 
     /// One row shape for both wire sources (run.fileChanges.files / diff.files).
     private struct ChangedFileRow: Identifiable {
@@ -101,6 +116,14 @@ struct TaskCompleteCard: View {
     }
 
     private var fileRows: [ChangedFileRow] {
+        if let files = closeoutFileChanges, !files.isEmpty {
+            return files.compactMap { file in
+                guard let path = file.path, !path.isEmpty else { return nil }
+                return ChangedFileRow(
+                    path: path, status: file.status,
+                    additions: file.additions, deletions: file.deletions)
+            }
+        }
         if let files = run.fileChanges?.files, !files.isEmpty {
             return files.map {
                 ChangedFileRow(
@@ -115,37 +138,32 @@ struct TaskCompleteCard: View {
                     additions: $0.additions, deletions: $0.deletions)
             }
         }
-        if let files = closeoutFileChanges, !files.isEmpty {
-            return files.compactMap { file in
-                guard let path = file.path, !path.isEmpty else { return nil }
-                return ChangedFileRow(
-                    path: path, status: file.status,
-                    additions: file.additions, deletions: file.deletions)
-            }
-        }
         return []
     }
 
+    private var usesCloseoutFileChanges: Bool { !(closeoutFileChanges?.isEmpty ?? true) }
+
     private var totalAdditions: Int? {
+        if usesCloseoutFileChanges { return fileRows.compactMap(\.additions).reduce(0, +) }
         if let additions = run.fileChanges?.additions ?? diff?.additions { return additions }
-        guard !(closeoutFileChanges?.isEmpty ?? true) else { return nil }
-        return fileRows.compactMap(\.additions).reduce(0, +)
+        return nil
     }
     private var totalDeletions: Int? {
+        if usesCloseoutFileChanges { return fileRows.compactMap(\.deletions).reduce(0, +) }
         if let deletions = run.fileChanges?.deletions ?? diff?.deletions { return deletions }
-        guard !(closeoutFileChanges?.isEmpty ?? true) else { return nil }
-        return fileRows.compactMap(\.deletions).reduce(0, +)
+        return nil
     }
     /// True changed-file count — the row list is capped on the wire.
     private var totalFilesChanged: Int {
-        run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
+        if usesCloseoutFileChanges { return fileRows.count }
+        return run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
     }
     private var hasFileChangeSummary: Bool {
-        run.fileChanges != nil || diff != nil || !(closeoutFileChanges?.isEmpty ?? true)
+        usesCloseoutFileChanges || run.fileChanges != nil || diff != nil
     }
 
     private var fileChangesMeta: String {
-        if run.fileChanges != nil || diff != nil {
+        if !usesCloseoutFileChanges, (run.fileChanges != nil || diff != nil) {
             let created = run.fileChanges?.createdFiles ?? 0
             let deleted = run.fileChanges?.deletedFiles ?? 0
             let modified =
@@ -161,7 +179,7 @@ struct TaskCompleteCard: View {
         return "Created \(created) · Edited \(modified) · Deleted \(deleted)"
     }
 
-    private var title: String { failed ? "Run failed" : "Task complete" }
+    private var title: String { twTaskCompleteTitle(for: effectiveStatus) }
 
     /// Failure-only footer — success no longer adds an "awaiting" row.
     private var runFooterLine: String? {
@@ -172,7 +190,7 @@ struct TaskCompleteCard: View {
     }
 
     private var workedFor: String? {
-        guard let ms = run.durationMs else { return nil }
+        guard let ms = closeoutDurationMs ?? run.durationMs else { return nil }
         let total = ms / 1000
         if total >= 3600 {
             return "Worked for \(total / 3600)h \((total % 3600) / 60)m"

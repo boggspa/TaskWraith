@@ -4322,7 +4322,7 @@ public final class RemoteSessionModel: ObservableObject {
         var summaries = snapshot.runSummaries ?? []
         if let latest = snapshot.runSummary { summaries.append(latest) }
         guard let match = summaries.first(where: { $0.runId == liveRunId }),
-            match.endedAt != nil || Self.isFinishedRunStatus(match.status)
+            twIsTerminalRunSummary(match)
         else { return }
         streamingTexts[key] = nil
         streamingSegments[key] = nil
@@ -4333,20 +4333,6 @@ public final class RemoteSessionModel: ObservableObject {
             streamingTerminalThreads.remove(key)
         }
         streamingPublishGate.reset(threadId: key)
-    }
-
-    /// Terminal run-status vocabulary the Mac projects (bridge runs flip
-    /// ChatRun.status to success/failed on finalize; the broader set is defensive
-    /// against other providers). `endedAt` is the primary terminal signal; this
-    /// is the fallback when a summary carries a status but no end timestamp.
-    private static func isFinishedRunStatus(_ status: String?) -> Bool {
-        guard let status else { return false }
-        switch status {
-        case "success", "failed", "completed", "complete", "cancelled", "canceled", "error", "done":
-            return true
-        default:
-            return false
-        }
     }
 
     private func currentRunSummaryFingerprints(
@@ -4586,8 +4572,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private static func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
-        guard let status = summary.status, !status.isEmpty else { return false }
-        return status != "running"
+        twIsTerminalRunSummary(summary)
     }
 
     private func windowStart(for snapshot: RemoteThreadSnapshot) -> Int {

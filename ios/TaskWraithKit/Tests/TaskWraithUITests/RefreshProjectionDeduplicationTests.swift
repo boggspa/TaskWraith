@@ -74,6 +74,21 @@ struct RefreshProjectionDeduplicationTests {
         #expect(model.threadSnapshots["thread-4"]?.rows?.map(\.id) == ["row-old", "row-new"])
     }
 
+    @Test func activeRunStatusesDoNotOutrankAStillRunningSummary() throws {
+        let model = makeModel()
+        let running = try threadSnapshot(
+            threadId: "thread-active", taskId: "task-active",
+            runSummary: .init(runId: "run-active", status: "running"))
+        let queued = try threadSnapshot(
+            threadId: "thread-active", taskId: "task-active",
+            runSummary: .init(runId: "run-active", status: "queued"))
+
+        model.mergeThreadSnapshotProjectionForTesting(running, key: "thread-active")
+        model.mergeThreadSnapshotAckForTesting(queued, key: "thread-active")
+
+        #expect(model.threadSnapshots["thread-active"]?.runSummary?.status == "running")
+    }
+
     @Test func equalGitSnapshotsPublishOnlyOnce() throws {
         let model = makeModel()
         let main = try gitSnapshot(branch: "main", changed: 2)
@@ -97,7 +112,8 @@ struct RefreshProjectionDeduplicationTests {
 
     private func threadSnapshot(
         threadId: String, taskId: String, rowId: String = "row-1",
-        windowStartIndex: Int? = nil, totalRows: Int = 1
+        windowStartIndex: Int? = nil, totalRows: Int = 1,
+        runSummary: RemoteThreadSnapshot.RunSummary? = nil
     ) throws
         -> RemoteThreadSnapshot
     {
@@ -119,6 +135,7 @@ struct RefreshProjectionDeduplicationTests {
             provider: "codex",
             rows: [row],
             totalRows: totalRows,
+            runSummary: runSummary,
             windowStartIndex: windowStartIndex)
     }
 

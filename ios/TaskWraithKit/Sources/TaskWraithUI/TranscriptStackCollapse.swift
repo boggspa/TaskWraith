@@ -68,7 +68,7 @@ private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
         || row.fanoutResult != nil || row.runFailure != nil || row.seatChange != nil
         || row.seatRoster != nil || row.seatParticipantAdded != nil
         || row.peopleContribution != nil || row.threadMessage != nil
-        || row.guestReply != nil
+        || row.guestReply != nil || row.isCloseout == true
 }
 
 /// True when the transcript window carries a row that explains why `runId`
