@@ -12,6 +12,8 @@ export interface UpdateRestartService {
 export interface UpdateRestartCoordinatorOptions {
   updateService: UpdateRestartService
   hasActiveWork: () => boolean
+  /** Async Host/update preparation. True means installer handoff may proceed. */
+  beforeRestart?: () => Promise<boolean>
   retryIntervalMs?: number
 }
 
@@ -24,13 +26,18 @@ export interface UpdateRestartCoordinatorOptions {
 export class UpdateRestartCoordinator {
   private readonly updateService: UpdateRestartService
   private readonly hasActiveWork: () => boolean
+  private readonly beforeRestart?: () => Promise<boolean>
   private readonly retryIntervalMs: number
   private restartRequested = false
+  private restartBarrierSatisfied = false
+  private barrierInFlight: Promise<void> | null = null
+  private barrierEpoch = 0
   private retryTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: UpdateRestartCoordinatorOptions) {
     this.updateService = options.updateService
     this.hasActiveWork = options.hasActiveWork
+    this.beforeRestart = options.beforeRestart
     this.retryIntervalMs = options.retryIntervalMs ?? UPDATE_RESTART_RETRY_MS
   }
 
@@ -42,6 +49,7 @@ export class UpdateRestartCoordinator {
     const status = this.updateService.snapshot().status
     if (status !== 'downloading' && status !== 'downloaded') return false
     this.restartRequested = true
+    this.restartBarrierSatisfied = false
     return this.tryRestart()
   }
 
@@ -56,6 +64,8 @@ export class UpdateRestartCoordinator {
     }
     if (status !== 'downloaded') {
       this.restartRequested = false
+      this.restartBarrierSatisfied = false
+      this.barrierEpoch += 1
       this.stopRetrying()
       this.updateService.setRestartPending(false)
       return false
@@ -67,8 +77,16 @@ export class UpdateRestartCoordinator {
       return false
     }
 
+    if (this.beforeRestart && !this.restartBarrierSatisfied) {
+      this.startBarrier()
+      this.startRetrying()
+      return false
+    }
+
     const restartStarted = this.updateService.quitAndInstall()
     this.restartRequested = false
+    this.restartBarrierSatisfied = false
+    this.barrierEpoch += 1
     this.stopRetrying()
     this.updateService.setRestartPending(false)
     return restartStarted
@@ -76,7 +94,30 @@ export class UpdateRestartCoordinator {
 
   dispose(): void {
     this.restartRequested = false
+    this.restartBarrierSatisfied = false
+    this.barrierEpoch += 1
+    this.barrierInFlight = null
     this.stopRetrying()
+  }
+
+  private startBarrier(): void {
+    if (this.barrierInFlight || !this.beforeRestart) return
+    const epoch = this.barrierEpoch
+    const operation = Promise.resolve()
+      .then(() => this.beforeRestart!())
+      .then(
+        (ready) => {
+          if (this.barrierInFlight !== operation) return
+          this.barrierInFlight = null
+          if (!this.restartRequested || epoch !== this.barrierEpoch || ready !== true) return
+          this.restartBarrierSatisfied = true
+          this.tryRestart()
+        },
+        () => {
+          if (this.barrierInFlight === operation) this.barrierInFlight = null
+        }
+      )
+    this.barrierInFlight = operation
   }
 
   private startRetrying(): void {
