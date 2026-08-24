@@ -17,6 +17,8 @@ export interface PreparedExternalHost {
   readonly profilePath: string
   readonly cutoverId: string
   readonly supervisor: HostExternalSupervisor
+  /** Fresh attachment factory for an explicit user restart after a successful stop. */
+  readonly createSupervisor: () => HostExternalSupervisor
   readonly result: HostExternalEnsureResult
 }
 
@@ -53,6 +55,7 @@ export function publishPreparedExternalHost(input: PreparedExternalHost): Prepar
   if (
     !input ||
     typeof input.supervisor?.ensureAvailable !== 'function' ||
+    typeof input.createSupervisor !== 'function' ||
     typeof input.cutoverId !== 'string' ||
     !input.cutoverId ||
     input.cutoverId.length > 200 ||
@@ -75,6 +78,7 @@ export function publishPreparedExternalHost(input: PreparedExternalHost): Prepar
     profilePath: input.profilePath,
     cutoverId: input.cutoverId,
     supervisor: input.supervisor,
+    createSupervisor: input.createSupervisor,
     result
   })
   return prepared

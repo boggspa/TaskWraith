@@ -149,6 +149,7 @@ export function createHostExternalPreparation(
         profilePath: options.profilePath,
         cutoverId,
         supervisor,
+        createSupervisor: options.createSupervisor,
         result: ensureResult
       })
       phaseValue = 'prepared'

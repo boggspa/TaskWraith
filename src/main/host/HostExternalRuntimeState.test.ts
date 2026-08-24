@@ -56,10 +56,12 @@ describe('HostExternalRuntimeState', () => {
       profilePath: '/profiles/a',
       cutoverId: 'cutover-a',
       supervisor: owner,
+      createSupervisor: () => owner,
       result
     })
     mutableWelcome.capabilities.push('channels')
     expect(published.result.welcome.capabilities).not.toContain('channels')
+    expect(published.createSupervisor()).toBe(owner)
     expect(() => consumePreparedExternalHost('/profiles/b')).toThrow('does not match')
     expect(consumePreparedExternalHost('/profiles/a')).toBe(published)
     expect(consumePreparedExternalHost('/profiles/a')).toBeNull()
@@ -72,6 +74,7 @@ describe('HostExternalRuntimeState', () => {
       profilePath: '/profiles/a',
       cutoverId: 'cutover-a',
       supervisor: owner,
+      createSupervisor: () => owner,
       result: { kind: 'launched', pid: 42, welcome }
     })
     expect(() =>
@@ -79,6 +82,7 @@ describe('HostExternalRuntimeState', () => {
         profilePath: '/profiles/a',
         cutoverId: 'cutover-b',
         supervisor: owner,
+        createSupervisor: () => owner,
         result: { kind: 'existing', welcome }
       })
     ).toThrow('already pending')
@@ -90,6 +94,7 @@ describe('HostExternalRuntimeState', () => {
         profilePath: '/profiles/a',
         cutoverId: 'cutover-invalid',
         supervisor: owner,
+        createSupervisor: () => owner,
         result: { kind: 'existing', welcome: { ...welcome, hostVersion: '1.9.6' } }
       })
     ).toThrow('production Node Host')
