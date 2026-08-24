@@ -43,6 +43,10 @@ function createDeps() {
   }
   const deps = {
     getCodexClient: vi.fn(() => client),
+    listCodexThreads: vi.fn(async (payload: unknown, timeoutMs: number) => {
+      calls.push(`list:${timeoutMs}`)
+      return { method: 'thread/list', payload, timeoutMs }
+    }),
     getAppVersion: vi.fn(() => '1.2.3'),
     providerDisplayName: vi.fn((provider: string) => provider.toUpperCase()),
     resolveSenderAgentThreadScope: vi.fn(
@@ -97,9 +101,10 @@ describe('registerCodexThreadHandlers', () => {
       nextCursor: null
     })
     expect(deps.getCodexClient).not.toHaveBeenCalled()
+    expect(deps.listCodexThreads).not.toHaveBeenCalled()
   })
 
-  it('ensures codex client startup before thread list with exact defaults and timeout', async () => {
+  it('routes thread list through the read-only dependency with exact defaults and timeout', async () => {
     const { deps, calls } = createDeps()
     registerCodexThreadHandlers(deps)
 
@@ -116,11 +121,12 @@ describe('registerCodexThreadHandlers', () => {
       },
       timeoutMs: 20_000
     })
-    expect(calls).toEqual(['ensure:1.2.3', 'request:thread/list:20000'])
+    expect(calls).toEqual(['list:20000'])
+    expect(deps.getCodexClient).not.toHaveBeenCalled()
   })
 
   it('locks detached thread listing to the durable chat workspace', async () => {
-    const { deps, client } = createDeps()
+    const { deps } = createDeps()
     deps.resolveSenderAgentThreadScope.mockReturnValue({
       kind: 'chat',
       chatId: 'chat-test-1',
@@ -131,8 +137,7 @@ describe('registerCodexThreadHandlers', () => {
 
     await handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', {})
 
-    expect(client.request).toHaveBeenCalledWith(
-      'thread/list',
+    expect(deps.listCodexThreads).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: '/Test 1' }),
       20_000
     )
@@ -144,7 +149,7 @@ describe('registerCodexThreadHandlers', () => {
         cursor: 'cursor-from-another-view'
       })
     ).rejects.toThrow('Provider thread pagination is unavailable in detached chat windows.')
-    expect(client.request).toHaveBeenCalledTimes(1)
+    expect(deps.listCodexThreads).toHaveBeenCalledTimes(1)
   })
 
   it('does not expose the global provider thread catalogue to a detached chat', async () => {
@@ -161,6 +166,7 @@ describe('registerCodexThreadHandlers', () => {
       handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', {})
     ).rejects.toThrow('Detached provider thread listing requires a workspace-scoped chat.')
     expect(client.request).not.toHaveBeenCalled()
+    expect(deps.listCodexThreads).not.toHaveBeenCalled()
   })
 
   it('fork reports emulated fallback requirements while rollback stays codex-only', async () => {
