@@ -1551,6 +1551,50 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('data-fanout-slot="trail"')
   })
 
+  it('pairs two adjacent Fleet cards only when the same run called them', () => {
+    const fleet = (id: string, runId: string): ChatMessage => ({
+      id,
+      role: 'system',
+      content: `Fleet ${id}`,
+      timestamp: '2026-08-24T02:00:00.000Z',
+      runId,
+      metadata: {
+        kind: 'fleetWave',
+        waveId: `wave-${id}`,
+        parentProvider: 'codex',
+        status: 'running',
+        workers: []
+      }
+    })
+    const messages = [fleet('fleet-a', 'caller-run'), fleet('fleet-b', 'caller-run')]
+    const chat = {
+      appChatId: 'fleet-pair-chat',
+      title: 'Fleet pair',
+      chatKind: 'single',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages,
+      runs: []
+    } as ChatRecord
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          currentChat: chat,
+          messages
+        })}
+      />
+    )
+
+    expect(html).toContain('data-fanout-slot="lead"')
+    expect(html).toContain('data-fanout-slot="trail"')
+    expect(html.match(/fleet-wave-card/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+
   it('ignores legacy completion-claim support metadata in the transcript', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

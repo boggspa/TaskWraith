@@ -4381,6 +4381,26 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   grid-column: auto;
 }
 
+/* Same grid contract for Fleet cards: the slot classifier admits only
+ * adjacent cards from the same calling run. Fill the grid cell (message-group
+ * normally shrink-wraps its children) and leave more room for the exact
+ * close-out seat strip by reducing the right column to glyph + open affordance
+ * in a two-across pair. A solo/odd Fleet card keeps its full State label. */
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block[data-fanout-slot]
+  .fleet-wave-message,
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block[data-fanout-slot]
+  .fleet-wave-card {
+  width: 100%;
+  max-width: 100%;
+}
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block:is([data-fanout-slot='lead'], [data-fanout-slot='trail'])
+  .fleet-wave-card-seat-state-label {
+  display: none;
+}
+
 .transcript-message-block {
   display: flex;
   flex-direction: column;

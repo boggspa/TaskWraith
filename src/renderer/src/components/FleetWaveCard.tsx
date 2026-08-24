@@ -1,6 +1,6 @@
 import { useId, type CSSProperties, type MouseEvent } from 'react'
 import type { ProviderId } from '../../../main/store/types'
-import type { SeatChangeSeatState } from '../../../shared/seatChange'
+import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import {
   canAllowAllPendingApprovals,
   fleetWaveDensityTier,
@@ -11,9 +11,10 @@ import {
   type FleetWaveTelemetry
 } from '../../../shared/fleetWave'
 import { NativeOrchestrationCard } from './NativeOrchestrationCard'
-import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { SeatChangeInlineStrip, SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole } from '../lib/transcriptSeat'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
+import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -76,9 +77,118 @@ const FLEET_WAVE_GHOST_PATHS = (
   </>
 )
 
+function fleetWaveAgentStatus(agent: FleetWaveAgentState): {
+  label: string
+  glyph: string
+} {
+  if (agent.status === 'completed') return { label: 'Returned', glyph: 'answered' }
+  if (agent.status === 'failed') return { label: 'Failed', glyph: 'failed' }
+  if (agent.status === 'needs_approval') return { label: 'Waiting', glyph: 'idle' }
+  if (agent.status === 'working') return { label: 'Working', glyph: 'running' }
+  return { label: 'Queued', glyph: 'idle' }
+}
+
+function fleetWaveSeatLink(agent: FleetWaveAgentState): SeatChangeLink | null {
+  if (!agent.seat) return null
+  return {
+    participantId: agent.id,
+    before: agent.seat,
+    after: agent.seat
+  }
+}
+
+export function FleetWaveSeatTable({
+  agents,
+  canOpen,
+  onOpenAgent
+}: {
+  agents: readonly FleetWaveAgentState[]
+  canOpen: boolean
+  onOpenAgent: (subThreadId: string) => void
+}) {
+  return (
+    <div className="fleet-wave-card-seat-table" role="table" data-testid="fleet-wave-seats">
+      <div className="fleet-wave-card-seat-row is-header" role="row">
+        <span role="columnheader">Seat</span>
+        <span className="fleet-wave-card-seat-state" role="columnheader">
+          State
+        </span>
+      </div>
+      {agents.map((agent) => {
+        const seatLink = fleetWaveSeatLink(agent)
+        const status = fleetWaveAgentStatus(agent)
+        const openable = canOpen && Boolean(agent.id)
+        const providerLabel = agent.provider ? providerDisplayName(agent.provider) : ''
+        const title = [providerLabel, agent.label].filter(Boolean).join(' · ')
+        const contents = (
+          <>
+            <span className="fleet-wave-card-seat" role="cell">
+              {seatLink ? (
+                <SeatChangeInlineStrip link={seatLink} />
+              ) : (
+                <span className="fleet-wave-card-seat-fallback">
+                  <span className="fleet-wave-card-seat-fallback-name">{agent.label}</span>
+                  {agent.provider ? (
+                    <>
+                      <ProviderBrandLogoIcon
+                        provider={agent.provider as ProviderId}
+                        wrapperClassName="fleet-wave-card-seat-fallback-logo"
+                      />
+                      <span>{providerLabel}</span>
+                    </>
+                  ) : null}
+                </span>
+              )}
+            </span>
+            <span
+              className={`fleet-wave-card-seat-state status-${agent.status}`}
+              role="cell"
+              style={agentAccentStyle(agent)}
+            >
+              <span className="fleet-wave-card-seat-state-label">{status.label}</span>
+              <span
+                className={`ensemble-above-chip-status status-${status.glyph} fleet-wave-card-seat-status-glyph`}
+                aria-hidden="true"
+              >
+                <ParticipantStatusIcon status={status.glyph} />
+              </span>
+              {openable ? (
+                <span className="fleet-wave-card-open" aria-hidden="true">
+                  ↗
+                </span>
+              ) : null}
+            </span>
+          </>
+        )
+
+        return openable ? (
+          <button
+            key={agent.id}
+            type="button"
+            className="fleet-wave-card-seat-row clickable"
+            role="row"
+            title={`Open ${title}`}
+            aria-label={`Open ${title}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenAgent(agent.id)
+            }}
+          >
+            {contents}
+          </button>
+        ) : (
+          <div key={agent.id} className="fleet-wave-card-seat-row" role="row">
+            {contents}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /**
  * Fourth NativeOrchestrationCard adapter — ephemeral/durable fleet progress.
- * Density ladder: ≤6 enumerate, 7–20 chips, 21+ aggregate (exceptions named).
+ * Density ladder: ≤20 exact seat rows, 21+ aggregate (exceptions named).
  * The ghost density strip renders at EVERY tier — the little ghosts filling /
  * changing accent as agents settle are the card's progress read; only the
  * text treatment around them changes with density (2026-08-19: it was
@@ -114,11 +224,19 @@ export function FleetWaveCard({
           ? 'completed'
           : 'running'
   const callerProvider = (provider || telemetry.parentProvider) as ProviderId | undefined
+  const callerAccent = callerSeat
+    ? seatAccentVar(callerSeat)
+    : callerProvider
+      ? `var(--provider-${callerProvider}-color, var(--accent))`
+      : undefined
   const exceptions = fleetWaveExceptions(agents)
   const rollup = fleetWaveRoleRollup(agents)
   const progressFraction = count > 0 ? settled / count : undefined
   const canOpen = Boolean(onOpenSubThread || onOpenSubThreadInSidePanel)
   const pendingApprovals = telemetry.pendingApprovals || []
+  const waveActive =
+    agents.some((agent) => agent.status === 'working' || agent.status === 'pending') ||
+    (agents.length === 0 && telemetry.status === 'running')
 
   const openAgent = (subThreadId: string) => {
     if (!subThreadId) return
@@ -129,28 +247,14 @@ export function FleetWaveCard({
     onOpenSubThread?.(subThreadId)
   }
 
-  const handleChipClick = (event: MouseEvent, subThreadId: string) => {
+  const handleExceptionClick = (event: MouseEvent, subThreadId: string) => {
     event.stopPropagation()
     openAgent(subThreadId)
   }
 
-  const statusLabel =
-    status === 'needs_approval'
-      ? `${waiting} waiting on you`
-      : status === 'completed'
-        ? 'Done'
-        : status === 'failed'
-          ? 'Failed'
-          : 'Working in parallel'
-
-  const renderAgentChip = (
-    agent: FleetWaveAgentState,
-    kind: 'worker' | 'exception',
-    withStatusSuffix: boolean
-  ) => {
+  const renderExceptionChip = (agent: FleetWaveAgentState) => {
     const openable = canOpen && Boolean(agent.id)
-    const className = `fleet-wave-card-${kind} status-${agent.status}${openable ? ' clickable' : ''}`
-    const label = withStatusSuffix ? `${agent.label} ${agentStatusSuffix(agent)}` : agent.label
+    const className = `fleet-wave-card-exception status-${agent.status}${openable ? ' clickable' : ''}`
     // A wave may be multi-provider, so the chip says which one ran it rather
     // than leaving the card's single caller accent to imply them all.
     const logo = agent.provider ? (
@@ -173,10 +277,10 @@ export function FleetWaveCard({
           style={{ ...chipButtonStyle, ...accentStyle }}
           title={`Open ${chipTitle}`}
           aria-label={`Open ${chipTitle}`}
-          onClick={(event) => handleChipClick(event, agent.id)}
+          onClick={(event) => handleExceptionClick(event, agent.id)}
         >
           {logo}
-          <span>{label}</span>
+          <span>{agent.label}</span>
           <span className="fleet-wave-card-open" aria-hidden="true">
             ↗
           </span>
@@ -187,7 +291,7 @@ export function FleetWaveCard({
     return (
       <span key={agent.id} className={className} title={chipTitle} style={accentStyle}>
         {logo}
-        <span>{label}</span>
+        <span>{agent.label}</span>
       </span>
     )
   }
@@ -226,9 +330,7 @@ export function FleetWaveCard({
         provider={callerProvider}
         wrapperClassName="fleet-wave-card-caller-logo"
       />
-      <span className="fleet-wave-card-caller-provider">
-        {providerDisplayName(callerProvider)}
-      </span>
+      <span className="fleet-wave-card-caller-provider">{providerDisplayName(callerProvider)}</span>
     </span>
   ) : null
 
@@ -245,7 +347,6 @@ export function FleetWaveCard({
   const densityExtras =
     tier === 'aggregate' ? (
       <>
-        <FleetWaveDensityStrip agents={agents} settled={settled} total={count} />
         <div className="fleet-wave-card-rollup" data-testid="fleet-wave-rollup">
           {rollup.map((row) => (
             <div key={row.role} className="fleet-wave-card-rollup-role">
@@ -257,7 +358,7 @@ export function FleetWaveCard({
           ))}
         </div>
         <div className="fleet-wave-card-exceptions">
-          {exceptions.map((agent) => renderAgentChip(agent, 'exception', false))}
+          {exceptions.map((agent) => renderExceptionChip(agent))}
           {count - exceptions.length > 0 ? (
             <span className="fleet-wave-card-more">{count - exceptions.length} others healthy</span>
           ) : null}
@@ -266,10 +367,7 @@ export function FleetWaveCard({
       </>
     ) : (
       <>
-        <FleetWaveDensityStrip agents={agents} settled={settled} total={count} />
-        <div className="fleet-wave-card-workers" data-testid="fleet-wave-workers">
-          {agents.map((agent) => renderAgentChip(agent, 'worker', tier === 'enumerate'))}
-        </div>
+        <FleetWaveSeatTable agents={agents} canOpen={canOpen} onOpenAgent={openAgent} />
         {elevationRow}
       </>
     )
@@ -287,9 +385,9 @@ export function FleetWaveCard({
               ? 'failed'
               : 'running'
       }
-      statusLabel={statusLabel}
       isRunning={status === 'running' || status === 'needs_approval'}
       useProviderAccent
+      providerAccentOverride={callerAccent}
       glyph={
         <span className="fleet-wave-card-glyph" aria-hidden="true">
           {/* Mini ghost mark; stroke 7 user units ≈ 1.2px at the 14px slot
@@ -311,6 +409,20 @@ export function FleetWaveCard({
         </span>
       }
       name={count ? `Fleet · ${count} agents` : 'Fleet'}
+      headerTrailing={
+        <>
+          <FleetWaveDensityStrip agents={agents} settled={settled} total={count} header />
+          {waveActive ? (
+            <span
+              className="ensemble-fanout-result-rim fleet-wave-card-rim"
+              style={callerAccent ? ({ '--accent': callerAccent } as CSSProperties) : undefined}
+              aria-hidden="true"
+            >
+              <span className="ensemble-fanout-result-rim-sweep" />
+            </span>
+          ) : null}
+        </>
+      }
       metaLead={callerLead}
       metaParts={
         [
@@ -327,18 +439,20 @@ export function FleetWaveCard({
 function FleetWaveDensityStrip({
   agents,
   settled,
-  total
+  total,
+  header = false
 }: {
   agents: readonly FleetWaveAgentState[]
   settled: number
   total: number
+  header?: boolean
 }) {
   const ghostSymbolId = `fleet-wave-ghost${useId().replace(/:/g, '')}`
   const ghostCells = fleetWaveGhostCellStates(agents)
 
   return (
     <div
-      className="fleet-wave-card-density"
+      className={`fleet-wave-card-density${header ? ' is-header' : ''}`}
       role="img"
       aria-label={`${settled} of ${total} settled`}
     >
@@ -431,12 +545,4 @@ function FleetWaveElevationRow({
       ) : null}
     </div>
   )
-}
-
-function agentStatusSuffix(agent: FleetWaveAgentState): string {
-  if (agent.status === 'completed') return 'done'
-  if (agent.status === 'failed') return 'failed'
-  if (agent.status === 'needs_approval') return 'waiting'
-  if (agent.status === 'working') return 'working'
-  return 'queued'
 }

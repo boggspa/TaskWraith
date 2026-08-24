@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { FleetWaveAgentState, FleetWaveTelemetry } from '../../../shared/fleetWave'
 import { findClickableByClassName } from '../test/reactElementTree'
-import { FleetWaveCard } from './FleetWaveCard'
+import { FleetWaveCard, FleetWaveSeatTable } from './FleetWaveCard'
 
 function agent(index: number, overrides: Partial<FleetWaveAgentState> = {}): FleetWaveAgentState {
   return {
@@ -61,7 +61,7 @@ describe('FleetWaveCard', () => {
     })
   })
 
-  it('enumerates ≤6 agents with status suffix chips (done/working)', () => {
+  it('stacks ≤6 agents as one close-out-style seat row each', () => {
     const html = renderToStaticMarkup(
       <FleetWaveCard
         telemetry={telemetry({
@@ -76,11 +76,12 @@ describe('FleetWaveCard', () => {
         })}
       />
     )
-    expect(html).toContain('data-testid="fleet-wave-workers"')
-    expect(html).toContain('fleet-wave-card-worker status-completed')
-    expect(html).toContain('fleet-wave-card-worker status-working')
-    expect(html).toContain('audit_css done')
-    expect(html).toContain('audit_tests working')
+    expect(html).toContain('data-testid="fleet-wave-seats"')
+    expect(html).toContain('fleet-wave-card-seat-row')
+    expect(html).toContain('audit_css')
+    expect(html).toContain('Returned')
+    expect(html).toContain('audit_tests')
+    expect(html).toContain('Working')
     expect(html).toContain('Fleet · 6 agents')
     // The ghost strip fills/accents per agent at EVERY tier, not only 21+.
     expect(html).toContain('fleet-wave-card-density')
@@ -89,7 +90,7 @@ describe('FleetWaveCard', () => {
     expect(html).toContain('fleet-wave-card-cell status-pending')
   })
 
-  it('chips 7–20 agents without status suffix text or multi-agent state class', () => {
+  it('stacks 7–20 agents without restoring worker pills', () => {
     const html = renderToStaticMarkup(
       <FleetWaveCard
         telemetry={telemetry({
@@ -100,17 +101,79 @@ describe('FleetWaveCard', () => {
         })}
       />
     )
-    expect(html).toContain('data-testid="fleet-wave-workers"')
+    expect(html).toContain('data-testid="fleet-wave-seats"')
     expect(html).toContain('chip-1')
     expect(html).toContain('chip-8')
-    expect(html).not.toContain('multi-agent-card-agent-state')
-    expect(html).not.toContain('chip-1 working')
-    expect(html).not.toContain('chip-2 done')
+    expect(html).not.toContain('fleet-wave-card-worker status-working')
+    expect(html).not.toContain('data-testid="fleet-wave-workers"')
     expect(html).toContain('Fleet · 8 agents')
-    // Chips drop the text suffix, but the ghost strip still carries status.
+    // The top-row ghost strip still carries status in dispatch order.
     expect(html).toContain('fleet-wave-card-density')
+    expect(html).toContain('fleet-wave-card-density is-header')
     expect(html).toContain('fleet-wave-card-cell status-completed')
     expect(html).toContain('fleet-wave-card-cell status-working')
+  })
+
+  it('renders worker choices through the exact close-out seat element', () => {
+    const html = renderToStaticMarkup(
+      <FleetWaveCard
+        telemetry={telemetry({
+          agents: [
+            agent(1, {
+              provider: 'codex',
+              model: 'gpt-5.6-terra',
+              label: 'Architecture',
+              role: 'scout',
+              status: 'working',
+              seat: {
+                provider: 'codex',
+                model: 'gpt-5.6-terra',
+                role: 'Architecture',
+                seatNumber: 1,
+                stageRole: 'scout',
+                reasoningEffort: 'xhigh',
+                permissionPresetId: 'workspace_write'
+              }
+            })
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('seat-change-message is-inline')
+    expect(html).toContain('composer-combined-picker-trigger seat-change-chip')
+    expect(html).toContain('Architecture')
+    expect(html).toContain('GPT-5.6-Terra')
+    expect(html).toContain('Extra High')
+    expect(html).toContain('Full WS Access')
+  })
+
+  it('replaces the generic header status pill with the top-row ghosts', () => {
+    const html = renderToStaticMarkup(
+      <FleetWaveCard telemetry={telemetry({ agents: agents(8) })} />
+    )
+    expect(html).toContain('fleet-wave-card-density is-header')
+    expect(html).not.toContain('Working in parallel')
+    expect(html).not.toContain('claude-workflow-card-status')
+  })
+
+  it('reuses the fan-out perimeter chase only while a lane is active', () => {
+    const active = renderToStaticMarkup(
+      <FleetWaveCard telemetry={telemetry({ agents: [agent(1, { status: 'working' })] })} />
+    )
+    expect(active).toContain('ensemble-fanout-result-rim fleet-wave-card-rim')
+    expect(active).toContain('ensemble-fanout-result-rim-sweep')
+
+    const settled = renderToStaticMarkup(
+      <FleetWaveCard
+        telemetry={telemetry({
+          status: 'completed',
+          agents: [agent(1, { status: 'completed' }), agent(2, { status: 'failed' })]
+        })}
+      />
+    )
+    expect(settled).not.toContain('fleet-wave-card-rim')
+    expect(settled).not.toContain('ensemble-fanout-result-rim-sweep')
   })
 
   it('aggregates 21+ agents with density strip, rollup, named exceptions, and healthy others', () => {
@@ -138,11 +201,11 @@ describe('FleetWaveCard', () => {
     expect(html).toContain('fleet-wave-card-exception status-failed')
     expect(html).toContain('fleet-wave-card-exception status-needs_approval')
     expect(html).toContain('19 others healthy')
-    expect(html).not.toContain('data-testid="fleet-wave-workers"')
+    expect(html).not.toContain('data-testid="fleet-wave-seats"')
     expect(html).toContain('Fleet · 21 agents')
   })
 
-  it('renders the ghost density strip at every tier, workers row intact', () => {
+  it('renders the enlarged header ghost strip at every tier with the seat table intact', () => {
     // 2026-08-19: the strip used to be aggregate-only (21+), so the common
     // 8-agent wave showed text chips with no ghosts — the intended design has
     // the little ghosts filling/changing accent as agents settle at ANY size.
@@ -150,7 +213,8 @@ describe('FleetWaveCard', () => {
       <FleetWaveCard telemetry={telemetry({ agents: agents(20) })} />
     )
     expect(html).toContain('fleet-wave-card-density')
-    expect(html).toContain('data-testid="fleet-wave-workers"')
+    expect(html).toContain('fleet-wave-card-density is-header')
+    expect(html).toContain('data-testid="fleet-wave-seats"')
   })
 
   it('renders a read-only elevation row when pendingApprovals are present without action props', () => {
@@ -302,6 +366,23 @@ describe('FleetWaveCard', () => {
       expect(html).not.toMatch(/claude-workflow-card-meta[^>]*>claude/)
     })
 
+    it('uses the caller model branding override for the live card accent', () => {
+      const html = renderToStaticMarkup(
+        <FleetWaveCard
+          telemetry={telemetry({ parentProvider: 'pi' })}
+          provider="pi"
+          callerSeat={{
+            provider: 'pi',
+            model: 'deepseek/deepseek-v4-flash',
+            role: 'Boss',
+            seatNumber: 1,
+            authority: 'boss'
+          }}
+        />
+      )
+      expect(html).toContain('--provider-accent:var(--provider-deepseek-color, var(--accent))')
+    })
+
     it('falls back to the provider label when the caller run records no seat', () => {
       // Solo turns genuinely have no seat; naming one would be a lie, but the
       // raw id is still not what a reader should see.
@@ -313,9 +394,10 @@ describe('FleetWaveCard', () => {
       expect(html).not.toContain('seat-state-chips')
     })
 
-    it('gives every worker chip its own provider logo', () => {
+    it('gives every legacy fallback row its own provider logo', () => {
       // A multi-provider fleet is the whole reason allowMultiProvider exists —
-      // the chip has to say which provider ran it.
+      // the fallback still has to say which provider ran it when no exact seat
+      // snapshot is available for a historical card.
       const html = renderToStaticMarkup(
         <FleetWaveCard
           telemetry={telemetry({
@@ -332,25 +414,23 @@ describe('FleetWaveCard', () => {
       expect(html).toContain('data-provider-logo="codex"')
     })
 
-    it('omits the chip logo when an agent records no provider', () => {
+    it('omits the fallback logo when an agent records no provider', () => {
       const html = renderToStaticMarkup(<FleetWaveCard telemetry={telemetry()} provider="claude" />)
-      expect(html).not.toContain('fleet-wave-card-worker-logo')
+      expect(html).not.toContain('fleet-wave-card-seat-fallback-logo')
     })
   })
 
-  it('opens a worker sub-thread from a chip without bubbling', () => {
+  it('opens a worker sub-thread from its seat row without bubbling', () => {
     const onOpenSubThreadInSidePanel = vi.fn()
     const stopPropagation = vi.fn()
-    const tree = FleetWaveCard({
-      telemetry: telemetry({
-        agents: [agent(1, { id: 'sub-worker-1', label: 'audit_css', status: 'working' })]
-      }),
-      onOpenSubThread: () => {},
-      onOpenSubThreadInSidePanel
+    const table = FleetWaveSeatTable({
+      agents: [agent(1, { id: 'sub-worker-1', label: 'audit_css', status: 'working' })],
+      canOpen: true,
+      onOpenAgent: onOpenSubThreadInSidePanel
     })
-    const extras = (tree as { props: { extras?: unknown } }).props.extras
+    const rows = (table as { props: { children: unknown[][] } }).props.children[1]
 
-    findClickableByClassName(extras as never, 'fleet-wave-card-worker').props.onClick?.({
+    findClickableByClassName(rows[0] as never, 'fleet-wave-card-seat-row').props.onClick?.({
       stopPropagation
     })
 

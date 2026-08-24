@@ -231,6 +231,7 @@ import {
   approvalIdsForAllowAllSameScope,
   collectFleetWavePendingApprovals
 } from '../lib/fleetWavePendingApprovals'
+import { fleetWaveSeatFromWorker } from '../lib/fleetWaveSeat'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
@@ -5090,6 +5091,7 @@ export const TranscriptPanel = memo(
                         agents: workers.map((worker: any, index: number) => {
                               const subThreadId = workerChatIds[index]
                               const child = chats.find((c) => c.appChatId === subThreadId)
+                              const seat = fleetWaveSeatFromWorker({ worker, index, child })
                               const running = runningChatIds.includes(subThreadId)
                               const failed =
                                 Boolean(child?.delegationContext?.dispatchError) ||
@@ -5133,9 +5135,11 @@ export const TranscriptPanel = memo(
                                 // what resolves an Ollama/Pi seat to the
                                 // upstream brand hue the user actually picked.
                                 model:
-                                  typeof child?.requestedModel === 'string'
+                                  seat?.model ||
+                                  (typeof child?.requestedModel === 'string'
                                     ? child.requestedModel
-                                    : undefined
+                                    : undefined),
+                                ...(seat ? { seat } : {})
                               }
                             })
                       }}

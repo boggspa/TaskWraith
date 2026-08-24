@@ -57,6 +57,17 @@ function delegation(id: string): ChatMessage {
   } as unknown as ChatMessage
 }
 
+function fleet(id: string, runId?: string): ChatMessage {
+  return {
+    id,
+    role: 'system',
+    content: `Fleet ${id}`,
+    timestamp: 0,
+    ...(runId ? { runId } : {}),
+    metadata: { kind: 'fleetWave', waveId: `wave-${id}` }
+  } as unknown as ChatMessage
+}
+
 describe('classifyFanoutLaneSlots', () => {
   it('returns nothing while the setting is off, so the stacked layout is untouched', () => {
     expect(classifyFanoutLaneSlots([lane('a'), lane('b')], false).size).toBe(0)
@@ -184,12 +195,7 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     const after = classifyFanoutLaneSlots(
-      [
-        subThreadReturn('r1'),
-        subThreadReturn('r2'),
-        subThreadReturn('r3'),
-        subThreadReturn('r4')
-      ],
+      [subThreadReturn('r1'), subThreadReturn('r2'), subThreadReturn('r3'), subThreadReturn('r4')],
       true
     )
     expect(after.get('r1#0')).toBe(before.get('r1#0'))
@@ -197,5 +203,32 @@ describe('classifyFanoutLaneSlots', () => {
     expect(before.get('r3#2')).toBe('solo')
     expect(after.get('r3#2')).toBe('lead')
     expect(after.get('r4#3')).toBe('trail')
+  })
+
+  it('pairs two adjacent Fleet calls from the same parent run', () => {
+    const slots = classifyFanoutLaneSlots([fleet('f1', 'run-1'), fleet('f2', 'run-1')], true)
+    expect(slots.get('f1#0')).toBe('lead')
+    expect(slots.get('f2#1')).toBe('trail')
+  })
+
+  it('never pairs adjacent Fleet cards from different runs or without run identity', () => {
+    const slots = classifyFanoutLaneSlots(
+      [fleet('f1', 'run-1'), fleet('f2', 'run-2'), fleet('legacy-1'), fleet('legacy-2')],
+      true
+    )
+    expect(slots.get('f1#0')).toBe('solo')
+    expect(slots.get('f2#1')).toBe('solo')
+    expect(slots.has('legacy-1#2')).toBe(false)
+    expect(slots.has('legacy-2#3')).toBe(false)
+  })
+
+  it('pairs same-run Fleet calls from the start and leaves an odd third card full-width', () => {
+    const slots = classifyFanoutLaneSlots(
+      [fleet('f1', 'run-1'), fleet('f2', 'run-1'), fleet('f3', 'run-1')],
+      true
+    )
+    expect(slots.get('f1#0')).toBe('lead')
+    expect(slots.get('f2#1')).toBe('trail')
+    expect(slots.get('f3#2')).toBe('solo')
   })
 })

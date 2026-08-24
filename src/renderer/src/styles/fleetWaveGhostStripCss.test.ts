@@ -17,9 +17,10 @@ import { describe, expect, it } from 'vitest'
  * Filled states (completed / failed) masked the bug because fill ignores
  * stroke.
  *
- * Correct weights for the 128 viewBox at a 13px cell:
- *   base 12 → 12 × 13 / 128 ≈ 1.22px   (matches the intended 1.25px look)
- *   needs_approval 16 → ≈ 1.63px       (the deliberately heavier ask state)
+ * The header treatment enlarged each cell 1.5× (13px → 20px) without changing
+ * the paths or their user-space stroke weights:
+ *   base 12 → 12 × 20 / 128 ≈ 1.88px
+ *   needs_approval 16 → 2.5px          (the deliberately heavier ask state)
  *
  * If the cell paths ever move to a different viewBox, these numbers must be
  * re-derived together — that is why this file pins BOTH sides of the
@@ -56,10 +57,11 @@ describe('fleet ghost strip stroke scales with the 128-unit mark viewBox', () =>
     expect(tsx).toContain('viewBox="0 0 128 128"')
   })
 
-  it('weights the base outline for the 128 viewBox (≈1.2px at the 13px cell)', () => {
+  it('weights the base outline for the 128 viewBox (≈1.9px at the 20px cell)', () => {
     const body = ruleBody(readCss(), '.fleet-wave-card-cell')
-    expect(body).toContain('width: 13px')
+    expect(body).toContain('width: 20px')
     expect(body).toContain('stroke-width: 12;')
+    expect(body).toContain('drop-shadow')
   })
 
   it('keeps needs_approval visibly heavier than the base outline', () => {
@@ -74,10 +76,25 @@ describe('fleet ghost strip stroke scales with the 128-unit mark viewBox', () =>
     for (const rule of cellRules) {
       const stroke = rule.match(/stroke-width:\s*([\d.]+)/)
       if (stroke) {
-        // Anything under 8 user units renders below ~0.8px at the 13px cell —
-        // invisible territory. 12/16 sit comfortably above.
+        // Anything under 8 user units approaches hairline territory. 12/16
+        // remain comfortably above it after the 20px header scale-up.
         expect(Number(stroke[1]), rule.split('{')[0].trim()).toBeGreaterThanOrEqual(8)
       }
     }
+  })
+
+  it('keeps the whole Fleet shell on caller accent across terminal states', () => {
+    const source = stripComments(readCss())
+    const start = source.indexOf('.fleet-wave-card.status-running,')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const close = source.indexOf('}', start)
+    const rule = source.slice(start, close)
+    expect(rule).toContain('.fleet-wave-card.status-paused')
+    expect(rule).toContain('.fleet-wave-card.status-completed')
+    expect(rule).toContain('.fleet-wave-card.status-failed')
+    expect(rule).toContain('var(--provider-accent, var(--accent))')
+    expect(rule).not.toContain('var(--danger)')
+    expect(rule).not.toContain('var(--success)')
+    expect(rule).not.toContain('var(--tool-warning)')
   })
 })

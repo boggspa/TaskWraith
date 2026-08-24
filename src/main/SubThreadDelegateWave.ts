@@ -224,7 +224,9 @@ function parseWorker(
   if (raw.role !== undefined && role === undefined) {
     return {
       ok: false,
-      message: `delegate_wave: workers[${index}].role must be scout, worker, or reviewer when set.`
+      message:
+        `delegate_wave: workers[${index}].role must be scout, work, or review when set ` +
+        `(worker and reviewer remain accepted aliases).`
     }
   }
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined

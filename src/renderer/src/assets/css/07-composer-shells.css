@@ -3395,19 +3395,36 @@
 }
 
 /* Fleet wave card — fourth NativeOrchestrationCard adapter. Chassis is
- * .claude-workflow-card; no edge stripes. Density ladder: ≤6 / 7–20 chips,
- * 21+ ghost strip + role roll-up + named exceptions only. */
-.fleet-wave-card.status-paused {
-  border-color: color-mix(in srgb, var(--tool-warning) 42%, transparent);
-  background: color-mix(in srgb, var(--tool-warning) 6%, transparent);
+ * .claude-workflow-card; no edge stripes. Up to 20 agents render as exact
+ * close-out seat rows; 21+ keeps the role roll-up + named exceptions only. */
+.fleet-wave-card {
+  position: relative;
+  isolation: isolate;
+  --fanout-lane-rim-duration: 3.6s;
+  --fanout-lane-rim-width: 1px;
 }
-.fleet-wave-card.status-paused .claude-workflow-card-status {
-  color: var(--tool-warning);
-  background: color-mix(in srgb, var(--tool-warning) 14%, transparent);
+.fleet-wave-card.status-running,
+.fleet-wave-card.status-paused,
+.fleet-wave-card.status-completed,
+.fleet-wave-card.status-failed {
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 6%, transparent);
 }
-.fleet-wave-card.status-paused .claude-workflow-card-glyph {
-  color: var(--tool-warning);
-  background: color-mix(in srgb, var(--tool-warning) 14%, transparent);
+.fleet-wave-card.status-running .claude-workflow-card-glyph,
+.fleet-wave-card.status-paused .claude-workflow-card-glyph,
+.fleet-wave-card.status-completed .claude-workflow-card-glyph,
+.fleet-wave-card.status-failed .claude-workflow-card-glyph {
+  color: var(--provider-accent, var(--accent));
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 14%, transparent);
+}
+.fleet-wave-card .claude-workflow-card-progress span,
+.fleet-wave-card .claude-workflow-card-progress.status-completed span,
+.fleet-wave-card .claude-workflow-card-progress.status-failed span {
+  background: linear-gradient(
+    90deg,
+    var(--provider-accent, var(--accent)),
+    color-mix(in srgb, var(--provider-accent, var(--accent)) 45%, white)
+  );
 }
 .fleet-wave-card-glyph {
   font-size: 12px;
@@ -3454,26 +3471,7 @@
   flex: 0 0 13px;
 }
 
-/* Worker chips — same lifecycle-tint contract as .multi-agent-card-agent. */
-.fleet-wave-card-workers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  margin-top: 7px;
-}
-.fleet-wave-card-worker {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: calc(var(--font-size-xs) - 1px);
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-/* A wave may be multi-provider, so each chip carries its own mark. Sized off
- * the chip's own text so it tracks the density-tier font, and never shrinks. */
+/* Aggregate exception chips still carry the worker provider's mark. */
 .fleet-wave-card-worker-logo.sidebar-provider-icon,
 .fleet-wave-card-worker-logo .sidebar-provider-icon {
   display: inline-flex;
@@ -3483,53 +3481,37 @@
   height: 11px;
   flex: 0 0 11px;
 }
-/* In flight wears the AGENT's accent (FleetWaveCard scopes --accent per chip
- * from its provider, with the Ollama/Pi upstream-brand override). It used to
- * be the generic running indigo, which named nobody. Settled + approval states
- * below keep their own meaning and must NOT be repainted this way. */
-.fleet-wave-card-worker.status-working {
-  color: color-mix(in srgb, var(--accent) 70%, var(--text-primary) 30%);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.fleet-wave-card-worker.status-completed {
-  color: color-mix(in srgb, var(--success) 70%, var(--text-primary) 30%);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-}
-.fleet-wave-card-worker.status-failed,
-.fleet-wave-card-worker.status-interrupted {
-  color: color-mix(in srgb, var(--danger) 70%, var(--text-primary) 30%);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
-.fleet-wave-card-worker.status-needs_approval {
-  color: color-mix(in srgb, var(--tool-warning) 70%, var(--text-primary) 30%);
-  background: color-mix(in srgb, var(--tool-warning) 12%, transparent);
-}
-
-/* Ghost density strip — one mini TaskWraith monoline per agent (13px).
+/* Ghost density strip — one glowing TaskWraith monoline per agent, now 1.5×
+ * the old 13px mark and seated in the header where the generic status pill was.
  * Outline = in flight, filled = settled; colour says which. Static. */
 .fleet-wave-card-density {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px 4px;
-  margin-top: 8px;
+  gap: 4px 6px;
+}
+.fleet-wave-card-density.is-header {
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  max-width: 70%;
+  margin-left: auto;
 }
 .fleet-wave-card-cell {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   display: block;
   color: color-mix(in srgb, var(--text-primary) 26%, transparent);
   fill: none;
   stroke: currentColor;
   /* USER-SPACE stroke against the mark's 128-unit viewBox (FleetWaveCard.tsx
-   * renders the full monoline paths). Effective px = stroke × 13 / 128, so
-   * 12 ≈ 1.22px. The original 1.25 was calibrated for a 16-unit mini glyph
-   * and rendered ≈0.13px here — every outline state was invisible.
+   * renders the full monoline paths). Effective px = stroke × 20 / 128, so
+   * 12 ≈ 1.88px — the same 1.5× scale-up as the cell itself.
    * fleetWaveGhostStripCss.test.ts pins both sides of the equation. */
   stroke-width: 12;
   stroke-linejoin: round;
   stroke-linecap: round;
   overflow: visible;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 72%, transparent));
 }
 .fleet-wave-card-cell.status-working {
   color: var(--accent);
@@ -3548,6 +3530,106 @@
 }
 .fleet-wave-card-cell.status-failed {
   color: var(--danger);
+}
+
+/* Exact participant rows. The left cell mounts SeatChangeInlineStrip — the
+ * same production element as Task Complete → Participants — while this table
+ * owns only row geometry, lifecycle state, and the sub-thread click target. */
+.fleet-wave-card-seat-table {
+  margin: 9px -11px 0;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.fleet-wave-card-seat-row {
+  appearance: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+}
+.fleet-wave-card-seat-row:first-child {
+  border-top: 0;
+}
+.fleet-wave-card-seat-row.is-header {
+  min-height: 30px;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  font-weight: 600;
+}
+.fleet-wave-card-seat-row.clickable {
+  cursor: pointer;
+}
+.fleet-wave-card-seat-row.clickable:hover,
+.fleet-wave-card-seat-row.clickable:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 24%, transparent);
+  outline-offset: -1px;
+}
+.fleet-wave-card-seat {
+  min-width: 0;
+  overflow: hidden;
+}
+.fleet-wave-card-seat .seat-change-message.is-inline,
+.fleet-wave-card-seat .seat-change-message.is-inline .seat-change-row {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.fleet-wave-card-seat-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.fleet-wave-card-seat-fallback-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.fleet-wave-card-seat-fallback-logo.sidebar-provider-icon,
+.fleet-wave-card-seat-fallback-logo .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+.fleet-wave-card-seat-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: right;
+}
+.fleet-wave-card-seat-state.status-working {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-primary) 28%);
+}
+.fleet-wave-card-seat-state.status-completed {
+  color: color-mix(in srgb, var(--success) 76%, var(--text-primary) 24%);
+}
+.fleet-wave-card-seat-state.status-failed {
+  color: color-mix(in srgb, var(--danger) 76%, var(--text-primary) 24%);
+}
+.fleet-wave-card-seat-state.status-needs_approval {
+  color: color-mix(in srgb, var(--tool-warning) 76%, var(--text-primary) 24%);
+}
+.fleet-wave-card-seat-status-glyph {
+  margin-left: 0;
+  flex: 0 0 auto;
+}
+.fleet-wave-card-seat-row .fleet-wave-card-open {
+  color: inherit;
+  opacity: 0.62;
 }
 
 /* Role roll-up — aggregate that replaces per-agent chips at 21+. */

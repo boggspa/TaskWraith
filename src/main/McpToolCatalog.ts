@@ -3698,7 +3698,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Spawn a wave of fresh context-isolated sub-threads (fleet). ' +
         'lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). ' +
         'Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. ' +
-        'Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. ' +
+        'Optional workers[].role (scout|work|review; worker/reviewer aliases accepted) + label; waves are spawn-only. ' +
         'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum. ' +
         'Call ensemble_await on the returned waveId immediately after delegating to keep your turn active and receive results directly. ' +
         `One approval covers the wave; sized by Settings → General → Max Wave Agents (default ${DEFAULT_MAX_WAVE_AGENTS}). ` +
@@ -3740,9 +3740,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 },
                 role: {
                   type: 'string',
-                  enum: ['scout', 'worker', 'reviewer'],
+                  enum: ['scout', 'work', 'review', 'worker', 'reviewer'],
                   description:
-                    'Agent-assigned fleet role (parallel to Ensemble stage names; not Ensemble dispatch).'
+                    'Agent-assigned lane role. scout/work/review are the concise forms; worker/reviewer remain backward-compatible aliases. Normalized internally to the existing fleet stage roles, not Ensemble dispatch.'
                 },
                 label: {
                   type: 'string',

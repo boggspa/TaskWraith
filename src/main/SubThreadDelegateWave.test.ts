@@ -76,6 +76,33 @@ describe('SubThreadDelegateWave pure helpers', () => {
     ])
   })
 
+  it('normalizes concise work/review lane roles to the durable fleet roles', () => {
+    const result = parseDelegateWaveArgs(
+      {
+        workers: [
+          { prompt: 'Scout it', role: 'scout', label: 'Scout' },
+          { prompt: 'Implement it', role: 'work', label: 'Builder' },
+          { prompt: 'Review it', role: 'review', label: 'Reviewer' }
+        ]
+      },
+      {
+        parentChatId,
+        parentAppRunId,
+        nowMs,
+        isAllowedProvider,
+        parentProvider: 'codex',
+        createWaveId: () => 'wave-role-aliases'
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.workers.map((worker) => worker.role)).toEqual([
+      'scout',
+      'worker',
+      'reviewer'
+    ])
+  })
+
   it('rejects mixed providers unless allowMultiProvider is true', () => {
     const mixed = parseDelegateWaveArgs(twoWorkers(), {
       parentChatId,

@@ -29,18 +29,21 @@
  * the other pairable kind — ends the run, and the next lane row starts a fresh
  * one at the left column. That keeps reading order honest: a pair is always two
  * lanes that were genuinely adjacent and the same kind (fan-out result with
- * fan-out result, or sub-thread return with sub-thread return), never two that
- * a scrolled-past row happened to bring together, and never a heterogeneous
- * fan-out/return couple. Wave ids never reorder the transcript for pairing.
+ * fan-out result, sub-thread return with sub-thread return, or Fleet card with
+ * Fleet card), never two that a scrolled-past row happened to bring together,
+ * and never a heterogeneous couple. Fleet cards add one tighter condition:
+ * both must carry the same calling runId, so unrelated adjacent waves never
+ * pair. Wave ids never reorder the transcript for pairing.
  */
 import type { ChatMessage, FanoutLaneLayout } from '../../../main/store/types'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
+import { isFleetWaveMessage } from '../components/FleetWaveCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
 
 export type FanoutLaneSlot = 'lead' | 'trail' | 'solo'
 
 /** Pairable row kinds that may form a two-across run. Runs stay kind-homogeneous. */
-type PairableLaneKind = 'fanoutResult' | 'subThreadReturn'
+type PairableLaneKind = 'fanoutResult' | 'subThreadReturn' | 'fleetWave'
 
 /** DOM attribute the CSS grid rules and the measurement pass both read. */
 export const FANOUT_LANE_SLOT_ATTRIBUTE = 'data-fanout-slot'
@@ -75,11 +78,11 @@ export function resolveFanoutLaneLayout(value: unknown): FanoutLaneLayout {
 }
 
 /**
- * Classify every fan-out lane row in `messages` into its two-across slot,
+ * Classify every pairable lane/Fleet row in `messages` into its two-across slot,
  * keyed by the transcript's own collision-proof row key (`${id}#${index}`) so
  * the render loop can look a row up without re-deriving its position. Rows
- * that are not fan-out lanes are absent from the map — callers stamp nothing on
- * them and they keep spanning the column.
+ * that are not pairable are absent from the map — callers stamp nothing on them
+ * and they keep spanning the column.
  *
  * Returns an empty map when `enabled` is false so the caller can hold one
  * unconditional `useMemo` rather than branching around it.
@@ -94,8 +97,8 @@ export function classifyFanoutLaneSlots(
 
   let index = 0
   while (index < messages.length) {
-    const kind = pairableLaneKind(messages[index])
-    if (!kind) {
+    const groupKey = pairableLaneGroupKey(messages[index])
+    if (!groupKey) {
       index += 1
       continue
     }
@@ -106,7 +109,7 @@ export function classifyFanoutLaneSlots(
     // A different pairable kind ends the run rather than joining it — fan-out
     // results and sub-thread returns never share a pair.
     let end = index + 1
-    while (end < messages.length && pairableLaneKind(messages[end]) === kind) end += 1
+    while (end < messages.length && pairableLaneGroupKey(messages[end]) === groupKey) end += 1
     for (let cursor = index; cursor < end; cursor += 2) {
       if (cursor + 1 < end) {
         slots.set(keyAt(cursor), 'lead')
@@ -124,5 +127,16 @@ function pairableLaneKind(message: ChatMessage | undefined): PairableLaneKind | 
   if (!message) return null
   if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
   if (isSubThreadReturnMessage(message)) return 'subThreadReturn'
+  if (isFleetWaveMessage(message)) return 'fleetWave'
   return null
+}
+
+function pairableLaneGroupKey(message: ChatMessage | undefined): string | null {
+  const kind = pairableLaneKind(message)
+  if (!kind) return null
+  // Fleet cards pair only when the same parent run called them together.
+  // Historical cards without a run id stay full-width, and adjacent cards
+  // from separate turns never snap together merely because they touch.
+  if (kind === 'fleetWave') return message?.runId ? `${kind}:${message.runId}` : null
+  return kind
 }

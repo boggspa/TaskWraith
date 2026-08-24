@@ -31,7 +31,9 @@ export function normalizeFleetLifecycle(raw: unknown): FleetWaveLifecycle {
 }
 
 export function parseFleetWaveRole(raw: unknown): FleetWaveRole | undefined {
-  if (raw === 'scout' || raw === 'worker' || raw === 'reviewer') return raw
+  if (raw === 'scout') return 'scout'
+  if (raw === 'work' || raw === 'worker') return 'worker'
+  if (raw === 'review' || raw === 'reviewer') return 'reviewer'
   return undefined
 }
 

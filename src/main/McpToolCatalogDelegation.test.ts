@@ -76,6 +76,22 @@ describe('delegate_wave roster sizing is discoverable', () => {
     expect(workers?.description).toMatch(/ceiling/i)
     expect(workers?.description).toMatch(new RegExp(`${DEFAULT_MAX_WAVE_AGENTS}`))
   })
+
+  it('advertises concise lane roles while retaining the historical aliases', () => {
+    const schema = waveDefinition()?.inputSchema as
+      | {
+          properties?: Record<
+            string,
+            { items?: { properties?: Record<string, { enum?: string[]; description?: string }> } }
+          >
+        }
+      | undefined
+    const role = schema?.properties?.workers?.items?.properties?.role
+
+    expect(role?.enum).toEqual(['scout', 'work', 'review', 'worker', 'reviewer'])
+    expect(role?.description).toMatch(/lane role/i)
+    expect(role?.description).toMatch(/backward-compatible aliases/i)
+  })
 })
 
 describe('ultra_task MCP schema', () => {
