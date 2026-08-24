@@ -707,6 +707,17 @@ declare global {
     api: {
       hostPlatform: NodeJS.Platform
       getRuntimeVersions: () => NodeJS.ProcessVersions
+      terminal: {
+        create: (workspacePath: string, sessionId: string) => Promise<void>
+        write: (sessionId: string, data: string) => Promise<void>
+        resize: (sessionId: string, cols: number, rows: number) => Promise<void>
+        detach: (sessionId: string) => Promise<void>
+        kill: (sessionId: string) => Promise<void>
+        list: () => Promise<{ sessionId: string; workspacePath: string }[]>
+        getScrollback: (sessionId: string) => Promise<string>
+        onData: (callback: (sessionId: string, data: string) => void) => () => void
+        onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void
+      }
       channels: ChannelIpcApi
       channelAgents: ChannelAgentIpcApi
       channelMemberships: ChannelMemberIpcApi

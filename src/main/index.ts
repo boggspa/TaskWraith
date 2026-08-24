@@ -1861,6 +1861,8 @@ import {
   type RendererLocalPathAuthorizationRequest
 } from './RendererLocalPathAuthority'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
+import { registerTerminalHandlers } from './ipc/terminalHandlers'
+import { TerminalSessionManager } from './terminal/TerminalSessionManager'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
@@ -2650,6 +2652,7 @@ const CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS = 30_000
 let chatRunReconcilerInterval: ReturnType<typeof setInterval> | null = null
 const stalledOccurrenceEventKeys = new Set<string>()
 let activeGeminiToolContext: GeminiToolContext | null = null
+let terminalSessionManagerRef: TerminalSessionManager | null = null
 const rendererConsoleBuffer: Array<{
   timestamp: string
   level: number
@@ -51715,6 +51718,7 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     app.on('will-quit', () => {
+      terminalSessionManagerRef?.killAll()
       gitSnapshotWorker.dispose()
       tuiHeadlessHostSession.dispose()
       void studioProductionLifecycleRef?.dispose()
@@ -59609,6 +59613,27 @@ if (isGeminiMcpBridgeProcess) {
       pushRemoteTaskCardDelta
     })
 
+    // Terminal Workbench Handlers
+    terminalSessionManagerRef = new TerminalSessionManager(app.getPath('userData'))
+    registerTerminalHandlers(
+      {
+        requireRegisteredWorkspace,
+        assertSenderWorkspaceScope: (event, workspacePath) => {
+          if (isMainRendererSender(event)) return
+          const owner = workspacePopoutOwnerForSender(event.sender.id)
+          if (owner?.kind !== 'chat') {
+            throw new Error('Only an owning chat renderer can start a workspace terminal.')
+          }
+          assertRendererFilesystemScope(event, {
+            capability: 'workspace-file',
+            workspacePath,
+            operation: 'read'
+          })
+        }
+      },
+      terminalSessionManagerRef
+    )
+
     // PTY (Trust Assistant terminal) handlers: start-pty / stop-pty /
     // pty-write / pty-resize. Extracted to ./ipc/ptyHandlers — `ipcMain` is
     // the validation-patched singleton, and the two index-local collaborators
@@ -59741,6 +59766,7 @@ if (isGeminiMcpBridgeProcess) {
       return
     }
     appShellStatsService.stop()
+    terminalSessionManagerRef?.killAll()
     if (geminiSessionProcess) {
       geminiSessionProcess.kill()
       geminiSessionProcess = null

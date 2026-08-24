@@ -528,6 +528,25 @@ function stickyAppWatchOk(value: unknown): { ok: boolean } {
 const api = {
   hostPlatform: process.platform,
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
+  terminal: {
+    create: (workspacePath, sessionId) => ipcRenderer.invoke('terminal:create', workspacePath, sessionId),
+    write: (sessionId, data) => ipcRenderer.invoke('terminal:write', sessionId, data),
+    resize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
+    detach: (sessionId) => ipcRenderer.invoke('terminal:detach', sessionId),
+    kill: (sessionId) => ipcRenderer.invoke('terminal:kill', sessionId),
+    list: () => ipcRenderer.invoke('terminal:list'),
+    getScrollback: (sessionId) => ipcRenderer.invoke('terminal:getScrollback', sessionId),
+    onData: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) => callback(sessionId, data)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
+    },
+    onExit: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) => callback(sessionId, exitCode)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
+    }
+  },
   channels: createChannelIpcBridge(ipcRenderer),
   channelAgents: createChannelAgentIpcBridge(ipcRenderer),
   channelMemberships: createChannelMemberIpcBridge(ipcRenderer),
