@@ -293,6 +293,7 @@ export class PairedHostProjectionGateway {
       case 'provider.auth.status':
       case 'thread.history':
       case 'history.since':
+      case 'host.shutdown':
         throw new PairedHostProjectionRequestError('unauthorized')
       case 'receipt.lookup':
         return {
