@@ -56,6 +56,7 @@ export interface QueuedRunRequest {
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string
   scheduledRunAt?: string

@@ -103,6 +103,7 @@ import {
 } from '../../shared/ensembleSeatFailureClear'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
+import { antigravityEffortForModelId } from '../../shared/antigravityAgyModelGrouping'
 import {
   buildHostCompactionSummaryPrompt,
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
@@ -1062,7 +1063,8 @@ const MUSE_REASONING_EFFORT_ALLOWLIST = new Set([
   'medium',
   'high',
   'xhigh',
-  'ultra'
+  'ultra',
+  'ultraTask'
 ])
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
@@ -4464,6 +4466,9 @@ function App(): React.JSX.Element {
       provider === 'claude' ? resolveEnsembleParticipantSettings(participant) : null
     const selectedKimiSettings =
       provider === 'kimi' ? resolveEnsembleParticipantSettings(participant) : null
+    const antigravityUltraTaskSelected =
+      provider === 'antigravity' &&
+      participant.reasoningEffort?.trim().toLowerCase() === 'ultratask'
     return {
       selectedModelType:
         provider !== 'kimi' && !isKnownModel && providerModel !== 'custom'
@@ -4531,6 +4536,19 @@ function App(): React.JSX.Element {
               participant.reasoningEffort || 'medium'
           }
         : {}),
+      ...(provider === 'pi'
+        ? {
+            piReasoningEffort:
+              participant.reasoningEffort || 'medium'
+          }
+        : {}),
+      antigravityReasoningEffort:
+        provider === 'antigravity'
+          ? antigravityUltraTaskSelected
+            ? 'ultraTask'
+            : participant.reasoningEffort || antigravityEffortForModelId(providerModel) || ''
+          : null,
+      antigravityUltraTaskSelected,
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrokModelId(providerModel)
@@ -4665,6 +4683,24 @@ function App(): React.JSX.Element {
               ? { museReasoningEffort: fallbackMetadata.museReasoningEffort }
               : {}
             : {}),
+          ...(fallbackProvider === 'mistral'
+            ? typeof fallbackMetadata.mistralReasoningEffort === 'string'
+              ? { mistralReasoningEffort: fallbackMetadata.mistralReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'pi'
+            ? typeof fallbackMetadata.piReasoningEffort === 'string'
+              ? { piReasoningEffort: fallbackMetadata.piReasoningEffort }
+              : {}
+            : {}),
+          antigravityReasoningEffort:
+            fallbackProvider === 'antigravity' &&
+            typeof fallbackMetadata.antigravityReasoningEffort === 'string'
+              ? fallbackMetadata.antigravityReasoningEffort
+              : null,
+          antigravityUltraTaskSelected:
+            fallbackProvider === 'antigravity' &&
+            fallbackMetadata.antigravityUltraTaskSelected === true,
           ...(fallbackProvider === 'ollama'
             ? typeof fallbackMetadata.ollamaReasoningEffort === 'string'
               ? { ollamaReasoningEffort: fallbackMetadata.ollamaReasoningEffort }
@@ -6499,6 +6535,7 @@ function App(): React.JSX.Element {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
+    enabledClaudeReasoningEfforts.add('ultraTask')
     const providerReasoningOptions = getEnsembleReasoningOptions(
       provider,
       selected,
@@ -6540,6 +6577,8 @@ function App(): React.JSX.Element {
         : storedPermissionPresetId || derivedPermissionPresetId
     const persistedOllamaRunProfile =
       typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
+    const antigravityUltraTaskSelected =
+      provider === 'antigravity' && metadata.antigravityUltraTaskSelected === true
     return {
       provider,
       selectedModelType: selected,
@@ -6609,6 +6648,13 @@ function App(): React.JSX.Element {
             : typeof metadata.cursorFastMode === 'boolean'
               ? metadata.cursorFastMode
               : false,
+      antigravityReasoningEffort:
+        antigravityUltraTaskSelected
+          ? 'ultraTask'
+          : typeof metadata.antigravityReasoningEffort === 'string'
+            ? metadata.antigravityReasoningEffort
+            : antigravityEffortForModelId(selected) || '',
+      antigravityUltraTaskSelected,
       // Solo-chat Ollama run profile: honored only if a legacy chat still
       // carries one in providerMetadata (there is no picker to set it any more).
       // Absent → undefined → the runtime defaults to provider_parity. The
@@ -6632,6 +6678,7 @@ function App(): React.JSX.Element {
     if (provider === 'pi') return selection.piReasoningEffort
     if (provider === 'ollama') return selection.ollamaReasoningEffort
     if (provider === 'cursor') return selection.cursorReasoningEffort
+    if (provider === 'antigravity') return selection.antigravityReasoningEffort
     return undefined
   }
 
@@ -6731,6 +6778,21 @@ function App(): React.JSX.Element {
               MUSE_DEFAULT_REASONING_EFFORT
           }
         : {}),
+      ...(provider === 'mistral'
+        ? {
+            reasoningEffort: selection.mistralReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'pi'
+        ? {
+            reasoningEffort: selection.piReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'antigravity' && selection.antigravityReasoningEffort
+        ? {
+            reasoningEffort: selection.antigravityReasoningEffort
+          }
+        : {}),
       ...(provider === 'ollama'
         ? {
             reasoningEffort: selection.ollamaReasoningEffort || defaults.reasoningEffort
@@ -6786,6 +6848,8 @@ function App(): React.JSX.Element {
     'ollamaReasoningEffort',
     'cursorReasoningEffort',
     'cursorFastMode',
+    'antigravityReasoningEffort',
+    'antigravityUltraTaskSelected',
     'runtimeProfileId',
     'geminiAuthProfileId'
   ])
@@ -8217,6 +8281,12 @@ function App(): React.JSX.Element {
           ? { reasoningEffort: options.previousReasoningEffort }
           : undefined
       )
+      const preserveUltraTask =
+        options.previousReasoningEffort?.trim().toLowerCase() === 'ultratask' &&
+        (modelMetadata as { ultraTaskSupported?: boolean } | undefined)?.ultraTaskSupported !== false
+      const nextReasoningEffort = preserveUltraTask
+        ? 'ultraTask'
+        : normalizedSelection.reasoningEffort
       const providerMetadata: Record<string, unknown> = {
         selectedModelType: nextModel,
         customModel: '',
@@ -8225,30 +8295,39 @@ function App(): React.JSX.Element {
         runtimeProfileId: nextRuntimeProfileId,
         geminiAuthProfileId: provider === 'gemini' ? null : undefined,
         codexReasoningEffort:
-          provider === 'codex' ? normalizedSelection.reasoningEffort || '' : undefined,
+          provider === 'codex' ? nextReasoningEffort || '' : undefined,
         codexServiceTier: provider === 'codex' ? normalizedSelection.serviceTier || '' : undefined,
         claudeReasoningEffort:
-          provider === 'claude' ? normalizedSelection.reasoningEffort || '' : undefined,
+          provider === 'claude' ? nextReasoningEffort || '' : undefined,
         claudeFastMode:
           provider === 'claude' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiFastMode:
           provider === 'kimi' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiReasoningEffort:
-          provider === 'kimi' ? normalizedSelection.reasoningEffort || 'on' : undefined,
+          provider === 'kimi' ? nextReasoningEffort || 'on' : undefined,
         kimiThinkingEnabled:
           provider === 'kimi' ? true : undefined,
         grokReasoningEffort:
-          provider === 'grok' ? normalizedSelection.reasoningEffort || '' : undefined,
+          provider === 'grok' ? nextReasoningEffort || '' : undefined,
         museReasoningEffort:
           provider === 'muse'
-            ? normalizedSelection.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+            ? nextReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
             : undefined,
+        mistralReasoningEffort:
+          provider === 'mistral' ? nextReasoningEffort || 'medium' : undefined,
+        piReasoningEffort:
+          provider === 'pi' ? nextReasoningEffort || 'medium' : undefined,
         ollamaReasoningEffort:
-          provider === 'ollama' ? normalizedSelection.reasoningEffort || '' : undefined,
+          provider === 'ollama' ? nextReasoningEffort || '' : undefined,
         cursorReasoningEffort:
-          provider === 'cursor' ? normalizedSelection.reasoningEffort || '' : undefined,
+          provider === 'cursor' ? nextReasoningEffort || '' : undefined,
         cursorFastMode:
-          provider === 'cursor' ? Boolean(normalizedSelection.fastModeEnabled) : undefined
+          provider === 'cursor' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
+        antigravityReasoningEffort:
+          provider === 'antigravity'
+            ? nextReasoningEffort || antigravityEffortForModelId(nextModel) || ''
+            : null,
+        antigravityUltraTaskSelected: provider === 'antigravity' && preserveUltraTask
       }
       return {
         change: {
@@ -13331,6 +13410,9 @@ function App(): React.JSX.Element {
       ...(snapshot.piReasoningEffort !== undefined
         ? { piReasoningEffort: snapshot.piReasoningEffort }
         : {}),
+      ...(snapshot.antigravityReasoningEffort !== undefined
+        ? { antigravityReasoningEffort: snapshot.antigravityReasoningEffort }
+        : {}),
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
@@ -13438,6 +13520,9 @@ function App(): React.JSX.Element {
       : {}),
     ...(request.piReasoningEffort !== undefined
       ? { piReasoningEffort: request.piReasoningEffort }
+      : {}),
+    ...(request.antigravityReasoningEffort !== undefined
+      ? { antigravityReasoningEffort: request.antigravityReasoningEffort }
       : {}),
     ...(request.ollamaReasoningEffort !== undefined
       ? { ollamaReasoningEffort: request.ollamaReasoningEffort }
@@ -13598,6 +13683,9 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
       piReasoningEffort:
         queuedProviderSelection?.piReasoningEffort ?? request.piReasoningEffort,
+      antigravityReasoningEffort:
+        queuedProviderSelection?.antigravityReasoningEffort ??
+        request.antigravityReasoningEffort,
       ollamaReasoningEffort:
         queuedProviderSelection?.ollamaReasoningEffort ?? request.ollamaReasoningEffort,
       cursorReasoningEffort:
@@ -13851,6 +13939,24 @@ function App(): React.JSX.Element {
     )
     const provider = selectedChat ? getChatProvider(selectedChat) : currentProvider
     const composerSelection = selectedChat ? getChatComposerSelection(selectedChat, provider) : null
+    // AntiGravity's presentation marker belongs only to an AntiGravity run.
+    // Older chats can retain it after a provider switch because provider
+    // metadata is merged for history. Strip that stale signal from the run
+    // snapshot so another provider cannot inherit invisible UltraTask intent.
+    const requestChatRecord =
+      selectedChat &&
+      provider !== 'antigravity' &&
+      (selectedChat.providerMetadata?.antigravityUltraTaskSelected === true ||
+        typeof selectedChat.providerMetadata?.antigravityReasoningEffort === 'string')
+        ? {
+            ...selectedChat,
+            providerMetadata: {
+              ...(selectedChat.providerMetadata || {}),
+              antigravityReasoningEffort: null,
+              antigravityUltraTaskSelected: false
+            }
+          }
+        : selectedChat
     const rawRequestModel = overrideModel
       ? selectedModelType
       : composerSelection?.selectedModelType || selectedModelType
@@ -13907,6 +14013,14 @@ function App(): React.JSX.Element {
           museReasoningEffort ||
           MUSE_DEFAULT_REASONING_EFFORT
         : museReasoningEffort
+    const requestMistralReasoningEffort =
+      provider === 'mistral'
+        ? composerSelection?.mistralReasoningEffort || mistralReasoningEffort
+        : mistralReasoningEffort
+    const requestPiReasoningEffort =
+      provider === 'pi'
+        ? composerSelection?.piReasoningEffort || piReasoningEffort
+        : piReasoningEffort
     const requestOllamaReasoningEffort =
       provider === 'ollama'
         ? composerSelection?.ollamaReasoningEffort || ollamaReasoningEffort
@@ -13919,6 +14033,12 @@ function App(): React.JSX.Element {
       provider === 'cursor'
         ? (composerSelection?.cursorFastMode ?? cursorFastMode)
         : cursorFastMode
+    const requestAntigravityReasoningEffort =
+      provider === 'antigravity'
+        ? composerSelection?.antigravityReasoningEffort ||
+          antigravityEffortForModelId(requestModel) ||
+          null
+        : null
     const normalizedExternalPathGrants =
       scope !== 'global'
         ? normalizeExternalPathGrants(
@@ -13999,9 +14119,12 @@ function App(): React.JSX.Element {
       kimiThinkingEnabled: requestKimiThinkingEnabled,
       grokReasoningEffort: requestGrokReasoningEffort,
       museReasoningEffort: requestMuseReasoningEffort,
+      mistralReasoningEffort: requestMistralReasoningEffort,
+      piReasoningEffort: requestPiReasoningEffort,
       ollamaReasoningEffort: requestOllamaReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
       cursorFastMode: requestCursorFastMode,
+      antigravityReasoningEffort: requestAntigravityReasoningEffort,
       runtimeProfileId: getRuntimeProfileIdForChat(selectedChat, provider),
       geminiAuthProfileId:
         provider === 'gemini'
@@ -14010,7 +14133,7 @@ function App(): React.JSX.Element {
             : geminiAuthStatus?.activeProfileId || null
           : null,
       workspaceRecord: selectedWorkspace || undefined,
-      chatRecord: selectedChat || undefined
+      chatRecord: requestChatRecord || undefined
     }
   }
   const buildRunRequestRef = useRef(buildRunRequest)
@@ -14655,6 +14778,7 @@ function App(): React.JSX.Element {
           museReasoningEffort: request.museReasoningEffort,
           mistralReasoningEffort: request.mistralReasoningEffort,
           piReasoningEffort: request.piReasoningEffort,
+          antigravityReasoningEffort: request.antigravityReasoningEffort,
           ollamaReasoningEffort: request.ollamaReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
           cursorFastMode: request.cursorFastMode,
@@ -17672,7 +17796,8 @@ function App(): React.JSX.Element {
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
       mistralReasoningEffort: request.mistralReasoningEffort,
-          piReasoningEffort: request.piReasoningEffort,
+      piReasoningEffort: request.piReasoningEffort,
+      antigravityReasoningEffort: request.antigravityReasoningEffort,
       ollamaReasoningEffort: request.ollamaReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
       cursorFastMode: request.cursorFastMode,
@@ -18626,6 +18751,7 @@ function App(): React.JSX.Element {
       museReasoningEffort: selection.museReasoningEffort,
       mistralReasoningEffort: selection.mistralReasoningEffort,
       piReasoningEffort: selection.piReasoningEffort,
+      antigravityReasoningEffort: selection.antigravityReasoningEffort,
       ollamaReasoningEffort: selection.ollamaReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,
       cursorFastMode: selection.cursorFastMode,

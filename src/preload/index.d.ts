@@ -497,6 +497,7 @@ interface ComposerRunInput {
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
   piReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
