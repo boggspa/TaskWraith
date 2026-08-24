@@ -460,7 +460,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'low'
+    defaultReasoningEffort: 'low',
+    ultraTaskSupported: true
   }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (see CODEX_RETIRED_MODEL_IDS)
   // and intentionally omitted here.

@@ -350,6 +350,13 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         .find((model) => model.id === 'gpt-5.3-codex-spark')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(
+      (
+        models.find((model) => model.id === 'gpt-5.3-codex-spark') as {
+          ultraTaskSupported?: boolean
+        }
+      )?.ultraTaskSupported
+    ).toBe(true)
   })
 
   it('carries official GA metadata on the GPT-5.6 trio rows', () => {

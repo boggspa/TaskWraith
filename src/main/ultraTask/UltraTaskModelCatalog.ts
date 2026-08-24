@@ -39,6 +39,37 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+/**
+ * Copy only TaskWraith-owned UltraTask capability fields from an exact static
+ * row onto a live row that omitted them. Live identity, presentation,
+ * disabled state, and every explicit opt-out remain authoritative. Unknown
+ * models stay unknown instead of inheriting a provider-wide default.
+ */
+export function mergeUltraTaskCatalogCapabilityMetadata<T extends UltraTaskCatalogModelLike>(
+  models: readonly T[],
+  fallbackModels: readonly UltraTaskCatalogModelLike[] = []
+): T[] {
+  const fallbackById = new Map<string, UltraTaskCatalogModelLike>()
+  for (const fallback of fallbackModels) {
+    const id = text(fallback.id).toLowerCase()
+    if (id && !fallbackById.has(id)) fallbackById.set(id, fallback)
+  }
+  return models.map((model) => {
+    const fallback = fallbackById.get(text(model.id).toLowerCase())
+    return {
+      ...model,
+      ...(model.ultraTaskSupported === undefined &&
+      typeof fallback?.ultraTaskSupported === 'boolean'
+        ? { ultraTaskSupported: fallback.ultraTaskSupported }
+        : {}),
+      ...(model.supportedReasoningEfforts === undefined &&
+      fallback?.supportedReasoningEfforts !== undefined
+        ? { supportedReasoningEfforts: fallback.supportedReasoningEfforts }
+        : {})
+    }
+  })
+}
+
 function enabledReasoningEfforts(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   const efforts: string[] = []
@@ -131,25 +162,14 @@ export function buildUltraTaskModelCapabilityCatalog(
   input: BuildUltraTaskModelCatalogInput
 ): UltraTaskModelCapabilityCandidate[] {
   const candidates: UltraTaskModelCapabilityCandidate[] = []
-  for (const model of input.models) {
+  const models = mergeUltraTaskCatalogCapabilityMetadata(input.models, input.fallbackModels)
+  for (const model of models) {
     const modelId = text(model.id)
     if (!isConcreteUltraTaskModelId(modelId)) continue
-    const fallback = input.fallbackModels?.find(
-      (candidate) => text(candidate.id).toLowerCase() === modelId.toLowerCase()
-    )
     const label = text(model.label) || modelId
-    const ultraTaskSupported =
-      model.ultraTaskSupported === undefined
-        ? fallback?.ultraTaskSupported === true
-        : model.ultraTaskSupported === true
-    const capabilityModel: UltraTaskCatalogModelLike = {
-      ...model,
-      ...(model.supportedReasoningEfforts === undefined && fallback?.supportedReasoningEfforts
-        ? { supportedReasoningEfforts: fallback.supportedReasoningEfforts }
-        : {})
-    }
+    const ultraTaskSupported = model.ultraTaskSupported === true
     const resolved = ultraTaskSupported
-      ? reasoningCapability(input.provider, modelId, capabilityModel)
+      ? reasoningCapability(input.provider, modelId, model)
       : { reasoning: { mode: 'none' as const } }
     const runtime = runtimeEvidence(input, modelId, model, resolved.error)
     candidates.push({

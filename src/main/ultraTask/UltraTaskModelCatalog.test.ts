@@ -1,5 +1,68 @@
 import { describe, expect, it } from 'vitest'
-import { buildUltraTaskModelCapabilityCatalog } from './UltraTaskModelCatalog'
+import {
+  buildUltraTaskModelCapabilityCatalog,
+  mergeUltraTaskCatalogCapabilityMetadata
+} from './UltraTaskModelCatalog'
+
+describe('mergeUltraTaskCatalogCapabilityMetadata', () => {
+  it('fills only missing exact-model capability fields without mutating live rows', () => {
+    const live = [
+      { id: 'gpt-5.6-sol', label: 'Account Sol', disabled: false },
+      { id: 'future-model', label: 'Future Model' }
+    ]
+    const fallback = [
+      {
+        id: 'GPT-5.6-SOL',
+        label: 'Static Sol',
+        disabled: true,
+        ultraTaskSupported: true,
+        supportedReasoningEfforts: [{ reasoningEffort: 'ultracode' }]
+      }
+    ]
+
+    expect(mergeUltraTaskCatalogCapabilityMetadata(live, fallback)).toEqual([
+      {
+        id: 'gpt-5.6-sol',
+        label: 'Account Sol',
+        disabled: false,
+        ultraTaskSupported: true,
+        supportedReasoningEfforts: [{ reasoningEffort: 'ultracode' }]
+      },
+      { id: 'future-model', label: 'Future Model' }
+    ])
+    expect(live).toEqual([
+      { id: 'gpt-5.6-sol', label: 'Account Sol', disabled: false },
+      { id: 'future-model', label: 'Future Model' }
+    ])
+  })
+
+  it('preserves an explicit live opt-out and live reasoning metadata', () => {
+    expect(
+      mergeUltraTaskCatalogCapabilityMetadata(
+        [
+          {
+            id: 'claude-haiku-4-5',
+            ultraTaskSupported: false,
+            supportedReasoningEfforts: []
+          }
+        ],
+        [
+          {
+            id: 'claude-haiku-4-5',
+            ultraTaskSupported: true,
+            supportedReasoningEfforts: [{ reasoningEffort: 'high' }]
+          }
+        ]
+      )
+    ).toEqual([
+      {
+        id: 'claude-haiku-4-5',
+        ultraTaskSupported: false,
+        supportedReasoningEfforts: []
+      }
+    ])
+  })
+})
 
 describe('buildUltraTaskModelCapabilityCatalog', () => {
   it('builds exact candidates and never emits sentinel rows', () => {
