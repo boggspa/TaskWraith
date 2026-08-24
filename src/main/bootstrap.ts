@@ -90,25 +90,15 @@ function isOrdinaryNodeExecutable(value: string): boolean {
   return (name === 'node' || name === 'node.exe') && !/electron/i.test(value)
 }
 
-function createExternalHostPreparation(): HostExternalPreparation {
-  const profilePath = canonicalProfilePath(app.getPath('userData'))
+function createExternalHostPreparation(profilePath: string): HostExternalPreparation {
   const packaged = app.isPackaged
   const repoRoot = packaged ? undefined : developmentRepoRoot()
   const nodeExecutable = repoRoot ? developmentNodeExecutable(repoRoot) : undefined
   return createHostExternalPreparation({
     profilePath,
-    migrateLegacyUserData: () => {
-      const migration = migrateLegacyUserDataSync({
-        userDataPath: profilePath,
-        log: {
-          log: () => console.log('[rebrand-migration] legacy userData copied'),
-          warn: () => console.warn('[rebrand-migration] legacy userData migration skipped')
-        }
-      })
-      if (migration.state === 'failed' || migration.state === 'invalid_profile') {
-        throw new Error('Legacy userData migration did not complete safely.')
-      }
-    },
+    // Bootstrap has already completed migration before deciding whether this
+    // rollout lane is enabled. Keep the transaction's ordering seam explicit.
+    migrateLegacyUserData: () => undefined,
     createSupervisor: () =>
       new HostExternalSupervisor({
         profilePath,
@@ -132,7 +122,19 @@ void bootstrapMainProcess({
   // index.ts retains its existing guard during this extraction. Electron's
   // requestSingleInstanceLock is idempotent for the process that owns it.
   prepareMainProcess: async () => {
-    externalHostPreparation = createExternalHostPreparation()
+    const profilePath = canonicalProfilePath(app.getPath('userData'))
+    const migration = migrateLegacyUserDataSync({
+      userDataPath: profilePath,
+      log: {
+        log: () => console.log('[rebrand-migration] legacy userData copied'),
+        warn: () => console.warn('[rebrand-migration] legacy userData migration skipped')
+      }
+    })
+    if (migration.state === 'failed' || migration.state === 'invalid_profile') {
+      throw new Error('Legacy userData migration did not complete safely.')
+    }
+    if (process.env.TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1') return
+    externalHostPreparation = createExternalHostPreparation(profilePath)
     await externalHostPreparation.prepare()
   },
   cleanupPreparedMainProcess: async () => {

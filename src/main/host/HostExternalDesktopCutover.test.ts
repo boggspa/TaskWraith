@@ -11,25 +11,25 @@ describe('Desktop external Host cutover', () => {
     const broker = source.indexOf('const desktopHostBroker = createHostProjectionBroker({')
     expect(consume).toBeGreaterThanOrEqual(0)
     expect(consume).toBeLessThan(broker)
-    expect(source).toContain('requires a bootstrap-prepared external Host')
+    expect(bootstrap).toContain("process.env.TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1'")
     expect(bootstrap.indexOf('prepareMainProcess:')).toBeLessThan(
       bootstrap.indexOf("loadMainProcess: () => import('./index')")
     )
   })
 
-  it('selects only the external lifecycle adapter and preserves a fresh restart factory', () => {
-    const start = source.indexOf('let initialPreparedExternalHost:')
+  it('never falls back after ownership and preserves a fresh external restart factory', () => {
+    const start = source.indexOf('let initialPreparedExternalHost =')
     const end = source.indexOf('const hostLifecycle = new HostLifecycleController({', start)
     const wiring = source.slice(start, end + 500)
     expect(wiring).toContain('createHostExternalLifecycleAdapter({')
     expect(wiring).toContain('preparedResult: initial.result')
     expect(wiring).toContain('preparedExternalHost.createSupervisor()')
-    expect(wiring).toContain('createSupervisor: createExternalHost')
+    expect(wiring).toContain('if (!preparedExternalHost) return createProductionHost()')
+    expect(wiring).toContain('createSupervisor: createSelectedHost')
     expect(wiring).not.toContain('createSupervisor: createProductionHost')
-    expect(wiring).not.toContain('return createProductionHost')
   })
 
-  it('keeps the legacy in-process factory inert rather than a fallback', () => {
+  it('keeps legacy compatibility selectable only before any ownership transfer', () => {
     expect(source).toContain('void createProductionHost')
     expect(source).toContain('It is never selected after')
     expect(source).toContain('hostLifecycle.stopSync()')

@@ -50108,9 +50108,6 @@ if (isGeminiMcpBridgeProcess) {
 
     const externalHostProfilePath = fsSync.realpathSync(app.getPath('userData'))
     const preparedExternalHost = consumePreparedExternalHost(externalHostProfilePath)
-    if (!preparedExternalHost) {
-      throw new Error('Desktop main process requires a bootstrap-prepared external Host.')
-    }
     const desktopHostBroker = createHostProjectionBroker({
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion()
@@ -51672,8 +51669,11 @@ if (isGeminiMcpBridgeProcess) {
     // remaining setup/shadow ports are extracted. It is never selected after
     // bootstrap transfers profile ownership to the independent Node Host.
     void createProductionHost
-    let initialPreparedExternalHost: typeof preparedExternalHost | null = preparedExternalHost
-    const createExternalHost = () => {
+    let initialPreparedExternalHost = preparedExternalHost
+    const createSelectedHost = () => {
+      // Compatibility is selected only when bootstrap never transferred
+      // ownership. Once a prepared external Host exists there is no fallback.
+      if (!preparedExternalHost) return createProductionHost()
       const initial = initialPreparedExternalHost
       if (initial) {
         const adapter = createHostExternalLifecycleAdapter({
@@ -51691,7 +51691,7 @@ if (isGeminiMcpBridgeProcess) {
       })
     }
     const hostLifecycle = new HostLifecycleController({
-      createSupervisor: createExternalHost,
+      createSupervisor: createSelectedHost,
       onOffline: () => desktopHostBroker.close(),
       log: (line) => console.log(line)
     })
