@@ -2099,6 +2099,14 @@ import {
   type StartUltraTaskGraphInput
 } from './ultraTask/UltraTaskGraphStartService'
 import type { StartedUltraTaskWorkflow } from './ultraTask/UltraTaskCoordinator'
+import {
+  resolveUltraTaskCapability,
+  ULTRATASK_REQUIRED_STAGES
+} from './ultraTask/UltraTaskCapabilityResolver'
+import {
+  buildUltraTaskModelCapabilityCatalog,
+  type UltraTaskCatalogModelLike
+} from './ultraTask/UltraTaskModelCatalog'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 import { shouldAutoAllowUserRequestedEnsembleImport } from './EnsembleRosterImportConsent'
@@ -8399,6 +8407,7 @@ let executionGraphCoordinatorRef: ExecutionGraphCoordinator | null = null
 let startUltraTaskGraphRef:
   | ((input: StartUltraTaskGraphInput) => StartedUltraTaskWorkflow)
   | null = null
+let listUltraTaskModelsRef: ((provider: ProviderId) => Promise<unknown[]>) | null = null
 let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
 
@@ -40662,6 +40671,56 @@ async function executeGeminiMcpTool(
       })
       if (!ultraTaskRequest.ok) throw new Error(ultraTaskRequest.message)
       const resolved = ultraTaskRequest.value
+      const listModels = listUltraTaskModelsRef
+      const startGraph = startUltraTaskGraphRef
+      if (!listModels) throw new Error('UltraTask live model catalog is unavailable.')
+      const liveModels = (await listModels(resolved.provider)) as UltraTaskCatalogModelLike[]
+      const staticModels = getStaticProviderModels(resolved.provider, {
+        includePreviewModels: previewModelCatalogEnabledForProvider(resolved.provider, process.env)
+      }) as UltraTaskCatalogModelLike[]
+      const exactCurrentModel =
+        resolved.provider === parentProvider && resolved.model === context.model
+      const candidates = buildUltraTaskModelCapabilityCatalog({
+        provider: resolved.provider,
+        models: liveModels,
+        fallbackModels: staticModels,
+        source: 'live',
+        ...(exactCurrentModel
+          ? { runtimeEvidence: { [resolved.model]: { state: 'available' as const } } }
+          : {})
+      })
+      const capability = resolveUltraTaskCapability({
+        provider: resolved.provider,
+        modelId: resolved.model,
+        models: candidates,
+        routes: [
+          {
+            id: 'ultratask-graph-v1',
+            kind: 'execution_graph',
+            availability: startGraph ? 'available' : 'unavailable',
+            unavailableReason: startGraph
+              ? undefined
+              : 'UltraTask durable graph runtime is unavailable.',
+            priority: 0,
+            stages: ULTRATASK_REQUIRED_STAGES
+          }
+        ]
+      })
+      if (!capability.ok) {
+        const choices = capability.models
+          .filter((model) => model.ultraTaskSupported)
+          .map((model) => model.modelId)
+          .slice(0, 24)
+        throw new Error(
+          `${capability.message}${choices.length ? ` Available UltraTask models: ${choices.join(', ')}.` : ''}`
+        )
+      }
+      if (
+        capability.capability.reasoning.ceiling !== undefined &&
+        capability.capability.reasoning.ceiling !== resolved.reasoningEffort
+      ) {
+        throw new Error('UltraTask model capability changed after request normalization.')
+      }
       const stageCount = 5 // two scouts + worker + reviewer + synthesis
       if (delegationApprovalBudget.remaining(context.appRunId) < stageCount) {
         throw new Error(
@@ -40712,7 +40771,6 @@ async function executeGeminiMcpTool(
           throw new Error('UltraTask delegation budget changed before graph launch.')
         }
       }
-      const startGraph = startUltraTaskGraphRef
       if (!startGraph) {
         delegationApprovalBudget.release(context.appRunId, stageCount)
         throw new Error('UltraTask durable graph runtime is unavailable.')
@@ -40720,11 +40778,11 @@ async function executeGeminiMcpTool(
       let started: StartedUltraTaskWorkflow
       try {
         started = startGraph({
-          title: `UltraTask · ${resolved.model}`,
+          title: `UltraTask · ${capability.capability.modelId}`,
           task: resolved.task,
-          provider: resolved.provider,
-          model: resolved.model,
-          reasoningEffort: resolved.reasoningEffort,
+          provider: capability.capability.provider,
+          model: capability.capability.modelId,
+          reasoningEffort: capability.capability.reasoning.ceiling,
           workspaceId: parentChat.workspaceId,
           workspacePath: parentChat.workspacePath,
           rootChatId: parentChat.appChatId,
@@ -56588,6 +56646,7 @@ if (isGeminiMcpBridgeProcess) {
         return codexStaticFallback
       }
     }
+    listUltraTaskModelsRef = listAgentModelsForProvider
     ipcMain.handle('get-agent-models', (_, provider: ProviderId) =>
       listAgentModelsForProvider(provider)
     )

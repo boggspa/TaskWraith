@@ -30,6 +30,11 @@ describe('execution graph main integration', () => {
 
     expect(dispatcher).toContain("markDispatchHandled('subthread-control')")
     expect(dispatcher).toContain('resolveUltraTaskToolRequest(')
+    expect(dispatcher).toContain('listUltraTaskModelsRef')
+    expect(dispatcher).toContain('buildUltraTaskModelCapabilityCatalog({')
+    expect(dispatcher).toContain('resolveUltraTaskCapability({')
+    expect(dispatcher).toContain("id: 'ultratask-graph-v1'")
+    expect(dispatcher).toContain('resolved.model === context.model')
     expect(dispatcher).toContain("toolName: 'ultra_task'")
     expect(dispatcher).toContain('startUltraTaskGraphRef')
     expect(dispatcher).toContain("status: 'running'")
