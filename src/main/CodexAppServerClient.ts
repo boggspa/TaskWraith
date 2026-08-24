@@ -523,14 +523,17 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
       // MCP approval RPC for TaskWraith to answer. Without this the brokered
       // tools are unreachable on precisely the most-elevated presets.
       //
-      // `auto` is safe because it does not widen anything: every TaskWraith
-      // tool call still routes through requestAgenticServiceApproval and is
-      // recorded in the Approval Ledger. This only stops codex double-gating
-      // a call TaskWraith already governs. Deliberately NOT applied to user
-      // MCP servers below — those have no such mediation. Enum is
-      // auto|prompt|writes|approve (verified against codex-cli 0.148.0).
+      // `approve` is safe here because it does not widen TaskWraith authority:
+      // every broker call still routes through requestAgenticServiceApproval
+      // and is recorded in the Approval Ledger. It only stops Codex from
+      // double-gating a call TaskWraith already governs. `auto` is NOT enough:
+      // it still classifies non-read-only MCP tools (including delegate_wave)
+      // as approval-required, which strands them when the thread-level policy
+      // is `never`. Deliberately NOT applied to user MCP servers below — those
+      // have no TaskWraith mediation. The official Codex config values are
+      // auto|prompt|writes|approve.
       '-c',
-      `mcp_servers.TaskWraith.default_tools_approval_mode="auto"`
+      `mcp_servers.TaskWraith.default_tools_approval_mode="approve"`
     )
   }
   for (const server of config.userMcpServers ?? []) {
