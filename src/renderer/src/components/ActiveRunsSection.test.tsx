@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
-import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   ActiveRunsSection,
   deriveVisibleActiveRunEntries,
   getActiveRunChatLabel,
   isActiveRunVisibleOnSurface,
-  resolveActiveRunChat,
-  resolveActiveRunProviderDisplay
+  resolveActiveRunChat
 } from './ActiveRunsSection'
 
 function job(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
@@ -248,8 +246,6 @@ describe('deriveVisibleActiveRunEntries', () => {
     expect(entries[0].chat).toBe(ensemble)
     expect(entries[0]).toMatchObject({
       isTransitionFallback: true,
-      statusLabel: 'Handoff',
-      providerModel: 'gemini-3.7-pro',
       job: {
         id: 'ensemble-transition:ensemble-chat:round-1',
         runId: 'source-run',
@@ -261,7 +257,7 @@ describe('deriveVisibleActiveRunEntries', () => {
     })
   })
 
-  it('renders the fallback as the target provider with a truthful handoff badge', () => {
+  it('renders the fallback as the parent thread rather than a target-seat strip', () => {
     const ensemble = transitioningChat()
     const html = renderToStaticMarkup(
       <ActiveRunsSection
@@ -273,8 +269,9 @@ describe('deriveVisibleActiveRunEntries', () => {
     )
 
     expect(html).toContain('Release panel')
-    expect(html).toContain('Gemini')
-    expect(html).toContain('Handoff')
+    expect(html).toContain('Ensemble')
+    expect(html).not.toContain('sidebar-active-run-provider')
+    expect(html).toContain('sidebar-chat-running')
     expect(html).toContain('sidebar-active-runs-count">1</span>')
   })
 
@@ -298,9 +295,82 @@ describe('deriveVisibleActiveRunEntries', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatchObject({
       job: targetJob,
-      isTransitionFallback: false,
-      statusLabel: 'Active'
+      isTransitionFallback: false
     })
+  })
+
+  it('collapses concurrent fan-out lanes to one parent thread row', () => {
+    const ensemble = chat('codex', {
+      appChatId: 'ensemble-chat',
+      chatKind: 'ensemble',
+      title: 'Release panel',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    })
+    const entries = deriveVisibleActiveRunEntries({
+      jobs: [
+        job({
+          id: 'lane-codex',
+          runId: 'lane-codex',
+          chatId: ensemble.appChatId,
+          provider: 'codex',
+          ensembleLaneId: 'lane-codex',
+          status: 'queued'
+        }),
+        job({
+          id: 'lane-claude',
+          runId: 'lane-claude',
+          chatId: ensemble.appChatId,
+          provider: 'claude',
+          ensembleLaneId: 'lane-claude'
+        })
+      ],
+      chats: [ensemble],
+      surface: 'code'
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].chat).toBe(ensemble)
+    expect(entries[0].job.id).toBe('lane-claude')
+  })
+
+  it('projects active delegated and fan-out children onto their parent thread', () => {
+    const parent = chat('codex', {
+      appChatId: 'parent-chat',
+      title: 'Parent thread',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    })
+    const delegatedChild = chat('claude', {
+      appChatId: 'subthread-chat',
+      title: 'Delegated child',
+      scope: 'workspace',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'subThread'
+    })
+    const fanoutChild = chat('gemini', {
+      appChatId: 'fanout-chat',
+      title: 'Fan-out child',
+      scope: 'workspace',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      sideChatContext: { createdAt: 0, mode: 'fanOut' }
+    })
+    const entries = deriveVisibleActiveRunEntries({
+      jobs: [
+        job({ id: 'subthread-run', runId: 'subthread-run', chatId: delegatedChild.appChatId }),
+        job({ id: 'fanout-run', runId: 'fanout-run', chatId: fanoutChild.appChatId })
+      ],
+      chats: [parent, delegatedChild, fanoutChild],
+      surface: 'work',
+      workChatIds: new Set([parent.appChatId])
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].chat).toBe(parent)
+    expect(entries.map((entry) => entry.chat.title)).toEqual(['Parent thread'])
   })
 
   it('does not revive a transition on a terminal round or the wrong surface', () => {
@@ -343,59 +413,5 @@ describe('deriveVisibleActiveRunEntries', () => {
     expect(
       deriveVisibleActiveRunEntries({ jobs: [], chats: [unresolved], surface: 'code' })
     ).toEqual([])
-  })
-})
-
-describe('resolveActiveRunProviderDisplay', () => {
-  it('uses the chat provider and Ollama display brand when a stale job says Gemini', () => {
-    const display = resolveActiveRunProviderDisplay(
-      job({
-        provider: 'gemini',
-        request: {
-          selectedModelType: 'custom',
-          customModel: 'laguna-xs-2.1:q8_0'
-        } as RunQueueJob['request']
-      }),
-      chat('ollama')
-    )
-
-    expect(display.provider).toBe('ollama')
-    expect(display.label).toBe('Poolside')
-    expect(display.providerClass).toBe('poolside')
-    expect(display.style).toMatchObject({
-      '--active-run-provider-color':
-        'var(--provider-poolside-color, var(--provider-ollama-color, var(--accent)))'
-    })
-  })
-
-  it('keeps real Gemini jobs on the Gemini label', () => {
-    const display = resolveActiveRunProviderDisplay(job({ provider: 'gemini' }), chat('gemini'))
-
-    expect(display.provider).toBe('gemini')
-    expect(display.label).toBe('Gemini')
-    expect(display.providerClass).toBe('gemini')
-  })
-
-  it('uses every Pi upstream hue for an active run', () => {
-    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
-      expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
-      const display = resolveActiveRunProviderDisplay(
-        job({
-          provider: 'pi',
-          request: {
-            selectedModelType: 'custom',
-            customModel: modelId
-          } as RunQueueJob['request']
-        }),
-        chat('pi')
-      )
-
-      expect(display.label).toBe('Pi')
-      expect(display.providerClass).toBe(brand.hueClass)
-      expect(display.style['--active-run-provider-color']).toContain(
-        `--provider-${brand.hueClass}-color`
-      )
-    }
   })
 })
