@@ -35,10 +35,13 @@ function event(subThreadId: string, outcome: 'done' | 'failed' = 'done') {
   }
 }
 
-function child(appChatId: string, waveId = 'wave-1') {
+function child(appChatId: string, waveId = 'wave-1', returnResultToParent = true) {
   return {
     appChatId,
-    delegationContext: { joinPolicy: { groupId: waveId } }
+    delegationContext: {
+      joinPolicy: { groupId: waveId },
+      ...(returnResultToParent ? {} : { returnResultToParent: false })
+    }
   }
 }
 
@@ -132,6 +135,45 @@ describe('dispatchEnsembleAwaitTool', () => {
       waveIds: ['wave-1'],
       timeoutSeconds: 45
     })
+  })
+
+  it('rejects an impossible child or wave wait when the child opted out of parent results', async () => {
+    const harness = deps({
+      getChildChats: vi.fn(() => [child('detached-child', 'detached-wave', false)])
+    })
+
+    const childResult = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { subThreadIds: ['detached-child'] }
+      },
+      harness
+    )
+    const waveResult = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { waveIds: ['detached-wave'] }
+      },
+      harness
+    )
+    const mixedResult = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { laneIds: ['lane-1'], subThreadIds: ['detached-child'] }
+      },
+      harness
+    )
+
+    for (const result of [childResult, waveResult, mixedResult]) {
+      expect(result).toMatchObject({ ok: false, error: 'invalid_sub_thread' })
+      expect(result.message).toMatch(/returnResult:false/i)
+      expect(result.message).toMatch(/list_subthreads\/read_subthread_result/i)
+    }
+    expect(harness.delay).not.toHaveBeenCalled()
+    expect(harness.orchestrator.awaitLanesForRun).not.toHaveBeenCalled()
   })
 
   it('preserves parameterless Ensemble waits for the current round', async () => {

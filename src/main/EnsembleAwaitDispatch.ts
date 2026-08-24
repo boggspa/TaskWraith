@@ -12,6 +12,7 @@ interface AwaitableChildChat {
   appChatId: string
   delegationContext?: {
     joinPolicy?: { groupId?: string }
+    returnResultToParent?: boolean
   }
 }
 
@@ -71,6 +72,44 @@ function latestMailboxOutcome(
     if (event?.source.subThreadId === subThreadId) return event.outcome
   }
   return undefined
+}
+
+/**
+ * A detached child that opted out of parent results has no mailbox event for
+ * ensemble_await to observe. Reject that impossible wait before either the
+ * durable child path or the mixed lane path starts polling.
+ */
+function unreturnableSubThreadAwaitResult(
+  input: DispatchEnsembleAwaitToolInput,
+  deps: DispatchEnsembleAwaitToolDeps,
+  subThreadIdsValue: unknown,
+  waveIdsValue: unknown
+): EnsembleAwaitResult | null {
+  const runId = input.runId?.trim()
+  const parentChatId = input.parentChatId?.trim()
+  if (!runId || !parentChatId || !deps.isParentRunActive(runId, parentChatId)) return null
+
+  const requestedSubThreadIds = normalizeTargetIds(subThreadIdsValue)
+  const requestedWaveIds = normalizeTargetIds(waveIdsValue)
+  if (requestedSubThreadIds === null || requestedWaveIds === null) return null
+
+  const childChats = deps.getChildChats(parentChatId)
+  const requestedChildIds = new Set(requestedSubThreadIds || [])
+  for (const child of childChats) {
+    const waveId = child.delegationContext?.joinPolicy?.groupId?.trim()
+    if (waveId && requestedWaveIds?.includes(waveId)) requestedChildIds.add(child.appChatId)
+  }
+  const detachedIds = [...requestedChildIds].filter(
+    (childId) =>
+      childChats.find((child) => child.appChatId === childId)?.delegationContext
+        ?.returnResultToParent === false
+  )
+  if (detachedIds.length === 0) return null
+  return invalid(
+    'invalid_sub_thread',
+    `ensemble_await: ${detachedIds.join(', ')} opted out of parent results (returnResult:false), ` +
+      'so this wait cannot settle. Use list_subthreads/read_subthread_result to inspect detached work, or delegate again with returnResult:true.'
+  )
 }
 
 async function awaitSubThreadTargets(
@@ -215,6 +254,10 @@ export async function dispatchEnsembleAwaitTool(
   const waveIds = input.args.waveIds ?? input.args.wave_ids
   const timeoutSeconds = input.args.timeoutSeconds ?? input.args.timeout_seconds
   const hasChildTargets = subThreadIds !== undefined || waveIds !== undefined
+  const unreturnableResult = hasChildTargets
+    ? unreturnableSubThreadAwaitResult(input, deps, subThreadIds, waveIds)
+    : null
+  if (unreturnableResult) return unreturnableResult
 
   if (laneIds === undefined && hasChildTargets) {
     return awaitSubThreadTargets(input, deps, subThreadIds, waveIds, timeoutSeconds)
