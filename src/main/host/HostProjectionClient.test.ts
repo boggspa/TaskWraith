@@ -52,6 +52,7 @@ interface FakeHost {
   token: string
   userDataPath: string
   nextClient(): Promise<Socket>
+  connectionCount(): number
 }
 
 async function startFakeHost(overrides?: {
@@ -111,6 +112,7 @@ async function startFakeHost(overrides?: {
     tokenPath,
     token,
     userDataPath,
+    connectionCount: () => allSockets.size,
     nextClient: () =>
       new Promise<Socket>((resolve) => {
         const existing = pendingClients.shift()
@@ -205,7 +207,8 @@ function makeEmptySnapshot(generation = 3, cursor = 42): HostSnapshot {
 
 function makeClient(
   host: FakeHost,
-  capabilities?: readonly HostCapability[]
+  capabilities?: readonly HostCapability[],
+  optionalCapabilities?: readonly HostCapability[]
 ): HostProjectionClient {
   const client = new HostProjectionClient({
     client: {
@@ -216,6 +219,7 @@ function makeClient(
     userDataPath: host.userDataPath,
     discoveryPath: host.discoveryPath,
     ...(capabilities ? { capabilities } : {}),
+    ...(optionalCapabilities ? { optionalCapabilities } : {}),
     connectTimeoutMs: 500,
     requestTimeoutMs: 500
   })
@@ -262,12 +266,55 @@ describe('HostProjectionClient', () => {
     expect(client.connected).toBe(true)
     expect(client.generation).toBe(3)
     expect(client.cursor).toBe(42)
+    expect(client.supports('bootstrap')).toBe(true)
+    expect(client.supports('provider-auth')).toBe(false)
+  })
+
+  it('requests a stable deduped base-plus-optional union on its first hello', async () => {
+    const host = await startFakeHost()
+    const client = makeClient(
+      host,
+      ['bootstrap', 'snapshot', 'bootstrap'],
+      ['provider-auth', 'snapshot', 'provider-catalog', 'provider-auth']
+    )
+    const connect = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect((hello.hello as { capabilities: readonly HostCapability[] }).capabilities).toEqual([
+      'bootstrap',
+      'snapshot',
+      'provider-auth',
+      'provider-catalog'
+    ])
+    sendWelcome(socket, makeWelcome({ capabilities: ['bootstrap', 'snapshot'] }))
+    await connect
+    expect(client.supports('provider-auth')).toBe(false)
+  })
+
+  it('retries once base-only only after an accepted connection closes before welcome', async () => {
+    const host = await startFakeHost()
+    const base: readonly HostCapability[] = ['bootstrap', 'snapshot']
+    const optional: readonly HostCapability[] = ['provider-auth', 'provider-catalog']
+    const client = makeClient(host, base, optional)
+    const connect = client.connect()
+
+    const first = await host.nextClient()
+    expect((await readLine(first)).hello).toMatchObject({
+      capabilities: ['bootstrap', 'snapshot', 'provider-auth', 'provider-catalog']
+    })
+    first.end()
+
+    const second = await host.nextClient()
+    expect((await readLine(second)).hello).toMatchObject({ capabilities: base })
+    sendWelcome(second, makeWelcome({ capabilities: base as HostCapability[] }))
+    await expect(connect).resolves.toMatchObject({ capabilities: base })
   })
 
   it('rejects with a distinct error when discovery advertises a non-v2 protocol', async () => {
     const host = await startFakeHost({ protocolVersion: 999 })
-    const client = makeClient(host)
+    const client = makeClient(host, ['bootstrap'], ['provider-auth'])
     await expect(client.connect()).rejects.toBeInstanceOf(HostProjectionIncompatibleProtocolError)
+    expect(host.connectionCount()).toBe(0)
   })
 
   it('rejects connect() when the socket closes before welcome (auth failure)', async () => {

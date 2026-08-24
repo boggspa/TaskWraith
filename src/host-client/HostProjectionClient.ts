@@ -98,6 +98,8 @@ export interface HostProjectionClientOptions {
   client: HostProjectionClientIdentity
   /** Capability request; Host intersects with its offer. */
   capabilities?: readonly HostCapability[]
+  /** Best-effort extensions requested only on the first hello. */
+  optionalCapabilities?: readonly HostCapability[]
   /** Injected userData path; defaults require an explicit discoveryPath. */
   userDataPath?: string
   /** Override discovery JSON path (tests). */
@@ -166,6 +168,25 @@ export class HostProjectionTransportError extends Error {
   }
 }
 
+/** Internal retry sentinel: TCP accepted then closed without a welcome frame. */
+class HostProjectionHandshakeClosedBeforeWelcomeError extends Error {
+  constructor() {
+    super('TaskWraith Host closed before welcome.')
+    this.name = 'HostProjectionHandshakeClosedBeforeWelcomeError'
+  }
+}
+
+function stableDedupCapabilities(capabilities: readonly HostCapability[]): HostCapability[] {
+  const seen = new Set<HostCapability>()
+  const output: HostCapability[] = []
+  for (const capability of capabilities) {
+    if (seen.has(capability)) continue
+    seen.add(capability)
+    output.push(capability)
+  }
+  return output
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -209,6 +230,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   private readonly options: {
     client: HostProjectionClientIdentity
     capabilities: readonly HostCapability[]
+    optionalCapabilities: readonly HostCapability[]
     userDataPath?: string
     discoveryPath?: string
     connectTimeoutMs: number
@@ -222,6 +244,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private closedByClient = false
   private eventSequenceSeen = -1
+  private connectAccepted = false
 
   welcome: HostBootstrapWelcome | null = null
   /**
@@ -234,7 +257,8 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     super()
     this.options = {
       client: options.client,
-      capabilities: options.capabilities ?? DEFAULT_CLIENT_CAPABILITIES,
+      capabilities: stableDedupCapabilities(options.capabilities ?? DEFAULT_CLIENT_CAPABILITIES),
+      optionalCapabilities: stableDedupCapabilities(options.optionalCapabilities ?? []),
       userDataPath: options.userDataPath,
       discoveryPath: options.discoveryPath,
       connectTimeoutMs: options.connectTimeoutMs ?? 6_250,
@@ -256,6 +280,11 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     return this.welcome?.cursor ?? null
   }
 
+  /** Capability support is authoritative only after Host welcome intersection. */
+  supports(capability: HostCapability): boolean {
+    return Boolean(this.welcome?.capabilities.includes(capability))
+  }
+
   async connect(): Promise<HostBootstrapWelcome> {
     if (this.connected && this.welcome) return this.welcome
     if (this.socket && !this.socket.destroyed) {
@@ -264,6 +293,16 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     this.closedByClient = false
     this.eventSequenceSeen = -1
 
+    try {
+      return await this.connectOnce(false)
+    } catch (error) {
+      if (!(error instanceof HostProjectionHandshakeClosedBeforeWelcomeError)) throw error
+      if (this.options.optionalCapabilities.length === 0) throw error
+      return this.connectOnce(true)
+    }
+  }
+
+  private async connectOnce(baseOnly: boolean): Promise<HostBootstrapWelcome> {
     const discoveryPath =
       this.options.discoveryPath ??
       (this.options.userDataPath ? taskWraithHostDiscoveryPath(this.options.userDataPath) : null)
@@ -275,7 +314,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     const token = (await readFile(discovery.tokenPath, 'utf8')).trim()
     if (!token) throw new Error('TaskWraith Host token is unavailable.')
 
-    const hello = this.buildHello(token)
+    const hello = this.buildHello(token, baseOnly)
     const encoded = encodeHostLocalTransportClientFrame(hello)
     if (!encoded.ok) {
       throw new HostProjectionTransportError(encoded.error.code)
@@ -286,9 +325,11 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       this.connectReject = reject
       const socket = connectDiscoverySocket(discovery.socketPath)
       this.socket = socket
+      this.connectAccepted = false
       socket.setEncoding('utf8')
       socket.setNoDelay(true)
       socket.once('connect', () => {
+        this.connectAccepted = true
         socket.write(`${JSON.stringify(encoded.value)}\n`)
       })
       socket.on('data', (chunk: string) => this.onData(chunk))
@@ -433,7 +474,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     }
   }
 
-  private buildHello(token: string) {
+  private buildHello(token: string, baseOnly: boolean) {
     const client = this.options.client
     const hello: HostBootstrapHello = {
       type: 'host.hello',
@@ -446,7 +487,12 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
         ...(client.subjectId !== undefined ? { subjectId: client.subjectId } : {}),
         ...(client.displayName !== undefined ? { displayName: client.displayName } : {})
       },
-      capabilities: [...this.options.capabilities]
+      capabilities: baseOnly
+        ? [...this.options.capabilities]
+        : stableDedupCapabilities([
+            ...this.options.capabilities,
+            ...this.options.optionalCapabilities
+          ])
     }
     return {
       type: 'hello' as const,
@@ -615,7 +661,17 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
 
   private onDisconnect(error: Error | null): void {
     const wasConnected = Boolean(this.welcome)
-    this.failConnect(error ?? new Error('TaskWraith Host disconnected.'))
+    const preWelcomeClose =
+      !wasConnected &&
+      this.connectAccepted &&
+      error === null &&
+      Boolean(this.connectReject || this.connectResolve)
+    this.connectAccepted = false
+    this.failConnect(
+      preWelcomeClose
+        ? new HostProjectionHandshakeClosedBeforeWelcomeError()
+        : (error ?? new Error('TaskWraith Host disconnected.'))
+    )
     this.socket = null
     this.welcome = null
     this.buffer = ''

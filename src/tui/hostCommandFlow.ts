@@ -13,6 +13,7 @@ import {
   type HostCommand,
   type HostCommandName,
   type HostCommandReceipt,
+  type HostResultRef,
   type HostReceiptStatus
 } from '../shared/hostProtocol'
 
@@ -68,6 +69,156 @@ export function buildHostCommand(input: {
     arguments: input.arguments ?? {},
     issuedAt: input.issuedAt ?? new Date().toISOString()
   }
+}
+
+export function buildWorkspaceRegisterCommand(input: {
+  actor: HostActorIdentity
+  path: string
+  displayName?: string
+  pinned?: boolean
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  return buildHostCommand({
+    name: 'workspace.register',
+    actor: input.actor,
+    target: {},
+    arguments: {
+      path: input.path,
+      ...(input.displayName ? { displayName: input.displayName } : {}),
+      ...(typeof input.pinned === 'boolean' ? { pinned: input.pinned } : {})
+    },
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+export function buildThreadCreateCommand(input: {
+  actor: HostActorIdentity
+  scope: 'global' | 'workspace'
+  workspaceId?: string
+  title?: string
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  if (input.scope === 'workspace' && !input.workspaceId) {
+    throw new Error('Workspace thread creation requires workspaceId.')
+  }
+  return buildHostCommand({
+    name: 'thread.create',
+    actor: input.actor,
+    target: {},
+    arguments: {
+      scope: input.scope,
+      ...(input.scope === 'workspace' ? { workspaceId: input.workspaceId! } : {}),
+      ...(input.title ? { title: input.title } : {})
+    },
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+export type ThreadConfigureOfferSelection = {
+  readonly threadId: string
+  readonly providerId: string
+  readonly modelId: string
+  readonly postureId: string
+  readonly offerRevision: string
+  readonly reasoningId?: string
+  readonly title?: string
+  readonly postureConsent?: true
+}
+
+export type ThreadConfigureTitleSelection = {
+  readonly threadId: string
+  readonly title: string
+}
+
+/** Full offer-bound selection or a title-only edit; no partial provider patch exists. */
+export type ThreadConfigureSelection = ThreadConfigureOfferSelection | ThreadConfigureTitleSelection
+
+export function buildThreadConfigureCommand(input: {
+  actor: HostActorIdentity
+  selection: ThreadConfigureSelection
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  const selection = input.selection
+  const offerSelection = 'providerId' in selection
+  return buildHostCommand({
+    name: 'thread.configure',
+    actor: input.actor,
+    target: { threadId: selection.threadId },
+    arguments: offerSelection
+      ? {
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+          postureId: selection.postureId,
+          offerRevision: selection.offerRevision,
+          ...(selection.reasoningId ? { reasoningId: selection.reasoningId } : {}),
+          ...(selection.title ? { title: selection.title } : {}),
+          ...(selection.postureConsent === true ? { postureConsent: true } : {})
+        }
+      : { title: selection.title },
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+export function buildThreadArchiveCommand(input: {
+  actor: HostActorIdentity
+  threadId: string
+  archived: boolean
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  return buildHostCommand({
+    name: 'thread.archive',
+    actor: input.actor,
+    target: { threadId: input.threadId },
+    arguments: { archived: input.archived },
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+export function buildProviderAuthBeginCommand(input: {
+  actor: HostActorIdentity
+  providerId: string
+  flowId: string
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  return buildHostCommand({
+    name: 'provider.auth.begin',
+    actor: input.actor,
+    target: { providerId: input.providerId },
+    arguments: { flowId: input.flowId },
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+export function buildProviderAuthCancelCommand(input: {
+  actor: HostActorIdentity
+  providerId: string
+  operationId: string
+  commandId?: string
+  idempotencyKey?: string
+}): HostCommand {
+  return buildHostCommand({
+    name: 'provider.auth.cancel',
+    actor: input.actor,
+    target: { providerId: input.providerId, operationId: input.operationId },
+    arguments: {},
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey
+  })
+}
+
+/** Locator-only success result; callers must never infer an operation id. */
+export function hostReceiptResultRef(receipt: HostCommandReceipt): HostResultRef | undefined {
+  return receipt.status === 'succeeded' ? receipt.resultRef : undefined
 }
 
 /** Human-readable notice for a receipt — never invents success from pending. */

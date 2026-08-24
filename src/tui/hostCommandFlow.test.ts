@@ -7,6 +7,12 @@ import { fingerprintHostCommand } from '../host-runtime/HostCommandFingerprint'
 import { HOST_PROTOCOL_VERSION, type HostCommandReceipt } from '../shared/hostProtocol'
 import {
   buildHostCommand,
+  buildProviderAuthCancelCommand,
+  buildProviderAuthBeginCommand,
+  buildThreadArchiveCommand,
+  buildThreadConfigureCommand,
+  buildThreadCreateCommand,
+  buildWorkspaceRegisterCommand,
   describeHostReceipt,
   isTerminalHostReceiptStatus,
   pollHostReceiptUntilTerminal
@@ -44,6 +50,78 @@ describe('hostCommandFlow', () => {
     expect(command.commandId.length).toBeGreaterThan(8)
     expect(command.idempotencyKey.length).toBeGreaterThan(8)
     expect(command.arguments.text).toBe('hello')
+  })
+
+  it('builds exact bounded Host setup commands without inventing auth operation ids', () => {
+    const actor = { actorId: 'tui-1', clientId: 'tui-1', clientClass: 'tui' } as const
+    expect(
+      buildWorkspaceRegisterCommand({ actor, path: '/workspace', pinned: true })
+    ).toMatchObject({
+      name: 'workspace.register',
+      target: {},
+      arguments: { path: '/workspace', pinned: true }
+    })
+    expect(
+      buildThreadCreateCommand({ actor, scope: 'workspace', workspaceId: 'workspace-1' })
+    ).toMatchObject({
+      name: 'thread.create',
+      arguments: { scope: 'workspace', workspaceId: 'workspace-1' }
+    })
+    expect(
+      buildThreadConfigureCommand({
+        actor,
+        selection: {
+          threadId: 'thread-1',
+          providerId: 'codex',
+          modelId: 'gpt-5.6',
+          postureId: 'plan',
+          offerRevision: 'offers-r1',
+          reasoningId: 'high',
+          postureConsent: true
+        }
+      })
+    ).toMatchObject({
+      name: 'thread.configure',
+      target: { threadId: 'thread-1' },
+      arguments: {
+        providerId: 'codex',
+        modelId: 'gpt-5.6',
+        reasoningId: 'high',
+        postureId: 'plan',
+        offerRevision: 'offers-r1',
+        postureConsent: true
+      }
+    })
+    expect(
+      buildThreadArchiveCommand({ actor, threadId: 'thread-1', archived: true })
+    ).toMatchObject({
+      name: 'thread.archive',
+      arguments: { archived: true }
+    })
+    const auth = buildProviderAuthBeginCommand({ actor, providerId: 'codex', flowId: 'browser' })
+    expect(auth).toMatchObject({
+      name: 'provider.auth.begin',
+      target: { providerId: 'codex' },
+      arguments: { flowId: 'browser' }
+    })
+    expect(auth.arguments).not.toHaveProperty('operationId')
+    expect(
+      buildProviderAuthCancelCommand({ actor, providerId: 'codex', operationId: 'auth-op-1' })
+    ).toMatchObject({
+      name: 'provider.auth.cancel',
+      target: { providerId: 'codex', operationId: 'auth-op-1' },
+      arguments: {}
+    })
+    expect(
+      buildThreadConfigureCommand({
+        actor,
+        selection: { threadId: 'thread-1', title: 'Renamed thread' }
+      })
+    ).toMatchObject({
+      name: 'thread.configure',
+      target: { threadId: 'thread-1' },
+      arguments: { title: 'Renamed thread' }
+    })
   })
 
   it('mints the actor-bound idempotency key required by deferred Host storage', () => {
