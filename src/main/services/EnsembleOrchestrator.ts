@@ -3600,6 +3600,21 @@ interface ActiveRoundRuntime {
   quarantinedLegacyQueuedPrompts?: string[]
   startAfterCancellation?: Promise<unknown>
   remainingParticipants?: EnsembleParticipant[]
+  /**
+   * Poll-response turns (1.0.4-AN extension): per-participant vote-only prompt
+   * stanzas recorded when a poll routes its voters. Consumed (and deleted) by
+   * the serial dispatch loop so the routed turn is scoped to casting the vote
+   * via ensemble_poll_response — the turn never counts against the seat's
+   * turn/hop/extra-turn budgets. Cleared when the poll terminalizes so a
+   * settled poll never summons a redundant vote-only turn.
+   */
+  pollVoteDirectiveByParticipantId?: Map<string, { pollId: string; directive: string }>
+  /**
+   * Participant ids currently appended to `remaining` purely as poll-response
+   * vote-only summons (not ordinary turns). Used to sweep those queue entries
+   * out when the poll terminalizes before the summons dispatches.
+   */
+  pollSummonsParticipantIds?: Set<string>
   /** Most recent foreground seat admitted by the serial loop. */
   lastForegroundParticipantId?: string
   midRunSteeringBoundaryState?: EnsembleMidRunSteeringBoundaryState
@@ -10287,6 +10302,16 @@ export class EnsembleOrchestrator {
           'create_poll requires question and at least two options.'
         )
       const timeoutSeconds = clampOptionalInteger(input.timeoutSeconds, 30, 24 * 60 * 60)
+      // Failed/unreachable round seats cannot cast a ballot — never targeted,
+      // never counted (mirrors the binding-poll voter roster predicate).
+      const failedSeatIds = new Set(
+        (this.deps.getChat(runtime.chatId)?.ensemble?.activeRound?.participants || [])
+          .filter(
+            (roundParticipant) =>
+              roundParticipant.status === 'failed' || roundParticipant.status === 'unreachable'
+          )
+          .map((roundParticipant) => roundParticipant.participantId)
+      )
       const pollTargetIds = participantIds.length
         ? participantIds
         : (this.deps.getChat(runtime.chatId)?.ensemble?.participants || [])
@@ -10294,6 +10319,7 @@ export class EnsembleOrchestrator {
               (participant) =>
                 participant.enabled &&
                 participant.id !== callerId &&
+                !failedSeatIds.has(participant.id) &&
                 !runtime.unreachableParticipantIds?.has(participant.id)
             )
             .map((participant) => participant.id)
@@ -10329,8 +10355,13 @@ export class EnsembleOrchestrator {
         this.routeBossmanTargets(
           runtime,
           pollTargetIds,
-          `${authorityLabel} routed poll ${poll.id} voters.`,
-          { allowAnsweredParticipant: true }
+          `${authorityLabel} routed poll ${poll.id} voters (vote-only turns; they do not consume seats' turns).`,
+          {
+            pollResponseTurn: {
+              pollId: poll.id,
+              directive: this.buildPollVoteDirective(poll.id, question, options)
+            }
+          }
         )
       }
       return {
@@ -10559,6 +10590,7 @@ export class EnsembleOrchestrator {
     // it through resolveBindingPoll('timeout') below, not a plain 'expired' mark.
     let bindingPollTimedOut = false
     let nonBindingPollTimedOut = false
+    let nonBindingPollClosed = false
     this.updateBossmanControlState(runtime, (state) => {
       const polls = state.polls || []
       const index = polls.findIndex((poll) => poll.id === pollId)
@@ -10653,6 +10685,7 @@ export class EnsembleOrchestrator {
           nextPoll.votes.some((entry) => entry.voterParticipantId === participantId)
         )
       if (hasAllTargetVotes) this.clearBossmanPollTimeout(runtime.chatId, pollId)
+      if (hasAllTargetVotes && !nextPoll.binding) nonBindingPollClosed = true
       response = {
         ok: true,
         tool: 'ensemble_poll_response',
@@ -10707,6 +10740,9 @@ export class EnsembleOrchestrator {
       this.resolveBindingPoll(runtime.chatId, pollId, 'timeout')
     } else if (nonBindingPollTimedOut) {
       this.settleBossApprovalReview(pollId, null, { pollAlreadyTerminal: true })
+    }
+    if (nonBindingPollClosed) {
+      this.clearPollVoteDirectives(runtime, pollId)
     }
     return response
   }
@@ -10884,9 +10920,13 @@ export class EnsembleOrchestrator {
           error: 'poll_closed'
         }
       }
-      const nextPoll = { ...poll, status: 'expired' as const }
-      this.clearBossmanPollTimeout(chatId, pollId)
-      this.saveChatWithCheckpoint(
+    const nextPoll = { ...poll, status: 'expired' as const }
+    this.clearBossmanPollTimeout(chatId, pollId)
+    const expiredRuntime = this.roundsByChatId.get(chatId)
+    if (expiredRuntime && !expiredRuntime.cancelled) {
+      this.clearPollVoteDirectives(expiredRuntime, pollId)
+    }
+    this.saveChatWithCheckpoint(
         {
           ...chat,
           ensemble: {
@@ -11220,11 +11260,23 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     runtime: ActiveRoundRuntime
   ): string[] {
+    // Failed/unreachable round seats cannot cast a ballot, so they are not
+    // counted: excluded from the voter roster, the target list, and the
+    // eligible-at-open floor denominator alike.
+    const failedSeatIds = new Set(
+      (chat.ensemble?.activeRound?.participants || [])
+        .filter(
+          (roundParticipant) =>
+            roundParticipant.status === 'failed' || roundParticipant.status === 'unreachable'
+        )
+        .map((roundParticipant) => roundParticipant.participantId)
+    )
     return (chat.ensemble?.participants || [])
       .filter(
         (participant) =>
           participant.enabled &&
           !isBackgroundParticipant(participant) &&
+          !failedSeatIds.has(participant.id) &&
           !runtime.unreachableParticipantIds?.has(participant.id) &&
           !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)
       )
@@ -11307,8 +11359,13 @@ export class EnsembleOrchestrator {
       this.routeBossmanTargets(
         runtime,
         eligibleIds,
-        `${authorityLabel} routed binding poll ${poll.id} voters.`,
-        { allowAnsweredParticipant: true }
+        `${authorityLabel} routed binding poll ${poll.id} voters (vote-only turns; they do not consume seats' turns).`,
+        {
+          pollResponseTurn: {
+            pollId: poll.id,
+            directive: this.buildPollVoteDirective(poll.id, question, options)
+          }
+        }
       )
     }
     return {
@@ -11380,6 +11437,10 @@ export class EnsembleOrchestrator {
     else resolution = 'passed'
 
     this.clearBossmanPollTimeout(chatId, pollId)
+    const bindingRuntime = this.roundsByChatId.get(chatId)
+    if (bindingRuntime && !bindingRuntime.cancelled) {
+      this.clearPollVoteDirectives(bindingRuntime, pollId)
+    }
     const nowIso = this.deps.nowIso()
     const resolvedPoll: EnsembleBossmanPoll = {
       ...poll,
@@ -11677,12 +11738,21 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     participantIds: string[],
     statusMessage: string,
-    options: { allowAnsweredParticipant?: boolean } = {}
+    options: {
+      allowAnsweredParticipant?: boolean
+      /** Poll-response mode: routed turns are vote-only summons that never
+       * consume the seat's turn/hop/extra-turn budgets, and failed/skipped/
+       * cancelled seats are neither routed nor counted. */
+      pollResponseTurn?: { pollId: string; directive: string }
+    } = {}
   ): number {
     const chat = this.deps.getChat(runtime.chatId)
     if (!chat?.ensemble || participantIds.length === 0) return 0
     const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
     const routed: EnsembleParticipant[] = []
+    // Vote-only summons queue BEHIND pending ordinary turns: ordinary round
+    // business continues first, then each summoned seat casts its ballot.
+    const pollSummons: EnsembleParticipant[] = []
     const seen = new Set<string>()
     for (const participantId of participantIds) {
       if (seen.has(participantId)) continue
@@ -11694,15 +11764,38 @@ export class EnsembleOrchestrator {
       if (runtime.unreachableParticipantIds?.has(participant.id)) continue
       if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) continue
       if (this.participantFanoutDispatchState(runtime, participant.id)) continue
+      const status = this.activeRoundParticipantStatus(runtime, participant.id)
       const pendingIndex = remaining.findIndex((entry) => entry.id === participant.id)
       if (pendingIndex >= 0) {
         const [pending] = remaining.splice(pendingIndex, 1)
         routed.push(pending)
         continue
       }
-      const status = this.activeRoundParticipantStatus(runtime, participant.id)
       if (status === 'idle') {
         routed.push(participant)
+        continue
+      }
+      if (options.pollResponseTurn) {
+        // A poll vote never counts against a seat's turn:
+        //   - Seats still owed their ordinary turn were handled above (queued
+        //     seats keep their pulled-forward turn; the open poll is already in
+        //     its context, so it votes there).
+        //   - Failed/skipped/cancelled seats are excluded — not routed, not
+        //     counted in the poll denominator.
+        //   - Everyone past their turn (answered/yielded/sleeping) or mid-turn
+        //     gets a budget-free vote-only summons appended behind the queue.
+        if (status === 'failed' || status === 'skipped' || status === 'cancelled') continue
+        const directives =
+          runtime.pollVoteDirectiveByParticipantId ??
+          (runtime.pollVoteDirectiveByParticipantId = new Map())
+        directives.set(participant.id, {
+          pollId: options.pollResponseTurn.pollId,
+          directive: options.pollResponseTurn.directive
+        })
+        ;(runtime.pollSummonsParticipantIds ?? (runtime.pollSummonsParticipantIds = new Set())).add(
+          participant.id
+        )
+        pollSummons.push(participant)
         continue
       }
       if (options.allowAnsweredParticipant) {
@@ -11719,18 +11812,67 @@ export class EnsembleOrchestrator {
     for (let index = routed.length - 1; index >= 0; index -= 1) {
       remaining.unshift(routed[index])
     }
-    if (routed.length > 0) {
+    remaining.push(...pollSummons)
+    if (routed.length > 0 || pollSummons.length > 0) {
+      const routedLabels = routed.map(participantDisplayName)
+      const summonsLabels = pollSummons.map(participantDisplayName)
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        `${statusMessage} Routed next: ${routed.map(participantDisplayName).join(', ')}.`
+        `${statusMessage} Routed next: ${routedLabels.concat(summonsLabels).join(', ')}.`
       )
     }
-    return routed.length
+    return routed.length + pollSummons.length
+  }
+
+  /**
+   * Drop pending vote-only summons for one poll (called when the poll
+   * terminalizes) so a settled poll never triggers a redundant vote-only turn:
+   * queued summons seats are swept out of `remaining` and their directives
+   * deleted. Seats still owed ordinary turns are untouched.
+   */
+  private clearPollVoteDirectives(runtime: ActiveRoundRuntime, pollId: string): void {
+    const directives = runtime.pollVoteDirectiveByParticipantId
+    if (!directives || directives.size === 0) return
+    const summonedIds = new Set<string>()
+    for (const [participantId, entry] of directives) {
+      if (entry.pollId === pollId) {
+        summonedIds.add(participantId)
+        directives.delete(participantId)
+      }
+    }
+    if (summonedIds.size === 0) return
+    if (directives.size === 0) runtime.pollVoteDirectiveByParticipantId = undefined
+    const summons = runtime.pollSummonsParticipantIds
+    if (summons) {
+      for (const participantId of summonedIds) summons.delete(participantId)
+      if (summons.size === 0) runtime.pollSummonsParticipantIds = undefined
+    }
+    const remaining = runtime.remainingParticipants
+    if (remaining && remaining.length > 0) {
+      for (let index = remaining.length - 1; index >= 0; index -= 1) {
+        if (summonedIds.has(remaining[index].id)) remaining.splice(index, 1)
+      }
+    }
   }
 
   private nextBossmanControlId(prefix: string): string {
     return `${prefix}-${this.deps.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
+  /**
+   * Vote-only prompt stanza stamped onto each routed poll-response turn. The
+   * dispatch loop consumes it to scope that turn to casting the ballot via
+   * ensemble_poll_response — the seat does no other work, and the turn never
+   * consumes its turn/hop/extra-turn budgets.
+   */
+  private buildPollVoteDirective(pollId: string, question: string, options: string[]): string {
+    return (
+      'POLL RESPONSE TURN (this turn does not count against your turn budget): ' +
+      `Poll ${pollId} is open: "${question}" Options: ${options.join(' / ')}. ` +
+      `Respond ONLY by calling ensemble_poll_response with pollId "${pollId}" and your chosen ` +
+      'option (optionally with a short rationale). Do no other work in this turn.'
+    )
   }
 
   private missingBossmanField(
@@ -16875,9 +17017,21 @@ export class EnsembleOrchestrator {
         ? { ...dispatchChat, messages: latestPromptChat.messages }
         : dispatchChat
       const skillHookContext = await this.resolveParticipantSkillHookContext(promptChat)
-      const currentPromptForParticipant =
+      // Poll-response turn (1.0.4-AN extension): consume this seat's pending
+      // vote-only directive, if any, and lead the prompt with it so the routed
+      // turn is scoped to casting the poll vote. Recorded by
+      // routeBossmanTargets({ pollResponseTurn }); one-shot per seat.
+      const pollVoteEntry = runtime.pollVoteDirectiveByParticipantId?.get(participant.id)
+      if (pollVoteEntry) {
+        runtime.pollVoteDirectiveByParticipantId?.delete(participant.id)
+        runtime.pollSummonsParticipantIds?.delete(participant.id)
+      }
+      const basePromptForParticipant =
         options.promptOverride ||
         (resumeWakeup ? formatWakeupResumePrompt(runtime.prompt, resumeWakeup) : runtime.prompt)
+      const currentPromptForParticipant = pollVoteEntry
+        ? `${pollVoteEntry.directive}\n\n${basePromptForParticipant}`
+        : basePromptForParticipant
       const promptProjection = buildEnsembleParticipantPromptProjection({
         chat: promptChat,
         config: ensembleConfigForRound,
