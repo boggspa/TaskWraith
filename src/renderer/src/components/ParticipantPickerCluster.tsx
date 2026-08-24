@@ -217,7 +217,7 @@ export function ParticipantPickerCluster({
           selectedModelOption
         )
   const reasoningOptions = [...baseReasoningOptions]
-  if (selectedModelOption?.ultraTaskSupported !== false) {
+  if (selectedModelOption?.ultraTaskSupported === true) {
     if (reasoningOptions.length === 0) {
       reasoningOptions.push({ value: 'off', label: 'Off' })
     }

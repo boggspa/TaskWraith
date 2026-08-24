@@ -399,7 +399,7 @@ export function getEnsembleAddReasoningOptions(
   // Inject UltraTask option for models that support it. Seed empty ladders
   // with an Off bottom stop so UltraTask is opt-in at the top of a movable
   // two-stop ladder rather than the ladder's only (locked/defaulted) stop.
-  if (modelOption?.ultraTaskSupported !== false) {
+  if (modelOption?.ultraTaskSupported === true) {
     if (baseOptions.length === 0) {
       baseOptions.push({
         value: 'off',

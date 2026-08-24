@@ -741,13 +741,19 @@ describe('EnsembleParticipantsAboveRow', () => {
         {
           provider: 'mistral' as const,
           label: 'Mistral',
-          modelOptions: [{ id: 'devstral-small', label: 'Devstral Small' }]
+          modelOptions: [
+            { id: 'devstral-small', label: 'Devstral Small', ultraTaskSupported: true }
+          ]
         },
         {
           provider: 'pi' as const,
           label: 'Pi',
           modelOptions: [
-            { id: 'mistral/devstral-small', label: 'Devstral Small (Pi)' }
+            {
+              id: 'mistral/devstral-small',
+              label: 'Devstral Small (Pi)',
+              ultraTaskSupported: true
+            }
           ]
         }
       ]
@@ -810,6 +816,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         thinkingEnabled: undefined,
         serviceTier: ''
       })
+      expect(
+        getEnsembleAddReasoningOptions('codex', 'gpt-next-live', providerGroups).map(
+          (option) => option.value
+        )
+      ).toEqual(['low', 'high'])
     })
 
     it('uses AntiGravity model variants as an effort ladder and preserves the selected wire id', () => {
@@ -818,9 +829,21 @@ describe('EnsembleParticipantsAboveRow', () => {
           provider: 'antigravity' as const,
           label: 'AntiGravity',
           modelOptions: groupAntigravityModelRows([
-            { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' },
-            { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
-            { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' }
+            {
+              id: 'gemini-3.6-flash-high',
+              label: 'gemini-3.6-flash-high',
+              ultraTaskSupported: true
+            },
+            {
+              id: 'gemini-3.6-flash-medium',
+              label: 'gemini-3.6-flash-medium',
+              ultraTaskSupported: true
+            },
+            {
+              id: 'gemini-3.6-flash-low',
+              label: 'gemini-3.6-flash-low',
+              ultraTaskSupported: true
+            }
           ])
         }
       ]
