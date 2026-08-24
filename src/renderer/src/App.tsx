@@ -509,6 +509,7 @@ import { ChangelogSheet } from './components/ChangelogSheet'
 import { ComposerScheduleButton } from './components/ComposerScheduleButton'
 import { AppBootMask } from './components/AppBootMask'
 import { MainAppLayout } from './app/views/MainAppLayout'
+import { TerminalWorkbench } from './components/TerminalWorkbench'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
 import {
   AppleTerminalIcon,
@@ -1587,7 +1588,7 @@ function App(): React.JSX.Element {
   // for surface-scoped host state — today the contextual dock memory. The ref
   // exists for write-time reads inside effects that must not re-run on tab
   // changes (the dock persist effect).
-  const [sidebarActiveTab, setSidebarActiveTab] = useState<'chat' | 'threads' | 'projects'>('chat')
+  const [sidebarActiveTab, setSidebarActiveTab] = useState<'chat' | 'threads' | 'projects' | 'terminal'>('chat')
   const sidebarActiveTabRef = useRef(sidebarActiveTab)
   sidebarActiveTabRef.current = sidebarActiveTab
   const [activeWorkProjectId, setActiveWorkProjectId] = useState<string | null>(null)
@@ -31859,6 +31860,9 @@ function App(): React.JSX.Element {
         </aside>
       )}
       <MainAppLayout {...mainAppLayoutProps} />
+      {sidebarActiveTab === 'terminal' && !showSettings && !isChatPopoutWindow && (
+        <TerminalWorkbench workspaceSidebarWidth={workspaceSidebarWidth} currentWorkspacePath={currentWorkspacePath} />
+      )}
 
       {/*
         Settings now renders as a full-app takeover — workspace
