@@ -1,4 +1,4 @@
-# TaskWraith diagnostic Host launcher — Node sidecar only.
+# TaskWraith production Host launcher — Node sidecar only.
 # Uses Resources\tui-runtime\win32-<arch>\node.exe and never Electron or
 # ELECTRON_RUN_AS_NODE (RunAsNode is fused off on the App binary).
 
@@ -10,7 +10,7 @@ $cliJs = Join-Path $resourcesDir 'host\host-runtime\cli.js'
 $runtimeRoot = Join-Path $resourcesDir 'tui-runtime'
 
 if (-not (Test-Path -LiteralPath $cliJs -PathType Leaf)) {
-  [Console]::Error.WriteLine("taskwraith-host: packaged diagnostic Host payload missing at:")
+  [Console]::Error.WriteLine("taskwraith-host: packaged production Host payload missing at:")
   [Console]::Error.WriteLine("  $cliJs")
   exit 1
 }
@@ -36,5 +36,5 @@ if (-not $nodeBin) {
   exit 1
 }
 
-& $nodeBin $cliJs serve --mode diagnostic @args
+& $nodeBin $cliJs serve --mode production @args
 exit $LASTEXITCODE

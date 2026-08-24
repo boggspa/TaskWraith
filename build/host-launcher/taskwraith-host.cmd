@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-rem TaskWraith diagnostic Host launcher — Node sidecar only.
+rem TaskWraith production Host launcher — Node sidecar only.
 rem Uses resources\tui-runtime\win32-<arch>\node.exe and never Electron or
 rem ELECTRON_RUN_AS_NODE (RunAsNode is fused off on the App binary).
 
@@ -11,7 +11,7 @@ set "CLI_JS=%RESOURCES_DIR%\host\host-runtime\cli.js"
 set "RUNTIME_ROOT=%RESOURCES_DIR%\tui-runtime"
 
 if not exist "%CLI_JS%" (
-  echo taskwraith-host: packaged diagnostic Host payload missing at: 1>&2
+  echo taskwraith-host: packaged production Host payload missing at: 1>&2
   echo   %CLI_JS% 1>&2
   exit /b 1
 )
@@ -31,6 +31,6 @@ if not defined NODE_BIN (
   exit /b 1
 )
 
-"%NODE_BIN%" "%CLI_JS%" serve --mode diagnostic %*
+"%NODE_BIN%" "%CLI_JS%" serve --mode production %*
 set "EXIT_CODE=%ERRORLEVEL%"
 endlocal & exit /b %EXIT_CODE%

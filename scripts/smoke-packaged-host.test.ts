@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 const repoRoot = process.cwd()
 
-describe('packaged diagnostic Host smoke', () => {
+describe('packaged production Host smoke', () => {
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
     const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
     const posix = fs.readFileSync(
@@ -23,12 +23,12 @@ describe('packaged diagnostic Host smoke', () => {
     )
 
     expect(smoke).toContain('function validateHostPayload')
-    expect(smoke).toContain('function runDiagnosticRoundTrip')
+    expect(smoke).toContain('function runProductionRoundTrip')
     expect(smoke).toContain('TASKWRAITH_HOST_REQUIRE_PACKAGE')
     expect(smoke).toContain('host-bin')
     for (const launcher of [posix, cmd, powershell]) {
       expect(launcher).toContain('tui-runtime')
-      expect(launcher).toMatch(/serve\s+--mode\s+diagnostic/)
+      expect(launcher).toMatch(/serve\s+--mode\s+production/)
       expect(launcher).not.toMatch(/ELECTRON_RUN_AS_NODE=1/)
     }
     expect(posix).not.toContain('*/node')
@@ -50,7 +50,7 @@ describe('packaged diagnostic Host smoke', () => {
     expect(result.error).toBeUndefined()
     expect(result.status).toBe(0)
     expect(`${result.stdout || ''}${result.stderr || ''}`).toContain(
-      'packaged diagnostic Host source launcher smoke ok'
+      'packaged production Host source launcher smoke ok'
     )
   }, 30_000)
 })

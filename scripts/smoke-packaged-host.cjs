@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Packaging smoke for the opt-in diagnostic Node Host sidecar.
+ * Packaging smoke for the production Node Host sidecar.
  *
  * This validates only `taskwraith-host` resources. It never starts Electron,
- * never alters TUI/Desktop authority, and never accepts production/read-only
- * modes. The launcher executes the bundled `tui-runtime` Node binary.
+ * never alters Electron authority. The launcher executes the bundled
+ * `tui-runtime` Node binary in fixed production mode.
  */
 
 const fs = require('node:fs')
@@ -35,23 +35,23 @@ async function main() {
   validateSourceLayout()
   if (sourceLauncher) {
     await validateSourceLauncher()
-    console.log('packaged diagnostic Host source launcher smoke ok')
+    console.log('packaged production Host source launcher smoke ok')
     return
   }
   if (layoutOnly) {
-    console.log('packaged diagnostic Host layout smoke ok (layout-only)')
+    console.log('packaged production Host layout smoke ok (layout-only)')
     return
   }
 
   const packageRoot = findPackagedApp(searchRoots)
   if (!packageRoot) {
     if (requirePackage) fail(`No packaged Electron app was found under ${searchRoots.join(', ')}.`)
-    console.log('packaged diagnostic Host checks skipped: no package found (layout checks passed)')
+    console.log('packaged production Host checks skipped: no package found (layout checks passed)')
     return
   }
   await validatePackagedHost(packageRoot)
   console.log(
-    `packaged diagnostic Host smoke ok: ${path.relative(repoRoot, packageRoot) || packageRoot}`
+    `packaged production Host smoke ok: ${path.relative(repoRoot, packageRoot) || packageRoot}`
   )
 }
 
@@ -59,10 +59,10 @@ function validateSourceLayout() {
   const launcherDir = path.join(repoRoot, 'build', 'host-launcher')
   assertDir(launcherDir, 'build/host-launcher')
   for (const name of ['taskwraith-host', 'taskwraith-host.cmd', 'taskwraith-host.ps1']) {
-    assertFile(path.join(launcherDir, name), `diagnostic Host launcher ${name}`)
+    assertFile(path.join(launcherDir, name), `production Host launcher ${name}`)
   }
   if (process.platform !== 'win32') {
-    assertExecutable(path.join(launcherDir, 'taskwraith-host'), 'diagnostic Host POSIX launcher')
+    assertExecutable(path.join(launcherDir, 'taskwraith-host'), 'production Host POSIX launcher')
   }
   for (const name of ['taskwraith-host', 'taskwraith-host.cmd', 'taskwraith-host.ps1']) {
     const body = fs.readFileSync(path.join(launcherDir, name), 'utf8')
@@ -71,15 +71,15 @@ function validateSourceLayout() {
         body
       )
     ) {
-      fail(`diagnostic Host launcher ${name} must not set ELECTRON_RUN_AS_NODE=1`)
+      fail(`production Host launcher ${name} must not set ELECTRON_RUN_AS_NODE=1`)
     }
     if (!/tui-runtime/.test(body) || !/host[\\/]host-runtime[\\/]cli\.js/.test(body)) {
       fail(
-        `diagnostic Host launcher ${name} must resolve bundled Node and host/host-runtime/cli.js`
+        `production Host launcher ${name} must resolve bundled Node and host/host-runtime/cli.js`
       )
     }
-    if (!/serve\s+--mode\s+diagnostic/.test(body)) {
-      fail(`diagnostic Host launcher ${name} must fix serve --mode diagnostic`)
+    if (!/serve\s+--mode\s+production/.test(body)) {
+      fail(`production Host launcher ${name} must fix serve --mode production`)
     }
   }
 
@@ -101,16 +101,22 @@ function validateSourceLayout() {
   if (pkg.bin?.['taskwraith-host'] !== './out/host/host-runtime/cli.js') {
     fail('package.json#bin.taskwraith-host must point at the built Host CLI')
   }
-  for (const script of ['host:build', 'typecheck:host', 'host:serve', 'smoke:host-package']) {
+  for (const script of [
+    'host:build',
+    'typecheck:host',
+    'host:serve',
+    'host:serve:diagnostic',
+    'smoke:host-package'
+  ]) {
     if (!pkg.scripts?.[script]) fail(`package.json must define ${script}`)
   }
-  if (!pkg.scripts['host:serve'].includes('serve --mode diagnostic')) {
-    fail('package.json#scripts.host:serve must fix diagnostic mode')
+  if (!pkg.scripts['host:serve'].includes('serve --mode production')) {
+    fail('package.json#scripts.host:serve must fix production mode')
   }
 
   const compiledRoot = path.join(repoRoot, 'out', 'host')
   if (fs.existsSync(compiledRoot)) {
-    validateHostPayload(compiledRoot, 'compiled diagnostic Host payload')
+    validateHostPayload(compiledRoot, 'compiled production Host payload')
   } else {
     console.log('note: out/host missing — run npm run host:build before packaging')
   }
@@ -147,19 +153,45 @@ async function validatePackagedHost(packageRoot) {
 
 async function validateHostResources(resources, target) {
   const hostRoot = path.join(resources, 'host')
-  validateHostPayload(hostRoot, 'packaged diagnostic Host payload')
+  validateHostPayload(hostRoot, 'packaged production Host payload')
   const launcher = resolveHostLauncher(resources, target)
-  if (target.platform === 'win32') assertFile(launcher, 'packaged diagnostic Host cmd launcher')
-  else assertExecutable(launcher, 'packaged diagnostic Host launcher')
+  if (target.platform === 'win32') assertFile(launcher, 'packaged production Host cmd launcher')
+  else assertExecutable(launcher, 'packaged production Host launcher')
   const nodeBin = resolveBundledNode(resources, target)
-  assertExecutable(nodeBin, 'bundled diagnostic Host Node runtime')
-  await runDiagnosticRoundTrip(launcher, target)
+  assertExecutable(nodeBin, 'bundled production Host Node runtime')
+  await runProductionRoundTrip(launcher, target)
 }
 
 function validateHostPayload(hostRoot, label) {
   assertDir(hostRoot, label)
-  if (fs.existsSync(path.join(hostRoot, 'main'))) {
-    fail(`${label} must not contain an Electron main subtree`)
+  const allowedMuse = new Set([
+    'MuseCliArgs.js',
+    'MuseCronAssert.js',
+    'MuseExecJson.js',
+    'MuseIsolatedHome.js',
+    'MuseProbe.js',
+    'MuseRun.js',
+    'MuseSessionLog.js',
+    'MuseSkillPin.js',
+    'MuseToolProjection.js',
+    'MuseTypes.js',
+    'MuseUsage.js'
+  ])
+  const mainRoot = path.join(hostRoot, 'main')
+  if (!fs.existsSync(mainRoot)) {
+    fail(`${label} must contain the exact production main/muse closure`)
+  } else {
+    const emitted = filesUnder(mainRoot, () => true).map((candidate) =>
+      path.relative(mainRoot, candidate)
+    )
+    const expected = new Set([...allowedMuse].map((name) => path.join('muse', name)))
+    const allowed = new Set([...expected, ...[...expected].map((candidate) => `${candidate}.map`)])
+    if (
+      emitted.some((candidate) => !allowed.has(candidate)) ||
+      [...expected].some((candidate) => !emitted.includes(candidate))
+    ) {
+      fail(`${label} must contain only the exact production main/muse closure`)
+    }
   }
   for (const segments of [
     ['host-runtime', 'cli.js'],
@@ -168,7 +200,17 @@ function validateHostPayload(hostRoot, label) {
     ['host-runtime', 'HostDiagnosticIdentity.js'],
     ['host-runtime', 'HostDiagnosticServer.js'],
     ['host-runtime', 'HostLocalServer.js'],
-    ['host-runtime', 'HostProfileAuthorityLease.js']
+    ['host-runtime', 'HostProfileAuthorityLease.js'],
+    ['host-runtime', 'HostServerIdentity.js'],
+    ['host-runtime', 'HostProductionCli.js'],
+    ['host-node', 'HostNodeProductionServer.js'],
+    ['host-node', 'HostNodeProductionFactory.js'],
+    ['host-node', 'HostNodeDomainPorts.js'],
+    ['host-node', 'HostNodeMuseResources.js'],
+    ['host-node', 'HostNodeMuseCatalog.js'],
+    ['host-node', 'HostNodeMuseAuthHandoff.js'],
+    ['host-node', 'HostNodeMuseProvider.js'],
+    ['host-node', 'HostNodeProfileRunPort.js']
   ]) {
     assertFile(path.join(hostRoot, ...segments), `${label} ${segments.join('/')}`)
   }
@@ -203,24 +245,35 @@ function resolveBundledNode(resources, target) {
   return selected
 }
 
-async function runDiagnosticRoundTrip(launcher, target) {
+async function runProductionRoundTrip(launcher, target) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-packaged-host-smoke-'))
   const discoveryPath = path.join(profile, 'taskwraith-host-v2.json')
   const tokenPath = path.join(profile, 'taskwraith-host-v2.token')
   const leasePath = path.join(profile, 'taskwraith-host-authority-v1.json')
-  const identityPath = path.join(profile, 'taskwraith-diagnostic-install-v1.json')
+  const identityPath = path.join(profile, 'host-runtime', 'host-install-identity.json')
+  const workspace = path.join(profile, 'workspace')
+  const museBinary = path.join(profile, 'muse')
   let child = null
   try {
-    child = spawnHostLauncher(launcher, ['--profile', profile], target)
+    fs.mkdirSync(workspace)
+    const launcherArgs = ['--profile', profile]
+    const childEnv = {}
+    if (target.platform !== 'win32') {
+      fs.writeFileSync(museBinary, '#!/bin/sh\n')
+      fs.chmodSync(museBinary, 0o700)
+      launcherArgs.push('--muse-binary', museBinary)
+      childEnv.META_API_KEY = 'taskwraith-host-smoke-key'
+    }
+    child = spawnHostLauncher(launcher, launcherArgs, target, childEnv)
     await waitFor(
       () => fs.existsSync(discoveryPath) && fs.existsSync(tokenPath) && fs.existsSync(leasePath),
-      'diagnostic Host did not publish owner-controlled discovery/token/lease'
+      'production Host did not publish owner-controlled discovery/token/lease'
     )
     const discovery = JSON.parse(fs.readFileSync(discoveryPath, 'utf8'))
-    assertOwnerOnly(discoveryPath, 'diagnostic Host discovery')
-    assertOwnerOnly(tokenPath, 'diagnostic Host token')
-    assertOwnerOnly(leasePath, 'diagnostic Host authority lease')
-    assertOwnerOnly(identityPath, 'diagnostic Host identity')
+    assertOwnerOnly(discoveryPath, 'production Host discovery')
+    assertOwnerOnly(tokenPath, 'production Host token')
+    assertOwnerOnly(leasePath, 'production Host authority lease')
+    assertOwnerOnly(identityPath, 'production Host identity')
 
     const response = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
       type: 'request',
@@ -231,59 +284,131 @@ async function runDiagnosticRoundTrip(launcher, target) {
     })
     if (
       !Array.isArray(response.welcome?.capabilities) ||
-      response.welcome.capabilities.join(',') !== 'bootstrap,snapshot,health'
+      response.welcome.hostVersion !== 'node-host-v1' ||
+      !response.welcome.capabilities.includes('setup') ||
+      !response.welcome.capabilities.includes('provider-catalog') ||
+      !response.welcome.capabilities.includes('history')
     ) {
-      fail('diagnostic Host must advertise only bootstrap,snapshot,health')
+      fail('production Host must advertise Node Host production capabilities')
     }
     if (response.frame?.ok !== true || response.frame.result?.kind !== 'snapshot.get') {
-      fail('diagnostic Host did not return an authenticated snapshot')
-    }
-    if (response.frame.result.frame.snapshot.health?.hostStatus !== 'degraded') {
-      fail('diagnostic Host snapshot must report degraded health')
+      fail('production Host did not return an authenticated snapshot')
     }
 
-    const command = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
-      type: 'request',
-      transportVersion: 1,
-      id: 'command',
-      kind: 'command.submit',
-      params: {
+    if (target.platform !== 'win32') {
+      const actor = {
+        actorId: 'packaged-host-smoke',
+        clientId: 'packaged-host-smoke',
+        clientClass: 'test'
+      }
+      const command = (id, name, target_, arguments_) => ({
         type: 'host.command',
         protocolVersion: 2,
-        commandId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        idempotencyKey: 'test:test:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-        actor: {
-          actorId: 'packaged-host-smoke',
-          clientId: 'packaged-host-smoke',
-          clientClass: 'test'
-        },
-        name: 'ping',
-        target: {},
-        arguments: {},
+        commandId: id,
+        idempotencyKey: `smoke-${id}`,
+        actor,
+        name,
+        target: target_,
+        arguments: arguments_,
         issuedAt: '2026-08-24T00:00:00.000Z'
+      })
+      const token = fs.readFileSync(tokenPath, 'utf8').trim()
+      const workspaceReceipt = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'workspace',
+        kind: 'command.submit',
+        params: command('workspace-command', 'workspace.register', {}, { path: workspace })
+      })
+      const workspaceId = workspaceReceipt.frame?.result?.receipt?.resultRef?.workspaceId
+      if (!workspaceId) fail('production Host workspace.register did not return a workspace ref')
+      const threadReceipt = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'thread',
+        kind: 'command.submit',
+        params: command(
+          'thread-command',
+          'thread.create',
+          {},
+          { scope: 'workspace', workspaceId, title: 'Smoke' }
+        )
+      })
+      const threadId = threadReceipt.frame?.result?.receipt?.resultRef?.threadId
+      if (!threadId) fail('production Host thread.create did not return a thread ref')
+      const offers = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'offers',
+        kind: 'provider.offers',
+        params: { providerId: 'muse' }
+      })
+      const revision = offers.frame?.result?.offers?.offerRevision
+      if (typeof revision !== 'string' || revision.length === 0) {
+        fail('production Host provider.offers did not return a bounded revision')
       }
-    })
-    if (command.frame?.ok !== false || command.frame.error?.code !== 'host_unavailable') {
-      fail('diagnostic Host command path must fail closed as host_unavailable')
+      const configured = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'config',
+        kind: 'command.submit',
+        params: command(
+          'config-command',
+          'thread.configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            postureId: 'default',
+            offerRevision: revision
+          }
+        )
+      })
+      if (
+        configured.frame?.ok !== true ||
+        configured.frame?.result?.receipt?.status !== 'succeeded'
+      ) {
+        fail('production Host thread.configure did not succeed')
+      }
+      const history = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'history',
+        kind: 'thread.history',
+        params: { threadId, limit: 10 }
+      })
+      if (history.frame?.ok !== true) fail('production Host history request failed')
+      const replay = await hostRequest(discovery, token, {
+        type: 'request',
+        transportVersion: 1,
+        id: 'replay',
+        kind: 'receipt.lookup',
+        params: { commandId: 'config-command' }
+      })
+      if (
+        replay.frame?.result?.receipt?.commandId !== 'config-command' ||
+        replay.frame?.result?.receipt?.status !== 'succeeded' ||
+        replay.frame?.result?.receipt?.resultRef?.threadId !== threadId
+      )
+        fail('production Host receipt replay failed')
     }
 
     const duplicate = spawnHostLauncher(launcher, ['--profile', profile], target)
     const duplicateExit = await waitForExit(duplicate)
     if (duplicateExit.code === 0)
-      fail('duplicate diagnostic Host profile launch unexpectedly succeeded')
+      fail('duplicate production Host profile launch unexpectedly succeeded')
 
     child.kill('SIGTERM')
     const stopped = await waitForExit(child)
     child = null
     if (stopped.code !== 0)
-      fail(`diagnostic Host launcher exited ${String(stopped.code)} during cleanup`)
+      fail(`production Host launcher exited ${String(stopped.code)} during cleanup`)
     if (fs.existsSync(discoveryPath) || fs.existsSync(tokenPath) || fs.existsSync(leasePath)) {
-      fail('diagnostic Host did not clean discovery/token/lease on shutdown')
+      fail('production Host did not clean discovery/token/lease on shutdown')
     }
-    if (!fs.existsSync(identityPath))
-      fail('diagnostic Host must retain its persisted opaque identity')
+    if (!fs.existsSync(identityPath)) fail('production Host must retain its persisted identity')
     if (discovery.socketPath && fs.existsSync(discovery.socketPath)) {
-      fail('diagnostic Host did not clean its socket on shutdown')
+      fail('production Host did not clean its socket on shutdown')
     }
   } finally {
     if (child && child.exitCode === null) child.kill('SIGTERM')
@@ -291,20 +416,20 @@ async function runDiagnosticRoundTrip(launcher, target) {
   }
 }
 
-function spawnHostLauncher(launcher, args, target) {
+function spawnHostLauncher(launcher, args, target, extraEnv = {}) {
   if (target.platform === 'win32') {
     const invocation = createWindowsCmdInvocation(launcher, args)
     return spawn(invocation.command, invocation.arguments, {
       ...invocation.spawnOptions,
       cwd: path.dirname(launcher),
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
+      env: { ...process.env, ...extraEnv, ELECTRON_RUN_AS_NODE: '' },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
   }
   return spawn(launcher, args, {
     cwd: path.dirname(launcher),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
+    env: { ...process.env, ...extraEnv, ELECTRON_RUN_AS_NODE: '' },
     stdio: ['ignore', 'pipe', 'pipe']
   })
 }
@@ -316,7 +441,7 @@ async function hostRequest(discovery, token, request) {
     let welcome = null
     const timer = setTimeout(() => {
       socket.destroy()
-      reject(new Error('timed out waiting for diagnostic Host response'))
+      reject(new Error('timed out waiting for production Host response'))
     }, timeoutMs)
     const finish = (value) => {
       clearTimeout(timer)
@@ -339,7 +464,17 @@ async function hostRequest(discovery, token, request) {
               clientClass: 'test',
               clientVersion: '1.0.0'
             },
-            capabilities: ['bootstrap', 'snapshot', 'health', 'commands']
+            capabilities: [
+              'bootstrap',
+              'snapshot',
+              'health',
+              'commands',
+              'receipts',
+              'provider-catalog',
+              'provider-auth',
+              'history',
+              'setup'
+            ]
           }
         })}\n`
       )
@@ -356,7 +491,7 @@ async function hostRequest(discovery, token, request) {
         try {
           frame = JSON.parse(line)
         } catch {
-          reject(new Error('diagnostic Host sent malformed JSON'))
+          reject(new Error('production Host sent malformed JSON'))
           return
         }
         if (frame.type === 'welcome') {
@@ -389,7 +524,7 @@ async function waitForExit(child) {
   if (child.exitCode !== null) return { code: child.exitCode }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error('diagnostic Host launcher did not exit')),
+      () => reject(new Error('production Host launcher did not exit')),
       timeoutMs
     )
     child.once('exit', (code) => {

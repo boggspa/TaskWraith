@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TaskWraith diagnostic Host launcher.
+# TaskWraith production Host launcher.
 #
 # The packaged Host is a Node sidecar. It executes the already-bundled official
 # Node runtime under Resources/tui-runtime and never invokes Electron or sets
@@ -24,7 +24,7 @@ CLI_JS="$RESOURCES_DIR/host/host-runtime/cli.js"
 RUNTIME_ROOT="$RESOURCES_DIR/tui-runtime"
 
 if [ ! -f "$CLI_JS" ]; then
-  echo "taskwraith-host: packaged diagnostic Host payload missing at:" >&2
+  echo "taskwraith-host: packaged production Host payload missing at:" >&2
   echo "  $CLI_JS" >&2
   exit 1
 fi
@@ -73,6 +73,6 @@ if ! NODE_BIN="$(find_node_runtime)"; then
   exit 1
 fi
 
-# Diagnostic mode is fixed by the packaged launcher. A caller may supply only
-# --profile <absolute path> and optional --parent-pid <pid>.
-exec "$NODE_BIN" "$CLI_JS" serve --mode diagnostic "$@"
+# Production mode is fixed by the packaged launcher. A caller supplies only
+# --profile <absolute path> and optional --muse-binary <absolute path>.
+exec "$NODE_BIN" "$CLI_JS" serve --mode production "$@"
