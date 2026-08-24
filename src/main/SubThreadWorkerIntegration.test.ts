@@ -126,24 +126,28 @@ describe('sub-thread long-lived worker main-process integration', () => {
   })
 
   it('routes ultra_task through the signed request resolver and dedicated approval gate', () => {
-    const wave = sourceBetween(
-      "} else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {",
-      'if (!handledDispatchOwner) {'
+    const ultraTask = sourceBetween(
+      "} else if (toolName === 'ultra_task') {",
+      "} else if (toolName === 'delegate_wave') {"
     )
     const single = sourceBetween(
       "} else if (toolName === 'delegate_to_subthread') {",
-      "} else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {"
+      "} else if (toolName === 'ultra_task') {"
     )
 
-    expectContains(wave, "markDispatchHandled('subthread-control')")
-    expectContains(wave, 'resolveUltraTaskToolRequest(args, {')
-    expectContains(wave, 'provider: parentProvider')
-    expectContains(wave, 'model: context.model')
-    expectContains(wave, 'allowedProviders: waveAllowedProviders')
-    expectContains(wave, 'waveArgs = ultraTaskRequest.value.waveArgs')
-    expectContains(wave, 'ultraTaskDelegationAutoAllow')
-    expectContains(wave, 'toolName,')
-    expect(wave).not.toContain('buildUltraTaskWave')
+    expectContains(ultraTask, "markDispatchHandled('subthread-control')")
+    expectContains(ultraTask, 'resolveUltraTaskToolRequest(args, {')
+    expectContains(ultraTask, 'provider: parentProvider')
+    expectContains(ultraTask, 'model: context.model')
+    expectContains(ultraTask, 'allowedProviders: selectableProviderIds(')
+    expectContains(ultraTask, 'buildUltraTaskModelCapabilityCatalog({')
+    expectContains(ultraTask, 'resolveUltraTaskCapability({')
+    expectContains(ultraTask, "kind: 'execution_graph'")
+    expectContains(ultraTask, 'requestAgenticServiceApproval(')
+    expectContains(ultraTask, 'started = startGraph({')
+    expectContains(ultraTask, 'Every join is automatic')
+    expect(ultraTask).not.toContain('buildUltraTaskWave')
+    expect(ultraTask).not.toContain('executeDelegateWaveTool({')
     expectContains(single, 'toolName,')
     expectContains(indexSource, "toolName === 'ultra_task' ||")
   })

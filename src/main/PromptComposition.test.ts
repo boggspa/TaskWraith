@@ -1006,7 +1006,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.contextualPrompt).toContain('approval, path checks, and audit logging')
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
       expect(result.contextualPrompt).toContain(
-        'do not use provider-native multi-agent orchestration paths'
+        'Do not use provider-native multi-agent orchestration paths'
       )
       expect(result.contextualPrompt).toContain('native question/elicitation UI is not connected')
       expect(result.contextualPrompt).toContain('reaches desktop and iOS')
