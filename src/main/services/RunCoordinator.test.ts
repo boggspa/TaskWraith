@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RunCoordinator, type RunCoordinatorDeps, type RunDispatchEvent } from './RunCoordinator'
+import type {
+  HostRunDispatchEvent,
+  HostRunEventTarget
+} from '../../host-runtime/HostRunEventTarget'
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
@@ -15,12 +19,12 @@ import { acquireProviderRunLifecycleOwnership } from '../run/ProviderRunLifecycl
  * records invocations.
  */
 
-function makeFakeSender(): Electron.WebContents {
-  return { id: 1, isDestroyed: () => false } as unknown as Electron.WebContents
+function makeFakeSender(): HostRunEventTarget {
+  return { id: 1 }
 }
 
-function makeFakeEvent(): Electron.IpcMainInvokeEvent {
-  return { sender: makeFakeSender() } as unknown as Electron.IpcMainInvokeEvent
+function makeFakeEvent(): HostRunDispatchEvent {
+  return { sender: makeFakeSender() }
 }
 
 /** Minimum-shape event the agent-driven `delegate_to_subthread` MCP

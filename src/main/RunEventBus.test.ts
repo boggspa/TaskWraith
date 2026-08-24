@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+
+import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import { makeElectronIpcSink, RunEventBus } from './RunEventBus'
 
 /*
@@ -19,11 +21,11 @@ import { makeElectronIpcSink, RunEventBus } from './RunEventBus'
 
 function makeSender(
   over: Partial<{ isDestroyed: () => boolean; send: (...args: any[]) => void }> = {}
-) {
+): HostRunEventTarget & { isDestroyed: () => boolean; send: (...args: any[]) => void } {
   return {
     isDestroyed: over.isDestroyed ?? (() => false),
     send: over.send ?? vi.fn()
-  } as unknown as Electron.WebContents
+  }
 }
 
 describe('makeElectronIpcSink', () => {
@@ -49,6 +51,19 @@ describe('makeElectronIpcSink', () => {
         publishedAt: new Date().toISOString(),
         payload: {},
         sender: undefined
+      })
+    ).not.toThrow()
+  })
+
+  it('leaves a Host-only target to non-Electron sinks', () => {
+    const sink = makeElectronIpcSink()
+    expect(() =>
+      sink.handle({
+        channel: 'agent-output',
+        provider: 'codex',
+        publishedAt: new Date().toISOString(),
+        payload: {},
+        sender: { id: 'host-local-client' }
       })
     ).not.toThrow()
   })

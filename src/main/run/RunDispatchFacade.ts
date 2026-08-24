@@ -1,4 +1,4 @@
-import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import type { HostRunDispatchEvent } from '../../host-runtime/HostRunEventTarget'
 import type {
   AgentRunPayload,
   RunDispatchFinalAuthorization,
@@ -85,7 +85,7 @@ export interface RunDispatchFacadeDeps {
 export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
   return async (
     payload: AgentRunPayload,
-    event: IpcMainInvokeEvent | { sender: WebContents },
+    event: HostRunDispatchEvent,
     observer?: RunDispatchObserver,
     finalAuthorization?: RunDispatchFinalAuthorization
   ): Promise<{ dispatched: boolean; appRunId: string }> => {

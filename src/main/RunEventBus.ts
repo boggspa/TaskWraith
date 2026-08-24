@@ -1,4 +1,4 @@
-import type Electron from 'electron'
+import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import type { ProviderId } from './store/types'
 
 /**
@@ -41,9 +41,9 @@ export interface RunEvent {
   provider: ProviderId
   /** Already route-enriched + serializable payload. */
   payload: unknown
-  /** Originating Electron WebContents, when the event came from an IPC handler.
-   * The built-in Electron IPC sink forwards to this. Remote sinks ignore it. */
-  sender?: Electron.WebContents
+  /** Originating Host run target. The optional desktop IPC sink forwards to
+   * targets with an Electron-compatible delivery shape; remote sinks ignore it. */
+  sender?: HostRunEventTarget
   /** Skip the legacy renderer IPC sink while preserving delivery to the other
    * in-process sinks. Canonical Ensemble output uses this after main has
    * already materialized the transcript; forwarding the same raw provider
@@ -208,42 +208,9 @@ export class RunEventBus {
 
 export const runEventBus = new RunEventBus()
 
-/**
- * Built-in sink that preserves the legacy "send to the originating
- * WebContents" behavior. Forwards `event.payload` to `event.sender` over the
- * `event.channel`. Skips events with no sender (remote-only events) and
- * skips senders that have been destroyed (e.g. window closed mid-run).
- */
-export function makeElectronIpcSink(): RunEventSink {
-  return {
-    id: 'electron-ipc',
-    handle(event) {
-      if (event.suppressElectronIpc) return
-      const sender = event.sender
-      if (!sender) return
-      try {
-        if (typeof sender.isDestroyed === 'function' && sender.isDestroyed()) return
-      } catch {
-        return
-      }
-      // 1.0.4-AQ1 — wrap the actual send in try-catch too. The
-      // isDestroyed() check above can pass and then the frame can
-      // be disposed during the same microtask (e.g. user closing
-      // the window while a CLI socket is mid-flush). Electron's
-      // `webContents.send` then logs `Render frame was disposed
-      // before WebFrameMain could be accessed` to stderr — which
-      // is harmless but spammy in production logs and indicates
-      // a real TOCTOU race we can mask.
-      try {
-        sender.send(event.channel, event.payload)
-      } catch {
-        // Renderer is gone — the bus is best-effort, so swallow
-        // the failure. Persistent state lives in the durable run
-        // event log (`RunRepository`) so no data is lost.
-      }
-    }
-  }
-}
+// Compatibility export while index.ts still registers this optional desktop
+// presentation adapter from the historical RunEventBus module path.
+export { makeElectronIpcSink } from './ElectronRunEventSink'
 
 /**
  * Debug subscriber. Logs a compact one-line summary per event so we can

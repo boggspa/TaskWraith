@@ -87,7 +87,7 @@ function makeDeps(order: string[]): RunDispatchFacadeDeps {
   }
 }
 
-const senderEvent = { sender: {} } as never
+const senderEvent = { sender: { id: 'host-run-facade-test' } }
 function payload(overrides: Partial<AgentRunPayload> = {}): AgentRunPayload {
   return {
     provider: 'codex',

@@ -1,6 +1,10 @@
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
 import type {
+  HostRunDispatchEvent,
+  HostRunEventTarget
+} from '../../host-runtime/HostRunEventTarget'
+import type {
   AgentRunPayload,
   AgentRunRoute,
   RunDispatchFinalAuthorization,
@@ -50,11 +54,11 @@ export interface RunCoordinatorDeps {
    * scheduled-task attachment, trust check. Returns false to abort
    * the dispatch (the function has already surfaced the error to the
    * sender). Currently `ensureProviderRunPreflight`. */
-  ensureProviderRunPreflight: (
-    sender: Electron.WebContents,
+  ensureProviderRunPreflight(
+    sender: HostRunEventTarget,
     payload: AgentRunPayload,
     reservation?: object
-  ) => Promise<boolean>
+  ): Promise<boolean>
   /** Materialize an explicit, signed Project reference context after all
    * preflight checks and immediately before provider dispatch. */
   captureReferenceContext?: (payload: AgentRunPayload) => void | Promise<void>
@@ -104,22 +108,22 @@ export interface RunCoordinatorDeps {
   getAdapter: (provider: ProviderId) => ProviderAdapter
   /** Report a per-run error to the originating sender. Currently
    * `sendAgentCompatError`. */
-  sendError: (
-    sender: Electron.WebContents,
+  sendError(
+    sender: HostRunEventTarget,
     provider: ProviderId,
     message: string,
     route: AgentRunRoute,
     reservation?: object
-  ) => void
+  ): void
   /** Report a per-run exit (process termination, dispatch abort,
    * etc.) to the sender. Currently `sendAgentCompatExit`. */
-  sendExit: (
-    sender: Electron.WebContents,
+  sendExit(
+    sender: HostRunEventTarget,
     provider: ProviderId,
     exitCode: number,
     route: AgentRunRoute,
     reservation?: object
-  ) => void
+  ): void
 }
 
 export interface DispatchResult {
@@ -153,22 +157,19 @@ export interface DispatchResult {
 
 /**
  * Minimum event-shape `dispatch` actually needs. The real
- * `Electron.IpcMainInvokeEvent` is a superset (it carries `frameId`,
- * `processId`, `senderFrame`, etc.) but the dispatch path + every
+ * Desktop IPC events are supersets (they carry frame/process metadata), but
+ * the dispatch path + every
  * production `ProviderAdapter.run` only ever touch `event.sender`.
  *
  * Widening the public type to this structural interface makes the
  * delegation path (MCP tool `delegate_to_subthread`, F3) honest: it
  * synthesizes a `{ sender }` object and used to need a `as
  * IpcMainInvokeEvent` cast that silently skipped the type check. With
- * this structural contract the cast is gone, the renderer call site
- * is unaffected (an `IpcMainInvokeEvent` trivially satisfies
- * `{ sender }`), and adapters that DO need more fields would fail at
+ * this structural contract the cast is gone, desktop call sites remain
+ * unaffected, and adapters that DO need more fields would fail at
  * the type level the moment they reached for them.
  */
-export interface RunDispatchEvent {
-  sender: Electron.WebContents
-}
+export type RunDispatchEvent = HostRunDispatchEvent
 
 export class RunCoordinator {
   constructor(private deps: RunCoordinatorDeps) {}
