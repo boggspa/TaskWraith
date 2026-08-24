@@ -122,7 +122,6 @@ export function ComposerEnsembleRosterPopover({
                       className="composer-ensemble-roster-seat-order"
                       aria-label={`Seat ${index + 1}`}
                     >
-                      <span aria-hidden>⠿</span>
                       {index + 1}
                     </span>
                     <span
@@ -136,7 +135,7 @@ export function ComposerEnsembleRosterPopover({
                         className="seat-role-icon"
                       />
                       <span>{role}</span>
-                      {!participant.enabled ? <small>Paused</small> : null}
+                      {!participant.enabled ? <small> · Paused</small> : null}
                     </span>
                     <SeatStateChips seat={seat} className="composer-ensemble-roster-seat-state" />
                     <span className="composer-ensemble-roster-seat-goal">
@@ -152,7 +151,7 @@ export function ComposerEnsembleRosterPopover({
 
       <p className="composer-ensemble-roster-footnote">
         Select a seat to keep the composer controls in context. The compact chips above still
-        support drag-to-reorder while this expanded roster workspace is being reviewed.
+        support drag-to-reorder.
       </p>
     </section>
   )

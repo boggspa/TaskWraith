@@ -85,5 +85,6 @@ describe('ComposerEnsembleRosterPopover', () => {
     expect(html).toContain('Check the implementation against the requested experience.')
     expect(html).toContain('seat-state-chips')
     expect(html).toContain('composer-ensemble-roster-seat is-selected')
+    expect(html).not.toContain('⠿')
   })
 })

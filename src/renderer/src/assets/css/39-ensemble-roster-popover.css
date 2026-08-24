@@ -1,0 +1,111 @@
+/*
+ * Ensemble roster popover — this shard intentionally changes only layout.
+ *
+ * The seat identity itself is `SeatStateChips`, the shared transcript / close-
+ * out element. Do not re-skin it with menu pills or introduce replacement
+ * provider marks here: the workspace is a larger table around the existing
+ * vocabulary, not a new vocabulary of its own.
+ */
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-roster-count {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 84%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.composer-ensemble-roster-list-inner {
+  min-width: 744px;
+}
+
+.composer-ensemble-roster-columns,
+.composer-ensemble-roster-seat {
+  grid-template-columns: 46px minmax(145px, 0.78fr) minmax(300px, 1.35fr) minmax(230px, 0.95fr);
+  column-gap: 12px;
+}
+
+.composer-ensemble-roster-columns {
+  padding-inline: 3px;
+  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
+  font-weight: 650;
+}
+
+.composer-ensemble-roster-list ol {
+  gap: 0;
+  padding: 0;
+}
+
+.composer-ensemble-roster-seat {
+  min-height: 0;
+  padding: 8px 3px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  border-radius: 0;
+  background: transparent;
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.composer-ensemble-roster-list li:last-child .composer-ensemble-roster-seat {
+  border-bottom: 0;
+}
+
+.composer-ensemble-roster-seat:hover,
+.composer-ensemble-roster-seat:focus-visible {
+  border-color: color-mix(in srgb, var(--panel-border) 44%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-selected {
+  border-color: color-mix(in srgb, var(--panel-border) 44%, transparent);
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 7%, transparent);
+  box-shadow: inset 2px 0 0
+    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 62%, transparent);
+}
+
+.composer-ensemble-roster-seat-order {
+  padding-left: 2px;
+  color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.composer-ensemble-roster-seat-role {
+  gap: 3px;
+  font-weight: 600;
+}
+
+.composer-ensemble-roster-seat-role small {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.composer-ensemble-roster-seat-state.seat-state-chips {
+  gap: 9px;
+  overflow: visible;
+}
+
+.composer-ensemble-roster-seat-goal {
+  color: color-mix(in srgb, var(--text-secondary) 84%, transparent);
+}
+
+.composer-ensemble-roster-footnote {
+  color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+}
+
+@media (max-width: 720px) {
+  .composer-ensemble-roster-list-inner {
+    min-width: 680px;
+  }
+}
