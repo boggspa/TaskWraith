@@ -10,7 +10,11 @@ const HOST_NODE_ROOT = resolve(REPO_ROOT, 'src/host-node')
 const HOST_RUNTIME_ROOT = resolve(REPO_ROOT, 'src/host-runtime')
 const SHARED_ROOT = resolve(REPO_ROOT, 'src/shared')
 const MAIN_MUSE_ROOT = resolve(REPO_ROOT, 'src/main/muse')
-const ROOT_MODULE = resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts')
+const ROOT_MODULES = [
+  resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProfileRunPort.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeDomainPorts.ts')
+]
 
 /** Deliberate production closure required by the Node Muse adapter. */
 const PURE_MUSE_CLOSURE = new Set([
@@ -78,9 +82,9 @@ function collectImports(source: ts.SourceFile): Array<{ specifier: string; typeO
   return imports
 }
 
-describe('HostNodeMuseProvider import boundary', () => {
+describe('HostNode import boundary', () => {
   it('uses only Node, host-runtime/shared, and the pinned pure Muse closure', async () => {
-    const pending = [ROOT_MODULE]
+    const pending = [...ROOT_MODULES]
     const visited = new Set<string>()
     while (pending.length) {
       const file = pending.pop()

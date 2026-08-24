@@ -169,15 +169,100 @@ describe('HostProfileDomainStore', () => {
       store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
     ).toThrow('begin')
     store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'running' })
-    store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
+    const completed = store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'completed'
+    })
+    const endedAt = completed.runs?.[0].endedAt
     expect(
-      store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
+      store.updateRun({
+        threadId: thread.appChatId,
+        runId: 'run-1',
+        status: 'completed',
+        endedAt
+      })
     ).toMatchObject({ runs: [{ runId: 'run-1', status: 'completed' }] })
     expect(() =>
       store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'running' })
     ).toThrow('Terminal run cannot change state')
     expect(() =>
       store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'failed' })
+    ).toThrow('Terminal run cannot change state')
+  })
+
+  it('persists run-correlated transcript and full lifecycle metadata across restart', () => {
+    const { profile, authority, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const startedAt = '2026-08-24T05:00:00.000Z'
+    const endedAt = '2026-08-24T05:01:00.000Z'
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      role: 'user',
+      content: 'Run-correlated user message',
+      timestamp: startedAt
+    })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'running',
+      provider: 'muse',
+      requestedModel: 'muse-spark-1.2',
+      phase: 'starting',
+      startedAt
+    })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'running',
+      phase: 'streaming'
+    })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'failed',
+      endedAt,
+      providerSessionId: '11111111-1111-4111-8111-111111111111',
+      usage: { inputTokens: 11, outputTokens: 13, estimatedCostUsd: 0.001 },
+      warningSummaries: ['Muse reported stderr during the run.'],
+      errorCode: 'provider_failed'
+    })
+    const restarted = new HostProfileDomainStore({
+      profilePath: profile,
+      authority,
+      now: () => 200
+    })
+    expect(restarted.getThread(thread.appChatId)).toMatchObject({
+      messages: [{ runId: 'run-1', content: 'Run-correlated user message' }],
+      runs: [
+        {
+          runId: 'run-1',
+          status: 'failed',
+          phase: 'streaming',
+          startedAt,
+          endedAt,
+          providerSessionId: '11111111-1111-4111-8111-111111111111',
+          usage: { inputTokens: 11, outputTokens: 13, estimatedCostUsd: 0.001 },
+          warningSummaries: ['Muse reported stderr during the run.'],
+          errorCode: 'provider_failed'
+        }
+      ]
+    })
+    expect(
+      restarted.updateRun({
+        threadId: thread.appChatId,
+        runId: 'run-1',
+        status: 'failed',
+        endedAt,
+        providerSessionId: '11111111-1111-4111-8111-111111111111',
+        usage: { inputTokens: 11, outputTokens: 13, estimatedCostUsd: 0.001 },
+        warningSummaries: ['Muse reported stderr during the run.'],
+        errorCode: 'provider_failed'
+      })
+    ).toMatchObject({ runs: [{ runId: 'run-1', status: 'failed' }] })
+    expect(() =>
+      restarted.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'cancelled' })
     ).toThrow('Terminal run cannot change state')
   })
 

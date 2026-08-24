@@ -79,6 +79,8 @@ export interface HostProfileThread {
 
 export interface HostProfileMessage {
   readonly id: string
+  /** Exact provider-run identity when the message was produced by a Host run. */
+  readonly runId?: string
   readonly role: 'user' | 'assistant' | 'system' | 'tool' | 'error'
   readonly content: string
   readonly timestamp: string
@@ -88,9 +90,22 @@ export interface HostProfileRun {
   readonly runId: string
   readonly provider?: string
   readonly status?: string
+  readonly phase?: 'starting' | 'streaming' | 'cancelling'
   readonly startedAt?: string
   readonly endedAt?: string
   readonly requestedModel?: string
+  readonly providerSessionId?: string
+  readonly usage?: HostProfileRunUsage
+  readonly warningSummaries?: readonly string[]
+  readonly errorCode?: 'provider_setup_unavailable' | 'provider_launch_failed' | 'provider_failed'
+}
+
+export interface HostProfileRunUsage {
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+  readonly estimatedCostUsd?: number
 }
 
 export interface HostProfileDomainStoreOptions {
@@ -121,6 +136,45 @@ function safeText(value: unknown, max = MAX_TEXT): value is string {
     if (code <= 0x1f || code === 0x7f) return false
   }
   return true
+}
+
+function safeCanonicalIso(value: unknown): value is string {
+  if (!safeText(value, 80)) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+}
+
+function safeRunUsage(value: unknown): value is HostProfileRunUsage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  if (keys.length === 0) return false
+  const allowed = new Set([
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+    'estimatedCostUsd'
+  ])
+  for (const [key, amount] of Object.entries(value)) {
+    if (!allowed.has(key) || typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+      return false
+    }
+  }
+  return true
+}
+
+function sameRunUsage(
+  left: HostProfileRunUsage | undefined,
+  right: HostProfileRunUsage | undefined
+): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+}
+
+function sameWarningSummaries(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined
+): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 }
 
 function assertPrivateRegular(path: string): void {
@@ -263,6 +317,7 @@ function decodeMessage(value: unknown): HostProfileMessage {
   ) {
     throw new Error('Invalid profile message')
   }
+  if (item.runId !== undefined && !safeId(item.runId)) throw new Error('Invalid profile message')
   // Legacy AppStore tool/error carriers may contain provider payload bodies or
   // empty content. Retain them inertly; history projection excludes them.
   if (
@@ -304,6 +359,24 @@ function decodeThread(value: unknown): HostProfileThread {
       if (
         !safeId(record.runId) ||
         (record.status !== undefined && !safeText(record.status, 80)) ||
+        (record.phase !== undefined &&
+          record.phase !== 'starting' &&
+          record.phase !== 'streaming' &&
+          record.phase !== 'cancelling') ||
+        // Legacy AppStore rows may carry opaque/noncanonical historical times;
+        // new Host-run writes validate canonical timestamps in updateRun.
+        (record.startedAt !== undefined && !safeText(record.startedAt, 80)) ||
+        (record.endedAt !== undefined && !safeText(record.endedAt, 80)) ||
+        (record.providerSessionId !== undefined && !safeId(record.providerSessionId)) ||
+        (record.usage !== undefined && !safeRunUsage(record.usage)) ||
+        (record.warningSummaries !== undefined &&
+          (!Array.isArray(record.warningSummaries) ||
+            record.warningSummaries.length > 16 ||
+            record.warningSummaries.some((item) => !safeText(item, 300)))) ||
+        (record.errorCode !== undefined &&
+          record.errorCode !== 'provider_setup_unavailable' &&
+          record.errorCode !== 'provider_launch_failed' &&
+          record.errorCode !== 'provider_failed') ||
         runIds.has(record.runId)
       ) {
         throw new Error('Invalid profile run')
@@ -521,12 +594,15 @@ export class HostProfileDomainStore {
 
   appendTranscript(input: {
     threadId: string
+    runId?: string
     role: HostProfileMessage['role']
     content: string
     timestamp?: string
   }): HostProfileThread {
     this.assertAuthority()
     const current = this.requireThread(input.threadId)
+    const runId = input.runId
+    if (runId !== undefined) this.requireId(runId)
     if (input.role !== 'user' && input.role !== 'assistant' && input.role !== 'system') {
       throw new Error('Invalid transcript role')
     }
@@ -535,6 +611,7 @@ export class HostProfileDomainStore {
     if (!this.isCanonicalIso(timestamp)) throw new Error('Invalid transcript timestamp')
     const message: HostProfileMessage = {
       id: this.newId(),
+      ...(runId !== undefined ? { runId } : {}),
       role: input.role,
       content: input.content,
       timestamp
@@ -556,6 +633,13 @@ export class HostProfileDomainStore {
     status: 'running' | 'completed' | 'failed' | 'cancelled'
     provider?: string
     requestedModel?: string
+    phase?: 'starting' | 'streaming' | 'cancelling'
+    startedAt?: string
+    endedAt?: string
+    providerSessionId?: string
+    usage?: HostProfileRunUsage
+    warningSummaries?: readonly string[]
+    errorCode?: 'provider_setup_unavailable' | 'provider_launch_failed' | 'provider_failed'
   }): HostProfileThread {
     this.assertAuthority()
     const current = this.requireThread(input.threadId)
@@ -563,15 +647,71 @@ export class HostProfileDomainStore {
     if (!['running', 'completed', 'failed', 'cancelled'].includes(input.status)) {
       throw new Error('Invalid run status')
     }
+    if (
+      input.phase !== undefined &&
+      input.phase !== 'starting' &&
+      input.phase !== 'streaming' &&
+      input.phase !== 'cancelling'
+    ) {
+      throw new Error('Invalid run phase')
+    }
+    if (input.startedAt !== undefined && !safeCanonicalIso(input.startedAt)) {
+      throw new Error('Invalid run start timestamp')
+    }
+    if (input.endedAt !== undefined && !safeCanonicalIso(input.endedAt)) {
+      throw new Error('Invalid run end timestamp')
+    }
+    if (input.providerSessionId !== undefined && !safeId(input.providerSessionId)) {
+      throw new Error('Invalid provider session')
+    }
+    if (input.usage !== undefined && !safeRunUsage(input.usage)) {
+      throw new Error('Invalid run usage')
+    }
+    if (
+      input.warningSummaries !== undefined &&
+      (!Array.isArray(input.warningSummaries) ||
+        input.warningSummaries.length > 16 ||
+        input.warningSummaries.some((item) => !safeText(item, 300)))
+    ) {
+      throw new Error('Invalid run warnings')
+    }
+    if (
+      input.errorCode !== undefined &&
+      input.errorCode !== 'provider_setup_unavailable' &&
+      input.errorCode !== 'provider_launch_failed' &&
+      input.errorCode !== 'provider_failed'
+    ) {
+      throw new Error('Invalid run error code')
+    }
     const runs = [...(current.runs ?? [])]
     const index = runs.findIndex((run) => run.runId === input.runId)
     const prior = index >= 0 ? runs[index] : undefined
     if (!prior && input.status !== 'running') throw new Error('Run must begin as running')
     const priorTerminalStatus = prior ? this.terminalRunStatus(prior) : null
-    if (priorTerminalStatus) {
-      if (priorTerminalStatus === input.status) return current
+    if (prior && priorTerminalStatus) {
+      if (
+        priorTerminalStatus === input.status &&
+        prior.endedAt === input.endedAt &&
+        prior.providerSessionId === input.providerSessionId &&
+        sameRunUsage(prior.usage, input.usage) &&
+        sameWarningSummaries(prior.warningSummaries, input.warningSummaries) &&
+        prior.errorCode === input.errorCode
+      ) {
+        return current
+      }
       throw new Error('Terminal run cannot change state')
     }
+    if (prior?.startedAt && input.startedAt !== undefined && prior.startedAt !== input.startedAt) {
+      throw new Error('Run start timestamp cannot change')
+    }
+    if (
+      prior?.phase &&
+      input.phase &&
+      this.runPhaseRank(input.phase) < this.runPhaseRank(prior.phase)
+    ) {
+      throw new Error('Run phase cannot move backwards')
+    }
+    if (!prior && input.status !== 'running') throw new Error('Run must begin as running')
     const run: HostProfileRun = {
       ...(prior ?? {}),
       runId: input.runId,
@@ -580,8 +720,25 @@ export class HostProfileDomainStore {
       ...(input.requestedModel !== undefined
         ? { requestedModel: this.requireText(input.requestedModel, 512) }
         : {}),
-      ...(prior?.startedAt ? {} : { startedAt: new Date(this.now()).toISOString() }),
-      ...(input.status === 'running' ? {} : { endedAt: new Date(this.now()).toISOString() })
+      ...(input.phase !== undefined
+        ? { phase: input.phase }
+        : prior?.phase
+          ? { phase: prior.phase }
+          : {}),
+      ...(prior?.startedAt
+        ? { startedAt: prior.startedAt }
+        : { startedAt: input.startedAt ?? new Date(this.now()).toISOString() }),
+      ...(input.status === 'running'
+        ? {}
+        : { endedAt: input.endedAt ?? new Date(this.now()).toISOString() }),
+      ...(input.providerSessionId !== undefined
+        ? { providerSessionId: input.providerSessionId }
+        : {}),
+      ...(input.usage !== undefined ? { usage: { ...input.usage } } : {}),
+      ...(input.warningSummaries !== undefined
+        ? { warningSummaries: [...input.warningSummaries] }
+        : {}),
+      ...(input.errorCode !== undefined ? { errorCode: input.errorCode } : {})
     }
     if (index >= 0) runs[index] = run
     else runs.push(run)
@@ -753,9 +910,18 @@ export class HostProfileDomainStore {
   }
 
   private isCanonicalIso(value: unknown): value is string {
-    if (!safeText(value, 80)) return false
-    const parsed = Date.parse(value)
-    return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+    return safeCanonicalIso(value)
+  }
+
+  private runPhaseRank(phase: NonNullable<HostProfileRun['phase']>): number {
+    switch (phase) {
+      case 'starting':
+        return 0
+      case 'streaming':
+        return 1
+      case 'cancelling':
+        return 2
+    }
   }
 
   private isRecognizedTemp(name: string): boolean {
