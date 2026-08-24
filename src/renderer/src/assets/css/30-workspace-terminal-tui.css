@@ -149,7 +149,7 @@
   right: 0;
   bottom: 0;
   z-index: 100;
-  background: var(--bg-main);
+  background: #05080d;
   display: flex;
   flex-direction: column;
 }
@@ -161,6 +161,7 @@
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
+  background: #05080d;
   gap: var(--space-md);
 }
 
