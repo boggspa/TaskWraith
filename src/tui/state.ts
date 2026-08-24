@@ -3,6 +3,8 @@ import {
   type HostCommandName,
   type HostSnapshot
 } from '../shared/hostProtocol'
+import type { HostHistoryCursor } from '../shared/hostHistoryProtocol'
+import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
@@ -11,6 +13,7 @@ import type {
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import type { ColdStartFlowState } from './coldStartFlow'
 
 export type TuiConnectionState =
   | 'connecting'
@@ -20,7 +23,7 @@ export type TuiConnectionState =
   | 'incompatible-protocol'
   | 'demo'
   | 'replay'
-export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune'
+export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 
 export interface TuiNotice {
@@ -50,6 +53,16 @@ export interface TuiPendingHostMutation {
   composerRestore?: string
 }
 
+/** Bounded transcript history fetched from the Host, separate from preview rows. */
+export interface TuiHistoryState {
+  readonly threadId: string
+  readonly generation: number
+  readonly cursor: number
+  readonly nextBefore?: HostHistoryCursor
+  readonly previewOnly: boolean
+  readonly loadingOlder?: boolean
+}
+
 export interface TaskWraithTuiState {
   connection: TuiConnectionState
   hostVersion?: string
@@ -77,6 +90,17 @@ export interface TaskWraithTuiState {
   pendingSelection?: TuiPendingSelection
   /** Active deferred Host mutation, if any. */
   pendingHostMutation?: TuiPendingHostMutation
+  /** Guided setup state shown before the Host has a configured conversation. */
+  coldStart?: ColdStartFlowState
+  /** Available setup providers; an explicit index is always user-controlled. */
+  coldStartProviderChoices?: readonly HostProviderStatusProjection[]
+  coldStartProviderIndex?: number
+  coldStartAuthFlowIndex?: number
+  coldStartModelIndex?: number
+  coldStartReasoningIndex?: number
+  coldStartPostureIndex?: number
+  /** Full Host history, when the negotiated capability is available. */
+  history?: TuiHistoryState
 }
 
 function row(

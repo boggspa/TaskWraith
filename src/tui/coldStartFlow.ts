@@ -73,7 +73,11 @@ export type ColdStartFlowState =
     })
   | (ColdStartBase & {
       readonly kind: 'legacy'
-      readonly reason: 'terminal_failure' | 'indeterminate' | 'invalid_result_ref'
+      readonly reason:
+        | 'terminal_failure'
+        | 'indeterminate'
+        | 'invalid_result_ref'
+        | 'setup_unavailable'
     })
 
 export function coldStartIdle(): ColdStartFlowState {

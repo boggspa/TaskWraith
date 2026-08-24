@@ -40,10 +40,32 @@ import type {
   TaskWraithControlTranscriptRow,
   TaskWraithControlWorkspace
 } from '../shared/taskWraithControlProtocol'
+import type { HostTranscriptHistoryEntry } from '../shared/hostHistoryProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 
 /** Explicit marker so UIs can say "preview only" rather than "full transcript". */
 export const HOST_TUI_PREVIEW_ROW_KIND = 'host-preview'
+
+/** Maps bounded Host history entries to existing renderer-independent transcript rows. */
+export function mapHostHistoryEntriesToTranscriptRows(
+  entries: readonly HostTranscriptHistoryEntry[]
+): TaskWraithControlTranscriptRow[] {
+  return entries.map((entry) => ({
+    id: `host-history:${entry.entryId}`,
+    role: entry.role,
+    kind: 'host-history',
+    speaker:
+      entry.label ||
+      (entry.role === 'user'
+        ? 'You'
+        : entry.role === 'assistant'
+          ? 'Assistant'
+          : 'TaskWraith Host'),
+    text: entry.text,
+    timestamp: new Date(entry.createdAt).toISOString(),
+    truncated: false
+  }))
+}
 
 export interface HostTuiThreadDetail {
   /** Control-shaped thread detail for the existing renderer. */

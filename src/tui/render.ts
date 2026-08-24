@@ -589,6 +589,133 @@ function renderContextOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+function renderSetupOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const cold = state.coldStart
+  const step = cold?.kind ?? 'idle'
+  const lines = [borderTitle('Host setup', width, ansi, glyphs)]
+  const hint =
+    step === 'idle'
+      ? 'Enter an absolute workspace path, then press Enter.'
+      : step === 'workspace'
+        ? 'Press Enter to choose an available provider.'
+        : step === 'auth'
+          ? cold?.kind === 'auth' && cold.operationId
+            ? 'Complete the provider flow; Enter refreshes status.'
+            : 'Press Enter to begin the available user-owned auth flow.'
+          : step === 'offers'
+            ? 'Press Enter to create a thread.'
+            : step === 'thread'
+              ? 'Press Enter to configure this thread.'
+              : step === 'configure'
+                ? 'Space acknowledges the selected posture; Enter applies it.'
+                : step === 'ready'
+                  ? 'Thread is ready.'
+                  : 'Host setup is unavailable; this session is read-only.'
+  lines.push(borderedLine(ansi.dim(hint), width, ansi, glyphs))
+  if (cold?.kind === 'idle') {
+    lines.push(
+      borderedLine(
+        ` path  ${sanitizeTerminalText(state.input) || ansi.dim('/absolute/path')}`,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  }
+  if (cold?.kind === 'workspace' && state.coldStartProviderChoices?.length) {
+    state.coldStartProviderChoices.forEach((provider, index) => {
+      const marker = index === (state.coldStartProviderIndex ?? 0) ? glyphs.promptCaret : ' '
+      lines.push(
+        borderedLine(
+          `${marker} ${provider.label} · ${provider.status.replace('_', ' ')}`,
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    })
+  }
+  if (cold?.kind === 'auth') {
+    lines.push(borderedLine(ansi.dim(` provider  ${cold.providerId}`), width, ansi, glyphs))
+    cold.flows.forEach((flow, index) => {
+      const marker = index === (state.coldStartAuthFlowIndex ?? 0) ? glyphs.promptCaret : ' '
+      lines.push(borderedLine(`${marker} ${flow.label}`, width, ansi, glyphs))
+    })
+  }
+  if (cold?.kind === 'offers' || cold?.kind === 'thread' || cold?.kind === 'configure') {
+    lines.push(borderedLine(ansi.dim(` provider  ${cold.providerId}`), width, ansi, glyphs))
+  }
+  if (cold?.kind === 'configure') {
+    const models = cold.offers.models.filter((candidate) => candidate.available)
+    const postures = cold.offers.postures.filter((candidate) => candidate.available)
+    const selectedModel = models[state.coldStartModelIndex ?? 0]
+    const reasoning = selectedModel?.reasoning.filter((candidate) => candidate.available) ?? []
+    lines.push(borderedLine(ansi.dim(' model  ↑/↓'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        models.map((model) => model.label),
+        state.coldStartModelIndex ?? 0,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderedLine(ansi.dim(' reasoning  Tab'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        reasoning.map((offer) => offer.label),
+        state.coldStartReasoningIndex ?? 0,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderedLine(ansi.dim(' posture  ←/→'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        postures.map(
+          (posture) =>
+            `${posture.label}${
+              posture.requiresExplicitConsent
+                ? cold.acknowledgedPostureIds.includes(posture.postureId)
+                  ? ' · acknowledged'
+                  : ' · consent required · Space'
+                : ''
+            }`
+        ),
+        state.coldStartPostureIndex ?? 0,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  }
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines
+}
+
+function renderSetupChoiceWindow(
+  labels: readonly string[],
+  selectedIndex: number,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  if (!labels.length) return [borderedLine(ansi.dim('  unavailable'), width, ansi, glyphs)]
+  const selected = Math.max(0, Math.min(selectedIndex, labels.length - 1))
+  const start = Math.max(0, Math.min(labels.length - 3, selected - 1))
+  return labels.slice(start, start + 3).map((label, offset) => {
+    const index = start + offset
+    const marker = index === selected ? glyphs.promptCaret : ' '
+    return borderedLine(`${marker} ${label}`, width, ansi, glyphs)
+  })
+}
+
 function threadRunStatus(thread: TaskWraithControlThread): TuiRunStatus {
   if (thread.status === 'working') return 'working'
   if (thread.status === 'needs-input') return 'needs-input'
@@ -1008,6 +1135,9 @@ function renderOverlay(
   if (state.overlay === 'context') {
     return renderContextOverlay(state, width, height, ansi, glyphs)
   }
+  if (state.overlay === 'setup') {
+    return renderSetupOverlay(state, width, ansi, glyphs).slice(0, Math.max(1, height))
+  }
   if (state.overlay === 'threads') {
     return renderThreadsOverlay(state, width, height, ansi, glyphs)
   }
@@ -1207,32 +1337,37 @@ function renderComposer(
   const density = resolveTuiDensity(width)
   const pendingApproval = selectedPendingApproval(state)
   const openQuestion = selectedOpenQuestion(state)
+  const setupRequired = Boolean(state.coldStart && state.coldStart.kind !== 'ready')
   // Glyph-set aware: ↵/· on Unicode, \/. on ASCII so chrome never mojibakes.
   const sep = ` ${glyphs.separator} `
-  const right = pendingApproval
-    ? ansi.dim(`y accept${sep}n decline`)
-    : openQuestion
-      ? density.composerHints === 'none'
-        ? ansi.dim(`${glyphs.newline} answer`)
-        : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
-      : density.composerHints === 'full'
-        ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
-        : density.composerHints === 'short'
-          ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
-          : ansi.dim(`${glyphs.newline} send`)
+  const right = setupRequired
+    ? ansi.dim('Host setup required')
+    : pendingApproval
+      ? ansi.dim(`y accept${sep}n decline`)
+      : openQuestion
+        ? density.composerHints === 'none'
+          ? ansi.dim(`${glyphs.newline} answer`)
+          : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
+        : density.composerHints === 'full'
+          ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
+          : density.composerHints === 'short'
+            ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
+            : ansi.dim(`${glyphs.newline} send`)
   const leftAvailable = Math.max(1, width - visibleWidth(right) - 1)
   const inputAvailable = Math.max(1, leftAvailable - visibleWidth(prompt) - 1)
-  const input = state.input
-    ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
-    : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
-        state.connection === 'offline'
-          ? 'Start TaskWraith to compose'
-          : pendingApproval
-            ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
-            : openQuestion
-              ? `Answer · ${terminalLabel(openQuestion.promptPreview)}`
-              : 'Ask TaskWraith…'
-      )}`
+  const input = setupRequired
+    ? `${ansi.color(glyphs.cursor, accent)} ${ansi.dim('Complete Host setup to compose')}`
+    : state.input
+      ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
+      : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
+          state.connection === 'offline'
+            ? 'Start TaskWraith to compose'
+            : pendingApproval
+              ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
+              : openQuestion
+                ? `Answer · ${terminalLabel(openQuestion.promptPreview)}`
+                : 'Ask TaskWraith…'
+        )}`
   return joinLeftRight(`${prompt} ${input}`, right, width)
 }
 

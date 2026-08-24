@@ -7,6 +7,7 @@ import {
 import {
   emptyHostSnapshotForTests,
   HOST_TUI_PREVIEW_ROW_KIND,
+  mapHostHistoryEntriesToTranscriptRows,
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
@@ -65,6 +66,30 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
 }
 
 describe('hostProjectionMap', () => {
+  it('maps bounded Host history entries onto existing transcript rows', () => {
+    expect(
+      mapHostHistoryEntriesToTranscriptRows([
+        {
+          entryId: 'history-1',
+          role: 'assistant',
+          createdAt: Date.UTC(2026, 7, 24, 4, 0, 0),
+          text: 'A bounded Host transcript entry.',
+          label: 'Host assistant'
+        }
+      ])
+    ).toEqual([
+      {
+        id: 'host-history:history-1',
+        role: 'assistant',
+        kind: 'host-history',
+        speaker: 'Host assistant',
+        text: 'A bounded Host transcript entry.',
+        timestamp: '2026-08-24T04:00:00.000Z',
+        truncated: false
+      }
+    ])
+  })
+
   it('maps workspaces and threads onto the control snapshot shape', () => {
     const mapped = mapHostSnapshotToControlSnapshot(snapshotWithThread())
     expect(mapped.generatedAt).toBe('2026-08-06T12:00:00.000Z')

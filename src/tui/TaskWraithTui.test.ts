@@ -19,13 +19,26 @@ import {
   type HostDeltaFamily,
   type HostDeltaKind,
   type HostDeltasSinceResult,
+  type HostResultRef,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
   type HostLocalTransportHostFrame
 } from '../shared/hostProtocolTransport'
+import type {
+  HostHistorySinceRequest,
+  HostHistorySinceResult,
+  HostThreadHistoryPage,
+  HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import { stripAnsi } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'
 
@@ -96,6 +109,14 @@ type MutationMode = 'allow' | 'defer'
 interface FakeHostHandlers {
   snapshot: () => HostSnapshot
   offers?: (threadId: string) => TaskWraithControlThreadOffers
+  capabilities?: readonly HostCapability[]
+  providerStatuses?: () => readonly HostProviderStatusProjection[]
+  providerOffers?: (providerId: string) => HostProviderOffersProjection
+  providerAuthFlows?: (providerId: string) => readonly HostProviderAuthFlowProjection[]
+  providerAuthStatus?: (providerId: string) => HostProviderAuthStatusProjection
+  threadHistory?: (request: HostThreadHistoryRequest) => HostThreadHistoryPage
+  historySince?: (request: HostHistorySinceRequest) => HostHistorySinceResult
+  resultRef?: (command: HostCommand) => HostResultRef | undefined
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
 }
@@ -116,6 +137,7 @@ class FakeHostV2 {
   private cursor = 9
   private eventSequence = 0
   snapshotRequests = 0
+  welcomeCount = 0
   helloCapabilities: HostCapability[] = []
   readonly commands: HostCommand[] = []
 
@@ -245,7 +267,7 @@ class FakeHostV2 {
             (capability): capability is HostCapability => typeof capability === 'string'
           )
         : []
-      const hostCapabilities: HostCapability[] = [
+      const hostCapabilities: readonly HostCapability[] = this.handlers.capabilities ?? [
         'bootstrap',
         'snapshot',
         'deltas',
@@ -279,6 +301,7 @@ class FakeHostV2 {
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
         welcome
       })
+      this.welcomeCount += 1
       return
     }
     if (message.type !== 'request') return
@@ -342,6 +365,75 @@ class FakeHostV2 {
       })
       return
     }
+    if (kind === 'provider.status' && this.handlers.providerStatuses) {
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'provider.status', statuses: this.handlers.providerStatuses() }
+      })
+      return
+    }
+    if (kind === 'provider.offers' && this.handlers.providerOffers) {
+      const providerId = String((message.params as { providerId?: unknown }).providerId ?? '')
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'provider.offers', offers: this.handlers.providerOffers(providerId) }
+      })
+      return
+    }
+    if (kind === 'provider.auth.flows' && this.handlers.providerAuthFlows) {
+      const providerId = String((message.params as { providerId?: unknown }).providerId ?? '')
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'provider.auth.flows', flows: this.handlers.providerAuthFlows(providerId) }
+      })
+      return
+    }
+    if (kind === 'provider.auth.status' && this.handlers.providerAuthStatus) {
+      const providerId = String((message.params as { providerId?: unknown }).providerId ?? '')
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'provider.auth.status', status: this.handlers.providerAuthStatus(providerId) }
+      })
+      return
+    }
+    if (kind === 'thread.history' && this.handlers.threadHistory) {
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'thread.history',
+          page: this.handlers.threadHistory(message.params as HostThreadHistoryRequest)
+        }
+      })
+      return
+    }
+    if (kind === 'history.since' && this.handlers.historySince) {
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'history.since',
+          result: this.handlers.historySince(message.params as HostHistorySinceRequest)
+        }
+      })
+      return
+    }
     if (kind === 'receipt.lookup') {
       const params = message.params as { commandId?: string; idempotencyKey?: string }
       const found = params.commandId
@@ -385,9 +477,11 @@ class FakeHostV2 {
     }
     const mode = this.handlers.mutationMode ?? 'allow'
     if (mode === 'allow' || command.name === 'ping') {
+      const resultRef = this.handlers.resultRef?.(command)
       const receipt = this.makeReceipt(command, {
         status: 'succeeded',
-        authority: { decision: 'allow' }
+        authority: { decision: 'allow' },
+        ...(resultRef ? { resultRef } : {})
       })
       this.receipts.set(receipt.commandId, receipt)
       this.cursor += 1
@@ -449,7 +543,7 @@ class FakeHostV2 {
   private makeReceipt(
     command: HostCommand,
     overrides: Pick<HostCommandReceipt, 'status' | 'authority'> &
-      Partial<Pick<HostCommandReceipt, 'errorCode' | 'errorMessage'>>
+      Partial<Pick<HostCommandReceipt, 'errorCode' | 'errorMessage' | 'resultRef'>>
   ): HostCommandReceipt {
     const now = new Date().toISOString()
     return {
@@ -467,7 +561,8 @@ class FakeHostV2 {
       createdAt: now,
       updatedAt: now,
       ...(overrides.errorCode ? { errorCode: overrides.errorCode } : {}),
-      ...(overrides.errorMessage ? { errorMessage: overrides.errorMessage } : {})
+      ...(overrides.errorMessage ? { errorMessage: overrides.errorMessage } : {}),
+      ...(overrides.resultRef ? { resultRef: overrides.resultRef } : {})
     }
   }
 
@@ -556,6 +651,53 @@ function makeHostSnapshot(overrides?: Partial<HostSnapshot>): HostSnapshot {
     ],
     usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
     ...overrides
+  }
+}
+
+function makeSetupOffers(providerId = 'provider-1'): HostProviderOffersProjection {
+  return {
+    providerId,
+    offerRevision: 'offer-revision-1',
+    models: [
+      {
+        modelId: 'model-1',
+        label: 'Model One',
+        available: true,
+        reasoning: [{ reasoningId: 'reasoning-1', label: 'Focused', available: true }]
+      }
+    ],
+    postures: [
+      {
+        postureId: 'posture-read',
+        label: 'Read',
+        available: true,
+        requiresExplicitConsent: false,
+        ceiling: 'read'
+      },
+      {
+        postureId: 'posture-write',
+        label: 'Workspace write',
+        available: true,
+        requiresExplicitConsent: true,
+        ceiling: 'workspace_write'
+      }
+    ]
+  }
+}
+
+function makeSetupThread(): HostSnapshot['threads'][number] {
+  return {
+    id: 'setup-thread-1',
+    workspaceId: 'setup-workspace-1',
+    title: 'Configured thread',
+    chatKind: 'single',
+    archived: false,
+    pinned: false,
+    updatedAt: 20,
+    messageCount: 0,
+    providerId: 'provider-1',
+    latestPreview: 'Ready for the first message',
+    previewTruncated: false
   }
 }
 
@@ -1100,6 +1242,259 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     feed(input, '\u001b[200~line one\nline two\u001b[201~')
     await waitFor(() => output.lastFrame.includes('line one'), 'paste inserted')
     expect(output.lastFrame).toContain('line two')
+  })
+
+  it('opens a projected thread locally when Host commands are unavailable', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-readonly-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: ['bootstrap', 'snapshot', 'deltas', 'model-offers', 'health', 'receipts']
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'read-only thread preview')
+
+    expect(host.commands).toHaveLength(0)
+    expect(output.lastFrame).toContain('Host preview only')
+  })
+
+  it('loads a bounded history page and requests older entries at the transcript top', async () => {
+    let historyRequests = 0
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-history-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts',
+        'history'
+      ],
+      threadHistory: (request) => {
+        historyRequests += 1
+        return request.before
+          ? {
+              threadId: request.threadId,
+              generation: 3,
+              cursor: 11,
+              entries: [
+                {
+                  entryId: 'history-older',
+                  role: 'user',
+                  createdAt: 1,
+                  text: 'Older bounded history entry'
+                }
+              ]
+            }
+          : {
+              threadId: request.threadId,
+              generation: 3,
+              cursor: 11,
+              entries: [
+                {
+                  entryId: 'history-current',
+                  role: 'assistant',
+                  createdAt: 2,
+                  text: 'Current bounded history entry'
+                }
+              ],
+              nextBefore: { generation: 3, cursor: 1 }
+            }
+      },
+      historySince: (request) => ({
+        kind: 'deltas',
+        threadId: request.threadId,
+        generation: request.since.generation,
+        fromCursor: request.since.cursor,
+        toCursor: request.since.cursor,
+        deltas: []
+      })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Current bounded history entry'), 'initial history page')
+    feed(input, '\u001b[5~')
+    await waitFor(() => historyRequests >= 2, 'older history page request')
+    await waitFor(() => output.lastFrame.includes('Older bounded history entry'), 'older history render')
+  })
+
+  it('drives Host setup through exact result refs before enabling the composer', async () => {
+    let configured = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-cold-start-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces: configured
+            ? [
+                {
+                  id: 'setup-workspace-1',
+                  name: 'Setup workspace',
+                  path: '/tmp/tui-cold-start',
+                  pinned: false,
+                  updatedAt: 10
+                }
+              ]
+            : [],
+          threads: configured ? [makeSetupThread()] : []
+        }),
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts',
+        'provider-catalog',
+        'setup'
+      ],
+      providerStatuses: () => [
+        { providerId: 'provider-1', status: 'ready', label: 'Provider One' }
+      ],
+      providerOffers: () => makeSetupOffers(),
+      resultRef: (command) => {
+        if (command.name === 'workspace.register') {
+          return { kind: 'workspace', workspaceId: 'setup-workspace-1' }
+        }
+        if (command.name === 'thread.create') {
+          return { kind: 'thread', threadId: 'setup-thread-1' }
+        }
+        if (command.name === 'thread.configure') {
+          configured = true
+          return { kind: 'thread', threadId: 'setup-thread-1' }
+        }
+        return undefined
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('absolute workspace path'), 'workspace setup prompt')
+    feed(input, '/tmp/tui-cold-start')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'workspace.register'),
+      'workspace registration command'
+    )
+
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Provider One'), 'provider selection')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.create'),
+      'thread creation command'
+    )
+
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Workspace write'), 'configuration choices')
+    feed(input, '\u001b[C')
+    feed(input, ' ')
+    await waitFor(() => output.lastFrame.includes('Workspace write · acknowledged'), 'posture acknowledgement')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Ask TaskWraith'), 'composer enabled')
+
+    expect(host.commands.map((command) => command.name)).toEqual([
+      'workspace.register',
+      'thread.create',
+      'thread.configure'
+    ])
+    const configure = host.commands.at(-1)!
+    expect(configure.target).toEqual({ threadId: 'setup-thread-1' })
+    expect(configure.arguments).toEqual({
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      postureId: 'posture-write',
+      offerRevision: 'offer-revision-1',
+      reasoningId: 'reasoning-1',
+      postureConsent: true
+    })
+  })
+
+  it('retains provider-auth state across refresh/reconnect without replaying begin', async () => {
+    let authenticated = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-auth-start-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot({ workspaces: [], threads: [] }),
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts',
+        'provider-catalog',
+        'provider-auth',
+        'setup'
+      ],
+      providerStatuses: () => [
+        { providerId: 'provider-1', status: 'auth_required', label: 'Provider One' }
+      ],
+      providerAuthFlows: () => [
+        { flowId: 'flow-1', kind: 'browser', label: 'Sign in in browser', available: true }
+      ],
+      providerAuthStatus: () => ({
+        providerId: 'provider-1',
+        state: authenticated ? 'authenticated' : 'unauthenticated'
+      }),
+      providerOffers: () => makeSetupOffers(),
+      resultRef: (command) =>
+        command.name === 'workspace.register'
+          ? { kind: 'workspace', workspaceId: 'setup-workspace-1' }
+          : command.name === 'provider.auth.begin'
+            ? { kind: 'provider-auth', providerId: 'provider-1', operationId: command.commandId }
+            : undefined
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { reconnectBaseDelayMs: 10 })
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('absolute workspace path'), 'workspace setup prompt')
+    feed(input, '/tmp/tui-auth-start')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'workspace.register'),
+      'workspace registration command'
+    )
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Provider One'), 'provider selection')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Sign in in browser'), 'auth-flow selection')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'provider.auth.begin').length === 1,
+      'provider auth begin command'
+    )
+    await waitFor(() => output.lastFrame.includes('Authentication is still pending'), 'pending auth status')
+
+    feed(input, '\r')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
+
+    host.dropAllClients()
+    await waitFor(() => host.welcomeCount >= 2, 'Host reconnect')
+    feed(input, '\r')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
+
+    authenticated = true
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'authenticated provider offers')
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
   })
 })
 

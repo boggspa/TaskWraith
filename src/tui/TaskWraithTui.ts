@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { emitKeypressEvents } from 'node:readline'
+import { isAbsolute } from 'node:path'
 import type { ReadStream, WriteStream } from 'node:tty'
 import {
   HostProjectionClient,
@@ -17,6 +18,7 @@ import {
   type HostQuestionProjection,
   type HostSnapshot
 } from '../shared/hostProtocol'
+import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
 import type {
@@ -30,12 +32,31 @@ import type {
 import { Ansi, sanitizeTerminalText, type AnsiColorMode } from './ansi'
 import {
   buildHostCommand,
+  buildProviderAuthBeginCommand,
+  buildThreadConfigureCommand,
+  buildThreadCreateCommand,
+  buildWorkspaceRegisterCommand,
   describeHostReceipt,
   isTerminalHostReceiptStatus,
   pollHostReceiptUntilTerminal
 } from './hostCommandFlow'
+import {
+  acknowledgeColdStartPosture,
+  applyColdStartReceipt,
+  beginColdStartProviderAuth,
+  coldStartAuthFlows,
+  coldStartConfigure,
+  coldStartIdle,
+  coldStartOffers,
+  coldStartPending,
+  coldStartSelectProvider,
+  coldStartWorkspaceRegistered,
+  selectColdStartConfiguration,
+  type ColdStartPendingCommand
+} from './coldStartFlow'
 import { renderTaskWraithTui } from './render'
 import {
+  mapHostHistoryEntriesToTranscriptRows,
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
@@ -215,6 +236,7 @@ export class TaskWraithTui {
             'commands',
             'receipts'
           ],
+          optionalCapabilities: ['provider-catalog', 'provider-auth', 'history', 'setup'],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }
@@ -325,6 +347,9 @@ export class TaskWraithTui {
         this.surfaceProjectionSyncError(error)
       })
     })
+    this.client.on('history', (frame) => {
+      void this.applyHistoryEvent(frame).catch((error) => this.surfaceProjectionSyncError(error))
+    })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
       // The host was reachable before, so this is a drop-and-retry rather
@@ -396,6 +421,7 @@ export class TaskWraithTui {
       this.state.hostVersion = welcome.hostVersion
       this.reconnectAttempts = 0
       await this.refreshHostSnapshot()
+      await this.resumeColdStartPending()
       const mapped = this.state.snapshot
       if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
       this.state.connection = 'connected'
@@ -409,6 +435,20 @@ export class TaskWraithTui {
       } else {
         this.state.selectedThreadId = undefined
         this.state.thread = undefined
+        if (this.client.supports('setup') && this.client.supports('provider-catalog')) {
+          if (!this.state.coldStart) {
+            const workspace = mapped.workspaces[0]
+            this.state.coldStart = workspace
+              ? coldStartWorkspaceRegistered(workspace.id)
+              : coldStartIdle()
+          }
+          this.state.overlay = 'setup'
+          this.setNotice('Host setup required before composing.', 'warning')
+        } else if (!this.state.coldStart) {
+          this.state.coldStart = { kind: 'legacy', reason: 'setup_unavailable' }
+          this.state.overlay = 'setup'
+          this.setNotice('Host setup capability is unavailable · read-only legacy mode.', 'warning')
+        }
       }
       this.render()
     } catch (error) {
@@ -489,6 +529,7 @@ export class TaskWraithTui {
       this.projectionRefreshTimer = null
       const refresh = this.client?.connected
         ? this.refreshHostSnapshot()
+            .then(() => this.refreshSelectedHistory())
             .then(() => this.render())
             .catch((error) => this.surfaceProjectionSyncError(error))
         : Promise.resolve()
@@ -523,6 +564,12 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    if (!this.client.supports('commands')) {
+      this.applyLocalThread(threadId, { previewNotice: true })
+      await this.loadThreadHistory(threadId)
+      this.render()
+      return
+    }
     this.selectingThread = true
     try {
       const command = this.buildMutation('thread.select', { threadId }, {})
@@ -531,6 +578,7 @@ export class TaskWraithTui {
         onSucceeded: async () => {
           await this.refreshHostSnapshot()
           this.applyLocalThread(threadId, { previewNotice: true })
+          await this.loadThreadHistory(threadId)
         }
       })
     } finally {
@@ -548,6 +596,16 @@ export class TaskWraithTui {
     this.state.thread = detail.thread
     this.state.overlay = 'none'
     this.state.scrollOffset = 0
+    if (!this.client?.supports('history')) {
+      this.state.history = {
+        threadId,
+        generation: 0,
+        cursor: 0,
+        previewOnly: true
+      }
+    } else if (this.state.history?.threadId !== threadId) {
+      this.state.history = undefined
+    }
     if (options.previewNotice) {
       this.setNotice(
         detail.previewOnly
@@ -557,6 +615,104 @@ export class TaskWraithTui {
         1_800
       )
     }
+  }
+
+  /**
+   * Reads one bounded history page. Host history is an optional capability;
+   * when it is absent the ordinary projection preview remains explicitly
+   * labelled as such instead of being mistaken for a transcript.
+   */
+  private async loadThreadHistory(
+    threadId: string,
+    before?: { generation: number; cursor: number }
+  ): Promise<void> {
+    if (!this.client?.connected || !this.client.supports('history')) {
+      if (this.state.selectedThreadId === threadId) {
+        this.state.history = { threadId, generation: 0, cursor: 0, previewOnly: true }
+      }
+      return
+    }
+    const page = await this.client.getThreadHistory({ threadId, limit: 50, ...(before ? { before } : {}) })
+    if (page.threadId !== threadId) throw new Error('Host returned history for a different thread.')
+    if (this.state.selectedThreadId !== threadId) return
+    const pageRows = mapHostHistoryEntriesToTranscriptRows(page.entries)
+    const current = this.state.history
+    const currentRows = current?.threadId === threadId && !current.previewOnly ? this.state.thread?.rows ?? [] : []
+    const rows = before
+      ? mergeTranscriptRows(pageRows, currentRows)
+      : pageRows
+    if (this.state.thread) this.state.thread = { ...this.state.thread, rows }
+    this.state.history = {
+      threadId,
+      generation: page.generation,
+      cursor: page.cursor,
+      ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
+      previewOnly: false
+    }
+    if (!before) this.state.scrollOffset = 0
+  }
+
+  /** Polling reconciliation for Hosts that do not yet publish history events. */
+  private async refreshSelectedHistory(): Promise<void> {
+    const history = this.state.history
+    if (
+      !history ||
+      history.previewOnly ||
+      history.loadingOlder ||
+      !this.client?.connected ||
+      !this.client.supports('history')
+    ) {
+      return
+    }
+    const result = await this.client.getHistorySince({
+      threadId: history.threadId,
+      since: { generation: history.generation, cursor: history.cursor }
+    })
+    await this.applyHistoryResult(history.threadId, result)
+  }
+
+  /** Future-safe event handling; production presently reaches this through polling above. */
+  private async applyHistoryEvent(frame: HostHistoryDeltasFrame): Promise<void> {
+    await this.applyHistoryResult(frame.threadId, frame.result)
+  }
+
+  private async applyHistoryResult(
+    threadId: string,
+    result: HostHistorySinceResult
+  ): Promise<void> {
+    const history = this.state.history
+    if (!history || history.previewOnly || history.threadId !== threadId) return
+    if (result.kind === 'full_resnapshot_required') {
+      this.setNotice('Transcript history changed · reloaded latest page.', 'warning', 3_000)
+      await this.loadThreadHistory(threadId)
+      return
+    }
+    if (result.generation !== history.generation || result.fromCursor !== history.cursor) {
+      this.setNotice('Transcript history cursor changed · reloaded latest page.', 'warning', 3_000)
+      await this.loadThreadHistory(threadId)
+      return
+    }
+    if (!this.state.thread || this.state.selectedThreadId !== threadId) return
+    let rows = [...this.state.thread.rows]
+    for (const delta of result.deltas) {
+      const id = delta.kind === 'remove' ? `host-history:${delta.entryId}` : `host-history:${delta.entry.entryId}`
+      if (delta.kind === 'remove') {
+        rows = rows.filter((row) => row.id !== id)
+        continue
+      }
+      const row = mapHostHistoryEntriesToTranscriptRows([delta.entry])[0]
+      const existing = rows.findIndex((candidate) => candidate.id === id)
+      if (existing >= 0) rows.splice(existing, 1, row)
+      else rows.push(row)
+    }
+    this.state.thread = { ...this.state.thread, rows }
+    this.state.history = {
+      ...history,
+      generation: result.generation,
+      cursor: result.toCursor,
+      previewOnly: false
+    }
+    this.render()
   }
 
   private readonly onResize = (): void => {
@@ -593,6 +749,18 @@ export class TaskWraithTui {
     }
     if ((key.ctrl && key.name === 'd' && !this.state.input) || (key.meta && key.name === 'q')) {
       this.stop()
+      return
+    }
+    if (this.state.coldStart && this.state.coldStart.kind !== 'ready' && this.state.overlay !== 'setup') {
+      this.state.overlay = 'setup'
+      void this.handleColdStartKey(input, key).catch((error) => {
+        this.setNotice(
+          `Host setup failed · ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          4_000
+        )
+        this.render()
+      })
       return
     }
     // Wave 4.2b: while a Host mutation is pending an ask, y/n answers it.
@@ -669,6 +837,17 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    if (this.state.overlay === 'setup') {
+      void this.handleColdStartKey(input, key).catch((error) => {
+        this.setNotice(
+          `Host setup failed · ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          4_000
+        )
+        this.render()
+      })
+      return
+    }
     if (this.state.overlay === 'threads') {
       this.handleThreadPickerKey(key)
       return
@@ -689,7 +868,24 @@ export class TaskWraithTui {
       return
     }
     if (key.name === 'pageup') {
-      this.state.scrollOffset += TRANSCRIPT_PAGE_ROWS
+      const history = this.state.history
+      const transcriptRows = this.state.thread?.rows.length ?? 0
+      const transcriptViewportRows = Math.max(1, this.options.output.rows - 3)
+      const atTop =
+        this.state.scrollOffset >= Math.max(0, transcriptRows - transcriptViewportRows)
+      if (history?.nextBefore && !history.loadingOlder && atTop) {
+        this.state.history = { ...history, loadingOlder: true }
+        void this.loadThreadHistory(history.threadId, history.nextBefore)
+          .catch((error) => this.surfaceProjectionSyncError(error))
+          .finally(() => {
+            if (this.state.history) this.state.history = { ...this.state.history, loadingOlder: false }
+            this.render()
+          })
+      }
+      this.state.scrollOffset = Math.min(
+        Math.max(0, transcriptRows - 1),
+        this.state.scrollOffset + TRANSCRIPT_PAGE_ROWS
+      )
       this.render()
       return
     }
@@ -760,6 +956,250 @@ export class TaskWraithTui {
     characters.splice(this.state.inputCursor, 0, ...inserted)
     this.state.input = characters.join('')
     this.state.inputCursor = Math.min(characters.length, this.state.inputCursor + inserted.length)
+  }
+
+  private async handleColdStartKey(input: string, key: Keypress): Promise<void> {
+    const cold = this.state.coldStart
+    const actor = this.actorIdentity()
+    if (!cold || !actor || !this.client) return
+    if (cold.kind === 'workspace' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartProviderIndex = cycleIndex(
+        this.state.coldStartProviderIndex ?? 0,
+        this.state.coldStartProviderChoices?.length ?? 0,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'auth' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartAuthFlowIndex = cycleIndex(
+        this.state.coldStartAuthFlowIndex ?? 0,
+        cold.flows.length,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartModelIndex = cycleIndex(
+        this.state.coldStartModelIndex ?? 0,
+        cold.offers.models.filter((candidate) => candidate.available).length,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && (key.name === 'left' || key.name === 'right')) {
+      this.state.coldStartPostureIndex = cycleIndex(
+        this.state.coldStartPostureIndex ?? 0,
+        cold.offers.postures.filter((candidate) => candidate.available).length,
+        key.name === 'left' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && key.name === 'tab') {
+      const model = cold.offers.models.filter((candidate) => candidate.available)[
+        this.state.coldStartModelIndex ?? 0
+      ]
+      this.state.coldStartReasoningIndex = cycleIndex(
+        this.state.coldStartReasoningIndex ?? 0,
+        model?.reasoning.filter((candidate) => candidate.available).length ?? 0,
+        1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'idle') {
+      if (key.name === 'return' || key.name === 'enter') {
+        const path = this.state.input.trim()
+        if (!isAbsolute(path)) {
+          this.setNotice('Enter an absolute workspace path.', 'warning', 3_000)
+        } else {
+          this.state.input = ''
+          this.state.inputCursor = 0
+          await this.runColdStartCommand(buildWorkspaceRegisterCommand({ actor, path }))
+        }
+      } else if (!key.ctrl && !key.meta && input) {
+        this.insertComposerText(input)
+      }
+      this.render()
+      return
+    }
+    if (key.name === 'space' && cold.kind === 'configure') {
+      const posture = cold.offers.postures.filter((candidate) => candidate.available)[
+        this.state.coldStartPostureIndex ?? 0
+      ]
+      if (posture?.requiresExplicitConsent) this.state.coldStart = acknowledgeColdStartPosture(cold, posture.postureId)
+      this.render()
+      return
+    }
+    if (key.name !== 'return' && key.name !== 'enter') return
+    if (cold.kind === 'workspace') {
+      if (!this.state.coldStartProviderChoices?.length) {
+        this.state.coldStartProviderChoices = (await this.client.getProviderStatuses()).filter(
+          (candidate) => candidate.status === 'ready' || candidate.status === 'auth_required'
+        )
+        this.state.coldStartProviderIndex = 0
+        this.setNotice('Use ↑/↓ to choose a provider, then Enter.', 'neutral')
+        this.render()
+        return
+      }
+      const status = this.state.coldStartProviderChoices[this.state.coldStartProviderIndex ?? 0]
+      if (!status) throw new Error('No Host provider is currently available.')
+      const provider = coldStartSelectProvider(cold, status)
+      this.state.coldStartProviderChoices = undefined
+      this.state.coldStartProviderIndex = 0
+      if (status.status === 'auth_required') {
+        if (!this.client.supports('provider-auth')) throw new Error('Provider auth capability is unavailable.')
+        const auth = await this.client.getProviderAuthStatus(status.providerId)
+        this.state.coldStart =
+          auth.state === 'authenticated'
+            ? coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
+            : coldStartAuthFlows(
+                provider,
+                auth,
+                await this.client.getProviderAuthFlows(status.providerId)
+              )
+        this.state.coldStartAuthFlowIndex = 0
+      } else {
+        this.state.coldStart = coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
+      }
+      this.resetColdStartConfigureIndices()
+    } else if (cold.kind === 'auth') {
+      if (cold.operationId) {
+        await this.refreshColdStartAuth(cold.providerId)
+        this.render()
+        return
+      }
+      const flow = cold.flows[this.state.coldStartAuthFlowIndex ?? 0]
+      if (!flow) throw new Error('No provider auth flow is currently available.')
+      const command = buildProviderAuthBeginCommand({ actor, providerId: cold.providerId, flowId: flow.flowId })
+      this.state.coldStart = beginColdStartProviderAuth(cold, flow.flowId, this.pendingFrom(command))
+      await this.runColdStartCommand(command, { preserveColdPending: true })
+    } else if (cold.kind === 'offers') {
+      await this.runColdStartCommand(
+        buildThreadCreateCommand({ actor, scope: cold.workspaceId ? 'workspace' : 'global', workspaceId: cold.workspaceId })
+      )
+    } else if (cold.kind === 'thread') {
+      this.state.coldStart = coldStartConfigure(cold)
+    } else if (cold.kind === 'configure') {
+      const model = cold.offers.models.filter((candidate) => candidate.available)[
+        this.state.coldStartModelIndex ?? 0
+      ]
+      const posture = cold.offers.postures.filter((candidate) => candidate.available)[
+        this.state.coldStartPostureIndex ?? 0
+      ]
+      if (!model || !posture) throw new Error('Host offers contain no available configuration.')
+      const consented = !posture.requiresExplicitConsent || cold.acknowledgedPostureIds.includes(posture.postureId)
+      const selection = selectColdStartConfiguration(cold, {
+        providerId: cold.providerId,
+        modelId: model.modelId,
+        postureId: posture.postureId,
+        offerRevision: cold.offers.offerRevision,
+        ...(consented && posture.requiresExplicitConsent ? { postureConsent: true } : {}),
+        ...(model.reasoning.filter((candidate) => candidate.available)[
+          this.state.coldStartReasoningIndex ?? 0
+        ]
+          ? {
+              reasoningId: model.reasoning.filter((candidate) => candidate.available)[
+                this.state.coldStartReasoningIndex ?? 0
+              ].reasoningId
+            }
+          : {})
+      })
+      this.state.coldStart = selection
+      if (selection.kind !== 'configure' || !selection.selection) return
+      await this.runColdStartCommand(buildThreadConfigureCommand({ actor, selection: selection.selection }))
+    }
+    this.render()
+  }
+
+  private pendingFrom(command: HostCommand): ColdStartPendingCommand {
+    return {
+      commandId: command.commandId,
+      idempotencyKey: command.idempotencyKey,
+      name: command.name as ColdStartPendingCommand['name'],
+      submittedAt: new Date(this.options.now()).toISOString()
+    }
+  }
+
+  private async runColdStartCommand(
+    command: HostCommand,
+    options: { preserveColdPending?: boolean } = {}
+  ): Promise<void> {
+    if (!this.state.coldStart) return
+    if (!options.preserveColdPending) this.state.coldStart = coldStartPending(this.state.coldStart, this.pendingFrom(command))
+    await this.runHostMutation(command, {
+      onTerminalReceipt: (receipt) => {
+        if (this.state.coldStart) this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+      },
+      onSucceeded: async () => {
+        const cold = this.state.coldStart
+        if (cold?.kind === 'workspace') this.setNotice('Workspace registered · choose provider', 'good')
+        if (cold?.kind === 'thread') this.setNotice('Thread created · configure it', 'good')
+        if (cold?.kind === 'auth' && cold.operationId) await this.pollColdStartAuth(cold.providerId)
+        if (cold?.kind === 'ready') {
+          this.state.overlay = 'none'
+          this.state.selectedThreadId = cold.threadId
+          await this.refreshHostSnapshot()
+          this.applyLocalThread(cold.threadId)
+          await this.loadThreadHistory(cold.threadId)
+        }
+      }
+    })
+  }
+
+  private async refreshColdStartAuth(providerId: string): Promise<void> {
+    if (!this.client?.connected || !this.state.coldStart || this.state.coldStart.kind !== 'auth') return
+    const status = await this.client.getProviderAuthStatus(providerId)
+    if (status.state !== 'authenticated') {
+      this.setNotice(
+        'Authentication is still pending · complete the provider flow, then reconnect or press Enter to refresh.',
+        'warning'
+      )
+      this.render()
+      return
+    }
+    this.state.coldStart = coldStartOffers(
+      this.state.coldStart,
+      await this.client.getProviderOffers(providerId)
+    )
+    this.resetColdStartConfigureIndices()
+    this.setNotice('Provider authenticated · choose thread creation.', 'good')
+    this.render()
+  }
+
+  /** Polls a bounded number of status reads; a handoff opening is never success. */
+  private async pollColdStartAuth(providerId: string): Promise<void> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (this.stopped || !this.client?.connected) return
+      await this.refreshColdStartAuth(providerId)
+      if (this.state.coldStart?.kind === 'offers') return
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 750)
+        timer.unref?.()
+      })
+    }
+    if (this.state.coldStart?.kind === 'auth') {
+      this.setNotice('Authentication is still pending · press Enter to refresh when complete.', 'warning', 4_000)
+    }
+  }
+
+  private resetColdStartConfigureIndices(): void {
+    this.state.coldStartModelIndex = 0
+    this.state.coldStartReasoningIndex = 0
+    this.state.coldStartPostureIndex = 0
+  }
+
+  private async resumeColdStartPending(): Promise<void> {
+    const pending = this.state.coldStart?.pending
+    if (!pending || !this.client?.connected) return
+    const receipt = await this.client.lookupReceipt({ commandId: pending.commandId })
+    if (this.state.coldStart) this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+    if (this.state.coldStart?.kind === 'auth' && this.state.coldStart.operationId) {
+      await this.refreshColdStartAuth(this.state.coldStart.providerId)
+    }
   }
 
   private toggleOverlay(overlay: Exclude<TuiOverlay, 'none'>): void {
@@ -1063,6 +1503,11 @@ export class TaskWraithTui {
     const original = this.state.input
     const text = original.trim()
     if (!text) return
+    if (this.state.coldStart && this.state.coldStart.kind !== 'ready') {
+      this.setNotice('Complete Host setup before using the composer.', 'warning', 3_000)
+      this.render()
+      return
+    }
     const question = this.selectedOpenQuestion()
     if (question && (this.sendingPrompt || this.mutationInFlight)) {
       this.setNotice('A Host command is already in flight.', 'warning', 2_000)
@@ -1419,6 +1864,7 @@ export class TaskWraithTui {
     options: {
       composerRestore?: string
       onSucceeded?: () => Promise<void> | void
+      onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     } = {}
   ): Promise<void> {
     if (!this.client) return
@@ -1486,6 +1932,7 @@ export class TaskWraithTui {
     options: {
       composerRestore?: string
       onSucceeded?: () => Promise<void> | void
+      onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     }
   ): Promise<void> {
     if (!isTerminalHostReceiptStatus(receipt.status)) {
@@ -1494,6 +1941,7 @@ export class TaskWraithTui {
       this.setNotice(`${stuck.text} · timed out`, 'warning', 5_000)
       return
     }
+    options.onTerminalReceipt?.(receipt)
     if (receipt.status === 'succeeded') {
       const noticeBefore = this.state.notice
       await options.onSucceeded?.()
@@ -1587,4 +2035,21 @@ export class TaskWraithTui {
     })
     this.options.output.write(`\u001b[H${frame}`)
   }
+}
+
+function cycleIndex(index: number, length: number, delta: number): number {
+  if (length <= 0) return 0
+  return (index + delta + length) % length
+}
+
+function mergeTranscriptRows(
+  older: readonly TaskWraithControlTranscriptRow[],
+  newer: readonly TaskWraithControlTranscriptRow[]
+): TaskWraithControlTranscriptRow[] {
+  const ids = new Set<string>()
+  return [...older, ...newer].filter((row) => {
+    if (ids.has(row.id)) return false
+    ids.add(row.id)
+    return true
+  })
 }

@@ -6,7 +6,7 @@ import { createTaskWraithTuiDemoState } from './state'
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' = 'none'
+  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup' = 'none'
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
   const state = createTaskWraithTuiDemoState(now)
@@ -21,6 +21,69 @@ function renderedLines(
 }
 
 describe('TaskWraith TUI renderer', () => {
+  it('renders a guided setup overlay and keeps the composer unavailable', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStart = {
+      kind: 'configure',
+      workspaceId: 'workspace-1',
+      providerId: 'provider-1',
+      threadId: 'thread-1',
+      acknowledgedPostureIds: [],
+      offers: {
+        providerId: 'provider-1',
+        offerRevision: 'offer-revision-1',
+        models: [
+          {
+            modelId: 'model-1',
+            label: 'Model One',
+            available: true,
+            reasoning: [
+              { reasoningId: 'reasoning-low', label: 'Low', available: true },
+              { reasoningId: 'reasoning-high', label: 'High', available: true }
+            ]
+          },
+          { modelId: 'model-2', label: 'Model Two', available: true, reasoning: [] }
+        ],
+        postures: [
+          {
+            postureId: 'posture-read',
+            label: 'Read',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'posture-full',
+            label: 'Full access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access'
+          }
+        ]
+      }
+    }
+    state.coldStartModelIndex = 0
+    state.coldStartReasoningIndex = 0
+    state.coldStartPostureIndex = 1
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('Host setup')
+    expect(output).toContain('Model One')
+    expect(output).toContain('Model Two')
+    expect(output).toContain('Low')
+    expect(output).toContain('Full access · consent required · Space')
+    expect(output).toContain('Complete Host setup to compose')
+  })
+
   it('uses exactly 80x24 with a transcript canvas and three-row ensemble footer', () => {
     const lines = renderedLines(80, 24)
     expect(lines).toHaveLength(24)
