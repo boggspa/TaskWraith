@@ -66,13 +66,13 @@ describe('parseHostDiagnosticCli', () => {
     }
   })
 
-  it('keeps the diagnostic Host available only through explicit source build scripts', () => {
+  it('exposes the packaged diagnostic Host bin while retaining explicit build scripts', () => {
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
       bin?: Record<string, string>
       scripts?: Record<string, string>
     }
 
-    expect(packageJson.bin?.['taskwraith-host']).toBeUndefined()
+    expect(packageJson.bin?.['taskwraith-host']).toBe('./out/host/host-runtime/cli.js')
     expect(packageJson.scripts?.['host:serve']).toContain('serve --mode diagnostic')
     expect(packageJson.scripts?.typecheck).toContain('typecheck:host')
     expect(packageJson.scripts?.build).toContain('host:build')
