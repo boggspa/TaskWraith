@@ -361,9 +361,9 @@ export class TaskWraithTui {
       this.setNotice(
         this.everConnected
           ? this.revivePending()
-            ? 'TaskWraith Host unreachable · relaunching the TaskWraith app…'
+            ? 'TaskWraith Host unreachable · restarting the standalone Host…'
             : 'TaskWraith Host disconnected · reconnecting'
-          : 'Electron Host offline · retrying',
+          : 'Standalone Host offline · retrying',
         'warning'
       )
       this.scheduleReconnect()
@@ -469,9 +469,9 @@ export class TaskWraithTui {
           this.setNotice(
             this.everConnected
               ? this.revivePending()
-                ? 'TaskWraith Host unreachable · relaunching the TaskWraith app…'
+                ? 'TaskWraith Host unreachable · restarting the standalone Host…'
                 : 'TaskWraith Host disconnected · reconnecting'
-              : 'Electron Host offline · retrying locally',
+              : 'Standalone Host offline · retrying locally',
             'warning'
           )
         }

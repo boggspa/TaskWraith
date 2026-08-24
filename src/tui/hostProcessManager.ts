@@ -2,23 +2,27 @@ import { randomUUID } from 'node:crypto'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn as spawnChild } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
 import { posix, resolve, win32, type PlatformPath } from 'node:path'
 
 import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError
 } from '../host-client/HostProjectionClient'
-import {
-  PACKAGE_SMOKE_ARG,
-  PACKAGE_SMOKE_USER_DATA_ARG,
-  resolveInstanceLaunchPosture
-} from '../host-shared/InstanceLaunchPosture'
-import { TUI_HEADLESS_HOST_ARG, TUI_HEADLESS_HOST_PARENT_ARG } from '../host-shared/TuiHeadlessHostLaunch'
+import type { HostBootstrapWelcome, HostCapability } from '../shared/hostProtocol'
 
 const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500
+export const TUI_STANDALONE_HOST_CAPABILITY_FLOOR: readonly HostCapability[] = [
+  'commands',
+  'receipts',
+  'setup',
+  'provider-catalog',
+  'provider-auth',
+  'history',
+  'health'
+]
+export const TUI_STANDALONE_HOST_PRODUCTION_VERSION = 'node-host-v1'
 
 export type TuiHostLaunchProfile = 'production' | 'development' | 'package-smoke' | 'custom'
 
@@ -35,12 +39,14 @@ interface TuiHostLaunchCandidate extends TuiHostLaunchCommand {
 
 export interface ResolveTuiHostLaunchCommandInput {
   readonly profile: TuiHostLaunchProfile
-  readonly parentPid?: number
   readonly moduleDir?: string
   readonly workingDirectory?: string
   readonly platform?: NodeJS.Platform
+  readonly architecture?: NodeJS.Architecture
   readonly env?: NodeJS.ProcessEnv
-  readonly homeDirectory?: string
+  /** Development seam; must be an ordinary Node executable, never Electron. */
+  readonly nodeExecutable?: string
+  readonly isOrdinaryNode?: (path: string) => boolean
   readonly userDataPath?: string
   readonly pathExists?: (path: string) => Promise<boolean>
 }
@@ -67,34 +73,15 @@ export type EnsureTuiHostAvailableResult =
   | { readonly kind: 'existing' }
   | { readonly kind: 'launched'; readonly pid: number | null }
 
-function headlessArgs(parentPid: number): string[] {
-  return [TUI_HEADLESS_HOST_ARG, `${TUI_HEADLESS_HOST_PARENT_ARG}${parentPid}`]
+export class TuiHostProductionCapabilityError extends HostProjectionIncompatibleProtocolError {
+  constructor() {
+    super('TaskWraith Host is diagnostic or missing required production capabilities.')
+    this.name = 'TuiHostProductionCapabilityError'
+  }
 }
 
-function launchArgs(input: {
-  profile: TuiHostLaunchProfile
-  parentPid: number
-  platform: NodeJS.Platform
-  userDataPath?: string
-}): string[] {
-  const args = headlessArgs(input.parentPid)
-  if (input.profile !== 'package-smoke') return args
-  const userDataPath = String(input.userDataPath || '').trim()
-  const smokeArgs = [PACKAGE_SMOKE_ARG, `${PACKAGE_SMOKE_USER_DATA_ARG}${userDataPath}`]
-  const posture = resolveInstanceLaunchPosture({
-    isPackaged: true,
-    argv: smokeArgs,
-    temporaryDirectory: tmpdir()
-  })
-  if (posture.kind !== 'package-smoke' || posture.userDataPath !== resolve(userDataPath)) {
-    throw new Error('TUI package smoke requires its exact disposable temp profile.')
-  }
-  return [
-    ...smokeArgs,
-    ...args,
-    ...(input.platform === 'darwin' ? ['--use-mock-keychain'] : []),
-    ...(input.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [])
-  ]
+function hostCliArgs(cliPath: string, profilePath: string): string[] {
+  return [cliPath, 'serve', '--mode', 'production', '--profile', profilePath]
 }
 
 function pathApi(platform: NodeJS.Platform): PlatformPath {
@@ -112,62 +99,28 @@ function hostEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result
 }
 
-function packagedCandidates(
+function packagedCandidate(
   platform: NodeJS.Platform,
   resourcesDir: string,
+  architecture: NodeJS.Architecture,
   env: NodeJS.ProcessEnv,
-  homeDirectory: string,
-  args: readonly string[]
-): TuiHostLaunchCandidate[] {
+  userDataPath: string
+): TuiHostLaunchCandidate {
   const api = pathApi(platform)
-  const installRoot = api.resolve(resourcesDir, '..')
-  const explicitExecutable = String(env.TASKWRAITH_TUI_APP_EXECUTABLE || '').trim()
-  const candidates: string[] = []
-  if (explicitExecutable && api.isAbsolute(explicitExecutable)) candidates.push(explicitExecutable)
-
-  if (api.basename(resourcesDir).toLowerCase() === 'resources') {
-    if (platform === 'darwin')
-      candidates.push(api.resolve(resourcesDir, '..', 'MacOS', 'TaskWraith'))
-    else if (platform === 'win32') candidates.push(api.resolve(installRoot, 'TaskWraith.exe'))
-    else
-      candidates.push(
-        api.resolve(installRoot, 'taskwraith'),
-        api.resolve(installRoot, 'TaskWraith')
-      )
-  }
-
-  if (platform === 'darwin') {
-    candidates.push(
-      '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
-      api.resolve(
-        homeDirectory,
-        'Applications',
-        'TaskWraith.app',
-        'Contents',
-        'MacOS',
-        'TaskWraith'
-      )
-    )
-  } else if (platform === 'win32') {
-    const localAppData = String(env.LOCALAPPDATA || '').trim()
-    const programFiles = String(env.ProgramFiles || '').trim()
-    if (localAppData) {
-      candidates.push(api.resolve(localAppData, 'Programs', 'TaskWraith', 'TaskWraith.exe'))
-    }
-    if (programFiles) candidates.push(api.resolve(programFiles, 'TaskWraith', 'TaskWraith.exe'))
-  } else {
-    const appImage = String(env.APPIMAGE || '').trim()
-    if (appImage && api.isAbsolute(appImage)) candidates.push(appImage)
-    candidates.push('/opt/TaskWraith/taskwraith')
-  }
-
-  return uniquePaths(candidates, platform).map((executable) => ({
-    executable,
-    args,
-    cwd: api.dirname(executable),
+  const runtime = api.resolve(
+    resourcesDir,
+    'tui-runtime',
+    `${platform}-${architecture}`,
+    platform === 'win32' ? 'node.exe' : 'node'
+  )
+  const cli = api.resolve(resourcesDir, 'host', 'host-runtime', 'cli.js')
+  return {
+    executable: runtime,
+    args: hostCliArgs(cli, api.resolve(userDataPath)),
+    cwd: api.dirname(cli),
     env: hostEnvironment(env),
-    requiredPaths: [executable]
-  }))
+    requiredPaths: [runtime, cli]
+  }
 }
 
 function developmentCandidates(
@@ -175,37 +128,26 @@ function developmentCandidates(
   moduleDir: string,
   workingDirectory: string,
   env: NodeJS.ProcessEnv,
-  args: readonly string[]
+  userDataPath: string,
+  nodeExecutable: string
 ): TuiHostLaunchCandidate[] {
   const api = pathApi(platform)
   const roots = uniquePaths([api.resolve(moduleDir, '..', '..', '..'), workingDirectory], platform)
-  const executableName = platform === 'win32' ? 'electron.exe' : 'electron'
   return roots.map((repoRoot) => {
-    const executable =
-      platform === 'darwin'
-        ? api.resolve(
-            repoRoot,
-            'node_modules',
-            'electron',
-            'dist',
-            'Electron.app',
-            'Contents',
-            'MacOS',
-            'Electron'
-          )
-        : api.resolve(repoRoot, 'node_modules', 'electron', 'dist', executableName)
+    const cli = api.resolve(repoRoot, 'out', 'host', 'host-runtime', 'cli.js')
     return {
-      executable,
-      args: [repoRoot, ...args],
-      cwd: repoRoot,
+      executable: nodeExecutable,
+      args: hostCliArgs(cli, api.resolve(userDataPath)),
+      cwd: api.dirname(cli),
       env: hostEnvironment(env),
-      requiredPaths: [
-        executable,
-        api.resolve(repoRoot, 'package.json'),
-        api.resolve(repoRoot, 'out', 'main', 'index.js')
-      ]
+      requiredPaths: [nodeExecutable, cli]
     }
   })
+}
+
+function ordinaryNodeExecutable(path: string, platform: NodeJS.Platform): boolean {
+  const base = pathApi(platform).basename(path).toLowerCase()
+  return (base === 'node' || base === 'node.exe') && !/electron/i.test(path)
 }
 
 async function defaultPathExists(path: string): Promise<boolean> {
@@ -218,34 +160,46 @@ async function defaultPathExists(path: string): Promise<boolean> {
 }
 
 /**
- * Resolve only a direct application executable. Shell launchers, open(1), and
- * ELECTRON_RUN_AS_NODE are intentionally excluded from the Host trust path.
+ * Resolve only a direct ordinary-Node Host invocation. Shell launchers,
+ * Electron, open(1), and ELECTRON_RUN_AS_NODE stay outside this trust path.
  */
 export async function resolveTuiHostLaunchCommand(
   input: ResolveTuiHostLaunchCommandInput
 ): Promise<TuiHostLaunchCommand | null> {
   if (input.profile === 'custom') return null
-  const parentPid = input.parentPid ?? process.pid
-  if (!Number.isSafeInteger(parentPid) || parentPid < 1) {
-    throw new Error('TUI Host launch requires a positive parent process identity.')
-  }
   const moduleDir = input.moduleDir ?? __dirname
   const workingDirectory = input.workingDirectory ?? process.cwd()
   const platform = input.platform ?? process.platform
   const env = input.env ?? process.env
-  const homeDirectory = input.homeDirectory ?? homedir()
   const pathExists = input.pathExists ?? defaultPathExists
-  const args = launchArgs({
-    profile: input.profile,
-    parentPid,
-    platform,
-    userDataPath: input.userDataPath
-  })
+  const userDataPath = String(input.userDataPath || '')
+  if (
+    !userDataPath ||
+    userDataPath.trim() !== userDataPath ||
+    !pathApi(platform).isAbsolute(userDataPath)
+  ) {
+    throw new Error('TUI Host launch requires an absolute profile path.')
+  }
   const resourcesDir = pathApi(platform).resolve(moduleDir, '..', '..')
+  const architecture = input.architecture ?? process.arch
+  const nodeExecutable = input.nodeExecutable ?? process.execPath
+  const isOrdinaryNode =
+    input.isOrdinaryNode ??
+    ((path: string) => ordinaryNodeExecutable(path, platform) && !process.versions.electron)
+  if (input.profile === 'development' && !isOrdinaryNode(nodeExecutable)) {
+    throw new Error('TUI development Host launch requires an ordinary Node executable.')
+  }
   const candidates =
     input.profile === 'development'
-      ? developmentCandidates(platform, moduleDir, workingDirectory, env, args)
-      : packagedCandidates(platform, resourcesDir, env, homeDirectory, args)
+      ? developmentCandidates(
+          platform,
+          moduleDir,
+          workingDirectory,
+          env,
+          userDataPath,
+          nodeExecutable
+        )
+      : [packagedCandidate(platform, resourcesDir, architecture, env, userDataPath)]
 
   for (const candidate of candidates) {
     const availability = await Promise.all(candidate.requiredPaths.map((path) => pathExists(path)))
@@ -265,15 +219,28 @@ async function authenticatedProbe(userDataPath: string, connectTimeoutMs: number
       clientVersion: 'host-launch-v1',
       displayName: 'TaskWraith TUI launcher'
     },
-    capabilities: ['bootstrap', 'health'],
+    capabilities: ['bootstrap', ...TUI_STANDALONE_HOST_CAPABILITY_FLOOR],
     userDataPath,
     connectTimeoutMs,
     requestTimeoutMs: connectTimeoutMs
   })
   try {
-    await client.connect()
+    const welcome = await client.connect()
+    assertTuiStandaloneHostWelcome(welcome)
   } finally {
     client.close()
+  }
+}
+
+/** Reject an App/diagnostic Host even if it speaks a compatible wire protocol. */
+export function assertTuiStandaloneHostWelcome(welcome: HostBootstrapWelcome): void {
+  if (
+    welcome.hostVersion !== TUI_STANDALONE_HOST_PRODUCTION_VERSION ||
+    !TUI_STANDALONE_HOST_CAPABILITY_FLOOR.every((capability) =>
+      welcome.capabilities.includes(capability)
+    )
+  ) {
+    throw new TuiHostProductionCapabilityError()
   }
 }
 
@@ -289,10 +256,10 @@ function launchUnavailableMessage(profile: TuiHostLaunchProfile): string {
   if (profile === 'custom') {
     return (
       'TaskWraith Host is offline. Automatic startup is unavailable for an explicit ' +
-      'user-data profile because the app cannot safely infer its launch authority.'
+      'user-data profile because the standalone Host cannot safely infer its launch authority.'
     )
   }
-  return `TaskWraith Host is offline and the ${profile} app executable could not be located.`
+  return `TaskWraith Host is offline and the ${profile} Node runtime could not be located.`
 }
 
 const inFlightStarts = new Map<string, Promise<EnsureTuiHostAvailableResult>>()

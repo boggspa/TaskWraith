@@ -6,10 +6,15 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { HostProjectionIncompatibleProtocolError } from '../main/host/HostProjectionClient'
 import {
+  assertTuiStandaloneHostWelcome,
   ensureTuiHostAvailable,
   resolveTuiHostLaunchCommand,
+  TuiHostProductionCapabilityError,
+  TUI_STANDALONE_HOST_CAPABILITY_FLOOR,
+  TUI_STANDALONE_HOST_PRODUCTION_VERSION,
   type TuiHostLaunchCommand
 } from './hostProcessManager'
+import type { HostBootstrapWelcome } from '../shared/hostProtocol'
 
 class FakeChild extends EventEmitter {
   pid = 42
@@ -24,96 +29,134 @@ class FakeChild extends EventEmitter {
 
 function command(): TuiHostLaunchCommand {
   return {
-    executable: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
-    args: ['--taskwraith-headless-host', '--taskwraith-headless-parent=7'],
-    cwd: '/Applications/TaskWraith.app/Contents/MacOS',
+    executable: '/resources/tui-runtime/darwin-arm64/node',
+    args: [
+      '/resources/host/host-runtime/cli.js',
+      'serve',
+      '--mode',
+      'production',
+      '--profile',
+      '/profiles/a'
+    ],
+    cwd: '/resources/host/host-runtime',
     env: {}
   }
 }
 
 describe('TUI Host process manager', () => {
-  it('resolves the packaged application executable without Electron-as-Node', async () => {
-    const executable = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
+  it('accepts only the standalone production version with the complete capability floor', () => {
+    const welcome = (overrides: Partial<HostBootstrapWelcome> = {}) =>
+      ({
+        hostVersion: TUI_STANDALONE_HOST_PRODUCTION_VERSION,
+        capabilities: [...TUI_STANDALONE_HOST_CAPABILITY_FLOOR],
+        ...overrides
+      }) as HostBootstrapWelcome
+
+    expect(() => assertTuiStandaloneHostWelcome(welcome({ hostVersion: '1.9.6' }))).toThrow(
+      TuiHostProductionCapabilityError
+    )
+    expect(() =>
+      assertTuiStandaloneHostWelcome(welcome({ capabilities: ['commands', 'receipts'] }))
+    ).toThrow(TuiHostProductionCapabilityError)
+    expect(() => assertTuiStandaloneHostWelcome(welcome())).not.toThrow()
+  })
+
+  it('resolves the packaged platform Node runtime and Host CLI without Electron', async () => {
+    const executable =
+      '/Applications/TaskWraith.app/Contents/Resources/tui-runtime/darwin-arm64/node'
+    const cli = '/Applications/TaskWraith.app/Contents/Resources/host/host-runtime/cli.js'
     const result = await resolveTuiHostLaunchCommand({
       profile: 'production',
-      parentPid: 77,
       platform: 'darwin',
+      architecture: 'arm64',
       moduleDir: '/Applications/TaskWraith.app/Contents/Resources/tui/tui',
-      homeDirectory: '/Users/example',
       env: { ELECTRON_RUN_AS_NODE: '1' },
-      pathExists: async (path) => path === executable
+      userDataPath: '/profiles/a',
+      pathExists: async (path) => path === executable || path === cli
     })
 
     expect(result).toEqual({
       executable,
-      args: ['--taskwraith-headless-host', '--taskwraith-headless-parent=77'],
-      cwd: '/Applications/TaskWraith.app/Contents/MacOS',
+      args: [cli, 'serve', '--mode', 'production', '--profile', '/profiles/a'],
+      cwd: '/Applications/TaskWraith.app/Contents/Resources/host/host-runtime',
       env: {}
     })
   })
 
-  it('resolves a built development Host with the exact repo and instance environment', async () => {
+  it('resolves a built development Host through an injected ordinary Node executable', async () => {
     const repoRoot = '/repo'
-    const executable = '/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
-    const required = new Set([executable, '/repo/package.json', '/repo/out/main/index.js'])
+    const executable = '/usr/local/bin/node'
+    const cli = '/repo/out/host/host-runtime/cli.js'
+    const required = new Set([executable, cli])
     const result = await resolveTuiHostLaunchCommand({
       profile: 'development',
-      parentPid: 88,
       platform: 'darwin',
       moduleDir: '/repo/out/tui/tui',
       workingDirectory: '/elsewhere',
+      userDataPath: '/profiles/dev',
+      nodeExecutable: executable,
       env: { TASKWRAITH_INSTANCE_ID: 'qa-two' },
       pathExists: async (path) => required.has(path)
     })
 
     expect(result).toMatchObject({
       executable,
-      cwd: repoRoot,
-      args: [repoRoot, '--taskwraith-headless-host', '--taskwraith-headless-parent=88'],
+      cwd: '/repo/out/host/host-runtime',
+      args: [cli, 'serve', '--mode', 'production', '--profile', '/profiles/dev'],
       env: { TASKWRAITH_INSTANCE_ID: 'qa-two' }
     })
   })
 
-  it('uses Windows path semantics when resolving a packaged executable', async () => {
-    const executable = 'C:\\Apps\\TaskWraith\\TaskWraith.exe'
+  it('uses Windows path semantics for packaged Node and Host CLI', async () => {
+    const executable = 'C:\\Apps\\TaskWraith\\resources\\tui-runtime\\win32-x64\\node.exe'
+    const cli = 'C:\\Apps\\TaskWraith\\resources\\host\\host-runtime\\cli.js'
     const result = await resolveTuiHostLaunchCommand({
       profile: 'production',
-      parentPid: 99,
       platform: 'win32',
+      architecture: 'x64',
       moduleDir: 'C:\\Apps\\TaskWraith\\resources\\tui\\tui',
       env: {},
-      pathExists: async (path) => path === executable
+      userDataPath: 'C:\\profiles\\a',
+      pathExists: async (path) => path === executable || path === cli
     })
 
     expect(result).toMatchObject({
       executable,
-      cwd: 'C:\\Apps\\TaskWraith',
-      args: ['--taskwraith-headless-host', '--taskwraith-headless-parent=99']
+      cwd: 'C:\\Apps\\TaskWraith\\resources\\host\\host-runtime',
+      args: [cli, 'serve', '--mode', 'production', '--profile', 'C:\\profiles\\a']
     })
   })
 
-  it('uses the real packaged launch resolver for an isolated package smoke profile', async () => {
-    const executable = '/tmp/TaskWraith-smoke.app/Contents/MacOS/TaskWraith'
+  it('rejects whitespace-padded profile paths instead of silently normalizing them', async () => {
+    await expect(
+      resolveTuiHostLaunchCommand({
+        profile: 'production',
+        platform: 'darwin',
+        architecture: 'arm64',
+        moduleDir: '/app/resources/tui/tui',
+        userDataPath: ' /profiles/unsafe ',
+        pathExists: async () => true
+      })
+    ).rejects.toThrow('absolute profile path')
+  })
+
+  it('uses the same direct Node Host invocation for an isolated package-smoke profile', async () => {
+    const executable = '/tmp/TaskWraith-smoke.app/Contents/Resources/tui-runtime/darwin-arm64/node'
+    const cli = '/tmp/TaskWraith-smoke.app/Contents/Resources/host/host-runtime/cli.js'
     const userDataPath = join(tmpdir(), 'taskwraith-tui-package-smoke-resolver')
     const result = await resolveTuiHostLaunchCommand({
       profile: 'package-smoke',
       userDataPath,
-      parentPid: 101,
       platform: 'darwin',
+      architecture: 'arm64',
       moduleDir: '/tmp/TaskWraith-smoke.app/Contents/Resources/tui/tui',
-      env: { TASKWRAITH_TUI_APP_EXECUTABLE: executable },
-      pathExists: async (path) => path === executable
+      env: {},
+      pathExists: async (path) => path === executable || path === cli
     })
 
     expect(result).toMatchObject({
       executable,
-      args: [
-        '--taskwraith-package-smoke',
-        `--taskwraith-package-smoke-user-data=${userDataPath}`,
-        '--taskwraith-headless-host',
-        '--taskwraith-headless-parent=101',
-        '--use-mock-keychain'
-      ]
+      args: [cli, 'serve', '--mode', 'production', '--profile', userDataPath]
     })
   })
 
@@ -194,6 +237,20 @@ describe('TUI Host process manager', () => {
         resolveLaunchCommand: async () => command()
       })
     ).rejects.toThrow(/explicit user-data profile/)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('never launches beside an App-mode Host even when its capability set is complete', async () => {
+    const spawn = vi.fn()
+    await expect(
+      ensureTuiHostAvailable({
+        userDataPath: '/profiles/app-mode-host',
+        profile: 'production',
+        probe: vi.fn().mockRejectedValue(new TuiHostProductionCapabilityError()),
+        spawn,
+        resolveLaunchCommand: async () => command()
+      })
+    ).rejects.toBeInstanceOf(TuiHostProductionCapabilityError)
     expect(spawn).not.toHaveBeenCalled()
   })
 

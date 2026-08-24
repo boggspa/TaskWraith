@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { ReadStream, WriteStream } from 'node:tty'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -33,6 +33,7 @@ import type {
   HostThreadHistoryRequest
 } from '../shared/hostHistoryProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
+import { taskWraithHostSocketPath } from '../shared/taskWraithHostPaths.node'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -101,7 +102,7 @@ async function waitFor(
 }
 
 /* -------------------------------------------------------------------------
- * Fake Host v2 — TCP loopback (sandbox-safe) + Host local transport
+ * Fake Host v2 — profile-bound local socket + Host local transport
  * ---------------------------------------------------------------------- */
 
 type MutationMode = 'allow' | 'defer'
@@ -151,27 +152,31 @@ class FakeHostV2 {
   async start(): Promise<void> {
     const server = createServer((socket) => this.accept(socket))
     this.server = server
+    const canonicalUserDataPath = await realpath(this.userDataPath)
+    this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath)
+    if (process.platform !== 'win32') {
+      await mkdir(dirname(this.socketPath), { recursive: true, mode: 0o700 })
+      await chmod(dirname(this.socketPath), 0o700)
+      await rm(this.socketPath, { force: true })
+    }
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => resolve())
+      server.listen(this.socketPath, () => resolve())
     })
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Fake Host failed to bind a TCP loopback port.')
-    }
-    this.socketPath = `127.0.0.1:${address.port}`
     await writeFile(this.tokenPath, `${this.token}\n`, 'utf8')
+    await chmod(this.tokenPath, 0o600)
     await writeFile(
       this.discoveryPath,
       JSON.stringify({
         protocolVersion: 2,
         socketPath: this.socketPath,
-        tokenPath: this.tokenPath,
+        tokenPath: join(canonicalUserDataPath, 'taskwraith-host-v2.token'),
         pid: process.pid,
         startedAt: new Date(0).toISOString()
       }),
       'utf8'
     )
+    await chmod(this.discoveryPath, 0o600)
   }
 
   async stop(): Promise<void> {
@@ -179,6 +184,7 @@ class FakeHostV2 {
     const server = this.server
     this.server = null
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (process.platform !== 'win32') await rm(this.socketPath, { force: true })
   }
 
   dropAllClients(): void {
