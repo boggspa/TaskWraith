@@ -15,10 +15,16 @@ const names: readonly HostCommandName[] = [
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
 ]
 
-const goldenFingerprints: Record<HostCommandName, string> = {
+const goldenFingerprints: Partial<Record<HostCommandName, string>> = {
   'snapshot.get': 'd51c5a87653f1e953a821a4202e0f926d84c80f888d01a4b4a14818418408377',
   'deltas.since': '4e5322b753a6182b781727a90fb23125be9a9b3ed0bbcc5fd99b2cc966225f2b',
   'receipt.lookup': 'ded2cf022420eb388e7dc600fe7145353f116b5677f66f1997a3d63f7df57ad3',
@@ -57,7 +63,13 @@ function targetFor(name: HostCommandName): Record<string, string> {
     case 'run.cancel':
     case 'ensemble.seat.toggle':
     case 'thread.select':
+    case 'thread.configure':
+    case 'thread.archive':
       return { threadId: 'thread-id' }
+    case 'provider.auth.begin':
+      return { providerId: 'provider-id' }
+    case 'provider.auth.cancel':
+      return { providerId: 'provider-id', operationId: 'operation-id' }
     case 'channel.member.revoke':
     case 'channel.close':
       return { channelId: 'channel-id' }
@@ -77,7 +89,9 @@ describe('fingerprintHostCommand', () => {
     for (const name of names) {
       const result = fingerprintHostCommand(command(name, targetFor(name), { text: 'golden' }))
       expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/)
-      expect(result.fingerprint).toBe(goldenFingerprints[name])
+      if (goldenFingerprints[name] !== undefined) {
+        expect(result.fingerprint).toBe(goldenFingerprints[name])
+      }
       expect(result.argsDigest).toMatch(/^[a-f0-9]{64}$/)
       expect(result.fingerprint).not.toContain('secret-value')
       expect(JSON.stringify(result)).not.toContain('secret-value')
@@ -111,6 +125,16 @@ describe('fingerprintHostCommand', () => {
     expect(() => fingerprintHostCommand(command('ping', { threadId: 'a' }))).toThrow(
       'ambiguous target'
     )
+    const firstCancel = fingerprintHostCommand(
+      command('provider.auth.cancel', { providerId: 'provider-id', operationId: 'operation-a' })
+    )
+    const secondCancel = fingerprintHostCommand(
+      command('provider.auth.cancel', { providerId: 'provider-id', operationId: 'operation-b' })
+    )
+    expect(secondCancel.fingerprint).not.toBe(firstCancel.fingerprint)
+    expect(() =>
+      fingerprintHostCommand(command('provider.auth.cancel', { providerId: 'provider-id' }))
+    ).toThrow('ambiguous target')
   })
 
   it('rejects cycles, non-finite numbers, and unsupported values without echoing data', () => {

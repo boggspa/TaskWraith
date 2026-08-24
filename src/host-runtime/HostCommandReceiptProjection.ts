@@ -90,6 +90,9 @@ export function projectHostCommandReceipt(
   if (record.resultSummary !== undefined) {
     candidate.resultSummary = record.resultSummary
   }
+  if (record.resultRef !== undefined) {
+    candidate.resultRef = record.resultRef
+  }
   if (record.errorCode !== undefined) {
     candidate.errorCode = record.errorCode
   }

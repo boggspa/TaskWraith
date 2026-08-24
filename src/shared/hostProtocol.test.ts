@@ -349,6 +349,41 @@ describe('Host protocol Wave 2A contract', () => {
     }
   })
 
+  it('accepts only strict discriminated setup result references', () => {
+    expect(
+      decodeHostCommandReceipt(
+        sampleReceipt({
+          name: 'workspace.register',
+          resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+        })
+      )
+    ).toMatchObject({ ok: true, value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } } })
+    expect(
+      decodeHostCommandReceipt(
+        sampleReceipt({
+          name: 'provider.auth.cancel',
+          resultRef: {
+            kind: 'provider-auth',
+            providerId: 'provider-1',
+            operationId: 'operation-1'
+          }
+        })
+      )
+    ).toMatchObject({ ok: true, value: { resultRef: { kind: 'provider-auth', operationId: 'operation-1' } } })
+    expect(
+      decodeHostCommandReceipt({
+        ...sampleReceipt(),
+        resultRef: { kind: 'workspace', id: 'workspace-1' }
+      })
+    ).toMatchObject({ ok: false, error: 'resultRef is invalid' })
+    expect(
+      decodeHostCommandReceipt({
+        ...sampleReceipt({ status: 'failed' }),
+        resultRef: { kind: 'thread', threadId: 'thread-1' }
+      })
+    ).toMatchObject({ ok: false, error: 'resultRef requires a succeeded receipt' })
+  })
+
   it('requires lowercase SHA-256 hex commandFingerprint on receipts', () => {
     expect(isHostCommandFingerprint(FP_EMPTY_SHA256)).toBe(true)
     expect(normalizeHostCommandFingerprint(` ${FP_A.toUpperCase()} `)).toBe(FP_A)

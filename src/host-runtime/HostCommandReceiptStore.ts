@@ -36,7 +36,12 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 
-import type { HostClientClass, HostCommandName } from '../shared/hostProtocol'
+import {
+  decodeHostResultRef,
+  type HostClientClass,
+  type HostCommandName,
+  type HostResultRef
+} from '../shared/hostProtocol'
 
 export const HOST_COMMAND_RECEIPT_SCHEMA_VERSION = 1 as const
 export const HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME = 'command-receipts.checkpoint.json'
@@ -135,6 +140,8 @@ export interface HostCommandReceiptRecord {
   errorCode?: string
   errorMessage?: string
   resultSummary?: string
+  /** Strict opaque setup result locator, retained across Host restart. */
+  resultRef?: HostResultRef
   /**
    * When status is `conflict`: commandId of the original receipt that owns the
    * idempotency key. Never raw args/tool output.
@@ -167,6 +174,8 @@ export type HostCommandReceiptCompleteInput = {
   errorCode?: string
   errorMessage?: string
   resultSummary?: string
+  /** Accepted only with a successful terminal receipt. */
+  resultRef?: HostResultRef
   /** Optional authority update at completion (e.g. final deny reason). */
   authority?: HostCommandReceiptAuthority
   /**
@@ -615,6 +624,10 @@ export class HostCommandReceiptStore {
     }
 
     const completedAt = input.completedAt ?? this.now()
+    const resultRef =
+      input.status === 'succeeded' && input.resultRef !== undefined
+        ? normalizeResultRef(input.resultRef)
+        : undefined
     const next: HostCommandReceiptRecord = {
       ...current,
       status: input.status,
@@ -630,6 +643,7 @@ export class HostCommandReceiptStore {
       ...(input.resultSummary !== undefined
         ? { resultSummary: truncateText(input.resultSummary, MAX_SUMMARY_CHARS) }
         : {}),
+      ...(resultRef !== undefined ? { resultRef } : {}),
       ...(position !== undefined
         ? { generation: position.generation, cursor: position.cursor }
         : {})
@@ -1063,6 +1077,12 @@ const HOST_COMMAND_NAME_SET = new Set<string>([
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
 ])
 
@@ -1169,6 +1189,14 @@ function normalizeTarget(target: HostCommandReceiptTarget): HostCommandReceiptTa
   return out
 }
 
+function normalizeResultRef(value: unknown): HostResultRef {
+  const decoded = decodeHostResultRef(value)
+  if (!decoded.ok || decoded.value === undefined) {
+    throw new Error('HostCommandReceiptStore: resultRef is invalid')
+  }
+  return decoded.value
+}
+
 function normalizeAuthority(authority: HostCommandReceiptAuthority): HostCommandReceiptAuthority {
   const decision = authority.decision
   if (decision !== 'allowed' && decision !== 'denied' && decision !== 'deferred') {
@@ -1264,6 +1292,11 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
     }
     if (typeof raw.resultSummary === 'string') {
       record.resultSummary = truncateText(raw.resultSummary, MAX_SUMMARY_CHARS)
+    }
+    if (raw.resultRef !== undefined) {
+      const resultRef = normalizeResultRef(raw.resultRef)
+      if (record.status !== 'succeeded') return null
+      record.resultRef = resultRef
     }
     if (typeof raw.conflictCommandId === 'string') {
       record.conflictCommandId = truncateText(raw.conflictCommandId, MAX_ID_CHARS)

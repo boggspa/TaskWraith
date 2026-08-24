@@ -251,8 +251,19 @@ describe('HostBridgeCommandExecutor construction', () => {
   })
 })
 
-describe('reserved read aliases and unknowns fail closed', () => {
-  it.each(['snapshot.get', 'deltas.since', 'receipt.lookup', 'ping'] as const)(
+describe('reserved read aliases, setup mutations, and unknowns fail closed', () => {
+  it.each([
+    'snapshot.get',
+    'deltas.since',
+    'receipt.lookup',
+    'ping',
+    'workspace.register',
+    'thread.create',
+    'thread.configure',
+    'thread.archive',
+    'provider.auth.begin',
+    'provider.auth.cancel'
+  ] as const)(
     '%s never calls Bridge',
     async (name) => {
       const { executor, bridge } = open()

@@ -255,6 +255,43 @@ describe('HostMutationCompletionCoordinator', () => {
     expect(envelope).toHaveBeenCalledTimes(1)
   })
 
+  it('forwards resultRef only for succeeded execution and drops it for cancelled execution', () => {
+    const { coordinator, ports } = openCoordinator()
+    coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: {
+          status: 'succeeded',
+          resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+        },
+        effects: []
+      }
+    })
+    expect(ports.completeReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: 'succeeded',
+        resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+      })
+    )
+
+    coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: {
+          status: 'cancelled',
+          resultRef: { kind: 'thread', threadId: 'thread-1' }
+        },
+        effects: []
+      }
+    })
+    expect(ports.completeReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'cancelled' })
+    )
+    expect(ports.completeReceipt.mock.calls.at(-1)?.[0]).not.toHaveProperty('resultRef')
+  })
+
   it('observed nonempty published: publish once then complete exact status at published.position', () => {
     const order: string[] = []
     const { coordinator } = openCoordinator({

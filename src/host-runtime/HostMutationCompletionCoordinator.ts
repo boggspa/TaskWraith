@@ -20,6 +20,7 @@
 
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
+import type { HostResultRef } from '../shared/hostProtocol'
 import {
   HOST_COMMAND_RECEIPT_INDETERMINATE_CODES,
   type HostCommandReceiptCompleteInput,
@@ -326,6 +327,7 @@ export class HostMutationCompletionCoordinator {
       errorCode?: string
       errorMessage?: string
       resultSummary?: string
+      resultRef?: HostResultRef
     },
     options: { consumeEnvelope: boolean }
   ): HostMutationCompletionResult {
@@ -337,7 +339,8 @@ export class HostMutationCompletionCoordinator {
         position: toReceiptPosition(position),
         ...(fields.errorCode !== undefined ? { errorCode: fields.errorCode } : {}),
         ...(fields.errorMessage !== undefined ? { errorMessage: fields.errorMessage } : {}),
-        ...(fields.resultSummary !== undefined ? { resultSummary: fields.resultSummary } : {})
+        ...(fields.resultSummary !== undefined ? { resultSummary: fields.resultSummary } : {}),
+        ...(fields.resultRef !== undefined ? { resultRef: fields.resultRef } : {})
       }
       record = this.completeReceipt(completeInput)
     } catch {
@@ -465,10 +468,14 @@ function executionFields(execution: HostCommandExecutionResult): {
   errorCode?: string
   errorMessage?: string
   resultSummary?: string
+  resultRef?: HostResultRef
 } {
   return {
     ...(execution.errorCode !== undefined ? { errorCode: execution.errorCode } : {}),
     ...(execution.errorMessage !== undefined ? { errorMessage: execution.errorMessage } : {}),
-    ...(execution.resultSummary !== undefined ? { resultSummary: execution.resultSummary } : {})
+    ...(execution.resultSummary !== undefined ? { resultSummary: execution.resultSummary } : {}),
+    ...(execution.status === 'succeeded' && execution.resultRef !== undefined
+      ? { resultRef: execution.resultRef }
+      : {})
   }
 }

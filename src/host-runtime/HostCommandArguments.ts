@@ -14,6 +14,7 @@ import {
   HOST_APPROVAL_DECIDE_DECISIONS,
   HOST_APPROVAL_DECIDE_MESSAGE_MAX_CHARS,
   HOST_PROTOCOL_MAX_ID,
+  HOST_PROTOCOL_MAX_STRING,
   HOST_PROTOCOL_MAX_SHORT,
   HOST_PROTOCOL_VERSION,
   HOST_QUESTION_ANSWER_DECISIONS,
@@ -356,6 +357,173 @@ function validatePing(command: HostCommand): HostDecodeResult<CanonicalParts> {
   return { ok: true, value: { target: target.value, arguments: args.value } }
 }
 
+function exactArgumentKeys(
+  args: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string
+): HostDecodeResult<Record<string, unknown>> {
+  if (Object.keys(args).some((key) => !allowed.includes(key))) {
+    return fail(`${label} has unknown argument keys`)
+  }
+  return { ok: true, value: args }
+}
+
+function optionalShortString(
+  value: unknown,
+  label: string
+): HostDecodeResult<string | undefined> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isNonEmptyString(value, HOST_PROTOCOL_MAX_SHORT)) {
+    return fail(`${label} must be a bounded string`)
+  }
+  return { ok: true, value }
+}
+
+function validateWorkspaceRegister(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = emptyTarget(command.target, 'workspace.register')
+  if (!target.ok) return target
+  const args = exactArgumentKeys(command.arguments, ['path', 'displayName', 'pinned'], 'workspace.register')
+  if (!args.ok) return args
+  if (!isNonEmptyString(args.value.path, HOST_PROTOCOL_MAX_STRING)) {
+    return fail('workspace.register path is required and bounded')
+  }
+  const displayName = optionalShortString(args.value.displayName, 'workspace.register displayName')
+  if (!displayName.ok) return displayName
+  if (args.value.pinned !== undefined && typeof args.value.pinned !== 'boolean') {
+    return fail('workspace.register pinned must be boolean')
+  }
+  const output: Record<string, unknown> = { path: args.value.path }
+  if (displayName.value !== undefined) output.displayName = displayName.value
+  if (args.value.pinned !== undefined) output.pinned = args.value.pinned
+  return { ok: true, value: { target: target.value, arguments: output } }
+}
+
+function validateThreadCreate(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = emptyTarget(command.target, 'thread.create')
+  if (!target.ok) return target
+  const args = exactArgumentKeys(command.arguments, ['scope', 'workspaceId', 'title'], 'thread.create')
+  if (!args.ok) return args
+  if (args.value.scope !== 'global' && args.value.scope !== 'workspace') {
+    return fail('thread.create scope must be global or workspace')
+  }
+  const title = optionalShortString(args.value.title, 'thread.create title')
+  if (!title.ok) return title
+  if (args.value.scope === 'global' && args.value.workspaceId !== undefined) {
+    return fail('thread.create global must not include workspaceId')
+  }
+  if (
+    args.value.scope === 'workspace' &&
+    !isNonEmptyString(args.value.workspaceId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return fail('thread.create workspace requires workspaceId')
+  }
+  const output: Record<string, unknown> = { scope: args.value.scope }
+  if (args.value.scope === 'workspace') output.workspaceId = args.value.workspaceId
+  if (title.value !== undefined) output.title = title.value
+  return { ok: true, value: { target: target.value, arguments: output } }
+}
+
+function validateThreadConfigure(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'threadId', 'thread.configure')
+  if (!target.ok) return target
+  const args = command.arguments
+  const keys = Object.keys(args).sort()
+  if (keys.length === 1 && keys[0] === 'title') {
+    if (!isNonEmptyString(args.title, HOST_PROTOCOL_MAX_SHORT)) {
+      return fail('thread.configure title must be a bounded string')
+    }
+    return { ok: true, value: { target: target.value, arguments: { title: args.title } } }
+  }
+  const required = ['modelId', 'offerRevision', 'postureId', 'providerId']
+  const allowed = [
+    'modelId',
+    'offerRevision',
+    'postureId',
+    'providerId',
+    'reasoningId',
+    'title',
+    'postureConsent'
+  ]
+  if (
+    keys.some((key) => !allowed.includes(key)) ||
+    required.some((key) => !Object.prototype.hasOwnProperty.call(args, key))
+  ) {
+    return fail('thread.configure must be title-only or a complete provider selection')
+  }
+  for (const key of required) {
+    if (!isNonEmptyString(args[key], HOST_PROTOCOL_MAX_ID)) {
+      return fail(`thread.configure ${key} must be a bounded string`)
+    }
+  }
+  if (
+    args.reasoningId !== undefined &&
+    !isNonEmptyString(args.reasoningId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return fail('thread.configure reasoningId must be a bounded string')
+  }
+  if (args.title !== undefined && !isNonEmptyString(args.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return fail('thread.configure title must be a bounded string')
+  }
+  if (args.postureConsent !== undefined && args.postureConsent !== true) {
+    return fail('thread.configure postureConsent must be true when present')
+  }
+  const output: Record<string, unknown> = {
+    providerId: args.providerId,
+    modelId: args.modelId,
+    postureId: args.postureId,
+    offerRevision: args.offerRevision
+  }
+  if (args.reasoningId !== undefined) output.reasoningId = args.reasoningId
+  if (args.title !== undefined) output.title = args.title
+  if (args.postureConsent === true) output.postureConsent = true
+  return { ok: true, value: { target: target.value, arguments: output } }
+}
+
+function validateThreadArchive(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'threadId', 'thread.archive')
+  if (!target.ok) return target
+  const args = command.arguments
+  if (Object.keys(args).length !== 1 || !Object.prototype.hasOwnProperty.call(args, 'archived')) {
+    return fail('thread.archive arguments must be exactly { archived }')
+  }
+  if (typeof args.archived !== 'boolean') return fail('thread.archive archived must be boolean')
+  return { ok: true, value: { target: target.value, arguments: { archived: args.archived } } }
+}
+
+function validateProviderAuthBegin(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'providerId', 'provider.auth.begin')
+  if (!target.ok) return target
+  const args = command.arguments
+  if (Object.keys(args).length !== 1 || !Object.prototype.hasOwnProperty.call(args, 'flowId')) {
+    return fail('provider.auth.begin arguments must be exactly { flowId }')
+  }
+  if (!isNonEmptyString(args.flowId, HOST_PROTOCOL_MAX_ID)) {
+    return fail('provider.auth.begin flowId is required and bounded')
+  }
+  return { ok: true, value: { target: target.value, arguments: { flowId: args.flowId } } }
+}
+
+function validateProviderAuthCancel(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const targetKeys = Object.keys(command.target).sort()
+  if (targetKeys.length !== 2 || targetKeys[0] !== 'operationId' || targetKeys[1] !== 'providerId') {
+    return fail('provider.auth.cancel target must be exactly { providerId, operationId }')
+  }
+  const providerId = command.target.providerId
+  const operationId = command.target.operationId
+  if (
+    !isNonEmptyString(providerId, HOST_PROTOCOL_MAX_ID) ||
+    !isNonEmptyString(operationId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return fail('provider.auth.cancel target identifiers are required and bounded')
+  }
+  const args = emptyArguments(command.arguments, 'provider.auth.cancel')
+  if (!args.ok) return args
+  return {
+    ok: true,
+    value: { target: { providerId, operationId }, arguments: args.value }
+  }
+}
+
 /**
  * Exhaustive per-name validators. Adding a HostCommandName without an entry
  * fails typecheck via `satisfies Record`.
@@ -372,6 +540,12 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'channel.member.revoke': validateChannelMemberRevoke,
   'channel.close': validateChannelClose,
   'thread.select': (command) => validateThreadOnlyEmptyArgs(command, 'thread.select'),
+  'workspace.register': validateWorkspaceRegister,
+  'thread.create': validateThreadCreate,
+  'thread.configure': validateThreadConfigure,
+  'thread.archive': validateThreadArchive,
+  'provider.auth.begin': validateProviderAuthBegin,
+  'provider.auth.cancel': validateProviderAuthCancel,
   ping: validatePing
 } as const satisfies Record<HostCommandName, CommandShapeValidator>
 

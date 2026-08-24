@@ -164,6 +164,37 @@ describe('HostCommandReceiptStore', () => {
     expect(durable?.cursor).toBe(42)
   })
 
+  it('persists a strict resultRef through restart and drops it from non-success completion', () => {
+    const store = openStore()
+    store.begin(
+      baseInput({
+        commandId: 'setup-1',
+        idempotencyKey: 'setup-key-1',
+        commandName: 'workspace.register'
+      })
+    )
+    const completed = store.complete({
+      commandId: 'setup-1',
+      status: 'succeeded',
+      resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+    })
+    expect(completed?.resultRef).toEqual({ kind: 'workspace', workspaceId: 'workspace-1' })
+
+    const reopened = openStore()
+    const durable = expectFound(reopened.getByCommandId('setup-1', OWNER_ACTOR), 'succeeded')
+    expect(durable?.resultRef).toEqual({ kind: 'workspace', workspaceId: 'workspace-1' })
+
+    reopened.begin(
+      baseInput({ commandId: 'setup-2', idempotencyKey: 'setup-key-2', commandName: 'thread.archive' })
+    )
+    const cancelled = reopened.complete({
+      commandId: 'setup-2',
+      status: 'cancelled',
+      resultRef: { kind: 'thread', threadId: 'thread-1' }
+    })
+    expect(cancelled?.resultRef).toBeUndefined()
+  })
+
   it('preserves the begin position when completion omits a refreshed position', () => {
     position = { generation: 3, cursor: 7 }
     const store = openStore()

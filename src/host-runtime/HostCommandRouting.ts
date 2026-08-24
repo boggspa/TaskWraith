@@ -18,7 +18,10 @@ import type { HostCommandName } from '../shared/hostProtocol'
  * (snapshot / deltas / receipt / health-style ping). They must not enter the
  * durable governed command() mutation path.
  */
-export type HostCommandRoutingClass = 'authority-rpc-read-alias' | 'governed-mutation'
+export type HostCommandRoutingClass =
+  | 'authority-rpc-read-alias'
+  | 'governed-mutation'
+  | 'setup-mutation'
 
 /**
  * Compile-time exhaustive routing table. Adding a HostCommandName without an
@@ -36,7 +39,13 @@ export const HOST_COMMAND_ROUTING_CLASS = {
   'ensemble.seat.toggle': 'governed-mutation',
   'channel.member.revoke': 'governed-mutation',
   'channel.close': 'governed-mutation',
-  'thread.select': 'governed-mutation'
+  'thread.select': 'governed-mutation',
+  'workspace.register': 'setup-mutation',
+  'thread.create': 'setup-mutation',
+  'thread.configure': 'setup-mutation',
+  'thread.archive': 'setup-mutation',
+  'provider.auth.begin': 'setup-mutation',
+  'provider.auth.cancel': 'setup-mutation'
 } as const satisfies Record<HostCommandName, HostCommandRoutingClass>
 
 /** Stable order derived from the typed routing map keys (no parallel catalog). */
@@ -52,6 +61,11 @@ export const HOST_AUTHORITY_RPC_READ_ALIAS_NAMES = Object.freeze(
 
 export const HOST_GOVERNED_MUTATION_COMMAND_NAMES = Object.freeze(
   HOST_COMMAND_NAMES.filter((name) => HOST_COMMAND_ROUTING_CLASS[name] === 'governed-mutation')
+) as readonly HostCommandName[]
+
+/** Setup mutations use their own executor and must never enter Bridge execution. */
+export const HOST_SETUP_MUTATION_COMMAND_NAMES = Object.freeze(
+  HOST_COMMAND_NAMES.filter((name) => HOST_COMMAND_ROUTING_CLASS[name] === 'setup-mutation')
 ) as readonly HostCommandName[]
 
 type AssertExhaustivePartition =
@@ -101,6 +115,10 @@ export function isGovernedMutationCommandName(name: HostCommandName): boolean {
   return HOST_COMMAND_ROUTING_CLASS[name] === 'governed-mutation'
 }
 
+export function isSetupMutationCommandName(name: HostCommandName): boolean {
+  return HOST_COMMAND_ROUTING_CLASS[name] === 'setup-mutation'
+}
+
 /**
  * Gate for a future durable command() path: only governed mutations may enter.
  * Reserved Authority-RPC read aliases and unknown names fail closed (null).
@@ -109,6 +127,13 @@ export function parseGovernedMutationCommandName(value: unknown): HostCommandNam
   const name = parseHostCommandName(value)
   if (!name) return null
   if (HOST_COMMAND_ROUTING_CLASS[name] !== 'governed-mutation') return null
+  return name
+}
+
+/** Gate for setup-only execution. Reads, Bridge-governed mutations, and unknown names fail closed. */
+export function parseSetupMutationCommandName(value: unknown): HostCommandName | null {
+  const name = parseHostCommandName(value)
+  if (!name || HOST_COMMAND_ROUTING_CLASS[name] !== 'setup-mutation') return null
   return name
 }
 

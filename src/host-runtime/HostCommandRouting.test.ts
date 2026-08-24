@@ -6,13 +6,16 @@ import {
   HOST_COMMAND_NAMES,
   HOST_COMMAND_ROUTING_CLASS,
   HOST_GOVERNED_MUTATION_COMMAND_NAMES,
+  HOST_SETUP_MUTATION_COMMAND_NAMES,
   classifyHostCommandName,
   hostCommandRoutingClassFor,
   isAuthorityRpcReadAliasName,
   isGovernedMutationCommandName,
+  isSetupMutationCommandName,
   parseAuthorityRpcReadAliasName,
   parseGovernedMutationCommandName,
-  parseHostCommandName
+  parseHostCommandName,
+  parseSetupMutationCommandName
 } from './HostCommandRouting'
 
 /** Canonical HostCommandName set from shared protocol (test oracle only). */
@@ -28,7 +31,22 @@ const PROTOCOL_COMMAND_NAMES: readonly HostCommandName[] = [
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
+]
+
+const EXPECTED_SETUP: readonly HostCommandName[] = [
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel'
 ]
 
 const EXPECTED_READ_ALIASES: readonly HostCommandName[] = [
@@ -58,15 +76,17 @@ describe('HostCommandRouting', () => {
     }
   })
 
-  it('partitions reserved Authority-RPC read aliases vs governed mutations', () => {
+  it('partitions read aliases, Bridge-governed mutations, and setup mutations', () => {
     expect([...HOST_AUTHORITY_RPC_READ_ALIAS_NAMES].sort()).toEqual(
       [...EXPECTED_READ_ALIASES].sort()
     )
     expect([...HOST_GOVERNED_MUTATION_COMMAND_NAMES].sort()).toEqual([...EXPECTED_GOVERNED].sort())
+    expect([...HOST_SETUP_MUTATION_COMMAND_NAMES].sort()).toEqual([...EXPECTED_SETUP].sort())
 
     const union = new Set([
       ...HOST_AUTHORITY_RPC_READ_ALIAS_NAMES,
-      ...HOST_GOVERNED_MUTATION_COMMAND_NAMES
+      ...HOST_GOVERNED_MUTATION_COMMAND_NAMES,
+      ...HOST_SETUP_MUTATION_COMMAND_NAMES
     ])
     expect(union.size).toBe(HOST_COMMAND_NAMES.length)
     expect(union).toEqual(new Set(HOST_COMMAND_NAMES))
@@ -83,6 +103,13 @@ describe('HostCommandRouting', () => {
       expect(isAuthorityRpcReadAliasName(name)).toBe(false)
       expect(hostCommandRoutingClassFor(name)).toBe('governed-mutation')
     }
+    for (const name of HOST_SETUP_MUTATION_COMMAND_NAMES) {
+      expect(HOST_GOVERNED_MUTATION_COMMAND_NAMES).not.toContain(name)
+      expect(isSetupMutationCommandName(name)).toBe(true)
+      expect(isGovernedMutationCommandName(name)).toBe(false)
+      expect(isAuthorityRpcReadAliasName(name)).toBe(false)
+      expect(hostCommandRoutingClassFor(name)).toBe('setup-mutation')
+    }
   })
 
   it.each([
@@ -97,7 +124,13 @@ describe('HostCommandRouting', () => {
     ['ensemble.seat.toggle', 'governed-mutation'],
     ['channel.member.revoke', 'governed-mutation'],
     ['channel.close', 'governed-mutation'],
-    ['thread.select', 'governed-mutation']
+    ['thread.select', 'governed-mutation'],
+    ['workspace.register', 'setup-mutation'],
+    ['thread.create', 'setup-mutation'],
+    ['thread.configure', 'setup-mutation'],
+    ['thread.archive', 'setup-mutation'],
+    ['provider.auth.begin', 'setup-mutation'],
+    ['provider.auth.cancel', 'setup-mutation']
   ] as const)('classifies %s as %s', (name, routingClass) => {
     expect(classifyHostCommandName(name)).toBe(routingClass)
     expect(hostCommandRoutingClassFor(name)).toBe(routingClass)
@@ -110,6 +143,16 @@ describe('HostCommandRouting', () => {
     }
     for (const name of EXPECTED_READ_ALIASES) {
       expect(parseGovernedMutationCommandName(name)).toBeNull()
+    }
+    for (const name of EXPECTED_SETUP) {
+      expect(parseGovernedMutationCommandName(name)).toBeNull()
+    }
+  })
+
+  it('parseSetupMutationCommandName admits only setup mutations', () => {
+    for (const name of EXPECTED_SETUP) expect(parseSetupMutationCommandName(name)).toBe(name)
+    for (const name of [...EXPECTED_READ_ALIASES, ...EXPECTED_GOVERNED]) {
+      expect(parseSetupMutationCommandName(name)).toBeNull()
     }
   })
 
@@ -149,12 +192,12 @@ describe('HostCommandRouting', () => {
     'shutdown',
     'bootstrap',
     'command',
-    'run.start',
-    'thread.create'
+    'run.start'
   ])('fails closed for untrusted input %# (%j)', (value) => {
     expect(parseHostCommandName(value)).toBeNull()
     expect(classifyHostCommandName(value)).toBeNull()
     expect(parseGovernedMutationCommandName(value)).toBeNull()
+    expect(parseSetupMutationCommandName(value)).toBeNull()
     expect(parseAuthorityRpcReadAliasName(value)).toBeNull()
   })
 

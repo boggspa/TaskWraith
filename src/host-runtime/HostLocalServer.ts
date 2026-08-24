@@ -60,6 +60,7 @@ import {
   type HostAuthorityCallContext,
   parseHostAuthorityReceiptLookup
 } from './HostAuthority'
+import { parseSetupMutationCommandName } from './HostCommandRouting'
 import { TW_MISSION_MAX_BUNDLE_BYTES } from '../host-shared/twmission'
 
 const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, HostCapability>> = {
@@ -648,6 +649,15 @@ export class HostLocalServer {
 
     const requiredCapability = REQUIRED_READ_CAPABILITY[frame.kind]
     if (requiredCapability && !binding.welcome.capabilities.includes(requiredCapability)) {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
+      return
+    }
+    if (
+      frame.kind === 'command.submit' &&
+      parseSetupMutationCommandName(frame.params.name) !== null &&
+      (!binding.welcome.capabilities.includes('commands') ||
+        !binding.welcome.capabilities.includes('setup'))
+    ) {
       socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
       return
     }

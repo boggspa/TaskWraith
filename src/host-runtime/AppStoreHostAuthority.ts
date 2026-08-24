@@ -17,6 +17,7 @@ import {
   type HostCursorPosition,
   type HostDeltasSinceResult,
   type HostHealthProjection,
+  type HostResultRef,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
@@ -32,7 +33,11 @@ import {
   type HostAuthorityShutdownResult
 } from './HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
-import { parseGovernedMutationCommandName } from './HostCommandRouting'
+import { validateHostCommandArguments } from './HostCommandArguments'
+import {
+  parseGovernedMutationCommandName,
+  parseSetupMutationCommandName
+} from './HostCommandRouting'
 import { projectHostCommandReceipt } from './HostCommandReceiptProjection'
 import { mintHostCommandId } from '../host-shared/HostCommandIdentity'
 import type {
@@ -108,12 +113,25 @@ export interface AppStoreHostAuthorityExecutorResult {
   readonly resultSummary?: string
   readonly errorCode?: string
   readonly errorMessage?: string
+  readonly resultRef?: HostResultRef
 }
 
 export type AppStoreHostAuthorityExecutor = (
   command: HostCommand,
   context: HostAuthorityCallContext
 ) => AppStoreHostAuthorityExecutorResult | Promise<AppStoreHostAuthorityExecutorResult>
+
+/**
+ * Dedicated setup executor seam. It is intentionally distinct from the
+ * Bridge-compatible commandExecutor: setup command names can never reach
+ * HostBridgeCommandExecutor through this authority.
+ */
+export interface AppStoreHostAuthoritySetupExecutor {
+  execute(
+    command: HostCommand,
+    context: HostAuthorityCallContext
+  ): AppStoreHostAuthorityExecutorResult | Promise<AppStoreHostAuthorityExecutorResult>
+}
 
 export type AppStoreHostAuthorityHealthProvider = () =>
   | HostHealthProjection
@@ -161,6 +179,7 @@ export interface AppStoreHostAuthorityPorts {
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
+  readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
@@ -288,6 +307,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   private readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   private readonly commandExecutor: AppStoreHostAuthorityExecutor
+  private readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
@@ -318,6 +338,7 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.snapshotDonor !== 'function' ||
       typeof ports.authorityEvaluator !== 'function' ||
       typeof ports.commandExecutor !== 'function' ||
+      (ports.setupExecutor !== undefined && typeof ports.setupExecutor.execute !== 'function') ||
       typeof ports.healthProvider !== 'function' ||
       (ports.threadOffersProvider !== undefined &&
         typeof ports.threadOffersProvider !== 'function') ||
@@ -330,6 +351,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.snapshotDonor = ports.snapshotDonor
     this.authorityEvaluator = ports.authorityEvaluator
     this.commandExecutor = ports.commandExecutor
+    this.setupExecutor = ports.setupExecutor
     this.healthProvider = ports.healthProvider
     this.threadOffersProvider = ports.threadOffersProvider
     this.onShutdown = ports.onShutdown
@@ -470,13 +492,22 @@ export class AppStoreHostAuthority implements HostAuthority {
 
     const decoded = decodeHostCommand(command)
     if (!decoded.ok) return { ok: false, error: 'invalid_lookup' }
-    const hostCommand = decoded.value
+    const validated = validateHostCommandArguments(decoded.value)
+    if (!validated.ok) return { ok: false, error: 'invalid_lookup' }
+    const hostCommand = validated.value
 
     // Body-bearing reads are Authority RPC methods only. Reserved read aliases
     // must never reach actor denial, fingerprinting, evaluation, receipts, or
     // execution through the durable mutation path.
-    if (parseGovernedMutationCommandName(hostCommand.name) === null) {
+    const governedName = parseGovernedMutationCommandName(hostCommand.name)
+    const setupName = parseSetupMutationCommandName(hostCommand.name)
+    if (governedName === null && setupName === null) {
       return { ok: false, error: 'invalid_lookup' }
+    }
+    // Never mint an orphan pending receipt when this compatibility authority
+    // has no dedicated setup executor wired. Setup is unavailable, not queued.
+    if (setupName !== null && !this.setupExecutor) {
+      return { ok: false, error: 'host_unavailable' }
     }
 
     // Actor spoof: bind any durable denial to authenticated context.actor.
@@ -582,9 +613,15 @@ export class AppStoreHostAuthority implements HostAuthority {
       )
     }
 
-    // allowed — observe once (wrap existing executor + closed-over context),
-    // then complete once through the sole-journal coordinator.
-    return this.executeAllowedMutation(hostCommand, context)
+    // allowed — setup uses the explicit injected executor, never the Bridge
+    // command port. Both paths retain the same observation + sole-journal
+    // terminal completion so result references survive replay/restart.
+    if (setupName !== null) {
+      // Guarded before durable begin above; this narrows the structural port.
+      if (!this.setupExecutor) return { ok: false, error: 'host_unavailable' }
+      return this.executeAllowedMutation(hostCommand, context, this.setupExecutor)
+    }
+    return this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
   }
 
   /**
@@ -594,12 +631,16 @@ export class AppStoreHostAuthority implements HostAuthority {
    */
   private async executeAllowedMutation(
     hostCommand: HostCommand,
-    context: HostAuthorityCallContext
+    context: HostAuthorityCallContext,
+    executor: AppStoreHostAuthorityExecutor | AppStoreHostAuthoritySetupExecutor
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {
     const observedExecutor = new HostObservedMutationExecutor({
       captureSnapshot: () => this.captureMutationSnapshot(),
       executeCommand: async (command) => {
-        const result = await this.commandExecutor(command, context)
+        const result =
+          'execute' in executor
+            ? await executor.execute(command, context)
+            : await executor(command, context)
         return result
       }
     })

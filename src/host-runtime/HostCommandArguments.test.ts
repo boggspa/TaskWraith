@@ -24,6 +24,12 @@ const names: readonly HostCommandName[] = [
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
 ]
 
@@ -88,6 +94,29 @@ function validShape(name: HostCommandName): {
       return {
         target: { approvalId: 'approval-id' },
         args: { decision: 'accept' }
+      }
+    case 'workspace.register':
+      return { target: {}, args: { path: '/workspace' } }
+    case 'thread.create':
+      return { target: {}, args: { scope: 'global', title: 'New thread' } }
+    case 'thread.configure':
+      return {
+        target: { threadId: 'thread-id' },
+        args: {
+          providerId: 'provider-id',
+          modelId: 'model-id',
+          postureId: 'posture-id',
+          offerRevision: 'offer-revision'
+        }
+      }
+    case 'thread.archive':
+      return { target: { threadId: 'thread-id' }, args: { archived: true } }
+    case 'provider.auth.begin':
+      return { target: { providerId: 'provider-id' }, args: { flowId: 'flow-id' } }
+    case 'provider.auth.cancel':
+      return {
+        target: { providerId: 'provider-id', operationId: 'operation-id' },
+        args: {}
       }
   }
 }
@@ -210,6 +239,52 @@ describe('validateHostCommandArguments', () => {
         error: `${name} target must be exactly { threadId }`
       })
     }
+  })
+
+  it('accepts only the closed setup command shapes', () => {
+    expect(
+      validateHostCommandArguments(
+        command('workspace.register', {}, { path: '/workspace', displayName: 'Workspace', pinned: false })
+      ).ok
+    ).toBe(true)
+    expect(
+      validateHostCommandArguments(
+        command('workspace.register', { workspaceId: 'nope' }, { path: '/workspace' })
+      )
+    ).toEqual({ ok: false, error: 'workspace.register target must be empty' })
+    expect(
+      validateHostCommandArguments(command('thread.create', {}, { scope: 'workspace' }))
+    ).toEqual({ ok: false, error: 'thread.create workspace requires workspaceId' })
+    expect(
+      validateHostCommandArguments(
+        command('thread.create', {}, { scope: 'global', workspaceId: 'workspace-id' })
+      )
+    ).toEqual({ ok: false, error: 'thread.create global must not include workspaceId' })
+
+    expect(
+      validateHostCommandArguments(command('thread.configure', { threadId: 'thread-id' }, { title: 'Retitled' }))
+    ).toMatchObject({ ok: true, value: { arguments: { title: 'Retitled' } } })
+    expect(
+      validateHostCommandArguments(
+        command('thread.configure', { threadId: 'thread-id' }, { providerId: 'provider-id' })
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.configure must be title-only or a complete provider selection'
+    })
+    expect(
+      validateHostCommandArguments(
+        command('thread.configure', { threadId: 'thread-id' }, { title: 'x', providerId: 'p' })
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.configure must be title-only or a complete provider selection'
+    })
+    expect(
+      validateHostCommandArguments(
+        command('provider.auth.cancel', { providerId: 'provider-id', operationId: 'operation-id' }, { flowId: 'x' })
+      )
+    ).toEqual({ ok: false, error: 'provider.auth.cancel arguments must be empty' })
   })
 
   it('ensemble.seat.toggle requires participantId and boolean enabled', () => {

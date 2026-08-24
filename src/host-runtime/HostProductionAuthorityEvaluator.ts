@@ -25,6 +25,7 @@ import type {
   AppStoreHostAuthorityEvaluation,
   AppStoreHostAuthorityEvaluator
 } from './AppStoreHostAuthority'
+import type { HostAuthorityCallContext } from './HostAuthority'
 import type { HostDeferredChallengeKind } from './HostDeferredCommandBridge'
 
 /* ------------------------------------------------------------------ */
@@ -112,11 +113,26 @@ const MUTATION_COMMANDS_NO_AUTHORITY: ReadonlySet<HostCommandName> = new Set([
   'thread.select'
 ])
 
+/**
+ * Setup has a distinct executor and no Bridge/deferred authority path. It is
+ * available only to the exact authenticated local actor established by the
+ * transport binding; remote/iOS callers fail closed.
+ */
+const SETUP_COMMANDS: ReadonlySet<HostCommandName> = new Set([
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel'
+])
+
 /** Every HostCommandName must appear in exactly one of the sets above. */
 const ALL_CLASSIFIED: ReadonlySet<HostCommandName> = new Set([
   ...READ_COMMANDS,
   ...RESPONSE_COMMANDS,
-  ...MUTATION_COMMANDS_NO_AUTHORITY
+  ...MUTATION_COMMANDS_NO_AUTHORITY,
+  ...SETUP_COMMANDS
 ])
 
 /* ------------------------------------------------------------------ */
@@ -146,7 +162,10 @@ export function createHostProductionAuthorityEvaluator(
   // documented injection seam.
   void ports
 
-  return (command: HostCommand): AppStoreHostAuthorityEvaluation => {
+  return (
+    command: HostCommand,
+    context: HostAuthorityCallContext
+  ): AppStoreHostAuthorityEvaluation => {
     const name = command.name as string
 
     // actor identity is load-bearing per R5 C5 even though today's
@@ -168,6 +187,30 @@ export function createHostProductionAuthorityEvaluator(
         decision: 'allowed',
         reason: 'response-to-existing-deferred-ask',
         policy: 'host-arc-r5-c2-response'
+      }
+    }
+
+    if (SETUP_COMMANDS.has(name as HostCommandName)) {
+      const locallyBound =
+        (context.client.clientClass === 'desktop' ||
+          context.client.clientClass === 'tui' ||
+          context.client.clientClass === 'test') &&
+        context.actor.clientId === context.client.clientId &&
+        context.actor.clientClass === context.client.clientClass &&
+        command.actor.actorId === context.actor.actorId &&
+        command.actor.clientId === context.actor.clientId &&
+        command.actor.clientClass === context.actor.clientClass
+      if (!locallyBound) {
+        return {
+          decision: 'denied',
+          reason: 'setup-requires-exact-local-actor',
+          policy: 'host-arc-r5-c5-setup-local-only'
+        }
+      }
+      return {
+        decision: 'allowed',
+        reason: 'exact-local-setup-actor',
+        policy: 'host-arc-r5-c5-setup-local-only'
       }
     }
 
@@ -222,4 +265,9 @@ export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES: readonly HostCommand
 /** Mutation commands that default to deferred (no existing authority). */
 export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED: readonly HostCommandName[] = [
   ...MUTATION_COMMANDS_NO_AUTHORITY
+].sort() as HostCommandName[]
+
+/** Setup is local-only and never deferred to the Bridge approval path. */
+export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP: readonly HostCommandName[] = [
+  ...SETUP_COMMANDS
 ].sort() as HostCommandName[]

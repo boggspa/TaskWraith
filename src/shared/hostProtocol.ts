@@ -52,6 +52,8 @@ export type HostCapability =
   | 'provider-catalog'
   | 'provider-auth'
   | 'history'
+  /** Opt-in setup mutations; never requested by legacy/default clients. */
+  | 'setup'
   | 'commands'
   | 'receipts'
   | 'health'
@@ -645,6 +647,12 @@ export type HostCommandName =
   | 'channel.member.revoke'
   | 'channel.close'
   | 'thread.select'
+  | 'workspace.register'
+  | 'thread.create'
+  | 'thread.configure'
+  | 'thread.archive'
+  | 'provider.auth.begin'
+  | 'provider.auth.cancel'
   | 'ping'
 
 export interface HostCommand {
@@ -723,7 +731,14 @@ export interface HostCommandReceipt {
    * command fingerprint than the durable original.
    */
   conflictCommandId?: string
+  resultRef?: HostResultRef
 }
+
+/** Opaque durable result locator; never a path, URL, credential, or body. */
+export type HostResultRef =
+  | { kind: 'workspace'; workspaceId: string }
+  | { kind: 'thread'; threadId: string }
+  | { kind: 'provider-auth'; providerId: string; operationId: string }
 
 export type HostDecodeResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
@@ -740,6 +755,53 @@ function isOptionalString(
   max = HOST_PROTOCOL_MAX_STRING
 ): value is string | undefined {
   return value === undefined || isNonEmptyString(value, max)
+}
+
+export function decodeHostResultRef(value: unknown): HostDecodeResult<HostResultRef | undefined> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    return { ok: false, error: 'resultRef is invalid' }
+  }
+  if (value.kind === 'workspace') {
+    if (
+      Object.keys(value).length !== 2 ||
+      !isSafeHostEntityIdComponent(value.workspaceId)
+    ) {
+      return { ok: false, error: 'resultRef is invalid' }
+    }
+    return {
+      ok: true,
+      value: { kind: 'workspace', workspaceId: value.workspaceId }
+    }
+  }
+  if (value.kind === 'thread') {
+    if (
+      Object.keys(value).length !== 2 ||
+      !isSafeHostEntityIdComponent(value.threadId)
+    ) {
+      return { ok: false, error: 'resultRef is invalid' }
+    }
+    return {
+      ok: true,
+      value: { kind: 'thread', threadId: value.threadId }
+    }
+  }
+  if (value.kind !== 'provider-auth') return { ok: false, error: 'resultRef is invalid' }
+  if (
+    Object.keys(value).length !== 3 ||
+    !isSafeHostEntityIdComponent(value.providerId) ||
+    !isSafeHostEntityIdComponent(value.operationId)
+  ) {
+    return { ok: false, error: 'resultRef is invalid' }
+  }
+  return {
+    ok: true,
+    value: {
+      kind: 'provider-auth',
+      providerId: value.providerId,
+      operationId: value.operationId
+    }
+  }
 }
 
 function hasUnsafeHostIdentifierControlCharacter(value: string): boolean {
@@ -834,6 +896,7 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'provider-catalog',
   'provider-auth',
   'history',
+  'setup',
   'commands',
   'receipts',
   'health',
@@ -866,6 +929,12 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'thread.create',
+  'thread.configure',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
 ])
 
@@ -1540,6 +1609,11 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (!isOptionalString(value.conflictCommandId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: 'conflictCommandId is invalid' }
   }
+  const resultRef = decodeHostResultRef(value.resultRef)
+  if (!resultRef.ok) return resultRef
+  if (resultRef.value !== undefined && status !== 'succeeded') {
+    return { ok: false, error: 'resultRef requires a succeeded receipt' }
+  }
   let authority: HostAuthorityDecision
   if (value.authority.decision === 'deny') {
     authority = { decision: 'deny', reason: String(value.authority.reason) }
@@ -1581,6 +1655,7 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (value.conflictCommandId !== undefined) {
     receipt.conflictCommandId = value.conflictCommandId
   }
+  if (resultRef.value) receipt.resultRef = resultRef.value
   return { ok: true, value: receipt }
 }
 

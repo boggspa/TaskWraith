@@ -120,6 +120,32 @@ describe('HostCommandReceiptProjection', () => {
     expect(JSON.stringify(projected.value)).not.toMatch(/"policy"/)
   })
 
+  it('projects a persisted opaque resultRef without internal target leakage', () => {
+    const store = openStore()
+    store.begin({
+      commandId: 'setup-workspace',
+      idempotencyKey: 'setup-workspace-key',
+      commandName: 'workspace.register',
+      commandFingerprint: 'e'.repeat(64),
+      actor: OWNER,
+      target: { kind: 'workspace-register' },
+      authority: { decision: 'allowed' }
+    })
+    store.complete({
+      commandId: 'setup-workspace',
+      status: 'succeeded',
+      resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+    })
+    const found = store.getByCommandId('setup-workspace', OWNER)
+    expect(found.kind).toBe('found')
+    if (found.kind !== 'found') return
+
+    expect(projectHostCommandReceipt(found.receipt)).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } }
+    })
+  })
+
   it('fails closed on incomplete legacy rows without inventing identity/position', () => {
     const store = openStore()
     store.begin({

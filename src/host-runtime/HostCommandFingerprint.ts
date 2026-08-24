@@ -29,6 +29,12 @@ const TARGET_RULES: Record<HostCommandName, { keys: readonly string[]; kind: str
   'channel.member.revoke': { keys: ['channelId'], kind: 'channel' },
   'channel.close': { keys: ['channelId'], kind: 'channel' },
   'thread.select': { keys: ['threadId'], kind: 'thread' },
+  'workspace.register': { keys: [], kind: 'workspace-register' },
+  'thread.create': { keys: [], kind: 'thread-create' },
+  'thread.configure': { keys: ['threadId'], kind: 'thread' },
+  'thread.archive': { keys: ['threadId'], kind: 'thread' },
+  'provider.auth.begin': { keys: ['providerId'], kind: 'provider-auth' },
+  'provider.auth.cancel': { keys: ['providerId', 'operationId'], kind: 'provider-auth' },
   ping: { keys: [], kind: 'host' }
 }
 
@@ -87,11 +93,14 @@ function targetFor(command: HostCommand): { kind: string; id?: string } {
     throw new Error('HostCommandFingerprint: ambiguous target')
   }
   if (rule.keys.length === 0) return { kind: rule.kind }
-  const id = command.target[rule.keys[0]]
-  if (typeof id !== 'string' || id.length === 0) {
+  const targetParts = rule.keys.map((key) => command.target[key])
+  if (targetParts.some((part) => typeof part !== 'string' || part.length === 0)) {
     throw new Error('HostCommandFingerprint: invalid target')
   }
-  return { kind: rule.kind, id }
+  return {
+    kind: rule.kind,
+    id: rule.keys.length === 1 ? targetParts[0] : JSON.stringify(targetParts)
+  }
 }
 
 /**

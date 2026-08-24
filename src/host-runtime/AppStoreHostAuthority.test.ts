@@ -298,6 +298,73 @@ describe('AppStoreHostAuthority', () => {
     expect(runtime.receiptStore.size).toBe(0)
   })
 
+  it('refuses setup before receipt begin when no dedicated setup executor is injected', async () => {
+    const authority = open()
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'setup-missing-executor',
+        idempotencyKey: 'setup-missing-executor-key',
+        actor: ACTOR_A,
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: '/workspace' }
+      })
+    )
+
+    expect(result).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(runtime.receiptStore.size).toBe(0)
+    expect(executorCalls).toBe(0)
+  })
+
+  it('routes setup only through the injected setup executor and persists its resultRef', async () => {
+    const bridgeExecutor = vi.fn(() => ({ status: 'succeeded' as const }))
+    const setupExecutor = vi.fn(() => ({
+      status: 'succeeded' as const,
+      resultRef: { kind: 'workspace' as const, workspaceId: 'workspace-1' }
+    }))
+    const authority = open({
+      ports: {
+        commandExecutor: bridgeExecutor,
+        setupExecutor: { execute: setupExecutor }
+      }
+    })
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'setup-executor',
+        idempotencyKey: 'setup-executor-key',
+        actor: ACTOR_A,
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: '/workspace' }
+      })
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { status: 'succeeded', resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } }
+    })
+    expect(setupExecutor).toHaveBeenCalledOnce()
+    expect(bridgeExecutor).not.toHaveBeenCalled()
+    const replay = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'setup-executor',
+        idempotencyKey: 'setup-executor-key',
+        actor: ACTOR_A,
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: '/workspace' }
+      })
+    )
+    expect(replay).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } }
+    })
+    expect(setupExecutor).toHaveBeenCalledOnce()
+  })
+
   it('orders the read-alias gate after decode and before every mutation-side effect', () => {
     const source = readFileSync(join(__dirname, 'AppStoreHostAuthority.ts'), 'utf8')
     const commandStart = source.indexOf('  async command(')
@@ -305,13 +372,15 @@ describe('AppStoreHostAuthority', () => {
     const commandBody = source.slice(commandStart, commandEnd)
     const orderedNeedles = [
       'decodeHostCommand(command)',
+      'validateHostCommandArguments(decoded.value)',
       'parseGovernedMutationCommandName(hostCommand.name)',
+      'parseSetupMutationCommandName(hostCommand.name)',
       'hostAuthorityCommandActorMatchesContext(context, hostCommand)',
       'fingerprintHostCommand(hostCommand)',
       'this.authorityEvaluator(hostCommand, context)',
       'this.runtime.receiptStore.begin({',
+      'this.executeAllowedMutation(hostCommand, context, this.commandExecutor)',
       'new HostObservedMutationExecutor({',
-      'this.commandExecutor(command, context)',
       'this.completionCoordinator.complete('
     ]
     const positions = orderedNeedles.map((needle) => commandBody.indexOf(needle))

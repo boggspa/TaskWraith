@@ -30,6 +30,7 @@ import {
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES,
+  HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP,
   type HostProductionAuthorityEvaluatorPorts
 } from './HostProductionAuthorityEvaluator'
 
@@ -157,22 +158,24 @@ describe('HostProductionAuthorityEvaluator import isolation', () => {
 /* ------------------------------------------------------------------ */
 
 describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
-  it('catalogue contains exactly 12 HostCommandNames', () => {
-    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(12)
+  it('catalogue contains exactly 18 HostCommandNames', () => {
+    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(18)
   })
 
   it('every classified command is covered by exactly one set', () => {
     const reads = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS)
     const responses = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES)
     const deferred = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED)
+    const setup = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP)
 
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
       const inReads = reads.has(name)
       const inResponses = responses.has(name)
       const inDeferred = deferred.has(name)
+      const inSetup = setup.has(name)
 
       // Exactly one set
-      const count = [inReads, inResponses, inDeferred].filter(Boolean).length
+      const count = [inReads, inResponses, inDeferred, inSetup].filter(Boolean).length
       expect(count).toBe(1)
     }
   })
@@ -211,6 +214,37 @@ describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
       expect(result.policy).toBe('host-arc-r5-c3-ask')
     }
   )
+
+  it.each([...HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP])(
+    '%s → allowed only for exact local desktop/tui/test actors',
+    (name) => {
+      const local = evaluate(name)
+      const ios = evaluate(name, { clientClass: 'ios' })
+      expect(local).toMatchObject({
+        decision: 'allowed',
+        policy: 'host-arc-r5-c5-setup-local-only'
+      })
+      expect(ios).toMatchObject({
+        decision: 'denied',
+        policy: 'host-arc-r5-c5-setup-local-only'
+      })
+    }
+  )
+
+  it('denies setup when the command actor differs from the authenticated local actor', () => {
+    const evaluator = createHostProductionAuthorityEvaluator()
+    const command = makeCommand('workspace.register', {
+      actor: makeActor({ actorId: 'spoofed-actor' })
+    })
+    const result = evaluator(command, {
+      actor: makeActor(),
+      client: { clientId: 'desktop-main', clientClass: 'desktop', clientVersion: '1.0.0' }
+    }) as AppStoreHostAuthorityEvaluation
+    expect(result).toMatchObject({
+      decision: 'denied',
+      reason: 'setup-requires-exact-local-actor'
+    })
+  })
 })
 
 /* ------------------------------------------------------------------ */
@@ -256,14 +290,15 @@ describe('HostProductionAuthorityEvaluator clientClass ordering (C5)', () => {
     }
   )
 
-  it('all client classes get the same decision for each command (current policy is uniform)', () => {
-    // Today's evaluator is class-agnostic by command type. This test
-    // documents that fact — if a future slice adds class-dependent policy
-    // it must update the ordering tests above AND this one.
+  it('only setup commands distinguish local from remote client classes', () => {
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
       const results = allClientClasses.map((cc) => evaluate(name, { clientClass: cc }))
       const decisions = new Set(results.map((r) => r.decision))
-      expect(decisions.size).toBe(1)
+      if (HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP.includes(name)) {
+        expect(decisions).toEqual(new Set(['allowed', 'denied']))
+      } else {
+        expect(decisions.size).toBe(1)
+      }
     }
   })
 })

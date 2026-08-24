@@ -105,6 +105,8 @@ function mockHostSession(
         'provider-catalog',
         'provider-auth',
         'history',
+        'commands',
+        'setup',
         'health'
       ]
       const capabilities = (request?.clientCapabilityRequest ?? []).filter((capability) =>
@@ -835,6 +837,49 @@ describe('HostLocalServer', () => {
         threadId: 'thread-1',
         since: { generation: 1, cursor: 3 }
       })
+    })
+
+    it('requires both commands and setup capability before forwarding setup submits', async () => {
+      const setupCommand = {
+        type: 'host.command',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        commandId: 'setup-command-1',
+        idempotencyKey: 'setup-key-1',
+        actor: { actorId: 'test-client', clientId: 'test-client', clientClass: 'test' },
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: '/workspace' },
+        issuedAt: '2026-08-24T03:00:00.000Z'
+      }
+      const missingCommands = await authAndConnect(['bootstrap', 'setup', 'health'])
+      missingCommands.writeLine(
+        JSON.stringify(makeRequest('command.submit' as never, 'r-setup-no-commands', setupCommand))
+      )
+      expect(await missingCommands.readFrame()).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized' }
+      })
+      missingCommands.close()
+      expect(authority.command).not.toHaveBeenCalled()
+
+      const missingSetup = await authAndConnect(['bootstrap', 'commands', 'health'])
+      missingSetup.writeLine(
+        JSON.stringify(makeRequest('command.submit' as never, 'r-setup-no-setup', setupCommand))
+      )
+      expect(await missingSetup.readFrame()).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized' }
+      })
+      missingSetup.close()
+      expect(authority.command).not.toHaveBeenCalled()
+
+      const allowed = await authAndConnect(['bootstrap', 'commands', 'setup', 'health'])
+      allowed.writeLine(
+        JSON.stringify(makeRequest('command.submit' as never, 'r-setup-allowed', setupCommand))
+      )
+      expect(await allowed.readFrame()).toMatchObject({ ok: true, result: { kind: 'command.submit' } })
+      allowed.close()
+      expect(authority.command).toHaveBeenCalledOnce()
     })
 
     it('receipt.lookup routes to authority.receipt with commandId', async () => {
