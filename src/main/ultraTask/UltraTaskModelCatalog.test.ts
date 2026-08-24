@@ -49,6 +49,66 @@ describe('buildUltraTaskModelCapabilityCatalog', () => {
     })
   })
 
+  it('fills only missing TaskWraith capability metadata from an exact static row', () => {
+    const [candidate] = buildUltraTaskModelCapabilityCatalog({
+      provider: 'codex',
+      source: 'live',
+      runtimeEvidence: { 'gpt-5.6-terra': { state: 'available' } },
+      models: [{ id: 'gpt-5.6-terra', label: 'Live Terra' }],
+      fallbackModels: [
+        {
+          id: 'gpt-5.6-terra',
+          label: 'Static Terra',
+          disabled: true,
+          ultraTaskSupported: true,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'xhigh' },
+            { reasoningEffort: 'ultracode' }
+          ]
+        }
+      ]
+    })
+
+    expect(candidate).toMatchObject({
+      modelId: 'gpt-5.6-terra',
+      label: 'Live Terra',
+      ultraTaskSupported: true,
+      runtimeAvailability: 'available',
+      reasoning: {
+        mode: 'configurable',
+        ceiling: 'ultracode',
+        supported: ['xhigh', 'ultracode']
+      }
+    })
+  })
+
+  it('never lets fallback support override an explicit live opt-out', () => {
+    const [candidate] = buildUltraTaskModelCapabilityCatalog({
+      provider: 'claude',
+      source: 'live',
+      runtimeEvidence: { 'claude-haiku-4-5': { state: 'available' } },
+      models: [
+        {
+          id: 'claude-haiku-4-5',
+          label: 'Live Haiku',
+          ultraTaskSupported: false
+        }
+      ],
+      fallbackModels: [
+        {
+          id: 'claude-haiku-4-5',
+          ultraTaskSupported: true,
+          supportedReasoningEfforts: [{ reasoningEffort: 'high' }]
+        }
+      ]
+    })
+    expect(candidate).toMatchObject({
+      ultraTaskSupported: false,
+      runtimeAvailability: 'available',
+      reasoning: { mode: 'none' }
+    })
+  })
+
   it('maps fixed and configurable provider ceilings without inventing high', () => {
     const [kimiFixed] = buildUltraTaskModelCapabilityCatalog({
       provider: 'kimi',

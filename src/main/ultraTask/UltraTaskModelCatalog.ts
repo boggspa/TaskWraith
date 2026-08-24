@@ -25,6 +25,10 @@ export interface UltraTaskModelRuntimeEvidence {
 export interface BuildUltraTaskModelCatalogInput {
   provider: ProviderId
   models: readonly UltraTaskCatalogModelLike[]
+  /** Exact-id TaskWraith metadata fallback for live catalogs that omit local
+   * capability fields. Identity, label, disabled state, and runtime evidence
+   * always remain owned by `models`. */
+  fallbackModels?: readonly UltraTaskCatalogModelLike[]
   source: UltraTaskModelCapabilityCandidate['source']
   /** Runtime/auth/model discovery evidence is supplied by the host. Absence is
    * unknown, never silently upgraded merely because a static row exists. */
@@ -130,10 +134,22 @@ export function buildUltraTaskModelCapabilityCatalog(
   for (const model of input.models) {
     const modelId = text(model.id)
     if (!isConcreteUltraTaskModelId(modelId)) continue
+    const fallback = input.fallbackModels?.find(
+      (candidate) => text(candidate.id).toLowerCase() === modelId.toLowerCase()
+    )
     const label = text(model.label) || modelId
-    const ultraTaskSupported = model.ultraTaskSupported === true
+    const ultraTaskSupported =
+      model.ultraTaskSupported === undefined
+        ? fallback?.ultraTaskSupported === true
+        : model.ultraTaskSupported === true
+    const capabilityModel: UltraTaskCatalogModelLike = {
+      ...model,
+      ...(model.supportedReasoningEfforts === undefined && fallback?.supportedReasoningEfforts
+        ? { supportedReasoningEfforts: fallback.supportedReasoningEfforts }
+        : {})
+    }
     const resolved = ultraTaskSupported
-      ? reasoningCapability(input.provider, modelId, model)
+      ? reasoningCapability(input.provider, modelId, capabilityModel)
       : { reasoning: { mode: 'none' as const } }
     const runtime = runtimeEvidence(input, modelId, model, resolved.error)
     candidates.push({
