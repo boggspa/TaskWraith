@@ -74,6 +74,17 @@ export interface EnsembleModelDefaults {
   defaultModelId: string
 }
 
+/** Curated roster rows mirror main's runnable catalogs. Every concrete row is
+ * an explicit UltraTask candidate unless it opts out; `custom` remains unknown
+ * until live discovery proves that exact id. */
+function withCuratedUltraTaskSupport<T extends CombinedModelPickerModelOption>(
+  models: readonly T[]
+): Array<T & { ultraTaskSupported?: boolean }> {
+  return models.map((model) =>
+    model.id === 'custom' ? { ...model } : { ultraTaskSupported: true, ...model }
+  )
+}
+
 const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'low', label: codexReasoningDisplayLabel('low') },
   { value: 'medium', label: codexReasoningDisplayLabel('medium') },
@@ -182,9 +193,10 @@ const OLLAMA_LEVEL_REASONING: CombinedModelPickerReasoningOption[] = [
 /** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
  *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
  *  live probe widens it. */
-const MUSE_MODELS: CombinedModelPickerModelOption[] = [
+const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' }
 ]
+const MUSE_MODELS = withCuratedUltraTaskSupport(MUSE_MODEL_ROWS)
 
 // Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
 // including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
@@ -197,7 +209,7 @@ const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'ultra', label: 'Ultra' }
 ]
 
-const CODEX_MODELS: CombinedModelPickerModelOption[] = [
+const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
   // errors cleanly if the user's account hasn't been ramped into the staged
@@ -212,8 +224,9 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   // removed from the ensemble Codex picker. Historical/cost lookups elsewhere
   // (modelDisplayName, contextWindows, ProviderRateService) keep their entries.
 ]
+const CODEX_MODELS = withCuratedUltraTaskSupport(CODEX_MODEL_ROWS)
 
-const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
+const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // Labels omit the "Claude " prefix (provider header/chip already carries
   // it); Legacy cluster below the current models — mirrors the main catalog.
   { id: 'claude-opus-5', label: 'Opus 5' },
@@ -228,15 +241,17 @@ const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
     ultraTaskSupported: false
   }
 ]
+const CLAUDE_MODELS = withCuratedUltraTaskSupport(CLAUDE_MODEL_ROWS)
 
-const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
+const GEMINI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite' }
 ]
+const GEMINI_MODELS = withCuratedUltraTaskSupport(GEMINI_MODEL_ROWS)
 
-const KIMI_MODELS: CombinedModelPickerModelOption[] = [
+const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   {
     id: 'kimi-k2.7-code',
     label: 'K2.7 Coding',
@@ -255,12 +270,13 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
     defaultReasoningEffort: 'max'
   }
 ]
+const KIMI_MODELS = withCuratedUltraTaskSupport(KIMI_MODEL_ROWS)
 // Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — K3 has no tier.
 const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
 // from the Cursor catalog below.
-const GROK_MODELS: CombinedModelPickerModelOption[] = [
+const GROK_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   {
     id: GROK_46_MODEL_ID,
     label: 'Grok 4.6 Fast',
@@ -275,12 +291,13 @@ const GROK_MODELS: CombinedModelPickerModelOption[] = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
+const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 
 /** Mistral Vibe seat models. BARE ids only — a `mistral/<model>` id belongs to
  *  Pi's BYOK upstream, a different provider that shares the brand word.
  *  devstral-small leads because it is the seat default. Mirrors
  *  MISTRAL_SEAT_MODELS and the contextWindows registrations. */
-const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
+const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'devstral-small', label: 'Devstral Small' },
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
@@ -296,10 +313,11 @@ const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'ministral-8b-2512', label: 'Ministral 3 (8B)' },
   { id: 'ministral-3b-2512', label: 'Ministral 3 (3B)' }
 ]
+const MISTRAL_MODELS = withCuratedUltraTaskSupport(MISTRAL_MODEL_ROWS)
 
 // Cursor model catalog — backs live Path-B Cursor seats and decodes stored
 // historical ensemble seats.
-const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
+const CURSOR_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
@@ -317,6 +335,7 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
     additionalSpeedTiers: ['fast']
   }
 ]
+const CURSOR_MODELS = withCuratedUltraTaskSupport(CURSOR_MODEL_ROWS)
 
 /** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
  * load-bearing (dispatch + discovery both key on it); the live discovery
@@ -333,19 +352,20 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
  *
  * Context windows resolve through the provider-level antigravity fallback
  * (1M), not per-model rows — shared/contextWindows.ts has no 3.x entries. */
-const ANTIGRAVITY_MODELS: CombinedModelPickerModelOption[] = [
+const ANTIGRAVITY_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gemini-api:gemini-3.6-flash', label: '3.6 Flash' },
   { id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' },
   { id: 'gemini-api:gemini-3.1-pro-preview', label: '3.1 Pro Preview' },
   { id: 'gemini-api:gemini-3.1-flash-lite', label: '3.1 Flash-Lite' }
 ]
+const ANTIGRAVITY_MODELS = withCuratedUltraTaskSupport(ANTIGRAVITY_MODEL_ROWS)
 
 /** Pi seat models. Wire ids are `<upstream>/<model>` (pi's own syntax) and
  * MUST stay in lockstep with src/main/pi/PiModels.ts — that module owns the
  * curated catalog and the anti-circumvention wall; this is the renderer-side
  * mirror the seat editor offers. A model whose upstream has no stored key is
  * still listed here but fails visibly at dispatch with a "no key" message. */
-const PI_MODELS: CombinedModelPickerModelOption[] = [
+const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: 'zai/glm-5.2', label: 'GLM-5.2' },
@@ -378,8 +398,9 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
   { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' }
 ]
+const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 
-const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
+const OLLAMA_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)' },
   { id: 'qwen3.5:2b', label: 'Qwen 3.5 (2B Param)' },
   { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)' },
@@ -416,6 +437,7 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'north-mini-code-1.0:q4_K_M', label: 'North Mini Code 1.0 (30B-A3B Q4)' },
   { id: 'llama3.2:3b', label: 'Llama 3.2 (3B Param)' }
 ]
+const OLLAMA_MODELS = withCuratedUltraTaskSupport(OLLAMA_MODEL_ROWS)
 
 const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.5',

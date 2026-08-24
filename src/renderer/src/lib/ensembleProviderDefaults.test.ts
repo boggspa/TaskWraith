@@ -35,6 +35,35 @@ function participant(overrides: Partial<EnsembleParticipant> = {}): EnsemblePart
   }
 }
 
+describe('UltraTask Ensemble catalog metadata', () => {
+  it('marks every curated concrete row explicitly and preserves the Haiku opt-out', () => {
+    const providers = [
+      'codex',
+      'claude',
+      'gemini',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
+      'pi',
+      'mistral',
+      'muse'
+    ] as const
+    for (const provider of providers) {
+      for (const model of getEnsembleModelDefaults(provider).modelOptions) {
+        if (model.id === 'custom') {
+          expect(model.ultraTaskSupported).toBeUndefined()
+        } else if (model.id === 'claude-haiku-4-5') {
+          expect(model.ultraTaskSupported).toBe(false)
+        } else {
+          expect(model.ultraTaskSupported, `${provider}/${model.id}`).toBe(true)
+        }
+      }
+    }
+  })
+})
+
 describe('getDefaultEnsembleParticipantConfig', () => {
   // Every live provider seeds new participants with the 'default'
   // (Accept Edits) preset — deterministic, never inherited from the
