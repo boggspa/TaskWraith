@@ -3950,7 +3950,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               (option) => option.value === effectiveOllamaReasoning
                             )
                               ? effectiveOllamaReasoning
-                              : combinedReasoningOptions.at(-1)?.value || ''
+                              : combinedReasoningOptions.filter((o) => o.value !== 'ultraTask').at(-1)?.value || combinedReasoningOptions[0]?.value || ''
                           } else if (
                             effectiveProvider === 'grok' &&
                             isGrokReasoningModelId(effectiveSelectedModel)
