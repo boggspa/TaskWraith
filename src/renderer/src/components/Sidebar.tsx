@@ -48,6 +48,7 @@ import { reusePairedRemoteDevices } from '../lib/pairedRemoteDevices'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
 import { ProjectsSidebarView } from './ProjectsSidebarView'
+import { TerminalSidebarView } from '../lib/TerminalSidebarView'
 import { useLocalServers } from '../hooks/useLocalServers'
 import { useSidebarHierarchyDrag } from '../hooks/useSidebarHierarchyDrag'
 import {
@@ -197,7 +198,7 @@ interface SidebarProps {
    * host can key surface-scoped state — e.g. the contextual dock memory.
    * Fires for EVERY tab change regardless of source (click, arrow keys, the
    * tab-follows-chat effect), unlike onPrimarySurfaceSelect. */
-  onActiveSidebarTabChange?: (tab: 'chat' | 'threads' | 'projects') => void
+  onActiveSidebarTabChange?: (tab: SidebarActiveTab) => void
   onSelectChat: (chat: ChatRecord) => void
   /** Start Project Home for an unhomed project (Work panel pass-through). */
   onStartProjectHome?: (projectId: string) => void
@@ -449,9 +450,9 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
 // state, the panel/tab DOM ids, and the surface-toggle planner all key on the
 // id, so the label can change (or be A/B'd) without touching the route. The
 // noun inside the panel remains "Projects".
-const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects']
+const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects', 'terminal']
 
-function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects'> {
+function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects' | 'terminal'> {
   return chat.scope === 'global' ? 'chat' : 'threads'
 }
 /**
@@ -3260,7 +3261,8 @@ export function Sidebar({
   const [sidebarSearchByTab, setSidebarSearchByTab] = useState<Record<SidebarActiveTab, string>>({
     chat: '',
     threads: '',
-    projects: ''
+    projects: '',
+    terminal: ''
   })
   const sidebarSearch = sidebarSearchByTab[activeSidebarTab]
   const setActiveSidebarSearch = useCallback(
@@ -3397,7 +3399,7 @@ export function Sidebar({
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
   const projectSidebarChats = topLevelChats
-  const activeChatSurfaceTab: Exclude<SidebarActiveTab, 'projects'> =
+  const activeChatSurfaceTab: Exclude<SidebarActiveTab, 'projects' | 'terminal'> =
     activeSidebarTab === 'chat' ? 'chat' : 'threads'
   const activeSurfaceChats = chats.filter(
     (chat) => getChatSidebarTab(chat) === activeChatSurfaceTab
@@ -4040,7 +4042,11 @@ export function Sidebar({
   // a General chat, while Code starts a workspace chat. Projects remains a
   // cross-scope organisational view and keeps General chat as its first action.
   const primaryNewTitle =
-    activeSidebarTab === 'threads' ? 'New workspace chat' : 'New general chat'
+    activeSidebarTab === 'terminal'
+      ? 'New Terminal Session…'
+      : activeSidebarTab === 'threads'
+        ? 'New workspace chat'
+        : 'New general chat'
   const defaultWorkspaceForNewChat =
     currentWorkspace ||
     [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
@@ -4909,6 +4915,18 @@ export function Sidebar({
               type="button"
               className="sidebar-primary-action"
               onClick={() => {
+                if (activeSidebarTab === 'terminal') {
+                  const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
+                  if (wsPath) {
+                    const sessionId = crypto.randomUUID()
+                    window.api.terminal.create(wsPath, sessionId).then(() => {
+                      import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
+                        terminalLaunchBus.emit(wsPath)
+                      })
+                    })
+                  }
+                  return
+                }
                 setNewMenuOpen((current) => {
                   const next = !current
                   if (next) {
@@ -4917,13 +4935,13 @@ export function Sidebar({
                   return next
                 })
               }}
-              title="Create"
-              aria-label="Create"
-              aria-expanded={newMenuOpen}
-              aria-haspopup="menu"
+              title={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+              aria-label={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+              aria-expanded={activeSidebarTab === 'terminal' ? undefined : newMenuOpen}
+              aria-haspopup={activeSidebarTab === 'terminal' ? undefined : 'menu'}
             >
               <PlusSymbolIcon />
-              <span>New</span>
+              <span>{activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'New'}</span>
             </button>
             {newMenuOpen && (
               <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
@@ -5056,10 +5074,12 @@ export function Sidebar({
               {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
             </span>
           )}
-          <span>
-            {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
-            {activeSidebarChatCount === 1 ? '' : 's'}
-          </span>
+          {activeSidebarTab !== 'terminal' && (
+            <span>
+              {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
+              {activeSidebarChatCount === 1 ? '' : 's'}
+            </span>
+          )}
           {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
         </div>
 
@@ -5097,7 +5117,7 @@ export function Sidebar({
               }}
               tabIndex={activeSidebarTab === tab ? 0 : -1}
             >
-              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : 'Work'}
+              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : tab === 'projects' ? 'Work' : 'Terminal'}
             </button>
           ))}
         </div>
@@ -5126,16 +5146,20 @@ export function Sidebar({
               placeholder={
                 activeSidebarTab === 'projects'
                   ? 'Search projects & members'
-                  : activeSidebarTab === 'chat'
-                    ? 'Search chats'
-                    : 'Search workspaces & threads'
+                  : activeSidebarTab === 'terminal'
+                    ? 'Search sessions'
+                    : activeSidebarTab === 'chat'
+                      ? 'Search chats'
+                      : 'Search workspaces & threads'
               }
               aria-label={
                 activeSidebarTab === 'projects'
                   ? 'Search projects and project members'
-                  : activeSidebarTab === 'chat'
-                    ? 'Search chats'
-                    : 'Search workspaces and chats'
+                  : activeSidebarTab === 'terminal'
+                    ? 'Search terminal sessions'
+                    : activeSidebarTab === 'chat'
+                      ? 'Search chats'
+                      : 'Search workspaces and chats'
               }
               spellCheck={false}
             />
@@ -5153,9 +5177,11 @@ export function Sidebar({
                   aria-label={
                     activeSidebarTab === 'projects'
                       ? 'Clear project search'
-                      : activeSidebarTab === 'chat'
-                        ? 'Clear chat search'
-                        : 'Clear workspace and thread search'
+                      : activeSidebarTab === 'terminal'
+                        ? 'Clear session search'
+                        : activeSidebarTab === 'chat'
+                          ? 'Clear chat search'
+                          : 'Clear workspace and thread search'
                   }
                 >
                   <XSymbolIcon />
@@ -5224,6 +5250,14 @@ export function Sidebar({
                   </div>
                 </section>
               )}
+            </div>
+          ) : activeSidebarTab === 'terminal' ? (
+            <div
+              id="sidebar-terminal-panel"
+              role="tabpanel"
+              aria-labelledby="sidebar-terminal-tab"
+            >
+              <TerminalSidebarView workspaces={workspaces} />
             </div>
           ) : (
             <div
