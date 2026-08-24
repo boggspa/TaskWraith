@@ -28,6 +28,19 @@ function fileChangeRows(count: number): {
   }))
 }
 
+function closingDivIndex(html: string, attributeIndex: number): number {
+  const opening = html.lastIndexOf('<div', attributeIndex)
+  const tags = /<\/?div\b[^>]*>/g
+  tags.lastIndex = opening
+  let depth = 0
+  for (let match = tags.exec(html); match; match = tags.exec(html)) {
+    if (match[0].startsWith('</')) depth -= 1
+    else depth += 1
+    if (depth === 0) return match.index + match[0].length
+  }
+  return -1
+}
+
 describe('RunCompleteEpicStack', () => {
   it('stacks participants, file changes, and commits with seat attribution', () => {
     const html = renderToStaticMarkup(
@@ -129,6 +142,8 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('Claude → Codex')
     expect(html).toContain('status-answered')
     expect(html).toContain('Returned')
+    expect(html).toContain('aria-label="Returned"')
+    expect(html).not.toContain('aria-label="answered"')
     expect(html).toContain('run-complete-epic-subagent')
   })
 
@@ -150,6 +165,7 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('not shown.')
     expect(html).toContain('Show 2 more sub-threads')
     expect(html).toContain('run-complete-epic-subagent-more')
+    expect(html).toContain('aria-expanded="false"')
   })
 
   it('renders every sub-thread when the host opts out of the window', () => {
@@ -204,6 +220,7 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('not shown.')
     expect(html).toContain('Show 2 more commits')
     expect(html).toContain('run-complete-epic-commit-more')
+    expect(html).toContain('aria-expanded="false"')
     // The window is a view, not a filter: the header keeps counting the whole
     // close-out, so the number does not shift as the reader expands.
     expect(html).toContain('10 commits')
@@ -475,5 +492,35 @@ describe('RunCompleteEpicStack', () => {
     const short = closeoutFileChangeWindow(changes.slice(0, 4), false)
     expect(short.visible).toHaveLength(4)
     expect(short.hiddenCount).toBe(0)
+  })
+
+  it('keeps Task Complete pagers outside their ARIA tables', () => {
+    const subagents = Array.from({ length: 10 }, (_, index) => ({
+      subThreadId: `child-${index}`,
+      provider: 'codex' as const,
+      status: 'created' as const
+    }))
+    const commits = Array.from({ length: 10 }, (_, index) => ({
+      hash: `${(index + 1).toString(16).padStart(9, '0')}abcdef`,
+      subject: `Commit ${index + 1}`,
+      stats: '1 file'
+    }))
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack subagentDelegations={subagents} commits={commits} />
+    )
+
+    const subagentTableStart = html.search(
+      /<div[^>]*role="table"[^>]*aria-label="Sub-threads"[^>]*>/
+    )
+    const subagentTableEnd = closingDivIndex(html, subagentTableStart)
+    const subagentPager = html.indexOf('run-complete-epic-subagent-more')
+    expect(subagentTableStart).toBeGreaterThan(-1)
+    expect(subagentPager).toBeGreaterThan(subagentTableEnd)
+
+    const commitTableStart = html.search(/<div[^>]*role="table"[^>]*aria-label="Commits"[^>]*>/)
+    const commitTableEnd = closingDivIndex(html, commitTableStart)
+    const commitPager = html.indexOf('run-complete-epic-commit-more')
+    expect(commitTableStart).toBeGreaterThan(-1)
+    expect(commitPager).toBeGreaterThan(commitTableEnd)
   })
 })

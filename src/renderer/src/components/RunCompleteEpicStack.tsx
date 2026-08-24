@@ -71,17 +71,17 @@ function CloseoutCommitStats({ stats }: { stats?: string }): ReactNode {
 }
 
 /** Same glyph vocabulary as the old close-out markdown table / roster chips. */
-function CloseoutStatusGlyph({ status }: { status: string }): ReactNode {
-  const label = status.trim() || 'Unknown'
-  const slug = label.toLowerCase().replace(/\s+/g, '-')
+function CloseoutStatusGlyph({ status, label }: { status: string; label?: string }): ReactNode {
+  const accessibleLabel = label?.trim() || status.trim() || 'Unknown'
+  const slug = (status.trim() || 'unknown').toLowerCase().replace(/\s+/g, '-')
   return (
     <span
       className={`ensemble-above-chip-status status-${slug} closeout-status-glyph`}
       role="img"
-      aria-label={label}
-      title={label}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
-      <ParticipantStatusIcon status={label} />
+      <ParticipantStatusIcon status={status} />
     </span>
   )
 }
@@ -437,7 +437,11 @@ export function RunCompleteEpicStack({
               </span>
             </div>
           </div>
-          <div className="file-change-summary-list run-complete-epic-list" role="table">
+          <div
+            className="file-change-summary-list run-complete-epic-list"
+            role="table"
+            aria-label="Participants"
+          >
             <div className="run-complete-epic-row is-header" role="row">
               <span role="columnheader">Seat</span>
               <span className="run-complete-epic-work" role="columnheader">
@@ -489,7 +493,11 @@ export function RunCompleteEpicStack({
               </span>
             </div>
           </div>
-          <div className="file-change-summary-list run-complete-epic-list" role="table">
+          <div
+            className="file-change-summary-list run-complete-epic-list"
+            role="table"
+            aria-label="Sub-threads"
+          >
             <div className="run-complete-epic-row is-header" role="row">
               <span role="columnheader">Agent</span>
               <span className="run-complete-epic-work" role="columnheader">
@@ -535,33 +543,35 @@ export function RunCompleteEpicStack({
                   </span>
                   <span className="run-complete-epic-work" role="cell">
                     <span title={subagentRouteLabel(row)}>{subagentRouteLabel(row)}</span>
-                    <CloseoutStatusGlyph status={glyphKey} />
+                    <CloseoutStatusGlyph status={glyphKey} label={statusLabel} />
                     <span className="run-complete-epic-subagent-status">{statusLabel}</span>
                   </span>
                 </div>
               )
             })}
-            {subagentWindow?.canShowMore ? (
-              <button
-                className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
-                type="button"
-                aria-label={`Show ${subagentWindow.nextShowCount} more sub-threads`}
-                onClick={showMoreSubagents}
-              >
-                Show {subagentWindow.nextShowCount} more sub-thread
-                {subagentWindow.nextShowCount === 1 ? '' : 's'}
-              </button>
-            ) : subagentWindow?.canShowFewer ? (
-              <button
-                className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
-                type="button"
-                aria-label="Show fewer sub-threads"
-                onClick={showFewerSubagents}
-              >
-                Show fewer sub-threads
-              </button>
-            ) : null}
           </div>
+          {subagentWindow?.canShowMore ? (
+            <button
+              className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
+              type="button"
+              aria-expanded={false}
+              aria-label={`Show ${subagentWindow.nextShowCount} more sub-threads`}
+              onClick={showMoreSubagents}
+            >
+              Show {subagentWindow.nextShowCount} more sub-thread
+              {subagentWindow.nextShowCount === 1 ? '' : 's'}
+            </button>
+          ) : subagentWindow?.canShowFewer ? (
+            <button
+              className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
+              type="button"
+              aria-expanded
+              aria-label="Show fewer sub-threads"
+              onClick={showFewerSubagents}
+            >
+              Show fewer sub-threads
+            </button>
+          ) : null}
         </section>
       )}
 
@@ -578,7 +588,11 @@ export function RunCompleteEpicStack({
               </span>
             </div>
           </div>
-          <div className="file-change-summary-list run-complete-epic-list" role="table">
+          <div
+            className="file-change-summary-list run-complete-epic-list"
+            role="table"
+            aria-label="Commits"
+          >
             <div
               className={`run-complete-epic-row is-header is-commits${commitNumbering ? ' has-commit-numbers' : ''}`}
               role="row"
@@ -694,27 +708,29 @@ export function RunCompleteEpicStack({
                 </div>
               )
             })}
-            {commitWindow?.canShowMore ? (
-              <button
-                className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
-                type="button"
-                aria-label={`Show ${commitWindow.nextShowCount} more commits`}
-                onClick={showMoreCommits}
-              >
-                Show {commitWindow.nextShowCount} more commit
-                {commitWindow.nextShowCount === 1 ? '' : 's'}
-              </button>
-            ) : commitWindow?.canShowFewer ? (
-              <button
-                className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
-                type="button"
-                aria-label="Show fewer commits"
-                onClick={showFewerCommits}
-              >
-                Show fewer commits
-              </button>
-            ) : null}
           </div>
+          {commitWindow?.canShowMore ? (
+            <button
+              className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
+              type="button"
+              aria-expanded={false}
+              aria-label={`Show ${commitWindow.nextShowCount} more commits`}
+              onClick={showMoreCommits}
+            >
+              Show {commitWindow.nextShowCount} more commit
+              {commitWindow.nextShowCount === 1 ? '' : 's'}
+            </button>
+          ) : commitWindow?.canShowFewer ? (
+            <button
+              className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
+              type="button"
+              aria-expanded
+              aria-label="Show fewer commits"
+              onClick={showFewerCommits}
+            >
+              Show fewer commits
+            </button>
+          ) : null}
         </section>
       )}
 
