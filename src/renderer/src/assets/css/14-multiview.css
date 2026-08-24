@@ -1,5 +1,5 @@
 /* ============================================================
-   Multiview — split the central chat pane into 1-4 panes.
+   Multiview — split the central chat pane into 1-6 panes.
 
    Distinct from side-chats; the grid lives INSIDE .chat-split-main
    and never touches either sidebar. Single layout renders the

@@ -330,6 +330,37 @@ describe('MultiviewPaneGrid', () => {
     }
   })
 
+  it('renders the three-column and six-way catalogue geometries', () => {
+    const vertical = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-3"
+        panes={makePanes(['a', 'b', 'c'])}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect((vertical.match(/data-pane-index=/g) || []).length).toBe(3)
+    expect(vertical).toContain('grid-template-columns:1fr 1fr 1fr')
+    expect(vertical).toContain('grid-template-rows:1fr')
+
+    const sixWay = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="six-way"
+        panes={makePanes(['a', 'b', 'c', 'd', 'e', 'f'])}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect((sixWay.match(/data-pane-index=/g) || []).length).toBe(6)
+    expect(sixWay).toContain('grid-template-columns:1fr 1fr 1fr')
+    expect(sixWay).toContain('grid-template-rows:1fr 1fr')
+    for (const area of ['a', 'b', 'c', 'd', 'e', 'f']) {
+      expect(sixWay).toContain(`grid-area:${area}`)
+    }
+  })
+
   it('renders a close button on non-focused cells only when onClosePane is given', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid

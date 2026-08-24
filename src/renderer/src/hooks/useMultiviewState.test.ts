@@ -25,6 +25,7 @@ import {
   MULTIVIEW_MIN_PANE_PX,
   normalizeMultiviewCoreState,
   isMultiviewFocusOnlyChange,
+  paneRecordsIncludingParked,
   removedCanvasIds,
   resolveMultiviewPaneRefs,
   type MultiviewCoreState
@@ -177,6 +178,16 @@ describe('applySetLayout', () => {
     expect(next.panes[0].id).toBe('t0') // preserved
     expect(ids(next).slice(1)).toEqual(['pane-100', 'pane-101', 'pane-102']) // freshly minted
     expect(next.nextPaneSeq).toBe(103)
+  })
+
+  it('grows to six-way with six stable pane records', () => {
+    const next = applySetLayout(
+      state({ layout: 'quad', panes: panesOf(['a', 'b', 'c', 'd']) }),
+      'six-way'
+    )
+    expect(next.layout).toBe('six-way')
+    expect(chatIds(next)).toEqual(['a', 'b', 'c', 'd', null, null])
+    expect(ids(next)).toEqual(['t0', 't1', 't2', 't3', 'pane-100', 'pane-101'])
   })
 
   it('seeds only the focused pane and leaves new panes independent', () => {
@@ -584,6 +595,27 @@ describe('applyClosePane', () => {
     expect(next.paneSettings.t2?.fx).toEqual({ ghost: false }) // survives, still keyed to t2
     expect(next.panes[1]).toEqual({ id: 't2', chatId: 'c' }) // t2 now sits at index 1
   })
+
+  it('collapses six-way to quad and parks the fifth survivor without losing it', () => {
+    const next = applyClosePane(
+      state({
+        layout: 'six-way',
+        panes: panesOf(['a', 'b', 'c', 'd', 'e', 'f']),
+        focusedPaneIndex: 0
+      }),
+      1
+    )
+    expect(next.layout).toBe('quad')
+    expect(chatIds(next)).toEqual(['a', 'c', 'd', 'e'])
+    expect(next.parkedPanes.map((pane) => pane.chatId)).toEqual(['f'])
+    expect(paneRecordsIncludingParked(next).map((pane) => pane.chatId)).toEqual([
+      'a',
+      'c',
+      'd',
+      'e',
+      'f'
+    ])
+  })
 })
 
 describe('applyAssignToFocusedPane', () => {
@@ -701,13 +733,27 @@ describe('applyOpenInNewPane', () => {
     expect(next.focusedPaneIndex).toBe(1)
   })
 
-  it('overwrites a non-focused cell when already at quad', () => {
+  it('grows quad to six-way before filling a new pane', () => {
     const next = applyOpenInNewPane(
       state({ layout: 'quad', panes: panesOf(['a', 'b', 'c', 'd']), focusedPaneIndex: 0 }),
       'z'
     )
-    expect(next.layout).toBe('quad')
-    expect(chatIds(next)).toEqual(['a', 'z', 'c', 'd'])
+    expect(next.layout).toBe('six-way')
+    expect(chatIds(next)).toEqual(['a', 'b', 'c', 'd', 'z', null])
+    expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('overwrites a non-focused cell when already at six-way', () => {
+    const next = applyOpenInNewPane(
+      state({
+        layout: 'six-way',
+        panes: panesOf(['a', 'b', 'c', 'd', 'e', 'f']),
+        focusedPaneIndex: 0
+      }),
+      'z'
+    )
+    expect(next.layout).toBe('six-way')
+    expect(chatIds(next)).toEqual(['a', 'z', 'c', 'd', 'e', 'f'])
     expect(next.focusedPaneIndex).toBe(0)
   })
 })
@@ -738,6 +784,11 @@ describe('getLayoutTracks', () => {
     expect(getLayoutTracks({}, 'vertical-2')).toEqual({ columns: [1, 1], rows: [1] })
     expect(getLayoutTracks({}, 'horizontal-2')).toEqual({ columns: [1], rows: [1, 1] })
     expect(getLayoutTracks({}, 'quad')).toEqual({ columns: [1, 1], rows: [1, 1] })
+    expect(getLayoutTracks({}, 'vertical-3')).toEqual({ columns: [1, 1, 1], rows: [1] })
+    expect(getLayoutTracks({}, 'six-way')).toEqual({
+      columns: [1, 1, 1],
+      rows: [1, 1]
+    })
   })
 
   it('returns the stored fractions when present', () => {
@@ -937,6 +988,17 @@ describe('normalizeMultiviewCoreState (backward-compat / hydration bridge)', () 
     expect(ids(next)).toEqual(['pane-1', 'pane-2', 'pane-3', 'pane-4'])
     expect(next.nextPaneSeq).toBe(5)
     expect(next.paneSettings).toEqual({})
+  })
+
+  it('normalizes all six panes of a persisted six-way layout', () => {
+    const next = normalizeMultiviewCoreState({
+      layout: 'six-way',
+      paneChatIds: ['a', 'b', 'c', 'd', 'e', 'f'],
+      focusedPaneIndex: 5
+    })
+    expect(next.layout).toBe('six-way')
+    expect(chatIds(next)).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+    expect(next.focusedPaneIndex).toBe(5)
   })
 
   it('clamps a legacy blob to the layout pane count (truncate or pad)', () => {

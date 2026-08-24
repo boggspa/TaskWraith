@@ -24,6 +24,14 @@ describe('buildMultiviewLayoutGridItems', () => {
     expect(items.find((i) => i.id === 'quad')?.label).toBe('Quad')
     expect(items.find((i) => i.id === 'single')?.description).toBe('One chat')
     expect(items.find((i) => i.id === 'vertical-2')?.description).toBe('2 panes')
+    expect(items.find((i) => i.id === 'vertical-3')).toMatchObject({
+      label: 'Vertical split',
+      description: '3 panes'
+    })
+    expect(items.find((i) => i.id === 'six-way')).toMatchObject({
+      label: '6-Way',
+      description: '6 panes'
+    })
   })
 
   it('flags the current layout active and only that one', () => {

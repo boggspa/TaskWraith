@@ -140,35 +140,39 @@ export function isMultiviewFocusOnlyChange(
 export const MULTIVIEW_MIN_PANE_PX = 240
 
 /**
- * Closing a pane downgrades the layout by exactly one pane. Each step reduces
- * paneCount by one: quad(4) -> two-top-one-bottom(3) -> vertical-2(2) ->
- * single(1). The four 3-pane variants all collapse to vertical-2.
+ * Closing a pane selects the next smaller catalogue shape. The six-way layout
+ * collapses to quad because there is no five-pane variant; applyClosePane parks
+ * the fifth survivor so closing one pane never discards another pane's state.
  */
 const DOWNGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   single: 'single',
   'vertical-2': 'single',
+  'vertical-3': 'vertical-2',
   'horizontal-2': 'single',
   'two-top-one-bottom': 'vertical-2',
   'one-top-two-bottom': 'vertical-2',
   'one-left-two-right': 'vertical-2',
   'two-left-one-right': 'vertical-2',
-  quad: 'two-top-one-bottom'
+  quad: 'two-top-one-bottom',
+  'six-way': 'quad'
 }
 
 /**
- * Inverse of DOWNGRADE_LAYOUT: grow the layout by exactly one pane
- * (single -> vertical-2 -> two-top-one-bottom -> quad). Used when opening a
- * chat in a new pane and no spare cell is free.
+ * Grow to the next available larger catalogue shape when opening a chat in a
+ * new pane and no spare cell is free. Quad jumps to six-way because there is no
+ * five-pane variant, leaving one additional empty cell.
  */
 const UPGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   single: 'vertical-2',
   'vertical-2': 'two-top-one-bottom',
+  'vertical-3': 'quad',
   'horizontal-2': 'two-top-one-bottom',
   'two-top-one-bottom': 'quad',
   'one-top-two-bottom': 'quad',
   'one-left-two-right': 'quad',
   'two-left-one-right': 'quad',
-  quad: 'quad'
+  quad: 'six-way',
+  'six-way': 'six-way'
 }
 
 const PANE_ID_PREFIX = 'pane-'
@@ -501,33 +505,26 @@ export function applyFocusEmptyPane(
 
 /**
  * Close a pane: drop that cell, compact the rest in order (SURVIVING panes keep
- * their ids and settings), and downgrade the layout one step. Focus follows:
+ * their ids and settings), and select the next smaller layout. Focus follows:
  * closing before the focused cell shifts focus left by one; closing the focused
- * cell keeps focus on the same slot index (clamped). A no-op in single layout.
+ * cell keeps focus on the same slot index (clamped). When six-way collapses to
+ * quad, applySetLayout parks the fifth survivor. A no-op in single layout.
  */
 export function applyClosePane(state: MultiviewCoreState, index: number): MultiviewCoreState {
   if (state.layout === 'single') return state
   if (index < 0 || index >= state.panes.length) return state
   const nextLayout = DOWNGRADE_LAYOUT[state.layout]
   const remaining = state.panes.filter((_, i) => i !== index)
-  // Downgrade always reduces paneCount by exactly one, so `remaining` already
-  // matches nextLayout's count — clampPanes is a no-op pass-through here.
-  const clamped = clampPanes(remaining, nextLayout, state.nextPaneSeq)
   let nextFocus = state.focusedPaneIndex
   if (index < state.focusedPaneIndex) nextFocus -= 1
-  else if (index === state.focusedPaneIndex) nextFocus = index
-  return {
-    layout: nextLayout,
-    panes: clamped.panes,
-    parkedPanes: state.parkedPanes,
-    focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout),
-    trackSizes: state.trackSizes,
-    paneSettings: pruneSettings(state.paneSettings, [
-      ...clamped.panes,
-      ...state.parkedPanes
-    ]),
-    nextPaneSeq: clamped.nextPaneSeq
+  else if (index === state.focusedPaneIndex) nextFocus = Math.min(index, remaining.length - 1)
+  const withoutClosed: MultiviewCoreState = {
+    ...state,
+    panes: remaining,
+    focusedPaneIndex: Math.max(0, nextFocus),
+    paneSettings: pruneSettings(state.paneSettings, [...remaining, ...state.parkedPanes])
   }
+  return applySetLayout(withoutClosed, nextLayout)
 }
 
 /**
@@ -554,8 +551,8 @@ export function applyAssignToFocusedPane(
 
 /**
  * Open a chat in a NON-focused pane WITHOUT moving focus — the sidebar
- * "Open in Multiview pane" action. Grows the layout by one pane when there is
- * no spare non-focused cell; once at quad, overwrites a non-focused cell. The
+ * "Open in Multiview pane" action. Grows to the next larger layout when there is
+ * no spare non-focused cell; once at six-way, overwrites a non-focused cell. The
  * focused (interactive) pane is never disturbed.
  */
 export function applyOpenInNewPane(
@@ -588,8 +585,8 @@ export function applyOpenInNewPane(
  * Detach an audio/video player into a NON-focused pane WITHOUT moving focus — the
  * transcript "pop out to pane" action. The user pops the player out of the message
  * flow but KEEPS TYPING in the current (transcript) pane, so focus is preserved.
- * Clones applyOpenInNewPane: grows the layout by one pane (UPGRADE_LAYOUT) when no
- * spare non-focused EMPTY cell exists; once at quad, overwrites a non-focused cell.
+ * Clones applyOpenInNewPane: grows via UPGRADE_LAYOUT when no
+ * spare non-focused EMPTY cell exists; once at six-way, overwrites a non-focused cell.
  * "Empty" here means truly empty — no chat, no canvas, no existing media — so an
  * already-detached player or a canvas is never clobbered while a spare exists.
  */
