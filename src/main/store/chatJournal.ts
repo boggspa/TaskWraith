@@ -165,6 +165,14 @@ const MAX_JOURNAL_PARSE_BYTES = 256 * 1024 * 1024
 export interface ChatJournalOptions {
   /** Override the oversized-journal ceiling. Tests only — production uses the constant. */
   maxJournalParseBytes?: number
+  /**
+   * Dynamic authority for every filesystem mutation, including startup repair.
+   *
+   * Read-only Host import may inspect an existing side-band journal, but it
+   * must never create, repair, quarantine, compact, append, or delete it.
+   * Omit this for the historical writable behaviour.
+   */
+  canWrite?: () => boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +206,19 @@ interface ChatState {
 
 export function createChatJournal(baseDir: string, options: ChatJournalOptions = {}): ChatJournal {
   const maxJournalParseBytes = options.maxJournalParseBytes ?? MAX_JOURNAL_PARSE_BYTES
+  const canWrite = (): boolean => {
+    try {
+      return options.canWrite?.() ?? true
+    } catch {
+      // A failed authority lookup must never turn into a repair/write permit.
+      return false
+    }
+  }
+  const requireWriteAuthority = (): void => {
+    if (!canWrite()) {
+      throw new Error('ChatJournal: write authority is unavailable')
+    }
+  }
 
   /**
    * Size of `filePath` when it is too large to read into one string, else null.
@@ -220,6 +241,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
    * unlaunchable-app bug simply moves from the read to the rename.
    */
   const quarantineOversizedJournal = (filePath: string): string | null => {
+    if (!canWrite()) return null
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const suffix = attempt === 0 ? '' : `.${attempt}`
@@ -265,6 +287,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
    * NOT used for journal appends — those use `appendJournalLine` instead.
    */
   const atomicWrite = (filePath: string, data: string): number => {
+    requireWriteAuthority()
     const dir = path.dirname(filePath)
     const base = path.basename(filePath)
     const seq = writeSeq++
@@ -296,6 +319,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
    * truncated by `parseJournalLines` on recovery.
    */
   const appendJournalLine = (filePath: string, line: string): void => {
+    requireWriteAuthority()
     let fd: number
     try {
       fd = fs.openSync(filePath, 'a', 0o600)
@@ -308,6 +332,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
       // Recovering only on the failure path keeps the hot path free of an
       // extra syscall per save.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      requireWriteAuthority()
       fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
       fd = fs.openSync(filePath, 'a', 0o600)
     }
@@ -439,6 +464,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
    * Called after detecting a torn tail on recovery.
    */
   const truncateToValidLines = (filePath: string, firstNLines: number): void => {
+    if (!canWrite()) return
     if (firstNLines === 0) {
       try {
         fs.unlinkSync(filePath)
@@ -467,10 +493,12 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
    * in-memory state, and recover tombstoned chats.
    */
   const initDirectory = (): void => {
-    try {
-      fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
-    } catch {
-      /* already exists */
+    if (canWrite()) {
+      try {
+        fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+      } catch {
+        /* already exists */
+      }
     }
 
     let entries: fs.Dirent[]
@@ -512,10 +540,10 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
         // looking journal-less, so a fresh journal starts from zero.
         const oversized = oversizedJournalBytes(jPath)
         if (oversized !== null) {
-          const parked = quarantineOversizedJournal(jPath)
+          const parked = canWrite() ? quarantineOversizedJournal(jPath) : null
           console.warn(
             `[chat-journal] ${name} is ${oversized} bytes, above the ${maxJournalParseBytes}-byte read ceiling; ` +
-              `parked as ${parked ? path.basename(parked) : '(rename failed)'} and skipped. ` +
+              `${canWrite() ? `parked as ${parked ? path.basename(parked) : '(rename failed)'}` : 'left in place without write authority'} and skipped. ` +
               'The authoritative chat record is unaffected; snapshot compaction for this chat needs investigating.'
           )
           continue
@@ -523,11 +551,11 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
 
         const { entries: lines, torn } = parseJournalLines(jPath)
 
-        if (torn && lines.length > 0) {
+        if (torn && lines.length > 0 && canWrite()) {
           // Truncate to last valid line
           truncateToValidLines(jPath, lines.length)
           tornLinesRecovered += 1
-        } else if (torn && lines.length === 0) {
+        } else if (torn && lines.length === 0 && canWrite()) {
           // All lines are corrupt — remove the journal
           try {
             fs.unlinkSync(jPath)
@@ -552,7 +580,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
           }
           if (snapData !== null) {
             dedupedLines = dedupeTailAgainstSnapshot(snapData, lines)
-            if (dedupedLines.length < lines.length) {
+            if (dedupedLines.length < lines.length && canWrite()) {
               // Rewrite journal with only the non-duplicate lines.
               // truncateToValidLines keeps the FIRST N, but dupes are
               // always at the head (journal lines up to snapshot mtime),
@@ -642,6 +670,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   // ---- public API ----
 
   const append = (chatId: string, record: unknown): void => {
+    requireWriteAuthority()
     appends += 1
     const state = ensureChat(chatId)
 
@@ -757,6 +786,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   }
 
   const deleteChat = (chatId: string): void => {
+    requireWriteAuthority()
     chatsDeleted += 1
 
     // Write tombstone marker first — this prevents a concurrent append
@@ -807,6 +837,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   }
 
   const compact = (chatId: string): boolean => {
+    requireWriteAuthority()
     const state = chats.get(chatId)
     if (!state || state.tombstoned || state.lineCount === 0) return false
 
@@ -858,6 +889,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   }
 
   const compactAll = (): number => {
+    requireWriteAuthority()
     let count = 0
     for (const chatId of Array.from(chats.keys())) {
       if (compact(chatId)) count += 1

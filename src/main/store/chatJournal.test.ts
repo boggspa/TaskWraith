@@ -1000,3 +1000,134 @@ describe('ChatJournal — oversized journal cannot brick startup', () => {
     expect(journal.read('grower').tail).toEqual([])
   })
 })
+
+describe('ChatJournal read-only no-repair authority', () => {
+  let parentDir: string
+  let baseDir: string
+
+  beforeEach(() => {
+    parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-chat-journal-read-only-'))
+    baseDir = path.join(parentDir, 'chat-journal')
+  })
+
+  afterEach(() => {
+    fs.rmSync(parentDir, { recursive: true, force: true })
+  })
+
+  /** Include exact file bytes and mtimes so a startup scan cannot mutate silently. */
+  function treeSnapshot(root: string): unknown {
+    if (!fs.existsSync(root)) return { exists: false }
+
+    const visit = (current: string): unknown => {
+      const stat = fs.lstatSync(current)
+      const relative = path.relative(root, current) || '.'
+      if (stat.isDirectory()) {
+        return {
+          relative,
+          type: 'directory',
+          mtimeMs: stat.mtimeMs,
+          children: fs
+            .readdirSync(current)
+            .sort()
+            .map((name) => visit(path.join(current, name)))
+        }
+      }
+      return {
+        relative,
+        type: stat.isSymbolicLink() ? 'symlink' : 'file',
+        mtimeMs: stat.mtimeMs,
+        bytes: stat.isFile() ? fs.readFileSync(current, 'utf-8') : null
+      }
+    }
+
+    return visit(root)
+  }
+
+  function validEntry(chatId: string, content: string): ChatJournalEntry {
+    return {
+      savedAt: '2026-08-24T00:00:00.000Z',
+      record: { id: chatId, messages: [{ role: 'user', content }] }
+    }
+  }
+
+  it('does not create a missing journal directory and rejects every mutator without authority', () => {
+    const before = treeSnapshot(baseDir)
+    const journal = createChatJournal(baseDir, { canWrite: () => false })
+
+    expect(journal.read('missing')).toEqual({ snapshot: null, tail: [] })
+    expect(() => journal.append('missing', { id: 'missing' })).toThrow('write authority')
+    expect(() => journal.delete('missing')).toThrow('write authority')
+    expect(() => journal.compact('missing')).toThrow('write authority')
+    expect(() => journal.compactAll()).toThrow('write authority')
+    expect(treeSnapshot(baseDir)).toEqual(before)
+  })
+
+  it('reads a valid torn prefix in memory without truncating the journal or changing metadata', () => {
+    fs.mkdirSync(baseDir, { mode: 0o700 })
+    const entry = validEntry('torn', 'complete')
+    const journalPath = path.join(baseDir, 'torn.jsonl')
+    fs.writeFileSync(journalPath, `${JSON.stringify(entry)}\n{"savedAt":"torn`, 'utf-8')
+    const before = treeSnapshot(baseDir)
+
+    const journal = createChatJournal(baseDir, { canWrite: () => false })
+
+    expect(journal.read('torn').tail).toEqual([entry])
+    expect(journal.stats()).toMatchObject({ linesWritten: 1, tornLinesRecovered: 0 })
+    expect(() => journal.append('torn', { id: 'torn' })).toThrow('write authority')
+    expect(() => journal.delete('torn')).toThrow('write authority')
+    expect(() => journal.compact('torn')).toThrow('write authority')
+    expect(() => journal.compactAll()).toThrow('write authority')
+    expect(treeSnapshot(baseDir)).toEqual(before)
+  })
+
+  it('leaves an oversized journal in place without authority', () => {
+    fs.mkdirSync(baseDir, { mode: 0o700 })
+    const oversized = Array.from({ length: 12 }, (_, index) =>
+      JSON.stringify({
+        savedAt: '2026-08-24T00:00:00.000Z',
+        record: { id: 'oversized', index, pad: 'x'.repeat(128) }
+      })
+    ).join('\n')
+    fs.writeFileSync(path.join(baseDir, 'oversized.jsonl'), `${oversized}\n`, 'utf-8')
+    const before = treeSnapshot(baseDir)
+
+    const journal = createChatJournal(baseDir, {
+      maxJournalParseBytes: 512,
+      canWrite: () => false
+    })
+
+    expect(journal.read('oversized')).toEqual({ snapshot: null, tail: [] })
+    expect(fs.readdirSync(baseDir)).toEqual(['oversized.jsonl'])
+    expect(treeSnapshot(baseDir)).toEqual(before)
+  })
+
+  it('dedupes a crash-window tail in memory without rewriting it', () => {
+    fs.mkdirSync(baseDir, { mode: 0o700 })
+    const entry = validEntry('duplicate', 'once')
+    fs.writeFileSync(
+      path.join(baseDir, 'duplicate.snapshot.json'),
+      JSON.stringify([entry]),
+      'utf-8'
+    )
+    fs.writeFileSync(path.join(baseDir, 'duplicate.jsonl'), `${JSON.stringify(entry)}\n`, 'utf-8')
+    const before = treeSnapshot(baseDir)
+
+    const journal = createChatJournal(baseDir, { canWrite: () => false })
+
+    expect(journal.read('duplicate')).toEqual({ snapshot: [entry], tail: [] })
+    expect(journal.stats().linesWritten).toBe(0)
+    expect(treeSnapshot(baseDir)).toEqual(before)
+  })
+
+  it('uses a dynamic authority predicate for a caller admitted after construction', () => {
+    let writable = false
+    fs.mkdirSync(baseDir, { mode: 0o700 })
+    const journal = createChatJournal(baseDir, { canWrite: () => writable })
+
+    expect(() => journal.append('later', { id: 'later' })).toThrow('write authority')
+    writable = true
+    journal.append('later', { id: 'later' })
+
+    expect(journal.read('later').tail).toHaveLength(1)
+  })
+})
