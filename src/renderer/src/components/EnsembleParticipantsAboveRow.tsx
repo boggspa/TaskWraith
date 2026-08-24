@@ -867,6 +867,13 @@ export function EnsembleParticipantsAboveRow({
   const chipsContainerRef = useRef<HTMLDivElement | null>(null)
   const pendingFocusParticipantIdRef = useRef<string | null>(null)
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null)
+  /* Double-click seat-role picker (2026-08 tactile roles). The compact
+   * permissions-style role picker opens when the user double-clicks a chip;
+   * single taps keep the select gesture. `rolePickerTapRef` timestamps the
+   * last tap so two taps on the same chip inside the window toggle it open
+   * instead of re-selecting. */
+  const [rolePickerOpenId, setRolePickerOpenId] = useState<string | null>(null)
+  const rolePickerTapRef = useRef<{ id: string; at: number } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragGhost, setDragGhost] = useState<ChipDragGhostState | null>(null)
@@ -1345,7 +1352,26 @@ export function EnsembleParticipantsAboveRow({
               isDragOver={dragOverId === participant.id && dragId !== participant.id}
               isDragging={dragId === participant.id}
               overflowOpen={false}
-              onClick={() => onSelectParticipant(participant.id)}
+              rolePickerOpen={rolePickerOpenId === participant.id}
+              onCloseRolePicker={() => setRolePickerOpenId(null)}
+              onClick={() => {
+                const now = Date.now()
+                const lastTap = rolePickerTapRef.current
+                if (lastTap && lastTap.id === participant.id && now - lastTap.at <= 400) {
+                  // Double-click on a chip → toggle the compact seat-role
+                  // picker instead of re-selecting.
+                  rolePickerTapRef.current = null
+                  setRolePickerOpenId((current) =>
+                    current === participant.id ? null : participant.id
+                  )
+                  return
+                }
+                rolePickerTapRef.current = { id: participant.id, at: now }
+                // A lone tap that isn't the start of a double-click closes
+                // any open picker for this chip before (re-)selecting.
+                setRolePickerOpenId((current) => (current === participant.id ? null : current))
+                onSelectParticipant(participant.id)
+              }}
               onCloseOverflow={() => undefined}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
               isBossman={
@@ -2204,6 +2230,11 @@ interface ParticipantChipProps {
   isDragOver: boolean
   isDragging: boolean
   overflowOpen: boolean
+  /* 2026-08 tactile roles — compact permissions-style seat-role picker,
+   * opened by double-clicking the chip. Mutually exclusive with the
+   * (currently unused) legacy overflow popover. */
+  rolePickerOpen: boolean
+  onCloseRolePicker: () => void
   onClick: () => void
   /* 1.0.5-EW22 — `onToggleOverflow` removed; the parent now toggles
    * overflowOpenId directly when the user clicks an already-selected
@@ -2277,6 +2308,8 @@ function ParticipantChip({
   isDragOver,
   isDragging,
   overflowOpen,
+  rolePickerOpen,
+  onCloseRolePicker,
   onClick,
   onCloseOverflow,
   onPatch,
@@ -2389,7 +2422,13 @@ function ParticipantChip({
       // the popover shut before the menu action runs — leaving every
       // context-menu option inert.
       const target = event.target as HTMLElement | null
-      if (target?.closest('.ensemble-above-overflow, .composer-textarea-context-menu')) return
+      if (
+        target?.closest(
+          '.ensemble-above-overflow, .ensemble-chip-role-picker, .composer-textarea-context-menu'
+        )
+      ) {
+        return
+      }
       // A press means the user is selecting/dragging — the hover
       // tooltip (pending or shown) would just get in the way.
       dismissTooltip()
@@ -2613,7 +2652,30 @@ function ParticipantChip({
         strip's overflow — app-global CSS tokens only, per the other
         body-portaled composer popovers.
       */}
-      {tooltipPosition && !overflowOpen && !isDragging
+      {/*
+        2026-08 tactile roles — double-clicking a chip opens this compact
+        permissions-style seat-role picker (Enabled / Auto, then Boss /
+        Captain / Agent, a divider, then Scout / Work / Review / BG).
+        Rendered inside the chip like the legacy overflow popover so it
+        inherits the anchor + unmount-on-chip-unmount behavior.
+      */}
+      {rolePickerOpen && (
+        <EnsembleChipRolePicker
+          anchor={chipAnchor}
+          participant={participant}
+          isBossman={isBossman}
+          isSecondInCommand={isSecondInCommand}
+          captainAssignmentDisabled={captainAssignmentDisabled}
+          hasLeadership={hasLeadership}
+          autoApprovalsEnabled={autoApprovalsEnabled}
+          onPatch={onPatch}
+          onSetAuthority={onSetAuthority}
+          onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
+          locked={locked}
+          onClose={onCloseRolePicker}
+        />
+      )}
+      {tooltipPosition && !overflowOpen && !rolePickerOpen && !isDragging
         ? createPortal(
             <div
               className={`ensemble-above-chip-tooltip provider-${providerClass}`}
@@ -2838,6 +2900,321 @@ export function EnsembleParticipantStageControl({
       />
     </div>
   )
+}
+
+/** One selectable row of the double-click seat-role picker. */
+export interface EnsembleChipRolePickerRow {
+  value: string
+  label: string
+  disabled: boolean
+  title?: string
+}
+
+/**
+ * Pure row model for the double-click seat-role picker, split at the
+ * authority/stage divider: authority rows (Boss / Captain / Agent) first,
+ * stage rows (Scout / Work / Review / BG) second. Mirrors the disabled /
+ * title rules of `EnsembleParticipantAuthorityControls` and
+ * `EnsembleParticipantStageControl` so both surfaces stay consistent.
+ */
+export function resolveEnsembleChipRolePickerRows({
+  isBossman,
+  captainAssignmentDisabled,
+  backgroundRestricted,
+  locked,
+  maxCaptains = MAX_ENSEMBLE_CAPTAINS
+}: {
+  isBossman: boolean
+  captainAssignmentDisabled: boolean
+  backgroundRestricted: boolean
+  locked: boolean
+  maxCaptains?: number
+}): { authorityRows: EnsembleChipRolePickerRow[]; stageRows: EnsembleChipRolePickerRow[] } {
+  return {
+    authorityRows: [
+      {
+        value: 'boss',
+        label: 'Boss',
+        disabled: locked || backgroundRestricted,
+        title: backgroundRestricted
+          ? 'BG seats cannot own Boss or Captain authority.'
+          : "Assign as the thread's only Boss."
+      },
+      {
+        value: 'captain',
+        label: 'Captain',
+        disabled:
+          locked || backgroundRestricted || isBossman || captainAssignmentDisabled,
+        title: backgroundRestricted
+          ? 'BG seats cannot own Boss or Captain authority.'
+          : isBossman
+            ? 'Assign another Boss before changing this participant\'s authority.'
+            : captainAssignmentDisabled
+              ? `This panel already has ${maxCaptains} Captains.`
+              : `Assign as one of up to ${maxCaptains} Captains.`
+      },
+      {
+        value: 'agent',
+        label: 'Agent',
+        disabled: locked || isBossman,
+        title: isBossman
+          ? 'Assign another Boss before changing this participant\'s authority.'
+          : 'Use standard Agent authority.'
+      }
+    ],
+    stageRows: [
+      { value: 'scout', label: 'Scout', disabled: locked },
+      { value: 'worker', label: 'Work', disabled: locked },
+      { value: 'reviewer', label: 'Review', disabled: locked },
+      {
+        value: 'background',
+        label: 'BG',
+        disabled: locked || isBossman,
+        title: isBossman
+          ? 'Assign another Boss before moving this participant to background.'
+          : undefined
+      }
+    ]
+  }
+}
+
+interface EnsembleChipRolePickerProps {
+  anchor: HTMLElement | null
+  participant: EnsembleParticipant
+  isBossman: boolean
+  isSecondInCommand: boolean
+  captainAssignmentDisabled: boolean
+  hasLeadership: boolean
+  autoApprovalsEnabled: boolean
+  onPatch: (patch: Partial<EnsembleParticipant>) => void
+  onSetAuthority: (
+    participantId: string,
+    authority: EnsembleParticipantAuthority
+  ) => void
+  onToggleBossmanAutoApprovals: (enabled: boolean) => void
+  locked: boolean
+  onClose: () => void
+}
+
+/**
+ * 2026-08 tactile roles — the compact seat-role picker that opens when the
+ * user double-clicks a participant chip in the above row.
+ *
+ * Visual contract: identical frosted-glass material to the composer's
+ * permissions/approval popover. That is achieved by REUSING the
+ * `.composer-combined-picker-popover` shell class (glass bg + backdrop
+ * material tokens, sheen/refraction pseudo-elements, degrade chain, and the
+ * 10060 portaled band all come along for free) with a narrow
+ * `.ensemble-chip-role-picker` modifier for geometry. Rows reuse
+ * `.composer-combined-picker-row` so hover/selected/disabled states match
+ * the permissions list exactly.
+ *
+ * Layout: Enabled + Auto quick toggles (existing pill styles), then a
+ * vertical authority list (Boss / Captain / Agent), a divider, then the
+ * stage list (Scout / Work / Review / BG).
+ */
+export function EnsembleChipRolePicker({
+  anchor,
+  participant,
+  isBossman,
+  isSecondInCommand,
+  captainAssignmentDisabled,
+  hasLeadership,
+  autoApprovalsEnabled,
+  onPatch,
+  onSetAuthority,
+  onToggleBossmanAutoApprovals,
+  locked,
+  onClose
+}: EnsembleChipRolePickerProps): React.JSX.Element | null {
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [position, setPosition] = useState<{
+    left: number
+    top: number
+    above: boolean
+  } | null>(null)
+
+  // Anchor below the chip (the strip sits above the composer, so downward
+  // is the natural reading direction); flip above when there isn't room.
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled || !anchor) return
+      const rect = anchor.getBoundingClientRect()
+      const flyoutWidth = 208
+      const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
+      // 2 toggle rows + 7 list rows ≈ 348px; only used for the flip test,
+      // never as an explicit height.
+      const estimatedHeight = 348
+      const fitsBelow = rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
+      setPosition(
+        fitsBelow
+          ? { left, top: rect.bottom + 6, above: false }
+          : { left, top: rect.top - 8, above: true }
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [anchor])
+
+  // Capture-phase outside-mousedown + Escape close, mirroring the legacy
+  // overflow popover. Anchor-chip clicks fall through so the chip's own tap
+  // pipeline owns the toggle gesture without close/reopen flicker.
+  useEffect(() => {
+    const handleClick = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (anchor && anchor.contains(target)) return
+      onClose()
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true)
+      document.removeEventListener('keydown', handleKey, true)
+    }
+  }, [onClose, anchor])
+
+  if (!position) return null
+
+  const providerLabel = getProviderName(participant.provider)
+  const authority: EnsembleParticipantAuthority = isBossman
+    ? 'boss'
+    : isSecondInCommand
+      ? 'captain'
+      : 'agent'
+  const backgroundRestricted = participant.stageRole === 'background'
+  const effectiveAutoApprovalsEnabled = hasLeadership && autoApprovalsEnabled
+
+  const { authorityRows, stageRows } = resolveEnsembleChipRolePickerRows({
+    isBossman,
+    captainAssignmentDisabled,
+    backgroundRestricted,
+    locked
+  })
+
+  const content = (
+    <div
+      ref={popoverRef}
+      className={`composer-combined-picker-popover ensemble-chip-role-picker provider-${resolveProviderHueClass(participant.provider, participant.model)}`}
+      style={{
+        position: 'fixed',
+        left: `${position.left}px`,
+        top: `${position.top}px`,
+        transform: position.above ? 'translateY(-100%)' : undefined
+      }}
+      role="dialog"
+      aria-label={`Seat roles for ${participant.role || providerLabel}`}
+    >
+      <div className="composer-combined-picker-column ensemble-chip-role-picker-column">
+        <div
+          className="ensemble-above-overflow-quick-toggles ensemble-chip-role-picker-toggles"
+          role="group"
+          aria-label={`Round participation and approvals for ${providerLabel}`}
+        >
+          <PillButton
+            size="compact"
+            className="ensemble-above-overflow-toggle is-enabled"
+            aria-label={`Enabled in ensemble rounds for ${providerLabel}`}
+            aria-pressed={participant.enabled}
+            title={participant.enabled ? 'Included in Ensemble rounds.' : 'Excluded from Ensemble rounds.'}
+            disabled={locked}
+            onClick={() => onPatch({ enabled: !participant.enabled })}
+          >
+            Enabled
+          </PillButton>
+          <PillButton
+            size="compact"
+            className="ensemble-above-overflow-toggle is-auto"
+            aria-label="Thread-wide Auto Approvals"
+            aria-pressed={effectiveAutoApprovalsEnabled}
+            title={
+              hasLeadership
+                ? effectiveAutoApprovalsEnabled
+                  ? 'Disable thread-wide Boss/Captain Auto Approvals.'
+                  : 'Enable thread-wide Boss/Captain Auto Approvals.'
+                : 'Assign a Boss before enabling Auto Approvals.'
+            }
+            disabled={locked || !hasLeadership}
+            onClick={() => onToggleBossmanAutoApprovals(!effectiveAutoApprovalsEnabled)}
+          >
+            Auto
+          </PillButton>
+        </div>
+        {authorityRows.map((row) => (
+          <button
+            key={row.value}
+            type="button"
+            className={`composer-combined-picker-row ensemble-chip-role-picker-row ${authority === row.value ? 'is-selected' : ''}`}
+            onClick={() =>
+              onSetAuthority(participant.id, row.value as EnsembleParticipantAuthority)
+            }
+            disabled={row.disabled}
+            title={row.title}
+          >
+            <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
+              {row.value === 'boss' && (
+                <BossmanCrownIcon className="ensemble-chip-role-picker-icon" />
+              )}
+              {row.value === 'captain' && (
+                <CaptainHatIcon className="ensemble-chip-role-picker-icon" />
+              )}
+              <span>{row.label}</span>
+            </span>
+            {authority === row.value && (
+              <span className="composer-combined-picker-check" aria-hidden>
+                ✓
+              </span>
+            )}
+          </button>
+        ))}
+        <div className="ensemble-chip-role-picker-divider" role="separator" />
+        {stageRows.map((row) => (
+          <button
+            key={row.value}
+            type="button"
+            className={`composer-combined-picker-row ensemble-chip-role-picker-row ${participant.stageRole === row.value ? 'is-selected' : ''}`}
+            onClick={() =>
+              onPatch({
+                stageRole:
+                  participant.stageRole === row.value
+                    ? undefined
+                    : (row.value as NonNullable<EnsembleParticipant['stageRole']>)
+              })
+            }
+            disabled={row.disabled}
+            title={
+              row.title ||
+              ENSEMBLE_PARTICIPANT_STAGE_OPTIONS.find((option) => option.value === row.value)
+                ?.title
+            }
+          >
+            <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
+              <EnsembleStageRoleIcon
+                stageRole={row.value as NonNullable<EnsembleParticipant['stageRole']>}
+                className="ensemble-chip-role-picker-icon"
+              />
+              <span>{row.label}</span>
+            </span>
+            {participant.stageRole === row.value && (
+              <span className="composer-combined-picker-check" aria-hidden>
+                ✓
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  return createPortal(content, document.body)
 }
 
 export function EnsembleParticipantOverflowPopover({

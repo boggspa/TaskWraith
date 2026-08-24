@@ -9,6 +9,7 @@ import {
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
+  resolveEnsembleChipRolePickerRows,
   applyEnsembleAddReasoningSelection,
   buildEnsembleAddProviderGroups,
   buildEnsembleParticipantAddition,
@@ -80,6 +81,73 @@ describe('EnsembleParticipantsAboveRow', () => {
       'This will not grant session/workspace approval'
     )
   })
+
+  describe('double-click chip seat-role picker', () => {
+    it('lists authority roles, then stage roles, in the tactile-picker order', () => {
+      const { authorityRows, stageRows } = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: false
+      })
+      expect(authorityRows.map((row) => row.label)).toEqual(['Boss', 'Captain', 'Agent'])
+      // The divider sits between these two lists — authority first, stages second.
+      expect(stageRows.map((row) => row.label)).toEqual(['Scout', 'Work', 'Review', 'BG'])
+    })
+
+    it('restricts Boss/Captain for BG seats and BG while the seat is Boss', () => {
+      const background = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: true,
+        locked: false
+      })
+      expect(
+        background.authorityRows
+          .filter((row) => row.value === 'boss' || row.value === 'captain')
+          .map((row) => row.disabled)
+      ).toEqual([true, true])
+      expect(background.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(
+        false
+      )
+      expect(background.stageRows.find((row) => row.value === 'background')?.disabled).toBe(
+        false
+      )
+
+      const bossman = resolveEnsembleChipRolePickerRows({
+        isBossman: true,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: false
+      })
+      // A configured Boss cannot demote itself through the picker, and cannot
+      // move itself to BG.
+      expect(bossman.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(true)
+      expect(bossman.stageRows.find((row) => row.value === 'background')?.disabled).toBe(true)
+    })
+
+    it('blocks Captain assignment at the panel cap and everything while locked', () => {
+      const capped = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: true,
+        backgroundRestricted: false,
+        locked: false
+      })
+      expect(capped.authorityRows.find((row) => row.value === 'captain')?.title).toContain(
+        'Captains'
+      )
+
+      const locked = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: true
+      })
+      expect(
+        [...locked.authorityRows, ...locked.stageRows].every((row) => row.disabled)
+      ).toBe(true)
+    })
+  });
 
   describe('participant authority controls', () => {
     const autoApprovals = {

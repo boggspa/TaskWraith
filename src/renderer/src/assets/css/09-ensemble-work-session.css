@@ -2058,6 +2058,53 @@
   gap: 8px;
 }
 
+/* ── Double-click chip seat-role picker (2026-08 tactile roles) ─────
+ * The compact vertical role list that opens when a participant chip in
+ * the above row is double-clicked. It reuses the composer's
+ * `.composer-combined-picker-popover` shell for the frosted glass
+ * material (glass bg, backdrop material, sheen/refraction pseudo-elements,
+ * degrade chain, 10060 portaled band) and `.composer-combined-picker-row`
+ * for row hover/selected/disabled states — these rules only add the
+ * narrow geometry and the authority/stage divider. */
+.ensemble-chip-role-picker {
+  width: 208px;
+}
+
+.composer-combined-picker-popover.ensemble-chip-role-picker {
+  flex-direction: column;
+}
+
+.ensemble-chip-role-picker .composer-combined-picker-column {
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.ensemble-chip-role-picker-toggles {
+  margin-bottom: 4px;
+}
+
+.ensemble-chip-role-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ensemble-chip-role-picker-label svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.ensemble-chip-role-picker-row.is-selected .ensemble-chip-role-picker-label svg {
+  opacity: 1;
+}
+
+.ensemble-chip-role-picker-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 4px 8px;
+  background: color-mix(in srgb, var(--panel-border) 55%, transparent);
+}
+
 .ensemble-above-overflow-quick-toggles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
