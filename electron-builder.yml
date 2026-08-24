@@ -88,11 +88,13 @@ files:
   - '!{AGENTS.md,CLAUDE.md,ARCHITECTURE.md,WINDOWS_PARITY_QA.md,TERMS_NOTES.md}'
   - '!{electron-builder.yml,electron-builder.debug.yml,vitest.config.ts}'
   - '!**/*.tsbuildinfo'
-  # TUI payload + official Node runtime ship outside app.asar via top-level
-  # extraResources (Developer Preview sidecar). RunAsNode is fused off on the
-  # App binary; launchers exec tui-runtime/<platform>-<arch>/node instead.
+  # TUI and diagnostic Host payloads + official Node runtime ship outside
+  # app.asar via top-level extraResources. RunAsNode is fused off on the App
+  # binary; sidecar launchers exec tui-runtime/<platform>-<arch>/node instead.
   - '!out/tui/**'
+  - '!out/host/**'
   - '!build/tui-launcher/**'
+  - '!build/host-launcher/**'
   - '!build/tui-runtime/**'
   # pdfjs-dist ships ~36MB, most of it dev artefacts and a browser viewer we
   # never load. Pruning the unused trees takes it to roughly 9MB.
@@ -122,7 +124,9 @@ files:
 # process.resourcesPath (macOS: TaskWraith.app/Contents/Resources/; win/linux:
 # <install>/resources/). Requires `npm run tui:build` and
 # `npm run prepare:tui-runtime` (or prepare:tui-runtime:mac for universal)
-# before electron-builder. Do NOT re-enable FuseV1 RunAsNode for the App binary.
+# before electron-builder. The diagnostic Host is an opt-in sidecar only; it
+# shares tui-runtime Node but does not change TUI/Desktop authority. Do NOT
+# re-enable FuseV1 RunAsNode for the App binary.
 extraResources:
   - from: out/tui
     to: tui
@@ -130,8 +134,19 @@ extraResources:
       - '**/*'
       - '!**/*.map'
       - '!**/.DS_Store'
+  - from: out/host
+    to: host
+    filter:
+      - '**/*'
+      - '!**/*.map'
+      - '!**/.DS_Store'
   - from: build/tui-launcher
     to: bin
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
+  - from: build/host-launcher
+    to: host-bin
     filter:
       - '**/*'
       - '!**/.DS_Store'

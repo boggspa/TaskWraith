@@ -5,7 +5,8 @@
   "main": "./out/main/index.js",
   "bin": {
     "taskwraith": "./out/tui/tui/cli.js",
-    "tw": "./out/tui/tui/cli.js"
+    "tw": "./out/tui/tui/cli.js",
+    "taskwraith-host": "./out/host/host-runtime/cli.js"
   },
   "author": "Chris Izatt",
   "license": "Apache-2.0",
@@ -97,6 +98,9 @@
     "smoke:package": "node scripts/smoke-packaged-electron.cjs",
     "smoke:tui-package": "node scripts/smoke-packaged-tui.cjs",
     "smoke:tui-package:layout": "node scripts/smoke-packaged-tui.cjs --layout-only",
+    "smoke:host-package": "node scripts/smoke-packaged-host.cjs",
+    "smoke:host-package:layout": "node scripts/smoke-packaged-host.cjs --layout-only",
+    "smoke:host-source-launcher": "node scripts/smoke-packaged-host.cjs --source-launcher",
     "finalize:mac-release-artifacts": "node scripts/finalize-mac-release-artifacts.cjs dist",
     "finalize:mac-release-artifacts:unsigned": "node scripts/finalize-mac-release-artifacts.cjs dist --skip-notarization",
     "finalize:debut:mac-release-artifacts": "node scripts/finalize-mac-release-artifacts.cjs --version 0.1.0 --channel release dist-debut",

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# TaskWraith diagnostic Host launcher.
+#
+# The packaged Host is a Node sidecar. It executes the already-bundled official
+# Node runtime under Resources/tui-runtime and never invokes Electron or sets
+# ELECTRON_RUN_AS_NODE (the App's RunAsNode fuse is disabled).
+
+set -euo pipefail
+
+resolve_bin_dir() {
+  local source="${BASH_SOURCE[0]:-$0}"
+  while [ -L "$source" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ $source != /* ]] && source="$dir/$source"
+  done
+  cd -P "$(dirname "$source")" && pwd
+}
+
+BIN_DIR="$(resolve_bin_dir)"
+RESOURCES_DIR="$(cd "$BIN_DIR/.." && pwd)"
+CLI_JS="$RESOURCES_DIR/host/host-runtime/cli.js"
+RUNTIME_ROOT="$RESOURCES_DIR/tui-runtime"
+
+if [ ! -f "$CLI_JS" ]; then
+  echo "taskwraith-host: packaged diagnostic Host payload missing at:" >&2
+  echo "  $CLI_JS" >&2
+  exit 1
+fi
+
+normalize_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'x64\n' ;;
+    aarch64 | arm64) printf 'arm64\n' ;;
+    *) uname -m ;;
+  esac
+}
+
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin) printf 'darwin\n' ;;
+    Linux) printf 'linux\n' ;;
+    *)
+      echo "taskwraith-host: unsupported platform for POSIX launcher: $(uname -s)" >&2
+      echo "On Windows use taskwraith-host.cmd or taskwraith-host.ps1." >&2
+      exit 1
+      ;;
+  esac
+}
+
+find_node_runtime() {
+  local platform arch primary
+  platform="$(detect_platform)"
+  arch="$(normalize_arch)"
+  primary="$RUNTIME_ROOT/${platform}-${arch}/node"
+  if [ -x "$primary" ] && [ -f "$primary" ]; then
+    printf '%s\n' "$primary"
+    return 0
+  fi
+  if [ -x "$RUNTIME_ROOT/node" ] && [ -f "$RUNTIME_ROOT/node" ]; then
+    printf '%s\n' "$RUNTIME_ROOT/node"
+    return 0
+  fi
+  return 1
+}
+
+if ! NODE_BIN="$(find_node_runtime)"; then
+  echo "taskwraith-host: packaged Node runtime missing under:" >&2
+  echo "  $RUNTIME_ROOT" >&2
+  echo "Expected: tui-runtime/$(detect_platform)-$(normalize_arch)/node" >&2
+  echo "TaskWraith does not use ELECTRON_RUN_AS_NODE (RunAsNode fuse disabled)." >&2
+  exit 1
+fi
+
+# Diagnostic mode is fixed by the packaged launcher. A caller may supply only
+# --profile <absolute path> and optional --parent-pid <pid>.
+exec "$NODE_BIN" "$CLI_JS" serve --mode diagnostic "$@"

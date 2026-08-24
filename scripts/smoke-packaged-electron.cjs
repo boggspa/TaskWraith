@@ -93,6 +93,7 @@ async function main() {
   console.log(`node-pty native binding: ${path.relative(repoRoot, nativeBindings[0])}`)
   await runLaunchSmoke(packageRoot)
   runPackagedTuiSmoke(packageRoot)
+  runPackagedDiagnosticHostSmoke(packageRoot)
 }
 
 /**
@@ -130,6 +131,47 @@ function runPackagedTuiSmoke(packageRoot) {
   if (result.status !== 0) {
     fail(
       `packaged TUI smoke failed with exit ${result.status ?? 'null'}${
+        result.error ? `: ${result.error.message}` : ''
+      }`
+    )
+  }
+}
+
+/**
+ * Optional diagnostic Node Host sidecar. Old packages predate it and remain
+ * valid; once either Host resource directory is present the pair is mandatory
+ * and its own authenticated subprocess smoke must pass.
+ */
+function runPackagedDiagnosticHostSmoke(packageRoot) {
+  const resourcesDir = resolveResourcesDir(packageRoot)
+  const hostRoot = path.join(resourcesDir, 'host')
+  const hostBinRoot = path.join(resourcesDir, 'host-bin')
+  const hasHostPayload = fs.existsSync(hostRoot)
+  const hasHostLaunchers = fs.existsSync(hostBinRoot)
+  if (!hasHostPayload && !hasHostLaunchers) {
+    console.log('packaged diagnostic Host smoke skipped: Host resources are absent')
+    return
+  }
+  if (!hasHostPayload || !hasHostLaunchers) {
+    fail('packaged diagnostic Host resources are incomplete (host and host-bin must ship together)')
+  }
+  const smokeScript = path.join(repoRoot, 'scripts/smoke-packaged-host.cjs')
+  if (!fs.existsSync(smokeScript)) {
+    fail(`Missing packaged diagnostic Host smoke script: ${smokeScript}`)
+  }
+  const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TASKWRAITH_HOST_REQUIRE_PACKAGE: '1'
+    }
+  })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) {
+    fail(
+      `packaged diagnostic Host smoke failed with exit ${result.status ?? 'null'}${
         result.error ? `: ${result.error.message}` : ''
       }`
     )
