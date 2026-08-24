@@ -52329,7 +52329,25 @@ if (isGeminiMcpBridgeProcess) {
         return AppStore.getWorkflowDefinitions().some((workflow) =>
           Boolean(workflow.activeExecutionId)
         )
-      }
+      },
+      ...(preparedExternalHost
+        ? {
+            beforeRestart: async (): Promise<boolean> => {
+              // An existing Host may be owned by a TUI or another explicit
+              // user flow. Updates may wait, never take that authority away.
+              if (preparedExternalHost.result.kind !== 'launched') return false
+              if (hostLifecycle.getSnapshot().phase === 'stopped') return true
+              const projected = await desktopHostBroker.snapshot()
+              if (!projected.ok) return false
+              if (
+                projected.snapshot.runs.some((run) => run.providerOutcome === 'running')
+              ) {
+                return false
+              }
+              return (await hostLifecycle.stop()).ok
+            }
+          }
+        : {})
     })
 
     // Local Servers — detect dev servers/watchers running under the user's

@@ -34,4 +34,11 @@ describe('Desktop external Host cutover', () => {
     expect(source).toContain('It is never selected after')
     expect(source).toContain('hostLifecycle.stopSync()')
   })
+
+  it('defers update shutdown for active or TUI-owned Hosts and stops only a Desktop launch', () => {
+    expect(source).toContain('beforeRestart: async (): Promise<boolean> => {')
+    expect(source).toContain("preparedExternalHost.result.kind !== 'launched'")
+    expect(source).toContain("run.providerOutcome === 'running'")
+    expect(source).toContain('return (await hostLifecycle.stop()).ok')
+  })
 })
