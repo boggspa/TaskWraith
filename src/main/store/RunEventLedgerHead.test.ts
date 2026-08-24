@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { AppStore } from './index'
+import { AppStore } from '../store'
 import { RUN_EVENT_EMPTY_HASH, serializeRunEventRecord } from '../RunEventStore'
 import type { RunEventRecord } from './types'
 

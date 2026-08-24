@@ -63,7 +63,7 @@ import {
   AppStore,
   registerPersistenceWriteEnqueue,
   resetPersistenceWriteSeamForTests
-} from './index'
+} from '../store'
 import type { ChatRecord, ChatRun } from './types'
 
 /* ── helpers ──────────────────────────────────────────────────────────── */

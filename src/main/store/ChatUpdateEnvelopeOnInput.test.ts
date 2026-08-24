@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from './index'
+import { AppStore } from '../store'
 import type { ChatRecord } from './types'
 import {
   CHAT_UPDATE_PROTOCOL_V2,

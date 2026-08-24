@@ -1,4 +1,3 @@
-import * as electron from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { createInterface } from 'readline'
@@ -61,6 +60,7 @@ import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
+import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -375,7 +375,6 @@ import {
   type ExtensionSecretOwnerKind,
   type ExtensionSecretRef,
   type ExtensionSecretResolution,
-  type ExtensionSecretSafeStorage,
   type ExtensionSecretStatusSnapshot
 } from '../ExtensionSecretStore'
 import {
@@ -419,7 +418,8 @@ function normalizeSideChatLifecycleState(
   return fallback
 }
 
-const userDataPath = electron.app.getPath('userData')
+const storeRuntime = requireConfiguredHostStoreRuntime()
+const userDataPath = storeRuntime.profilePath
 const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
 const projectsPath = path.join(userDataPath, 'projects.json')
@@ -1144,35 +1144,9 @@ function chatPersistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> |
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
 }
 
-function electronSafeStorageOrUnavailable(): ExtensionSecretSafeStorage {
-  try {
-    const storage = (electron as unknown as { safeStorage?: unknown }).safeStorage
-    if (
-      storage &&
-      typeof (storage as { isEncryptionAvailable?: unknown }).isEncryptionAvailable ===
-        'function' &&
-      typeof (storage as { encryptString?: unknown }).encryptString === 'function' &&
-      typeof (storage as { decryptString?: unknown }).decryptString === 'function'
-    ) {
-      return storage as ExtensionSecretSafeStorage
-    }
-  } catch {
-    // Older unit-test Electron mocks do not expose safeStorage.
-  }
-  return {
-    isEncryptionAvailable: () => false,
-    encryptString: () => {
-      throw new Error('Electron safeStorage is unavailable.')
-    },
-    decryptString: () => {
-      throw new Error('Electron safeStorage is unavailable.')
-    }
-  }
-}
-
 const extensionSecretStore = new ExtensionSecretStore({
   userDataPath,
-  safeStorage: electronSafeStorageOrUnavailable()
+  safeStorage: storeRuntime.secureStorage
 })
 
 function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): T {
@@ -12444,7 +12418,7 @@ export class AppStore {
     const records = readJson<ProductCrashRecord[] | unknown>(productCrashesPath, [])
     const current = Array.isArray(records) ? records : []
     const record = createProductCrashRecord(input, {
-      appVersion: electron.app.getVersion() || 'unknown',
+      appVersion: storeRuntime.appVersion || 'unknown',
       platform: process.platform,
       arch: process.arch
     })

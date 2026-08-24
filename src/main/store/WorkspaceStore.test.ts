@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from './index'
+import { AppStore } from '../store'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-workspace-store-test-${process.pid}`)
 

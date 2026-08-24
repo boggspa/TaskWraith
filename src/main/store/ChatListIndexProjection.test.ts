@@ -26,7 +26,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from './index'
+import { AppStore } from '../store'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import type { ChatListItem, ChatRecord } from './types'
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord } from './types'
-import { AppStore } from './index'
+import { AppStore } from '../store'
 
 vi.mock('electron', () => ({
   app: {
