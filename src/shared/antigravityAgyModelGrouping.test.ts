@@ -60,6 +60,25 @@ describe('antigravityModelGrouping', () => {
     expect(rows[1].id).toBe('gemini-3.6-flash-high')
   })
 
+  it('preserves exact support metadata for single and selected grouped rows', () => {
+    const rows = groupAntigravityModelRows(
+      [
+        { id: 'gemini-api:gemini-3.6-flash', ultraTaskSupported: true },
+        { id: 'gemini-4-flash-high', ultraTaskSupported: true },
+        { id: 'gemini-4-flash-low', ultraTaskSupported: false },
+        { id: 'claude-sonnet-4-6', ultraTaskSupported: false }
+      ],
+      'gemini-4-flash-low'
+    )
+
+    expect(rows[0]).toMatchObject({ ultraTaskSupported: true })
+    expect(rows[1]).toMatchObject({
+      id: 'gemini-4-flash-low',
+      ultraTaskSupported: false
+    })
+    expect(rows[2]).toMatchObject({ ultraTaskSupported: false })
+  })
+
   it('parses effort suffixes and fixed reasoning', () => {
     expect(antigravityEffortForModelId('gemini-3.7-flash-high')).toBe('high')
     expect(antigravityEffortForModelId('gemini-3.1-pro-low')).toBe('low')

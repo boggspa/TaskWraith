@@ -96,7 +96,7 @@ export interface AntigravityVariantGroup {
   baseId: string
   displayName: string
   /** Present variants in slider order (low → high). */
-  variants: Array<{ effort: AntigravityEffort; id: string }>
+  variants: Array<{ effort: AntigravityEffort; id: string; ultraTaskSupported?: boolean }>
   /** Catalogue-first variant — what a fresh click on the row selects. */
   defaultId: string
 }
@@ -104,6 +104,7 @@ export interface AntigravityVariantGroup {
 export interface AntigravityGroupedModelRow {
   id: string
   label: string
+  ultraTaskSupported?: boolean
   /** Concrete wire-model variants retained for a consumer that needs to
    * switch the family through the reasoning ladder. */
   antigravityVariants?: AntigravityVariantGroup['variants']
@@ -112,6 +113,7 @@ export interface AntigravityGroupedModelRow {
 interface CatalogueOptionLike {
   id: string
   label?: string
+  ultraTaskSupported?: boolean
 }
 
 /** Human-readable name for a bare agy id ('gemini-3.6-flash' → 'Gemini 3.6
@@ -131,12 +133,14 @@ export function antigravityDisplayName(baseId: string): string {
 function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
   groupsByBase: Map<string, AntigravityVariantGroup>
   orderedEntries: Array<
-    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
+    | { kind: 'group'; baseId: string }
+    | { kind: 'single'; id: string; label?: string; ultraTaskSupported?: boolean }
   >
 } {
   const groupsByBase = new Map<string, AntigravityVariantGroup>()
   const orderedEntries: Array<
-    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
+    | { kind: 'group'; baseId: string }
+    | { kind: 'single'; id: string; label?: string; ultraTaskSupported?: boolean }
   > = []
   for (const option of options) {
     const id = option.id
@@ -146,7 +150,12 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
     // convention — those rows pass through completely untouched. Grouping
     // and prettifying apply to the agy CLI lane's bare ids only.
     if (id.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)) {
-      orderedEntries.push({ kind: 'single', id, label: option.label })
+      orderedEntries.push({
+        kind: 'single',
+        id,
+        label: option.label,
+        ultraTaskSupported: option.ultraTaskSupported
+      })
       continue
     }
     const normalized = id.trim().toLowerCase()
@@ -157,7 +166,12 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
     if (!effort) {
       // A curated label (differing from the id) is authored — keep it.
       const curated = option.label && option.label !== id ? option.label : undefined
-      orderedEntries.push({ kind: 'single', id, label: curated })
+      orderedEntries.push({
+        kind: 'single',
+        id,
+        label: curated,
+        ultraTaskSupported: option.ultraTaskSupported
+      })
       continue
     }
     const baseId = id.slice(0, id.length - effort.length - 1)
@@ -173,7 +187,13 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
       orderedEntries.push({ kind: 'group', baseId })
     }
     if (!group.variants.some((variant) => variant.id === id)) {
-      group.variants.push({ effort, id })
+      group.variants.push({
+        effort,
+        id,
+        ...(typeof option.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: option.ultraTaskSupported }
+          : {})
+      })
     }
   }
   for (const group of groupsByBase.values()) {
@@ -195,16 +215,26 @@ export function groupAntigravityModelRows(
   const { groupsByBase, orderedEntries } = collectGroups(options)
   return orderedEntries.map((entry) => {
     if (entry.kind === 'single') {
-      return { id: entry.id, label: entry.label ?? antigravityDisplayName(entry.id) }
+      return {
+        id: entry.id,
+        label: entry.label ?? antigravityDisplayName(entry.id),
+        ...(typeof entry.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: entry.ultraTaskSupported }
+          : {})
+      }
     }
     const group = groupsByBase.get(entry.baseId)!
     const selected = selectedModelId
       ? group.variants.find((variant) => variant.id === selectedModelId)
       : undefined
+    const resolved = selected ?? group.variants.find((variant) => variant.id === group.defaultId)!
     return {
-      id: selected?.id ?? group.defaultId,
+      id: resolved.id,
       label: group.displayName,
-      antigravityVariants: group.variants
+      antigravityVariants: group.variants,
+      ...(typeof resolved.ultraTaskSupported === 'boolean'
+        ? { ultraTaskSupported: resolved.ultraTaskSupported }
+        : {})
     }
   })
 }
