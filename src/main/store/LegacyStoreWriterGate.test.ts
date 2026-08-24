@@ -105,4 +105,39 @@ describe('LegacyStoreWriterGate', () => {
       gate.runAdmitted({ operation: 'save', pathFamily: 'chats' }, () => undefined)
     ).toThrow()
   })
+
+  it('retains one active admission until deferred work settles after drain begins', async () => {
+    const gate = createLegacyStoreWriterGate()
+    const admission = gate.admit({ operation: 'save', pathFamily: 'chats' })!
+    let deferred!: ReturnType<typeof gate.retainActiveAdmission>
+    admission.run(() => {
+      deferred = gate.retainActiveAdmission()
+    })
+    expect(deferred).not.toBeNull()
+    expect(gate.retainActiveAdmission()).toBeNull()
+    expect(gate.beginDrain()).toBe(true)
+    let drained = false
+    const waiting = gate.awaitDrained().then(() => {
+      drained = true
+    })
+    expect(admission.release()).toBe(true)
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    expect(deferred!.run(() => gate.hasActiveAdmissionContext())).toBe(true)
+    expect(deferred!.release()).toBe(true)
+    expect(deferred!.release()).toBe(false)
+    await waiting
+    expect(gate.snapshot().inFlight).toBe(0)
+  })
+
+  it('does not leak an admission when runAdmitted receives an invalid callback', () => {
+    const gate = createLegacyStoreWriterGate()
+    expect(() =>
+      gate.runAdmitted(
+        { operation: 'invalid-callback', pathFamily: 'chats' },
+        null as unknown as () => void
+      )
+    ).toThrow()
+    expect(gate.snapshot().inFlight).toBe(0)
+  })
 })

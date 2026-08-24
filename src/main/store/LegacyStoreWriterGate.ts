@@ -52,7 +52,7 @@ function canonical(value: unknown): value is string {
 export class LegacyStoreWriterGate {
   private stateValue: LegacyStoreWriterGateState = 'open'
   private inFlightValue = 0
-  private readonly active = new Set<object>()
+  private readonly active = new Map<object, number>()
   private readonly drainedWaiters = new Set<() => void>()
   private ownershipValue?: Readonly<{ hostId: string; generation: number; cutoverId: string }>
   private readonly context = new AsyncLocalStorage<readonly object[]>()
@@ -61,15 +61,38 @@ export class LegacyStoreWriterGate {
     if (!input || !canonical(input.operation) || !canonical(input.pathFamily)) return null
     if (this.stateValue !== 'open') return null
     const token = Object.freeze({})
-    this.active.add(token)
+    this.active.set(token, 1)
     this.inFlightValue += 1
+    return this.lease(token)
+  }
+
+  /** Retain the current admission for deferred work that settles after its caller returns. */
+  retainActiveAdmission(): LegacyStoreWriterAdmissionLease | null {
+    const context = this.context.getStore() ?? []
+    for (let index = context.length - 1; index >= 0; index -= 1) {
+      const token = context[index]
+      const references = this.active.get(token)
+      if (references === undefined) continue
+      this.active.set(token, references + 1)
+      return this.lease(token)
+    }
+    return null
+  }
+
+  private lease(token: object): LegacyStoreWriterAdmissionLease {
     let released = false
     return {
       release: () => {
-        if (released || !this.active.delete(token)) return false
+        const references = this.active.get(token)
+        if (released || references === undefined) return false
         released = true
-        this.inFlightValue -= 1
-        this.notifyDrained()
+        if (references === 1) {
+          this.active.delete(token)
+          this.inFlightValue -= 1
+          this.notifyDrained()
+        } else {
+          this.active.set(token, references - 1)
+        }
         return true
       },
       run: <T>(fn: () => T): T => {
@@ -90,7 +113,11 @@ export class LegacyStoreWriterGate {
       return fn()
     }
     const lease = this.admit(input)
-    if (!lease || typeof fn !== 'function') throw new LegacyStoreWriterGateClosedError()
+    if (!lease) throw new LegacyStoreWriterGateClosedError()
+    if (typeof fn !== 'function') {
+      lease.release()
+      throw new LegacyStoreWriterGateClosedError()
+    }
     try {
       const value = lease.run(fn)
       if (value && typeof (value as unknown as PromiseLike<unknown>).then === 'function') {
