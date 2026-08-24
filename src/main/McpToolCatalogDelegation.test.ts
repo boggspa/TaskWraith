@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
+import { ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS } from './ultraTask/UltraTaskToolRequest'
 
 describe('delegate_to_subthread MCP schema', () => {
   it('advertises fresh-seat model controls and marks them spawn-only', () => {
@@ -74,5 +75,24 @@ describe('delegate_wave roster sizing is discoverable', () => {
     expect(workers?.maxItems).toBe(64)
     expect(workers?.description).toMatch(/ceiling/i)
     expect(workers?.description).toMatch(new RegExp(`${DEFAULT_MAX_WAVE_AGENTS}`))
+  })
+})
+
+describe('ultra_task MCP schema', () => {
+  it('advertises the implemented worker default', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ultra_task'
+    )
+    const schema = definition?.inputSchema as
+      | {
+          properties?: Record<string, { default?: number; description?: string }>
+        }
+      | undefined
+    const maxWorkers = schema?.properties?.maxWorkers
+
+    expect(maxWorkers?.default).toBe(ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS)
+    expect(maxWorkers?.description).toMatch(
+      new RegExp(`default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}`)
+    )
   })
 })

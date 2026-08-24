@@ -2091,6 +2091,8 @@ import {
 } from './mcp/McpRouteGuards'
 import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { resolveSubThreadWorkerPermissions } from './SubThreadPermissions'
+import { hasUltraTaskDelegationAutoAllow } from './UltraTaskDelegationConsent'
+import { resolveUltraTaskToolRequest } from './ultraTask/UltraTaskToolRequest'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 import { shouldAutoAllowUserRequestedEnsembleImport } from './EnsembleRosterImportConsent'
@@ -26236,6 +26238,7 @@ function getAgentToolContext(
     appRunId: session.runId,
     appChatId: session.appChatId,
     providerSessionId: session.providerSessionId,
+    model: state.model,
     approvalMode: state.approvalMode,
     workflowMode: state.workflowMode,
     sessionTrust: state.sessionTrust,
@@ -37187,6 +37190,7 @@ async function executeGeminiMcpTool(
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
     toolName === 'delegate_wave' ||
+    toolName === 'ultra_task' ||
     isRecallMcpToolName(toolName) ||
     // Self-gates through the dedicated `threadMessage` service; the generic
     // mcpTools gate would both double-prompt and imply the wrong authority.
@@ -40108,6 +40112,7 @@ async function executeGeminiMcpTool(
           body: approvalBody,
           preview: {
             kind: 'subthread-delegation',
+            toolName,
             parentProvider,
             targetProvider: providerArg,
             targetModel: delegationSettings.requestedModel,
@@ -40502,27 +40507,9 @@ async function executeGeminiMcpTool(
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +
           `\nReuse this id by passing subThreadId="${subThread.appChatId}" on the next delegate_to_subthread call if you want to continue the conversation with this same sub-agent.`
     } else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {
-      let waveArgs = args
-      if (toolName === 'ultra_task') {
-        const { buildUltraTaskWave } = require('./ultraTask/UltraTaskWaveBuilder')
-        const utArgs = args as Record<string, unknown>
-        const utConfig = {
-          baseProvider: parentProvider as any,
-          baseModel: (typeof utArgs.model === 'string' ? utArgs.model : undefined) || 'cli-default',
-          taskPrompt: String(utArgs.task),
-          enableResearcherFanout: utArgs.enableFanout !== false,
-          enableReviewerLayer: utArgs.enableReview !== false,
-          maxWorkers: typeof utArgs.maxWorkers === 'number' ? utArgs.maxWorkers : undefined
-        }
-        const wave = buildUltraTaskWave(utConfig)
-        waveArgs = {
-          workers: wave.workers,
-          join: wave.join,
-          lifecycle: wave.lifecycle,
-          allowMultiProvider: wave.allowMultiProvider
-        }
-      }
       markDispatchHandled('subthread-control')
+      let waveArgs = args
+      let ultraTaskNotice: string | undefined
       // Batch spawn-only wave. Business logic lives in SubThreadDelegateWave;
       // this branch is composition-root wiring (context, approval, spawn ports).
       if (parentProvider === 'ollama') {
@@ -40566,6 +40553,16 @@ async function executeGeminiMcpTool(
         (provider) => provider !== 'ollama'
       )
       const waveAllowedProviderSet = new Set<string>(waveAllowedProviders)
+      if (toolName === 'ultra_task') {
+        const ultraTaskRequest = resolveUltraTaskToolRequest(args, {
+          provider: parentProvider,
+          model: context.model,
+          allowedProviders: waveAllowedProviders
+        })
+        if (!ultraTaskRequest.ok) throw new Error(ultraTaskRequest.message)
+        waveArgs = ultraTaskRequest.value.waveArgs
+        ultraTaskNotice = ultraTaskRequest.value.notice
+      }
       const callerParticipantId =
         context.ensembleRun?.participantId ||
         (context.appRunId
@@ -40580,6 +40577,9 @@ async function executeGeminiMcpTool(
       )
       const permissionPresetId =
         callingParticipant?.permissionPresetId ?? context.effectivePermissions?.presetId
+      const ultraTaskDelegationAutoAllow = hasUltraTaskDelegationAutoAllow(
+        context.effectivePermissions
+      )
       const isBossOrCaptain = isDelegateWaveBossOrCaptain({
         callerParticipantId,
         bossmanParticipantId: ensemble?.bossmanParticipantId,
@@ -40599,6 +40599,7 @@ async function executeGeminiMcpTool(
         allowedProvidersLabel: `${waveAllowedProviders.join('/')} (ollama excluded)`,
         isBossOrCaptain,
         permissionPresetId,
+        ultraTaskDelegationAutoAllow,
         budgetRemaining: delegationApprovalBudget.remaining(delegationBudgetKey),
         tryConsumeBudgetSlot: () => delegationApprovalBudget.tryConsume(delegationBudgetKey),
         releaseBudgetSlots: (count) => delegationApprovalBudget.release(delegationBudgetKey, count),
@@ -40629,6 +40630,7 @@ async function executeGeminiMcpTool(
               body: preview.body,
               preview: {
                 kind: 'subthread-delegation-wave',
+                toolName,
                 parentProvider,
                 waveId: preview.waveId,
                 workers: preview.workers,
@@ -41020,7 +41022,8 @@ async function executeGeminiMcpTool(
       if (
         shouldSkipDelegateWaveApproval({
           isBossOrCaptain,
-          permissionPresetId
+          permissionPresetId,
+          ultraTaskDelegationAutoAllow
         })
       ) {
         try {
@@ -41058,7 +41061,7 @@ async function executeGeminiMcpTool(
           // Best-effort audit.
         }
       }
-      text = waveOutcome.text
+      text = ultraTaskNotice ? `${waveOutcome.text}\n\nNote: ${ultraTaskNotice}` : waveOutcome.text
     }
 
     if (!handledDispatchOwner) {
@@ -41457,6 +41460,7 @@ function installGeminiToolContextForRun(
     scope,
     cwd: resolvedCwd,
     ...(scope === 'workspace' ? { workspacePath: resolvedCwd } : {}),
+    model: options.runPayload?.model,
     approvalMode: options.runPayload?.approvalMode,
     sessionTrust: Boolean(options.runPayload?.sessionTrust ?? sessionTrust),
     externalPathGrants: options.runPayload?.externalPathGrants,

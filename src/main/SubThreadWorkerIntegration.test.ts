@@ -124,4 +124,27 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'dispatchResolvedGatewayTarget({')
     expectContains(indexSource, 'executeCanonical: executeGeminiMcpTool')
   })
+
+  it('routes ultra_task through the signed request resolver and dedicated approval gate', () => {
+    const wave = sourceBetween(
+      "} else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {",
+      'if (!handledDispatchOwner) {'
+    )
+    const single = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      "} else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {"
+    )
+
+    expectContains(wave, "markDispatchHandled('subthread-control')")
+    expectContains(wave, 'resolveUltraTaskToolRequest(args, {')
+    expectContains(wave, 'provider: parentProvider')
+    expectContains(wave, 'model: context.model')
+    expectContains(wave, 'allowedProviders: waveAllowedProviders')
+    expectContains(wave, 'waveArgs = ultraTaskRequest.value.waveArgs')
+    expectContains(wave, 'ultraTaskDelegationAutoAllow')
+    expectContains(wave, 'toolName,')
+    expect(wave).not.toContain('buildUltraTaskWave')
+    expectContains(single, 'toolName,')
+    expectContains(indexSource, "toolName === 'ultra_task' ||")
+  })
 })

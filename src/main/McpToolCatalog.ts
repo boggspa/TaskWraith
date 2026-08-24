@@ -4,6 +4,7 @@ import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
+import { ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS } from './ultraTask/UltraTaskToolRequest'
 import {
   BLACKBOARD_MAX_KEY_LEN,
   BLACKBOARD_MAX_POLL_OPTION_LEN,
@@ -3824,8 +3825,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           maxWorkers: {
             type: 'number',
-            description: 'Maximum workers for fanout (2-64, default: 4).',
-            default: 4,
+            description: `Maximum workers for fanout (2-64, default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}).`,
+            default: ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
             minimum: 2,
             maximum: 64
           },

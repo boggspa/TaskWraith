@@ -28,7 +28,7 @@ const DOCUMENTED_REASONING_OVERRIDES = new Set([
 export interface UltraTaskSignedRunContext {
   /** Main-verified provider for the active run, never a provider-authored arg. */
   provider: ProviderId
-  /** Main-verified model for the active run. A sentinel resolves to its catalog default. */
+  /** Main-verified concrete model for the active run. Never infer a sentinel. */
   model?: string | null
   /** Configured providers the caller may target. Omit only in pure/unit callers. */
   allowedProviders?: readonly ProviderId[]
@@ -69,6 +69,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isConcreteModelId(value: string): boolean {
+  const model = value.trim().toLowerCase()
+  return Boolean(model) && model !== 'cli-default' && model !== 'default' && model !== 'custom'
+}
+
 function providerDefaultModel(provider: ProviderId): string | null {
   const models = getStaticProviderModels(provider, { includePreviewModels: true }) as Array<{
     id: string
@@ -76,20 +81,15 @@ function providerDefaultModel(provider: ProviderId): string | null {
     disabled?: boolean
   }>
   const model =
-    models.find((candidate) => candidate.isDefault && !candidate.disabled) ||
     models.find(
-      (candidate) =>
-        !candidate.disabled && candidate.id !== 'custom' && candidate.id !== 'cli-default'
-    )
+      (candidate) => candidate.isDefault && !candidate.disabled && isConcreteModelId(candidate.id)
+    ) || models.find((candidate) => !candidate.disabled && isConcreteModelId(candidate.id))
   return model?.id || null
 }
 
 function concreteCurrentModel(context: UltraTaskSignedRunContext): string | null {
   const model = typeof context.model === 'string' ? context.model.trim() : ''
-  if (model && model !== 'cli-default' && model !== 'default' && model !== 'custom') {
-    return model
-  }
-  return providerDefaultModel(context.provider)
+  return isConcreteModelId(model) ? model : null
 }
 
 function parseProvider(
@@ -126,6 +126,13 @@ function parseModel(
       return { ok: false, message: 'model must be a non-empty string when provided.' }
     }
     const model = value.trim()
+    if (!isConcreteModelId(model)) {
+      return {
+        ok: false,
+        message:
+          'model must be a concrete model id; cli-default, default, and custom cannot run UltraTask.'
+      }
+    }
     if (model.length > MODEL_MAX_LENGTH) {
       return { ok: false, message: `model must be ${MODEL_MAX_LENGTH} characters or fewer.` }
     }
@@ -138,7 +145,10 @@ function parseModel(
     ? { ok: true, model }
     : {
         ok: false,
-        message: `model is required because ${provider} has no concrete default model.`
+        message:
+          provider === context.provider
+            ? 'the active run has no concrete model. Select a concrete model in the provider/model picker before calling ultra_task.'
+            : `model is required because ${provider} has no concrete default model.`
       }
 }
 

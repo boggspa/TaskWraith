@@ -64,6 +64,28 @@ describe('resolveUltraTaskToolRequest', () => {
     })
   })
 
+  it('requires a concrete active model instead of guessing from a legacy sentinel', () => {
+    for (const model of [undefined, null, 'cli-default', 'default', 'custom'] as const) {
+      expect(
+        resolveUltraTaskToolRequest({ task: 'Do work.' }, { provider: 'codex', model })
+      ).toMatchObject({
+        ok: false,
+        message: expect.stringMatching(/active run has no concrete model/i)
+      })
+    }
+  })
+
+  it('rejects explicit legacy model sentinels', () => {
+    for (const model of ['cli-default', 'default', 'custom'] as const) {
+      expect(
+        resolveUltraTaskToolRequest(
+          { task: 'Do work.', model },
+          { provider: 'codex', model: 'gpt-5.6-luna' }
+        )
+      ).toMatchObject({ ok: false, message: expect.stringMatching(/concrete model id/i) })
+    }
+  })
+
   it('uses the provider normalizer for an explicit reasoning override', () => {
     const result = resolveUltraTaskToolRequest(
       {
