@@ -46,7 +46,11 @@ import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfil
 import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
-import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
+import {
+  applyProviderChange,
+  clearPendingProviderChange,
+  readPendingProviderChange
+} from '../providerChangeQueue'
 import {
   isExternalProviderThreadImportMessage,
   stripExternalProviderThreadImportContinuity
@@ -164,6 +168,22 @@ export interface RebindChatWorkspaceOptions {
   now?: number
 }
 
+/** Narrow Host setup creation input; it cannot carry a renderer-authored ChatRecord. */
+export type CreateSingleThreadInput =
+  | { readonly scope: 'global' }
+  | { readonly scope: 'workspace'; readonly workspaceId: string; readonly workspacePath: string }
+
+/** Bounded configuration patch; grants, permission posture, and metadata are not accepted. */
+export interface ConfigureThreadInput {
+  readonly chatId: string
+  readonly provider?: ProviderId
+  readonly selectedModelType?: unknown
+}
+
+export interface ArchiveThreadInput {
+  readonly chatId: string
+}
+
 type ResolvedChatWorkspaceRebindTarget =
   | {
       chatId: string
@@ -261,6 +281,10 @@ export interface ChatServiceDeps {
     title: string,
     payload?: unknown
   ) => void
+  /** Current-offer validation belongs to the main-owned provider catalog. */
+  assertProviderOfferedForThread?: (provider: ProviderId, chat: ChatRecord) => void
+  /** Stronger live run/round fence supplied by the main-owned coordinator when available. */
+  assertThreadSetupIdle?: (chat: ChatRecord) => void
 }
 
 /**
@@ -300,6 +324,55 @@ export class ChatService {
 
   createGlobalChat(): ChatRecord {
     return this.deps.appStore.createGlobalChat()
+  }
+
+  /** Creates exactly one canonical single thread in global or registered-workspace scope. */
+  createSingleThread(input: CreateSingleThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object') throw new Error('Thread creation input is required.')
+    if (input.scope === 'global') return this.createGlobalChat()
+    if (input.scope !== 'workspace') throw new Error('Thread scope must be global or workspace.')
+    return this.createChat(
+      requireNonEmptyString(input.workspaceId, 'Workspace id'),
+      requireNonEmptyString(input.workspacePath, 'Workspace path')
+    )
+  }
+
+  /**
+   * Applies only a current provider/model selection to a canonical idle thread.
+   * The shared provider-change helper clears stale linked sessions on a real
+   * provider switch and preserves them for a same-provider model adjustment.
+   */
+  configureThread(input: ConfigureThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object')
+      throw new Error('Thread configuration input is required.')
+    const chatId = requireSafeChatId(input.chatId, 'Chat id')
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current || current.archived) throw new Error('Chat is not available for configuration.')
+    assertHostSetupThreadIdle(current)
+    this.deps.assertThreadSetupIdle?.(current)
+
+    const provider =
+      input.provider === undefined ? current.provider : assertLiveProviderId(input.provider)
+    if (!provider) throw new Error('Thread provider is required for configuration.')
+    this.deps.assertProviderOfferedForThread?.(provider, current)
+    const selectedModelType = sanitizeThreadModel(input.selectedModelType)
+    const configured = applyProviderChange(current, {
+      provider,
+      ...(selectedModelType ? { providerMetadata: { selectedModelType } } : {})
+    })
+    return this.saveChat({ ...configured, updatedAt: Date.now() })
+  }
+
+  /** Archives a canonical idle thread without accepting a full mutable chat payload. */
+  archiveThread(input: ArchiveThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object') throw new Error('Thread archive input is required.')
+    const chatId = requireSafeChatId(input.chatId, 'Chat id')
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current) throw new Error('Chat not found.')
+    if (current.archived) return current
+    assertHostSetupThreadIdle(current)
+    this.deps.assertThreadSetupIdle?.(current)
+    return this.saveChat({ ...current, archived: true, updatedAt: Date.now() })
   }
 
   createEnsembleChat(args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>): ChatRecord {
@@ -2208,4 +2281,26 @@ function requireBoundedText(value: unknown, label: string, maxChars: number): st
     throw new Error(`${label} is too long.`)
   }
   return trimmed
+}
+
+function sanitizeThreadModel(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('Selected model must be a non-empty string.')
+  }
+  const model = value.trim()
+  if (model.length > 200) throw new Error('Selected model is too long.')
+  return model
+}
+
+function assertHostSetupThreadIdle(chat: ChatRecord): void {
+  const activeRun = (chat.runs || []).some((run) => {
+    const status = String(run.status || '').toLowerCase()
+    return (
+      status === 'running' || status === 'pending' || status === 'awaiting' || status === 'queued'
+    )
+  })
+  if (activeRun || chat.ensemble?.activeRound) {
+    throw new Error('Thread setup is unavailable while a run or round is active.')
+  }
 }

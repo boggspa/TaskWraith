@@ -12,6 +12,10 @@ import {
   unknownInstallChannelMessage
 } from '../providers/CliInstallChannel'
 import { MUSE_INSTALL_COMMAND } from '../../shared/providerSetupCatalog'
+import {
+  buildProviderManualSetupFlow,
+  providerManualSetupNotice
+} from '../providers/ProviderManualSetupFlowCatalog'
 
 /** Best-effort realpath. A failure classifies as 'unknown', which refuses to
  *  guess rather than upgrading the wrong copy. */
@@ -36,29 +40,8 @@ export type ProviderTerminalResult = {
   notice?: string
 }
 
-const KIMI_USER_OWNED_SETUP_NOTICE =
-  'This is a user-owned Kimi setup command outside TaskWraith managed-run containment. Success does not qualify this runtime for managed Kimi turns or compaction.'
-
-const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
-  'This opens the official user-installed agy CLI for a user-owned sign-in. TaskWraith does not read, copy, or store Google or AntiGravity OAuth or keyring credentials. Completing sign-in does not make AntiGravity available for managed runs until its runtime support is available.'
-
-const ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE =
-  "This opens the official user-installed agy CLI's own updater. TaskWraith resolves and invokes that same CLI installation but does not download or repackage the update. Updating agy does not make AntiGravity ToS-approved or ban-safe."
-
-const MISTRAL_USER_OWNED_SETUP_NOTICE =
-  'This opens the official Mistral Vibe setup wizard for a user-owned plan or API-key sign-in. TaskWraith does not read, copy, or store Vibe credentials. After setup, managed Mistral runs use the separate `vibe-acp` runtime.'
-
-const MUSE_USER_OWNED_SETUP_NOTICE =
-  'This opens the official Muse Code CLI for a user-owned Meta Model API login (`muse login`) or credential clear (`muse logout`). TaskWraith does not permanently store Meta credentials; managed runs project the Muse-owned credential into a private seat-local home that is deleted at teardown.'
-
-const MUSE_USER_OWNED_UPGRADE_NOTICE =
-  'This invokes the resolved Muse launcher with its synchronous-update flag, so the CLI TaskWraith actually runs is updated in place. Meta owns the launcher, download, and account flow.'
-
 const MUSE_USER_OWNED_INSTALL_NOTICE =
   'Muse was not found on PATH. This saves Meta’s official launcher to ~/.local/bin/muse, validates its shell syntax, and invokes the launcher’s explicit install mode.'
-
-const OLLAMA_USER_OWNED_SETUP_NOTICE =
-  'This invokes the resolved official Ollama CLI for account sign-in or sign-out. Ollama owns the browser flow and credentials; TaskWraith stores neither. The same local Ollama daemon then authenticates Ollama Cloud model requests.'
 
 export interface ProviderTerminalHandlersDeps {
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
@@ -187,11 +170,11 @@ async function openProviderAuthTerminal(
             'Kimi Code does not expose a bounded logout command. No Kimi process was started; remove Kimi credentials using the documented account controls instead.',
           scope: 'user-owned-provider-setup',
           managedRunReady: false,
-          notice: KIMI_USER_OWNED_SETUP_NOTICE
+          notice: providerManualSetupNotice('kimi') || undefined
         }
       }
       const resolved = await deps.resolveCliProviderBinary('kimi')
-      setupNotice = KIMI_USER_OWNED_SETUP_NOTICE
+      setupNotice = buildProviderManualSetupFlow('kimi', action)?.notice || null
       if (action === 'upgrade') {
         // Kimi Code's subcommand is `upgrade` — the legacy `/upgrade` slash-arg
         // is gone and errors on a kimi-code binary.
@@ -218,12 +201,12 @@ async function openProviderAuthTerminal(
         // used by managed runs so a second PATH installation cannot report a
         // successful upgrade while TaskWraith keeps launching stale bytes.
         const resolved = await deps.resolveCliProviderBinary('antigravity')
-        setupNotice = ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE
+        setupNotice = buildProviderManualSetupFlow('antigravity', 'upgrade')?.notice || null
         commandParts = [resolved.binaryPath || 'agy', 'update']
       } else {
         // The official CLI starts its own browser/keyring sign-in when launched.
         // Do not resolve or inspect credentials for this interactive handoff.
-        setupNotice = ANTIGRAVITY_USER_OWNED_SETUP_NOTICE
+        setupNotice = buildProviderManualSetupFlow('antigravity', 'login')?.notice || null
         commandParts = ['agy']
       }
     } else if (provider === 'cursor') {
@@ -251,7 +234,7 @@ async function openProviderAuthTerminal(
       if (action === 'upgrade') {
         rawCommand = 'curl -fsSL https://ollama.com/install.sh | sh'
       } else {
-        setupNotice = OLLAMA_USER_OWNED_SETUP_NOTICE
+        setupNotice = buildProviderManualSetupFlow('ollama', action)?.notice || null
         commandParts = [resolved.binaryPath || 'ollama', action === 'logout' ? 'signout' : 'signin']
         postscript = `${actionLabel} finished (exit $status). Close this window, return to TaskWraith, and refresh Ollama models.`
       }
@@ -268,7 +251,7 @@ async function openProviderAuthTerminal(
             'Mistral Vibe does not expose a bounded logout command. No Vibe process was started; manage account credentials using the documented Mistral or Vibe account controls instead.',
           scope: 'user-owned-provider-setup',
           managedRunReady: false,
-          notice: MISTRAL_USER_OWNED_SETUP_NOTICE
+          notice: providerManualSetupNotice('mistral') || undefined
         }
       }
       if (action === 'upgrade') {
@@ -276,15 +259,15 @@ async function openProviderAuthTerminal(
       } else {
         // The interactive `vibe` binary owns plan / API-key setup. Managed
         // TaskWraith turns still use `vibe-acp`, never this terminal TUI.
-        setupNotice = MISTRAL_USER_OWNED_SETUP_NOTICE
+        setupNotice = buildProviderManualSetupFlow('mistral', action)?.notice || null
         commandParts = ['vibe', '--setup']
       }
     } else if (provider === 'muse') {
       label = 'Muse'
-      setupNotice = MUSE_USER_OWNED_SETUP_NOTICE
+      setupNotice = buildProviderManualSetupFlow('muse', action)?.notice || null
       if (action === 'upgrade') {
         const resolved = await deps.resolveCliProviderBinary('muse')
-        setupNotice = MUSE_USER_OWNED_UPGRADE_NOTICE
+        setupNotice = buildProviderManualSetupFlow('muse', 'upgrade')?.notice || null
         if (resolved.binaryPath) {
           // The installed `muse` path is Meta's launcher. Force its normal
           // update check to run synchronously, then use a bounded --version

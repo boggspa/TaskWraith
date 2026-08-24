@@ -41,6 +41,13 @@ export interface WorkspaceServiceDeps {
   checkTrust: (workspacePath: string) => TrustStatusResult
 }
 
+/** Narrow Host setup input; never accepts grants, remote policy, or a full record. */
+export interface RegisterWorkspaceInput {
+  readonly selectedPath: string
+  readonly displayName?: unknown
+  readonly pinned?: unknown
+}
+
 /**
  * WorkspaceService — Phase B4 extraction.
  *
@@ -75,6 +82,34 @@ export class WorkspaceService {
     const path = await this.deps.selectDirectory()
     if (!path) return null
     return this.addWorkspaceFromNativeSelection(path)
+  }
+
+  /**
+   * Host-adaptable native-selection registration. The filesystem realpath is
+   * the idempotency key; lexical aliases never create a second workspace and
+   * this method never issues a path grant or remote allowlist entry.
+   */
+  async registerWorkspace(input: RegisterWorkspaceInput): Promise<WorkspaceRecord> {
+    if (!input || typeof input !== 'object') {
+      throw new Error('Workspace registration input is required.')
+    }
+    const lexicalPath = this.deps.canonicalPath(
+      requireNonEmptyString(input.selectedPath, 'Workspace selection')
+    )
+    this.assertSafeWorkspaceRoot(lexicalPath)
+    const realPath = await this.resolveRealDirectory(lexicalPath)
+    const existing = this.deps.appStore.getWorkspaces().find((workspace) => {
+      const candidate = workspace.realPath || workspace.path
+      return this.tryCanonicalPath(candidate) === realPath
+    })
+    const partial: Partial<WorkspaceRecord> = { realPath }
+    const displayName = sanitizeWorkspaceDisplayName(input.displayName)
+    if (displayName !== undefined) partial.displayName = displayName
+    if (typeof input.pinned === 'boolean') partial.pinned = input.pinned
+
+    // Preserve an existing record's stable id/path while pinning its verified
+    // canonical realpath. A newly selected directory is stored by realpath.
+    return this.deps.appStore.addOrUpdateWorkspace(existing?.path || realPath, partial)
   }
 
   /**
@@ -305,6 +340,13 @@ function sanitizeWorkspaceGeminiWorktree(
     sanitized.name = record.name.trim()
   }
   return sanitized
+}
+
+function sanitizeWorkspaceDisplayName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  return trimmed.slice(0, 160)
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

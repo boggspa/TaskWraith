@@ -1,0 +1,81 @@
+import type { ProviderId } from '../store/types'
+
+export type ProviderManualSetupAction = 'login' | 'logout' | 'upgrade'
+
+/**
+ * Bounded user-owned setup metadata. Commands, URLs, device codes, and
+ * credentials stay in the Electron IPC adapter; Host setup sees only this
+ * non-secret eligibility/notice projection.
+ */
+export interface ProviderManualSetupFlow {
+  readonly provider: ProviderId
+  readonly action: ProviderManualSetupAction
+  readonly scope: 'user-owned-provider-setup'
+  readonly managedRunReady: false
+  readonly notice: string
+}
+
+const KIMI_USER_OWNED_SETUP_NOTICE =
+  'This is a user-owned Kimi setup command outside TaskWraith managed-run containment. Success does not qualify this runtime for managed Kimi turns or compaction.'
+
+const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
+  'This opens the official user-installed agy CLI for a user-owned sign-in. TaskWraith does not read, copy, or store Google or AntiGravity OAuth or keyring credentials. Completing sign-in does not make AntiGravity available for managed runs until its runtime support is available.'
+
+const ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE =
+  "This opens the official user-installed agy CLI's own updater. TaskWraith resolves and invokes that same CLI installation but does not download or repackage the update. Updating agy does not make AntiGravity ToS-approved or ban-safe."
+
+const MISTRAL_USER_OWNED_SETUP_NOTICE =
+  'This opens the official Mistral Vibe setup wizard for a user-owned plan or API-key sign-in. TaskWraith does not read, copy, or store Vibe credentials. After setup, managed Mistral runs use the separate `vibe-acp` runtime.'
+
+const MUSE_USER_OWNED_SETUP_NOTICE =
+  'This opens the official Muse Code CLI for a user-owned Meta Model API login (`muse login`) or credential clear (`muse logout`). TaskWraith does not permanently store Meta credentials; managed runs project the Muse-owned credential into a private seat-local home that is deleted at teardown.'
+
+const MUSE_USER_OWNED_UPGRADE_NOTICE =
+  'This invokes the resolved Muse launcher with its synchronous-update flag, so the CLI TaskWraith actually runs is updated in place. Meta owns the launcher, download, and account flow.'
+
+const OLLAMA_USER_OWNED_SETUP_NOTICE =
+  'This invokes the resolved official Ollama CLI for account sign-in or sign-out. Ollama owns the browser flow and credentials; TaskWraith stores neither. The same local Ollama daemon then authenticates Ollama Cloud model requests.'
+
+const FLOWS: Readonly<Record<string, ProviderManualSetupFlow>> = {
+  'kimi:login': flow('kimi', 'login', KIMI_USER_OWNED_SETUP_NOTICE),
+  'kimi:upgrade': flow('kimi', 'upgrade', KIMI_USER_OWNED_SETUP_NOTICE),
+  'antigravity:login': flow('antigravity', 'login', ANTIGRAVITY_USER_OWNED_SETUP_NOTICE),
+  'antigravity:upgrade': flow('antigravity', 'upgrade', ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE),
+  'ollama:login': flow('ollama', 'login', OLLAMA_USER_OWNED_SETUP_NOTICE),
+  'ollama:logout': flow('ollama', 'logout', OLLAMA_USER_OWNED_SETUP_NOTICE),
+  'mistral:login': flow('mistral', 'login', MISTRAL_USER_OWNED_SETUP_NOTICE),
+  'mistral:upgrade': flow('mistral', 'upgrade', MISTRAL_USER_OWNED_SETUP_NOTICE),
+  'muse:login': flow('muse', 'login', MUSE_USER_OWNED_SETUP_NOTICE),
+  'muse:logout': flow('muse', 'logout', MUSE_USER_OWNED_SETUP_NOTICE),
+  'muse:upgrade': flow('muse', 'upgrade', MUSE_USER_OWNED_UPGRADE_NOTICE)
+}
+
+export function buildProviderManualSetupFlow(
+  provider: ProviderId,
+  action: ProviderManualSetupAction
+): ProviderManualSetupFlow | null {
+  return FLOWS[`${provider}:${action}`] || null
+}
+
+/** User-owned notice for a provider even when a requested action is unsupported. */
+export function providerManualSetupNotice(provider: ProviderId): string | null {
+  return (
+    buildProviderManualSetupFlow(provider, 'login')?.notice ||
+    buildProviderManualSetupFlow(provider, 'upgrade')?.notice ||
+    null
+  )
+}
+
+function flow(
+  provider: ProviderId,
+  action: ProviderManualSetupAction,
+  notice: string
+): ProviderManualSetupFlow {
+  return Object.freeze({
+    provider,
+    action,
+    scope: 'user-owned-provider-setup',
+    managedRunReady: false,
+    notice
+  })
+}

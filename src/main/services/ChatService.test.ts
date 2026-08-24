@@ -239,6 +239,71 @@ function makeDeps(overrides: Partial<ChatServiceDeps> = {}): {
   return { deps, store: deps.appStore }
 }
 
+describe('ChatService Host setup methods', () => {
+  it('creates only canonical global or registered-workspace single threads', () => {
+    const { deps, store } = makeDeps()
+    const service = new ChatService(deps)
+
+    expect(service.createSingleThread({ scope: 'global' }).scope).toBe('global')
+    expect(
+      service.createSingleThread({
+        scope: 'workspace',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo'
+      }).workspacePath
+    ).toBe('/canonical/repo')
+    expect(store.createGlobalChat).toHaveBeenCalledTimes(1)
+    expect(store.createChat).toHaveBeenCalledWith('workspace-1', '/canonical/repo')
+  })
+
+  it('configures a canonical idle thread through offer validation and provider-change hygiene', () => {
+    const current = makeChat({
+      provider: 'gemini',
+      linkedProviderSessionId: 'old-provider-session',
+      linkedGeminiSessionId: 'old-gemini-session'
+    })
+    const store = makeStatefulStore(current)
+    const assertProviderOfferedForThread = vi.fn()
+    const { deps } = makeDeps({ appStore: store, assertProviderOfferedForThread })
+    const result = new ChatService(deps).configureThread({
+      chatId: 'chat-1',
+      provider: 'claude',
+      selectedModelType: ' claude-sonnet '
+    })
+
+    expect(assertProviderOfferedForThread).toHaveBeenCalledWith('claude', current)
+    expect(result).toMatchObject({ provider: 'claude' })
+    expect(result.providerMetadata).toMatchObject({ selectedModelType: 'claude-sonnet' })
+    expect(result.linkedProviderSessionId).toBeUndefined()
+    expect(result.linkedGeminiSessionId).toBeUndefined()
+  })
+
+  it('refuses configure/archive while a run or round is active', () => {
+    const active = makeChat({
+      runs: [{ runId: 'run-1', status: 'running' }] as ChatRecord['runs'],
+      ensemble: { activeRound: { roundId: 'round-1' } } as ChatRecord['ensemble']
+    })
+    const store = makeStatefulStore(active)
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    expect(() => service.configureThread({ chatId: 'chat-1', provider: 'claude' })).toThrow(
+      /run or round is active/i
+    )
+    expect(() => service.archiveThread({ chatId: 'chat-1' })).toThrow(/run or round is active/i)
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('archives only the canonical thread record', () => {
+    const store = makeStatefulStore(makeChat())
+    const { deps } = makeDeps({ appStore: store })
+    const result = new ChatService(deps).archiveThread({ chatId: 'chat-1' })
+
+    expect(result.archived).toBe(true)
+    expect(store.saveChat).toHaveBeenCalledWith(expect.objectContaining({ archived: true }))
+  })
+})
+
 describe('ChatService.clearChats external history', () => {
   it('prepares and releases the matching global or workspace history-clear scope', async () => {
     const clearExternalChatHistory = vi.fn()

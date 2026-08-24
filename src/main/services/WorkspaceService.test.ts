@@ -165,6 +165,30 @@ describe('WorkspaceService', () => {
     expect(store.addOrUpdateWorkspace).not.toHaveBeenCalled()
   })
 
+  it('registerWorkspace keys native selections by canonical realpath without issuing a grant', async () => {
+    const existing = makeWorkspace({ id: 'existing', path: '/alias/repo', realPath: '/real/repo' })
+    const store = makeStore({ getWorkspaces: vi.fn(() => [existing]) })
+    const { deps, allowlist } = makeDeps({
+      appStore: store,
+      canonicalPath: vi.fn((value: string) => value),
+      resolveRealDirectory: vi.fn(async () => '/real/repo')
+    })
+
+    const result = await new WorkspaceService(deps).registerWorkspace({
+      selectedPath: '/alias/repo',
+      displayName: '  Canonical Repo  ',
+      pinned: true
+    })
+
+    expect(store.addOrUpdateWorkspace).toHaveBeenCalledWith('/alias/repo', {
+      realPath: '/real/repo',
+      displayName: 'Canonical Repo',
+      pinned: true
+    })
+    expect(result).toMatchObject({ id: 'workspace-1', realPath: '/real/repo' })
+    expect(allowlist.upsert).not.toHaveBeenCalled()
+  })
+
   describe('workspace real-target reconciliation', () => {
     it('pins only direct legacy directory paths', async () => {
       const direct = makeWorkspace({ id: 'direct', path: '/repo/direct' })
