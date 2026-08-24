@@ -67,6 +67,10 @@ export function buildMuseBundledSkillActivationPin(
 
 export interface MuseSkillPinSettings {
   readonly schema_version: 1
+  readonly run?: {
+    /** Muse-native delegation; never an MCP or workspace-tool grant. */
+    readonly subagent_delegation_mode: 'auto'
+  }
   readonly skills: {
     readonly activation: {
       readonly bundled: Readonly<Record<string, MuseSkillActivation>>
@@ -76,10 +80,18 @@ export interface MuseSkillPinSettings {
 
 /** Pre-seed body for `$XDG_CONFIG_HOME/muse/settings.json`. */
 export function buildMuseSkillPinSettings(
-  activation: MuseSkillActivation = 'off'
+  activation: MuseSkillActivation = 'off',
+  options: { ultraTaskDelegationAutoAllow?: boolean } = {}
 ): MuseSkillPinSettings {
   return Object.freeze({
     schema_version: 1 as const,
+    ...(options.ultraTaskDelegationAutoAllow === true
+      ? {
+          run: Object.freeze({
+            subagent_delegation_mode: 'auto' as const
+          })
+        }
+      : {}),
     skills: Object.freeze({
       activation: Object.freeze({
         bundled: buildMuseBundledSkillActivationPin(activation)

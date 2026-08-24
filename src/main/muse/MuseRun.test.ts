@@ -229,6 +229,58 @@ describe('runMuseProvider', () => {
     expect(existsSync(outcome.leasePath)).toBe(false)
   })
 
+  it('materializes signed UltraTask native delegation without widening file or shell tools', async () => {
+    const temporaryRoot = tempDir('muse-run-ultratask-')
+    const workspacePath = tempDir('muse-ws-ultratask-')
+    let observedSettings: unknown
+    let observedArgv: readonly string[] = []
+
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'review this change',
+      runId: 'run-ultratask',
+      temporaryRoot,
+      approvalMode: 'plan',
+      ultraTaskDelegationAutoAllow: true,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-ultratask',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedSettings = JSON.parse(
+          readFileSync(join(input.env.XDG_CONFIG_HOME, 'muse', 'settings.json'), 'utf8')
+        )
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'reviewed' }
+          })
+        ])
+      }
+    })
+
+    expect(outcome.status).toBe('success')
+    expect(observedSettings).toMatchObject({
+      run: { subagent_delegation_mode: 'auto' }
+    })
+    expect(observedArgv).toContain('--agents')
+    expect(observedArgv).toContain('--disable-write')
+    expect(observedArgv).toContain('--disable-shell')
+    expect(observedArgv).not.toContain('--yolo')
+    expect(observedArgv).not.toContain('--disable-sandbox')
+  })
+
   it('cleans the private home when OAuth projection is rejected before spawn', async () => {
     const temporaryRoot = tempDir('muse-run-bad-oauth-')
     const workspacePath = tempDir('muse-ws-bad-oauth-')

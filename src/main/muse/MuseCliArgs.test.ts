@@ -10,6 +10,9 @@ import {
   MUSE_NATIVE_TOOL_POLICY,
   MUSE_REASONING_EFFORTS,
   MUSE_TOOL_SURFACE_VERSION_PIN,
+  MUSE_ULTRATASK_REVIEWER_AGENT_ID,
+  MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY,
+  MUSE_ULTRATASK_REVIEWER_TOOLS,
   buildMuseExecArgv,
   buildMuseSeatEnv,
   isMuseSessionUuid,
@@ -213,6 +216,34 @@ describe('buildMuseExecArgv', () => {
   it('can leave web tools enabled when disableWebTools is false', () => {
     const args = buildMuseExecArgv({ ...base, disableWebTools: false })
     expect(args).not.toContain('--disable-web-tools')
+  })
+
+  it('adds only the read/search Muse reviewer for signed UltraTask delegation consent', () => {
+    const ordinary = buildMuseExecArgv(base)
+    expect(ordinary).not.toContain('--agents')
+
+    const args = buildMuseExecArgv({
+      ...base,
+      ultraTaskDelegationAutoAllow: true
+    })
+    const agentsIndex = args.indexOf('--agents')
+    expect(agentsIndex).toBeGreaterThan(-1)
+    expect(args[agentsIndex + 1]).toBe(MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY)
+
+    const overlay = JSON.parse(MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY) as Record<
+      string,
+      { tools?: string[]; prompt?: string }
+    >
+    expect(Object.keys(overlay)).toEqual([MUSE_ULTRATASK_REVIEWER_AGENT_ID])
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.tools).toEqual([
+      ...MUSE_ULTRATASK_REVIEWER_TOOLS
+    ])
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.tools).not.toEqual(
+      expect.arrayContaining(['write_file', 'edit_file', 'bash', 'bash_input'])
+    )
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.prompt).toMatch(/read_file and search only/i)
+    expect(args).toContain('--disable-write')
+    expect(args).toContain('--disable-shell')
   })
 
   it('rejects empty workspace or sessionId', () => {

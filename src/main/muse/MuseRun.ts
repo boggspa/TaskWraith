@@ -31,6 +31,7 @@ import {
   projectMuseAuthJson,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
+import { buildMuseSkillPinSettings, type MuseSkillPinSettings } from './MuseSkillPin'
 import {
   createMuseSessionLogTailer,
   resolveMuseSessionLogPath,
@@ -76,6 +77,8 @@ export interface MuseRunInput {
   readonly model?: string | null
   readonly reasoningEffort?: string | null
   readonly approvalMode?: string | null
+  /** Derived only from the main-signed UltraTask delegation consent. */
+  readonly ultraTaskDelegationAutoAllow?: boolean
   /** BYOK for `--api-key-stdin` only — never placed on argv. */
   readonly apiKey?: string | null
   /**
@@ -106,6 +109,7 @@ export interface MuseRunInput {
     readonly temporaryRoot: string
     readonly runId: string
     readonly sourceEnvironment?: NodeJS.ProcessEnv
+    readonly skillPinSettings?: MuseSkillPinSettings
   }) => MuseIsolatedHomeLease
 }
 
@@ -183,6 +187,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const writeCapable = museWriteCapable(input.approvalMode)
   const effort = normalizeMuseReasoningEffort(input.reasoningEffort)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)
+  const ultraTaskDelegationAutoAllow = input.ultraTaskDelegationAutoAllow === true
   const warnings: string[] = []
   const events: MuseExecNormalizedEvent[] = []
 
@@ -190,7 +195,14 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const lease = createHome({
     temporaryRoot,
     runId,
-    sourceEnvironment: input.sourceEnvironment
+    sourceEnvironment: input.sourceEnvironment,
+    ...(ultraTaskDelegationAutoAllow
+      ? {
+          skillPinSettings: buildMuseSkillPinSettings('off', {
+            ultraTaskDelegationAutoAllow: true
+          })
+        }
+      : {})
   })
   const skillPinHash = hashSkillPinSettings(lease.settingsPath)
 
@@ -306,7 +318,8 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     model: input.model,
     reasoningEffort: input.reasoningEffort,
     readOnlySeat: !writeCapable,
-    apiKeyStdin
+    apiKeyStdin,
+    ultraTaskDelegationAutoAllow
   })
   assertSafeMuseArgv(argv)
 

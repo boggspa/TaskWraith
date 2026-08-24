@@ -377,6 +377,46 @@ describe('runMuseProviderFromIpc', () => {
     )
   })
 
+  it('derives Muse native delegation only from the signed UltraTask posture marker', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const auth = async () => JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } })
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        reasoningEffort: 'ultraTask',
+        effectivePermissions: { subThreadDelegationAutoAllowSource: 'ultratask' }
+      }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({ reasoningEffort: 'ultraTask', effectivePermissions: null }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: false })
+    )
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        reasoningEffort: 'high',
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultra'
+        } as never
+      }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: false })
+    )
+  })
+
   it('passes muse login OAuth through as run-local auth.json instead of an API key', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome())
     const authJsonText = JSON.stringify({

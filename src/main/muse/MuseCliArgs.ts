@@ -71,6 +71,24 @@ export function resolveMuseExecSessionId(
 
 export const MUSE_DEFAULT_REASONING_EFFORT: MuseReasoningEffort = 'high'
 
+/**
+ * Muse has no per-run MCP configuration surface. UltraTask therefore uses
+ * Muse's native child-agent control plane. The ephemeral definition is a
+ * deliberately read-only reviewer: Agent Definitions can only narrow the
+ * parent's Work-tool grant, and this allowlist contains no file mutation or
+ * shell capability.
+ */
+export const MUSE_ULTRATASK_REVIEWER_AGENT_ID = 'ultratask-reviewer'
+export const MUSE_ULTRATASK_REVIEWER_TOOLS = Object.freeze(['read_file', 'search'] as const)
+export const MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY = JSON.stringify({
+  [MUSE_ULTRATASK_REVIEWER_AGENT_ID]: {
+    description: 'Independent read-only reviewer for an UltraTask run.',
+    prompt:
+      'Review the delegated work independently. Inspect with read_file and search only; do not modify files, run shell commands, or broaden the assignment. Return concise findings with file and line evidence.',
+    tools: MUSE_ULTRATASK_REVIEWER_TOOLS
+  }
+})
+
 export interface MuseSeatHomes {
   xdgConfigHome: string
   xdgDataHome: string
@@ -103,6 +121,12 @@ export interface BuildMuseExecArgvInput {
   apiKeyStdin?: boolean
   /** If set, emit `--prompt-file` and omit the positional prompt. */
   promptFile?: string
+  /**
+   * Main-derived only from the signed UltraTask delegation-consent posture.
+   * Adds Muse's native, read-only reviewer definition; ordinary Muse argv is
+   * byte-for-byte unchanged.
+   */
+  ultraTaskDelegationAutoAllow?: boolean
   // NEVER: yolo, disableSandbox, noSessionLog when metering required
 }
 
@@ -205,6 +229,10 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
 
   if (input.disableWebTools !== false) {
     args.push('--disable-web-tools')
+  }
+
+  if (input.ultraTaskDelegationAutoAllow === true) {
+    args.push('--agents', MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY)
   }
 
   if (input.readOnlySeat) {

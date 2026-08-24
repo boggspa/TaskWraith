@@ -9,6 +9,7 @@ import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:c
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { EffectiveRunPermissions } from '../store/types'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
 import { parseMuseAuthJsonCredential, type MuseProbeBinary } from './MuseProbe'
@@ -32,6 +33,7 @@ export interface MuseIpcRunPayload {
   model?: string | null
   reasoningEffort?: string | null
   approvalMode?: string | null
+  effectivePermissions?: Pick<EffectiveRunPermissions, 'subThreadDelegationAutoAllowSource'> | null
   providerSessionId?: string | null
   /** Optional BYOK; never placed on argv — piped via `--api-key-stdin`. */
   museApiKey?: string | null
@@ -354,6 +356,8 @@ export async function runMuseProviderFromIpc(
   let emittedTerminalResult = false
   const startedAt = deps.now?.() ?? Date.now()
   const museSessionId = resolveMuseExecSessionId(payload.providerSessionId)
+  const ultraTaskDelegationAutoAllow =
+    payload.effectivePermissions?.subThreadDelegationAutoAllowSource === 'ultratask'
 
   try {
     deps.sendCompatLine(
@@ -378,6 +382,7 @@ export async function runMuseProviderFromIpc(
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
+      ultraTaskDelegationAutoAllow,
       apiKey: credential.apiKey,
       authJsonText: credential.authJsonText,
       spawn: deps.spawn,
