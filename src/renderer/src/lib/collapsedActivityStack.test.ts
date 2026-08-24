@@ -222,6 +222,29 @@ describe('shouldAutoCollapseActivityStack', () => {
     ).toBe(false)
     expect(activityStackHasLiveWork(streaming)).toBe(true)
   })
+
+  it('does not collapse a stack made only of hidden infrastructure activity', () => {
+    const hidden = [
+      activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
+      activity({ toolName: 'generic', displayName: 'Used Generic' })
+    ]
+    expect(
+      shouldAutoCollapseActivityStack({ activities: hidden, isLiveRow: false, isLastRow: false })
+    ).toBe(false)
+  })
+
+  it('does not let hidden live infrastructure keep visible settled work open', () => {
+    expect(
+      shouldAutoCollapseActivityStack({
+        activities: [
+          activity({ toolName: 'antigravity_init', status: 'running' }),
+          activity({ category: 'read', filePath: '/a/x.ts' })
+        ],
+        isLiveRow: false,
+        isLastRow: false
+      })
+    ).toBe(true)
+  })
 })
 
 describe('summarizeCollapsedSuperGroup', () => {

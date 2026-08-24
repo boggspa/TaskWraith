@@ -45,6 +45,35 @@ function visibleText(html: string): string {
 }
 
 describe('CollapsedActivityStackRow diff totals', () => {
+  it('does not render a zero-step disclosure for all-hidden infrastructure activity', () => {
+    const html = renderToStaticMarkup(
+      <CollapsedActivityStackRow
+        header={null}
+        activities={[
+          {
+            id: 'init-1',
+            toolName: 'antigravity_init',
+            displayName: 'Used AntiGravity Init',
+            category: 'unknown',
+            status: 'success'
+          },
+          {
+            id: 'generic-1',
+            toolName: 'generic',
+            displayName: 'Used Generic',
+            category: 'unknown',
+            status: 'success'
+          }
+        ]}
+        expanded={false}
+        onToggle={() => {}}
+      />
+    )
+
+    expect(html).toBe('')
+    expect(html).not.toContain('0 activity steps')
+  })
+
   it('scopes the summary and expanded children to the resolved provider brand hue', () => {
     const html = renderToStaticMarkup(
       <CollapsedActivityStackRow

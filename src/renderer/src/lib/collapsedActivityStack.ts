@@ -263,6 +263,13 @@ export function shouldAutoCollapseActivityStack(input: {
   isLastRow: boolean
 }): boolean {
   if (input.isLiveRow || input.isLastRow) return false
-  if (input.activities.length === 0) return false
-  return !activityStackHasLiveWork(input.activities)
+  // Keep this eligibility test in the same visibility space as the summary.
+  // A stack made only of synthetic infrastructure rows has no user-facing
+  // activity to fold, and previously produced a collapsed "0 activity steps"
+  // control. Hidden work also cannot keep visible settled work expanded.
+  const visibleActivities = input.activities.filter(
+    (activity) => !isHiddenInfrastructureToolName(activity.toolName || '')
+  )
+  if (visibleActivities.length === 0) return false
+  return !activityStackHasLiveWork(visibleActivities)
 }

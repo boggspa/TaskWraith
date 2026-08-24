@@ -76,6 +76,90 @@ function truncateAtWordBoundary(text: string, maxChars: number): string {
   return slice
 }
 
+interface OpenMarkdownFence {
+  /** The literal marker, including its full run length (for example `~~~~`). */
+  readonly marker: string
+  /** Offset where the marker starts in the preview. */
+  readonly index: number
+  /** Offset immediately after the marker. */
+  readonly markerEnd: number
+}
+
+/**
+ * Returns the opening marker from a fenced-code line. Keeping the marker's
+ * exact character and length matters: a `~~~~` block may only be closed by
+ * an equal-or-longer tilde fence, never by a short backtick fence.
+ */
+function markdownFenceMarker(line: string): string | null {
+  const match = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line)
+  return match?.[1] || null
+}
+
+/**
+ * Finds an opener left unmatched by this preview. This is deliberately
+ * line-aware: literal ```/~~~ inside prose or code do not accidentally count
+ * as block fences, and the two fence styles never close one another.
+ */
+function findUnclosedMarkdownFence(preview: string): OpenMarkdownFence | null {
+  let offset = 0
+  let open: OpenMarkdownFence | null = null
+
+  for (const line of preview.split('\n')) {
+    const marker = markdownFenceMarker(line)
+    if (marker) {
+      const markerIndex = offset + line.indexOf(marker)
+      if (!open) {
+        open = { marker, index: markerIndex, markerEnd: markerIndex + marker.length }
+      } else {
+        const closesOpenFence =
+          marker[0] === open.marker[0] &&
+          marker.length >= open.marker.length &&
+          /^[ \t\r]*$/.test(line.slice(line.indexOf(marker) + marker.length))
+        if (closesOpenFence) open = null
+      }
+    }
+    offset += line.length + 1
+  }
+
+  return open
+}
+
+/**
+ * A leading fence has no prose before it to fall back to. Close it
+ * synthetically inside the existing preview budget instead of returning an
+ * empty bubble or exposing an unterminated code block. If the line limit is
+ * too small to include both fences, return a non-Markdown fallback.
+ */
+function closeLeadingMarkdownFencePreview(
+  preview: string,
+  fence: OpenMarkdownFence,
+  thresholds: UserMessageCollapseThresholds
+): string {
+  const maxChars = Math.max(0, thresholds.previewChars)
+  const closer = `\n${fence.marker}`
+  const maxBodyChars = maxChars - closer.length
+
+  // An extremely small custom budget cannot carry both a valid opener and
+  // closer. Keep a non-empty, non-Markdown fallback rather than returning a
+  // dangling fence (or a blank collapsed bubble).
+  if (thresholds.previewLines < 2 || maxBodyChars < fence.markerEnd) {
+    return 'Code block'.slice(0, maxChars)
+  }
+
+  let body = preview
+  if (countLines(body) >= thresholds.previewLines) {
+    const lastLineStart = body.lastIndexOf('\n')
+    if (lastLineStart <= fence.index) return 'Code block'.slice(0, maxChars)
+    body = body.slice(0, lastLineStart)
+  }
+  body = truncateAtWordBoundary(body, maxBodyChars).replace(/\s+$/, '')
+
+  if (body.length < fence.markerEnd || countLines(body) >= thresholds.previewLines) {
+    return 'Code block'.slice(0, maxChars)
+  }
+  return `${body}${closer}`
+}
+
 /**
  * Build the collapsed preview for a message that already passed
  * `shouldCollapseUserMessage`. The returned string is never longer than
@@ -84,9 +168,11 @@ function truncateAtWordBoundary(text: string, maxChars: number): string {
  * The cut is taken at a word boundary so the preview reads as a coherent
  * sentence fragment, not "Lorem ips" mid-word.
  *
- * Markdown fences (```) are honoured: if the preview cut would leave a fenced
- * block unterminated, we step back to before the opening fence so the preview
- * never shows a broken half-block.
+ * Markdown fences (both ``` and ~~~) are honoured: if the preview cut would
+ * leave a fenced block unterminated, we step back to before the opening fence.
+ * A leading fence has no preceding prose, so it receives a synthetic matching
+ * closer within the preview budget instead of becoming an empty or broken
+ * bubble.
  */
 export function truncateUserMessagePreview(
   content: string,
@@ -104,15 +190,14 @@ export function truncateUserMessagePreview(
 
   const byChars = truncateAtWordBoundary(byLines, thresholds.previewChars)
 
-  // Guard against breaking a markdown code fence in half. If the preview
-  // contains an odd number of ``` fences, walk back to before the unclosed
-  // opener so the bubble never renders a dangling block.
-  const fenceCount = (byChars.match(/```/g) || []).length
-  if (fenceCount % 2 === 1) {
-    const lastFenceIdx = byChars.lastIndexOf('```')
-    if (lastFenceIdx > 0) {
-      return byChars.slice(0, lastFenceIdx).replace(/\s+$/, '')
-    }
+  // Guard against breaking a markdown code fence in half. For an ordinary
+  // prose-led message, hide the partial block. When the message starts with a
+  // fence, preserve a useful code preview by closing that opener synthetically.
+  const unclosedFence = findUnclosedMarkdownFence(byChars)
+  if (unclosedFence) {
+    const beforeFence = byChars.slice(0, unclosedFence.index).replace(/\s+$/, '')
+    if (beforeFence) return beforeFence
+    return closeLeadingMarkdownFencePreview(byChars, unclosedFence, thresholds)
   }
 
   return byChars

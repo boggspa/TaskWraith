@@ -193,6 +193,11 @@ export function CollapsedActivityStackRow({
     <ToolActivityDetailHydrationBoundary activities={activities}>
       {(hydratedActivities) => {
         const summary = summarizeCollapsedActivityStack(hydratedActivities)
+        // Callers normally gate this component through
+        // shouldAutoCollapseActivityStack, but keep the rendered control
+        // defensive too: an all-infrastructure stack has nothing visible to
+        // expand and must never announce itself as "0 activity steps".
+        if (summary.activityCount === 0) return null
         return (
           <CollapsedTranscriptRow
             header={header}
