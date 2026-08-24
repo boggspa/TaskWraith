@@ -1,0 +1,273 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  HOST_PROFILE_CHATS_DIRECTORY,
+  HOST_PROFILE_WORKSPACES_FILENAME,
+  HostProfileDomainStore
+} from './HostProfileDomainStore'
+
+const profiles: string[] = []
+
+function open() {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-workspace-'))
+  profiles.push(profile, workspace)
+  const authority = { assertProfileAuthority: vi.fn() }
+  let sequence = 0
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority,
+    now: () => 100,
+    idFactory: () => `id-${++sequence}`
+  })
+  return { profile, workspace, authority, store }
+}
+
+afterEach(() => {
+  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+})
+
+describe('HostProfileDomainStore', () => {
+  it('asserts authority before profile access and canonicalizes workspace aliases idempotently', () => {
+    const { store, workspace, authority } = open()
+    const first = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+    const alias = join(workspace, '.')
+    const second = store.registerWorkspace({ path: alias, pinned: true })
+    expect(second.id).toBe(first.id)
+    expect(second.realPath).toBe(first.realPath)
+    expect(store.listWorkspaces()).toHaveLength(1)
+    expect(authority.assertProfileAuthority).toHaveBeenCalled()
+  })
+
+  it('preserves unknown workspace/chat fields across narrow updates and restart', () => {
+    const { profile, workspace, authority, store } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const workspaceFile = join(profile, HOST_PROFILE_WORKSPACES_FILENAME)
+    const workspaces = JSON.parse(readFileSync(workspaceFile, 'utf8')) as Array<
+      Record<string, unknown>
+    >
+    workspaces[0].unknownWorkspaceField = 'retain'
+    writeFileSync(workspaceFile, JSON.stringify(workspaces))
+    chmodSync(workspaceFile, 0o600)
+    expect(store.registerWorkspace({ path: workspace }).unknownWorkspaceField).toBe('retain')
+
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.unknownChatField = { preserve: true }
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    store.configureThread({ threadId: thread.appChatId, title: 'Renamed' })
+    const restarted = new HostProfileDomainStore({
+      profilePath: profile,
+      authority,
+      now: () => 101
+    })
+    expect(restarted.getThread(thread.appChatId)).toMatchObject({
+      title: 'Renamed',
+      unknownChatField: { preserve: true }
+    })
+  })
+
+  it('loads legacy workspace rows without realPath/pinned and adopts them idempotently', () => {
+    const { profile, workspace, store } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const workspaceFile = join(profile, HOST_PROFILE_WORKSPACES_FILENAME)
+    const legacy = JSON.parse(readFileSync(workspaceFile, 'utf8')) as Array<Record<string, unknown>>
+    delete legacy[0].realPath
+    delete legacy[0].pinned
+    delete legacy[0].updatedAt
+    writeFileSync(workspaceFile, JSON.stringify(legacy))
+    chmodSync(workspaceFile, 0o600)
+    const adopted = store.registerWorkspace({ path: join(workspace, '.') })
+    expect(adopted.id).toBe(registered.id)
+    expect(adopted.realPath).toBe(registered.realPath)
+    expect(adopted.pinned).toBe(false)
+  })
+
+  it('fences setup/archive while a run is active and supports bounded history pages', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'user', content: 'one' })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'assistant', content: 'two' })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'system', content: 'three' })
+    expect(store.threadHistory({ threadId: thread.appChatId, limit: 2 })).toMatchObject({
+      cursor: 3,
+      entries: [{ text: 'two' }, { text: 'three' }],
+      nextBefore: { generation: 3, cursor: 1 }
+    })
+    store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'running' })
+    expect(() => store.archiveThread(thread.appChatId, true)).toThrow('active')
+    expect(() => store.configureThread({ threadId: thread.appChatId, title: 'Nope' })).toThrow(
+      'active'
+    )
+    expect(
+      store.historySince({ threadId: thread.appChatId, since: { generation: 4, cursor: 3 } })
+    ).toMatchObject({ kind: 'full_resnapshot_required', reason: 'retention_gap' })
+    expect(() =>
+      store.threadHistory({
+        threadId: thread.appChatId,
+        limit: 1,
+        before: { generation: 3, cursor: 1 }
+      })
+    ).toThrow('generation')
+  })
+
+  it('fails closed on corrupt or symlinked profile artifacts', () => {
+    const { profile, workspace, store } = open()
+    store.registerWorkspace({ path: workspace })
+    const workspaceFile = join(profile, HOST_PROFILE_WORKSPACES_FILENAME)
+    writeFileSync(workspaceFile, '{')
+    chmodSync(workspaceFile, 0o600)
+    expect(() => store.listWorkspaces()).toThrow()
+
+    const { profile: symlinkProfile, workspace: symlinkWorkspace, store: symlinkStore } = open()
+    symlinkStore.registerWorkspace({ path: symlinkWorkspace })
+    const target = join(symlinkProfile, 'other.json')
+    writeFileSync(target, '[]')
+    chmodSync(target, 0o600)
+    rmSync(join(symlinkProfile, HOST_PROFILE_WORKSPACES_FILENAME))
+    symlinkSync(target, join(symlinkProfile, HOST_PROFILE_WORKSPACES_FILENAME))
+    expect(() => symlinkStore.listWorkspaces()).toThrow('Unsafe')
+  })
+
+  it('leaves the prior authoritative record intact when atomic publication faults', () => {
+    const { profile, authority, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const faulting = new HostProfileDomainStore({
+      profilePath: profile,
+      authority,
+      beforeAtomicPublish: () => {
+        throw new Error('injected publish fault')
+      }
+    })
+    expect(() => faulting.configureThread({ threadId: thread.appChatId, title: 'After' })).toThrow(
+      'injected publish fault'
+    )
+    expect(store.getThread(thread.appChatId)?.title).toBe('Before')
+  })
+
+  it('clears stale provider/MCP sessions on provider switch and enforces run transitions', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.provider = 'claude'
+    raw.linkedProviderSessionId = 'provider-session'
+    raw.linkedGeminiSessionId = 'gemini-session'
+    raw.taskWraithMcpProfileReceipt = { opaque: true }
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    const switched = store.configureThread({ threadId: thread.appChatId, providerId: 'codex' })
+    expect(switched).not.toHaveProperty('linkedProviderSessionId')
+    expect(switched).not.toHaveProperty('linkedGeminiSessionId')
+    expect(switched).not.toHaveProperty('taskWraithMcpProfileReceipt')
+    expect(() =>
+      store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
+    ).toThrow('begin')
+    store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'running' })
+    store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
+    expect(
+      store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
+    ).toMatchObject({ runs: [{ runId: 'run-1', status: 'completed' }] })
+    expect(() =>
+      store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'running' })
+    ).toThrow('Terminal run cannot change state')
+    expect(() =>
+      store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'failed' })
+    ).toThrow('Terminal run cannot change state')
+  })
+
+  it('persists explicit workspace-write posture consent and clears it for a lower posture', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    expect(() =>
+      store.configureThread({ threadId: thread.appChatId, postureId: 'workspace_write' })
+    ).toThrow('requires explicit consent')
+    const consented = store.configureThread({
+      threadId: thread.appChatId,
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    expect(consented.providerMetadata).toMatchObject({
+      permissionPresetId: 'workspace_write',
+      explicitConsentAcknowledged: true
+    })
+    const lowered = store.configureThread({ threadId: thread.appChatId, postureId: 'read_only' })
+    expect(lowered.providerMetadata).toMatchObject({ permissionPresetId: 'read_only' })
+    expect(lowered.providerMetadata).not.toHaveProperty('explicitConsentAcknowledged')
+  })
+
+  it('retains legacy tool/error message carriers inertly while excluding them from history', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.messages = [
+      { id: 'tool-1', role: 'tool', content: '', timestamp: 'legacy' },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'visible',
+        timestamp: '2026-08-24T00:00:00.000Z'
+      }
+    ]
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    expect(store.threadHistory({ threadId: thread.appChatId, limit: 10 }).entries).toEqual([
+      expect.objectContaining({ entryId: 'assistant-1', text: 'visible' })
+    ])
+    const updated = store.configureThread({ threadId: thread.appChatId, title: 'Updated' })
+    expect(updated.messages).toHaveLength(2)
+  })
+
+  it('fails closed on a chat symlink or unexpected directory entry', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const target = join(profile, 'chat-target.json')
+    writeFileSync(target, readFileSync(chatFile))
+    chmodSync(target, 0o600)
+    rmSync(chatFile)
+    symlinkSync(target, chatFile)
+    expect(() => store.listThreads()).toThrow('Unsafe')
+  })
+
+  it('treats missing legacy run status as active until an end timestamp exists and ignores AppStore temp artifacts', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.runs = [{ runId: 'legacy-run' }]
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    writeFileSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json.123.job-1.tmp`),
+      '{}'
+    )
+    chmodSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json.123.job-1.tmp`),
+      0o600
+    )
+    expect(() => store.configureThread({ threadId: thread.appChatId, title: 'Blocked' })).toThrow(
+      'active'
+    )
+    raw.runs = [{ runId: 'legacy-run', endedAt: '2026-08-24T00:00:00.000Z' }]
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    expect(store.configureThread({ threadId: thread.appChatId, title: 'Allowed' }).title).toBe(
+      'Allowed'
+    )
+    expect(store.listThreads()).toHaveLength(1)
+
+    raw.runs = [{ runId: 'legacy-run', status: 'future-state', endedAt: 'not-an-iso-date' }]
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+    expect(() =>
+      store.configureThread({ threadId: thread.appChatId, title: 'Still blocked' })
+    ).toThrow('active')
+  })
+})
