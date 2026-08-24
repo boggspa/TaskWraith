@@ -1,9 +1,10 @@
 # TaskWraith TUI design contract
 
 This document is the design **contract** for the TaskWraith terminal client.
-Its renderer is Electron-free. When no authenticated Host is reachable, the
-client may supervise the app executable in windowless Host mode; production
-authority remains in Electron main until the separate pure-Node extraction arc.
+Its renderer is Electron-free. The client connects to an authenticated
+production Host — the pure-Node `taskwraith-host` process (`node-host-v1`) —
+and launches or reuses one directly when none is reachable; production
+authority lives in that Node Host, not in Electron.
 It describes invariants the renderer must obey. Cut-point numbers and glyph
 shapes live in code; restating them here is how documentation drifts.
 
@@ -102,8 +103,9 @@ animates; nothing animates while idle.
 
 ## Sidecar boundary — what the TUI deliberately drops
 
-The TUI is a **terminal endpoint** onto TaskWraith while Electron main remains
-the host. It is not a fully-fledged CLI twin of the desktop app.
+The TUI is a **terminal endpoint** onto TaskWraith while the pure-Node
+production Host (`taskwraith-host serve --mode production`) remains the
+authority. It is not a fully-fledged CLI twin of the desktop app.
 
 Deliberately omitted relative to the GUI chrome framework:
 
