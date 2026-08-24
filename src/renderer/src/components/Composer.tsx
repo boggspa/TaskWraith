@@ -568,14 +568,14 @@ function ComposerPrimaryStack({
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
 
-// UltraTask is a synthetic top-of-ladder token; it's selectable on every model
-// except those explicitly flagged unsupported (e.g. Claude Haiku).
-function ultraTaskSupportedForModel(
+// UltraTask is a synthetic top-of-ladder token backed by canonical model
+// metadata. Absence is unknown, not permission to expose the execution mode.
+export function composerModelSupportsUltraTask(
   modelOptions: readonly { id: string; ultraTaskSupported?: boolean }[] | undefined,
   modelId: string | undefined
 ): boolean {
   const model = modelOptions?.find((option) => option.id === modelId)
-  return model?.ultraTaskSupported !== false
+  return model?.ultraTaskSupported === true
 }
 
 // Appending UltraTask to an EMPTY base ladder would make it the ladder's only
@@ -1279,8 +1279,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       // owns a derived ladder, so clone before appending UltraTask.
       baseOptions = [...getEnsembleReasoningOptions(targetProvider, modelId, model)]
     }
-    // Inject UltraTask option for models that support it
-    if (model?.ultraTaskSupported !== false) {
+    // Inject UltraTask only for a model with explicit canonical support.
+    if (model?.ultraTaskSupported === true) {
       baseOptions = withUltraTaskLadderBottom(baseOptions)
       if (!baseOptions.some((option) => option.value.toLowerCase() === 'ultratask')) {
         baseOptions.push({
@@ -4070,7 +4070,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 antigravityEffortForModelId(effectiveSelectedModel)
                               if (
                                 antigravityFixedEffort &&
-                                ultraTaskSupportedForModel(
+                                composerModelSupportsUltraTask(
                                   effectiveModelOptionsRaw,
                                   effectiveSelectedModel
                                 )
@@ -4124,7 +4124,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 : effectiveMistralReasoning
                             const mistralPiUltraTaskVisible =
                               desiredMistralPiReasoning === 'ultraTask' &&
-                              ultraTaskSupportedForModel(
+                              composerModelSupportsUltraTask(
                                 effectiveModelOptionsRaw,
                                 effectiveSelectedModel
                               )
@@ -4157,10 +4157,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           )
                           // Inject even when the base ladder is empty (Mistral/Cursor
                           // models without thinking tiers) so UltraTask alone can be
-                          // selected; only models explicitly flagged unsupported opt out.
+                          // selected; missing capability metadata stays ineligible.
                           if (
                             Array.isArray(combinedReasoningOptions) &&
-                            ultraTaskSelectedModel?.ultraTaskSupported !== false &&
+                            ultraTaskSelectedModel?.ultraTaskSupported === true &&
                             !combinedReasoningOptions.some((option) => option.value === 'ultraTask')
                           ) {
                             // Empty base ladder (Mistral/Cursor models without

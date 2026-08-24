@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  composerModelSupportsUltraTask,
   composerPickerUltraTaskSupportMetadata,
   shouldRenderWelcomeNotifications
 } from './Composer'
@@ -18,5 +19,21 @@ describe('composerPickerUltraTaskSupportMetadata', () => {
       ultraTaskSupported: false
     })
     expect(composerPickerUltraTaskSupportMetadata({})).toEqual({})
+  })
+})
+
+describe('composerModelSupportsUltraTask', () => {
+  it('requires an exact selected row with explicit support', () => {
+    const models = [
+      { id: 'supported', ultraTaskSupported: true },
+      { id: 'unsupported', ultraTaskSupported: false },
+      { id: 'unknown' }
+    ]
+
+    expect(composerModelSupportsUltraTask(models, 'supported')).toBe(true)
+    expect(composerModelSupportsUltraTask(models, 'unsupported')).toBe(false)
+    expect(composerModelSupportsUltraTask(models, 'unknown')).toBe(false)
+    expect(composerModelSupportsUltraTask(models, 'missing')).toBe(false)
+    expect(composerModelSupportsUltraTask(undefined, 'supported')).toBe(false)
   })
 })

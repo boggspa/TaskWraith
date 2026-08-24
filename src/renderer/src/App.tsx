@@ -8264,16 +8264,9 @@ function App(): React.JSX.Element {
           ? defaults.model
           : getDefaultModelForProvider(provider))
       const nextRuntimeProfileId = defaultRuntimeProfileIdForProvider(provider)
-      const modelMetadata =
-        provider === 'codex'
-          ? codexModels.find((model) => model.id === nextModel)
-          : provider === 'claude'
-            ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-                (model) => model.id === nextModel
-              )
-            : provider === 'ollama'
-              ? getProviderModelOptions('ollama').find((model) => model.id === nextModel)
-              : undefined
+      const modelMetadata = getProviderModelOptions(provider).find(
+        (model) => model.id === nextModel
+      )
       const normalizedSelection = normalizeProviderModelSelection(
         provider,
         nextModel,
@@ -8284,7 +8277,7 @@ function App(): React.JSX.Element {
       )
       const preserveUltraTask =
         options.previousReasoningEffort?.trim().toLowerCase() === 'ultratask' &&
-        (modelMetadata as { ultraTaskSupported?: boolean } | undefined)?.ultraTaskSupported !== false
+        modelMetadata?.ultraTaskSupported === true
       const nextReasoningEffort = preserveUltraTask
         ? 'ultraTask'
         : normalizedSelection.reasoningEffort
@@ -8341,10 +8334,9 @@ function App(): React.JSX.Element {
       }
     },
     [
-      agentModelsByProvider.claude,
-      codexModels,
       defaultRuntimeProfileIdForProvider,
-      getDefaultModelForProvider
+      getDefaultModelForProvider,
+      getProviderModelOptions
     ]
   )
 
