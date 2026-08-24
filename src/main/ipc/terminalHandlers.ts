@@ -19,27 +19,27 @@ export function registerTerminalHandlers(deps: TerminalHandlerDeps, manager: Ter
     manager.create(registeredWorkspace, sessionId)
   })
 
-  ipcMain.handle('terminal:write', (event, sessionId: string, data: string) => {
+  ipcMain.handle('terminal:write', (_event, sessionId: string, data: string) => {
     manager.write(sessionId, data)
   })
 
-  ipcMain.handle('terminal:resize', (event, sessionId: string, cols: number, rows: number) => {
+  ipcMain.handle('terminal:resize', (_event, sessionId: string, cols: number, rows: number) => {
     manager.resize(sessionId, cols, rows)
   })
 
-  ipcMain.handle('terminal:detach', (event, sessionId: string) => {
+  ipcMain.handle('terminal:detach', (_event, sessionId: string) => {
     manager.detach(sessionId)
   })
 
-  ipcMain.handle('terminal:kill', (event, sessionId: string) => {
+  ipcMain.handle('terminal:kill', (_event, sessionId: string) => {
     manager.kill(sessionId)
   })
 
-  ipcMain.handle('terminal:list', (event) => {
+  ipcMain.handle('terminal:list', (_event) => {
     return manager.list()
   })
 
-  ipcMain.handle('terminal:getScrollback', (event, sessionId: string) => {
+  ipcMain.handle('terminal:getScrollback', (_event, sessionId: string) => {
     return manager.getScrollback(sessionId)
   })
 

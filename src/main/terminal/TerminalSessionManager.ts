@@ -93,7 +93,7 @@ export class TerminalSessionManager extends EventEmitter {
     this.sessions.get(sessionId)?.ptyProcess.resize(cols, rows)
   }
 
-  detach(sessionId: string): void {
+  detach(_sessionId: string): void {
     // Detach keeps process + scrollback; it is just unmounting the view.
     // So there is nothing to do here on the backend.
   }
