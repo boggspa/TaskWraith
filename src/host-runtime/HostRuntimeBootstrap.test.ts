@@ -7,7 +7,7 @@ import {
   HOST_PROTOCOL_VERSION,
   type HostActorIdentity,
   type HostCommand
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
 import {
   HOST_DEFERRED_COMMAND_ENVELOPE_JOURNAL_FILENAME,

@@ -29,7 +29,7 @@ import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelo
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import {
   createHostMainComposition,
   createUnwiredDeferredResolutionPorts,

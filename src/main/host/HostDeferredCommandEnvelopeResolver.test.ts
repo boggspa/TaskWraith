@@ -5,17 +5,17 @@ import {
   type HostActorIdentity,
   type HostCommand
 } from '../../shared/hostProtocol'
-import { fingerprintHostCommand } from './HostCommandFingerprint'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
 import type {
   HostDeferredCommandEnvelopeLookupResult,
   HostDeferredCommandEnvelopeRecord,
   HostDeferredCommandEnvelopeTransitionResult
-} from './HostDeferredCommandEnvelopeStore'
+} from '../../host-runtime/HostDeferredCommandEnvelopeStore'
 import type {
   HostCommandReceiptLookupResult,
   HostCommandReceiptRecord,
   HostCommandReceiptStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import type {
   HostBridgeCommandExecutor,
   HostBridgeCommandExecutorResult

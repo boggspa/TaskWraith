@@ -36,7 +36,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 
-import type { HostClientClass, HostCommandName } from '../../shared/hostProtocol'
+import type { HostClientClass, HostCommandName } from '../shared/hostProtocol'
 
 export const HOST_COMMAND_RECEIPT_SCHEMA_VERSION = 1 as const
 export const HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME = 'command-receipts.checkpoint.json'

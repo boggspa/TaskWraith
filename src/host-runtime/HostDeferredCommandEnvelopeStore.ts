@@ -34,10 +34,14 @@ import {
   type HostActorIdentity,
   type HostCommand,
   type HostCommandName
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 import { validateHostCommandArguments } from './HostCommandArguments'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
-import { isHostUuid, isSafeHostIdentifier, parseHostIdempotencyKey } from './HostCommandIdentity'
+import {
+  isHostUuid,
+  isSafeHostIdentifier,
+  parseHostIdempotencyKey
+} from '../host-shared/HostCommandIdentity'
 import { parseGovernedMutationCommandName } from './HostCommandRouting'
 
 export const HOST_DEFERRED_COMMAND_ENVELOPE_SCHEMA_VERSION = 1 as const

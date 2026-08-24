@@ -60,7 +60,7 @@ export type HostRuntimeRecoverySummaryWithDeferred = HostRuntimeRecoverySummary 
 }
 
 /**
- * Electron-free composition boundary for the durable Host stores.
+ * Node-host composition boundary for the durable Host stores.
  *
  * This class owns no domain state or position counters: generation/cursor are
  * always read from HostDeltaStore, while receipts remain independently durable.

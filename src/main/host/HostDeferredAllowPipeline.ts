@@ -34,7 +34,7 @@ import type {
   HostCommandReceiptIndeterminateCode,
   HostCommandReceiptStatus,
   HostCommandReceiptTerminalStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 
 /**
  * Closed body-free result union. Never carries command args, tool output,

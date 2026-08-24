@@ -18,7 +18,7 @@ import {
   isExactActor,
   isProjectableRecord,
   type HostCommandReceiptRecord
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 
 export type HostCommandReceiptProjectionResult = HostDecodeResult<HostCommandReceipt>
 

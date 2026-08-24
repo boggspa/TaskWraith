@@ -52,7 +52,7 @@ import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import { createHostMainComposition, type HostMainComposition } from './HostMainComposition'
 import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 
 const ACTOR: HostActorIdentity = {
   actorId: 'actor-a',

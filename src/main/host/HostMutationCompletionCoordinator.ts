@@ -28,7 +28,7 @@ import {
   type HostCommandReceiptMarkIndeterminateResult,
   type HostCommandReceiptRecord,
   type HostCommandReceiptTerminalStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostObservedMutationResult } from './HostObservedMutationExecutor'
 

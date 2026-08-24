@@ -47,7 +47,7 @@ import {
   type HostDeltaFamily,
   type HostDeltaKind,
   type HostGeneration
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 
 export const HOST_DELTA_STORE_SCHEMA_VERSION = 1 as const
 export const HOST_DELTA_CHECKPOINT_FILENAME = 'host-deltas.checkpoint.json'

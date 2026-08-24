@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { projectHostRecovery } from './HostRecoveryProjection'
-import type { HostRuntimeRecoverySummary } from './HostRuntimeBootstrap'
+import type { HostRuntimeRecoverySummary } from '../../host-runtime/HostRuntimeBootstrap'
 
 function summary(
   recoveryState: HostRuntimeRecoverySummary['delta']['recoveryState']

@@ -11,7 +11,7 @@
  * command-name string list.
  */
 
-import type { HostCommandName } from '../../shared/hostProtocol'
+import type { HostCommandName } from '../shared/hostProtocol'
 
 /**
  * Authority-RPC read aliases map to dedicated HostAuthority methods

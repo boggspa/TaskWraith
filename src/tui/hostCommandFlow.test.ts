@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HostDeferredCommandEnvelopeStore } from '../main/host/HostDeferredCommandEnvelopeStore'
-import { fingerprintHostCommand } from '../main/host/HostCommandFingerprint'
+import { HostDeferredCommandEnvelopeStore } from '../host-runtime/HostDeferredCommandEnvelopeStore'
+import { fingerprintHostCommand } from '../host-runtime/HostCommandFingerprint'
 import { HOST_PROTOCOL_VERSION, type HostCommandReceipt } from '../shared/hostProtocol'
 import {
   buildHostCommand,

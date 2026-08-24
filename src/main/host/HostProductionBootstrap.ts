@@ -85,7 +85,7 @@ import {
   type HostProductionScheduleListPort
 } from './HostProductionSuppliers'
 import type { HostChannelAdminPort } from './HostChannelCommandExecutor'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from '../../host-runtime/HostSession'
 import {
   createHostSupervisor,

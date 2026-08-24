@@ -59,9 +59,9 @@ import { createHostDeferredResolutionAdapter } from './HostDeferredResolutionAda
 import {
   HostRuntimeBootstrap,
   type HostRuntimeRecoverySummaryWithDeferred
-} from './HostRuntimeBootstrap'
+} from '../../host-runtime/HostRuntimeBootstrap'
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
-import type { HostDeltaAppendListener } from './HostDeltaStore'
+import type { HostDeltaAppendListener } from '../../host-runtime/HostDeltaStore'
 import {
   HostProjectionReconciler,
   type HostProjectionReconcileResult

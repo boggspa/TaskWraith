@@ -1,5 +1,5 @@
 import type { HostRecoveryProjection } from '../../shared/hostProtocol'
-import type { HostRuntimeRecoverySummary } from './HostRuntimeBootstrap'
+import type { HostRuntimeRecoverySummary } from '../../host-runtime/HostRuntimeBootstrap'
 
 export interface HostRecoveryProjectionInput {
   summary: HostRuntimeRecoverySummary

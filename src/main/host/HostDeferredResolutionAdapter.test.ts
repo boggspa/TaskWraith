@@ -11,7 +11,7 @@ import type { HostDeferredCommandEnvelopeResolverInput } from './HostDeferredCom
 import type {
   HostCommandReceiptStatus,
   HostCommandReceiptTerminalStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import {
   createHostDeferredResolutionAdapter,
   HOST_DEFERRED_RESOLUTION_ALREADY_TERMINAL_CODE,

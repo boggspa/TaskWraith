@@ -31,8 +31,8 @@ import {
   type HostAuthorityResult,
   type HostAuthorityShutdownResult
 } from '../../host-runtime/HostAuthority'
-import { fingerprintHostCommand } from './HostCommandFingerprint'
-import { parseGovernedMutationCommandName } from './HostCommandRouting'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
+import { parseGovernedMutationCommandName } from '../../host-runtime/HostCommandRouting'
 import { projectHostCommandReceipt } from './HostCommandReceiptProjection'
 import { mintHostCommandId } from './HostCommandIdentity'
 import type {
@@ -48,13 +48,13 @@ import type {
 import type {
   HostDeferredCommandEnvelopePutInput,
   HostDeferredCommandEnvelopePutResult
-} from './HostDeferredCommandEnvelopeStore'
+} from '../../host-runtime/HostDeferredCommandEnvelopeStore'
 import type {
   HostCommandAuthorityDecision,
   HostCommandReceiptActor,
   HostCommandReceiptRecord,
   HostCommandReceiptTarget
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import {
   HostMutationCompletionCoordinator,
@@ -65,7 +65,7 @@ import {
   type HostObservedMutationResult
 } from './HostObservedMutationExecutor'
 import { projectHostRecovery } from './HostRecoveryProjection'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
 
 /** Literal activation mode — migration/rollback only. */

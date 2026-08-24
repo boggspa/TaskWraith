@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { HostCommandName } from '../../shared/hostProtocol'
+import type { HostCommandName } from '../shared/hostProtocol'
 import {
   HOST_AUTHORITY_RPC_READ_ALIAS_NAMES,
   HOST_COMMAND_NAMES,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { HostCommand, HostCommandName } from '../../shared/hostProtocol'
+import type { HostCommand, HostCommandName } from '../shared/hostProtocol'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
 
 const names: readonly HostCommandName[] = [

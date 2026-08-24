@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { HOST_PROJECTION_VERSION } from '../../shared/hostProtocol'
+import { HOST_PROJECTION_VERSION } from '../shared/hostProtocol'
 
 import {
   HostDeltaStore,

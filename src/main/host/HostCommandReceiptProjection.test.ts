@@ -10,7 +10,7 @@ import {
   hostCommandFingerprint,
   HOST_COMMAND_RECEIPT_JOURNAL_FILENAME,
   type HostCommandReceiptActor
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 
 const OWNER: HostCommandReceiptActor = {
   clientId: 'client-tui-1',

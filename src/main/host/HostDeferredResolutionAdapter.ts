@@ -33,7 +33,7 @@ import type {
   HostDeferredPublishEffectsInput
 } from './HostDeferredCommandBridge'
 import type { HostDeferredCommandEnvelopeResolverInput } from './HostDeferredCommandEnvelopeResolver'
-import type { HostCommandReceiptTerminalStatus } from './HostCommandReceiptStore'
+import type { HostCommandReceiptTerminalStatus } from '../../host-runtime/HostCommandReceiptStore'
 
 /** Body-free terminal code when the receipt is already terminal (zero re-success). */
 export const HOST_DEFERRED_RESOLUTION_ALREADY_TERMINAL_CODE = 'receipt_already_terminal' as const

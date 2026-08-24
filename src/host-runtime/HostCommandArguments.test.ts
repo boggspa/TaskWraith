@@ -4,7 +4,7 @@ import {
   HOST_PROTOCOL_VERSION,
   type HostCommand,
   type HostCommandName
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 import {
   HOST_COMPOSER_SEND_MODEL_MAX_CHARS,
   HOST_COMPOSER_SEND_REASONING_EFFORT_MAX_CHARS,

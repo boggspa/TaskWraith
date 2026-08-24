@@ -16,6 +16,8 @@ import {
   type HostCommandReceiptPosition
 } from './HostCommandReceiptStore'
 
+// The durable receipt contract is runtime-owned; moving this suite preserves its coverage.
+
 const DEFAULT_INDETERMINATE_CODE: HostCommandReceiptIndeterminateCode =
   'deferred_envelope_unavailable'
 

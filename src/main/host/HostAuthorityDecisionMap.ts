@@ -10,7 +10,7 @@
  */
 
 import type { HostAuthorityDecision } from '../../shared/hostProtocol'
-import type { HostCommandAuthorityDecision } from './HostCommandReceiptStore'
+import type { HostCommandAuthorityDecision } from '../../host-runtime/HostCommandReceiptStore'
 
 /** Wire authority.decision tokens. */
 export type HostWireAuthorityDecision = HostAuthorityDecision['decision']

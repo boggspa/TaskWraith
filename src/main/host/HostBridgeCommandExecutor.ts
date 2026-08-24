@@ -42,14 +42,14 @@ import {
   HOST_PROTOCOL_MAX_ID,
   type HostApprovalDecideDecision
 } from '../../shared/hostProtocol'
-import { validateHostCommandArguments } from './HostCommandArguments'
+import { validateHostCommandArguments } from '../../host-runtime/HostCommandArguments'
 import {
   isHostUuid,
   isSafeHostIdentifier,
   resolveHostApprovalId,
   resolveHostQuestionId
 } from './HostCommandIdentity'
-import { parseGovernedMutationCommandName } from './HostCommandRouting'
+import { parseGovernedMutationCommandName } from '../../host-runtime/HostCommandRouting'
 
 /** Matches the migration authority executor result shape — kept local (no Authority import). */
 export type HostBridgeCommandExecutorResult = {

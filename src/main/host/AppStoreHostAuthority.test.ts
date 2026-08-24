@@ -22,8 +22,8 @@ import {
   hostAuthorityReceiptResultHasBody,
   type HostAuthorityCallContext
 } from '../../host-runtime/HostAuthority'
-import { fingerprintHostCommand } from './HostCommandFingerprint'
-import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
+import { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 
 const ACTOR_A: HostActorIdentity = {
   actorId: 'actor-a',

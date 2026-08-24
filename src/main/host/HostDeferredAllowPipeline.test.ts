@@ -19,7 +19,7 @@ import type {
 import type {
   HostCommandReceiptIndeterminateCode,
   HostCommandReceiptStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import {
   HostDeferredAllowPipeline,
   type HostDeferredAllowPipelineConsumeEnvelope
@@ -710,7 +710,7 @@ describe('HostDeferredAllowPipeline', () => {
       './HostCommandMutationPipeline',
       './HostMutationCompletionCoordinator',
       './HostDeferredCommandEnvelopeResolver',
-      './HostCommandReceiptStore'
+      '../../host-runtime/HostCommandReceiptStore'
     ])
 
     // Strip comments before checking for forbidden surface references —

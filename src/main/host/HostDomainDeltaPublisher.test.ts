@@ -16,7 +16,7 @@ import {
   HOST_DELTA_JOURNAL_FILENAME,
   type HostDeltaAppendInput,
   type HostDeltaAppendResult
-} from './HostDeltaStore'
+} from '../../host-runtime/HostDeltaStore'
 import type { HostCursorPosition } from '../../shared/hostProtocol'
 
 describe('HostDomainDeltaPublisher', () => {

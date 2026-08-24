@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import type { HostCommand, HostCommandName } from '../../shared/hostProtocol'
+import type { HostCommand, HostCommandName } from '../shared/hostProtocol'
 import { hostCommandFingerprint } from './HostCommandReceiptStore'
 
 export interface HostCommandFingerprintResult {
@@ -57,9 +57,10 @@ function canonicalize(value: unknown, seen: Set<object>): CanonicalValue {
     if (Array.isArray(value)) {
       return value.map((item) => canonicalize(item, seen))
     }
+    const record = value as Record<string, unknown>
     const output: { [key: string]: CanonicalValue } = {}
-    for (const key of Object.keys(value).sort()) {
-      output[key] = canonicalize(value[key], seen)
+    for (const key of Object.keys(record).sort()) {
+      output[key] = canonicalize(record[key], seen)
     }
     return output
   } finally {

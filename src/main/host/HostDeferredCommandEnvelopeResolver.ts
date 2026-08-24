@@ -37,19 +37,19 @@ import {
   decodeHostCommand,
   type HostCommandName
 } from '../../shared/hostProtocol'
-import { validateHostCommandArguments } from './HostCommandArguments'
-import { fingerprintHostCommand } from './HostCommandFingerprint'
-import { isHostUuid, isSafeHostIdentifier, parseHostIdempotencyKey } from './HostCommandIdentity'
-import { parseGovernedMutationCommandName } from './HostCommandRouting'
+import { validateHostCommandArguments } from '../../host-runtime/HostCommandArguments'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
+import { isHostUuid, isSafeHostIdentifier, parseHostIdempotencyKey } from '../../host-shared/HostCommandIdentity'
+import { parseGovernedMutationCommandName } from '../../host-runtime/HostCommandRouting'
 import type {
   HostDeferredCommandEnvelopeLookupResult,
   HostDeferredCommandEnvelopeQuarantineCode,
   HostDeferredCommandEnvelopeTransitionResult
-} from './HostDeferredCommandEnvelopeStore'
+} from '../../host-runtime/HostDeferredCommandEnvelopeStore'
 import type {
   HostCommandReceiptLookupResult,
   HostCommandReceiptStatus
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import type {
   HostBridgeCommandExecutor,
   HostBridgeCommandExecutorResult

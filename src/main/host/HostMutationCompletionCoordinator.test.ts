@@ -10,7 +10,7 @@ import type {
   HostCommandReceiptMarkIndeterminateInput,
   HostCommandReceiptMarkIndeterminateResult,
   HostCommandReceiptRecord
-} from './HostCommandReceiptStore'
+} from '../../host-runtime/HostCommandReceiptStore'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostObservedMutationResult } from './HostObservedMutationExecutor'
 import {

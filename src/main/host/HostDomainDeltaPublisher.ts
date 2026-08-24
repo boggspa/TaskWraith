@@ -29,7 +29,7 @@ import {
   type HostDeltaAppendInput,
   type HostDeltaAppendResult,
   type HostDeltaPayloadPrivacyCode
-} from './HostDeltaStore'
+} from '../../host-runtime/HostDeltaStore'
 
 /** Domain effects never mint generation fences. */
 export type HostDomainEffectKind = 'upsert' | 'remove' | 'tombstone'

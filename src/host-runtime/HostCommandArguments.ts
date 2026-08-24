@@ -23,7 +23,7 @@ import {
   type HostCommand,
   type HostCommandName,
   type HostDecodeResult
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 
 /** Matches control v1 + decodeHostCommand composer text bound. */
 export const HOST_COMPOSER_SEND_TEXT_MAX_CHARS = 12_000

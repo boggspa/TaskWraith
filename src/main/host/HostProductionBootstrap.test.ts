@@ -31,7 +31,7 @@ import type {
   HostLocalServerOptions
 } from '../../host-runtime/HostLocalServer'
 import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from './HostSupervisor'
 
 /* ------------------------------------------------------------------ */

@@ -9,7 +9,7 @@ import {
   type HostSnapshot,
   type HostThreadProjection
 } from '../../shared/hostProtocol'
-import { HostDeltaStore } from './HostDeltaStore'
+import { HostDeltaStore } from '../../host-runtime/HostDeltaStore'
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import { HostProjectionReconciler } from './HostProjectionReconciler'
 
