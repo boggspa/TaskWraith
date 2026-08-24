@@ -26,6 +26,28 @@ import type {
   HostSnapshotFrame
 } from './hostProtocol'
 import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
+import {
+  decodeHostHistoryDeltasFrame,
+  decodeHostHistorySinceRequest,
+  decodeHostHistorySinceResult,
+  decodeHostThreadHistoryPage,
+  decodeHostThreadHistoryRequest,
+  type HostHistoryDeltasFrame,
+  type HostHistorySinceRequest,
+  type HostHistorySinceResult,
+  type HostThreadHistoryPage,
+  type HostThreadHistoryRequest
+} from './hostHistoryProtocol'
+import {
+  decodeHostProviderAuthFlows,
+  decodeHostProviderAuthStatusProjection,
+  decodeHostProviderOffersProjection,
+  decodeHostProviderStatuses,
+  type HostProviderAuthFlowProjection,
+  type HostProviderAuthStatusProjection,
+  type HostProviderOffersProjection,
+  type HostProviderStatusProjection
+} from './hostSetupProtocol'
 
 /** Local Host transport envelope version — distinct from HOST_PROTOCOL_VERSION. */
 export const HOST_LOCAL_TRANSPORT_VERSION = 1 as const
@@ -65,6 +87,12 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'snapshot.get',
   'deltas.since',
   'thread.offers',
+  'provider.status',
+  'provider.offers',
+  'provider.auth.flows',
+  'provider.auth.status',
+  'thread.history',
+  'history.since',
   'receipt.lookup',
   'health.get',
   'command.submit',
@@ -73,7 +101,12 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
 
 export type HostLocalTransportRequestKind = (typeof HOST_LOCAL_TRANSPORT_REQUEST_KINDS)[number]
 
-export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = ['deltas', 'health', 'host.closing'] as const
+export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = [
+  'deltas',
+  'history',
+  'health',
+  'host.closing'
+] as const
 
 export type HostLocalTransportEventKind = (typeof HOST_LOCAL_TRANSPORT_EVENT_KINDS)[number]
 
@@ -88,6 +121,10 @@ export interface HostLocalTransportHello {
 export type HostLocalTransportReceiptLookupParams =
   | { commandId: string; idempotencyKey?: undefined }
   | { idempotencyKey: string; commandId?: undefined }
+
+export interface HostLocalTransportProviderIdParams {
+  providerId: string
+}
 
 export type HostLocalTransportRequest =
   | {
@@ -110,6 +147,34 @@ export type HostLocalTransportRequest =
       id: string
       kind: 'thread.offers'
       params: { threadId: string }
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'provider.status'
+      params: Record<string, never>
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'provider.offers' | 'provider.auth.flows' | 'provider.auth.status'
+      params: HostLocalTransportProviderIdParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.history'
+      params: HostThreadHistoryRequest
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'history.since'
+      params: HostHistorySinceRequest
     }
   | {
       type: 'request'
@@ -153,6 +218,12 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'snapshot.get'; frame: HostSnapshotFrame }
   | { kind: 'deltas.since'; frame: HostDeltasFrame }
   | { kind: 'thread.offers'; offers: TaskWraithControlThreadOffers }
+  | { kind: 'provider.status'; statuses: readonly HostProviderStatusProjection[] }
+  | { kind: 'provider.offers'; offers: HostProviderOffersProjection }
+  | { kind: 'provider.auth.flows'; flows: readonly HostProviderAuthFlowProjection[] }
+  | { kind: 'provider.auth.status'; status: HostProviderAuthStatusProjection }
+  | { kind: 'thread.history'; page: HostThreadHistoryPage }
+  | { kind: 'history.since'; result: HostHistorySinceResult }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
@@ -185,6 +256,13 @@ export type HostLocalTransportEvent =
       event: 'deltas'
       sequence: number
       payload: HostDeltasFrame
+    }
+  | {
+      type: 'event'
+      transportVersion: HostLocalTransportVersion
+      event: 'history'
+      sequence: number
+      payload: HostHistoryDeltasFrame
     }
   | {
       type: 'event'
@@ -397,6 +475,15 @@ function decodeThreadOffersParams(
   return { ok: true, value: { threadId: value.threadId } }
 }
 
+function decodeProviderIdParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostLocalTransportProviderIdParams> {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || !isBoundedId(value.providerId)) {
+    return fail('invalid_payload')
+  }
+  return { ok: true, value: { providerId: value.providerId } }
+}
+
 function decodeSuccessResult(
   value: unknown
 ): HostLocalTransportDecodeResult<HostLocalTransportSuccessResult> {
@@ -411,6 +498,36 @@ function decodeSuccessResult(
     case 'thread.offers':
       if (!hasThreadOffersShape(value.offers)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'thread.offers', offers: value.offers } }
+    case 'provider.status': {
+      const statuses = decodeHostProviderStatuses(value.statuses)
+      if (!statuses.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.status', statuses: statuses.value } }
+    }
+    case 'provider.offers': {
+      const offers = decodeHostProviderOffersProjection(value.offers)
+      if (!offers.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.offers', offers: offers.value } }
+    }
+    case 'provider.auth.flows': {
+      const flows = decodeHostProviderAuthFlows(value.flows)
+      if (!flows.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.auth.flows', flows: flows.value } }
+    }
+    case 'provider.auth.status': {
+      const status = decodeHostProviderAuthStatusProjection(value.status)
+      if (!status.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.auth.status', status: status.value } }
+    }
+    case 'thread.history': {
+      const page = decodeHostThreadHistoryPage(value.page)
+      if (!page.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'thread.history', page: page.value } }
+    }
+    case 'history.since': {
+      const result = decodeHostHistorySinceResult(value.result)
+      if (!result.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'history.since', result: result.value } }
+    }
     case 'receipt.lookup':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'receipt.lookup', receipt: value.receipt } }
@@ -505,6 +622,63 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'thread.offers',
+            params: params.value
+          }
+        }
+      }
+      case 'provider.status': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'provider.status',
+            params: {}
+          }
+        }
+      }
+      case 'provider.offers':
+      case 'provider.auth.flows':
+      case 'provider.auth.status': {
+        const params = decodeProviderIdParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: value.kind,
+            params: params.value
+          }
+        }
+      }
+      case 'thread.history': {
+        const params = decodeHostThreadHistoryRequest(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.history',
+            params: params.value
+          }
+        }
+      }
+      case 'history.since': {
+        const params = decodeHostHistorySinceRequest(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'history.since',
             params: params.value
           }
         }
@@ -642,6 +816,20 @@ export function decodeHostLocalTransportHostFrame(
           event: 'deltas',
           sequence: value.sequence,
           payload: value.payload
+        }
+      }
+    }
+    if (value.event === 'history') {
+      const payload = decodeHostHistoryDeltasFrame(value.payload)
+      if (!payload.ok) return failHost('invalid_payload')
+      return {
+        ok: true,
+        value: {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'history',
+          sequence: value.sequence,
+          payload: payload.value
         }
       }
     }

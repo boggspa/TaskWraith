@@ -17,6 +17,9 @@ describe('HostDiagnosticAuthority', () => {
     const authority = new HostDiagnosticAuthority({ now: () => 1_700_000_000_000 })
 
     expect(HOST_DIAGNOSTIC_CAPABILITIES).toEqual(['bootstrap', 'snapshot', 'health'])
+    expect(HOST_DIAGNOSTIC_CAPABILITIES).not.toContain('provider-catalog')
+    expect(HOST_DIAGNOSTIC_CAPABILITIES).not.toContain('provider-auth')
+    expect(HOST_DIAGNOSTIC_CAPABILITIES).not.toContain('history')
     expect(authority.getPosition()).toEqual({ generation: 0, cursor: 0 })
 
     const snapshot = await authority.snapshot(CONTEXT)

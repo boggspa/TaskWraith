@@ -36,6 +36,19 @@ import {
   type HostSnapshotFrame
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
+import type {
+  HostHistoryDeltasFrame,
+  HostHistorySinceRequest,
+  HostHistorySinceResult,
+  HostThreadHistoryPage,
+  HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
   decodeHostLocalTransportHostFrame,
@@ -113,6 +126,7 @@ export interface HostProjectionClientEvents {
   welcome: [HostBootstrapWelcome]
   deltas: [HostDeltasFrame, sequence: number]
   health: [HostHealthFrame, sequence: number]
+  history: [HostHistoryDeltasFrame, sequence: number]
   hostClosing: [sequence: number]
   /**
    * Fired when the socket drops after a successful welcome, and the close was
@@ -322,6 +336,56 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     return result.offers
   }
 
+  async getProviderStatuses(): Promise<readonly HostProviderStatusProjection[]> {
+    const result = await this.request('provider.status', {})
+    if (result.kind !== 'provider.status') {
+      throw new Error('TaskWraith Host returned an unexpected provider status result kind.')
+    }
+    return result.statuses
+  }
+
+  async getProviderOffers(providerId: string): Promise<HostProviderOffersProjection> {
+    const result = await this.request('provider.offers', { providerId })
+    if (result.kind !== 'provider.offers') {
+      throw new Error('TaskWraith Host returned an unexpected provider offers result kind.')
+    }
+    return result.offers
+  }
+
+  async getProviderAuthFlows(
+    providerId: string
+  ): Promise<readonly HostProviderAuthFlowProjection[]> {
+    const result = await this.request('provider.auth.flows', { providerId })
+    if (result.kind !== 'provider.auth.flows') {
+      throw new Error('TaskWraith Host returned an unexpected provider auth flow result kind.')
+    }
+    return result.flows
+  }
+
+  async getProviderAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection> {
+    const result = await this.request('provider.auth.status', { providerId })
+    if (result.kind !== 'provider.auth.status') {
+      throw new Error('TaskWraith Host returned an unexpected provider auth status result kind.')
+    }
+    return result.status
+  }
+
+  async getThreadHistory(request: HostThreadHistoryRequest): Promise<HostThreadHistoryPage> {
+    const result = await this.request('thread.history', request)
+    if (result.kind !== 'thread.history') {
+      throw new Error('TaskWraith Host returned an unexpected thread history result kind.')
+    }
+    return result.page
+  }
+
+  async getHistorySince(request: HostHistorySinceRequest): Promise<HostHistorySinceResult> {
+    const result = await this.request('history.since', request)
+    if (result.kind !== 'history.since') {
+      throw new Error('TaskWraith Host returned an unexpected history since result kind.')
+    }
+    return result.result
+  }
+
   async lookupReceipt(params: HostLocalTransportReceiptLookupParams): Promise<HostCommandReceipt> {
     const result = await this.request('receipt.lookup', params)
     if (result.kind !== 'receipt.lookup') {
@@ -508,7 +572,9 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     // welcome are not applied to the cache (reconnect / Host restart).
     if (this.welcome && 'payload' in event) {
       const payloadGeneration =
-        event.event === 'deltas' ? event.payload.result.generation : undefined
+        event.event === 'deltas' || event.event === 'history'
+          ? event.payload.result.generation
+          : undefined
       if (typeof payloadGeneration === 'number' && payloadGeneration !== this.welcome.generation) {
         this.markCacheStale()
         return
@@ -527,6 +593,10 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     }
     if (event.event === 'health') {
       this.emit('health', event.payload, event.sequence)
+      return
+    }
+    if (event.event === 'history') {
+      this.emit('history', event.payload, event.sequence)
       return
     }
     if (event.event === 'host.closing') {

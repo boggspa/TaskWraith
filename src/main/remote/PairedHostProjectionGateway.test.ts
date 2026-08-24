@@ -244,6 +244,21 @@ describe('PairedHostProjectionGateway', () => {
     await expect(
       h.gateway.request(DEVICE_KEY, { kind: 'format.disk', params: {} })
     ).rejects.toMatchObject({ code: 'unknown_request_kind' })
+    for (const request of [
+      { kind: 'provider.status', params: {} },
+      { kind: 'provider.offers', params: { providerId: 'codex' } },
+      { kind: 'provider.auth.flows', params: { providerId: 'codex' } },
+      { kind: 'provider.auth.status', params: { providerId: 'codex' } },
+      { kind: 'thread.history', params: { threadId: 'thread-1', limit: 25 } },
+      {
+        kind: 'history.since',
+        params: { threadId: 'thread-1', since: { generation: 3, cursor: 4 } }
+      }
+    ]) {
+      await expect(h.gateway.request(DEVICE_KEY, request)).rejects.toMatchObject({
+        code: 'unauthorized'
+      })
+    }
   })
 
   it('submits only commands whose actor exactly matches the authenticated pair', async () => {

@@ -254,6 +254,24 @@ describe('hostProtocolTransport Wave 3.2', () => {
         case 'thread.offers':
           frame = { ...base, kind, params: { threadId: 'thread-1' } }
           break
+        case 'provider.status':
+          frame = { ...base, kind, params: {} }
+          break
+        case 'provider.offers':
+        case 'provider.auth.flows':
+        case 'provider.auth.status':
+          frame = { ...base, kind, params: { providerId: 'codex' } }
+          break
+        case 'thread.history':
+          frame = { ...base, kind, params: { threadId: 'thread-1', limit: 25 } }
+          break
+        case 'history.since':
+          frame = {
+            ...base,
+            kind,
+            params: { threadId: 'thread-1', since: { generation: 1, cursor: 2 } }
+          }
+          break
         case 'receipt.lookup':
           frame = { ...base, kind, params: { commandId: 'cmd-1' } }
           break
@@ -331,6 +349,80 @@ describe('hostProtocolTransport Wave 3.2', () => {
       for (const frame of results) {
         expectHostRoundTrip(frame)
       }
+    })
+
+    it('round-trips setup/history responses and the separate history event', () => {
+      const historyResult = {
+        kind: 'deltas' as const,
+        threadId: 'thread-1',
+        generation: 1,
+        fromCursor: 2,
+        toCursor: 3,
+        deltas: [
+          {
+            kind: 'append' as const,
+            entry: { entryId: 'message-1', role: 'assistant' as const, createdAt: 1, text: 'Hello' }
+          }
+        ]
+      }
+      for (const result of [
+        {
+          kind: 'provider.status' as const,
+          statuses: [{ providerId: 'codex', status: 'ready' as const, label: 'Codex' }]
+        },
+        {
+          kind: 'provider.offers' as const,
+          offers: {
+            providerId: 'codex',
+            offerRevision: 'catalog-r1',
+            models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+            postures: [
+              {
+                postureId: 'plan',
+                label: 'Plan',
+                available: true,
+                requiresExplicitConsent: true,
+                ceiling: 'workspace_write' as const
+              }
+            ]
+          }
+        },
+        {
+          kind: 'provider.auth.flows' as const,
+          flows: [
+            { flowId: 'browser', kind: 'browser' as const, label: 'Browser', available: true }
+          ]
+        },
+        {
+          kind: 'provider.auth.status' as const,
+          status: { providerId: 'codex', state: 'unauthenticated' as const }
+        },
+        {
+          kind: 'thread.history' as const,
+          page: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+        },
+        { kind: 'history.since' as const, result: historyResult }
+      ]) {
+        expectHostRoundTrip({
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: `r-${result.kind}`,
+          ok: true,
+          result
+        } as HostLocalTransportResponse)
+      }
+      expectHostRoundTrip({
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        event: 'history',
+        sequence: 9,
+        payload: {
+          type: 'host.history',
+          protocolVersion: 2,
+          threadId: 'thread-1',
+          result: historyResult
+        }
+      })
     })
 
     it('round-trips body-free error responses for every closed code', () => {

@@ -48,6 +48,12 @@ import {
   type HostCursorPosition,
   type HostDeltaEnvelope
 } from '../shared/hostProtocol'
+import type {
+  HostHistorySinceRequest,
+  HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
+import type { HostCapability } from '../shared/hostProtocol'
+import type { HostLocalTransportRequestKind } from '../shared/hostProtocolTransport'
 import type { HostSession, HostSessionBindRequest, HostSessionBinding } from './HostSession'
 import {
   type HostAuthority,
@@ -55,6 +61,16 @@ import {
   parseHostAuthorityReceiptLookup
 } from './HostAuthority'
 import { TW_MISSION_MAX_BUNDLE_BYTES } from '../host-shared/twmission'
+
+const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, HostCapability>> = {
+  'thread.offers': 'model-offers',
+  'provider.status': 'provider-catalog',
+  'provider.offers': 'provider-catalog',
+  'provider.auth.flows': 'provider-auth',
+  'provider.auth.status': 'provider-auth',
+  'thread.history': 'history',
+  'history.since': 'history'
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -630,7 +646,8 @@ export class HostLocalServer {
       client: binding.authenticatedClient
     }
 
-    if (frame.kind === 'thread.offers' && !binding.welcome.capabilities.includes('model-offers')) {
+    const requiredCapability = REQUIRED_READ_CAPABILITY[frame.kind]
+    if (requiredCapability && !binding.welcome.capabilities.includes(requiredCapability)) {
       socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
       return
     }
@@ -658,6 +675,18 @@ export class HostLocalServer {
         return this.handleDeltas(context, frame.id, frame.params)
       case 'thread.offers':
         return this.handleThreadOffers(context, frame.id, frame.params.threadId)
+      case 'provider.status':
+        return this.handleProviderStatuses(context, frame.id)
+      case 'provider.offers':
+        return this.handleProviderOffers(context, frame.id, frame.params.providerId)
+      case 'provider.auth.flows':
+        return this.handleProviderAuthFlows(context, frame.id, frame.params.providerId)
+      case 'provider.auth.status':
+        return this.handleProviderAuthStatus(context, frame.id, frame.params.providerId)
+      case 'thread.history':
+        return this.handleThreadHistory(context, frame.id, frame.params)
+      case 'history.since':
+        return this.handleHistorySince(context, frame.id, frame.params)
       case 'receipt.lookup':
         return this.handleReceiptLookup(context, frame.id, frame.params)
       case 'health.get':
@@ -800,6 +829,90 @@ export class HostLocalServer {
       id,
       ok: true,
       result: success
+    }
+  }
+
+  private async handleProviderStatuses(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerStatuses
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.status', statuses: result.value })
+  }
+
+  private async handleProviderOffers(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerOffers
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.offers', offers: result.value })
+  }
+
+  private async handleProviderAuthFlows(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerAuthFlows
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.auth.flows', flows: result.value })
+  }
+
+  private async handleProviderAuthStatus(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerAuthStatus
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.auth.status', status: result.value })
+  }
+
+  private async handleThreadHistory(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostThreadHistoryRequest
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadHistory
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.history', page: result.value })
+  }
+
+  private async handleHistorySince(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostHistorySinceRequest
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.historySince
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'history.since', result: result.value })
+  }
+
+  private success(
+    id: string,
+    result: HostLocalTransportSuccessResult
+  ): HostLocalTransportHostFrame {
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result
     }
   }
 

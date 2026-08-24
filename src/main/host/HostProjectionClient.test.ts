@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  type HostCapability,
   type HostBootstrapWelcome,
   type HostCommand,
   type HostCommandReceipt,
@@ -202,7 +203,10 @@ function makeEmptySnapshot(generation = 3, cursor = 42): HostSnapshot {
   }
 }
 
-function makeClient(host: FakeHost): HostProjectionClient {
+function makeClient(
+  host: FakeHost,
+  capabilities?: readonly HostCapability[]
+): HostProjectionClient {
   const client = new HostProjectionClient({
     client: {
       clientId: 'desktop-1',
@@ -211,6 +215,7 @@ function makeClient(host: FakeHost): HostProjectionClient {
     },
     userDataPath: host.userDataPath,
     discoveryPath: host.discoveryPath,
+    ...(capabilities ? { capabilities } : {}),
     connectTimeoutMs: 500,
     requestTimeoutMs: 500
   })
@@ -246,6 +251,9 @@ describe('HostProjectionClient', () => {
     expect((hello.hello as { type: string }).type).toBe('host.hello')
     expect((hello.hello as { protocolVersion: number }).protocolVersion).toBe(HOST_PROTOCOL_VERSION)
     expect((hello.hello as { capabilities: string[] }).capabilities).toContain('model-offers')
+    expect((hello.hello as { capabilities: string[] }).capabilities).not.toEqual(
+      expect.arrayContaining(['provider-catalog', 'provider-auth', 'history'])
+    )
     sendWelcome(socket)
     const welcome = await connectPromise
     expect(welcome.hostId).toBe('test-host')
@@ -485,6 +493,145 @@ describe('HostProjectionClient', () => {
     expect(received.bytes.byteLength).toBeGreaterThan(0)
   })
 
+  it('routes typed provider setup and bounded history reads', async () => {
+    const host = await startFakeHost()
+    const requestedCapabilities: readonly HostCapability[] = [
+      'bootstrap',
+      'snapshot',
+      'health',
+      'provider-catalog',
+      'provider-auth',
+      'history'
+    ]
+    const client = makeClient(host, requestedCapabilities)
+    const connect = client.connect()
+    const hostSocket = await host.nextClient()
+    const hello = await readLine(hostSocket)
+    expect((hello.hello as { capabilities: readonly string[] }).capabilities).toEqual(
+      requestedCapabilities
+    )
+    sendWelcome(hostSocket)
+    await connect
+
+    const statuses = client.getProviderStatuses()
+    const statusesRequest = await readLine(hostSocket)
+    expect(statusesRequest).toMatchObject({ kind: 'provider.status', params: {} })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(statusesRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.status',
+        statuses: [{ providerId: 'codex', status: 'ready', label: 'Codex' }]
+      }
+    })
+    await expect(statuses).resolves.toEqual([
+      { providerId: 'codex', status: 'ready', label: 'Codex' }
+    ])
+
+    const offers = client.getProviderOffers('codex')
+    const offersRequest = await readLine(hostSocket)
+    expect(offersRequest).toMatchObject({
+      kind: 'provider.offers',
+      params: { providerId: 'codex' }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(offersRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.offers',
+        offers: {
+          providerId: 'codex',
+          offerRevision: 'catalog-r1',
+          models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+          postures: [
+            {
+              postureId: 'plan',
+              label: 'Plan',
+              available: true,
+              requiresExplicitConsent: true,
+              ceiling: 'workspace_write'
+            }
+          ]
+        }
+      }
+    })
+    await expect(offers).resolves.toMatchObject({ providerId: 'codex' })
+
+    const authFlows = client.getProviderAuthFlows('codex')
+    const authFlowsRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(authFlowsRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.auth.flows',
+        flows: [{ flowId: 'browser', kind: 'browser', label: 'Browser', available: true }]
+      }
+    })
+    await expect(authFlows).resolves.toHaveLength(1)
+
+    const authStatus = client.getProviderAuthStatus('codex')
+    const authStatusRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(authStatusRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.auth.status',
+        status: { providerId: 'codex', state: 'unauthenticated' }
+      }
+    })
+    await expect(authStatus).resolves.toEqual({ providerId: 'codex', state: 'unauthenticated' })
+
+    const history = client.getThreadHistory({ threadId: 'thread-1', limit: 25 })
+    const historyRequest = await readLine(hostSocket)
+    expect(historyRequest).toMatchObject({
+      kind: 'thread.history',
+      params: { threadId: 'thread-1', limit: 25 }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(historyRequest.id),
+      ok: true,
+      result: {
+        kind: 'thread.history',
+        page: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+      }
+    })
+    await expect(history).resolves.toMatchObject({ threadId: 'thread-1' })
+
+    const since = client.getHistorySince({
+      threadId: 'thread-1',
+      since: { generation: 1, cursor: 3 }
+    })
+    const sinceRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(sinceRequest.id),
+      ok: true,
+      result: {
+        kind: 'history.since',
+        result: {
+          kind: 'deltas',
+          threadId: 'thread-1',
+          generation: 1,
+          fromCursor: 3,
+          toCursor: 3,
+          deltas: []
+        }
+      }
+    })
+    await expect(since).resolves.toMatchObject({ kind: 'deltas', threadId: 'thread-1' })
+  })
+
   it('rejects a twmission export whose integrity digest was tampered', async () => {
     const { hostSocket, client } = await connectedPair()
     const exported = exportTwMissionBundle({
@@ -518,6 +665,9 @@ describe('HostProjectionClient', () => {
     const healthSeen = new Promise<number>((resolve) =>
       client.once('health', (_frame, sequence) => resolve(sequence))
     )
+    const historySeen = new Promise<number>((resolve) =>
+      client.once('history', (_frame, sequence) => resolve(sequence))
+    )
     const closingSeen = new Promise<number>((resolve) =>
       client.once('hostClosing', (sequence) => resolve(sequence))
     )
@@ -542,8 +692,27 @@ describe('HostProjectionClient', () => {
     writeFrame(hostSocket, {
       type: 'event',
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      event: 'history',
+      sequence: 3,
+      payload: {
+        type: 'host.history',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        threadId: 'thread-1',
+        result: {
+          kind: 'deltas',
+          threadId: 'thread-1',
+          generation: 3,
+          fromCursor: 41,
+          toCursor: 41,
+          deltas: []
+        }
+      }
+    })
+    writeFrame(hostSocket, {
+      type: 'event',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       event: 'health',
-      sequence: 2,
+      sequence: 4,
       payload: {
         type: 'host.health',
         protocolVersion: HOST_PROTOCOL_VERSION,
@@ -559,12 +728,13 @@ describe('HostProjectionClient', () => {
       type: 'event',
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       event: 'host.closing',
-      sequence: 3
+      sequence: 5
     })
 
     expect(await deltasSeen).toBe(1)
-    expect(await healthSeen).toBe(2)
-    expect(await closingSeen).toBe(3)
+    expect(await healthSeen).toBe(4)
+    expect(await historySeen).toBe(3)
+    expect(await closingSeen).toBe(5)
   })
 
   it('skips unknown event kinds without disconnecting (forward compat)', async () => {

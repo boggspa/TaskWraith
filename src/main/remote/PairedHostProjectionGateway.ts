@@ -9,9 +9,9 @@
  */
 
 import {
-  HOST_CAPABILITY_ORDER,
   decodeHostCommand,
   type HostBootstrapWelcome,
+  type HostCapability,
   type HostCommand,
   type HostDeltasFrame,
   type HostHealthFrame,
@@ -27,6 +27,17 @@ import {
   HostProjectionClient,
   type HostProjectionClientOptions
 } from '../host/HostProjectionClient'
+
+/** Remote/iOS remains on the existing projection ceiling until it has an explicit setup/history UX. */
+const PAIRED_HOST_CAPABILITIES: readonly HostCapability[] = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'model-offers',
+  'commands',
+  'receipts',
+  'health'
+]
 
 export const PAIRED_HOST_PROJECTION_METHODS = {
   request: 'bridge.requestHost',
@@ -218,7 +229,7 @@ export class PairedHostProjectionGateway {
         subjectId: attachment.deviceKey,
         ...(attachment.displayName ? { displayName: attachment.displayName } : {})
       },
-      capabilities: HOST_CAPABILITY_ORDER
+      capabilities: PAIRED_HOST_CAPABILITIES
     })
     const session: PairedHostProjectionSession = {
       deviceKey: attachment.deviceKey,
@@ -276,6 +287,13 @@ export class PairedHostProjectionGateway {
           kind: 'thread.offers',
           offers: await session.client.getThreadOffers(request.params.threadId)
         }
+      case 'provider.status':
+      case 'provider.offers':
+      case 'provider.auth.flows':
+      case 'provider.auth.status':
+      case 'thread.history':
+      case 'history.since':
+        throw new PairedHostProjectionRequestError('unauthorized')
       case 'receipt.lookup':
         return {
           kind: 'receipt.lookup',

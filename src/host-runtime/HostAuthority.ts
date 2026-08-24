@@ -19,6 +19,18 @@ import type {
   HostSnapshot
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
+import type {
+  HostHistorySinceRequest,
+  HostHistorySinceResult,
+  HostThreadHistoryPage,
+  HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 
 /** Authenticated call context required on every Authority operation. */
 export interface HostAuthorityCallContext {
@@ -95,6 +107,37 @@ export interface HostAuthority {
     context: HostAuthorityCallContext,
     threadId: string
   ): Promise<HostAuthorityResult<TaskWraithControlThreadOffers>>
+
+  /** Capability-gated cold-start read; no provider runtime or credential body. */
+  providerStatuses?(
+    context: HostAuthorityCallContext
+  ): Promise<HostAuthorityResult<readonly HostProviderStatusProjection[]>>
+
+  providerOffers?(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<HostProviderOffersProjection>>
+
+  providerAuthFlows?(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<readonly HostProviderAuthFlowProjection[]>>
+
+  providerAuthStatus?(
+    context: HostAuthorityCallContext,
+    providerId: string
+  ): Promise<HostAuthorityResult<HostProviderAuthStatusProjection>>
+
+  /** Bounded immutable history page; separate from the live snapshot cursor. */
+  threadHistory?(
+    context: HostAuthorityCallContext,
+    request: HostThreadHistoryRequest
+  ): Promise<HostAuthorityResult<HostThreadHistoryPage>>
+
+  historySince?(
+    context: HostAuthorityCallContext,
+    request: HostHistorySinceRequest
+  ): Promise<HostAuthorityResult<HostHistorySinceResult>>
 
   command(
     context: HostAuthorityCallContext,

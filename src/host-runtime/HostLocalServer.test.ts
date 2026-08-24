@@ -102,6 +102,9 @@ function mockHostSession(
         'snapshot',
         'deltas',
         'model-offers',
+        'provider-catalog',
+        'provider-auth',
+        'history',
         'health'
       ]
       const capabilities = (request?.clientCapabilityRequest ?? []).filter((capability) =>
@@ -152,6 +155,12 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
   snapshot: ReturnType<typeof vi.fn>
   deltas: ReturnType<typeof vi.fn>
   threadOffers: ReturnType<typeof vi.fn>
+  providerStatuses: ReturnType<typeof vi.fn>
+  providerOffers: ReturnType<typeof vi.fn>
+  providerAuthFlows: ReturnType<typeof vi.fn>
+  providerAuthStatus: ReturnType<typeof vi.fn>
+  threadHistory: ReturnType<typeof vi.fn>
+  historySince: ReturnType<typeof vi.fn>
   command: ReturnType<typeof vi.fn>
   receipt: ReturnType<typeof vi.fn>
   health: ReturnType<typeof vi.fn>
@@ -208,10 +217,60 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
   const shutdown = vi
     .fn()
     .mockResolvedValue({ ok: true, value: { stopped: true, alreadyStopped: false } })
+  const providerStatuses = vi.fn().mockResolvedValue({
+    ok: true,
+    value: [{ providerId: 'codex', status: 'ready', label: 'Codex' }]
+  })
+  const providerOffers = vi.fn().mockResolvedValue({
+    ok: true,
+    value: {
+      providerId: 'codex',
+      offerRevision: 'catalog-r1',
+      models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+      postures: [
+        {
+          postureId: 'plan',
+          label: 'Plan',
+          available: true,
+          requiresExplicitConsent: true,
+          ceiling: 'workspace_write'
+        }
+      ]
+    }
+  })
+  const providerAuthFlows = vi.fn().mockResolvedValue({
+    ok: true,
+    value: [{ flowId: 'browser', kind: 'browser', label: 'Browser sign-in', available: true }]
+  })
+  const providerAuthStatus = vi.fn().mockResolvedValue({
+    ok: true,
+    value: { providerId: 'codex', state: 'unauthenticated' }
+  })
+  const threadHistory = vi.fn().mockResolvedValue({
+    ok: true,
+    value: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+  })
+  const historySince = vi.fn().mockResolvedValue({
+    ok: true,
+    value: {
+      kind: 'deltas',
+      threadId: 'thread-1',
+      generation: 1,
+      fromCursor: 3,
+      toCursor: 3,
+      deltas: []
+    }
+  })
   return {
     snapshot,
     deltas,
     threadOffers,
+    providerStatuses,
+    providerOffers,
+    providerAuthFlows,
+    providerAuthStatus,
+    threadHistory,
+    historySince,
     command,
     receipt,
     health,
@@ -221,6 +280,12 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
     snapshot: ReturnType<typeof vi.fn>
     deltas: ReturnType<typeof vi.fn>
     threadOffers: ReturnType<typeof vi.fn>
+    providerStatuses: ReturnType<typeof vi.fn>
+    providerOffers: ReturnType<typeof vi.fn>
+    providerAuthFlows: ReturnType<typeof vi.fn>
+    providerAuthStatus: ReturnType<typeof vi.fn>
+    threadHistory: ReturnType<typeof vi.fn>
+    historySince: ReturnType<typeof vi.fn>
     command: ReturnType<typeof vi.fn>
     receipt: ReturnType<typeof vi.fn>
     health: ReturnType<typeof vi.fn>
@@ -684,6 +749,92 @@ describe('HostLocalServer', () => {
       expect(frame).toMatchObject({ ok: false, error: { code: 'unauthorized' } })
       expect(authority.threadOffers).not.toHaveBeenCalled()
       client.close()
+    })
+
+    it('gates provider setup reads by their exact negotiated capabilities', async () => {
+      const catalogClient = await authAndConnect(['bootstrap', 'provider-catalog', 'health'])
+      catalogClient.writeLine(
+        JSON.stringify(makeRequest('provider.status' as never, 'r-provider-status'))
+      )
+      expect(await catalogClient.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'provider.status', statuses: [{ providerId: 'codex' }] }
+      })
+      catalogClient.writeLine(
+        JSON.stringify(
+          makeRequest('provider.offers' as never, 'r-provider-offers', { providerId: 'codex' })
+        )
+      )
+      expect(await catalogClient.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'provider.offers', offers: { providerId: 'codex' } }
+      })
+      expect(authority.providerStatuses).toHaveBeenCalledOnce()
+      expect(authority.providerOffers).toHaveBeenCalledWith(expect.anything(), 'codex')
+      catalogClient.close()
+
+      const deniedClient = await authAndConnect(['bootstrap', 'provider-catalog', 'health'])
+      deniedClient.writeLine(
+        JSON.stringify(
+          makeRequest('provider.auth.status' as never, 'r-auth-denied', { providerId: 'codex' })
+        )
+      )
+      expect(await deniedClient.readFrame()).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized' }
+      })
+      expect(authority.providerAuthStatus).not.toHaveBeenCalled()
+      deniedClient.close()
+
+      const authClient = await authAndConnect(['bootstrap', 'provider-auth', 'health'])
+      authClient.writeLine(
+        JSON.stringify(
+          makeRequest('provider.auth.flows' as never, 'r-auth-flows', { providerId: 'codex' })
+        )
+      )
+      expect(await authClient.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'provider.auth.flows', flows: [{ flowId: 'browser' }] }
+      })
+      authClient.close()
+      expect(authority.providerAuthFlows).toHaveBeenCalledWith(expect.anything(), 'codex')
+    })
+
+    it('gates bounded history pages and separate history cursor deltas', async () => {
+      const client = await authAndConnect(['bootstrap', 'history', 'health'])
+      client.writeLine(
+        JSON.stringify(
+          makeRequest('thread.history' as never, 'r-history-page', {
+            threadId: 'thread-1',
+            limit: 25
+          })
+        )
+      )
+      expect(await client.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'thread.history', page: { threadId: 'thread-1' } }
+      })
+      client.writeLine(
+        JSON.stringify(
+          makeRequest('history.since' as never, 'r-history-since', {
+            threadId: 'thread-1',
+            since: { generation: 1, cursor: 3 }
+          })
+        )
+      )
+      expect(await client.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'history.since', result: { threadId: 'thread-1' } }
+      })
+      client.close()
+      expect(authority.threadHistory).toHaveBeenCalledWith(expect.anything(), {
+        threadId: 'thread-1',
+        limit: 25
+      })
+      expect(authority.historySince).toHaveBeenCalledWith(expect.anything(), {
+        threadId: 'thread-1',
+        since: { generation: 1, cursor: 3 }
+      })
     })
 
     it('receipt.lookup routes to authority.receipt with commandId', async () => {

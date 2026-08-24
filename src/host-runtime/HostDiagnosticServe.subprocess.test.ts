@@ -126,6 +126,9 @@ describe('standalone diagnostic Host subprocess', () => {
       const welcome = await client.connect()
       expect(welcome.capabilities).toEqual(['bootstrap', 'snapshot', 'health'])
       expect(welcome.capabilities).not.toContain('commands')
+      expect(welcome.capabilities).not.toContain('provider-catalog')
+      expect(welcome.capabilities).not.toContain('provider-auth')
+      expect(welcome.capabilities).not.toContain('history')
 
       const snapshot = await client.getSnapshot()
       expect(snapshot.snapshot.health.hostStatus).toBe('degraded')
@@ -149,6 +152,10 @@ describe('standalone diagnostic Host subprocess', () => {
           issuedAt: '2026-08-24T00:00:00.000Z'
         })
       ).rejects.toBeInstanceOf(HostProjectionTransportError)
+      await expect(client.getProviderStatuses()).rejects.toMatchObject({ code: 'unauthorized' })
+      await expect(
+        client.getThreadHistory({ threadId: 'diagnostic-thread', limit: 25 })
+      ).rejects.toMatchObject({ code: 'unauthorized' })
 
       const duplicate = spawnHost(profilePath)
       await expect(waitForExit(duplicate)).resolves.not.toBe(0)
