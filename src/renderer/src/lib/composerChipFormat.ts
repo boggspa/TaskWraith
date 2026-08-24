@@ -340,6 +340,13 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   if (provider === 'kimi') {
+    if (
+      String(ctx.kimiReasoningEffort || '')
+        .trim()
+        .toLowerCase() === 'ultratask'
+    ) {
+      return 'UltraTask'
+    }
     if (ctx.modelId.trim().toLowerCase() === 'kimi-k3') {
       return kimiReasoningDisplayLabel(ctx.kimiReasoningEffort)
     }

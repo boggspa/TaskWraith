@@ -422,6 +422,15 @@ describe('reasoningDisplayLabel', () => {
       reasoningDisplayLabel({ ...base, provider: 'kimi', modelId: 'kimi-k3', kimiReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
+      reasoningDisplayLabel({
+        ...base,
+        provider: 'kimi',
+        modelId: 'kimi-k2.7-code',
+        kimiReasoningEffort: 'ultraTask',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('UltraTask')
+    expect(
       reasoningDisplayLabel({ ...base, provider: 'grok', modelId: 'grok-4.6', grokReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
