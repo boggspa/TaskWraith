@@ -2107,6 +2107,7 @@ import {
 } from './ultraTask/UltraTaskCapabilityResolver'
 import {
   buildUltraTaskModelCapabilityCatalog,
+  mergeUltraTaskCatalogCapabilityMetadata,
   type UltraTaskCatalogModelLike
 } from './ultraTask/UltraTaskModelCatalog'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
@@ -56616,23 +56617,28 @@ if (isGeminiMcpBridgeProcess) {
     // (get-agent-models IPC) and the paired-device broadcast both call this,
     // so the phone's hierarchical picker can never drift from the desktop's.
     const listAgentModelsForProvider = async (provider: ProviderId): Promise<unknown[]> => {
+      const staticFallback = getStaticProviderModels(provider, {
+        includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env)
+      })
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()
-          return (
+          const liveModels = (
             await fetchOllamaModelCatalog(settings, {
               cloudApiKey: getStoredOllamaApiKey()
             })
           ).models
+          return mergeUltraTaskCatalogCapabilityMetadata(liveModels, staticFallback)
         } catch {
-          return getStaticProviderModels('ollama')
+          return staticFallback
         }
       }
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()
-        return (
+        const liveModels = (
           managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
         )
+        return mergeUltraTaskCatalogCapabilityMetadata(liveModels, staticFallback)
       }
       if (provider === 'pi') {
         // Only models whose upstream has a stored key: an unkeyed row could
@@ -56640,7 +56646,7 @@ if (isGeminiMcpBridgeProcess) {
         const configured = new Set<string>(
           piKeyStoreRef ? piKeyStoreRef.getStatus().configuredUpstreams : []
         )
-        return getStaticProviderModels('pi').filter((row) => {
+        return staticFallback.filter((row) => {
           const wireId =
             typeof (row as { id?: unknown }).id === 'string' ? (row as { id: string }).id : ''
           const split = splitPiWireModelId(wireId)
@@ -56648,17 +56654,13 @@ if (isGeminiMcpBridgeProcess) {
         })
       }
       if (provider !== 'codex') {
-        return getStaticProviderModels(provider, {
-          includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env)
-        })
+        return staticFallback
       }
 
       // Apply the shared lifecycle schedule to static and live catalogs. This
       // adds a warning date before sunset, then removes the row automatically
       // on the date (including stale rows a CLI may continue returning).
-      const codexStaticFallback = getStaticProviderModels('codex', {
-        includePreviewModels: previewModelCatalogEnabledForProvider('codex', process.env)
-      })
+      const codexStaticFallback = staticFallback
       try {
         const response: any = await withUnownedCodexClientLifecycle(
           'model-catalog',
@@ -56695,9 +56697,10 @@ if (isGeminiMcpBridgeProcess) {
         const mergedCodexModels = mergeCodexLiveModelRows(normalized, codexStaticFallback, {
           includePreviewAppends: previewModelCatalogEnabledForProvider('codex', process.env)
         })
-        return mergedCodexModels
+        const liveModels = mergedCodexModels
           ? normalizeCodexDefaultModelRows(mergedCodexModels)
           : codexStaticFallback
+        return mergeUltraTaskCatalogCapabilityMetadata(liveModels, codexStaticFallback)
       } catch {
         return codexStaticFallback
       }
