@@ -51,7 +51,13 @@ export const HOST_QUESTION_ID_MIGRATION_ALIAS = {
   legacyField: HOST_QUESTION_ID_LEGACY_ALIAS
 } as const
 
-const HOST_CLIENT_CLASSES: ReadonlySet<HostClientClass> = new Set(['desktop', 'tui', 'ios', 'test'])
+const HOST_CLIENT_CLASSES: ReadonlySet<HostClientClass> = new Set([
+  'desktop',
+  'tui',
+  'ios',
+  'test',
+  'host-cli'
+])
 
 /** RFC 4122 UUID shape (hex + hyphens). Case-insensitive. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i

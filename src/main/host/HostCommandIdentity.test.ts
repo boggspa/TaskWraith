@@ -56,6 +56,14 @@ function iosContext(
   }
 }
 
+function hostCliContext(): HostTransportVerifiedClientContext {
+  return {
+    clientClass: 'host-cli',
+    clientId: 'taskwraith-host-cli',
+    actorId: 'taskwraith-host-cli'
+  }
+}
+
 describe('HostCommandIdentity migration aliases', () => {
   it('documents approvalId=toolCallId and questionId=promptId', () => {
     expect(HOST_APPROVAL_ID_MIGRATION_ALIAS).toEqual({
@@ -135,7 +143,7 @@ describe('isSafeHostIdentifier', () => {
 })
 
 describe('hostActorIdentityFromVerifiedContext', () => {
-  it('builds actor identity for Desktop-local, authenticated TUI, and paired iOS', () => {
+  it('builds actor identity for Desktop, TUI, paired iOS, and the local Host CLI', () => {
     const classes: Array<{
       label: string
       context: HostTransportVerifiedClientContext
@@ -143,7 +151,8 @@ describe('hostActorIdentityFromVerifiedContext', () => {
     }> = [
       { label: 'desktop-local', context: desktopContext(), clientClass: 'desktop' },
       { label: 'authenticated-tui', context: tuiContext(), clientClass: 'tui' },
-      { label: 'paired-ios', context: iosContext(), clientClass: 'ios' }
+      { label: 'paired-ios', context: iosContext(), clientClass: 'ios' },
+      { label: 'host-cli', context: hostCliContext(), clientClass: 'host-cli' }
     ]
 
     for (const row of classes) {
@@ -221,7 +230,7 @@ describe('mintHostCommandId / mintHostIdempotencyKey', () => {
   })
 
   it('mints bounded clientClass:clientId:uuid idempotency keys', () => {
-    for (const context of [desktopContext(), tuiContext(), iosContext()]) {
+    for (const context of [desktopContext(), tuiContext(), iosContext(), hostCliContext()]) {
       const minted = mintHostIdempotencyKey(context, () => FIXED_UUID_B)
       expect(minted.ok, context.clientClass).toBe(true)
       if (!minted.ok) continue
