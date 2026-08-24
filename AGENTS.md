@@ -901,7 +901,7 @@ Each ensemble has a `orchestrationMode`:
 
 - **Turn-bound** (default) — each enabled participant speaks ONCE
   per round. After everyone speaks, the round ends and the user
-  is prompted for the next user turn.
+  is prompted for the next user turn. Beyond this, participants tagging each other (after all participants' contributions complete or round 1 over, etc.) then offers turns (in addition to existing fan-out and yield).
 - **Continuous** — after the roster drains, TaskWraith can autonomously run
   another pass even when nobody explicitly yielded or mentioned a peer. Every
   admitted continuation turn consumes the `maxContinuationHops` budget
