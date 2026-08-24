@@ -2537,8 +2537,17 @@ export class McpBridgeRuntime {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
-    const toolArguments =
+    let toolArguments =
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input
+
+    if (rawToolName === 'ensemble_control') {
+      if (isRecord(toolArguments) && isRecord(toolArguments.params)) {
+        toolArguments = toolArguments.params
+      } else if (toolArguments === undefined && brokerRequestRecord.params !== undefined) {
+        toolArguments = brokerRequestRecord.params
+      }
+    }
+
     const dispatchContract = resolveToolDispatchContractStrict(
       String(rawToolName || ''),
       toolArguments
