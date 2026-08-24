@@ -222,7 +222,11 @@ const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
   { id: 'claude-opus-4-8-1m', label: 'Opus 4.8 1M Legacy' },
   { id: 'claude-opus-4-7-1m', label: 'Opus 4.7 1M Legacy' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
+  {
+    id: 'claude-haiku-4-5',
+    label: 'Haiku 4.5',
+    ultraTaskSupported: false
+  }
 ]
 
 const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
@@ -833,17 +837,22 @@ export function resolveKimiReasoningPickerSelection(
   model: string | null | undefined,
   reasoningEffort?: string | null
 ): string {
+  if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') return 'ultraTask'
   if (!isKimiK3Model(model)) return 'on'
   return normalizeReasoningEffortToken(reasoningEffort) || 'max'
 }
 
-/** Persist a K3 ladder selection without treating it as K2.7's legacy flag. */
+/** Persist K3 effort and the synthetic UltraTask selection without treating
+ * ordinary K2.7 choices as anything other than its fixed thinking flag. */
 export function buildKimiReasoningPickerPatch(
   model: string | null | undefined,
   reasoningEffort: string
 ): Pick<Partial<EnsembleParticipant>, 'reasoningEffort' | 'thinkingEnabled'> {
+  if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') {
+    return { reasoningEffort: 'ultraTask', thinkingEnabled: true }
+  }
   if (isKimiK3Model(model)) return { reasoningEffort, thinkingEnabled: true }
-  return { thinkingEnabled: true }
+  return { reasoningEffort: undefined, thinkingEnabled: true }
 }
 
 function fallbackModelSelectionMetadata(

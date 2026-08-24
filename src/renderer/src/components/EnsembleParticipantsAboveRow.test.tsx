@@ -9,6 +9,7 @@ import {
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
+  applyEnsembleAddReasoningSelection,
   buildEnsembleAddProviderGroups,
   buildEnsembleParticipantAddition,
   computeEnsembleChipGridSpans,
@@ -735,6 +736,45 @@ describe('EnsembleParticipantsAboveRow', () => {
       ).toEqual(['low', 'medium', 'high', 'xhigh', 'ultraTask'])
     })
 
+    it('derives UltraTask options without mutating shared provider ladders', () => {
+      const providerGroups = [
+        {
+          provider: 'mistral' as const,
+          label: 'Mistral',
+          modelOptions: [{ id: 'devstral-small', label: 'Devstral Small' }]
+        },
+        {
+          provider: 'pi' as const,
+          label: 'Pi',
+          modelOptions: [
+            { id: 'mistral/devstral-small', label: 'Devstral Small (Pi)' }
+          ]
+        }
+      ]
+
+      const first = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const second = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const pi = getEnsembleAddReasoningOptions(
+        'pi',
+        'mistral/devstral-small',
+        providerGroups
+      )
+
+      for (const options of [first, second, pi]) {
+        expect(options.filter((option) => option.value === 'ultraTask')).toHaveLength(1)
+      }
+      expect(first).not.toBe(second)
+      expect(first).not.toBe(pi)
+    })
+
     it('keeps live models and honors their reasoning metadata', () => {
       const providerGroups = [
         {
@@ -803,6 +843,21 @@ describe('EnsembleParticipantsAboveRow', () => {
         provider: 'antigravity',
         model: 'gemini-3.6-flash-medium',
         reasoningEffort: undefined
+      })
+      expect(
+        applyEnsembleAddReasoningSelection(
+          createEnsembleParticipantAddConfiguration(
+            'antigravity',
+            'gemini-3.6-flash-medium',
+            providerGroups
+          ),
+          'ultraTask',
+          providerGroups
+        )
+      ).toMatchObject({
+        provider: 'antigravity',
+        model: 'gemini-3.6-flash-high',
+        reasoningEffort: 'ultraTask'
       })
     })
 

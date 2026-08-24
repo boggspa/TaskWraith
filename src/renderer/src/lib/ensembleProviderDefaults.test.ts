@@ -109,6 +109,9 @@ describe('Kimi reasoning picker selection', () => {
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'ultraTask')).toBe(
+      'ultraTask'
+    )
   })
 
   it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
@@ -117,6 +120,11 @@ describe('Kimi reasoning picker selection', () => {
       thinkingEnabled: true
     })
     expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'on')).toEqual({
+      reasoningEffort: undefined,
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'ultraTask')).toEqual({
+      reasoningEffort: 'ultraTask',
       thinkingEnabled: true
     })
   })
@@ -763,6 +771,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-7-1m')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
+    expect(
+      claude.modelOptions.find((option) => option.id === 'claude-haiku-4-5')
+        ?.ultraTaskSupported
+    ).toBe(false)
   })
 
   it('returns model-aware Claude reasoning options for ensemble pickers', () => {

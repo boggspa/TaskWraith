@@ -4,7 +4,8 @@ import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   ParticipantPickerCluster,
   buildParticipantProviderModelPatch,
-  buildParticipantPickerProviderGroups
+  buildParticipantPickerProviderGroups,
+  buildParticipantReasoningSelectionPatch
 } from './ParticipantPickerCluster'
 
 function participant(
@@ -121,6 +122,44 @@ describe('buildParticipantProviderModelPatch', () => {
       serviceTier: 'fast',
       thinkingEnabled: true
     })
+  })
+
+  it('maps an existing AntiGravity participant to High when UltraTask is selected', () => {
+    const source = participant({
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash-medium'
+    })
+    const patch = buildParticipantReasoningSelectionPatch(
+      source,
+      'gemini-3.6-flash-medium',
+      'ultraTask',
+      [
+        { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' },
+        { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
+        { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' }
+      ]
+    )
+
+    expect(patch).toMatchObject({
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash-high',
+      reasoningEffort: 'ultraTask'
+    })
+  })
+
+  it('clears K2.7 UltraTask when the fixed Thinking stop is selected', () => {
+    expect(
+      buildParticipantReasoningSelectionPatch(
+        participant({
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          reasoningEffort: 'ultraTask',
+          thinkingEnabled: true
+        }),
+        'kimi-k2.7-code',
+        'on'
+      )
+    ).toEqual({ reasoningEffort: undefined, thinkingEnabled: true })
   })
 })
 
@@ -310,6 +349,28 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('K3')
     expect(html).toContain('>Max<')
     expect(html).not.toContain('data-selected-reasoning="on"')
+  })
+
+  it('keeps a K2.7 UltraTask selection above its fixed thinking stop', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'ultraTask',
+            thinkingEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="ultraTask"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">UltraTask')
   })
 
   it('surfaces an Ollama participant boolean thinking selection', () => {

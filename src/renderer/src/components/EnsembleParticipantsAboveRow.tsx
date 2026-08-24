@@ -391,7 +391,10 @@ export function getEnsembleAddReasoningOptions(
       }
     })
   } else {
-    baseOptions = getEnsembleReasoningOptions(provider, model, modelOption)
+    // The provider helper returns shared catalogue arrays for several
+    // providers. Add owns a derived ladder, so clone before appending the
+    // synthetic UltraTask stop.
+    baseOptions = [...getEnsembleReasoningOptions(provider, model, modelOption)]
   }
   // Inject UltraTask option for models that support it. Seed empty ladders
   // with an Off bottom stop so UltraTask is opt-in at the top of a movable
@@ -403,10 +406,12 @@ export function getEnsembleAddReasoningOptions(
         label: 'Off'
       })
     }
-    baseOptions.push({
-      value: 'ultraTask',
-      label: 'UltraTask'
-    })
+    if (!baseOptions.some((option) => option.value.toLowerCase() === 'ultratask')) {
+      baseOptions.push({
+        value: 'ultraTask',
+        label: 'UltraTask'
+      })
+    }
   }
   return baseOptions
 }
@@ -453,6 +458,51 @@ export function createEnsembleParticipantAddConfiguration(
     ...normalized,
     model
   }
+}
+
+/** Apply one reasoning-ladder choice to the Add Participant draft. AntiGravity
+ * encodes real effort in its concrete model id, so UltraTask moves the family
+ * to its High variant while retaining the explicit synthetic selection. */
+export function applyEnsembleAddReasoningSelection(
+  current: EnsembleParticipantAddConfiguration,
+  value: string,
+  providerGroups: readonly CombinedModelPickerProviderGroup[]
+): EnsembleParticipantAddConfiguration {
+  if (current.provider === 'antigravity') {
+    const modelOptions =
+      providerGroups.find((group) => group.provider === 'antigravity')?.modelOptions || []
+    const targetEffort = value === 'ultraTask' ? 'high' : value
+    const target = findEnsembleAddModelOption(
+      'antigravity',
+      current.model,
+      modelOptions
+    )?.antigravityVariants?.find((variant) => variant.effort === targetEffort)
+    if (value === 'ultraTask') {
+      const next =
+        target && target.id !== current.model
+          ? createEnsembleParticipantAddConfiguration(
+              'antigravity',
+              target.id,
+              providerGroups
+            )
+          : current
+      return { ...next, reasoningEffort: 'ultraTask' }
+    }
+    if (target && target.id !== current.model) {
+      const next = createEnsembleParticipantAddConfiguration(
+        'antigravity',
+        target.id,
+        providerGroups
+      )
+      return { ...next, reasoningEffort: '' }
+    }
+    return current.reasoningEffort === 'ultraTask'
+      ? { ...current, reasoningEffort: '' }
+      : current
+  }
+  return current.provider === 'kimi'
+    ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
+    : { ...current, reasoningEffort: value }
 }
 
 export function createEnsembleParticipantAddDetails(
@@ -1745,33 +1795,9 @@ function EnsembleAddParticipantButton({
   const handleReasoningSelection = useCallback(
     (value: string) => {
       setDuplicateSourceId(null)
-      setDraft((current) => {
-        if (current.provider === 'antigravity') {
-          if (value === 'ultraTask') {
-            return { ...current, reasoningEffort: value }
-          }
-          const modelOptions =
-            availableProviderGroups.find((group) => group.provider === 'antigravity')
-              ?.modelOptions || []
-          const target = findEnsembleAddModelOption(
-            'antigravity',
-            current.model,
-            modelOptions
-          )?.antigravityVariants?.find((variant) => variant.effort === value)
-          if (target && target.id !== current.model) {
-            const nextConfig = createEnsembleParticipantAddConfiguration(
-              'antigravity',
-              target.id,
-              availableProviderGroups
-            )
-            return { ...nextConfig, reasoningEffort: '' }
-          }
-          return current.reasoningEffort === 'ultraTask' ? { ...current, reasoningEffort: '' } : current
-        }
-        return current.provider === 'kimi'
-          ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
-          : { ...current, reasoningEffort: value }
-      })
+      setDraft((current) =>
+        applyEnsembleAddReasoningSelection(current, value, availableProviderGroups)
+      )
     },
     [availableProviderGroups]
   )

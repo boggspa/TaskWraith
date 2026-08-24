@@ -66,6 +66,44 @@ export function buildParticipantProviderModelPatch(
   return buildSameProviderModelChangeParticipantPatch(participant, model)
 }
 
+/** Build the lossless participant patch for one reasoning-ladder selection.
+ * AntiGravity carries real effort in its concrete model id, so UltraTask maps
+ * the family to High and keeps the synthetic marker alongside it. */
+export function buildParticipantReasoningSelectionPatch(
+  participant: EnsembleParticipant,
+  selectedModelId: string,
+  value: string,
+  antigravityModels: ReadonlyArray<{ id: string; label?: string }> = []
+): Partial<EnsembleParticipant> {
+  if (participant.provider === 'antigravity') {
+    const variantGroup = antigravityVariantGroupForModel(
+      antigravityModels,
+      selectedModelId
+    )
+    const targetEffort = value === 'ultraTask' ? 'high' : value
+    const target = variantGroup?.variants.find((variant) => variant.effort === targetEffort)
+    if (value === 'ultraTask') {
+      return {
+        ...(target && target.id !== selectedModelId
+          ? buildParticipantProviderModelPatch(participant, 'antigravity', target.id)
+          : {}),
+        reasoningEffort: 'ultraTask'
+      }
+    }
+    if (target && target.id !== selectedModelId) {
+      return {
+        ...buildParticipantProviderModelPatch(participant, 'antigravity', target.id),
+        reasoningEffort: ''
+      }
+    }
+    return participant.reasoningEffort === 'ultraTask' ? { reasoningEffort: '' } : {}
+  }
+  if (participant.provider === 'kimi') {
+    return buildKimiReasoningPickerPatch(selectedModelId, value)
+  }
+  return { reasoningEffort: value }
+}
+
 interface ParticipantPickerClusterProps {
   participant: EnsembleParticipant
   configuredProviderSnapshot?: ConfiguredProviderSnapshot
@@ -186,22 +224,14 @@ export function ParticipantPickerCluster({
     reasoningOptions.push({ value: 'ultraTask', label: 'UltraTask' })
   }
   const onSelectReasoning = (value: string): void => {
-    if (participant.provider === 'antigravity') {
-      if (value === 'ultraTask') {
-        onPatch({ reasoningEffort: value })
-      } else {
-        const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)
-        if (target && target.id !== selectedModelId) {
-          onPatch({ ...buildParticipantProviderModelPatch(participant, 'antigravity', target.id), reasoningEffort: '' })
-        } else if (participant.reasoningEffort === 'ultraTask') {
-          onPatch({ reasoningEffort: '' })
-        }
-      }
-    } else if (participant.provider === 'kimi') {
-      onPatch(buildKimiReasoningPickerPatch(selectedModelId, value))
-    } else {
-      onPatch({ reasoningEffort: value })
-    }
+    onPatch(
+      buildParticipantReasoningSelectionPatch(
+        participant,
+        selectedModelId,
+        value,
+        antigravityModels
+      )
+    )
   }
 
   const fastModeEnabled =

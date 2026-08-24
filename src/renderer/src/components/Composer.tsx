@@ -31,6 +31,7 @@ import type {
 } from '../components/CombinedModelPicker'
 import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPicker'
 import type { PermissionOption } from '../components/CombinedPermissionsPicker'
+import { buildParticipantReasoningSelectionPatch } from '../components/ParticipantPickerCluster'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import type { ComposerSuggestionModel } from '../lib/composerSuggestion'
@@ -587,6 +588,16 @@ function withUltraTaskLadderBottom<
 >(options: T[]): T[] {
   if (options.length > 0) return options
   return [{ value: 'off', label: 'Off' } as unknown as T, ...options]
+}
+
+/** Preserve an explicit model-level UltraTask exclusion while adapting the
+ * live catalogue into generic picker rows. */
+export function composerPickerUltraTaskSupportMetadata(
+  model: Pick<CodexModelOption, 'ultraTaskSupported'>
+): Pick<CombinedModelPickerModelOption, 'ultraTaskSupported'> {
+  return model.ultraTaskSupported !== undefined
+    ? { ultraTaskSupported: model.ultraTaskSupported }
+    : {}
 }
 
 // Air kept between the composer's bottom edge and the terminal's top edge when
@@ -1193,6 +1204,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         ...(model.additionalSpeedTiers
           ? { additionalSpeedTiers: model.additionalSpeedTiers }
           : {}),
+        ...composerPickerUltraTaskSupportMetadata(model),
         ...(retiresAt ? { retiresAt } : {})
       }
     }),
@@ -1263,15 +1275,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         }
       })
     } else {
-      baseOptions = getEnsembleReasoningOptions(targetProvider, modelId, model)
+      // Several provider defaults are shared catalogue arrays. This helper
+      // owns a derived ladder, so clone before appending UltraTask.
+      baseOptions = [...getEnsembleReasoningOptions(targetProvider, modelId, model)]
     }
     // Inject UltraTask option for models that support it
     if (model?.ultraTaskSupported !== false) {
       baseOptions = withUltraTaskLadderBottom(baseOptions)
-      baseOptions.push({
-        value: 'ultraTask',
-        label: 'UltraTask'
-      })
+      if (!baseOptions.some((option) => option.value.toLowerCase() === 'ultratask')) {
+        baseOptions.push({
+          value: 'ultraTask',
+          label: 'UltraTask'
+        })
+      }
     }
     return baseOptions
   }
@@ -4444,14 +4460,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
-                              if (ensembleBinding.provider === 'kimi') {
-                                updateSelectedParticipant({
-                                  reasoningEffort: value,
-                                  thinkingEnabled: true
-                                })
-                              } else {
-                                updateSelectedParticipant({ reasoningEffort: value })
-                              }
+                              updateSelectedParticipant(
+                                buildParticipantReasoningSelectionPatch(
+                                  ensembleBinding,
+                                  effectiveSelectedModel,
+                                  value,
+                                  effectiveProvider === 'antigravity'
+                                    ? effectiveModelOptionsRaw
+                                    : []
+                                )
+                              )
                               return
                             }
                             if (effectiveProvider === 'codex') {
