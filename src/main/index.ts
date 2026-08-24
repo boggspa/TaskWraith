@@ -2107,6 +2107,7 @@ import {
 } from './ultraTask/UltraTaskCapabilityResolver'
 import {
   buildUltraTaskModelCapabilityCatalog,
+  materializeDiscoveredUltraTaskSupport,
   mergeUltraTaskCatalogCapabilityMetadata,
   type UltraTaskCatalogModelLike
 } from './ultraTask/UltraTaskModelCatalog'
@@ -56102,7 +56103,16 @@ if (isGeminiMcpBridgeProcess) {
       const settings = AppStore.getSettings()
       const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
       const configuredModels = managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
-      const antigravityModels = configuredModels.get('antigravity')
+      const discoveredAntigravityModels = configuredModels.get('antigravity')
+      const antigravityModels = discoveredAntigravityModels
+        ? materializeDiscoveredUltraTaskSupport(
+            'antigravity',
+            mergeUltraTaskCatalogCapabilityMetadata(
+              discoveredAntigravityModels,
+              getStaticProviderModels('antigravity')
+            )
+          )
+        : undefined
       const antigravityConfigured = isAuthenticatedAntigravityConfiguredProvider(
         settings,
         snapshot,
@@ -56620,6 +56630,11 @@ if (isGeminiMcpBridgeProcess) {
       const staticFallback = getStaticProviderModels(provider, {
         includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env)
       })
+      const publishLiveModels = <T extends UltraTaskCatalogModelLike>(models: readonly T[]) =>
+        materializeDiscoveredUltraTaskSupport(
+          provider,
+          mergeUltraTaskCatalogCapabilityMetadata(models, staticFallback)
+        )
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()
@@ -56628,7 +56643,7 @@ if (isGeminiMcpBridgeProcess) {
               cloudApiKey: getStoredOllamaApiKey()
             })
           ).models
-          return mergeUltraTaskCatalogCapabilityMetadata(liveModels, staticFallback)
+          return publishLiveModels(liveModels)
         } catch {
           return staticFallback
         }
@@ -56638,7 +56653,7 @@ if (isGeminiMcpBridgeProcess) {
         const liveModels = (
           managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
         )
-        return mergeUltraTaskCatalogCapabilityMetadata(liveModels, staticFallback)
+        return publishLiveModels(liveModels)
       }
       if (provider === 'pi') {
         // Only models whose upstream has a stored key: an unkeyed row could
@@ -56700,7 +56715,7 @@ if (isGeminiMcpBridgeProcess) {
         const liveModels = mergedCodexModels
           ? normalizeCodexDefaultModelRows(mergedCodexModels)
           : codexStaticFallback
-        return mergeUltraTaskCatalogCapabilityMetadata(liveModels, codexStaticFallback)
+        return publishLiveModels(liveModels)
       } catch {
         return codexStaticFallback
       }

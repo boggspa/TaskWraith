@@ -13,6 +13,7 @@ import type { HostProjectedProvider } from '../lib/host/hostSnapshotProjection'
 export interface ConfiguredProviderModel {
   id: string
   label: string
+  ultraTaskSupported?: boolean
 }
 
 export interface ConfiguredProviderSnapshot {
@@ -120,7 +121,13 @@ export function sanitizeConfiguredProviderSnapshot(value: unknown): ConfiguredPr
     const id = typeof model?.id === 'string' ? model.id.trim() : ''
     const label = typeof model?.label === 'string' ? model.label.trim() : ''
     if (id && id.length <= 512 && !antigravityModelsById.has(id)) {
-      antigravityModelsById.set(id, { id, label: label || id })
+      antigravityModelsById.set(id, {
+        id,
+        label: label || id,
+        ...(typeof model?.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: model.ultraTaskSupported }
+          : {})
+      })
     }
   }
   const antigravityModels = Array.from(antigravityModelsById.values())
@@ -214,7 +221,11 @@ export function configuredProviderSnapshotFromHostProjection(
         : modelId
     const list = modelsByProvider[providerId] ?? []
     if (!list.some((model) => model.id === modelId)) {
-      list.push({ id: modelId, label })
+      list.push({
+        id: modelId,
+        label,
+        ...(providerId === ANTIGRAVITY_PROVIDER_ID ? { ultraTaskSupported: true } : {})
+      })
       modelsByProvider[providerId] = list
     }
   }

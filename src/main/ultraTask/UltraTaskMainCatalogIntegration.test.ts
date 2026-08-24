@@ -19,8 +19,10 @@ describe('UltraTask live model catalog integration', () => {
     )
 
     expect(indexSource).toContain('mergeUltraTaskCatalogCapabilityMetadata,')
+    expect(indexSource).toContain('materializeDiscoveredUltraTaskSupport,')
     expect(catalog).toContain('const staticFallback = getStaticProviderModels(provider,')
-    expect(catalog.match(/mergeUltraTaskCatalogCapabilityMetadata\(/g)).toHaveLength(3)
+    expect(catalog).toContain('const publishLiveModels =')
+    expect(catalog.match(/publishLiveModels\(/g)).toHaveLength(3)
     expect(catalog).toContain('return staticFallback')
     expect(catalog).not.toContain('ultraTaskSupported: true')
   })

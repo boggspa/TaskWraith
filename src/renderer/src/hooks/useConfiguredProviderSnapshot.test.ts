@@ -609,7 +609,11 @@ describe('sanitizeConfiguredProviderSnapshot', () => {
         providerIds: ['antigravity'],
         modelsByProvider: {
           antigravity: [
-            { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' },
+            {
+              id: 'gemini-3.5-pro',
+              label: 'Gemini 3.5 Pro',
+              ultraTaskSupported: true
+            },
             { id: 'gemini-3.5-pro', label: 'Duplicate is ignored' },
             { id: '', label: 'Ignored' }
           ]
@@ -619,7 +623,13 @@ describe('sanitizeConfiguredProviderSnapshot', () => {
       ready: true,
       providerIds: ['antigravity'],
       modelsByProvider: {
-        antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
+        antigravity: [
+          {
+            id: 'gemini-3.5-pro',
+            label: 'Gemini 3.5 Pro',
+            ultraTaskSupported: true
+          }
+        ]
       }
     })
   })
@@ -702,7 +712,7 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
       ready: true,
       providerIds: ['antigravity'],
       modelsByProvider: {
-        antigravity: [{ id: 'agy-model', label: 'AGY model' }]
+        antigravity: [{ id: 'agy-model', label: 'AGY model', ultraTaskSupported: true }]
       }
     })
   })
@@ -806,8 +816,8 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
       providerIds: ['antigravity'],
       modelsByProvider: {
         antigravity: [
-          { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' },
-          { id: 'gemini-flash', label: 'Flash' }
+          { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro', ultraTaskSupported: true },
+          { id: 'gemini-flash', label: 'Flash', ultraTaskSupported: true }
         ]
       }
     })
