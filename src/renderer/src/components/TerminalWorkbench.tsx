@@ -65,7 +65,9 @@ export function TerminalWorkbench({
             }
             return [...prev, { sessionId: newSessionId, workspacePath: event.workspacePath }]
           })
-        }).catch(() => {})
+        }).catch((err) => {
+          console.error('[TerminalWorkbench] terminal.create failed', { workspacePath: event.workspacePath, sessionId: newSessionId, error: err })
+        })
       }
     })
 
@@ -95,10 +97,14 @@ export function TerminalWorkbench({
           <p>workspace-isolated environment</p>
           <button 
             className="terminal-workbench-new-btn"
-            onClick={() => terminalLaunchBus.emit(currentWorkspacePath || (window.api.hostPlatform === 'win32' ? 'C:\\' : process.env.HOME || '/'))}
+            disabled={!currentWorkspacePath}
+            onClick={() => { if (currentWorkspacePath) terminalLaunchBus.emit(currentWorkspacePath) }}
           >
             New Terminal Session&hellip;
           </button>
+          {!currentWorkspacePath && (
+            <p className="terminal-workbench-empty-hint">Open a workspace first</p>
+          )}
         </div>
       ) : (
         <div className="terminal-workbench-grid" data-count={sessions.length}>
