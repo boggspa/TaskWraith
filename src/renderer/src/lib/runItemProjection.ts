@@ -1,10 +1,7 @@
 import type { ItemDeltaRunItemEvent, RunItemEvent } from '../../../shared/runItemEvents'
 import type { AssistantDeltaInput } from './applyAssistantDelta'
 import type { ProviderId } from '../../../main/store/types'
-import {
-  extractToolInvocationParameters,
-  mergeToolResultParameters
-} from '../../../shared/toolInvocationPresentation'
+import { mergeToolResultParameters } from '../../../shared/toolInvocationPresentation'
 
 export interface RunItemAssistantProjection {
   chatId: string

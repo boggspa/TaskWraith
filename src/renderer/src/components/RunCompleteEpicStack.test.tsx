@@ -497,6 +497,8 @@ describe('RunCompleteEpicStack', () => {
   it('keeps Task Complete pagers outside their ARIA tables', () => {
     const subagents = Array.from({ length: 10 }, (_, index) => ({
       subThreadId: `child-${index}`,
+      identitySeed: `child-${index}`,
+      title: `Worker ${index + 1}`,
       provider: 'codex' as const,
       status: 'created' as const
     }))

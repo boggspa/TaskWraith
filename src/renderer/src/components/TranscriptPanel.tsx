@@ -4023,7 +4023,7 @@ export const TranscriptPanel = memo(
     const ensureSuperGroupExpandedForMessage = useCallback(
       (messageId: string, rowKey?: string): boolean => {
         const row = findProjectedRowForMessage(messageId, rowKey)
-        const leadRowKey = collapsedSuperGroupLeadForRow(superGroupByRowKey, row)
+        const leadRowKey = collapsedSuperGroupLeadForRow(superGroupByRowKey, row ?? null)
         if (!leadRowKey || expandedSuperGroups.has(leadRowKey)) return false
         setSuperGroupExpanded(leadRowKey, true)
         return true
@@ -6144,7 +6144,7 @@ export const TranscriptPanel = memo(
                         // complete" merely because the reader opened it later.
                         const durableCloseoutStatus = durableCloseoutCardStatus(
                           msg.metadata?.closeoutStatus,
-                          { isGlobal, producedWork: closeoutProducedWork }
+                          { isGlobal: isGlobal ?? false, producedWork: closeoutProducedWork }
                         )
                         const cardStatus =
                           showLatestActions && runCompleteStatus

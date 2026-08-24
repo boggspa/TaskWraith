@@ -59,7 +59,7 @@ function ActiveRunsChevron({ isExpanded }: { isExpanded: boolean }): JSX.Element
 }
 
 interface ActiveRunsSectionProps {
-  chats: ChatRecord[]
+  chats: readonly ChatRecord[]
   currentChat: ChatRecord | null
   runningChatIds?: string[]
   surface?: ActiveRunsSurface

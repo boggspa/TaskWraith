@@ -219,7 +219,7 @@ describe('transcriptRowRenderCache', () => {
         ...first.metadata,
         closeoutSubagentDelegations: [
           {
-            ...first.metadata.closeoutSubagentDelegations![0],
+            ...first.metadata!.closeoutSubagentDelegations![0],
             status: 'returned',
             promptPreview: 'Found and repaired stale transcript rows.'
           }
