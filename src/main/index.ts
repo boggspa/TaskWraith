@@ -996,6 +996,8 @@ import { createHostProductionChannelAdapter } from './host/HostProductionChannel
 import { createHostProjectionBroker } from './host/HostProjectionBroker'
 import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandClient'
 import { HostLifecycleController } from './host/HostLifecycleController'
+import { createHostExternalLifecycleAdapter } from './host/HostExternalLifecycleAdapter'
+import { consumePreparedExternalHost } from './host/HostExternalRuntimeState'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -50135,6 +50137,11 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    const externalHostProfilePath = fsSync.realpathSync(app.getPath('userData'))
+    const preparedExternalHost = consumePreparedExternalHost(externalHostProfilePath)
+    if (!preparedExternalHost) {
+      throw new Error('Desktop main process requires a bootstrap-prepared external Host.')
+    }
     const desktopHostBroker = createHostProjectionBroker({
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion()
@@ -51692,8 +51699,30 @@ if (isGeminiMcpBridgeProcess) {
         }),
         ...(hostChannels ? { channels: hostChannels } : {})
       })
+    // The in-process factory above remains inert compatibility code while its
+    // remaining setup/shadow ports are extracted. It is never selected after
+    // bootstrap transfers profile ownership to the independent Node Host.
+    void createProductionHost
+    let initialPreparedExternalHost: typeof preparedExternalHost | null = preparedExternalHost
+    const createExternalHost = () => {
+      const initial = initialPreparedExternalHost
+      if (initial) {
+        const adapter = createHostExternalLifecycleAdapter({
+          profilePath: externalHostProfilePath,
+          supervisor: initial.supervisor,
+          preparedResult: initial.result
+        })
+        initialPreparedExternalHost = null
+        return adapter
+      }
+      const supervisor = preparedExternalHost.createSupervisor()
+      return createHostExternalLifecycleAdapter({
+        profilePath: externalHostProfilePath,
+        supervisor
+      })
+    }
     const hostLifecycle = new HostLifecycleController({
-      createSupervisor: createProductionHost,
+      createSupervisor: createExternalHost,
       onOffline: () => desktopHostBroker.close(),
       log: (line) => console.log(line)
     })
