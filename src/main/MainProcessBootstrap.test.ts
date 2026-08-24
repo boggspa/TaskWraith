@@ -160,12 +160,35 @@ describe('main process bootstrap', () => {
       new URL('../../electron.vite.config.ts', import.meta.url),
       'utf8'
     )
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
+    )
 
     expect(entrySource.indexOf("import './devAppName'")).toBeLessThan(
       entrySource.indexOf("from 'electron'")
     )
+    expect(entrySource).toContain('createHostExternalPreparation')
+    expect(entrySource).toContain('migrateLegacyUserDataSync({')
+    expect(entrySource).toContain("migration.state === 'failed'")
+    expect(entrySource).toContain('new HostExternalSupervisor')
+    expect(entrySource).toContain('resolveHostExternalLaunch({')
+    expect(entrySource.indexOf('prepareMainProcess:')).toBeLessThan(
+      entrySource.indexOf("loadMainProcess: () => import('./index')")
+    )
+    expect(entrySource).toContain('cleanupPreparedMainProcess:')
+    expect(entrySource).toContain('const packaged = app.isPackaged')
+    expect(entrySource).toContain('resourcesPath: process.resourcesPath')
+    expect(entrySource).toContain('app.getAppPath() || process.cwd()')
+    expect(entrySource).toContain('process.env.npm_node_execpath')
+    expect(entrySource).toContain('process.env.NODE')
+    expect(entrySource).toContain("'tui-runtime'")
+    expect(entrySource).not.toContain('process.execPath')
+    expect(entrySource).not.toContain('ELECTRON_RUN_AS_NODE')
+    expect(entrySource).not.toMatch(/from ['"]\.\/index['"]|AppStore/)
     expect(entrySource).toContain("loadMainProcess: () => import('./index')")
     expect(viteConfigSource).toContain("index: resolve('src/main/bootstrap.ts')")
     expect(viteConfigSource).toContain("chunkFileNames: '[name]-[hash].js'")
+    expect(packageJson.scripts.dev).toContain('host:build')
+    expect(packageJson.scripts.dev).toContain('electron-vite dev')
   })
 })
