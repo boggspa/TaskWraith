@@ -1748,13 +1748,20 @@ export function buildEnsembleParticipantPromptProjection(
         ]
       : []),
     '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out is a reader TASK INTENT, not a permission demotion: any eligible target keeps its configured permission tier while the lane remains inspection/review-only. Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available. locked_writers remains feature-gated, requires explicit writeScopes for writer targets, and relies on workspace write locks. `ensemble_fanout_all` has no writeScopes surface and therefore refuses any selection that would create write intent; use it only for an all-reader sweep, and use `ensemble_fanout(mode="locked_writers", writeScopes=...)` for parallel mutations. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background auxiliary lanes may still be host-clamped read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
-    ...(['ultra', 'ultracode', 'ultratask'].includes(input.participant.reasoningEffort?.toLowerCase() || '')
-      ? [
-          '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-          '- Priority order: ensemble_fanout (Ensemble only) > delegate_wave (all chats) > delegate_to_subthread (fallback).',
-          '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
-          '- After ANY delegation call, immediately invoke ensemble_await with the returned IDs to block and retain turn ownership.'
-        ]
+    ...(input.participant.reasoningEffort?.trim().toLowerCase() === 'ultratask'
+      ? input.participant.provider === 'muse'
+        ? [
+            '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+            '- Use Muse native sub-agents: subagent_spawn for the delegated worker/reviewer, then subagent_wait and subagent_read_result to join and inspect the result.',
+            '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+            '- After ANY subagent_spawn call, immediately invoke subagent_wait, then subagent_read_result, to block and retain turn ownership.'
+          ]
+        : [
+            '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+            '- Priority order: ensemble_fanout (Ensemble only) > delegate_wave (all chats) > delegate_to_subthread (fallback).',
+            '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+            '- After ANY delegation call, immediately invoke ensemble_await with the returned IDs to block and retain turn ownership.'
+          ]
       : []),
     '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. ensemble_await also accepts subThreadIds and waveIds to block on delegated sub-threads and waves in both Ensemble and single-provider threads. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
     '- At most 3 fan-outs may be in flight at once. A fourth dispatch is refused until you ensemble_await one of the open ones and read it with ensemble_lane_result — so plan a fan-out and its join together rather than firing several and collecting them later. This bounds concurrent fan-out CALLS, never the number of participants in one: a single fan-out may carry the whole roster, so never drop seats to get past the refusal.',

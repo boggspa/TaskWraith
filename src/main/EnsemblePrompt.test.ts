@@ -303,7 +303,7 @@ describe('Ensemble prompt composition', () => {
     ])
   })
 
-  it('injects the ULTRA-TASK delegation block when a seat carries an ultra effort', () => {
+  it('injects the ULTRA-TASK delegation block when a seat carries the exact synthetic effort', () => {
     const ultraSeat: EnsembleParticipant = {
       ...ensemble.participants[1],
       reasoningEffort: 'ultraTask'
@@ -318,6 +318,49 @@ describe('Ensemble prompt composition', () => {
     })
     expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
     expect(prompt).toContain('Priority order: ensemble_fanout')
+  })
+
+  it.each(['ultra', 'ultracode', 'max'])(
+    'does not confer UltraTask delegation consent for the ordinary %s tier',
+    (reasoningEffort) => {
+      const seat: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        reasoningEffort
+      }
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config: { ...ensemble, participants: [ensemble.participants[0], seat] },
+        participant: seat,
+        currentPrompt: 'Please implement this.',
+        roundId: 'round-1',
+        chatContextTurns: 4
+      })
+
+      expect(prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    }
+  )
+
+  it('routes a Muse UltraTask seat through native sub-agents', () => {
+    const museSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      provider: 'muse',
+      model: 'muse-spark-1.2',
+      reasoningEffort: 'ultraTask'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], museSeat] },
+      participant: museSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain('subagent_spawn')
+    expect(prompt).toContain('subagent_wait')
+    expect(prompt).toContain('subagent_read_result')
+    expect(prompt).not.toContain('delegate_wave (all chats)')
   })
 
   it('builds bounded tagged context with roster and role instructions', () => {

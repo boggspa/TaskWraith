@@ -853,6 +853,70 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Priority order:')
   })
 
+  it.each([
+    { label: 'Ask/Plan posture', approvalMode: 'plan', isGlobalRun: false },
+    { label: 'global chat', approvalMode: 'default', isGlobalRun: true }
+  ])('keeps exact UltraTask enforcement active in $label', ({ approvalMode, isGlobalRun }) => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Run the independent review.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun,
+      approvalMode,
+      providerLabel: 'Codex',
+      reasoningEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
+  })
+
+  it.each(['ultra', 'ultracode', 'max'])(
+    'does not treat the ordinary %s reasoning tier as UltraTask consent',
+    (reasoningEffort) => {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'codex',
+        finalPrompt: 'Reason carefully.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Codex',
+        reasoningEffort
+      })
+
+      expect(result.contextualPrompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    }
+  )
+
+  it('uses Muse native sub-agents for exact UltraTask without claiming TaskWraith MCP', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'muse',
+      finalPrompt: 'Implement and review this change.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'plan',
+      providerLabel: 'Muse',
+      reasoningEffort: 'ultraTask',
+      taskWraithMcpAdvertised: false
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('subagent_spawn')
+    expect(result.contextualPrompt).toContain('subagent_wait')
+    expect(result.contextualPrompt).toContain('subagent_read_result')
+    expect(result.contextualPrompt).not.toContain('TaskWraith__delegate_wave')
+    expect(result.contextualPrompt).not.toContain('TaskWraith MCP server')
+  })
+
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
     const result = composeRunPrompt({
       instructionContext: null,

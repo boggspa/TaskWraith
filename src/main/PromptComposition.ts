@@ -515,6 +515,14 @@ function exampleDelegationProvider(provider: ProviderId): ProviderId {
 /** The four ULTRA-TASK enforcement lines, shared by the full runtime preamble
  * and the standalone note so their wording can never drift apart. */
 function buildUltraTaskLines(provider: ProviderId): string[] {
+  if (provider === 'muse') {
+    return [
+      'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+      'Use Muse native sub-agents: subagent_spawn for the delegated worker/reviewer, then subagent_wait and subagent_read_result to join and inspect the result.',
+      'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+      'After ANY subagent_spawn call, immediately invoke subagent_wait, then subagent_read_result, to block and retain turn ownership.'
+    ]
+  }
   const fanoutTool = taskWraithToolNameForProvider(provider, 'ensemble_fanout')
   const delegateWaveTool = taskWraithToolNameForProvider(provider, 'delegate_wave')
   const delegateTool = taskWraithToolNameForProvider(provider, 'delegate_to_subthread')
@@ -1314,12 +1322,13 @@ export interface ComposeRunPromptInput {
   instructionsDigestApplied?: string | null
   instructionsDigestProvider?: string | null
   /**
-   * Reasoning effort level for the run (e.g., 'ultra', 'ultracode', 'high', etc.).
-   * Used to detect UltraTask mode and inject delegation enforcement.
+   * Reasoning effort level for the run. Only the exact synthetic `ultraTask`
+   * token activates UltraTask delegation; native Ultra/Ultracode remain
+   * ordinary provider reasoning tiers.
    */
   reasoningEffort?: string | null
   /**
-   * Raw (un-normalized) reasoning tier preserved solely for UltraTask
+   * Raw (un-normalized) exact UltraTask token preserved solely for prompt
    * detection. Providers whose wire argv clamps effort to a narrow allowlist
    * (e.g. AntiGravity low/medium/high, which nulls the presentation-only
    * 'ultraTask' token) set this so prompt composition can still see UltraTask
@@ -1795,9 +1804,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // Cold Kimi ACP/Grok keep injecting; resumed Kimi ACP behaves like the
   // other history-bearing sessions.
   let runtimePreambleInjected = false
-  const isUltraTask = ['ultra', 'ultracode', 'ultratask'].includes(
-    (input.ultraTaskDetectionEffort ?? input.reasoningEffort)?.toLowerCase() || ''
-  )
+  const isUltraTask =
+    (input.ultraTaskDetectionEffort ?? input.reasoningEffort)?.trim().toLowerCase() === 'ultratask'
   if (
     shouldInjectTaskWraithRuntimePreamble({
       provider,
@@ -1833,12 +1841,13 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // rather than inside the top-of-preamble runtime note. This makes it:
   // - per-turn: not subject to the runtime preamble's once-per-session
   //   suppression on resumed Claude/Codex/Gemini sessions;
-  // - gate-free: Pi hard-codes taskWraithMcpAdvertised=false (its coordination
-  //   tools attach at launch) and Claude only advertises with a pinned receipt
-  //   or the Gemini bridge, yet UltraTask is a reasoning-tier contract;
+  // - posture-independent: exact UltraTask selection is the user's consent to
+  //   delegation, including Ask/Plan and global chats;
+  // - provider-aware: Muse uses its native subagent_spawn/join route while
+  //   broker-backed providers use the TaskWraith delegation tools;
   // - adjacent: recency at the moment the model chooses how to execute.
   // The runtime preamble itself no longer carries these lines (v11 -> v12).
-  if (isUltraTask && !isGlobalRun && approvalMode !== 'plan') {
+  if (isUltraTask) {
     const ultraTaskNote = buildUltraTaskStandaloneNote(provider)
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
     const markerIndex = contextualPrompt.lastIndexOf(currentRequestMarker)

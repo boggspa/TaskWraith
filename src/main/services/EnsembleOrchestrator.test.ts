@@ -649,6 +649,163 @@ function completeDispatchedRun(
 }
 
 describe('EnsembleOrchestrator', () => {
+  it.each([
+    ['pi', 'mistral/devstral-small', 'ultraTask'],
+    ['mistral', 'devstral-small', 'ultraTask'],
+    ['antigravity', 'gemini-3.6-flash-medium', 'high']
+  ] as const)(
+    'signs exact UltraTask consent and carries %s ceiling reasoning on serial dispatch',
+    async (provider, model, expectedReasoning) => {
+      const signRunPermissionPosture = vi.fn(() => 'signed-ultratask-posture')
+      const harness = makeHarness({ signRunPermissionPosture })
+      harness.chat.ensemble!.participants = [
+        {
+          id: `${provider}-ultratask`,
+          provider,
+          enabled: true,
+          role: 'Reviewer',
+          instructions: 'Review independently.',
+          order: 1,
+          model,
+          reasoningEffort: 'ultraTask',
+          permissionPresetId: 'read_only'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Run the independent review.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      const payload = harness.dispatched[0]
+      expect(payload.reasoningEffort).toBe(expectedReasoning)
+      expect(payload.approvalMode).toBe('plan')
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.effectivePermissionsSignature).toBe('signed-ultratask-posture')
+      expect(signRunPermissionPosture).toHaveBeenCalledWith(
+        'plan',
+        expect.objectContaining({ subThreadDelegationAutoAllowSource: 'ultratask' }),
+        expect.objectContaining({ ensembleParticipantId: `${provider}-ultratask` })
+      )
+    }
+  )
+
+  it('carries signed UltraTask consent and provider ceilings through fan-out dispatch', async () => {
+    const signRunPermissionPosture = vi.fn(() => 'signed-ultratask-fanout')
+    const harness = makeHarness({ signRunPermissionPosture })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'lead'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Coordinate.',
+        order: 1,
+        model: 'gpt-5.5',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'pi-reviewer',
+        provider: 'pi',
+        enabled: true,
+        role: 'pi-reviewer',
+        instructions: 'Review independently.',
+        order: 2,
+        model: 'mistral/devstral-small',
+        reasoningEffort: 'ultraTask',
+        // Keep round-start scout auto-fanout off; the explicit fanout below
+        // still carries each target's normal signed posture.
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'mistral-reviewer',
+        provider: 'mistral',
+        enabled: true,
+        role: 'mistral-reviewer',
+        instructions: 'Review independently.',
+        order: 3,
+        model: 'devstral-small',
+        reasoningEffort: 'ultraTask',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'antigravity-reviewer',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'antigravity-reviewer',
+        instructions: 'Review independently.',
+        order: 4,
+        model: 'gemini-3.6-flash-medium',
+        reasoningEffort: 'ultraTask',
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead then fan out review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['pi-reviewer', 'mistral-reviewer', 'antigravity-reviewer'],
+      prompt: 'Review this in parallel.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    const lanes = new Map(
+      harness.dispatched.slice(1).map((payload) => [payload.ensembleRun?.participantId, payload])
+    )
+    expect(lanes.get('pi-reviewer')?.reasoningEffort).toBe('ultraTask')
+    expect(lanes.get('mistral-reviewer')?.reasoningEffort).toBe('ultraTask')
+    expect(lanes.get('antigravity-reviewer')?.reasoningEffort).toBe('high')
+    for (const payload of lanes.values()) {
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.effectivePermissionsSignature).toBe('signed-ultratask-fanout')
+    }
+  })
+
+  it('rotates a wave-less resumable participant before an exact UltraTask dispatch', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'claude-reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review independently.',
+        order: 1,
+        model: 'claude-sonnet-5',
+        reasoningEffort: 'ultraTask',
+        permissionPresetId: 'read_only',
+        linkedProviderSessionId: 'claude-pre-wave',
+        taskWraithMcpProfileReceipt: {
+          schemaVersion: 1,
+          profileId: 'taskwraith-gateway-v12',
+          provider: 'claude',
+          providerSessionId: 'claude-pre-wave',
+          pinnedAt: '2026-08-01T10:00:00.000Z'
+        }
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the delegated review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(harness.dispatched[0].providerSessionId).toBeNull()
+    expect(harness.dispatched[0].prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(harness.dispatched[0].prompt).toContain('delegate_wave (all chats)')
+  })
+
   it('recovers a Cursor turn after a rejected yield and missing terminal so rotation advances', async () => {
     vi.useFakeTimers()
     try {

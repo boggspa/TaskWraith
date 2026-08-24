@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
+import {
+  TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+} from '../mcp/McpSessionProfileFence'
 import {
   ComposerService,
   type ComposerRunPayload,
@@ -551,6 +554,177 @@ describe('ComposerService', () => {
     } finally {
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
+  })
+
+  it.each([
+    ['codex', 'codexReasoningEffort'],
+    ['claude', 'claudeReasoningEffort'],
+    ['kimi', 'kimiReasoningEffort'],
+    ['grok', 'grokReasoningEffort'],
+    ['cursor', 'cursorReasoningEffort'],
+    ['ollama', 'ollamaReasoningEffort'],
+    ['pi', 'piReasoningEffort'],
+    ['mistral', 'mistralReasoningEffort'],
+    ['muse', 'museReasoningEffort']
+  ] as const)(
+    'stamps exact persisted UltraTask consent for %s under an Ask posture',
+    async (provider, metadataKey) => {
+      const payload = await compose(
+        {
+          provider,
+          providerMetadata: { [metadataKey]: 'ultraTask' }
+        },
+        { approvalMode: 'plan', workflowMode: 'normal' }
+      )
+
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+      if (provider === 'pi' || provider === 'mistral') {
+        expect(payload.reasoningEffort).toBe('ultraTask')
+      }
+      if (provider === 'muse') {
+        expect(payload.taskWraithMcpAdvertised).toBe(false)
+        expect(payload.prompt).toContain('subagent_spawn')
+        expect(payload.prompt).not.toContain('TaskWraith__delegate_wave')
+      }
+    }
+  )
+
+  it('stamps AntiGravity consent only from its persisted current-provider marker', async () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const payload = await compose(
+        {
+          provider: 'antigravity',
+          providerMetadata: {
+            antigravityUltraTaskSelected: true,
+            antigravityReasoningEffort: 'high'
+          }
+        },
+        { approvalMode: 'plan', workflowMode: 'normal' }
+      )
+
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.reasoningEffort).toBe('high')
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('never mints consent from stale foreign-provider metadata or raw input', async () => {
+    const staleForeign = await compose(
+      {
+        provider: 'codex',
+        providerMetadata: {
+          codexReasoningEffort: 'medium',
+          claudeReasoningEffort: 'ultraTask',
+          museReasoningEffort: 'ultraTask'
+        }
+      },
+      {}
+    )
+    expect(staleForeign.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+    expect(staleForeign.prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+
+    const rawInputOnly = await compose(
+      {
+        provider: 'codex',
+        providerMetadata: { codexReasoningEffort: 'medium' }
+      },
+      { codexReasoningEffort: 'ultraTask' }
+    )
+    expect(rawInputOnly.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(rawInputOnly.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+  })
+
+  it('never mints consent from an untrusted chatSnapshot', async () => {
+    const storedChat = makeChat({
+      provider: 'codex',
+      providerMetadata: { codexReasoningEffort: 'medium' }
+    })
+    const { deps } = makeDeps(storedChat)
+    const service = new ComposerService(deps)
+    const payload = await service.composeRun({
+      chatId: storedChat.appChatId,
+      provider: 'codex',
+      workspace: storedChat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'gpt-5.5',
+      approvalMode: 'default',
+      chatSnapshot: {
+        ...storedChat,
+        providerMetadata: { codexReasoningEffort: 'ultraTask' }
+      }
+    })
+
+    expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+  })
+
+  it.each(['taskwraith-core-v1', 'taskwraith-gateway-v12'] as const)(
+    'rotates an exact UltraTask session pinned to wave-less profile %s',
+    async (profileId) => {
+      const payload = await compose(
+        {
+          provider: 'claude',
+          linkedProviderSessionId: 'claude-session-pre-wave',
+          providerMetadata: { claudeReasoningEffort: 'ultraTask' },
+          taskWraithMcpProfileReceipt: {
+            schemaVersion: 1,
+            profileId,
+            provider: 'claude',
+            providerSessionId: 'claude-session-pre-wave',
+            pinnedAt: '2026-08-01T10:00:00.000Z'
+          }
+        },
+        {},
+        { geminiMcpBridgeEnabled: true }
+      )
+
+      expect(payload.providerSessionId).toBeNull()
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.prompt).toContain('mcp__TaskWraith__delegate_wave')
+    }
+  )
+
+  it('retains an exact UltraTask session already pinned to a wave-capable profile', async () => {
+    const payload = await compose(
+      {
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-session-v13',
+        providerMetadata: { claudeReasoningEffort: 'ultraTask' },
+        taskWraithMcpProfileReceipt: {
+          schemaVersion: 1,
+          profileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID,
+          provider: 'claude',
+          providerSessionId: 'claude-session-v13',
+          pinnedAt: '2026-08-01T10:00:00.000Z'
+        }
+      },
+      {},
+      { geminiMcpBridgeEnabled: true }
+    )
+
+    expect(payload.providerSessionId).toBe('claude-session-v13')
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)
+  })
+
+  it('keeps exact UltraTask consent and enforcement in a global chat', async () => {
+    const payload = await compose(
+      {
+        provider: 'codex',
+        scope: 'global',
+        workspaceId: undefined,
+        workspacePath: undefined,
+        providerMetadata: { codexReasoningEffort: 'ultraTask' }
+      },
+      { scope: 'global', workspace: undefined }
+    )
+
+    expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+    expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(payload.prompt).toContain('TaskWraith__delegate_wave')
   })
 
   it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', async () => {

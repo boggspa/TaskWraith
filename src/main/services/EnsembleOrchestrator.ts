@@ -14,6 +14,12 @@ import {
 } from '../../shared/ensembleSeatFailureClear'
 import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import {
+  isExplicitUltraTaskSelection,
+  withUltraTaskDelegationAutoAllow
+} from '../UltraTaskDelegationConsent'
+import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
+import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
 import { ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE } from '../EnsembleYieldToolResult'
 import { resolveRuntimeProfileIdForScope } from '../RuntimeProfileResolution'
 import {
@@ -3761,6 +3767,71 @@ interface ActiveRoundRuntime {
   readyWakeups?: EnsembleWakeupRecord[]
   wakeWaiter?: () => void
   resumeWakeup?: EnsembleWakeupRecord
+}
+
+function ensembleParticipantReasoningEffortForRun(
+  participant: EnsembleParticipant
+): string | undefined {
+  const effort = participant.reasoningEffort?.trim()
+  if (!effort) return undefined
+  if (participant.provider === 'antigravity') {
+    // AntiGravity has no synthetic UltraTask wire token. Its solo picker maps
+    // the selection onto the family's High variant; ensemble seats need the
+    // same ceiling when an older/add-participant record still carries only the
+    // synthetic reasoning marker.
+    return isExplicitUltraTaskSelection({
+      provider: participant.provider,
+      reasoningEffort: effort
+    })
+      ? 'high'
+      : effort
+  }
+  if (
+    participant.provider === 'codex' ||
+    participant.provider === 'kimi' ||
+    participant.provider === 'muse' ||
+    participant.provider === 'ollama' ||
+    participant.provider === 'mistral' ||
+    participant.provider === 'pi' ||
+    (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
+    (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
+  ) {
+    return effort
+  }
+  return undefined
+}
+
+function ensembleProviderSessionForUltraTask(
+  participant: EnsembleParticipant,
+  providerSessionId: string | null
+): string | null {
+  if (
+    !providerSessionId ||
+    !isExplicitUltraTaskSelection({
+      provider: participant.provider,
+      reasoningEffort: participant.reasoningEffort
+    }) ||
+    participant.provider === 'muse' ||
+    participant.provider === 'pi' ||
+    participant.provider === 'ollama'
+  ) {
+    return providerSessionId
+  }
+  const receipt = isTaskWraithMcpProfileReceiptForSession(participant.taskWraithMcpProfileReceipt, {
+    provider: participant.provider,
+    providerSessionId
+  })
+    ? participant.taskWraithMcpProfileReceipt
+    : null
+  if (receipt) {
+    return taskWraithMcpAdvertisedToolNamesForProfile(receipt.profileId).includes('delegate_wave')
+      ? providerSessionId
+      : null
+  }
+  // Only Claude treats an unreceipted resume as a frozen legacy full-v1
+  // catalogue. Other resumable transports reattach the current broker surface
+  // per turn and therefore need no context-dropping rotation without a receipt.
+  return participant.provider === 'claude' ? null : providerSessionId
 }
 
 export class EnsembleOrchestrator {
@@ -16670,6 +16741,17 @@ export class EnsembleOrchestrator {
         participantExternalPathGrants,
         { ensembleLaneId: run.laneId }
       )
+      const requestedProviderSessionId =
+        run.providerSessionId || participant.linkedProviderSessionId || null
+      const providerSessionId = ensembleProviderSessionForUltraTask(
+        participant,
+        requestedProviderSessionId
+      )
+      if (requestedProviderSessionId && !providerSessionId) {
+        // Do not let completion persist the pre-v13 handle if dispatch fails
+        // before the provider reports the replacement fresh-session id.
+        run.providerSessionId = undefined
+      }
       // 1.0.4-AF — merge the round-scoped `selfReflective` flag (set
       // by `/discuss` at startRound) into the config so the prompt
       // builder sees the inverted deictic rule for this round only.
@@ -16712,14 +16794,12 @@ export class EnsembleOrchestrator {
       const slimTurn =
         ensembleSlimResumeEnabled() &&
         SLIM_RESUME_PROVIDERS.has(participant.provider) &&
-        Boolean(run.providerSessionId || participant.linkedProviderSessionId) &&
+        Boolean(providerSessionId) &&
         (participant.provider !== 'codex' ||
-          isCodexAppServerThreadId(run.providerSessionId || participant.linkedProviderSessionId)) &&
+          isCodexAppServerThreadId(providerSessionId)) &&
         (participant.provider !== 'kimi' ||
           (isProductionKimiAcpSeat(participant) &&
-            String(run.providerSessionId || participant.linkedProviderSessionId).startsWith(
-              'session_'
-            ))) &&
+            String(providerSessionId).startsWith('session_'))) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
       // Blackboard delta bookkeeping: same selection the prompt builder makes
@@ -16815,8 +16895,6 @@ export class EnsembleOrchestrator {
             runtime.discordContextSnapshots
           )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
         : undefined
-      const providerSessionId =
-        run.providerSessionId || participant.linkedProviderSessionId || null
       const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
         slimTurn,
         promptAttribution: buildEnsemblePromptAttribution({
@@ -16845,15 +16923,7 @@ export class EnsembleOrchestrator {
       // matches the participant's provider so adapters don't see
       // cross-provider noise. Falls back silently when a participant
       // pre-dates the setup-sheet picker rework.
-      const sharedReasoning =
-        participant.provider === 'codex' ||
-        participant.provider === 'kimi' ||
-        participant.provider === 'muse' ||
-        participant.provider === 'ollama' ||
-        (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
-        (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
-          ? participant.reasoningEffort
-          : undefined
+      const sharedReasoning = ensembleParticipantReasoningEffortForRun(participant)
       const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
@@ -19341,7 +19411,10 @@ export class EnsembleOrchestrator {
       const promptWithDiscordContext = `${shellRoutingPrompt}${fileRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
-      const providerSessionId = participant.linkedProviderSessionId || null
+      const providerSessionId = ensembleProviderSessionForUltraTask(
+        participant,
+        participant.linkedProviderSessionId || null
+      )
       const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
         slimTurn: false,
         promptAttribution: buildEnsemblePromptAttribution({
@@ -19357,15 +19430,7 @@ export class EnsembleOrchestrator {
       // Mirror the serial path: thread per-participant reasoning/thinking into
       // the fan-out payload too, else a concurrent round silently runs every
       // participant at provider-default reasoning regardless of its config.
-      const sharedReasoning =
-        participant.provider === 'codex' ||
-        participant.provider === 'kimi' ||
-        participant.provider === 'muse' ||
-        participant.provider === 'ollama' ||
-        (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
-        (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
-          ? participant.reasoningEffort
-          : undefined
+      const sharedReasoning = ensembleParticipantReasoningEffortForRun(participant)
       const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
@@ -22742,23 +22807,29 @@ export class EnsembleOrchestrator {
         round?.unattendedElevationLevel && !previewRiskModel
           ? unattendedElevationPresetId(round.unattendedElevationLevel)
           : undefined
-      return resolveEffectiveRunPermissions({
-        provider: participant.provider,
-        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
-        model: participant.model,
-        settings: this.deps.getSettings(),
-        // The unattended fallback is Plan. Standard-service asks remain
-        // promptable and fail closed through approval timeout.
-        presetId: elevatedPreset || 'plan',
-        // Force-deny network egress in EVERY unattended posture (Plan carries
-        // networkAccess 'allow' for attended web reads, and workspace_write /
-        // default fall to the settings default 'allow').
-        overrides: {
-          networkAccess: 'deny'
+      return withUltraTaskDelegationAutoAllow(
+        resolveEffectiveRunPermissions({
+          provider: participant.provider,
+          workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+          model: participant.model,
+          settings: this.deps.getSettings(),
+          // The unattended fallback is Plan. Standard-service asks remain
+          // promptable and fail closed through approval timeout.
+          presetId: elevatedPreset || 'plan',
+          // Force-deny network egress in EVERY unattended posture (Plan carries
+          // networkAccess 'allow' for attended web reads, and workspace_write /
+          // default fall to the settings default 'allow').
+          overrides: {
+            networkAccess: 'deny'
+          }
+          // Deliberately drop explicitExternalPathGrants either way: an unattended
+          // round must not widen file access via composer-supplied grants.
+        }),
+        {
+          provider: participant.provider,
+          reasoningEffort: participant.reasoningEffort
         }
-        // Deliberately drop explicitExternalPathGrants either way: an unattended
-        // round must not widen file access via composer-supplied grants.
-      })
+      )
     }
     const requestedPresetId = options.presetId || participant.permissionPresetId
     const trustedSessionGranted =
@@ -22776,21 +22847,27 @@ export class EnsembleOrchestrator {
       requestedPresetId === 'full_access' && !trustedSessionGranted
         ? 'workspace_write'
         : requestedPresetId
-    return resolveEffectiveRunPermissions({
-      provider: participant.provider,
-      workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
-      model: participant.model,
-      settings: this.deps.getSettings(),
-      presetId,
-      overrides: options.ignoreOverrides ? null : participant.permissionOverrides || null,
-      // 1.0.4-AT4 — composer-level grants merge in here. The
-      // resolver dedupes across (`explicit` ∪ `overrides.externalPathGrants`)
-      // and provider-filters before returning, so each
-      // participant only sees grants tagged for its own provider.
-      ...(explicitExternalPathGrants && explicitExternalPathGrants.length > 0
-        ? { explicitExternalPathGrants }
-        : {})
-    })
+    return withUltraTaskDelegationAutoAllow(
+      resolveEffectiveRunPermissions({
+        provider: participant.provider,
+        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        model: participant.model,
+        settings: this.deps.getSettings(),
+        presetId,
+        overrides: options.ignoreOverrides ? null : participant.permissionOverrides || null,
+        // 1.0.4-AT4 — composer-level grants merge in here. The
+        // resolver dedupes across (`explicit` ∪ `overrides.externalPathGrants`)
+        // and provider-filters before returning, so each
+        // participant only sees grants tagged for its own provider.
+        ...(explicitExternalPathGrants && explicitExternalPathGrants.length > 0
+          ? { explicitExternalPathGrants }
+          : {})
+      }),
+      {
+        provider: participant.provider,
+        reasoningEffort: participant.reasoningEffort
+      }
+    )
   }
 }
 
