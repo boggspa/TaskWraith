@@ -170,7 +170,11 @@ export interface EphemeralFleetLiveWave {
  * the die-on-return archive landed, or dispatch failed and the child will
  * never run.
  */
-export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView): boolean {
+export function isEphemeralFleetChildSettled(
+  child: EphemeralFleetWaveChildView,
+  parentIsTerminalized?: boolean
+): boolean {
+  if (parentIsTerminalized) return true
   return (
     child.archived === true ||
     typeof child.delegationContext?.resultReturnedAt === 'number' ||
@@ -197,6 +201,7 @@ export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView)
 export function findLiveEphemeralFleetWave(input: {
   children: ReadonlyArray<EphemeralFleetWaveChildView>
   nowMs: number
+  parentIsTerminalized?: boolean
 }): EphemeralFleetLiveWave | null {
   const waves = new Map<string, { total: number; settled: number; heldOpen: boolean }>()
   for (const child of input.children) {
@@ -206,7 +211,7 @@ export function findLiveEphemeralFleetWave(input: {
     if (!waveId) continue
     const wave = waves.get(waveId) || { total: 0, settled: 0, heldOpen: false }
     wave.total += 1
-    if (isEphemeralFleetChildSettled(child)) {
+    if (isEphemeralFleetChildSettled(child, input.parentIsTerminalized)) {
       wave.settled += 1
     } else {
       const deadlineMs = Date.parse(context.joinPolicy?.deadlineAt || '')

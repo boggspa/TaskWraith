@@ -63,6 +63,7 @@ export interface BackgroundSubThreadTranscriptState {
   providerSessionId?: string
   stats?: unknown
   status: 'running' | 'success' | 'failed'
+  lastActivityAt?: number
   errorMessage?: string
   flushTimer?: ReturnType<typeof setTimeout>
   flushedOnce?: boolean

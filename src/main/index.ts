@@ -9456,13 +9456,14 @@ function refreshFleetWaveDoorbell(parentChatId: string): void {
     // to notify in the first place.
     if (!parent?.ensemble) return
     const nowMs = Date.now()
+    const parentLive = parent?.appRunId ? isChatRunLive(parent.appRunId) : false
     const byWave = new Map<string, { total: number; settled: number }>()
     for (const child of AppStore.getChildChats(parentChatId)) {
       const groupId = child.delegationContext?.joinPolicy?.groupId?.trim()
       if (!groupId) continue
       const counts = byWave.get(groupId) ?? { total: 0, settled: 0 }
       counts.total += 1
-      if (isEphemeralFleetChildSettled(child)) counts.settled += 1
+      if (isEphemeralFleetChildSettled(child, !parentLive)) counts.settled += 1
       byWave.set(groupId, counts)
     }
     const nextValue = buildFleetDoorbellValue(
@@ -11206,6 +11207,7 @@ function seedAgentDrivenSubThreadTranscript(args: {
     promptMessageId,
     assistantMessageId,
     startedAt,
+    lastActivityAt: Date.now(),
     content: '',
     status: 'running',
     ...(messageMutationIndex ? { messageMutationIndex } : {})
@@ -12684,6 +12686,7 @@ function injectTrustedMediaRefs(
 
   const subThreadState = backgroundSubThreadTranscripts.get(appRunId)
   if (subThreadState) {
+    subThreadState.lastActivityAt = Date.now()
     subThreadState.mediaRefs = mergeTranscriptMediaRefs(subThreadState.mediaRefs, refs)
     if (!subThreadState.flushedOnce) flushBackgroundSubThreadTranscript(appRunId)
     else scheduleBackgroundSubThreadFlush(appRunId)
@@ -13043,6 +13046,8 @@ function materializeBackgroundSubThreadProviderOutput(
   const state = backgroundSubThreadTranscripts.get(runId)
   if (!state || state.provider !== provider) return
   if (routed.appChatId && routed.appChatId !== state.chatId) return
+
+  state.lastActivityAt = Date.now()
 
   const providerSessionId = extractProviderSessionId(payload)
   if (providerSessionId) {
@@ -40486,11 +40491,15 @@ async function executeGeminiMcpTool(
         // One live ephemeral fleet per parent — derived from durable child
         // records at call time, never a counter (restart-safe; a wave whose
         // join deadline has passed no longer blocks, the reaper fails it).
-        findLiveEphemeralFleet: () =>
-          findLiveEphemeralFleetWave({
+        findLiveEphemeralFleet: () => {
+          const parentChat = AppStore.getChat(parentChatId)
+          const parentLive = parentChat?.appRunId ? isChatRunLive(parentChat.appRunId) : false
+          return findLiveEphemeralFleetWave({
             children: AppStore.getChildChats(parentChatId),
-            nowMs: Date.now()
-          }),
+            nowMs: Date.now(),
+            parentIsTerminalized: !parentLive
+          })
+        },
         budgetCap: delegationApprovalBudget.cap(),
         subThreadDelegationPolicy:
           context.effectivePermissions?.agenticServices?.subThreadDelegation,
