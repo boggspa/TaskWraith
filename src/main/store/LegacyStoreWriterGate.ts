@@ -145,6 +145,11 @@ export class LegacyStoreWriterGate {
     return (this.context.getStore() ?? []).some((token) => this.active.has(token))
   }
 
+  /** Dynamic filesystem authority for lower stores: open globally, or one already-admitted drain. */
+  allowsCurrentWrite(): boolean {
+    return this.stateValue === 'open' || this.hasActiveAdmissionContext()
+  }
+
   beginDrain(): boolean {
     if (this.stateValue !== 'open') return false
     this.stateValue = 'draining'

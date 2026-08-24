@@ -130,6 +130,27 @@ describe('LegacyStoreWriterGate', () => {
     expect(gate.snapshot().inFlight).toBe(0)
   })
 
+  it('allows open writes and admitted drain work but denies every unscoped closed state', () => {
+    const gate = createLegacyStoreWriterGate()
+    expect(gate.allowsCurrentWrite()).toBe(true)
+    const lease = gate.admit({ operation: 'save', pathFamily: 'chats' })!
+    lease.run(() => {
+      expect(gate.beginDrain()).toBe(true)
+      expect(gate.allowsCurrentWrite()).toBe(true)
+    })
+    expect(gate.allowsCurrentWrite()).toBe(false)
+    lease.release()
+    expect(gate.rollbackDrain()).toBe(true)
+    expect(gate.allowsCurrentWrite()).toBe(true)
+    expect(gate.beginDrain()).toBe(true)
+    expect(gate.markHostOwned({ hostId: 'host-1', generation: 1, cutoverId: 'cutover-1' })).toBe(
+      true
+    )
+    expect(gate.allowsCurrentWrite()).toBe(false)
+    gate.close()
+    expect(gate.allowsCurrentWrite()).toBe(false)
+  })
+
   it('does not leak an admission when runAdmitted receives an invalid callback', () => {
     const gate = createLegacyStoreWriterGate()
     expect(() =>
