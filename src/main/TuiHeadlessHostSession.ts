@@ -6,8 +6,12 @@
  * bounded parent/client/run lifetime decision.
  */
 
-export const TUI_HEADLESS_HOST_ARG = '--taskwraith-headless-host'
-export const TUI_HEADLESS_HOST_PARENT_ARG = '--taskwraith-headless-parent='
+import {
+  TUI_HEADLESS_HOST_ARG,
+  TUI_HEADLESS_HOST_PARENT_ARG
+} from '../host-shared/TuiHeadlessHostLaunch'
+
+export { TUI_HEADLESS_HOST_ARG, TUI_HEADLESS_HOST_PARENT_ARG } from '../host-shared/TuiHeadlessHostLaunch'
 
 const DEFAULT_PARENT_POLL_MS = 1_000
 const DEFAULT_ORPHAN_GRACE_MS = 3_000

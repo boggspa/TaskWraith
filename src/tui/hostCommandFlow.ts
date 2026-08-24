@@ -6,7 +6,7 @@
  * status, and may answer the Host ask via approval.decide.
  */
 
-import { mintHostCommandIdentity } from '../main/host/HostCommandIdentity'
+import { mintHostCommandIdentity } from '../host-shared/HostCommandIdentity'
 import {
   HOST_PROTOCOL_VERSION,
   type HostActorIdentity,

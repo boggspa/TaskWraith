@@ -4,7 +4,7 @@ import type { ReadStream, WriteStream } from 'node:tty'
 import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError
-} from '../main/host/HostProjectionClient'
+} from '../host-client/HostProjectionClient'
 import {
   HOST_QUESTION_ANSWER_MAX_CHARS,
   type HostDeltasFrame,

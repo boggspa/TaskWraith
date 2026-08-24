@@ -70,6 +70,21 @@ describe('packaged TUI disposable macOS host launch', () => {
     expect(roundTrip).not.toContain('app = spawn(')
   })
 
+  it('requires the reusable Host client/shared payload and rejects Electron-main output', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('function assertTuiPayloadBoundary')
+    expect(source).toContain("['host-client', 'HostProjectionClient.js']")
+    expect(source).toContain("['host-shared', 'HostCommandIdentity.js']")
+    expect(source).toContain("['host-shared', 'TuiHeadlessHostLaunch.js']")
+    expect(source).toContain('must not contain an emitted main subtree')
+    expect(source).toContain('must not resolve a production require/import into main')
+    expect(source).toContain('must clear generated out/tui before compiling')
+  })
+
   it('verifies the exact windowless smoke command on Windows before cleanup', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),

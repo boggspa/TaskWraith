@@ -80,7 +80,7 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run verify:kimi-runtime-qualifications && npm run verify:cursor-runtime-qualifications && npm run verify:identity-handoff && npm run typecheck && electron-vite build && npm run tui:build",
-    "tui:build": "tsc -p src/tui/tsconfig.json && node -e \"require('node:fs').chmodSync('out/tui/tui/cli.js', 0o755)\"",
+    "tui:build": "node scripts/clean-tui-output.cjs && tsc -p src/tui/tsconfig.json && node -e \"require('node:fs').chmodSync('out/tui/tui/cli.js', 0o755)\"",
     "tui": "npm run tui:build --silent && node out/tui/tui/cli.js --dev",
     "tui:demo": "npm run tui:build --silent && node out/tui/tui/cli.js --demo",
     "tui:snapshot": "npm run tui:build --silent && node out/tui/tui/cli.js --demo --snapshot --width=80 --height=24",

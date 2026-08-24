@@ -61,7 +61,9 @@ Replay validates the schema, protocol/projection versions, size ceiling and
 integrity digest before rendering. It is detached: replay cannot connect to or
 mutate live Host state.
 
-Build only the sidecar with `npm run tui:build`. The compiled entry point is
+Build only the sidecar with `npm run tui:build`. It first clears the exact
+generated `out/tui` tree, preventing obsolete Electron-main modules from a
+previous compile from reaching the package. The compiled entry point is
 `out/tui/tui/cli.js`, exposed as both `taskwraith` and `tw` when the package is
 linked or installed. `NO_COLOR=1` and `--no-animation` provide static
 fallbacks.

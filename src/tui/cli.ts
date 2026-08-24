@@ -2,12 +2,12 @@
 
 import { randomUUID } from 'node:crypto'
 import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
-import { HostProjectionClient } from '../main/host/HostProjectionClient'
+import { HostProjectionClient } from '../host-client/HostProjectionClient'
 import {
   TW_MISSION_MAX_BUNDLE_BYTES,
   importTwMissionBundleBytes,
   type TwMissionManifest
-} from '../main/host/twmission'
+} from '../host-shared/twmission'
 import type { HostSnapshot } from '../shared/hostProtocol'
 import { Ansi } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'

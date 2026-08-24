@@ -181,6 +181,16 @@ function validateSourceLayout() {
   if (!pkg.scripts?.['tui:build'] || !pkg.scripts?.['smoke:tui-package']) {
     fail('package.json must define tui:build and smoke:tui-package scripts')
   }
+  const tuiBuild = pkg.scripts['tui:build']
+  const cleanTuiOutputCommand = 'node scripts/clean-tui-output.cjs'
+  const tuiCompilerCommand = 'tsc -p src/tui/tsconfig.json'
+  if (
+    !tuiBuild.includes(cleanTuiOutputCommand) ||
+    !tuiBuild.includes(tuiCompilerCommand) ||
+    tuiBuild.indexOf(cleanTuiOutputCommand) > tuiBuild.indexOf(tuiCompilerCommand)
+  ) {
+    fail('package.json#scripts.tui:build must clear generated out/tui before compiling')
+  }
   if (!pkg.scripts?.['prepare:tui-runtime'] || !pkg.scripts?.['prepare:tui-runtime:mac']) {
     fail('package.json must define prepare:tui-runtime and prepare:tui-runtime:mac')
   }
@@ -197,23 +207,17 @@ function validateSourceLayout() {
     path.join(repoRoot, 'scripts/prepare-tui-runtime.cjs'),
     'scripts/prepare-tui-runtime.cjs'
   )
+  assertFile(path.join(repoRoot, 'scripts/clean-tui-output.cjs'), 'scripts/clean-tui-output.cjs')
   assertFile(path.join(repoRoot, 'build/tui-runtime/README.md'), 'build/tui-runtime/README.md')
 
   // Compiled payload is required before packaging; warn-only if missing so a
   // pure-layout check can still run on a clean tree after tui:build.
-  const cliJs = path.join(repoRoot, 'out/tui/tui/cli.js')
+  const compiledTuiRoot = path.join(repoRoot, 'out/tui')
+  const cliJs = path.join(compiledTuiRoot, 'tui', 'cli.js')
   if (!fs.existsSync(cliJs)) {
     console.log('note: out/tui/tui/cli.js missing — run npm run tui:build before electron-builder')
   } else {
-    assertFile(cliJs, 'compiled TUI entry')
-    assertFile(
-      path.join(repoRoot, 'out/tui/tui/hostProcessManager.js'),
-      'compiled TUI Host process manager'
-    )
-    assertFile(
-      path.join(repoRoot, 'out/tui/main/TuiHeadlessHostSession.js'),
-      'compiled TUI headless Host contract'
-    )
+    assertTuiPayloadBoundary(compiledTuiRoot, 'compiled TUI payload')
   }
 
   // Runtime binaries are prepared on demand; warn-only when absent at layout time.
@@ -235,16 +239,9 @@ async function validatePackagedTui(packageRoot) {
   assertDir(resourcesDir, 'Electron resources directory')
   assertFile(appAsarPath, 'packaged app.asar')
 
-  const cliJs = path.join(resourcesDir, 'tui', 'tui', 'cli.js')
-  assertFile(cliJs, 'packaged TUI entry (outside app.asar)')
-  assertFile(
-    path.join(resourcesDir, 'tui', 'tui', 'hostProcessManager.js'),
-    'packaged TUI Host process manager'
-  )
-  assertFile(
-    path.join(resourcesDir, 'tui', 'main', 'TuiHeadlessHostSession.js'),
-    'packaged TUI headless Host contract'
-  )
+  const packagedTuiRoot = path.join(resourcesDir, 'tui')
+  const cliJs = path.join(packagedTuiRoot, 'tui', 'cli.js')
+  assertTuiPayloadBoundary(packagedTuiRoot, 'packaged TUI payload')
 
   // Hard invariant: the TUI must not only live inside the asar.
   if (!cliJs.startsWith(resourcesDir) || cliJs.includes(`${path.sep}app.asar${path.sep}`)) {
@@ -1186,6 +1183,78 @@ function assertExecutable(filePath, label) {
 function assertDir(dirPath, label) {
   if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
     fail(`Missing ${label}: ${dirPath}`)
+  }
+}
+
+function isPathWithin(parentPath, candidatePath) {
+  const relation = path.relative(parentPath, candidatePath)
+  return (
+    relation === '' ||
+    (relation !== '..' && !relation.startsWith(`..${path.sep}`) && !path.isAbsolute(relation))
+  )
+}
+
+function compiledModuleSpecifiers(source) {
+  const specifiers = []
+  const pattern =
+    /(?:\b(?:require|import)\s*\(\s*(['"])([^'"]+)\1\s*\)|\b(?:from|import)\s+(['"])([^'"]+)\3)/g
+  let match
+  while ((match = pattern.exec(source))) {
+    specifiers.push(match[2] || match[4])
+  }
+  return specifiers
+}
+
+function compiledJavaScriptFiles(root) {
+  const files = []
+  const walk = (directory) => {
+    for (const entry of safeReadDir(directory)) {
+      const entryPath = path.join(directory, entry.name)
+      if (entry.isDirectory()) walk(entryPath)
+      else if (entry.isFile() && entry.name.endsWith('.js')) files.push(entryPath)
+    }
+  }
+  walk(root)
+  return files
+}
+
+/**
+ * The standalone `tw` payload may contain shared protocol and Host-client
+ * code, but never Electron-main modules. A stale `main/**` directory would be
+ * copied by electron-builder's `out/tui` extraResource filter even if no live
+ * TUI source imports it, so inspect both the tree and emitted JS specifiers.
+ */
+function assertTuiPayloadBoundary(tuiRoot, label) {
+  assertDir(tuiRoot, label)
+  const mainRoot = path.join(tuiRoot, 'main')
+  if (fs.existsSync(mainRoot)) {
+    fail(`${label} must not contain an emitted main subtree: ${mainRoot}`)
+  }
+
+  for (const [segments, requiredLabel] of [
+    [['tui', 'cli.js'], 'TUI entry'],
+    [['tui', 'hostProcessManager.js'], 'TUI Host process manager'],
+    [['host-client', 'HostProjectionClient.js'], 'Host projection client'],
+    [['host-shared', 'HostCommandIdentity.js'], 'Host command identity'],
+    [['host-shared', 'InstanceLaunchPosture.js'], 'Host launch posture'],
+    [['host-shared', 'TuiHeadlessHostLaunch.js'], 'TUI headless launch contract'],
+    [['host-shared', 'twmission', 'index.js'], 'TwMission codec surface']
+  ]) {
+    assertFile(path.join(tuiRoot, ...segments), `${label} ${requiredLabel}`)
+  }
+
+  for (const filePath of compiledJavaScriptFiles(tuiRoot)) {
+    const source = fs.readFileSync(filePath, 'utf8')
+    for (const specifier of compiledModuleSpecifiers(source)) {
+      if (!specifier.startsWith('.')) continue
+      const resolved = path.resolve(path.dirname(filePath), specifier)
+      if (isPathWithin(mainRoot, resolved)) {
+        fail(
+          `${label} must not resolve a production require/import into main: ` +
+            `${path.relative(tuiRoot, filePath)} -> ${specifier}`
+        )
+      }
+    }
   }
 }
 

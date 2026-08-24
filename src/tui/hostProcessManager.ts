@@ -8,13 +8,13 @@ import { posix, resolve, win32, type PlatformPath } from 'node:path'
 import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError
-} from '../main/host/HostProjectionClient'
+} from '../host-client/HostProjectionClient'
 import {
   PACKAGE_SMOKE_ARG,
   PACKAGE_SMOKE_USER_DATA_ARG,
   resolveInstanceLaunchPosture
-} from '../main/InstanceLaunchPosture'
-import { TUI_HEADLESS_HOST_ARG, TUI_HEADLESS_HOST_PARENT_ARG } from '../main/TuiHeadlessHostSession'
+} from '../host-shared/InstanceLaunchPosture'
+import { TUI_HEADLESS_HOST_ARG, TUI_HEADLESS_HOST_PARENT_ARG } from '../host-shared/TuiHeadlessHostLaunch'
 
 const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
