@@ -137,6 +137,8 @@ describe('production Host CLI subprocess', () => {
     })
     let client: HostProjectionClient | null = null
     let reconnected: HostProjectionClient | null = null
+    let desktopPeer: HostProjectionClient | null = null
+    let tuiPeer: HostProjectionClient | null = null
     try {
       await waitFor(
         () =>
@@ -195,6 +197,27 @@ describe('production Host CLI subprocess', () => {
         command('thread.create', 'cmd-thread', {}, { scope: 'workspace', workspaceId })
       )
       const threadId = thread.resultRef?.kind === 'thread' ? thread.resultRef.threadId : ''
+      desktopPeer = new HostProjectionClient({
+        userDataPath: profile,
+        client: { clientId: 'desktop-peer', clientClass: 'desktop', clientVersion: '1.0' },
+        capabilities: ['bootstrap', 'snapshot', 'history', 'health']
+      })
+      tuiPeer = new HostProjectionClient({
+        userDataPath: profile,
+        client: { clientId: 'tui-peer', clientClass: 'tui', clientVersion: '1.0' },
+        capabilities: ['bootstrap', 'snapshot', 'history', 'health']
+      })
+      await Promise.all([desktopPeer.connect(), tuiPeer.connect()])
+      await expect(desktopPeer.getSnapshot()).resolves.toMatchObject({
+        snapshot: { threads: expect.arrayContaining([expect.objectContaining({ id: threadId })]) }
+      })
+      desktopPeer.close()
+      desktopPeer = null
+      await expect(tuiPeer.getHealth()).resolves.toMatchObject({ type: 'host.health' })
+      await expect(tuiPeer.getSnapshot()).resolves.toMatchObject({
+        snapshot: { threads: expect.arrayContaining([expect.objectContaining({ id: threadId })]) }
+      })
+      expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(true)
       if (exerciseMuse) {
         const offers = await client.getProviderOffers('muse')
         const configured = await client.submitCommand(
@@ -230,7 +253,7 @@ describe('production Host CLI subprocess', () => {
           commandId: 'cmd-config'
         })
         client.close()
-        const reconnected = new HostProjectionClient({
+        reconnected = new HostProjectionClient({
           userDataPath: profile,
           client: { clientId: 'subprocess-client', clientClass: 'test', clientVersion: '1.0' },
           capabilities: [
@@ -262,6 +285,8 @@ describe('production Host CLI subprocess', () => {
     } finally {
       client?.close()
       reconnected?.close()
+      desktopPeer?.close()
+      tuiPeer?.close()
       const graceful = spawnSync(
         process.execPath,
         [cli, 'stop', '--profile', realpathSync(profile)],
