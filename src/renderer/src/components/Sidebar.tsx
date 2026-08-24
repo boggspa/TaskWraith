@@ -5175,6 +5175,7 @@ export function Sidebar({
             >
               <ProjectsSidebarView
                 chats={projectSidebarChats}
+                activeRunChats={displayChats}
                 currentChat={currentChat}
                 activeChatId={selectedChatId}
                 runningChatIds={runningChatIds}

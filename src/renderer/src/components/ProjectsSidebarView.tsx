@@ -69,6 +69,10 @@ const PROJECT_CHAT_DRAG_MIME = 'application/x-taskwraith-chat-id'
 
 interface ProjectsSidebarViewProps {
   chats: ChatRecord[]
+  /** Full chat catalog used only to project active linked runs onto their
+   * top-level parent thread. Project membership and listing stay scoped to
+   * `chats`. */
+  activeRunChats?: readonly ChatRecord[]
   currentChat: ChatRecord | null
   activeChatId?: string | null
   runningChatIds?: string[]
@@ -242,6 +246,7 @@ function HighlightMatch({ text, query }: { text: string; query: string }): JSX.E
 
 export function ProjectsSidebarView({
   chats,
+  activeRunChats,
   currentChat,
   activeChatId,
   runningChatIds = [],
@@ -1307,7 +1312,7 @@ export function ProjectsSidebarView({
   return (
     <section className="sidebar-projects-view" aria-label="Projects">
       <ActiveRunsSection
-        chats={chats}
+        chats={activeRunChats || chats}
         currentChat={currentChat}
         runningChatIds={runningChatIds}
         surface="work"
