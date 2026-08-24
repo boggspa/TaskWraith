@@ -29101,6 +29101,11 @@ function App(): React.JSX.Element {
       )
     }
     const viewerProvider = getChatProvider(viewerChat)
+    const viewerSelection = getChatComposerSelection(viewerChat, viewerProvider)
+    const viewerProviderPresentation = resolveWorkingIndicatorProviderPresentation(
+      viewerProvider,
+      viewerSelection.selectedModelType
+    )
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
     // The one legacy host projection stays attached to its chat until a
     // host-only action explicitly moves it. Local pane focus must not swap two
@@ -29536,8 +29541,8 @@ function App(): React.JSX.Element {
         chat={viewerChat}
         messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
         provider={viewerProvider}
-        providerLabel={getProviderLabel(viewerProvider)}
-        providerClass={viewerProvider}
+        providerLabel={viewerProviderPresentation.providerLabel}
+        providerClass={viewerProviderPresentation.providerClass}
         interfaceStyle={interfaceStyle}
         isEnsemble={viewerChat.chatKind === 'ensemble'}
         showAura={showAgentAuraFx}
@@ -30100,6 +30105,10 @@ function App(): React.JSX.Element {
       // is now built inside the shared <Composer> from `currentProviderModelOptions`
       // (overridden per-pane in paneComposerCtx), mirroring the focused composer.
       const viewerSelectedModel = viewerSelection.selectedModelType
+      const viewerProviderPresentation = resolveWorkingIndicatorProviderPresentation(
+        viewerProvider,
+        viewerSelectedModel
+      )
       const viewerCodexModelOption =
         viewerProvider === 'codex'
           ? codexModels.find((model) => model.id === viewerSelectedModel)
@@ -30237,7 +30246,7 @@ function App(): React.JSX.Element {
         ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
         : 'Set active goal'
       const paneViewerSelection = viewerSelection
-      const viewerProviderLabel = getProviderLabel(viewerProvider)
+      const viewerProviderLabel = viewerProviderPresentation.providerLabel
       const paneIsEnsembleChat = viewerChat.chatKind === 'ensemble'
       const paneComposerPlaceholder = paneIsEnsembleChat
         ? 'Ask the ensemble. @ to direct a participant.'
