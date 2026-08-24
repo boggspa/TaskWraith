@@ -30,6 +30,12 @@ it('reports an idempotent already-stopped state when all owned artifacts are abs
   await expect(client.shutdown()).resolves.toBe('already_stopping')
 })
 
+it('is idempotent when the canonical profile directory does not exist', async () => {
+  const profile = join(tmpdir(), `host-shutdown-client-missing-${process.pid}-${Date.now()}`)
+  const client = new HostShutdownClient({ profilePath: profile })
+  await expect(client.shutdown()).resolves.toBe('already_stopping')
+})
+
 it('fails closed on an inconsistent artifact set without connecting', async () => {
   const profile = realpathSync(mkdtempSync(join(tmpdir(), 'host-shutdown-client-bad-')))
   paths.push(profile)

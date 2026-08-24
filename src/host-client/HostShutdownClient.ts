@@ -1,5 +1,5 @@
 import { createConnection, type Socket } from 'node:net'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, parse, resolve } from 'node:path'
 
 import {
@@ -52,12 +52,15 @@ export class HostShutdownClient {
   private readonly timeoutMs: number
 
   constructor(options: HostShutdownClientOptions) {
-    if (!options || !isAbsolute(options.profilePath))
+    if (
+      !options ||
+      !isAbsolute(options.profilePath) ||
+      resolve(options.profilePath) !== options.profilePath ||
+      options.profilePath === parse(options.profilePath).root
+    )
       throw new Error('HostShutdownClient requires an absolute profile')
-    const canonical = realpathSync(resolve(options.profilePath))
-    if (canonical !== options.profilePath || canonical === parse(canonical).root)
-      throw new Error('HostShutdownClient requires a canonical non-root profile')
-    this.profilePath = canonical
+    this.profilePath = options.profilePath
+    if (existsSync(this.profilePath)) this.assertCanonicalProfile()
     this.connect = options.connect ?? createConnection
     this.exists = options.exists ?? existsSync
     this.delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
@@ -78,6 +81,7 @@ export class HostShutdownClient {
       return 'already_stopping'
     }
     if (present.some((value) => !value)) throw new Error('Host shutdown artifacts are inconsistent')
+    this.assertCanonicalProfile()
     let rawDiscovery: unknown
     try {
       rawDiscovery = JSON.parse(
@@ -111,6 +115,14 @@ export class HostShutdownClient {
       await this.delay(25)
     }
     throw new Error('Host shutdown timed out while ownership artifacts remain')
+  }
+
+  private assertCanonicalProfile(): void {
+    const canonical = realpathSync(this.profilePath)
+    const stat = lstatSync(canonical)
+    if (canonical !== this.profilePath || !stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error('HostShutdownClient requires a canonical profile directory')
+    }
   }
 
   private request(socketPath: string, token: string): Promise<HostShutdownState> {
@@ -182,7 +194,7 @@ export class HostShutdownClient {
             fail(new Error('Host shutdown response is invalid'))
             return
           }
-          if (decoded.skipped) continue
+          if ('skipped' in decoded) continue
           const frame = decoded.value
           if (frame.type === 'welcome') {
             if (
