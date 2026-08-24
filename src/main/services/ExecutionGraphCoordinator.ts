@@ -3,13 +3,18 @@ import type { RunSessionChangeEvent, RunSessionStatus } from '../RunManager'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import type {
   ExecutionEffect,
+  ExecutionGraphRevision,
   ExecutionPermissionCeilingRef,
   ExecutionStepDefinition,
   ExecutionStepResult,
+  ExecutionTenantRef,
   StepActivation,
   StepAttempt
 } from '../executionGraph/ExecutionGraphModel'
-import { stableExecutionGraphStringify } from '../executionGraph/ExecutionGraphCompiler'
+import {
+  executionGraphRevisionRef,
+  stableExecutionGraphStringify
+} from '../executionGraph/ExecutionGraphCompiler'
 import {
   executionTopologyFrontier,
   isExecutionRunTerminal,
@@ -83,8 +88,21 @@ export interface MaterializeExecutionQueueJobInput {
   readonly rootChatId: string
   readonly provider: ProviderId
   readonly runTemplate: ExecutionGraphRunTemplate
+  /** Exact structured predecessor results bound through this step's data edges. */
+  readonly inputs?: Readonly<Record<string, ExecutionStepResult>>
   /** Main-minted authority root inherited from the execution creation event. */
   readonly permissionCeilingAuthorityDigest: string
+}
+
+export interface StartExecutionGraphInput {
+  readonly executionId: string
+  readonly title: string
+  readonly workspaceId: string
+  readonly rootChatId: string
+  readonly tenant: ExecutionTenantRef
+  readonly revision: ExecutionGraphRevision
+  readonly permissionCeilingRef: ExecutionPermissionCeilingRef
+  readonly anchorRunRef?: string
 }
 
 /**
@@ -193,6 +211,45 @@ function startupRecoveryUncertainty(job: RunQueueJob): string | undefined {
     return 'Startup recovery found an interrupted steer promotion whose dispatch boundary is uncertain.'
   }
   return 'Startup recovery rewrote the claimed queue job without authoritative provider outcome evidence.'
+}
+
+/**
+ * Admission profile for the first structured-data graph runtime. It remains
+ * deliberately narrower than the generic compiler: solo agents, all-joins,
+ * and terminal outputs only; one attempt; no unenforced time/token/cost limits.
+ */
+function assertBoundExecutionGraphSupported(revision: ExecutionGraphRevision): void {
+  if (revision.steps.length === 0) throw new Error('Bound execution graph requires steps.')
+  if (
+    revision.limits.maxWallClockMs !== undefined ||
+    revision.limits.maxTokens !== undefined ||
+    revision.limits.maxCostUsd !== undefined
+  ) {
+    throw new Error('Bound execution graph cannot start with unenforced budgets.')
+  }
+  for (const step of revision.steps) {
+    if (step.retry.maxAttempts !== 1 || step.retry.backoffMs !== undefined) {
+      throw new Error('Bound execution graph currently admits one attempt per step.')
+    }
+    if (step.timeoutMs !== undefined) {
+      throw new Error('Bound execution graph cannot start with an unenforced step timeout.')
+    }
+    if (step.kind === 'join') {
+      if (step.join.mode !== 'all') {
+        throw new Error('Bound execution graph currently admits only all-joins.')
+      }
+      continue
+    }
+    if (step.kind !== 'solo_agent' && step.kind !== 'output') {
+      throw new Error(`Bound execution graph cannot execute ${step.kind} steps.`)
+    }
+    if (step.kind === 'output' && (step.inputs?.length !== 1 || step.inputs[0]?.required !== true)) {
+      throw new Error('Bound execution graph output steps require one required data input.')
+    }
+    if (step.kind === 'solo_agent' && !step.agent.runTemplateRef?.trim()) {
+      throw new Error('Bound execution graph solo-agent steps require a run template.')
+    }
+  }
 }
 
 function canonicalPart(value: string): string {
@@ -329,6 +386,58 @@ export class ExecutionGraphCoordinator {
 
   getExecution(executionId: string): ExecutionRunProjection | undefined {
     return this.repository.getExecution(executionId)
+  }
+
+  /**
+   * Start a precompiled graph whose revision is already durably registered in
+   * the repository. Product adapters (UltraTask, Workflow, Audit) own graph
+   * construction; the coordinator owns only exact activation/runtime state.
+   */
+  startExecutionGraph(input: StartExecutionGraphInput): ExecutionRunProjection {
+    assertBoundExecutionGraphSupported(input.revision)
+    const baseRevision = executionGraphRevisionRef(input.revision)
+    const timestamp = this.now()
+    const activations = input.revision.steps.map((step) => ({
+      executionId: input.executionId,
+      kind: 'activation_created' as const,
+      activationId: this.id('activation'),
+      stepId: step.id,
+      timestamp
+    }))
+    const state = input.anchorRunRef ? 'waiting' : 'running'
+    const projection = this.repository.createExecution(
+      {
+        executionId: input.executionId,
+        kind: 'execution_created',
+        title: input.title,
+        workspaceId: input.workspaceId,
+        rootChatId: input.rootChatId,
+        tenant: input.tenant,
+        baseRevision,
+        permissionCeilingRef: input.permissionCeilingRef,
+        ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
+        timestamp
+      },
+      [
+        ...activations,
+        {
+          executionId: input.executionId,
+          kind: 'execution_state_changed',
+          state,
+          reason: input.anchorRunRef
+            ? 'Waiting for the execution anchor run to finish.'
+            : 'Compiled execution graph is ready.',
+          timestamp
+        }
+      ]
+    )
+    this.changed(
+      projection,
+      'execution-created',
+      input.revision.steps.map((step) => step.id)
+    )
+    if (!input.anchorRunRef) this.drain(input.executionId)
+    return this.requireExecution(input.executionId)
   }
 
   /**
@@ -1233,16 +1342,47 @@ export class ExecutionGraphCoordinator {
             )
             return
           }
-          if (step.kind === 'deterministic_check' || step.kind === 'join') {
+          if (step.kind === 'deterministic_check') {
             this.requireActivationAction(
               projection,
               ready,
-              `${step.kind === 'join' ? 'Join' : 'Deterministic check'} executor is not bound for this V1 Stack.`
+              'Deterministic check executor is not bound for this execution graph.'
             )
             return
           }
-          this.completeDeterministicStep(projection, ready)
-          continue
+          if (step.kind === 'join') {
+            this.completeDeterministicStep(projection, ready)
+            continue
+          }
+          if (step.kind === 'output') {
+            const boundInputs = this.resolveStepInputResults(projection, step)
+            if (!boundInputs.ok) {
+              this.requireActivationAction(projection, ready, boundInputs.reason)
+              return
+            }
+            const sourceResult = Object.values(boundInputs.inputs)[0]
+            this.completeDeterministicStep(
+              projection,
+              ready,
+              sourceResult
+                ? {
+                    schemaVersion: 1,
+                    ...(sourceResult.output !== undefined ? { output: sourceResult.output } : {}),
+                    ...(sourceResult.summary ? { summary: sourceResult.summary } : {}),
+                    artifactRefs: [],
+                    trust: sourceResult.trust,
+                    ...(sourceResult.evidenceRefs
+                      ? { evidenceRefs: sourceResult.evidenceRefs }
+                      : {}),
+                    ...(sourceResult.providerRunRef
+                      ? { providerRunRef: sourceResult.providerRunRef }
+                      : {}),
+                    ...(sourceResult.threadRef ? { threadRef: sourceResult.threadRef } : {})
+                  }
+                : undefined
+            )
+            continue
+          }
         }
 
         const activations = Object.values(projection.activations)
@@ -1273,6 +1413,11 @@ export class ExecutionGraphCoordinator {
     activation: StepActivation,
     step: Extract<ExecutionStepDefinition, { kind: 'solo_agent' }>
   ): void {
+    const boundInputs = this.resolveStepInputResults(projection, step)
+    if (!boundInputs.ok) {
+      this.requireActivationAction(projection, activation, boundInputs.reason)
+      return
+    }
     const templateRef = step.agent.runTemplateRef
     const template = templateRef ? this.repository.getRunTemplate(templateRef) : undefined
     if (!template) {
@@ -1326,6 +1471,7 @@ export class ExecutionGraphCoordinator {
         rootChatId: projection.rootChatId!,
         provider: step.agent.provider as ProviderId,
         runTemplate: template,
+        ...(Object.keys(boundInputs.inputs).length > 0 ? { inputs: boundInputs.inputs } : {}),
         permissionCeilingAuthorityDigest: projection.permissionCeilingRef!.authorityDigest
       })
     } catch (error) {
@@ -1364,6 +1510,53 @@ export class ExecutionGraphCoordinator {
       return
     }
     this.appendAttemptQueued(projection, attempt)
+  }
+
+  private resolveStepInputResults(
+    projection: ExecutionRunProjection,
+    step: ExecutionStepDefinition
+  ): { ok: true; inputs: Record<string, ExecutionStepResult> } | { ok: false; reason: string } {
+    const inputs: Record<string, ExecutionStepResult> = {}
+    for (const port of step.inputs || []) {
+      const edges = projection.topology.edges.filter(
+        (edge): edge is Extract<typeof edge, { kind: 'data' }> =>
+          edge.kind === 'data' && edge.to.stepId === step.id && edge.to.port === port.name
+      )
+      if (edges.length === 0) {
+        if (port.required) {
+          return {
+            ok: false,
+            reason: `Required graph input "${port.name}" has no data binding.`
+          }
+        }
+        continue
+      }
+      if (edges.length !== 1) {
+        return {
+          ok: false,
+          reason: `Graph input "${port.name}" has ${edges.length} data bindings; exactly one is required.`
+        }
+      }
+      const edge = edges[0]!
+      const sourceActivation = latestActivationForStep(projection, edge.from.stepId)
+      const sourceAttempt = sourceActivation
+        ? latestAttemptForActivation(projection, sourceActivation)
+        : undefined
+      if (
+        sourceActivation?.state !== 'succeeded' ||
+        sourceAttempt?.state !== 'succeeded' ||
+        !sourceAttempt.result
+      ) {
+        return {
+          ok: false,
+          reason:
+            `Graph input "${port.name}" is missing the terminal structured result from ` +
+            `step "${edge.from.stepId}".`
+        }
+      }
+      inputs[port.name] = sourceAttempt.result
+    }
+    return { ok: true, inputs }
   }
 
   private appendAttemptQueued(projection: ExecutionRunProjection, attempt: StepAttempt): void {
@@ -1847,10 +2040,11 @@ export class ExecutionGraphCoordinator {
 
   private completeDeterministicStep(
     projection: ExecutionRunProjection,
-    activation: StepActivation
+    activation: StepActivation,
+    suppliedResult?: ExecutionStepResult
   ): void {
     const attemptId = this.id('attempt')
-    const result: ExecutionStepResult = {
+    const result: ExecutionStepResult = suppliedResult || {
       schemaVersion: 1,
       artifactRefs: [],
       trust: 'deterministic'

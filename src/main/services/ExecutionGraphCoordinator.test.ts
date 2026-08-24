@@ -5,8 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunSessionChangeEvent } from '../RunManager'
 import { recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
+import { compileExecutionGraphRevision } from '../executionGraph/ExecutionGraphCompiler'
 import { ExecutionGraphRepository } from '../executionGraph/ExecutionGraphRepository'
-import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionGraphRevision,
+  ExecutionPermissionCeilingRef
+} from '../executionGraph/ExecutionGraphModel'
 import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
 import { buildExecutionGraphAttemptTerminalReceipt } from '../executionGraph/ExecutionGraphAttemptResult'
 import {
@@ -306,6 +310,101 @@ function terminalReceipt(
     evidenceRefs: [`assistant-${runId}`],
     ...(status === 'failed' ? { error: 'Provider run failed.' } : {})
   })
+}
+
+function structuredJoinRevision(h: Harness): ExecutionGraphRevision {
+  const outputSchema = { type: 'object', additionalProperties: true } as const
+  const compiled = compileExecutionGraphRevision({
+    graphId: 'structured-join-graph',
+    revision: 1,
+    workspaceId: 'workspace-one',
+    name: 'Structured join graph',
+    createdAt: '2026-07-18T11:00:00.000Z',
+    steps: [
+      ...['scout-one', 'scout-two'].map((id) => ({
+        id,
+        kind: 'solo_agent' as const,
+        title: id,
+        objective: `Run ${id}.`,
+        effect: 'read_only' as const,
+        outputs: [{ name: 'report', schema: outputSchema, required: true }],
+        retry: { maxAttempts: 1 },
+        agent: {
+          provider: 'codex',
+          model: 'gpt-5.5',
+          runTemplateRef: h.templateRef,
+          session: { mode: 'fresh' as const }
+        }
+      })),
+      {
+        id: 'scout-join',
+        kind: 'join' as const,
+        title: 'Scout join',
+        objective: 'Join both scouts.',
+        effect: 'read_only' as const,
+        retry: { maxAttempts: 1 },
+        join: { mode: 'all' as const }
+      },
+      {
+        id: 'worker',
+        kind: 'solo_agent' as const,
+        title: 'Worker',
+        objective: 'Use both scout results.',
+        effect: 'read_only' as const,
+        inputs: [
+          { name: 'scout_1', schema: outputSchema, required: true },
+          { name: 'scout_2', schema: outputSchema, required: true }
+        ],
+        outputs: [{ name: 'artifact', schema: outputSchema, required: true }],
+        retry: { maxAttempts: 1 },
+        agent: {
+          provider: 'codex',
+          model: 'gpt-5.5',
+          runTemplateRef: h.templateRef,
+          session: { mode: 'fresh' as const }
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'control-scout-one-join',
+        kind: 'control',
+        fromStepId: 'scout-one',
+        toStepId: 'scout-join',
+        outcome: 'success'
+      },
+      {
+        id: 'control-scout-two-join',
+        kind: 'control',
+        fromStepId: 'scout-two',
+        toStepId: 'scout-join',
+        outcome: 'success'
+      },
+      {
+        id: 'control-join-worker',
+        kind: 'control',
+        fromStepId: 'scout-join',
+        toStepId: 'worker',
+        outcome: 'success'
+      },
+      {
+        id: 'data-scout-one-worker',
+        kind: 'data',
+        from: { stepId: 'scout-one', port: 'report' },
+        to: { stepId: 'worker', port: 'scout_1' }
+      },
+      {
+        id: 'data-scout-two-worker',
+        kind: 'data',
+        from: { stepId: 'scout-two', port: 'report' },
+        to: { stepId: 'worker', port: 'scout_2' }
+      }
+    ],
+    limits: { maxSteps: 4, maxConcurrentSteps: 2, maxAttempts: 4 }
+  })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.issues))
+  h.repository.saveRevision(compiled.revision)
+  return compiled.revision
 }
 
 describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
@@ -1463,5 +1562,90 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       'skipped',
       'skipped'
     ])
+  })
+})
+
+describe('ExecutionGraphCoordinator structured graph scheduling', () => {
+  it('executes an all-join and binds exact predecessor results into the worker', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h)
+    const started = h.coordinator.startExecutionGraph({
+      executionId: 'structured-join-execution',
+      title: 'Structured join execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow', tenantId: 'ultratask-one' },
+      revision,
+      permissionCeilingRef: h.ceiling
+    })
+
+    const firstRunId = providerRunId(started)
+    markQueueStarting(h, firstRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'completed'),
+      terminalReceipt(h, firstRunId, 'completed')
+    )
+
+    const afterFirst = h.coordinator.getExecution(started.executionId)!
+    const secondRunId = Object.values(afterFirst.attempts).find(
+      (attempt) => attempt.providerRunRef && attempt.providerRunRef !== firstRunId
+    )?.providerRunRef
+    if (!secondRunId) throw new Error('Second scout did not materialize.')
+    markQueueStarting(h, secondRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(secondRunId, 'completed'),
+      terminalReceipt(h, secondRunId, 'completed')
+    )
+
+    const afterJoin = h.coordinator.getExecution(started.executionId)!
+    expect(
+      Object.values(afterJoin.activations).find((activation) => activation.stepId === 'scout-join')
+        ?.state
+    ).toBe('succeeded')
+    const workerAttempt = Object.values(afterJoin.attempts).find(
+      (attempt) => attempt.stepId === 'worker'
+    )
+    expect(workerAttempt?.state).toBe('queued')
+    expect(h.materializePausedQueueJob).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        executionId: started.executionId,
+        inputs: {
+          scout_1: expect.objectContaining({
+            output: { schemaVersion: 1, kind: 'assistant_text', text: `Result from ${firstRunId}` }
+          }),
+          scout_2: expect.objectContaining({
+            output: { schemaVersion: 1, kind: 'assistant_text', text: `Result from ${secondRunId}` }
+          })
+        }
+      })
+    )
+
+    const workerRunId = workerAttempt?.providerRunRef
+    if (!workerRunId) throw new Error('Worker did not receive a provider run.')
+    markQueueStarting(h, workerRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(workerRunId, 'completed'),
+      terminalReceipt(h, workerRunId, 'completed')
+    )
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+  })
+
+  it('refuses graph controls the bound runtime does not enforce yet', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h)
+    expect(() =>
+      h.coordinator.startExecutionGraph({
+        executionId: 'budgeted-execution',
+        title: 'Budgeted execution',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        tenant: { kind: 'workflow' },
+        revision: {
+          ...revision,
+          limits: { ...revision.limits, maxCostUsd: 1 }
+        },
+        permissionCeilingRef: h.ceiling
+      })
+    ).toThrow(/unenforced budgets/i)
   })
 })
