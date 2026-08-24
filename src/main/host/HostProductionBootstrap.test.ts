@@ -24,7 +24,7 @@ import type { HostProductionContextResolverDeps } from './HostProductionContextR
 import type {
   HostProductionChatListPort,
   HostProductionProviderListPort
-} from './HostProductionSuppliers'
+} from '../../host-runtime/HostProductionSuppliers'
 import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
 import type { HostLocalServer, HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import type {
@@ -32,7 +32,7 @@ import type {
   HostMainCompositionInput
 } from '../../host-runtime/HostMainComposition'
 import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
-import type { HostSupervisor, HostSupervisorInput } from './HostSupervisor'
+import type { HostSupervisor, HostSupervisorInput } from '../../host-runtime/HostSupervisor'
 
 /* ------------------------------------------------------------------ */
 /*  Scaffolding                                                       */

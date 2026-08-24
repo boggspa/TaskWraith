@@ -36,7 +36,10 @@ const REQUIRED_RUNTIME_MODULES = [
   'HostRecoveryProjection.ts',
   'AppStoreHostAuthority.ts',
   'HostMainComposition.ts',
-  'HostRuntimePaths.ts'
+  'HostRuntimePaths.ts',
+  'HostSupervisor.ts',
+  'HostProductionSuppliers.ts',
+  'HostProductionAuthorityEvaluator.ts'
 ] as const
 const LEGACY_MAIN_HOST_MODULES = REQUIRED_RUNTIME_MODULES.map((name) =>
   resolve(REPO_ROOT, 'src/main/host', name)
@@ -51,16 +54,17 @@ const REQUIRED_MAIN_HOST_CONSUMERS: Readonly<Record<string, readonly string[]>> 
     '../../host-runtime/HostMainComposition',
     '../../host-runtime/HostMutationCompletionCoordinator',
     '../../host-runtime/HostObservedMutationExecutor',
-    '../../host-runtime/HostRuntimePaths'
+    '../../host-runtime/HostRuntimePaths',
+    '../../host-runtime/HostSupervisor',
+    '../../host-runtime/HostProductionSuppliers',
+    '../../host-runtime/HostProductionAuthorityEvaluator'
   ],
-  'src/main/host/HostSupervisor.ts': [
-    '../../host-runtime/AppStoreHostAuthority',
-    '../../host-runtime/HostMainComposition'
-  ],
-  'src/main/host/HostProductionSuppliers.ts': ['../../host-runtime/AppStoreHostAuthority'],
-  'src/main/host/HostProductionAuthorityEvaluator.ts': [
-    '../../host-runtime/AppStoreHostAuthority',
-    '../../host-runtime/HostDeferredCommandBridge'
+  'src/main/host/HostLifecycleController.ts': ['../../host-runtime/HostSupervisor'],
+  'src/main/host/HostProductionQuestionShadow.ts': ['../../host-runtime/HostProductionSuppliers'],
+  'src/main/host/HostProductionChannelAdapter.ts': ['../../host-runtime/HostProductionSuppliers'],
+  'src/main/host/HostProductionApprovalShadow.ts': ['../../host-runtime/HostProductionSuppliers'],
+  'src/main/host/HostProductionProviderAdmission.ts': [
+    '../../host-runtime/HostProductionSuppliers'
   ],
   'src/main/host/HostInstallIdentity.ts': ['../../host-runtime/HostRuntimePaths'],
   'src/main/host/HostChannelCommandExecutor.ts': [

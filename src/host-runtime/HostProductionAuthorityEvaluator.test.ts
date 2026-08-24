@@ -22,7 +22,7 @@ import type {
   HostClientClass,
   HostCommand,
   HostCommandName
-} from '../../shared/hostProtocol'
+} from '../shared/hostProtocol'
 
 import {
   createHostProductionAuthorityEvaluator,
@@ -33,7 +33,7 @@ import {
   type HostProductionAuthorityEvaluatorPorts
 } from './HostProductionAuthorityEvaluator'
 
-import type { AppStoreHostAuthorityEvaluation } from '../../host-runtime/AppStoreHostAuthority'
+import type { AppStoreHostAuthorityEvaluation } from './AppStoreHostAuthority'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -144,6 +144,7 @@ describe('HostProductionAuthorityEvaluator import isolation', () => {
       // Allowed: shared/hostProtocol plus moved runtime types.
       expect(
         p === '../../shared/hostProtocol' ||
+          p === '../shared/hostProtocol' ||
           p.startsWith('./') ||
           p.startsWith('../../host-runtime/')
       ).toBe(true)

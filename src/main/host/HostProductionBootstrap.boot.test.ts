@@ -52,7 +52,7 @@ import {
   type HostProductionBootstrapOptions
 } from './HostProductionBootstrap'
 import { createHostProductionQuestionShadow } from './HostProductionQuestionShadow'
-import type { HostSupervisor } from './HostSupervisor'
+import type { HostSupervisor } from '../../host-runtime/HostSupervisor'
 
 const HOST_ID = 'boot-proof-host-0001'
 const HOST_VERSION = '0.0.0-boot-proof'
