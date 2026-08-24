@@ -834,6 +834,13 @@ export function resetPersistenceWriteSeamForTests(): void {
 }
 
 function purgeChatJournalArtifacts(chatId: string): void {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'purge-chat-journal', pathFamily: 'chats' },
+    () => purgeChatJournalArtifactsAdmitted(chatId)
+  )
+}
+
+function purgeChatJournalArtifactsAdmitted(chatId: string): void {
   // V2 is a second durable history source. Unlike the legacy best-effort
   // cleanup below, failure must stop the deletion transaction so transcript
   // mutations cannot survive a reported successful delete.
@@ -862,6 +869,13 @@ function purgeChatJournalArtifacts(chatId: string): void {
  * separable on the comparison report.
  */
 function appendChatJournalEntry(chatId: string, record: ChatRecord): void {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'append-chat-journal', pathFamily: 'chats' },
+    () => appendChatJournalEntryAdmitted(chatId, record)
+  )
+}
+
+function appendChatJournalEntryAdmitted(chatId: string, record: ChatRecord): void {
   const probing = isPersistenceProbeEnabled()
   const before = probing ? chatJournal.stats().bytesWritten : 0
   const startedAt = probing ? Date.now() : 0
@@ -900,6 +914,18 @@ function incrementalPersistenceBoundary(reason: FlushReason): IncrementalChatPer
  * the legacy hot rewrite is eligible for removal.
  */
 function persistIncrementalChat(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  reason: FlushReason,
+  authoredTranscript?: AuthoredChatTranscriptMutation
+): IncrementalChatPersistResult | null {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'persist-incremental-chat', pathFamily: 'chats' },
+    () => persistIncrementalChatAdmitted(previous, next, reason, authoredTranscript)
+  )
+}
+
+function persistIncrementalChatAdmitted(
   previous: ChatRecord | null,
   next: ChatRecord,
   reason: FlushReason,
@@ -5844,6 +5870,16 @@ export class AppStore {
    *  a fat line per streamed message AND the settle callback appended a
    *  second, stale-content line per flush just to refresh two stat numbers. */
   private static writeChatListIndexEntryIfAllowed(chatId: string, next: ChatListItem): boolean {
+    return runLegacyStoreWriteAdmission(
+      { operation: 'write-chat-list-index', pathFamily: 'chats' },
+      () => this.writeChatListIndexEntryIfAllowedAdmitted(chatId, next)
+    )
+  }
+
+  private static writeChatListIndexEntryIfAllowedAdmitted(
+    chatId: string,
+    next: ChatListItem
+  ): boolean {
     const previous = chatListIndexStore.readEntry(chatId)
     if (!this.shouldWriteChatListIndexItem(previous, next)) return false
     chatListIndexStore.writeEntry(chatId, next)
@@ -8572,19 +8608,28 @@ export class AppStore {
   }
 
   static deleteChat(chatId: string, _seen: Set<string> = new Set()): void {
-    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
-    this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+    runLegacyStoreWriteAdmission({ operation: 'delete-chat', pathFamily: 'chats' }, () => {
+      if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+      this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+    })
   }
 
   static truncateChatHistory(chatId: string): ChatRecord | null {
-    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
-    if (!this.getChat(chatId)) return null
-    this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
-    return this.getChat(chatId)
+    return runLegacyStoreWriteAdmission(
+      { operation: 'truncate-chat-history', pathFamily: 'chats' },
+      () => {
+        if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+        if (!this.getChat(chatId)) return null
+        this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
+        return this.getChat(chatId)
+      }
+    )
   }
 
   static clearChats(workspaceId?: string): void {
-    this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
+    runLegacyStoreWriteAdmission({ operation: 'clear-chats', pathFamily: 'chats' }, () => {
+      this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
+    })
   }
 
   // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so

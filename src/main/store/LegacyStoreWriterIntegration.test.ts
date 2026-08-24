@@ -14,11 +14,49 @@ import type { ChatRecord } from './types'
 
 afterAll(() => fs.rmSync(userDataPath, { recursive: true, force: true }))
 
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    const relative = path.relative(root, current) || '.'
+    rows.push({
+      relative,
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      mode: stat.mode,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
+}
+
 it('fences Host-owned workspace/chat writes while leaving settings available', async () => {
   const workspacePath = path.join(userDataPath, 'workspace')
   AppStore.addOrUpdateWorkspace(workspacePath)
   const workspacesFile = path.join(userDataPath, 'workspaces.json')
   const workspacesBefore = fs.readFileSync(workspacesFile, 'utf8')
+  const existingChat: ChatRecord = {
+    appChatId: 'existing-chat',
+    scope: 'workspace',
+    chatKind: 'single',
+    provider: 'gemini',
+    title: 'Existing chat',
+    workspaceId: 'workspace-1',
+    workspacePath,
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: []
+  }
+  AppStore.saveChat(existingChat)
+  const hostOwnedBytesBefore = snapshotTree(userDataPath)
 
   expect(legacyStoreWriterGate.beginDrain()).toBe(true)
   await legacyStoreWriterGate.awaitDrained()
@@ -34,22 +72,21 @@ it('fences Host-owned workspace/chat writes while leaving settings available', a
     LegacyStoreWriterGateClosedError
   )
   const chat: ChatRecord = {
+    ...existingChat,
     appChatId: 'late-chat',
-    scope: 'workspace',
-    chatKind: 'single',
-    provider: 'gemini',
-    title: 'Late chat',
-    workspaceId: 'workspace-1',
-    workspacePath,
-    createdAt: 1,
-    updatedAt: 1,
-    archived: false,
-    messages: [],
-    runs: []
+    title: 'Late chat'
   }
   expect(() => AppStore.saveChat(chat)).toThrow(LegacyStoreWriterGateClosedError)
+  expect(() => AppStore.deleteChat(existingChat.appChatId)).toThrow(
+    LegacyStoreWriterGateClosedError
+  )
+  expect(() => AppStore.truncateChatHistory(existingChat.appChatId)).toThrow(
+    LegacyStoreWriterGateClosedError
+  )
+  expect(() => AppStore.clearChats()).toThrow(LegacyStoreWriterGateClosedError)
   expect(fs.readFileSync(workspacesFile, 'utf8')).toBe(workspacesBefore)
   expect(fs.existsSync(path.join(userDataPath, 'chats', 'late-chat.json'))).toBe(false)
+  expect(snapshotTree(userDataPath)).toEqual(hostOwnedBytesBefore)
 
   expect(() => AppStore.updateSettings({ themeAppearance: 'dark' })).not.toThrow()
   expect(
