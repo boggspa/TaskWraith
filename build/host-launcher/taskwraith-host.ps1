@@ -36,5 +36,10 @@ if (-not $nodeBin) {
   exit 1
 }
 
-& $nodeBin $cliJs serve --mode production @args
+if ($args.Count -gt 0 -and $args[0] -eq 'stop') {
+  $stopArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+  & $nodeBin $cliJs stop @stopArgs
+} else {
+  & $nodeBin $cliJs serve --mode production @args
+}
 exit $LASTEXITCODE

@@ -1,7 +1,7 @@
 import { isAbsolute, parse, resolve } from 'node:path'
 
 export const HOST_PRODUCTION_USAGE =
-  'Usage: taskwraith-host serve --profile <absolute canonical non-root path> --mode production [--muse-binary <absolute canonical path>]'
+  'Usage: taskwraith-host serve --profile <absolute canonical non-root path> --mode production [--muse-binary <absolute canonical path>]\n       taskwraith-host stop --profile <absolute canonical non-root path>'
 
 export interface HostProductionServeCommand {
   readonly command: 'serve'
@@ -9,6 +9,13 @@ export interface HostProductionServeCommand {
   readonly mode: 'production'
   readonly museBinary?: string
 }
+
+export interface HostProductionStopCommand {
+  readonly command: 'stop'
+  readonly profilePath: string
+}
+
+export type HostProductionCommand = HostProductionServeCommand | HostProductionStopCommand
 
 export class HostProductionCliError extends Error {
   constructor(message: string) {
@@ -40,8 +47,10 @@ function canonicalPath(value_: string, option: string, forbidRoot: boolean): str
   return result
 }
 
-export function parseHostProductionCli(argv: readonly string[]): HostProductionServeCommand {
-  if (argv[0] !== 'serve') throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
+export function parseHostProductionCli(argv: readonly string[]): HostProductionCommand {
+  if (argv[0] !== 'serve' && argv[0] !== 'stop')
+    throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
+  const command = argv[0]
   let profilePath: string | undefined
   let mode: string | undefined
   let museBinary: string | undefined
@@ -52,10 +61,13 @@ export function parseHostProductionCli(argv: readonly string[]): HostProductionS
       profilePath = canonicalPath(value(argv, index, option), option, true)
       index += 1
     } else if (option === '--mode') {
+      if (command === 'stop') throw new HostProductionCliError('--mode is unavailable for stop.')
       if (mode !== undefined) throw new HostProductionCliError('--mode may appear once.')
       mode = value(argv, index, option)
       index += 1
     } else if (option === '--muse-binary') {
+      if (command === 'stop')
+        throw new HostProductionCliError('--muse-binary is unavailable for stop.')
       if (museBinary) throw new HostProductionCliError('--muse-binary may appear once.')
       museBinary = canonicalPath(value(argv, index, option), option, true)
       index += 1
@@ -66,7 +78,9 @@ export function parseHostProductionCli(argv: readonly string[]): HostProductionS
         `Unknown argument ${JSON.stringify(option)}. ${HOST_PRODUCTION_USAGE}`
       )
   }
-  if (!profilePath || mode !== 'production') throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
+  if (!profilePath) throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
+  if (command === 'stop') return { command: 'stop', profilePath }
+  if (mode !== 'production') throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
   return {
     command: 'serve',
     profilePath,

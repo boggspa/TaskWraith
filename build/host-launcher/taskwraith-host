@@ -73,6 +73,11 @@ if ! NODE_BIN="$(find_node_runtime)"; then
   exit 1
 fi
 
+# `stop` is the authenticated lifecycle RPC, never a signal/kill shortcut.
+if [ "${1:-}" = "stop" ]; then
+  shift
+  exec "$NODE_BIN" "$CLI_JS" stop "$@"
+fi
 # Production mode is fixed by the packaged launcher. A caller supplies only
 # --profile <absolute path> and optional --muse-binary <absolute path>.
 exec "$NODE_BIN" "$CLI_JS" serve --mode production "$@"

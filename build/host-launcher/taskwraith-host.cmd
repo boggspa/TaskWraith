@@ -31,6 +31,10 @@ if not defined NODE_BIN (
   exit /b 1
 )
 
-"%NODE_BIN%" "%CLI_JS%" serve --mode production %*
+if "%~1"=="stop" (
+  "%NODE_BIN%" "%CLI_JS%" %*
+) else (
+  "%NODE_BIN%" "%CLI_JS%" serve --mode production %*
+)
 set "EXIT_CODE=%ERRORLEVEL%"
 endlocal & exit /b %EXIT_CODE%
