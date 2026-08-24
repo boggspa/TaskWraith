@@ -267,7 +267,7 @@ describe('TaskWraith Host v2 paths', () => {
         tokenPath: '/tmp/t',
         pid: 1
       })
-    ).toEqual({ ok: false, error: 'startedAt must be a non-empty bounded string' })
+    ).toEqual({ ok: false, error: 'startedAt must be a canonical ISO timestamp' })
   })
 
   it('rejects extra fields gracefully (still decodes)', () => {
@@ -277,7 +277,7 @@ describe('TaskWraith Host v2 paths', () => {
       socketPath: '/tmp/s',
       tokenPath: '/tmp/t',
       pid: 1,
-      startedAt: 'now',
+      startedAt: '2026-08-24T00:00:00.000Z',
       extra: 'should be ignored'
     })
     expect(result.ok).toBe(true)

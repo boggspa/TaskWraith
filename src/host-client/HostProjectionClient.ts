@@ -16,7 +16,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { createConnection, type Socket } from 'node:net'
 
 import {
@@ -62,8 +62,15 @@ import {
 import {
   decodeTaskWraithHostDiscovery,
   taskWraithHostDiscoveryPath,
+  taskWraithHostSocketPath,
+  taskWraithHostTokenPath,
   type TaskWraithHostDiscovery
 } from '../shared/taskWraithHostPaths.node'
+import {
+  HOST_LOCAL_CONTROL_MAX_DISCOVERY_BYTES,
+  HOST_LOCAL_CONTROL_MAX_TOKEN_BYTES,
+  readPrivateLocalControlArtifact
+} from '../shared/hostLocalControlArtifacts.node'
 import {
   TW_MISSION_MAX_BUNDLE_BYTES,
   encodeTwMissionBundle,
@@ -208,6 +215,15 @@ function parseDiscovery(raw: string): TaskWraithHostDiscovery {
   return decoded.discovery
 }
 
+async function canonicalProfileDirectory(path: string): Promise<string> {
+  const canonical = await realpath(path)
+  const stat = await lstat(canonical)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error('TaskWraith Host profile directory is unsafe.')
+  }
+  return canonical
+}
+
 /**
  * Production discovery always carries a unix-socket / named-pipe path.
  * Tests under sandboxes that refuse `listen(path)` may advertise
@@ -245,6 +261,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   private closedByClient = false
   private eventSequenceSeen = -1
   private connectAccepted = false
+  private discoveryIdentity: Pick<TaskWraithHostDiscovery, 'hostId' | 'hostVersion'> | null = null
 
   welcome: HostBootstrapWelcome | null = null
   /**
@@ -303,16 +320,38 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   }
 
   private async connectOnce(baseOnly: boolean): Promise<HostBootstrapWelcome> {
+    const explicitDiscoveryPath = this.options.discoveryPath
+    let canonicalUserDataPath: string | null = null
+    if (!explicitDiscoveryPath && this.options.userDataPath) {
+      canonicalUserDataPath = await canonicalProfileDirectory(this.options.userDataPath)
+    }
     const discoveryPath =
-      this.options.discoveryPath ??
-      (this.options.userDataPath ? taskWraithHostDiscoveryPath(this.options.userDataPath) : null)
+      explicitDiscoveryPath ??
+      (canonicalUserDataPath ? taskWraithHostDiscoveryPath(canonicalUserDataPath) : null)
     if (!discoveryPath) {
       throw new Error('TaskWraith Host discovery path is required (userDataPath or discoveryPath).')
     }
 
-    const discovery = parseDiscovery(await readFile(discoveryPath, 'utf8'))
-    const token = (await readFile(discovery.tokenPath, 'utf8')).trim()
+    const discovery = parseDiscovery(
+      readPrivateLocalControlArtifact(discoveryPath, HOST_LOCAL_CONTROL_MAX_DISCOVERY_BYTES)
+    )
+    if (canonicalUserDataPath) {
+      if (
+        discovery.tokenPath !== taskWraithHostTokenPath(canonicalUserDataPath) ||
+        discovery.socketPath !== taskWraithHostSocketPath(canonicalUserDataPath)
+      ) {
+        throw new Error('TaskWraith Host discovery paths do not match the configured profile.')
+      }
+    }
+    const token = readPrivateLocalControlArtifact(
+      discovery.tokenPath,
+      HOST_LOCAL_CONTROL_MAX_TOKEN_BYTES
+    ).trim()
     if (!token) throw new Error('TaskWraith Host token is unavailable.')
+    this.discoveryIdentity = {
+      ...(discovery.hostId ? { hostId: discovery.hostId } : {}),
+      ...(discovery.hostVersion ? { hostVersion: discovery.hostVersion } : {})
+    }
 
     const hello = this.buildHello(token, baseOnly)
     const encoded = encodeHostLocalTransportClientFrame(hello)
@@ -588,6 +627,16 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
 
     const frame = decoded.value
     if (frame.type === 'welcome') {
+      if (
+        (this.discoveryIdentity?.hostId &&
+          frame.welcome.hostId !== this.discoveryIdentity.hostId) ||
+        (this.discoveryIdentity?.hostVersion &&
+          frame.welcome.hostVersion !== this.discoveryIdentity.hostVersion)
+      ) {
+        this.failConnect(new Error('TaskWraith Host welcome identity does not match discovery.'))
+        this.socket?.destroy()
+        return
+      }
       this.welcome = frame.welcome
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null

@@ -8,7 +8,7 @@
  * sequence skip, cache-stale-on-disconnect, and clean client close.
  */
 
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,6 +88,7 @@ async function startFakeHost(overrides?: {
   const tokenPath = join(userDataPath, 'taskwraith-host-v2.token')
   const token = overrides?.token ?? 'test-host-token-0123456789abcdef'
   await writeFile(tokenPath, `${token}\n`, 'utf8')
+  await chmod(tokenPath, 0o600)
   await writeFile(
     discoveryPath,
     JSON.stringify({
@@ -99,6 +100,7 @@ async function startFakeHost(overrides?: {
     }),
     'utf8'
   )
+  await chmod(discoveryPath, 0o600)
 
   cleanup.push(() => {
     for (const socket of allSockets) socket.destroy()

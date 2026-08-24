@@ -64,6 +64,10 @@ export interface TaskWraithHostDiscovery {
   pid: number
   /** ISO-8601 timestamp of when the server started. */
   startedAt: string
+  /** Stable Host identity; absent only in legacy diagnostic discovery. */
+  hostId?: string
+  /** Stable Host version; absent only in legacy diagnostic discovery. */
+  hostVersion?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +83,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isNonEmptyString(value: unknown, max = 16_000): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= max
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= max &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- discovery metadata is control-free.
+    !/[\u0000-\u001f\u007f]/.test(value)
+  )
+}
+
+function isCanonicalIso(value: unknown): value is string {
+  if (!isNonEmptyString(value, 100)) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
 }
 
 /**
@@ -105,8 +122,14 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
     return { ok: false, error: 'pid must be a positive integer' }
   }
 
-  if (!isNonEmptyString(value.startedAt, 100)) {
-    return { ok: false, error: 'startedAt must be a non-empty bounded string' }
+  if (!isCanonicalIso(value.startedAt)) {
+    return { ok: false, error: 'startedAt must be a canonical ISO timestamp' }
+  }
+  if (value.hostId !== undefined && !isNonEmptyString(value.hostId, 512)) {
+    return { ok: false, error: 'hostId must be a non-empty bounded string' }
+  }
+  if (value.hostVersion !== undefined && !isNonEmptyString(value.hostVersion, 80)) {
+    return { ok: false, error: 'hostVersion must be a non-empty bounded string' }
   }
 
   return {
@@ -116,7 +139,9 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
       socketPath: value.socketPath as string,
       tokenPath: value.tokenPath as string,
       pid: value.pid as number,
-      startedAt: value.startedAt as string
+      startedAt: value.startedAt as string,
+      ...(value.hostId !== undefined ? { hostId: value.hostId as string } : {}),
+      ...(value.hostVersion !== undefined ? { hostVersion: value.hostVersion as string } : {})
     }
   }
 }

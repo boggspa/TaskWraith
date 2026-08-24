@@ -22,8 +22,8 @@
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { unlinkSync } from 'node:fs'
-import { chmod, mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
+import { realpathSync, unlinkSync } from 'node:fs'
+import { chmod, mkdir, rm, rmdir } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
 
@@ -33,6 +33,11 @@ import {
   taskWraithHostTokenPath,
   type TaskWraithHostDiscovery
 } from '../shared/taskWraithHostPaths.node'
+import {
+  publishPrivateLocalControlArtifact,
+  removeOwnedPrivateLocalControlArtifact,
+  type HostLocalControlArtifactOwnership
+} from '../shared/hostLocalControlArtifacts.node'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
   decodeHostLocalTransportClientFrame,
@@ -201,6 +206,14 @@ function errorFrame(id: string, error: HostLocalTransportError): HostLocalTransp
   }
 }
 
+async function settleCleanup(tasks: readonly (() => Promise<unknown> | unknown)[]): Promise<void> {
+  const results = await Promise.allSettled(tasks.map((task) => Promise.resolve().then(task)))
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  )
+  if (failure) throw failure.reason
+}
+
 /** Map HostAuthority operational error codes to closed transport error codes. */
 function authorityErrorToTransportCode(
   code: 'host_unavailable' | 'shutting_down' | 'invalid_lookup'
@@ -230,6 +243,8 @@ export class HostLocalServer {
   private started = false
   private eventSequence = 0
   private deltaUnsubscribe: (() => void) | null = null
+  private tokenArtifact: HostLocalControlArtifactOwnership | null = null
+  private discoveryArtifact: HostLocalControlArtifactOwnership | null = null
 
   readonly socketPath: string
   readonly tokenPath: string
@@ -243,9 +258,10 @@ export class HostLocalServer {
       now: options.now ?? (() => Date.now())
     }
     this.token = randomBytes(32).toString('hex')
-    this.socketPath = taskWraithHostSocketPath(options.userDataPath, this.options.platform)
-    this.tokenPath = taskWraithHostTokenPath(options.userDataPath)
-    this.discoveryPath = taskWraithHostDiscoveryPath(options.userDataPath)
+    const canonicalUserDataPath = realpathSync(options.userDataPath)
+    this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath, this.options.platform)
+    this.tokenPath = taskWraithHostTokenPath(canonicalUserDataPath)
+    this.discoveryPath = taskWraithHostDiscoveryPath(canonicalUserDataPath)
   }
 
   // -----------------------------------------------------------------------
@@ -296,21 +312,27 @@ export class HostLocalServer {
         await chmod(this.socketPath, 0o600)
       }
 
-      await writeFile(this.tokenPath, `${this.token}\n`, { encoding: 'utf8', mode: 0o600 })
-      await chmod(this.tokenPath, 0o600).catch(() => {})
+      this.tokenArtifact = publishPrivateLocalControlArtifact(
+        this.tokenPath,
+        `${this.token}\n`,
+        4_096
+      )
 
       const discovery: TaskWraithHostDiscovery = {
         protocolVersion: 2,
         socketPath: this.socketPath,
         tokenPath: this.tokenPath,
         pid: process.pid,
-        startedAt: new Date(this.options.now()).toISOString()
+        startedAt: new Date(this.options.now()).toISOString(),
+        hostId: this.options.hostId,
+        hostVersion: this.options.hostVersion
       }
-      await writeFile(this.discoveryPath, `${JSON.stringify(discovery, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600
-      })
-      await chmod(this.discoveryPath, 0o600).catch(() => {})
+      // Discovery is the readiness flag and is published only after token.
+      this.discoveryArtifact = publishPrivateLocalControlArtifact(
+        this.discoveryPath,
+        `${JSON.stringify(discovery)}\n`,
+        16 * 1024
+      )
 
       if (this.options.subscribeDeltas) {
         this.deltaUnsubscribe = this.options.subscribeDeltas((delta) => {
@@ -332,12 +354,11 @@ export class HostLocalServer {
         await new Promise<void>((resolve) => server.close(() => resolve()))
       }
       if (ownsSocket) {
-        await Promise.all([
-          rm(this.discoveryPath, { force: true }),
-          rm(this.tokenPath, { force: true }),
-          this.options.platform === 'win32'
-            ? Promise.resolve()
-            : rm(this.socketPath, { force: true })
+        await settleCleanup([
+          () => removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact),
+          () => removeOwnedPrivateLocalControlArtifact(this.tokenArtifact),
+          () =>
+            this.options.platform === 'win32' ? undefined : rm(this.socketPath, { force: true })
         ])
         if (this.options.platform !== 'win32') {
           await rmdir(dirname(this.socketPath)).catch(() => {})
@@ -364,15 +385,17 @@ export class HostLocalServer {
     this.clearDeltaSubscription()
     this.disconnectClients()
     await closePromise
-    await Promise.all([
-      rm(this.discoveryPath, { force: true }),
-      rm(this.tokenPath, { force: true }),
-      this.options.platform === 'win32' ? Promise.resolve() : rm(this.socketPath, { force: true })
+    await settleCleanup([
+      () => removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact),
+      () => removeOwnedPrivateLocalControlArtifact(this.tokenArtifact),
+      () => (this.options.platform === 'win32' ? undefined : rm(this.socketPath, { force: true }))
     ])
     if (this.options.platform !== 'win32') {
       await rmdir(dirname(this.socketPath)).catch(() => {})
     }
     this.started = false
+    this.discoveryArtifact = null
+    this.tokenArtifact = null
   }
 
   /**
@@ -389,11 +412,17 @@ export class HostLocalServer {
     const server = this.server
     this.server = null
     if (server?.listening) server.close()
-    for (const path of [
-      this.discoveryPath,
-      this.tokenPath,
-      ...(this.options.platform === 'win32' ? [] : [this.socketPath])
-    ]) {
+    try {
+      removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact)
+      removeOwnedPrivateLocalControlArtifact(this.tokenArtifact)
+    } catch (error) {
+      this.options.log?.(
+        `[host-local-server] synchronous artifact cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+    for (const path of this.options.platform === 'win32' ? [] : [this.socketPath]) {
       try {
         unlinkSync(path)
       } catch {
@@ -408,6 +437,8 @@ export class HostLocalServer {
       }
     }
     this.started = false
+    this.discoveryArtifact = null
+    this.tokenArtifact = null
   }
 
   /** True after start() succeeds and before stop()/stopSync(). */
