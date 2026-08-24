@@ -70,6 +70,36 @@ export function mergeUltraTaskCatalogCapabilityMetadata<T extends UltraTaskCatal
   })
 }
 
+/**
+ * Turn live discovery plus provider-control validation into an explicit model
+ * support bit. A provider normalizer that substitutes another model is not
+ * evidence: the exact discovered id must survive resolution byte-for-byte.
+ * This is intentionally separate from static metadata merging so unknown
+ * static/user ids never acquire capability merely from their provider name.
+ */
+export function materializeDiscoveredUltraTaskSupport<T extends UltraTaskCatalogModelLike>(
+  provider: ProviderId,
+  models: readonly T[]
+): Array<Omit<T, 'ultraTaskSupported'> & { ultraTaskSupported?: boolean }> {
+  return models.map((model) => {
+    const { ultraTaskSupported, ...base } = model
+    if (ultraTaskSupported !== undefined) {
+      return { ...base, ultraTaskSupported: ultraTaskSupported === true }
+    }
+    const modelId = text(model.id)
+    if (!isConcreteUltraTaskModelId(modelId)) return { ...base }
+    const resolved = resolveSubThreadDelegationRunSettings({
+      provider,
+      model: modelId,
+      reasoningEffort: 'ultratask'
+    })
+    return {
+      ...base,
+      ultraTaskSupported: resolved.ok && resolved.requestedModel === modelId
+    }
+  })
+}
+
 function enabledReasoningEfforts(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   const efforts: string[] = []

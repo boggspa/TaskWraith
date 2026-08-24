@@ -1,8 +1,50 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildUltraTaskModelCapabilityCatalog,
+  materializeDiscoveredUltraTaskSupport,
   mergeUltraTaskCatalogCapabilityMetadata
 } from './UltraTaskModelCatalog'
+
+describe('materializeDiscoveredUltraTaskSupport', () => {
+  it('admits an exact live model but rejects a control-ineligible row', () => {
+    expect(
+      materializeDiscoveredUltraTaskSupport('ollama', [
+        { id: 'future-local:latest', label: 'Future Local' }
+      ])
+    ).toEqual([
+      {
+        id: 'future-local:latest',
+        label: 'Future Local',
+        ultraTaskSupported: true
+      }
+    ])
+    expect(
+      materializeDiscoveredUltraTaskSupport('claude', [{ id: 'claude-haiku-4-5', label: 'Haiku' }])
+    ).toEqual([
+      {
+        id: 'claude-haiku-4-5',
+        label: 'Haiku',
+        ultraTaskSupported: false
+      }
+    ])
+  })
+
+  it('preserves explicit booleans and never classifies sentinel rows', () => {
+    expect(
+      materializeDiscoveredUltraTaskSupport('codex', [
+        { id: 'gpt-5.5', ultraTaskSupported: false },
+        { id: 'future-codex', ultraTaskSupported: true },
+        { id: 'cli-default' },
+        { id: 'custom' }
+      ])
+    ).toEqual([
+      { id: 'gpt-5.5', ultraTaskSupported: false },
+      { id: 'future-codex', ultraTaskSupported: true },
+      { id: 'cli-default' },
+      { id: 'custom' }
+    ])
+  })
+})
 
 describe('mergeUltraTaskCatalogCapabilityMetadata', () => {
   it('fills only missing exact-model capability fields without mutating live rows', () => {
