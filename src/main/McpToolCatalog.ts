@@ -4,7 +4,10 @@ import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
-import { ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS } from './ultraTask/UltraTaskToolRequest'
+import {
+  ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
+  ULTRA_TASK_MAX_EFFECTIVE_WORKERS
+} from './ultraTask/UltraTaskToolRequest'
 import {
   BLACKBOARD_MAX_KEY_LEN,
   BLACKBOARD_MAX_POLL_OPTION_LEN,
@@ -3786,11 +3789,10 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ultra_task',
       description:
-        'Execute an Ultra Task - highest reasoning with multi-agent orchestration. ' +
-        'Auto-selects the maximum available reasoning tier for the provider/model and ' +
-        'encourages delegate wave patterns (researcher/worker/reviewer) with automatic ' +
-        'result aggregation via ensemble_await. For providers with explicit Ultra/Ultracode ' +
-        'support, uses that tier; otherwise uses the highest available (max, xhigh, high, etc.).',
+        'Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns ' +
+        '2-6 scout stages, their all-join, the worker artifact, independent review, synthesis, ' +
+        'and final output. The initiating provider may finish after receiving the workflow id; ' +
+        'cli-default/default/custom models are refused.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3817,17 +3819,17 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           enableFanout: {
             type: 'boolean',
-            description: 'Enable researcher/explorer fanout for complex tasks (default: true).',
+            description: 'Reserved staged-graph invariant; must remain true.',
             default: true
           },
           enableReview: {
             type: 'boolean',
-            description: 'Enable quality reviewer layer for validation (default: true).',
+            description: 'Reserved staged-graph invariant; must remain true.',
             default: true
           },
           maxWorkers: {
             type: 'number',
-            description: `Maximum workers for fanout (2-64, default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}).`,
+            description: `Requested durable scout stages (2-64, clamped to ${ULTRA_TASK_MAX_EFFECTIVE_WORKERS}, default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}).`,
             default: ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
             minimum: 2,
             maximum: 64

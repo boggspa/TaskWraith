@@ -24,23 +24,30 @@ describe('resolveUltraTaskToolRequest', () => {
         returnResult: true,
         requestedMaxWorkers: 3,
         effectiveMaxWorkers: 3,
+        scoutCount: 3,
         maxWorkersClamped: false,
-        waveArgs: {
-          lifecycle: 'ephemeral',
-          allowMultiProvider: false,
-          join: { required: true, quorum: 3, debounceMs: 2_000 }
-        }
+        approvalPreviewWorkers: expect.any(Array)
       }
     })
     if (!result.ok) return
-    expect(result.value.waveArgs.workers).toHaveLength(3)
-    expect(result.value.waveArgs.workers.every((worker) => worker.provider === 'codex')).toBe(true)
-    expect(result.value.waveArgs.workers.every((worker) => worker.model === 'gpt-5.6-luna')).toBe(
+    expect(result.value.approvalPreviewWorkers).toHaveLength(6)
+    expect(result.value.approvalPreviewWorkers.map((worker) => worker.role)).toEqual([
+      'scout',
+      'scout',
+      'scout',
+      'worker',
+      'reviewer',
+      'worker'
+    ])
+    expect(result.value.approvalPreviewWorkers.every((worker) => worker.provider === 'codex')).toBe(
       true
     )
-    expect(result.value.waveArgs.workers.every((worker) => worker.reasoningEffort === 'max')).toBe(
-      true
-    )
+    expect(
+      result.value.approvalPreviewWorkers.every((worker) => worker.model === 'gpt-5.6-luna')
+    ).toBe(true)
+    expect(
+      result.value.approvalPreviewWorkers.every((worker) => worker.reasoningEffort === 'max')
+    ).toBe(true)
   })
 
   it('requires an explicit cross-provider model and returns concrete choices', () => {
@@ -111,7 +118,7 @@ describe('resolveUltraTaskToolRequest', () => {
       }
     })
     if (!result.ok) return
-    expect(result.value.waveArgs.workers).toEqual(
+    expect(result.value.approvalPreviewWorkers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           provider: 'mistral',
@@ -140,7 +147,7 @@ describe('resolveUltraTaskToolRequest', () => {
     if (!result.ok) return
     expect(result.value.reasoningEffort).toBeUndefined()
     expect(
-      result.value.waveArgs.workers.every((worker) => worker.reasoningEffort === undefined)
+      result.value.approvalPreviewWorkers.every((worker) => worker.reasoningEffort === undefined)
     ).toBe(true)
   })
 
@@ -174,7 +181,7 @@ describe('resolveUltraTaskToolRequest', () => {
     }
   )
 
-  it('caps the currently constructed wave at three and reports the clamp', () => {
+  it('caps durable scout stages at six and reports the clamp', () => {
     const result = resolveUltraTaskToolRequest(
       { task: 'Handle a large task.', maxWorkers: 64 },
       { provider: 'codex', model: 'gpt-5.5' }
@@ -185,16 +192,18 @@ describe('resolveUltraTaskToolRequest', () => {
       value: {
         requestedMaxWorkers: 64,
         effectiveMaxWorkers: ULTRA_TASK_MAX_EFFECTIVE_WORKERS,
+        scoutCount: ULTRA_TASK_MAX_EFFECTIVE_WORKERS,
         maxWorkersClamped: true,
-        notice: expect.stringMatching(/capped at 3/i),
-        waveArgs: { join: { quorum: 3 } }
+        notice: expect.stringMatching(/capped at 6.*scout stages/i)
       }
     })
     if (!result.ok) return
-    expect(result.value.waveArgs.workers).toHaveLength(ULTRA_TASK_MAX_EFFECTIVE_WORKERS)
+    expect(
+      result.value.approvalPreviewWorkers.filter((worker) => worker.role === 'scout')
+    ).toHaveLength(ULTRA_TASK_MAX_EFFECTIVE_WORKERS)
   })
 
-  it('defines the two-slot priority and tells the caller how to choose review instead', () => {
+  it('uses maxWorkers as the durable scout-stage count', () => {
     const result = resolveUltraTaskToolRequest(
       { task: 'Handle a bounded task.', maxWorkers: 2 },
       { provider: 'codex', model: 'gpt-5.5' }
@@ -204,29 +213,28 @@ describe('resolveUltraTaskToolRequest', () => {
       ok: true,
       value: {
         effectiveMaxWorkers: 2,
-        notice: expect.stringMatching(/reviewer was omitted.*enableFanout=false/i),
-        waveArgs: { join: { quorum: 2 } }
+        scoutCount: 2
       }
     })
     if (!result.ok) return
-    expect(result.value.waveArgs.workers.map((worker) => worker.role)).toEqual(['worker', 'scout'])
+    expect(result.value.approvalPreviewWorkers.map((worker) => worker.role)).toEqual([
+      'scout',
+      'scout',
+      'worker',
+      'reviewer',
+      'worker'
+    ])
   })
 
-  it('describes the concurrent reviewer honestly', () => {
-    const result = resolveUltraTaskToolRequest(
-      { task: 'Implement a parser.', enableFanout: false, enableReview: true },
-      { provider: 'codex', model: 'gpt-5.5' }
-    )
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: { waveArgs: { join: { quorum: 2 } } }
-    })
-    if (!result.ok) return
-    const reviewer = result.value.waveArgs.workers.find((worker) => worker.role === 'reviewer')
-    expect(reviewer?.prompt).toMatch(/runs concurrently/i)
-    expect(reviewer?.prompt).toMatch(/do not claim to verify/i)
-    expect(reviewer?.prompt).not.toMatch(/review (?:and validate )?the primary worker's output/i)
+  it('rejects reduced-DAG flags instead of silently ignoring them', () => {
+    for (const args of [
+      { task: 'Implement a parser.', enableFanout: false },
+      { task: 'Implement a parser.', enableReview: false }
+    ]) {
+      expect(
+        resolveUltraTaskToolRequest(args, { provider: 'codex', model: 'gpt-5.5' })
+      ).toMatchObject({ ok: false, message: expect.stringMatching(/staged UltraTask graph/i) })
+    }
   })
 
   it('fails closed on unsupported, unconfigured, or malformed provider/model controls', () => {

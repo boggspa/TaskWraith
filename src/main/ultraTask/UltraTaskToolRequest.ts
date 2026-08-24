@@ -5,12 +5,9 @@ import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { resolveSubThreadDelegationRunSettings } from '../SubThreadDelegationRunSettings'
 import { isUltraTaskSupported } from './UltraTaskReasoningResolver'
 
-/**
- * The current UltraTask implementation has one primary worker plus at most one
- * independent scout and one concurrent risk reviewer. A larger number would be
- * a fictitious control: no fourth worker is currently constructed.
- */
-export const ULTRA_TASK_MAX_EFFECTIVE_WORKERS = 3
+/** `maxWorkers` is the legacy public name for the durable graph's independent
+ * scout-stage count. The V1 graph admits two through six bounded scouts. */
+export const ULTRA_TASK_MAX_EFFECTIVE_WORKERS = 6
 export const ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS = 3
 
 const DOCUMENTED_MAX_WORKERS = 64
@@ -42,19 +39,15 @@ export interface ResolvedUltraTaskToolRequest {
   returnResult: true
   requestedMaxWorkers: number
   effectiveMaxWorkers: number
+  scoutCount: number
   maxWorkersClamped: boolean
   notice?: string
-  /** Direct input for executeDelegateWaveTool. Results are joined by the caller. */
-  waveArgs: {
-    workers: DelegateWaveWorkerSpec[]
-    join: {
-      required: true
-      quorum: number
-      debounceMs: number
-    }
-    lifecycle: 'ephemeral'
-    allowMultiProvider: boolean
-  }
+  /** Presentation-only stage roster for the central approval preview. The
+   * durable execution graph, not a provider-owned wave, performs the work. */
+  approvalPreviewWorkers: DelegateWaveWorkerSpec[]
+  /** @deprecated Composition-root compatibility until every approval preview
+   * reads `approvalPreviewWorkers`; never pass this to the wave executor. */
+  waveArgs: { workers: DelegateWaveWorkerSpec[] }
 }
 
 export interface UltraTaskToolModelOption {
@@ -256,9 +249,8 @@ function workerWithControls(
  * already-verified run identity. The provider/model never fall back to the old
  * `parentProvider + cli-default` guess.
  *
- * This produces a concurrent wave, not a sequential reviewer pipeline. The
- * reviewer therefore supplies independent risks and acceptance criteria; it
- * never claims to have inspected a primary result that does not exist yet.
+ * This resolves controls for the staged durable graph. It does not construct
+ * or join a provider-owned wave.
  */
 export function resolveUltraTaskToolRequest(
   args: unknown,
@@ -285,8 +277,18 @@ export function resolveUltraTaskToolRequest(
 
   const enableFanout = parseBoolean(args.enableFanout, 'enableFanout', true)
   if (!enableFanout.ok) return fail(enableFanout.message)
+  if (!enableFanout.value) {
+    return fail(
+      'enableFanout=false is not supported by the staged UltraTask graph; at least two scouts are required.'
+    )
+  }
   const enableReview = parseBoolean(args.enableReview, 'enableReview', true)
   if (!enableReview.ok) return fail(enableReview.message)
+  if (!enableReview.value) {
+    return fail(
+      'enableReview=false is not supported by the staged UltraTask graph; independent review is required.'
+    )
+  }
   const maxWorkers = parseMaxWorkers(args.maxWorkers)
   if (!maxWorkers.ok) return fail(maxWorkers.message)
 
@@ -321,7 +323,20 @@ export function resolveUltraTaskToolRequest(
   })
   if (!settings.ok) return fail(settings.message.replace(/^delegate_to_subthread:\s*/, ''))
 
-  const workers: DelegateWaveWorkerSpec[] = [
+  const approvalPreviewWorkers: DelegateWaveWorkerSpec[] = [
+    ...Array.from({ length: maxWorkers.effective }, (_entry, index) =>
+      workerWithControls(
+        provider,
+        settings.requestedModel,
+        settings.reasoningEffort,
+        settings.kimiThinking,
+        {
+          role: 'scout',
+          label: `Scout ${index + 1}`,
+          prompt: `Investigate the assigned aspect of the UltraTask independently: ${task}`
+        }
+      )
+    ),
     workerWithControls(
       provider,
       settings.requestedModel,
@@ -332,52 +347,35 @@ export function resolveUltraTaskToolRequest(
         label: 'Primary Worker',
         prompt: task
       }
+    ),
+    workerWithControls(
+      provider,
+      settings.requestedModel,
+      settings.reasoningEffort,
+      settings.kimiThinking,
+      {
+        role: 'reviewer',
+        label: 'Independent Reviewer',
+        prompt: `Review the terminal worker artifact for the UltraTask: ${task}`
+      }
+    ),
+    workerWithControls(
+      provider,
+      settings.requestedModel,
+      settings.reasoningEffort,
+      settings.kimiThinking,
+      {
+        role: 'worker',
+        label: 'Synthesis',
+        prompt: `Synthesize the worker artifact and reviewer verdict for the UltraTask: ${task}`
+      }
     )
   ]
-  if (enableFanout.value && workers.length < maxWorkers.effective) {
-    workers.push(
-      workerWithControls(
-        provider,
-        settings.requestedModel,
-        settings.reasoningEffort,
-        settings.kimiThinking,
-        {
-          role: 'scout',
-          label: 'Research Scout',
-          prompt:
-            `Investigate independently for the parent UltraTask: ${task}\n\n` +
-            'Gather codebase facts, edge cases, and constraints. Do not modify files. Return concise evidence for the parent to combine after the wave joins.'
-        }
-      )
-    )
-  }
-  if (enableReview.value && workers.length < maxWorkers.effective) {
-    workers.push(
-      workerWithControls(
-        provider,
-        settings.requestedModel,
-        settings.reasoningEffort,
-        settings.kimiThinking,
-        {
-          role: 'reviewer',
-          label: 'Independent Risk Reviewer',
-          prompt:
-            `Review the task independently for the parent UltraTask: ${task}\n\n` +
-            'Identify acceptance criteria, likely failure modes, and verification steps. This lane runs concurrently with the primary worker: do not claim to verify its eventual output. Return a checklist and risks for the parent to apply after the wave joins.'
-        }
-      )
-    )
-  }
 
   const notices: string[] = []
   if (maxWorkers.clamped) {
     notices.push(
-      `maxWorkers=${maxWorkers.requested} was capped at ${ULTRA_TASK_MAX_EFFECTIVE_WORKERS}; the current wave constructs at most one primary, one scout, and one concurrent risk reviewer.`
-    )
-  }
-  if (enableReview.value && !workers.some((worker) => worker.role === 'reviewer')) {
-    notices.push(
-      `The reviewer was omitted at maxWorkers=${maxWorkers.effective} because the primary and scout take priority; set enableFanout=false to use the second slot for the concurrent risk reviewer.`
+      `maxWorkers=${maxWorkers.requested} was capped at ${ULTRA_TASK_MAX_EFFECTIVE_WORKERS} durable scout stages.`
     )
   }
   const notice = notices.length > 0 ? notices.join(' ') : undefined
@@ -391,18 +389,11 @@ export function resolveUltraTaskToolRequest(
       returnResult: true,
       requestedMaxWorkers: maxWorkers.requested,
       effectiveMaxWorkers: maxWorkers.effective,
+      scoutCount: maxWorkers.effective,
       maxWorkersClamped: maxWorkers.clamped,
       ...(notice ? { notice } : {}),
-      waveArgs: {
-        workers,
-        join: {
-          required: true,
-          quorum: workers.length,
-          debounceMs: 2_000
-        },
-        lifecycle: 'ephemeral',
-        allowMultiProvider: provider !== context.provider
-      }
+      approvalPreviewWorkers,
+      waveArgs: { workers: approvalPreviewWorkers }
     }
   }
 }
