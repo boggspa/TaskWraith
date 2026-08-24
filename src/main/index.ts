@@ -9759,6 +9759,10 @@ async function failHungEphemeralFleetWorkersOnJoinDeadline(
       : undefined
     const runId = backgroundRunId || sessionRunId || (child.runs || []).at(-1)?.runId
     if (!runId) continue
+    const backgroundState = backgroundSubThreadTranscripts.get(runId)
+    if (backgroundState && !backgroundState.finalized) {
+      backgroundState.cancellationRequested = { reason, at: Date.now() }
+    }
     // Stamp `cancelled` on the persisted row BEFORE aborting: the background
     // flusher settles 'cancelled' only when the row already says so, and
     // stamping first cannot race the abort-triggered final flush.
@@ -9783,16 +9787,19 @@ async function failHungEphemeralFleetWorkersOnJoinDeadline(
       cancelled = false
     }
     if (!cancelled) {
-      // No live session (crashed, or died before registration): the abort
-      // path will never flush a typed return, so settle + propagate here —
-      // propagation alone runs worktree settle, archive, and the mailbox
-      // enqueue.
-      settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
-      await maybePropagateLinkedChildResult(subThreadId, {
-        outcome: 'cancelled',
-        sourceRunId: runId,
-        errorMessage: reason
-      })
+      // No live session (crashed, or died before registration): a seeded
+      // background child first fences its deferred dispatcher and finalizes
+      // only when no exact operation exists; otherwise its close owns return.
+      if (backgroundState) {
+        backgroundSubThreadDispatchMayStart(runId)
+      } else {
+        settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
+        await maybePropagateLinkedChildResult(subThreadId, {
+          outcome: 'cancelled',
+          sourceRunId: runId,
+          errorMessage: reason
+        })
+      }
     }
   }
 }
@@ -9809,8 +9816,8 @@ async function failHungEphemeralFleetWorkersOnJoinDeadline(
  * Scope guards:
  * - Only fires on PARENT terminal events — never on child completion, so the
  *   Cambridge no-auto-drain regression guard is preserved.
- * - Durable (`lifecycle: 'durable'`) children stay recallable and are skipped;
- *   ephemeral die-BY-deadline semantics are untouched.
+ * - Only explicit ephemeral wave children die with their parent. Omitted
+ *   lifecycle means durable/recallable and stays independent.
  */
 async function cascadeWaveChildrenOnParentTerminal(
   parentRunId: string,
@@ -9819,7 +9826,7 @@ async function cascadeWaveChildrenOnParentTerminal(
   const children = AppStore.getChats().filter(
     (chat) =>
       chat.delegationContext?.parentAppRunId === parentRunId &&
-      chat.delegationContext?.lifecycle !== 'durable'
+      chat.delegationContext?.lifecycle === 'ephemeral'
   )
   for (const child of children) {
     const subThreadId = child.appChatId
@@ -9839,6 +9846,10 @@ async function cascadeWaveChildrenOnParentTerminal(
     if (!runId) continue
     const latestRow = (child.runs || []).at(-1)
     if (latestRow && latestRow.runId === runId && latestRow.status !== 'running') continue
+    const backgroundState = backgroundSubThreadTranscripts.get(runId)
+    if (backgroundState && !backgroundState.finalized) {
+      backgroundState.cancellationRequested = { reason, at: Date.now() }
+    }
     // Stamp `cancelled` on the persisted row BEFORE aborting (same flusher
     // contract as the reaper).
     saveAndBroadcastChat({
@@ -9862,12 +9873,19 @@ async function cascadeWaveChildrenOnParentTerminal(
       cancelled = false
     }
     if (!cancelled) {
-      settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
-      await maybePropagateLinkedChildResult(subThreadId, {
-        outcome: 'cancelled',
-        sourceRunId: runId,
-        errorMessage: reason
-      })
+      // Match the deadline reaper: a seeded child may still be between
+      // transcript creation and provider registration, so fence its deferred
+      // dispatch before deciding whether terminal fallback is safe.
+      if (backgroundState) {
+        backgroundSubThreadDispatchMayStart(runId)
+      } else {
+        settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
+        await maybePropagateLinkedChildResult(subThreadId, {
+          outcome: 'cancelled',
+          sourceRunId: runId,
+          errorMessage: reason
+        })
+      }
     }
   }
 }
@@ -10094,7 +10112,11 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
     }
     const bgLeaked = backgroundSubThreadTranscripts.get(settlement.runId)
     if (bgLeaked && !bgLeaked.finalized) {
-      finalizeBackgroundSubThreadTranscript(settlement.runId, 'failed', CHAT_RUN_STALE_REASON)
+      finalizeBackgroundSubThreadTranscript(
+        settlement.runId,
+        bgLeaked.status === 'cancelled' ? 'cancelled' : 'failed',
+        CHAT_RUN_STALE_REASON
+      )
     }
     console.warn(
       `[chat-run-reconciler] settled stale ChatRun chat=${settlement.chatId} run=${settlement.runId} was=${settlement.previousStatus}: ${CHAT_RUN_STALE_REASON}`
@@ -11350,7 +11372,13 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
     state.flushTimer = undefined
   }
   const current = AppStore.getChat(state.chatId)
-  if (!current) return
+  if (!current) {
+    if (final) {
+      backgroundSubThreadTranscripts.delete(runId)
+      releaseMainOwnedRunPersistenceHolds(runId)
+    }
+    return
+  }
   const mutationIndex = liveTranscriptMutationIndex(state, current)
   const transcriptMutation = mutationIndex?.begin()
   const timestamp = new Date().toISOString()
@@ -11419,7 +11447,13 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
     stats: state.stats || existingRun?.stats,
     status: final ? finalStatus : 'running',
     endedAt: final ? timestamp : existingRun?.endedAt,
-    exitCode: final && finalStatus === 'failed' ? 1 : existingRun?.exitCode
+    ...(final && finalStatus === 'cancelled' ? { cancelled: true } : {}),
+    exitCode:
+      final && finalStatus === 'failed'
+        ? 1
+        : final && finalStatus === 'cancelled'
+          ? 130
+          : existingRun?.exitCode
   }
   if (runIndex >= 0) {
     runs[runIndex] = updatedRun
@@ -11499,7 +11533,7 @@ function scheduleBackgroundSubThreadFlush(runId: string): void {
 
 function finalizeBackgroundSubThreadTranscript(
   runId: string,
-  status: 'success' | 'failed',
+  status: 'success' | 'failed' | 'cancelled',
   errorMessage?: string
 ): void {
   const state = backgroundSubThreadTranscripts.get(runId)
@@ -11507,7 +11541,33 @@ function finalizeBackgroundSubThreadTranscript(
   state.finalized = true
   state.status = status
   state.errorMessage = errorMessage
-  flushBackgroundSubThreadTranscript(runId, true)
+  try {
+    flushBackgroundSubThreadTranscript(runId, true)
+  } catch (error) {
+    // Keep the state retryable for the stale-run reconciler; a synchronous
+    // persistence failure must not strand a finalized background transcript.
+    state.finalized = false
+    throw error
+  }
+}
+
+/**
+ * A parent can terminalize between seeding a child transcript and the
+ * fire-and-forget RunCoordinator dispatch. Do not start that zombie child;
+ * if no exact provider operation exists yet, close the already-seeded child.
+ */
+function backgroundSubThreadDispatchMayStart(runId: string): boolean {
+  const state = backgroundSubThreadTranscripts.get(runId)
+  if (!state || state.finalized || state.status !== 'running') return false
+  if (!state.cancellationRequested) return true
+  const session = runManager.get(runId)
+  const hasActiveSession = Boolean(session && isActiveRunSessionStatus(session.status))
+  const hasProviderOperation =
+    providerAdapterRunsInFlight.has(runId) || providerTransportOperations.get(runId) !== undefined
+  if (!hasActiveSession && !hasProviderOperation) {
+    finalizeBackgroundSubThreadTranscript(runId, 'cancelled', state.cancellationRequested.reason)
+  }
+  return false
 }
 
 function saveSubThreadWorkerControl(
@@ -13225,7 +13285,22 @@ function materializeBackgroundSubThreadProviderOutput(
   }
   if (payload?.type === 'result') {
     state.stats = payload.stats
-    const status = payload.status === 'failed' || payload.subtype === 'error' ? 'failed' : 'success'
+    const claimedTerminalStatus = runManager.getClaimedTerminalStatus(runId)
+    const pendingLifecycleStatus = runManager.getTerminalJoinState(runId).lifecycleStatus
+    const runCancelled =
+      claimedTerminalStatus === 'cancelled' ||
+      pendingLifecycleStatus === 'cancelled' ||
+      runManager.get(runId)?.status === 'cancelled'
+    const runFailed =
+      claimedTerminalStatus === 'failed' ||
+      pendingLifecycleStatus === 'failed' ||
+      runManager.get(runId)?.status === 'failed'
+    const status =
+      runCancelled || payload.status === 'cancelled'
+        ? 'cancelled'
+        : runFailed || payload.status === 'failed' || payload.subtype === 'error'
+          ? 'failed'
+          : 'success'
     finalizeBackgroundSubThreadTranscript(runId, status)
   }
 }
@@ -26621,6 +26696,33 @@ function sendAgentCompatExit(
           : graphTerminalStatus === 'cancelled'
             ? 'cancelled'
             : 'failed'
+      )
+    }
+    // A background child normally finalizes from its provider `result` frame.
+    // A confirmed process exit without that frame must still close its typed
+    // return: the parent-terminal cascade deliberately stamps cancellation
+    // before requesting an abort, and onChange waits for this finalizer rather
+    // than racing it. This is the close boundary, not the cancel acknowledgement.
+    const backgroundSubThreadState = backgroundSubThreadTranscripts.get(routed.appRunId)
+    if (
+      backgroundSubThreadState &&
+      backgroundSubThreadState.provider === provider &&
+      (!routed.appChatId || backgroundSubThreadState.chatId === routed.appChatId)
+    ) {
+      const errorMessage =
+        graphTerminalStatus === 'cancelled'
+          ? 'Sub-thread run was cancelled before the provider emitted a terminal result.'
+          : graphTerminalStatus === 'failed'
+            ? `Sub-thread provider exited with code ${code ?? 'unknown'} before emitting a terminal result.`
+            : undefined
+      finalizeBackgroundSubThreadTranscript(
+        routed.appRunId,
+        graphTerminalStatus === 'completed'
+          ? 'success'
+          : graphTerminalStatus === 'cancelled'
+            ? 'cancelled'
+            : 'failed',
+        errorMessage
       )
     }
     // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
@@ -40448,6 +40550,7 @@ async function executeGeminiMcpTool(
       // `surfaceSubThreadDispatchFailure`.
       const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
       void (async () => {
+        if (!backgroundSubThreadDispatchMayStart(subThreadRunId)) return
         if (!runCoordinatorRef) {
           finalizeBackgroundSubThreadTranscript(
             subThreadRunId,
@@ -40849,6 +40952,7 @@ async function executeGeminiMcpTool(
           )
           const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
           void (async () => {
+            if (!backgroundSubThreadDispatchMayStart(subThreadRunId)) return
             if (!runCoordinatorRef) {
               finalizeBackgroundSubThreadTranscript(
                 subThreadRunId,

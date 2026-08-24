@@ -86,6 +86,48 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     expect(recovery).toContain('scheduleSubThreadJoinEvaluation(')
   })
 
+  it('cascades only explicit ephemeral workers and finalizes a resultless child after exit', () => {
+    const cascade = sourceBetween(
+      'async function cascadeWaveChildrenOnParentTerminal(',
+      'function isChatRunLive('
+    )
+    const exit = sourceBetween(
+      'function sendAgentCompatExit(',
+      'function codexApprovalPolicyForMode('
+    )
+
+    expect(cascade).toContain("delegationContext?.lifecycle === 'ephemeral'")
+    expect(cascade).not.toContain("delegationContext?.lifecycle !== 'durable'")
+    // Cancelling is only an abort request. The confirmed exit boundary owns
+    // the final background flush so a late normal result cannot be raced.
+    expect(cascade).not.toContain('finalizeBackgroundSubThreadTranscript(')
+    expect(cascade).toContain('backgroundState.cancellationRequested')
+    expect(cascade).toContain('backgroundSubThreadDispatchMayStart(runId)')
+    expect(exit).toContain('const backgroundSubThreadState = backgroundSubThreadTranscripts.get(')
+    expect(exit).toContain('finalizeBackgroundSubThreadTranscript(')
+    expect(exit).toContain('before the provider emitted a terminal result')
+    expect(exit).toContain("graphTerminalStatus === 'cancelled'\n            ? 'cancelled'")
+    const materializer = sourceBetween(
+      'function materializeBackgroundSubThreadProviderOutput(',
+      'function emitRunEventsChanged('
+    )
+    expect(materializer).toContain("payload.status === 'cancelled'")
+    expect(materializer).toContain('runManager.getClaimedTerminalStatus(runId)')
+    const finalizer = sourceBetween(
+      'function finalizeBackgroundSubThreadTranscript(',
+      'function saveSubThreadWorkerControl('
+    )
+    expect(finalizer).toContain("status: 'success' | 'failed' | 'cancelled'")
+    expect(finalizer).toContain('state.finalized = false')
+    expect(finalizer).toContain('backgroundSubThreadDispatchMayStart')
+    expect(finalizer).toContain('providerAdapterRunsInFlight.has(runId)')
+    expect(finalizer).toContain('providerTransportOperations.get(runId)')
+    expect(indexSource.match(/backgroundSubThreadDispatchMayStart\(subThreadRunId\)/g)).toHaveLength(2)
+    expect(exit.indexOf('finalizeBackgroundSubThreadTranscript(')).toBeGreaterThan(
+      exit.indexOf('finalizeBridgeRunTranscript(')
+    )
+  })
+
   it('broadcasts the parent in the same synchronous turn as its save (wave-return ordering)', () => {
     const producer = sourceBetween(
       'async function maybePropagateLinkedChildResult(',
