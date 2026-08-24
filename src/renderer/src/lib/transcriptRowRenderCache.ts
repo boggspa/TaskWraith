@@ -91,6 +91,80 @@ function primitiveSignature(value: unknown): string {
   return sampledTextSignature(stableJson(value).slice(0, MESSAGE_SIGNATURE_SAMPLE_CHARS * 2))
 }
 
+/**
+ * Close-out cards retain their detailed evidence on metadata rather than in
+ * message content. Keep their fingerprint short, but hash the complete,
+ * canonical value so a late commit repair (or sub-thread refresh) cannot be
+ * hidden behind an otherwise unchanged transcript row.
+ */
+function canonicalJson(value: unknown): string {
+  const ancestors = new WeakSet<object>()
+  const visit = (current: unknown): string => {
+    if (current === null) return 'null'
+    if (current === undefined) return 'undefined'
+    if (typeof current === 'string') return JSON.stringify(current)
+    if (typeof current === 'boolean') return current ? 'true' : 'false'
+    if (typeof current === 'number') {
+      return Number.isFinite(current) ? String(current) : JSON.stringify(String(current))
+    }
+    if (typeof current === 'bigint') return `${current}n`
+    if (typeof current !== 'object') return JSON.stringify(String(current))
+    if (ancestors.has(current)) return '"[circular]"'
+
+    ancestors.add(current)
+    const result = Array.isArray(current)
+      ? `[${current.map(visit).join(',')}]`
+      : `{${Object.keys(current)
+          .sort()
+          .map(
+            (key) => `${JSON.stringify(key)}:${visit((current as Record<string, unknown>)[key])}`
+          )
+          .join(',')}}`
+    ancestors.delete(current)
+    return result
+  }
+  return visit(value)
+}
+
+function compactFullValueSignature(value: unknown): string {
+  const text = canonicalJson(value)
+  let first = 2166136261
+  let second = 0x9e3779b9
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    first = Math.imul(first ^ code, 16777619)
+    second = Math.imul(second ^ code, 2246822519)
+  }
+  return `${text.length.toString(36)}:${(first >>> 0).toString(36)}:${(second >>> 0).toString(36)}`
+}
+
+function closeoutMetadataRenderSignature(message: ChatMessage): string {
+  const metadata = message.metadata
+  if (metadata?.kind !== 'taskWraithCloseout') return ''
+  // This is deliberately an explicit projection. It includes every close-out
+  // field that the row itself renders or uses to decide which Task Complete
+  // card hosts the epic stack, without making unrelated metadata churn
+  // invalidate the rest of the transcript.
+  return compactFullValueSignature({
+    closeoutSource: metadata.closeoutSource,
+    closeoutProvider: metadata.closeoutProvider,
+    closeoutModel: metadata.closeoutModel,
+    closeoutAiSummary: metadata.closeoutAiSummary,
+    closeoutScope: metadata.closeoutScope,
+    sourceRunId: metadata.sourceRunId,
+    closeoutRoundId: metadata.closeoutRoundId,
+    closeoutStatus: metadata.closeoutStatus,
+    closeoutDurationMs: metadata.closeoutDurationMs,
+    closeoutGoalId: metadata.closeoutGoalId,
+    closeoutGoalStatus: metadata.closeoutGoalStatus,
+    closeoutReceipt: metadata.closeoutReceipt,
+    closeoutParticipantTable: metadata.closeoutParticipantTable,
+    closeoutCommits: metadata.closeoutCommits,
+    closeoutFileChanges: metadata.closeoutFileChanges,
+    closeoutSubagentDelegations: metadata.closeoutSubagentDelegations
+  })
+}
+
 function metadataRenderSignature(message: ChatMessage): string {
   const metadata = message.metadata
   if (!metadata) return ''
@@ -167,7 +241,8 @@ function metadataRenderSignature(message: ChatMessage): string {
       ? metadata.imageThumbnails
           .map((thumb: any) => `${thumb?.mimeType || ''}:${thumb?.dataBase64?.length || 0}`)
           .join('|')
-      : ''
+      : '',
+    closeoutMetadataRenderSignature(message)
   ].join('\u0001')
 }
 

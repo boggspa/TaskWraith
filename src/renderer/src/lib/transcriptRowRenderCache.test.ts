@@ -137,6 +137,175 @@ describe('transcriptRowRenderCache', () => {
     )
   })
 
+  it('invalidates a cached Task Complete card when late commit repair updates metadata only', () => {
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      content: 'Close-out content remains unchanged',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-1',
+        closeoutReceipt: {
+          version: 1,
+          targetId: 'round-1',
+          scope: 'ensembleRound',
+          status: 'completed',
+          observedCommitCount: 0,
+          observedChangedFileCount: 2
+        }
+      }
+    }
+    const repaired: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        closeoutCommits: [
+          {
+            hash: 'a048ce5',
+            subject: 'Repair persisted close-out commits',
+            stats: '2 files, +212 -157',
+            participantId: 'writer',
+            files: [
+              {
+                path: 'src/renderer/src/lib/transcriptRowRenderCache.ts',
+                additions: 12,
+                deletions: 3,
+                hunks: '@@ cache repair @@'
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    expect(repaired.content).toBe(first.content)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ message: first, messageSignature: transcriptMessageRenderSignature(first) }),
+        signature({
+          message: repaired,
+          messageSignature: transcriptMessageRenderSignature(repaired)
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('invalidates a cached Task Complete card when a sub-thread tombstone is refreshed', () => {
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      content: 'Close-out content remains unchanged',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutScope: 'run',
+        sourceRunId: 'run-1',
+        closeoutSubagentDelegations: [
+          {
+            subThreadId: 'child-1',
+            identitySeed: 'child-1',
+            title: 'Review the cache',
+            provider: 'claude',
+            parentProvider: 'codex',
+            status: 'running',
+            promptPreview: 'Find stale transcript rows.'
+          }
+        ]
+      }
+    }
+    const refreshed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        closeoutSubagentDelegations: [
+          {
+            ...first.metadata.closeoutSubagentDelegations![0],
+            status: 'returned',
+            promptPreview: 'Found and repaired stale transcript rows.'
+          }
+        ]
+      }
+    }
+
+    expect(refreshed.content).toBe(first.content)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ message: first, messageSignature: transcriptMessageRenderSignature(first) }),
+        signature({
+          message: refreshed,
+          messageSignature: transcriptMessageRenderSignature(refreshed)
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('uses a deterministic compact signature for complete close-out card metadata', () => {
+    const hugeHunk = 'line\n'.repeat(4_000)
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutSource: 'summaryProvider',
+        closeoutProvider: 'claude',
+        closeoutModel: 'claude-opus-5',
+        closeoutDurationMs: 63_000,
+        closeoutParticipantTable: {
+          totalWorkLabel: '1 turn',
+          rows: [
+            {
+              participantId: 'writer',
+              seatLink: {
+                participantId: 'writer',
+                before: { provider: 'claude', model: 'claude-opus-5' },
+                after: { provider: 'claude', model: 'claude-opus-5' }
+              },
+              seatText: 'Claude / Writer',
+              workLabel: '1 turn',
+              status: 'answered',
+              statusGlyphMarkdown: ':white_check_mark:'
+            }
+          ]
+        },
+        closeoutFileChanges: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 2 }],
+        closeoutCommits: [
+          {
+            hash: '1234567890abcdef',
+            subject: 'Keep cache fresh',
+            files: [{ path: 'src/a.ts', hunks: hugeHunk }]
+          }
+        ],
+        closeoutSubagentDelegations: [
+          {
+            subThreadId: 'child-1',
+            identitySeed: 'child-1',
+            title: 'Inspect close-out',
+            provider: 'claude',
+            status: 'completed'
+          }
+        ]
+      }
+    }
+    const equivalent: ChatMessage = {
+      ...first,
+      metadata: {
+        closeoutSubagentDelegations: first.metadata!.closeoutSubagentDelegations,
+        closeoutCommits: first.metadata!.closeoutCommits,
+        closeoutFileChanges: first.metadata!.closeoutFileChanges,
+        closeoutParticipantTable: first.metadata!.closeoutParticipantTable,
+        closeoutDurationMs: 63_000,
+        closeoutModel: 'claude-opus-5',
+        closeoutProvider: 'claude',
+        closeoutSource: 'summaryProvider',
+        kind: 'taskWraithCloseout'
+      }
+    }
+
+    const firstSignature = transcriptMessageRenderSignature(first)
+    expect(transcriptMessageRenderSignature(equivalent)).toBe(firstSignature)
+    expect(firstSignature.length).toBeLessThan(1_500)
+  })
+
   it('invalidates when a captured ensemble seat adds effort or thinking state', () => {
     const first: ChatMessage = {
       ...message,
