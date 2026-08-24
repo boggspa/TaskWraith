@@ -302,6 +302,15 @@ import {
 } from '../EnsembleTerminalUsage'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from '../bridge/BridgeTextFold'
+import {
+  catalogToolOperationCategory,
+  resolveCatalogToolName
+} from '../../shared/canonicalToolCoalesce'
+import {
+  extractToolInvocationParameters,
+  mergeToolResultParameters,
+  presentToolInvocation
+} from '../../shared/toolInvocationPresentation'
 import { evaluateEnsembleFanoutWriteAdmission } from './EnsembleFanoutWriteAdmission'
 import {
   formatDiscordContextPromptAppendix,
@@ -2526,24 +2535,7 @@ function extractToolKind(event: any): string {
 }
 
 function extractToolParameters(event: any): Record<string, unknown> {
-  if (!event || typeof event !== 'object') return {}
-  const raw =
-    event.parameters ||
-    event.params ||
-    event.arguments ||
-    event.input ||
-    event.function?.arguments ||
-    {}
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      return parsed && typeof parsed === 'object' ? parsed : {}
-    } catch {
-      // Native wrapper tools can carry executable source instead of JSON.
-      return { input: raw }
-    }
-  }
-  return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return extractToolInvocationParameters(event)
 }
 
 function stripToolNamespace(toolName: string): string {
@@ -3003,7 +2995,13 @@ function isEnsembleReasoningToolName(toolName: string): boolean {
 function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity['category'] {
   const kindCategory = mapEnsembleToolKindToCategory(toolKind)
   if (kindCategory) return kindCategory
-  const name = stripToolNamespace(toolName)
+  const catalogTool = resolveCatalogToolName(toolName)
+  const operationCategory = catalogToolOperationCategory(toolName)
+  if (operationCategory === 'read_file') return 'read'
+  if (operationCategory === 'edit_file') return 'write'
+  if (operationCategory === 'search') return 'search'
+  if (operationCategory === 'shell') return 'shell'
+  const name = stripToolNamespace(catalogTool || toolName)
   if (isEnsembleReasoningToolName(name)) return 'task'
   if (
     name === 'ensemble_yield' ||
@@ -3017,7 +3015,13 @@ function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity[
   }
   if (name === 'read_file' || name === 'list_directory') return 'read'
   if (FILE_WRITE_TOOL_NAMES.has(name)) return 'write'
-  if (name === 'grep_search' || name === 'grep' || name === 'rg' || name === 'web_search')
+  if (
+    name === 'grep_search' ||
+    name === 'grep' ||
+    name === 'rg' ||
+    name === 'web_search' ||
+    name === 'capability_search'
+  )
     return 'search'
   if (name === 'run_shell_command' || name === 'shell' || name === 'get_diagnostics') return 'shell'
   if (name === 'git_push' || name === 'git_create_pr') return 'shell'
@@ -3031,7 +3035,7 @@ function getEnsembleToolDisplayName(
   participant?: EnsembleParticipant,
   roster?: readonly EnsembleParticipant[]
 ): string {
-  const name = stripToolNamespace(toolName)
+  const name = stripToolNamespace(resolveCatalogToolName(toolName) || toolName)
   if (name === 'ensemble_yield') {
     const target = getStringParameter(parameters, ['target', 'participant', 'to', 'next'])
     const actor = participantLabel(participant)
@@ -3201,15 +3205,16 @@ function buildEnsembleToolActivity(
   const rawToolName = extractToolName(event)
   const toolKind = extractToolKind(event)
   const rawParameters = extractToolParameters(event)
-  const toolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const presentation = presentToolInvocation(rawToolName, rawParameters)
+  const toolName = canonicalImageViewToolName(presentation.toolName, presentation.parameters)
   const parameterImageCount =
-    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(rawParameters) : undefined
+    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(presentation.parameters) : undefined
   const parameters = parameterImageCount
-    ? { ...rawParameters, imageCount: parameterImageCount }
-    : rawParameters
-  const canonicalToolName = stripToolNamespace(toolName)
+    ? { ...presentation.parameters, imageCount: parameterImageCount }
+    : presentation.parameters
+  const canonicalToolName = resolveCatalogToolName(toolName) || stripToolNamespace(toolName)
   const category =
-    toolName === IMAGE_VIEW_TOOL_NAME ? 'read' : getEnsembleToolCategory(rawToolName, toolKind)
+    toolName === IMAGE_VIEW_TOOL_NAME ? 'read' : getEnsembleToolCategory(toolName, toolKind)
   const parameterFilePath =
     typeof parameters.file_path === 'string'
       ? (parameters.file_path as string)
@@ -3222,7 +3227,9 @@ function buildEnsembleToolActivity(
   // undefined instead of seeding fake +0/-0 stats that suppress richer
   // renderer-side derivation on the activity row.
   const inputDiffSummary =
-    category === 'write' ? bridgeToolDiffStats(canonicalToolName, parameters) : undefined
+    category === 'write'
+      ? bridgeToolDiffStats(canonicalToolName, parameters, { writeLike: true })
+      : undefined
   const filePath = parameterFilePath || singleDiffFilePath(inputDiffSummary)
   const diffSummary =
     category === 'write'
@@ -3249,7 +3256,7 @@ function buildEnsembleToolActivity(
     displayName:
       toolName === IMAGE_VIEW_TOOL_NAME
         ? IMAGE_VIEW_DISPLAY_NAME
-        : getEnsembleToolDisplayName(rawToolName, parameters, participant, roster),
+        : getEnsembleToolDisplayName(toolName, parameters, participant, roster),
     category,
     status: 'running',
     startedAt,
@@ -3372,21 +3379,53 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
     event?.result && typeof event.result === 'object' && !Array.isArray(event.result)
       ? (event.result as Record<string, unknown>)
       : {}
+  const resultParameters = mergeToolResultParameters(activity.parameters, event)
+  const resultPresentation = presentToolInvocation(activity.toolName, resultParameters)
+  const toolName = resultPresentation.toolName
+  const category =
+    activity.category === 'unknown'
+      ? getEnsembleToolCategory(toolName, extractToolKind(event))
+      : activity.category
+  const resultInputDiffSummary =
+    category === 'write'
+      ? bridgeToolDiffStats(toolName, resultPresentation.parameters, { writeLike: true })
+      : undefined
   const resultDiffSummary =
-    activity.category === 'write'
+    category === 'write'
       ? bridgeResultDiffStats({
-          toolName: stripToolNamespace(activity.toolName),
+          toolName: stripToolNamespace(toolName),
           summary: output,
           changes: event?.changes ?? resultRecord.changes,
-          kind: event?.kind ?? resultRecord.kind ?? activity.parameters?.kind
+          kind: event?.kind ?? resultRecord.kind ?? resultPresentation.parameters.kind
         })
       : undefined
+  const inputAndResultDiffSummary = mergeToolDiffSummaries(
+    resultInputDiffSummary,
+    resultDiffSummary,
+    singleDiffFilePath(resultInputDiffSummary) || singleDiffFilePath(resultDiffSummary)
+  )
+  const resultFilePath = getStringParameter(resultPresentation.parameters, [
+    'file_path',
+    'filePath',
+    'path',
+    'TargetFile',
+    'targetFile'
+  ])
   const diffSummary = mergeToolDiffSummaries(
     activity.diffSummary,
-    resultDiffSummary,
-    activity.filePath || singleDiffFilePath(resultDiffSummary)
+    inputAndResultDiffSummary,
+    activity.filePath || resultFilePath || singleDiffFilePath(inputAndResultDiffSummary)
   )
-  const filePath = activity.filePath || singleDiffFilePath(diffSummary)
+  const filePath =
+    activity.filePath || resultFilePath || singleDiffFilePath(diffSummary)
+  const resolvedDisplayName =
+    imageView
+      ? IMAGE_VIEW_DISPLAY_NAME
+      : status === 'success' && stripToolNamespace(toolName) === 'ensemble_yield'
+        ? activity.displayName.replace(/\byielding\b/i, 'yielded')
+        : activity.filePath || !filePath
+          ? displayName
+          : getEnsembleToolDisplayName(toolName, resultPresentation.parameters)
   return {
     ...activity,
     ...(imageView
@@ -3398,8 +3437,15 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
             : activity.parameters
         }
       : {}),
+    ...(imageView
+      ? {}
+      : {
+          toolName,
+          category,
+          parameters: resultPresentation.parameters
+        }),
     status,
-    displayName,
+    displayName: resolvedDisplayName,
     endedAt,
     durationMs,
     ...(filePath ? { filePath } : {}),

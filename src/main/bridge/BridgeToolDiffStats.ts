@@ -35,7 +35,8 @@ export function bridgeUnifiedDiffStats(
   const hasDiffStructure =
     /^@@ .*@@/m.test(text) ||
     /^diff --git /m.test(text) ||
-    (/^\+\+\+ /m.test(text) && /^--- /m.test(text))
+    (/^\+\+\+ /m.test(text) && /^--- /m.test(text)) ||
+    /^\*\*\*\s+(?:Begin Patch|(?:Update|Add|Delete) File:)/m.test(text)
   if (!hasDiffStructure) return undefined
   let additions = 0
   let deletions = 0
@@ -55,10 +56,15 @@ function changesFlatStats(changes: unknown): ToolDiffSummary | undefined {
   for (const item of changes) {
     const entry = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
     const add = bridgeNumberish(
-      entry.additions ?? entry.added ?? entry.linesAdded ?? entry.insertions
+      entry.additions ?? entry.added ?? entry.linesAdded ?? entry.lines_added ?? entry.insertions
     )
     const del = bridgeNumberish(
-      entry.deletions ?? entry.deleted ?? entry.linesDeleted ?? entry.removals
+      entry.deletions ??
+        entry.deleted ??
+        entry.linesDeleted ??
+        entry.linesRemoved ??
+        entry.lines_removed ??
+        entry.removals
     )
     if (add !== undefined || del !== undefined) hasStats = true
     additions += add ?? 0
@@ -186,20 +192,22 @@ function isCreateKind(kind: unknown): boolean {
  * shows for write tools instead of truncated result text. */
 export function bridgeToolDiffStats(
   toolName: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  options: { writeLike?: boolean } = {}
 ): ToolDiffSummary | undefined {
   const explicitAdditions =
-    typeof input.additions === 'number'
-      ? input.additions
-      : typeof input.additions === 'string'
-        ? parseInt(input.additions, 10)
-        : undefined
+    bridgeNumberish(
+      input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
+    )
   const explicitDeletions =
-    typeof input.deletions === 'number'
-      ? input.deletions
-      : typeof input.deletions === 'string'
-        ? parseInt(input.deletions, 10)
-        : undefined
+    bridgeNumberish(
+      input.deletions ??
+        input.deleted ??
+        input.linesDeleted ??
+        input.linesRemoved ??
+        input.lines_removed ??
+        input.removals
+    )
   if (
     (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
     (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))
@@ -272,6 +280,8 @@ export function bridgeToolDiffStats(
   const patch =
     (typeof input.patch === 'string' && input.patch) ||
     (typeof input.diff === 'string' && input.diff) ||
+    (typeof input.diffString === 'string' && input.diffString) ||
+    (typeof input.diff_string === 'string' && input.diff_string) ||
     (typeof input.patchPreview === 'string' && input.patchPreview) ||
     (typeof input.patch_preview === 'string' && input.patch_preview) ||
     (typeof input.unifiedDiff === 'string' && input.unifiedDiff) ||
@@ -307,13 +317,14 @@ export function bridgeToolDiffStats(
       }
     }
   }
-  if (isWriteLikeCatalogTool(toolName)) {
+  if (options.writeLike || isWriteLikeCatalogTool(toolName)) {
     const content =
       (typeof input.content === 'string' && input.content) ||
       (typeof input.file_text === 'string' && input.file_text) ||
       (typeof input.CodeContent === 'string' && input.CodeContent) ||
       (typeof input.codeContent === 'string' && input.codeContent) ||
       (typeof input.CodeEdit === 'string' && input.CodeEdit) ||
+      (typeof input.contents === 'string' && input.contents) ||
       undefined
     if (content !== undefined) {
       return {

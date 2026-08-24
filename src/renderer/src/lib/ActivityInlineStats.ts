@@ -103,9 +103,15 @@ function lineChangesFromContent(
   toolName: string,
   parameters: Record<string, unknown>
 ): { additions?: number; deletions?: number } {
-  if (typeof parameters.content !== 'string') return {}
+  const content =
+    typeof parameters.content === 'string'
+      ? parameters.content
+      : typeof parameters.contents === 'string'
+        ? parameters.contents
+        : undefined
+  if (content === undefined) return {}
   if (!looksWriteLike(toolName)) return {}
-  return { additions: (parameters.content as string).split('\n').length, deletions: 0 }
+  return { additions: content.split('\n').length, deletions: 0 }
 }
 
 export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {

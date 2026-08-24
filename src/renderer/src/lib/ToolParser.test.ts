@@ -698,6 +698,35 @@ describe('ToolParser', () => {
       expect(summary?.files).toHaveLength(2)
     })
 
+    it('derives per-change Codex patch envelopes when numeric counts are absent', () => {
+      const summary = deriveToolDiffSummary('edit_file', {
+        changes: [
+          {
+            kind: 'update',
+            path: 'src/a.ts',
+            diff: '*** Begin Patch\n*** Update File: src/a.ts\n-old\n+new\n+next\n*** End Patch'
+          }
+        ]
+      })
+
+      expect(summary).toMatchObject({
+        additions: 2,
+        deletions: 1,
+        files: [{ path: 'src/a.ts', additions: 2, deletions: 1 }]
+      })
+    })
+
+    it('accepts Cursor result aliases for line counts and diffString', () => {
+      expect(
+        deriveToolDiffSummary('edit', {
+          path: 'src/cursor.ts',
+          linesAdded: 3,
+          linesRemoved: 2,
+          diffString: '@@ -1,2 +1,3 @@\n-old one\n-old two\n+new one\n+new two\n+new three'
+        })
+      ).toMatchObject({ additions: 3, deletions: 2 })
+    })
+
     it('parses unified diffs when changes do not carry stats', () => {
       const summary = parseUnifiedDiffSummary(
         [

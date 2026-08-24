@@ -38,6 +38,8 @@ export interface NormalizedGrokRunEvent {
   toolId?: string
   toolName?: string
   toolInput?: Record<string, unknown>
+  /** Late ACP tool-call evidence carried by a terminal update. */
+  toolResultInput?: Record<string, unknown>
   toolStatus?: 'success' | 'error'
   toolOutput?: string
   /**

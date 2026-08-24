@@ -20,6 +20,11 @@ import {
   imageViewCountFromResult,
   isImageViewToolUse
 } from '../../../shared/imageViewIdentity'
+import {
+  extractToolInvocationParameters,
+  mergeToolResultParameters,
+  presentToolInvocation
+} from '../../../shared/toolInvocationPresentation'
 
 export function extractToolName(event: any): string {
   if (!event || typeof event !== 'object') return 'unknown'
@@ -67,29 +72,7 @@ export function extractParentToolCallId(event: any): string | undefined {
 }
 
 export function extractParameters(event: any): Record<string, unknown> {
-  if (!event || typeof event !== 'object') return {}
-  const raw =
-    event.parameters ||
-    event.params ||
-    event.payload ||
-    event.args ||
-    event.input ||
-    event.arguments ||
-    {}
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
-      }
-    } catch {
-      // Provider-native wrapper tools (notably Codex `exec`) carry source text.
-    }
-    return { input: raw }
-  }
-  return raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>)
-    : {}
+  return extractToolInvocationParameters(event)
 }
 
 /**
@@ -468,6 +451,7 @@ const SEARCH_LIKE_TOOL_NAMES = new Set([
   'web_search',
   'websearch',
   'workspace_search',
+  'capability_search',
   'file_search',
   'tw_recall_find'
 ])
@@ -885,18 +869,31 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
 } {
   if (!parameters) return {}
 
-  const explicitAdditions =
-    typeof parameters.additions === 'number'
-      ? parameters.additions
-      : typeof parameters.additions === 'string'
-        ? parseInt(parameters.additions, 10)
-        : undefined
-  const explicitDeletions =
-    typeof parameters.deletions === 'number'
-      ? parameters.deletions
-      : typeof parameters.deletions === 'string'
-        ? parseInt(parameters.deletions, 10)
-        : undefined
+  const explicitLineCount = (...values: unknown[]): number | undefined => {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value
+      if (typeof value === 'string' && value.trim()) {
+        const parsed = parseInt(value, 10)
+        if (!Number.isNaN(parsed)) return parsed
+      }
+    }
+    return undefined
+  }
+  const explicitAdditions = explicitLineCount(
+    parameters.additions,
+    parameters.added,
+    parameters.linesAdded,
+    parameters.lines_added,
+    parameters.insertions
+  )
+  const explicitDeletions = explicitLineCount(
+    parameters.deletions,
+    parameters.deleted,
+    parameters.linesDeleted,
+    parameters.linesRemoved,
+    parameters.lines_removed,
+    parameters.removals
+  )
   if (
     (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
     (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))
@@ -921,6 +918,7 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
     (typeof parameters.CodeContent === 'string' && parameters.CodeContent) ||
     (typeof parameters.codeContent === 'string' && parameters.codeContent) ||
     (typeof parameters.CodeEdit === 'string' && parameters.CodeEdit) ||
+    (typeof parameters.contents === 'string' && parameters.contents) ||
     undefined
   if (typeof content === 'string') {
     return { additions: content.split('\n').length, deletions: 0 }
@@ -1009,12 +1007,38 @@ function parseChanges(value: unknown): ToolDiffSummary | undefined {
     .filter((item): item is Record<string, unknown> =>
       Boolean(item && typeof item === 'object' && !Array.isArray(item))
     )
-    .map((item) => ({
-      path: getPathFromRecord(item),
-      status: normalizeStatus(item.kind || item.type || item.operation || item.status),
-      additions: numberValue(item.additions ?? item.added ?? item.linesAdded ?? item.insertions),
-      deletions: numberValue(item.deletions ?? item.deleted ?? item.linesDeleted ?? item.removals)
-    }))
+    .map((item) => {
+      const preview =
+        stringValue(item.diff) ||
+        stringValue(item.patch) ||
+        stringValue(item.patchPreview) ||
+        stringValue(item.patch_preview) ||
+        stringValue(item.unifiedDiff) ||
+        stringValue(item.unified_diff)
+      const previewSummary = preview ? parseUnifiedDiffSummary(preview) : undefined
+      const previewFile = previewSummary?.files?.[0]
+      return {
+        path: getPathFromRecord(item) || previewFile?.path,
+        status:
+          normalizeStatus(item.kind || item.type || item.operation || item.status) ||
+          previewFile?.status,
+        additions:
+          numberValue(
+            item.additions ?? item.added ?? item.linesAdded ?? item.lines_added ?? item.insertions
+          ) ??
+          previewSummary?.additions,
+        deletions:
+          numberValue(
+            item.deletions ??
+              item.deleted ??
+              item.linesDeleted ??
+              item.linesRemoved ??
+              item.lines_removed ??
+              item.removals
+          ) ??
+          previewSummary?.deletions
+      }
+    })
 
   return summarizeFiles(files, 'codex_changes', 'exact')
 }
@@ -1031,7 +1055,8 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
   const hasDiffStructure =
     /^@@ .*@@/m.test(diffText) ||
     /^diff --git /m.test(diffText) ||
-    (/^\+\+\+ /m.test(diffText) && /^--- /m.test(diffText))
+    (/^\+\+\+ /m.test(diffText) && /^--- /m.test(diffText)) ||
+    /^\*\*\*\s+(?:Begin Patch|(?:Update|Add|Delete) File:)/m.test(diffText)
   if (!hasDiffStructure) return undefined
 
   const files: ToolDiffFileSummary[] = []
@@ -1051,6 +1076,19 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
       current = {
         path: diffHeader[2] || diffHeader[1],
         status: 'modified',
+        additions: 0,
+        deletions: 0
+      }
+      continue
+    }
+
+    const codexHeader = line.match(/^\*{3}\s+(Update|Add|Delete) File:\s*(.+)$/i)
+    if (codexHeader) {
+      commitCurrent()
+      const operation = codexHeader[1].toLowerCase()
+      current = {
+        path: codexHeader[2].trim(),
+        status: operation === 'add' ? 'created' : operation === 'delete' ? 'deleted' : 'modified',
         additions: 0,
         deletions: 0
       }
@@ -1082,6 +1120,8 @@ function getPatchPreview(parameters?: Record<string, unknown>, resultText?: stri
     stringValue(parameters.patch_preview) ||
     stringValue(parameters.patch) ||
     stringValue(parameters.diff) ||
+    stringValue(parameters.diffString) ||
+    stringValue(parameters.diff_string) ||
     stringValue(parameters.unifiedDiff) ||
     stringValue(parameters.unified_diff) ||
     resultText ||
@@ -1159,12 +1199,24 @@ export function deriveToolDiffSummary(
 export function createToolActivity(toolUseEvent: any): ToolActivity {
   const rawToolName = extractToolName(toolUseEvent)
   const rawParameters = extractParameters(toolUseEvent)
-  const toolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const presentation = presentToolInvocation(rawToolName, rawParameters)
+  const rawImageToolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const toolName =
+    rawImageToolName === IMAGE_VIEW_TOOL_NAME
+      ? rawImageToolName
+      : canonicalImageViewToolName(presentation.toolName, presentation.parameters)
   const parameterImageCount =
-    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(rawParameters) : undefined
+    toolName === IMAGE_VIEW_TOOL_NAME
+      ? imageViewCountFromParameters(rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters)
+      : undefined
   const parameters = parameterImageCount
-    ? { ...rawParameters, imageCount: parameterImageCount }
-    : rawParameters
+    ? {
+        ...(rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters),
+        imageCount: parameterImageCount
+      }
+    : rawImageToolName === IMAGE_VIEW_TOOL_NAME
+      ? rawParameters
+      : presentation.parameters
   // Prefer a transport-supplied canonical kind (e.g. Grok ACP `tool_kind`) for
   // the category icon — the human tool label is often a freeform title ("Write
   // `package.json`") that name-based resolution can't categorise. Fall back to
@@ -1294,11 +1346,18 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
   const inferred = inferNamelessActivityFromResult(activity, resultOutput)
   const inferredToolName = inferred.toolName || activity.toolName
   const inferredParameters = inferred.parameters || activity.parameters
+  const resultParameters = mergeToolResultParameters(inferredParameters, toolResultEvent)
+  const resultPresentation = presentToolInvocation(inferredToolName, resultParameters)
+  const presentedToolName = resultPresentation.toolName
   const imageView = isImageViewToolUse(inferredToolName, inferredParameters)
   const returnedImageCount = imageView ? imageViewCountFromResult(toolResultEvent) : undefined
   const pairedParameters = returnedImageCount
-    ? { ...(inferredParameters || {}), imageCount: returnedImageCount }
-    : inferredParameters
+    ? { ...resultPresentation.parameters, imageCount: returnedImageCount }
+    : resultPresentation.parameters
+  const pairedFilePath = getPathFromRecord(pairedParameters)
+  const pairedCategory =
+    activity.category === 'unknown' ? getToolCategory(presentedToolName) : activity.category
+  const pairedDisplayName = getToolDisplayName(presentedToolName, pairedParameters)
 
   return {
     ...activity,
@@ -1310,7 +1369,15 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
           category: 'read' as const
         }
       : {}),
+    ...(imageView
+      ? {}
+      : {
+          toolName: presentedToolName,
+          displayName: pairedDisplayName,
+          category: pairedCategory
+        }),
     parameters: pairedParameters,
+    ...(pairedFilePath ? { filePath: pairedFilePath, affectedFilePath: pairedFilePath } : {}),
     status,
     endedAt,
     durationMs,
@@ -1320,7 +1387,7 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     // that; every estimate-versus-estimate outcome below is unchanged.
     diffSummary: preserveMeasuredDiffSummary(
       activity.diffSummary,
-      deriveToolDiffSummary(inferredToolName, pairedParameters, resultOutput) ||
+      deriveToolDiffSummary(presentedToolName, pairedParameters, resultOutput) ||
         inferred.diffSummary ||
         activity.diffSummary
     ),

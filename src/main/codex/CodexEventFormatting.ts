@@ -169,16 +169,25 @@ function looksLikePatchText(value: string): boolean {
   )
 }
 
+/**
+ * Recognise a patch COMMAND, not a command which merely mentions its name.
+ * Search queries such as `rg apply_patch` and text rewrites containing that
+ * token are ordinary shell calls; classifying them as file edits promises a
+ * diff badge we do not have evidence to show.
+ */
+function commandInvokesPatch(command: string): boolean {
+  const invocationBoundary = '(?:^|(?:&&|\\|\\||;|\\n)\\s*)'
+  return new RegExp(`${invocationBoundary}apply_patch(?:\\s|$)`, 'i').test(command) ||
+    /\bgit\s+add\s+-p(?:\s|$)/i.test(command) ||
+    /\bgit\s+apply(?:\s|$)/i.test(command) ||
+    /\bpatch\s+-p(?:\s|$)/i.test(command)
+}
+
 export function codexCommandFileEditMetadata(
   command: string,
   output = ''
 ): { toolName: string; parameters: Record<string, unknown> } | null {
-  const normalized = command.toLowerCase()
-  const commandSuggestsPatch =
-    normalized.includes('apply_patch') ||
-    normalized.includes('git add -p') ||
-    normalized.includes('git apply') ||
-    normalized.includes('patch -p')
+  const commandSuggestsPatch = commandInvokesPatch(command)
   const patchPreview = looksLikePatchText(output) ? output : ''
   if (!commandSuggestsPatch && !patchPreview) return null
   const path = codexCommandEditPath(command)

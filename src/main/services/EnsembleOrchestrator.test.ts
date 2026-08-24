@@ -2409,6 +2409,60 @@ describe('EnsembleOrchestrator', () => {
     expect(testCase.summary(activity!)).toMatchObject(testCase.expected)
   })
 
+  it('normalizes native mutation, gateway search, and result-side evidence in ensemble rows', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      {
+        id: 'antigravity-seat',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'Writer',
+        instructions: 'Write only.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Apply the scoped update.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'tool_use',
+      tool_id: 'agy-replace',
+      tool_name: 'replace_file_content',
+      parameters: { TargetFile: 'src/a.ts', TargetContent: 'before', ReplacementContent: 'after\nnext' }
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'tool_result',
+      tool_id: 'agy-replace',
+      status: 'success',
+      output: 'done'
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'tool_use',
+      tool_id: 'capability-search',
+      tool_name: 'capability_search',
+      parameters: { query: 'needle' }
+    })
+
+    await vi.waitFor(() => {
+      const activities = harness.chat.messages.flatMap((message) => message.toolActivities || [])
+      expect(activities.find((activity) => activity.id === 'agy-replace')).toMatchObject({
+        category: 'write',
+        filePath: 'src/a.ts',
+        diffSummary: { additions: 2, deletions: 1 }
+      })
+      expect(activities.find((activity) => activity.id === 'capability-search')).toMatchObject({
+        category: 'search'
+      })
+    })
+  })
+
   it('emits coalesced ephemeral usage snapshots for the active participant turn', async () => {
     let now = 1_000
     const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []

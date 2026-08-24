@@ -247,6 +247,33 @@ describe('G4c — ACP tool_call / tool_call_update → tool-card run events', ()
     ])
   })
 
+  it('carries late terminal diff evidence so an earlier empty use can be enriched', () => {
+    const [result] = acpMessageToRunEvents(
+      toolUpdate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'late-edit',
+        title: 'Edit src/a.ts',
+        kind: 'edit',
+        status: 'completed',
+        content: [
+          { type: 'diff', path: 'src/a.ts', oldText: 'before', newText: 'after\nnext' }
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({
+      type: 'tool_result',
+      toolId: 'late-edit',
+      toolName: 'Edit src/a.ts',
+      toolKind: 'edit',
+      toolResultInput: {
+        file_path: 'src/a.ts',
+        old_string: 'before',
+        new_string: 'after\nnext'
+      }
+    })
+  })
+
   it('flags a failed tool_call_update as an errored result', () => {
     const events = acpMessageToRunEvents(
       toolUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'call_3', status: 'failed' })

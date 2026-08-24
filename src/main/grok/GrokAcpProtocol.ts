@@ -13,6 +13,7 @@
 
 import type { NormalizedGrokRunEvent } from './GrokStreamingJson'
 import type { AgenticServiceId } from '../store/types'
+import { extractToolInvocationParameters } from '../../shared/toolInvocationPresentation'
 
 export type { NormalizedGrokRunEvent }
 
@@ -154,6 +155,23 @@ function acpDiffBlockToolInput(content: unknown): Record<string, unknown> {
   return {}
 }
 
+/** Pull only declared argument bags out of an ACP update. The update object
+ * itself carries lifecycle/content metadata, which must never become a tool's
+ * input merely because an adapter omitted rawInput. */
+function acpToolUpdateInput(update: Record<string, unknown>): Record<string, unknown> {
+  return extractToolInvocationParameters({
+    rawInput: update.rawInput,
+    input: update.input,
+    arguments: update.arguments,
+    args: update.args,
+    parameters: update.parameters,
+    payload: update.payload,
+    toolInput: update.toolInput,
+    tool_input: update.tool_input,
+    function: update.function
+  })
+}
+
 /**
  * Map an ACP `session/update` tool event (`tool_call` / `tool_call_update`) to
  * normalized run events. A `tool_call` opens the activity card (`tool_use`); a
@@ -175,7 +193,7 @@ function acpToolUpdateToRunEvents(
     // Diff-block evidence FILLS GAPS ONLY: whatever the agent stated in
     // rawInput/input wins every key it set, so a recovered value can never
     // contradict the arguments the tool was actually invoked with.
-    const statedInput = asObject(update.rawInput) || asObject(update.input) || {}
+    const statedInput = acpToolUpdateInput(update)
     const recoveredInput = acpDiffBlockToolInput(update.content)
     events.push({
       type: 'tool_use',
@@ -189,9 +207,17 @@ function acpToolUpdateToRunEvents(
     })
   }
   if (terminal) {
+    const statedInput = acpToolUpdateInput(update)
+    const recoveredInput = acpDiffBlockToolInput(update.content)
+    const toolResultInput = { ...recoveredInput, ...statedInput }
+    const toolName = firstStr(update.title, update.kind)
+    const toolKind = firstStr(update.kind)
     events.push({
       type: 'tool_result',
       toolId: toolId || undefined,
+      ...(sub === 'tool_call' || !toolName ? {} : { toolName }),
+      ...(sub === 'tool_call' || !toolKind ? {} : { toolKind }),
+      ...(Object.keys(toolResultInput).length > 0 ? { toolResultInput } : {}),
       toolStatus: status === 'failed' ? 'error' : 'success',
       toolOutput: acpToolContentToText(update.content) || safeStringify(update.rawOutput),
       raw

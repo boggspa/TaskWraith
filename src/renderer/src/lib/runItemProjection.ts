@@ -1,6 +1,7 @@
 import type { ItemDeltaRunItemEvent, RunItemEvent } from '../../../shared/runItemEvents'
 import type { AssistantDeltaInput } from './applyAssistantDelta'
 import type { ProviderId } from '../../../main/store/types'
+import { extractToolInvocationParameters } from '../../../shared/toolInvocationPresentation'
 
 export interface RunItemAssistantProjection {
   chatId: string
@@ -180,12 +181,20 @@ export function projectRunItemToolEvents(
           ...(output ? { summary: output } : {}),
           ...stripHiddenProgressFields(data)
         }
-      : {
+      // Run-item `data` is already the sidecar's canonical argument bag. Do
+      // not unwrap it a second time: capability_invoke deliberately owns an
+      // outer `{ name, arguments }` envelope which the transcript presenter
+      // needs in order to resolve the concrete target.
+      : data
+    const fallbackParameters =
+      !isVisibleProgress && Object.keys(parameters).length === 0
+        ? {
           ...(event.title ? { title: event.title } : {}),
           ...(event.summary ? { summary: event.summary } : {}),
           ...(event.status ? { status: event.status } : {}),
           ...data
         }
+        : parameters
 
     const projections: RunItemToolProjection[] = [
       {
@@ -200,7 +209,7 @@ export function projectRunItemToolEvents(
             type: 'tool_use',
             tool_id: toolId,
             tool_name: toolName,
-            parameters,
+            parameters: fallbackParameters,
             ...(provider ? { provider } : {})
           },
           timestamp: event.createdAt,
@@ -243,6 +252,7 @@ export function projectRunItemToolEvents(
     const toolId = event.toolCallId || event.itemId
     const toolName = event.toolName || 'unknown'
     const output = event.output || event.delta
+    const resultParameters = extractToolInvocationParameters(event.data)
     return [
       {
         chatId: event.chatId,
@@ -259,6 +269,11 @@ export function projectRunItemToolEvents(
             output,
             content: output,
             status: event.status || 'success',
+            // The renderer's legacy lane is intentionally skipped whenever a
+            // sidecar rides the same line. Keep terminal `changes`, patches,
+            // and provider-specific result arguments here so pairToolResult
+            // receives the same evidence as the skipped legacy event.
+            parameters: resultParameters,
             ...(provider ? { provider } : {})
           },
           timestamp: event.createdAt,

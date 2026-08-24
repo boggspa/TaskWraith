@@ -65,7 +65,15 @@ export function stripToolNamespace(toolName: string): string {
       'taskwraith-broker_',
       'taskwraith_broker_',
       'taskwraith-broker-',
-      'taskwraith_broker-'
+      'taskwraith_broker-',
+      // Provider-scoped TaskWraith MCP aliases are presentation namespaces,
+      // not independent tools. Mistral ACP currently emits the single-
+      // underscore spelling; fold it here so every transcript lane sees the
+      // same catalog identity as the broker/approval path.
+      'taskwraith-mistral__',
+      'taskwraith-mistral_',
+      'taskwraith-grok__',
+      'taskwraith-grok_'
     ]
     for (const prefix of knownServerPrefixes) {
       if (normalized.startsWith(prefix)) {
@@ -81,6 +89,18 @@ export function stripToolNamespace(toolName: string): string {
   }
   if (normalized.startsWith('taskwraith-broker_')) {
     return normalized.slice('taskwraith-broker_'.length)
+  }
+  if (normalized.startsWith('taskwraith-mistral__')) {
+    return normalized.slice('taskwraith-mistral__'.length)
+  }
+  if (normalized.startsWith('taskwraith-mistral_')) {
+    return normalized.slice('taskwraith-mistral_'.length)
+  }
+  if (normalized.startsWith('taskwraith-grok__')) {
+    return normalized.slice('taskwraith-grok__'.length)
+  }
+  if (normalized.startsWith('taskwraith-grok_')) {
+    return normalized.slice('taskwraith-grok_'.length)
   }
   if (normalized.startsWith('taskwraith_broker_')) {
     return normalized.slice('taskwraith_broker_'.length)
@@ -99,6 +119,9 @@ const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   // Shell / runtime
   shell: 'run_shell_command',
   bash: 'run_shell_command',
+  exec: 'run_shell_command',
+  zsh: 'run_shell_command',
+  binzsh: 'run_shell_command',
   runshellcommand: 'run_shell_command',
   runcommand: 'run_shell_command',
   runterminalcommand: 'run_shell_command',

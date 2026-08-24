@@ -18,6 +18,9 @@ describe('canonicalToolCoalesce', () => {
   it('strips broker namespaces before alias lookup', () => {
     expect(stripToolNamespace('mcp__TaskWraith__read_file')).toBe('read_file')
     expect(stripToolNamespace('taskwraith-broker__write_file')).toBe('write_file')
+    expect(stripToolNamespace('taskwraith-mistral_capability_invoke')).toBe(
+      'capability_invoke'
+    )
   })
 
   it('maps Cursor-native PascalCase tools to catalog names', () => {
@@ -39,6 +42,8 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveCatalogToolName('replace_file_content')).toBe('replace')
     expect(resolveCatalogToolName('view_file')).toBe('read_file')
     expect(resolveCatalogToolName('run_terminal_command')).toBe('run_shell_command')
+    expect(resolveCatalogToolName('/bin/zsh')).toBe('run_shell_command')
+    expect(resolveCatalogToolName('exec')).toBe('run_shell_command')
     expect(resolveCatalogToolName('view_image')).toBe('image_view')
     expect(resolveCatalogToolName('InspectImage')).toBe('image_view')
   })

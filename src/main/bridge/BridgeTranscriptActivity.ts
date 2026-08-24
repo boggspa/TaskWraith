@@ -8,6 +8,10 @@ import {
   imageViewCountFromResult,
   isImageViewToolUse
 } from '../../shared/imageViewIdentity'
+import {
+  extractToolInvocationParameters,
+  presentToolInvocation
+} from '../../shared/toolInvocationPresentation'
 
 const BRIDGE_TOOL_CATEGORY_RULES: Array<{
   pattern: RegExp
@@ -32,18 +36,6 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function parametersRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string') {
-    try {
-      return recordValue(JSON.parse(value))
-    } catch {
-      // Native wrapper tools can carry executable source instead of JSON.
-      return { input: value }
-    }
-  }
-  return recordValue(value)
 }
 
 function bridgeToolKindCategory(kind: string): ToolActivity['category'] | undefined {
@@ -136,7 +128,7 @@ export function buildBridgeToolActivity(input: {
   nowIso?: () => string
 }): ToolActivity {
   const { payload, provider, activityIndex, nowIso = () => new Date().toISOString() } = input
-  const toolName = String(
+  const reportedToolName = String(
     payload.tool_name || payload.toolName || payload.name || recordValue(payload.function).name || 'tool'
   )
   const id = String(
@@ -147,22 +139,22 @@ export function buildBridgeToolActivity(input: {
       payload.toolCallId ||
       `bridge-tool-${activityIndex + 1}`
   )
-  const rawParameters = parametersRecord(
-    payload.parameters ?? payload.input ?? payload.arguments ?? payload.params
-  )
+  const rawParameters = extractToolInvocationParameters(payload)
   const innerName =
-    /^(use_tool|call_tool|mcp)$/i.test(toolName) && typeof rawParameters.tool_name === 'string'
+    /^(use_tool|call_tool|mcp)$/i.test(reportedToolName) &&
+    typeof rawParameters.tool_name === 'string'
       ? rawParameters.tool_name
       : undefined
-  const effectiveName = innerName || toolName
-  const canonicalName = canonicalImageViewToolName(effectiveName, rawParameters)
+  const presentation = presentToolInvocation(innerName || reportedToolName, rawParameters)
+  const effectiveName = presentation.toolName
+  const canonicalName = canonicalImageViewToolName(effectiveName, presentation.parameters)
   const parameterImageCount =
     canonicalName === IMAGE_VIEW_TOOL_NAME
-      ? imageViewCountFromParameters(rawParameters)
+      ? imageViewCountFromParameters(presentation.parameters)
       : undefined
   const parameters = parameterImageCount
-    ? { ...rawParameters, imageCount: parameterImageCount }
-    : rawParameters
+    ? { ...presentation.parameters, imageCount: parameterImageCount }
+    : presentation.parameters
   const filePath =
     stringValue(parameters.path) ||
     stringValue(parameters.file_path) ||
@@ -183,7 +175,11 @@ export function buildBridgeToolActivity(input: {
     stringValue(parameters.tool_kind) ||
     stringValue(parameters.toolKind) ||
     stringValue(parameters.kind)
-  const diffSummary = bridgeToolDiffStats(effectiveName, parameters)
+  const category =
+    canonicalName === IMAGE_VIEW_TOOL_NAME ? 'read' : bridgeToolCategory(effectiveName, toolKind)
+  const diffSummary = bridgeToolDiffStats(effectiveName, parameters, {
+    writeLike: category === 'write'
+  })
   const patchPaths = new Set(
     (diffSummary?.files ?? []).map((file) => file.path).filter(Boolean) as string[]
   )
@@ -196,8 +192,7 @@ export function buildBridgeToolActivity(input: {
       canonicalName === IMAGE_VIEW_TOOL_NAME
         ? IMAGE_VIEW_DISPLAY_NAME
         : bridgeToolDisplayName(effectiveName),
-    category:
-      canonicalName === IMAGE_VIEW_TOOL_NAME ? 'read' : bridgeToolCategory(effectiveName, toolKind),
+    category,
     status: 'running',
     startedAt: nowIso(),
     parameters,

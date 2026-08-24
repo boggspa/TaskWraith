@@ -135,6 +135,28 @@ describe('BridgeTranscriptActivity', () => {
     })
   })
 
+  it('projects a gateway invocation to the concrete write target with its diff evidence', () => {
+    const activity = buildBridgeToolActivity({
+      provider: 'mistral',
+      activityIndex: 0,
+      payload: {
+        tool_id: 'gateway-replace',
+        tool_name: 'mcp__TaskWraith__capability_invoke',
+        parameters: {
+          name: 'replace',
+          arguments: { path: 'src/a.ts', old_string: 'before', new_string: 'after\nnext' }
+        }
+      }
+    })
+
+    expect(activity).toMatchObject({
+      toolName: 'replace',
+      category: 'write',
+      filePath: 'src/a.ts',
+      diffSummary: { additions: 2, deletions: 1 }
+    })
+  })
+
   it('coalesces a Codex exec wrapper carrying native Image View source', () => {
     const input =
       'const paths = ["one.png", "two.png", "three.png", "four.png"]; for (const path of paths) await tools.view_image({ path });'

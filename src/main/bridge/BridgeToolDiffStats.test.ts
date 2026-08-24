@@ -210,6 +210,19 @@ describe('bridgeResultDiffStats (result-side derivation)', () => {
     expect(stats).toMatchObject({ additions: 2, deletions: 1, source: 'result_diff' })
   })
 
+  it('counts Codex apply_patch envelopes in a result as well as an input', () => {
+    expect(
+      bridgeResultDiffStats({
+        toolName: 'apply_patch',
+        summary: '*** Begin Patch\n*** Update File: src/a.ts\n-old\n+new\n+next\n*** End Patch'
+      })
+    ).toMatchObject({
+      additions: 2,
+      deletions: 1,
+      files: [{ path: 'src/a.ts', additions: 2, deletions: 1 }]
+    })
+  })
+
   it('counts a create-kind result as content (+lines) when no diff structure exists', () => {
     const stats = bridgeResultDiffStats({
       toolName: 'edit_file',

@@ -349,15 +349,21 @@ import {
 import { type SpeechRecognitionResult } from './studio/StudioTranscriptAdapter'
 import { registerStudioEffectPreviewHandlers } from './studio/StudioEffectPreviewHandlers'
 import { createStudioOpenInStudioHandler } from './studio/StudioOpenMediaHop'
-import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
+import { bridgeResultDiffStats, bridgeToolDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
 import {
   applyBridgeToolResultIdentity,
   bridgeAssistantMessageMetadata,
+  bridgeToolCategory,
+  bridgeToolDisplayName,
   bridgeModelMetadataFromEvent,
   buildBridgeToolActivity
 } from './bridge/BridgeTranscriptActivity'
+import {
+  mergeToolResultParameters,
+  presentToolInvocation
+} from '../shared/toolInvocationPresentation'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
 import {
   ANTIGRAVITY_PROVIDER_ID,
@@ -12950,6 +12956,29 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
     (id && [...state.activities].reverse().find((entry) => entry.id === id)) ||
     [...state.activities].reverse().find((entry) => entry.status === 'running')
   if (!activity) return
+  const resultParameters = mergeToolResultParameters(activity.parameters, payload)
+  const presentation = presentToolInvocation(activity.toolName, resultParameters)
+  const resultKind =
+    typeof payload?.tool_kind === 'string'
+      ? payload.tool_kind
+      : typeof payload?.toolKind === 'string'
+        ? payload.toolKind
+        : typeof resultParameters.kind === 'string'
+          ? resultParameters.kind
+          : ''
+  activity.toolName = presentation.toolName
+  activity.parameters = presentation.parameters
+  activity.category = bridgeToolCategory(activity.toolName, resultKind)
+  activity.displayName = bridgeToolDisplayName(activity.toolName)
+  if (!activity.filePath) {
+    for (const key of ['path', 'file_path', 'filePath', 'TargetFile', 'targetFile']) {
+      const value = presentation.parameters[key]
+      if (typeof value === 'string' && value.trim()) {
+        activity.filePath = value.trim()
+        break
+      }
+    }
+  }
   applyBridgeToolResultIdentity(
     activity,
     payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
@@ -12980,7 +13009,11 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
   // odometer ticks — but exact input-derived stats are only ever
   // OVERWRITTEN by larger result evidence (the first input snapshot can
   // be a partial patch; the result stream carries the rest).
-  const stats =
+  const resultInputStats =
+    !failed && activity.category === 'write'
+      ? bridgeToolDiffStats(activity.toolName, presentation.parameters, { writeLike: true })
+      : undefined
+  const resultStats =
     !failed && summary
       ? bridgeResultDiffStats({
           toolName: activity.toolName,
@@ -12989,6 +13022,9 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
           kind: payload.kind
         })
       : undefined
+  const stats = resultStats
+    ? mergeToolDiffSummary(resultInputStats, resultStats)
+    : resultInputStats
   if (stats) {
     // Precedence lives in `mergeToolDiffSummary` so it is unit-tested rather
     // than asserted only by how the odometer looks. Larger-wins is preserved
@@ -18424,6 +18460,9 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       {
         type: 'tool_result',
         tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         raw: evt.raw
@@ -18445,6 +18484,9 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       {
         type: 'tool_result',
         tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         provider: 'grok'
@@ -23555,6 +23597,9 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       {
         type: 'tool_result',
         tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         raw: evt.raw
@@ -23579,6 +23624,9 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       {
         type: 'tool_result',
         tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         provider: 'mistral'
@@ -24488,6 +24536,9 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       {
         type: 'tool_result',
         tool_id: evt.toolId || `kimi-tool-${randomUUID()}`,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         provider: 'kimi'
