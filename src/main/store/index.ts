@@ -64,6 +64,7 @@ import {
   type LegacyStoreDeferredSettlement,
   type LegacyStoreWriteAdmissionScope
 } from './LegacyStoreWriteAdmission'
+import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
@@ -432,11 +433,13 @@ const projectsPath = path.join(userDataPath, 'projects.json')
 const usagePath = path.join(userDataPath, 'usage.json')
 const usageJournalPath = path.join(userDataPath, 'usage-journal.jsonl')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
+const legacyStoreCanWrite = (): boolean => legacyStoreWriterGate.allowsCurrentWrite()
 
 const usageJournalStore = new UsageJournalStore({
   checkpointPath: usagePath,
   journalPath: usageJournalPath,
-  archivePath: usageArchivePath
+  archivePath: usageArchivePath,
+  canWrite: legacyStoreCanWrite
 })
 
 /** Main-owned Project registry (Work surface). Constructed against the
@@ -553,7 +556,9 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 )
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
-const chatListIndexStore = new ChatListIndexStore(userDataPath)
+const chatJournalDir = path.join(userDataPath, 'chat-journal')
+const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
+const chatListIndexStore = new ChatListIndexStore(userDataPath, { canWrite: legacyStoreCanWrite })
 /**
  * T3a-1: per-chat save coalescer.
  *
@@ -611,13 +616,21 @@ const saveCoalescer =
  * whole-file write is what disappears. Anyone reading the comparison report
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
-const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
+const chatJournal = createChatJournal(chatJournalDir, { canWrite: legacyStoreCanWrite })
 const incrementalChatPersistence = createIncrementalChatPersistence({
-  journal: createIncrementalChatJournal(path.join(userDataPath, 'chat-journal-v2'))
+  journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+    canWrite: legacyStoreCanWrite
+  }),
+  canWrite: legacyStoreCanWrite
 })
 const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
-  incrementalChatPersistence.checkpointIdle()
+  if (!legacyStoreCanWrite()) return
+  try {
+    incrementalChatPersistence.checkpointIdle()
+  } catch (error) {
+    console.error('[incremental-chat] idle checkpoint timer failed', error)
+  }
 }, 5_000)
 incrementalChatIdleCheckpointTimer.unref()
 
@@ -2454,6 +2467,13 @@ function readJson<T>(filePath: string, defaultData: T): T {
     }
   } catch (e) {
     console.error(`Failed to read ${filePath}`, e)
+    // Once the standalone Host owns these durable families, a legacy AppStore
+    // read may still project their valid prefix/default in memory but must not
+    // create a `.corrupt-*` side artifact. Settings and schedules deliberately
+    // remain outside this fence for Desktop compatibility.
+    if (hostOwnedReadRepairPathFamily(filePath) && !legacyStoreCanWrite()) {
+      return defaultData
+    }
     try {
       if (fs.existsSync(filePath)) {
         fs.copyFileSync(filePath, `${filePath}.corrupt-${Date.now()}`)
@@ -2762,6 +2782,32 @@ function hostOwnedJsonPathFamily(filePath: string): 'workspaces' | 'chats' | nul
   if (filePath === workspacesPath) return 'workspaces'
   if (path.dirname(filePath) === chatsDir && path.extname(filePath) === '.json') return 'chats'
   return null
+}
+
+/** Durable families the standalone Host owns once the legacy gate closes. */
+function hostOwnedReadRepairPathFamily(filePath: string): boolean {
+  if (filePath === workspacesPath) return true
+  const chatDirectory = path.join(userDataPath, 'chats')
+  if (path.dirname(filePath) === chatDirectory && path.extname(filePath) === '.json') return true
+  if (filePath === usagePath || filePath === usageJournalPath || filePath === usageArchivePath) {
+    return true
+  }
+  const listIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
+  const legacyListIndexPath = path.join(userDataPath, 'chat-list-index.json')
+  const listSummariesDirectory = path.join(userDataPath, 'chat-list-summaries')
+  if (
+    filePath === listIndexPath ||
+    filePath === legacyListIndexPath ||
+    path.dirname(filePath) === listSummariesDirectory
+  ) {
+    return true
+  }
+  const journalDirectory = path.join(userDataPath, 'chat-journal')
+  const incrementalJournalDirectory = path.join(userDataPath, 'chat-journal-v2')
+  return (
+    path.dirname(filePath) === journalDirectory ||
+    path.dirname(filePath) === incrementalJournalDirectory
+  )
 }
 
 function writeJson<T>(filePath: string, data: T): void {
@@ -5854,6 +5900,7 @@ export class AppStore {
     // the same gate as saveChat: a streaming-stale row rebuilds fresh for the
     // caller on every read, but its disk append rides the volatile cadence.
     for (const chatId of dirtyChatIds) {
+      if (!legacyStoreCanWrite()) continue
       this.writeChatListIndexEntryIfAllowed(chatId, nextIndex[chatId])
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -7461,6 +7508,7 @@ export class AppStore {
    * to ensure the record is durable before a downstream consumer reads it.
    */
   static flushChatSave(chatId: string): boolean {
+    if (!legacyStoreCanWrite()) return false
     return saveCoalescer.flush(chatId)
   }
 
@@ -7469,6 +7517,7 @@ export class AppStore {
    * shutdown (will-quit) to ensure no data is lost.
    */
   static flushAllChatSaves(): void {
+    if (!legacyStoreCanWrite()) return
     saveCoalescer.flushAll()
     incrementalChatPersistence.checkpointAll()
   }
