@@ -276,6 +276,7 @@ describe('hostProtocolTransport Wave 3.2', () => {
           frame = { ...base, kind, params: { commandId: 'cmd-1' } }
           break
         case 'health.get':
+        case 'host.shutdown':
           frame = { ...base, kind, params: {} }
           break
         case 'command.submit':
@@ -337,6 +338,20 @@ describe('hostProtocolTransport Wave 3.2', () => {
           id: 'r-health',
           ok: true,
           result: { kind: 'health.get', frame: sampleHealthFrame() }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-shutdown',
+          ok: true,
+          result: { kind: 'host.shutdown', state: 'stopping' }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-shutdown-again',
+          ok: true,
+          result: { kind: 'host.shutdown', state: 'already_stopping' }
         },
         {
           type: 'response',

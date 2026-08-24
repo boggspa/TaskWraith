@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { normalize } from 'node:path'
 import {
   decodeTaskWraithHostDiscovery,
+  TASKWRAITH_HOST_AUTHORITY_LEASE_FILE,
   TASKWRAITH_HOST_DISCOVERY_FILE,
   TASKWRAITH_HOST_SOCKET_FILE,
   TASKWRAITH_HOST_TOKEN_FILE,
   taskWraithHostDiscoveryPath,
+  taskWraithHostAuthorityLeasePath,
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from './taskWraithHostPaths.node'
@@ -30,6 +32,13 @@ describe('TaskWraith Host v2 paths', () => {
     expect(TASKWRAITH_HOST_DISCOVERY_FILE).toContain('host-v2')
     expect(TASKWRAITH_HOST_TOKEN_FILE).toContain('host-v2')
     expect(TASKWRAITH_HOST_SOCKET_FILE).toContain('host-v2')
+  })
+
+  it('derives the profile authority lease beside discovery and token', () => {
+    expect(TASKWRAITH_HOST_AUTHORITY_LEASE_FILE).toBe('taskwraith-host-authority-v1.json')
+    expect(taskWraithHostAuthorityLeasePath('/profile')).toBe(
+      '/profile/taskwraith-host-authority-v1.json'
+    )
   })
 
   // -----------------------------------------------------------------------

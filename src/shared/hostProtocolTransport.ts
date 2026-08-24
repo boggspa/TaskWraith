@@ -74,7 +74,8 @@ export const HOST_LOCAL_TRANSPORT_ERROR_CODES = [
   'invalid_token',
   'invalid_payload',
   'unauthorized',
-  'host_unavailable'
+  'host_unavailable',
+  'shutting_down'
 ] as const
 
 export type HostLocalTransportErrorCode = (typeof HOST_LOCAL_TRANSPORT_ERROR_CODES)[number]
@@ -95,6 +96,7 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'history.since',
   'receipt.lookup',
   'health.get',
+  'host.shutdown',
   'command.submit',
   'twmission.export'
 ] as const
@@ -194,6 +196,13 @@ export type HostLocalTransportRequest =
       type: 'request'
       transportVersion: HostLocalTransportVersion
       id: string
+      kind: 'host.shutdown'
+      params: Record<string, never>
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
       kind: 'command.submit'
       params: HostCommand
     }
@@ -226,6 +235,7 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'history.since'; result: HostHistorySinceResult }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
+  | { kind: 'host.shutdown'; state: 'stopping' | 'already_stopping' }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
   | { kind: 'twmission.export'; result: Record<string, unknown> }
 
@@ -534,6 +544,13 @@ function decodeSuccessResult(
     case 'health.get':
       if (!hasHealthFrameShape(value.frame)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'health.get', frame: value.frame } }
+    case 'host.shutdown':
+      if (
+        Object.keys(value).length !== 2 ||
+        (value.state !== 'stopping' && value.state !== 'already_stopping')
+      )
+        return fail('invalid_payload')
+      return { ok: true, value: { kind: 'host.shutdown', state: value.state } }
     case 'command.submit':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'command.submit', receipt: value.receipt } }
@@ -706,6 +723,19 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'health.get',
+            params: {}
+          }
+        }
+      }
+      case 'host.shutdown': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.shutdown',
             params: {}
           }
         }

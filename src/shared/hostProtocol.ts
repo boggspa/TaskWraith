@@ -42,7 +42,7 @@ export const HOST_COMMAND_FINGERPRINT_HEX_LENGTH = 64
 export type HostProtocolVersion = typeof HOST_PROTOCOL_VERSION
 export type HostProjectionVersion = typeof HOST_PROJECTION_VERSION
 
-export type HostClientClass = 'desktop' | 'tui' | 'ios' | 'test'
+export type HostClientClass = 'desktop' | 'tui' | 'ios' | 'test' | 'host-cli'
 
 export type HostCapability =
   | 'bootstrap'
@@ -54,6 +54,7 @@ export type HostCapability =
   | 'history'
   /** Opt-in setup mutations; never requested by legacy/default clients. */
   | 'setup'
+  | 'host-lifecycle'
   | 'commands'
   | 'receipts'
   | 'health'
@@ -884,7 +885,13 @@ function isNonNegativeInt(value: unknown): value is number {
 }
 
 function isClientClass(value: unknown): value is HostClientClass {
-  return value === 'desktop' || value === 'tui' || value === 'ios' || value === 'test'
+  return (
+    value === 'desktop' ||
+    value === 'tui' ||
+    value === 'ios' ||
+    value === 'test' ||
+    value === 'host-cli'
+  )
 }
 
 /** Canonical host capability offer order (stable intersect ordering). */
@@ -897,6 +904,7 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'provider-auth',
   'history',
   'setup',
+  'host-lifecycle',
   'commands',
   'receipts',
   'health',

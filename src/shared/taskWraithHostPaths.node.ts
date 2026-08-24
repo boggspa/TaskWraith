@@ -41,6 +41,8 @@ import { join } from 'node:path'
 export const TASKWRAITH_HOST_DISCOVERY_FILE = 'taskwraith-host-v2.json'
 export const TASKWRAITH_HOST_TOKEN_FILE = 'taskwraith-host-v2.token'
 export const TASKWRAITH_HOST_SOCKET_FILE = 'taskwraith-host-v2.sock'
+/** Profile authority artifact used by production Host ownership. */
+export const TASKWRAITH_HOST_AUTHORITY_LEASE_FILE = 'taskwraith-host-authority-v1.json'
 
 // ---------------------------------------------------------------------------
 // Discovery payload
@@ -165,6 +167,11 @@ export function taskWraithHostDiscoveryPath(userDataPath: string): string {
  */
 export function taskWraithHostTokenPath(userDataPath: string): string {
   return join(userDataPath, TASKWRAITH_HOST_TOKEN_FILE)
+}
+
+/** Absolute profile-authority lease path alongside Host discovery/token. */
+export function taskWraithHostAuthorityLeasePath(userDataPath: string): string {
+  return join(userDataPath, TASKWRAITH_HOST_AUTHORITY_LEASE_FILE)
 }
 
 /**
