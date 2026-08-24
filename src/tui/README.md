@@ -38,6 +38,17 @@ command receipts/result references. Credentials, permission bodies, and raw
 provider payloads are not projected. Provider runs use the authenticated client
 id only as a transport-neutral delivery target.
 
+Muse workspace-write posture requires an explicit, persisted consent bit before
+the Host accepts configuration. Muse currently emits no deferred
+approval/question continuation events, so the standalone Host does not
+advertise those capabilities. It must not manufacture approval cards for a
+provider that cannot resume them safely.
+
+An interactively started `taskwraith-host serve` can hand
+`muse login` to that same terminal with exact, shell-free argv. A detached Host
+has no visible TTY and therefore does not advertise an invisible manual-auth
+flow; configure its approved credential environment or start it interactively.
+
 ## Packages
 
 Packages ship `tw`/`taskwraith` in `Resources/bin` and
@@ -48,11 +59,14 @@ pure Muse closure.
 
 ```sh
 taskwraith-host --profile /absolute/profile
+taskwraith-host stop --profile /absolute/profile
 ```
 
 The launcher fixes `serve --mode production`; callers provide a profile and
 optionally an absolute Muse executable. An existing Host is reused, while a
-held lease fails cleanly.
+held lease fails cleanly. `stop` is a dedicated authenticated lifecycle RPC:
+it awaits run/resource cleanup and removal of discovery, token, socket, and
+profile lease rather than killing a discovery PID.
 
 ## Diagnostic rollback
 
@@ -105,8 +119,9 @@ while transcript prose stays neutral and detail remains in transient lenses.
 
 Slash commands include `/context`, `/threads`, `/missions`, `/history`,
 `/model`, `/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. Every setup,
-approval, cancellation, and configuration action remains a bounded Host command
-with capability, actor, offer, and receipt validation.
+cancellation, and configuration action remains a bounded Host command with
+capability, actor, offer, and receipt validation. Approval/question actions are
+available only when the connected Host actually negotiates those capabilities.
 
 ### Current boundary
 
@@ -117,3 +132,15 @@ thread creation/configuration/archive, provider offers/auth metadata, bounded
 history, and receipt replay through that Host. It deliberately omits arbitrary
 AppStore writes, permission bodies, credentials, raw provider payloads,
 desktop-only drag/drop/canvas/glass surfaces, and unbounded terminal control.
+
+## Desktop coexistence rollout
+
+The production transport supports simultaneous authenticated Desktop and TUI
+clients, and a Desktop disconnect does not stop the Host or its provider run.
+The Desktop pre-import migration, writer drain, read-only compatibility stores,
+external lifecycle adapter, and update shutdown barrier are implemented. The
+Desktop selection is temporarily enabled with
+`TASKWRAITH_DESKTOP_EXTERNAL_HOST=1` while its remaining synchronous provider
+and arbitrary AppStore mutation paths are converted to Host commands. Without
+that explicit rollout switch Desktop retains its existing in-process Host and
+all current capabilities; the standalone TUI path remains independent.
