@@ -48,7 +48,7 @@ import type {
 import type {
   AppStoreHostAuthoritySnapshotDonor,
   AppStoreHostAuthoritySnapshotDonorFamilies
-} from './AppStoreHostAuthority'
+} from '../../host-runtime/AppStoreHostAuthority'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import type { HostWarningProjection } from '../../shared/hostProtocol'
 import type { HostProductionArtifactListPort } from './HostProductionArtifactShadow'

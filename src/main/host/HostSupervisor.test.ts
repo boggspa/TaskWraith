@@ -12,7 +12,10 @@ import { join } from 'node:path'
 
 import { createHostSupervisor } from './HostSupervisor'
 import type { HostSupervisor, HostSupervisorBackoff, HostSupervisorInput } from './HostSupervisor'
-import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
+import type {
+  HostMainComposition,
+  HostMainCompositionInput
+} from '../../host-runtime/HostMainComposition'
 import type { HostLocalServer } from '../../host-runtime/HostLocalServer'
 import type { HostAuthority } from '../../host-runtime/HostAuthority'
 import type { HostSession } from '../../host-runtime/HostSession'
@@ -21,7 +24,7 @@ import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthorityEvaluator,
   AppStoreHostAuthoritySnapshotDonor
-} from './AppStoreHostAuthority'
+} from '../../host-runtime/AppStoreHostAuthority'
 
 // ---------------------------------------------------------------------------
 // Test scaffolding

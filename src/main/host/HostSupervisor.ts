@@ -20,10 +20,13 @@
  * - zero composition-root edits.
  */
 
-import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
+import type {
+  HostMainComposition,
+  HostMainCompositionInput
+} from '../../host-runtime/HostMainComposition'
 import type { HostLocalServer, HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import type { HostAuthority } from '../../host-runtime/HostAuthority'
-import type { AppStoreHostAuthorityHealthProvider } from './AppStoreHostAuthority'
+import type { AppStoreHostAuthorityHealthProvider } from '../../host-runtime/AppStoreHostAuthority'
 import type { HostHealthProjection } from '../../shared/hostProtocol'
 
 // ---------------------------------------------------------------------------

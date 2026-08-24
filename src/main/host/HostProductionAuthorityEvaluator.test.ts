@@ -33,7 +33,7 @@ import {
   type HostProductionAuthorityEvaluatorPorts
 } from './HostProductionAuthorityEvaluator'
 
-import type { AppStoreHostAuthorityEvaluation } from './AppStoreHostAuthority'
+import type { AppStoreHostAuthorityEvaluation } from '../../host-runtime/AppStoreHostAuthority'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -141,8 +141,12 @@ describe('HostProductionAuthorityEvaluator import isolation', () => {
     // Extract all import paths
     const importPaths = [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
     for (const p of importPaths) {
-      // Allowed: shared/hostProtocol (types), local host module types
-      expect(p === '../../shared/hostProtocol' || p.startsWith('./')).toBe(true)
+      // Allowed: shared/hostProtocol plus moved runtime types.
+      expect(
+        p === '../../shared/hostProtocol' ||
+          p.startsWith('./') ||
+          p.startsWith('../../host-runtime/')
+      ).toBe(true)
     }
   })
 })

@@ -18,30 +18,54 @@ const REQUIRED_RUNTIME_MODULES = [
   'HostDeferredCommandEnvelopeStore.ts',
   'HostCommandArguments.ts',
   'HostCommandFingerprint.ts',
-  'HostCommandRouting.ts'
+  'HostCommandRouting.ts',
+  'HostAuthorityDecisionMap.ts',
+  'HostCommandReceiptProjection.ts',
+  'HostCommandExecutionResult.ts',
+  'HostDeferredCommandBridge.ts',
+  'HostDeferredAllowPipeline.ts',
+  'HostDeferredCommandEnvelopeResolver.ts',
+  'HostDeferredResolutionAdapter.ts',
+  'HostDomainDeltaPublisher.ts',
+  'HostMutationCompletionCoordinator.ts',
+  'HostCommandMutationPipeline.ts',
+  'HostObservedMutationExecutor.ts',
+  'HostProjectionReconciler.ts',
+  'HostSnapshotProjector.ts',
+  'HostSnapshotDomainEffectDiff.ts',
+  'HostRecoveryProjection.ts',
+  'AppStoreHostAuthority.ts',
+  'HostMainComposition.ts',
+  'HostRuntimePaths.ts'
 ] as const
 const LEGACY_MAIN_HOST_MODULES = REQUIRED_RUNTIME_MODULES.map((name) =>
   resolve(REPO_ROOT, 'src/main/host', name)
 )
 const REQUIRED_MAIN_HOST_CONSUMERS: Readonly<Record<string, readonly string[]>> = {
-  'src/main/host/HostMainComposition.ts': [
-    '../../host-runtime/HostRuntimeBootstrap',
-    '../../host-runtime/HostDeltaStore'
+  'src/main/host/HostProductionBootstrap.ts': [
+    '../../host-runtime/AppStoreHostAuthority',
+    '../../host-runtime/HostCommandMutationPipeline',
+    '../../host-runtime/HostDeferredAllowPipeline',
+    '../../host-runtime/HostDeferredCommandEnvelopeResolver',
+    '../../host-runtime/HostDomainDeltaPublisher',
+    '../../host-runtime/HostMainComposition',
+    '../../host-runtime/HostMutationCompletionCoordinator',
+    '../../host-runtime/HostObservedMutationExecutor',
+    '../../host-runtime/HostRuntimePaths'
   ],
-  'src/main/host/HostProductionBootstrap.ts': ['../../host-runtime/HostRuntimeBootstrap'],
-  'src/main/host/AppStoreHostAuthority.ts': [
-    '../../host-runtime/HostCommandFingerprint',
-    '../../host-runtime/HostCommandRouting',
-    '../../host-runtime/HostDeferredCommandEnvelopeStore',
-    '../../host-runtime/HostCommandReceiptStore',
-    '../../host-runtime/HostRuntimeBootstrap'
+  'src/main/host/HostSupervisor.ts': [
+    '../../host-runtime/AppStoreHostAuthority',
+    '../../host-runtime/HostMainComposition'
   ],
-  'src/main/host/HostDeferredCommandEnvelopeResolver.ts': [
-    '../../host-runtime/HostCommandArguments',
-    '../../host-runtime/HostCommandFingerprint',
-    '../../host-runtime/HostCommandRouting',
-    '../../host-runtime/HostDeferredCommandEnvelopeStore',
-    '../../host-runtime/HostCommandReceiptStore'
+  'src/main/host/HostProductionSuppliers.ts': ['../../host-runtime/AppStoreHostAuthority'],
+  'src/main/host/HostProductionAuthorityEvaluator.ts': [
+    '../../host-runtime/AppStoreHostAuthority',
+    '../../host-runtime/HostDeferredCommandBridge'
+  ],
+  'src/main/host/HostInstallIdentity.ts': ['../../host-runtime/HostRuntimePaths'],
+  'src/main/host/HostChannelCommandExecutor.ts': [
+    '../../host-runtime/AppStoreHostAuthority',
+    '../../host-runtime/HostCommandArguments'
   ]
 }
 const AUTHENTICATED_TRANSPORT_CORE = [

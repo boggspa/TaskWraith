@@ -25,12 +25,12 @@ import type {
   HostProductionChatListPort,
   HostProductionProviderListPort
 } from './HostProductionSuppliers'
-import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
+import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
+import type { HostLocalServer, HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import type {
-  HostLocalServer,
-  HostLocalServerOptions
-} from '../../host-runtime/HostLocalServer'
-import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
+  HostMainComposition,
+  HostMainCompositionInput
+} from '../../host-runtime/HostMainComposition'
 import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from './HostSupervisor'
 

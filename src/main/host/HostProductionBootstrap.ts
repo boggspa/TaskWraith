@@ -48,23 +48,23 @@ import type { HostActorIdentity, HostCapability } from '../../shared/hostProtoco
 import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthorityHealthProvider
-} from './AppStoreHostAuthority'
+} from '../../host-runtime/AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
 import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
 import { HostChannelCommandExecutor } from './HostChannelCommandExecutor'
-import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
-import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
-import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
-import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import { HostCommandMutationPipeline } from '../../host-runtime/HostCommandMutationPipeline'
+import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
+import { HostDeferredCommandEnvelopeResolver } from '../../host-runtime/HostDeferredCommandEnvelopeResolver'
+import { HostDomainDeltaPublisher } from '../../host-runtime/HostDomainDeltaPublisher'
 import { HostLocalServer, type HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import {
   createHostMainComposition,
-  hostRuntimeDataDir,
   type HostMainComposition,
   type HostMainCompositionInput
-} from './HostMainComposition'
-import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
-import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
+} from '../../host-runtime/HostMainComposition'
+import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
+import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
+import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
 import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
 import {
   createHostProductionContextResolvers,

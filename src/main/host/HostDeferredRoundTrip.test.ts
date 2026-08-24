@@ -39,15 +39,18 @@ import {
 import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthoritySnapshotDonorFamilies
-} from './AppStoreHostAuthority'
+} from '../../host-runtime/AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
-import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
-import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
-import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
-import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
-import { createHostMainComposition, type HostMainComposition } from './HostMainComposition'
-import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
-import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
+import { HostCommandMutationPipeline } from '../../host-runtime/HostCommandMutationPipeline'
+import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
+import { HostDeferredCommandEnvelopeResolver } from '../../host-runtime/HostDeferredCommandEnvelopeResolver'
+import { HostDomainDeltaPublisher } from '../../host-runtime/HostDomainDeltaPublisher'
+import {
+  createHostMainComposition,
+  type HostMainComposition
+} from '../../host-runtime/HostMainComposition'
+import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
+import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
 import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 
 const ACTOR: HostActorIdentity = {

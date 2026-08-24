@@ -24,8 +24,8 @@ import type { HostClientClass, HostCommand, HostCommandName } from '../../shared
 import type {
   AppStoreHostAuthorityEvaluation,
   AppStoreHostAuthorityEvaluator
-} from './AppStoreHostAuthority'
-import type { HostDeferredChallengeKind } from './HostDeferredCommandBridge'
+} from '../../host-runtime/AppStoreHostAuthority'
+import type { HostDeferredChallengeKind } from '../../host-runtime/HostDeferredCommandBridge'
 
 /* ------------------------------------------------------------------ */
 /*  Ports (injected by composition root; never import engines)        */

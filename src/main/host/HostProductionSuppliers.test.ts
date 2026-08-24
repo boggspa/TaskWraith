@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { projectHostSnapshot } from './HostSnapshotProjector'
+import { projectHostSnapshot } from '../../host-runtime/HostSnapshotProjector'
 import type {
   HostApprovalProjection,
   HostProviderModelProjection,

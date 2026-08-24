@@ -1,5 +1,5 @@
 import type { HostActorIdentity, HostCommand } from '../../shared/hostProtocol'
-import type { AppStoreHostAuthorityExecutorResult } from './AppStoreHostAuthority'
+import type { AppStoreHostAuthorityExecutorResult } from '../../host-runtime/AppStoreHostAuthority'
 import { validateHostCommandArguments } from '../../host-runtime/HostCommandArguments'
 
 export type HostChannelAdminFailure = {
