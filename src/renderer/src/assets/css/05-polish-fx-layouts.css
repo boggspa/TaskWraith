@@ -5605,61 +5605,9 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   box-shadow: none;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Assistant code-block rim chase
- *
- * Same masked conic-gradient technique as the fan-out lane rim
- * (02-transcript-messages-fx.css `fanout-lane-rim-chase`), but dialed way
- * down: assistant code blocks are dense reading surfaces, so the sweep runs
- * slower and at a fraction of the fan-out alphas — perceptible as "alive"
- * only at the rim, never fogging the glyphs. Harder corners match the
- * high-contrast shell above. The mask is static; only the child-free
- * pseudo-element's background rotates via a compositor-friendly transform
- * on the gradient layer (same trick as the fan-out sweep).
- * ───────────────────────────────────────────────────────────────────────── */
-.message-bubble.assistant .message-code-shell::after {
-  content: '';
-  position: absolute;
-  /* Sit ON the 1px border: the shell clips at its own edge, so the ring is
-   * drawn just inside it. Static xor mask keeps only the rim strip. */
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  contain: paint;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-  z-index: 1;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    transparent 186deg,
-    rgb(var(--agent-accent-rgb) / 0.1) 268deg,
-    rgb(var(--agent-accent-rgb) / 0.24) 330deg,
-    rgb(var(--agent-accent-rgb) / 0.38) 353deg,
-    transparent 360deg
-  );
-  transform: translateZ(0);
-  transform-origin: 50% 50%;
-  will-change: transform;
-  animation: code-shell-rim-chase 7s linear infinite;
-}
-
-@keyframes code-shell-rim-chase {
-  to {
-    transform: translateZ(0) rotate(360deg);
-  }
-}
-
 /* Light themes need their own rim contrast: the accent sweep reads against
- * a light bed too, so the stops are lifted slightly and the shell swaps its
- * darkened bed for a brightened one with a darker inset hairline. */
+ * a light bed, so the shell swaps its darkened bed for a brightened one with
+ * a darker inset hairline. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
   .message-code-shell {
   border-color: rgb(var(--agent-accent-rgb) / 0.48);
@@ -5675,29 +5623,6 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   .message-code-header {
   border-bottom-color: rgb(0 0 0 / 0.08);
   background: rgb(0 0 0 / 0.04);
-}
-
-:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
-  .message-bubble.assistant .message-code-shell::after {
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    transparent 186deg,
-    rgb(var(--agent-accent-rgb) / 0.16) 268deg,
-    rgb(var(--agent-accent-rgb) / 0.34) 330deg,
-    rgb(var(--agent-accent-rgb) / 0.5) 353deg,
-    transparent 360deg
-  );
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .message-bubble.assistant .message-code-shell::after {
-    animation: none;
-  }
-}
-
-:root[data-reduce-motion='true'] .message-bubble.assistant .message-code-shell::after {
-  animation: none;
 }
 
 /* Live tool diff telemetry — per-row inline odometer ("+46 -23" next to
