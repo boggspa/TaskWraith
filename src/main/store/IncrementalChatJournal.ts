@@ -68,6 +68,8 @@ export interface IncrementalChatAppendOptions {
 }
 
 export interface IncrementalChatJournalOptions {
+  /** Dynamic authority gate; false is strictly replay-only. */
+  canWrite?: () => boolean
   now?: () => number
   maxJournalBytes?: number
   maxJournalEntries?: number
@@ -199,6 +201,16 @@ export function createIncrementalChatJournal(
   options: IncrementalChatJournalOptions = {}
 ): IncrementalChatJournal {
   const now = options.now ?? Date.now
+  const canWrite = (): boolean => {
+    try {
+      return options.canWrite?.() ?? true
+    } catch {
+      return false
+    }
+  }
+  const assertWritable = (): void => {
+    if (!canWrite()) throw new Error('Incremental chat journal is read-only')
+  }
   const maxJournalBytes = positiveInteger(options.maxJournalBytes, DEFAULT_MAX_JOURNAL_BYTES)
   const maxJournalEntries = positiveInteger(options.maxJournalEntries, DEFAULT_MAX_JOURNAL_ENTRIES)
   const idleCheckpointMs = positiveInteger(options.idleCheckpointMs, DEFAULT_IDLE_CHECKPOINT_MS)
@@ -240,7 +252,7 @@ export function createIncrementalChatJournal(
    * layer once produced a 44 GB artifact. Saturation falls back to sync. */
   const MAX_PENDING_DEFERRED_FSYNCS = 64
 
-  fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+  if (canWrite()) fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
 
   const assertChatId = (chatId: string): void => {
     if (!CHAT_ID_PATTERN.test(chatId)) throw new Error(`Unsafe chat id: ${chatId}`)
@@ -361,6 +373,7 @@ export function createIncrementalChatJournal(
   }
 
   const drainDeferredDurability = (): number => {
+    assertWritable()
     let drained = 0
     for (const [filePath, entries] of pendingDeferredByPath) {
       const unsettled = [...entries].filter((entry) => !entry.settled)
@@ -503,7 +516,7 @@ export function createIncrementalChatJournal(
     const parsed = tombstoned
       ? { batches: [], bytes: 0, torn: false, validContent: '' }
       : parseJournal(chatId)
-    recoverTornTail(chatId, parsed)
+    if (canWrite()) recoverTornTail(chatId, parsed)
     if (!checkpoint && parsed.batches.length > 0) {
       throw new Error(`Incremental chat journal for ${chatId} has no checkpoint baseline`)
     }
@@ -528,6 +541,7 @@ export function createIncrementalChatJournal(
   }
 
   const initialize = (chatId: string, record: ChatRecord): void => {
+    assertWritable()
     assertChatId(chatId)
     if (record.appChatId !== chatId) throw new Error('Checkpoint chat identity mismatch')
     const state = loadState(chatId)
@@ -582,7 +596,8 @@ export function createIncrementalChatJournal(
       }
     }
     const parsed = parseJournal(chatId)
-    recoverTornTail(chatId, parsed)
+    const repairedTornTail = parsed.torn && canWrite()
+    if (repairedTornTail) recoverTornTail(chatId, parsed)
     let record = cloneRecord(checkpoint.record)
     let appliedBatches = 0
     let skippedBatches = 0
@@ -605,11 +620,12 @@ export function createIncrementalChatJournal(
       revision: recordRevision(record),
       appliedBatches,
       skippedBatches,
-      recoveredTornTail: parsed.torn
+      recoveredTornTail: repairedTornTail
     }
   }
 
   const checkpoint = (chatId: string, reason: IncrementalChatCheckpointReason): boolean => {
+    assertWritable()
     assertChatId(chatId)
     const state = loadState(chatId)
     if (state.tombstoned || state.journalEntries === 0) return false
@@ -643,6 +659,7 @@ export function createIncrementalChatJournal(
   }
 
   const replaceAuthoritativeCheckpoint = (chatId: string, record: ChatRecord): void => {
+    assertWritable()
     assertChatId(chatId)
     if (record.appChatId !== chatId) throw new Error('Checkpoint chat identity mismatch')
     const state = loadState(chatId)
@@ -680,6 +697,7 @@ export function createIncrementalChatJournal(
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
+    assertWritable()
     assertChatId(batch.chatId)
     if (!validMutationBatch(batch, batch.chatId)) throw new Error('Invalid chat mutation batch')
     const state = loadState(batch.chatId)
@@ -744,6 +762,7 @@ export function createIncrementalChatJournal(
   }
 
   const checkpointIdle = (nowMs = now()): number => {
+    assertWritable()
     let count = 0
     for (const chatId of knownChatIds()) {
       const state = loadState(chatId)
@@ -766,6 +785,7 @@ export function createIncrementalChatJournal(
   }
 
   const checkpointAll = (reason: IncrementalChatCheckpointReason = 'shutdown'): number => {
+    assertWritable()
     // A shutdown/manual sweep must not leave D1 appends riding the kernel:
     // settle the deferred flushes first, then supersede them with checkpoints.
     drainDeferredDurability()
@@ -777,6 +797,7 @@ export function createIncrementalChatJournal(
   }
 
   const deleteChat = (chatId: string): void => {
+    assertWritable()
     assertChatId(chatId)
     atomicWrite(tombstonePath(chatId), '')
     for (const filePath of [journalPath(chatId), checkpointPath(chatId)]) {
@@ -798,6 +819,7 @@ export function createIncrementalChatJournal(
   }
 
   const purge = (chatId: string): void => {
+    assertWritable()
     assertChatId(chatId)
     for (const filePath of [journalPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
       try {
@@ -811,6 +833,7 @@ export function createIncrementalChatJournal(
   }
 
   const clear = (): void => {
+    assertWritable()
     let entries: fs.Dirent[] = []
     try {
       entries = fs.readdirSync(baseDir, { withFileTypes: true })

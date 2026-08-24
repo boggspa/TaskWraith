@@ -38,6 +38,26 @@ function advance(source: ChatRecord, content: string): ChatRecord {
   return next
 }
 
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    rows.push({
+      relative: path.relative(root, current) || '.',
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
+}
+
 describe('IncrementalChatPersistence', () => {
   let baseDir: string
   let persistence: IncrementalChatPersistence
@@ -124,6 +144,32 @@ describe('IncrementalChatPersistence', () => {
       parityMismatches: 1
     })
     expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps replay read-only, suppresses verify repair, and rejects every persistence mutation', () => {
+    const sideBand = chat(1, 'side-band state')
+    persistence.persist(null, sideBand, 'normal')
+    const before = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatPersistence({
+      journal: createIncrementalChatJournal(baseDir, { canWrite: () => false }),
+      canWrite: () => false,
+      logger
+    })
+    const authoritative = chat(1, 'authoritative state')
+
+    expect(readOnly.replay('chat-1').record).toEqual(sideBand)
+    expect(readOnly.verify('chat-1', authoritative, true)).toBe(false)
+    for (const mutate of [
+      () => readOnly.persist(sideBand, advance(sideBand, 'late'), 'normal'),
+      () => readOnly.replaceAuthoritative('chat-1', authoritative),
+      () => readOnly.checkpointIdle(),
+      () => readOnly.checkpointAll(),
+      () => readOnly.purge('chat-1'),
+      () => readOnly.clear()
+    ]) {
+      expect(mutate).toThrow('read-only')
+    }
+    expect(snapshotTree(baseDir)).toEqual(before)
   })
 
   it('retains the approval fsync boundary and verifies without checkpointing', () => {

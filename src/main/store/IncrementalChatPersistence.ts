@@ -61,6 +61,7 @@ export interface IncrementalChatPersistence {
 
 export interface IncrementalChatPersistenceOptions {
   journal: IncrementalChatJournal
+  canWrite?: () => boolean
   logger?: Pick<Console, 'error' | 'warn'>
 }
 
@@ -122,6 +123,13 @@ export function createIncrementalChatPersistence(
   options: IncrementalChatPersistenceOptions
 ): IncrementalChatPersistence {
   const { journal } = options
+  const canWrite = (): boolean => {
+    try {
+      return options.canWrite?.() ?? true
+    } catch {
+      return false
+    }
+  }
   const logger = options.logger ?? console
   const baselineVerifiedChatIds = new Set<string>()
   const boundaryMix: Record<IncrementalChatPersistenceBoundary, number> = {
@@ -143,6 +151,7 @@ export function createIncrementalChatPersistence(
   let failures = 0
 
   const replaceAuthoritative = (chatId: string, record: ChatRecord): void => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.replaceAuthoritativeCheckpoint(chatId, durableClone(record))
     baselineVerifiedChatIds.add(chatId)
     baselineRepairs += 1
@@ -158,7 +167,7 @@ export function createIncrementalChatPersistence(
       return true
     }
     parityMismatches += 1
-    if (repair) {
+    if (repair && canWrite()) {
       logger.warn(
         `[incremental-chat] replay parity mismatch for ${chatId}; ` +
           'restoring the canonical AppStore record'
@@ -195,6 +204,7 @@ export function createIncrementalChatPersistence(
     boundary: IncrementalChatPersistenceBoundary,
     authoredTranscript?: AuthoredChatTranscriptMutation
   ): IncrementalChatPersistResult => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     try {
       boundaryMix[boundary] += 1
       if (!previous) {
@@ -250,6 +260,7 @@ export function createIncrementalChatPersistence(
   }
 
   const checkpointIdle = (nowMs?: number): number => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     try {
       const count = journal.checkpointIdle(nowMs)
       idleCheckpoints += count
@@ -262,6 +273,7 @@ export function createIncrementalChatPersistence(
   }
 
   const checkpointAll = (): number => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     try {
       const count = journal.checkpointAll('shutdown')
       shutdownCheckpoints += count
@@ -274,11 +286,13 @@ export function createIncrementalChatPersistence(
   }
 
   const purge = (chatId: string): void => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.purge(chatId)
     baselineVerifiedChatIds.delete(chatId)
   }
 
   const clear = (): void => {
+    if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.clear()
     baselineVerifiedChatIds.clear()
   }

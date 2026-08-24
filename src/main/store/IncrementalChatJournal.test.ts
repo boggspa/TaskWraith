@@ -34,7 +34,66 @@ function advance(source: ChatRecord, content: string): ChatRecord {
   return next
 }
 
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    rows.push({
+      relative: path.relative(root, current) || '.',
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      mode: stat.mode,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
+}
+
 describe('IncrementalChatJournal', () => {
+  it('does not create a missing directory when dynamic write authority is false', () => {
+    const baseDir = path.join(os.tmpdir(), `incremental-chat-readonly-${Date.now()}`)
+    const journal = createIncrementalChatJournal(baseDir, { canWrite: () => false })
+    expect(journal.replay('chat-1')).toMatchObject({ record: null })
+    expect(fs.existsSync(baseDir)).toBe(false)
+    expect(() => journal.clear()).toThrow('read-only')
+  })
+
+  it('replays a torn valid prefix without repair and rejects every mutator before side effects', () => {
+    const before = chat()
+    const after = advance(before, 'complete mutation')
+    const batch = deriveChatRecordMutation(before, after)
+    journal.initialize('chat-1', before)
+    journal.append(batch)
+    fs.appendFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), '{"torn":')
+    const treeBefore = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatJournal(baseDir, { canWrite: () => false })
+
+    expect(readOnly.replay('chat-1')).toMatchObject({
+      record: after,
+      recoveredTornTail: false
+    })
+    for (const mutate of [
+      () => readOnly.initialize('chat-1', before),
+      () => readOnly.append(batch),
+      () => readOnly.replaceAuthoritativeCheckpoint('chat-1', after),
+      () => readOnly.checkpoint('chat-1', 'manual'),
+      () => readOnly.checkpointIdle(),
+      () => readOnly.checkpointAll(),
+      () => readOnly.drainDeferredDurability(),
+      () => readOnly.delete('chat-1'),
+      () => readOnly.purge('chat-1'),
+      () => readOnly.clear()
+    ]) {
+      expect(mutate).toThrow('read-only')
+    }
+    expect(snapshotTree(baseDir)).toEqual(treeBefore)
+  })
   let baseDir: string
   let journal: IncrementalChatJournal
   let nowMs: number
