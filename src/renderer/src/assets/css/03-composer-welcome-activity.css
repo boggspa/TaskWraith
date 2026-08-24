@@ -6325,6 +6325,263 @@
   transform: translate(-50%, 0);
 }
 
+/* The Ensemble trigger graduates from a two-choice toggle into the roster's
+ * spacious working surface. It is allowed to rise all the way to the viewport
+ * edge, like Blackboard, rather than compressing a multi-seat roster into a
+ * footer-sized menu. The scroll region deliberately owns both axes: when a
+ * narrow pane cannot preserve the four-column read order, it scrolls instead
+ * of wrapping model/posture text into an ambiguous stack. */
+.composer-ensemble-toggle-popover.has-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  max-height: none;
+  box-sizing: border-box;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-popover-header {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  padding: 0 2px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
+  flex: 0 0 auto;
+  width: min(240px, 100%);
+  margin: 10px 2px 0 auto;
+}
+
+.composer-ensemble-roster-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.composer-ensemble-roster-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 12px 2px 9px;
+}
+
+.composer-ensemble-roster-eyebrow {
+  display: block;
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  font-size: var(--font-size-sm);
+  font-weight: 750;
+}
+
+.composer-ensemble-roster-summary p {
+  max-width: 620px;
+  margin: 3px 0 0;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.composer-ensemble-roster-count {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
+  color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 82%, var(--text-primary));
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.composer-ensemble-roster-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px;
+  scrollbar-gutter: stable;
+}
+
+.composer-ensemble-roster-list-inner {
+  min-width: 780px;
+}
+
+.composer-ensemble-roster-columns,
+.composer-ensemble-roster-seat {
+  display: grid;
+  grid-template-columns: 52px minmax(160px, 0.78fr) minmax(300px, 1.35fr) minmax(250px, 0.95fr);
+  column-gap: 14px;
+}
+
+.composer-ensemble-roster-columns {
+  align-items: end;
+  padding: 0 9px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.composer-ensemble-roster-list ol {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 7px 0 2px;
+  list-style: none;
+}
+
+.composer-ensemble-roster-list li {
+  margin: 0;
+  padding: 0;
+}
+
+.composer-ensemble-roster-seat {
+  width: 100%;
+  align-items: center;
+  min-height: 68px;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
+.composer-ensemble-roster-seat:hover,
+.composer-ensemble-roster-seat:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--panel-border) 88%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.composer-ensemble-roster-seat:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-selected {
+  border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 48%, transparent);
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-disabled {
+  opacity: 0.58;
+}
+
+.composer-ensemble-roster-seat-order {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.composer-ensemble-roster-seat-order > span {
+  color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  font-size: calc(var(--font-size-xs) + 2px);
+  line-height: 1;
+}
+
+.composer-ensemble-roster-seat-role {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 2px;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 700;
+}
+
+.composer-ensemble-roster-seat-role > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-ensemble-roster-seat-role small {
+  flex: 0 0 auto;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--warning, #e0a43a) 34%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--warning, #e0a43a) 80%, var(--text-primary));
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.composer-ensemble-roster-seat-state.seat-state-chips {
+  min-width: 0;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.composer-ensemble-roster-seat-goal {
+  min-width: 0;
+  max-height: 3.9em;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+.composer-ensemble-roster-footnote {
+  flex: 0 0 auto;
+  margin: 9px 2px 0;
+  padding: 8px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.composer-ensemble-roster-empty {
+  padding: 15px 3px 3px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+@media (max-height: 540px) {
+  .composer-ensemble-toggle-popover.has-roster {
+    padding: 9px;
+  }
+
+  .composer-ensemble-roster-summary {
+    padding-block: 8px 6px;
+  }
+
+  .composer-ensemble-roster-seat {
+    min-height: 56px;
+    padding-block: 7px;
+  }
+}
+
+@media (max-width: 720px) {
+  .composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
+    width: 100%;
+    margin-inline: 0;
+  }
+
+  .composer-ensemble-roster-list-inner {
+    min-width: 680px;
+  }
+}
+
 .composer-ensemble-toggle-popover-header {
   display: flex;
   align-items: center;

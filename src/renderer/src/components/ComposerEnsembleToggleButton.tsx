@@ -1,30 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ChatRecord } from '../../../main/store/types'
 import {
   computeComposerPlanPopoverPosition,
   type ComposerPlanPopoverPosition
 } from './ComposerPlanPopoverButton'
+import {
+  resolveComposerSurfacePopoverPosition,
+  type ComposerSurfacePopoverPosition
+} from '../lib/composerSurfacePopover'
+import { ComposerEnsembleRosterPopover } from './ComposerEnsembleRosterPopover'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 
 interface ComposerEnsembleToggleButtonProps {
   enabled: boolean
   visible: boolean
   onToggle: (enabled: boolean) => void
+  chat?: ChatRecord | null
+  selectedParticipantId?: string | null
+  onSelectParticipant?: (participantId: string) => void
   composerStyle?: string
   disabled?: boolean
   title?: string
 }
 
+type ComposerEnsemblePopoverPosition =
+  | ({ kind: 'toggle' } & ComposerPlanPopoverPosition)
+  | ({ kind: 'roster' } & ComposerSurfacePopoverPosition)
+
 export function ComposerEnsembleToggleButton({
   enabled,
   visible,
   onToggle,
+  chat,
+  selectedParticipantId,
+  onSelectParticipant,
   composerStyle = 'default',
   disabled = false,
   title: overrideTitle
 }: ComposerEnsembleToggleButtonProps): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<ComposerPlanPopoverPosition | null>(null)
+  const [position, setPosition] = useState<ComposerEnsemblePopoverPosition | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
 
@@ -36,15 +52,30 @@ export function ComposerEnsembleToggleButton({
       return
     }
     const rect = trigger.getBoundingClientRect()
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect()
+    if (enabled && chat?.ensemble) {
+      setPosition({
+        kind: 'roster',
+        ...resolveComposerSurfacePopoverPosition({
+          triggerRect: rect,
+          surfaceRect: surfaceRect || rect,
+          viewportWidth: window.innerWidth,
+          widthFloor: 620
+        })
+      })
+      return
+    }
     const popoverHeight = popoverRef.current?.offsetHeight || 118
-    setPosition(
-      computeComposerPlanPopoverPosition(
+    setPosition({
+      kind: 'toggle',
+      ...computeComposerPlanPopoverPosition(
         rect,
         { width: window.innerWidth, height: window.innerHeight },
         { width: 236, height: popoverHeight }
       )
-    )
-  }, [])
+    })
+  }, [chat?.ensemble, enabled])
 
   const closePopover = useCallback((restoreFocus = true): void => {
     setOpen(false)
@@ -86,6 +117,7 @@ export function ComposerEnsembleToggleButton({
   if (!visible) return null
 
   const title = overrideTitle || (enabled ? 'Ensemble on' : 'Ensemble off')
+  const rosterWorkspace = enabled && Boolean(chat?.ensemble)
   const selectMode = (nextEnabled: boolean): void => {
     setOpen(false)
     if (nextEnabled !== enabled) onToggle(nextEnabled)
@@ -96,17 +128,33 @@ export function ComposerEnsembleToggleButton({
       ? createPortal(
           <div
             ref={popoverRef}
-            className={`composer-ensemble-toggle-popover shell-${composerStyle}${position?.placement === 'below' ? ' is-below' : ''}`}
+            className={`composer-ensemble-toggle-popover shell-${composerStyle}${
+              rosterWorkspace ? ' has-roster' : ''
+            }${position?.kind === 'toggle' && position.placement === 'below' ? ' is-below' : ''}`}
             role="dialog"
             aria-label="Ensemble"
             style={
               position
-                ? { left: `${position.left}px`, top: `${position.top}px` }
+                ? position.kind === 'roster'
+                  ? {
+                      left: `${position.left}px`,
+                      top: `${position.top}px`,
+                      width: `${position.width}px`,
+                      height: `calc(${position.top}px - 8px)`,
+                      transform: 'translateY(-100%)'
+                    }
+                  : {
+                      left: `${position.left}px`,
+                      top: `${position.top}px`,
+                      width: `${position.width}px`
+                    }
                 : { left: '0px', top: '0px', visibility: 'hidden' }
             }
           >
             <div className="composer-ensemble-toggle-popover-header">
-              <span className="composer-ensemble-toggle-popover-title">Ensemble</span>
+              <span className="composer-ensemble-toggle-popover-title">
+                {rosterWorkspace ? 'Ensemble roster' : 'Ensemble'}
+              </span>
               <span className="composer-ensemble-toggle-state">{enabled ? 'On' : 'Off'}</span>
             </div>
             <div
@@ -133,6 +181,13 @@ export function ComposerEnsembleToggleButton({
                 Off
               </button>
             </div>
+            {rosterWorkspace ? (
+              <ComposerEnsembleRosterPopover
+                chat={chat}
+                selectedParticipantId={selectedParticipantId}
+                onSelectParticipant={onSelectParticipant}
+              />
+            ) : null}
           </div>,
           document.body
         )

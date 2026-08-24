@@ -5297,6 +5297,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       (isEnsembleModeEnabled || isCurrentEnsembleChat)
                   )}
                   onToggle={handleToggleWelcomeEnsemble}
+                  chat={currentChat}
+                  selectedParticipantId={effectiveSelectedParticipantId}
+                  onSelectParticipant={handleSelectParticipant}
                   composerStyle={appearance.composerStyle}
                   disabled={isCurrentChatRunning}
                   title={
