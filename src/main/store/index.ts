@@ -58,6 +58,12 @@ import {
 } from './ChatUpdateProjectionTracker'
 import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
+import {
+  runLegacyStoreWriteAdmission,
+  scheduleLegacyStoreDeferredWrite,
+  type LegacyStoreDeferredSettlement,
+  type LegacyStoreWriteAdmissionScope
+} from './LegacyStoreWriteAdmission'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
@@ -2726,7 +2732,24 @@ function normalizeSettingsFontFamily(value: unknown, fallback: string): string {
  */
 const directoryFsyncQueue = createDirectoryFsyncQueue()
 
-function writeJson<T>(filePath: string, data: T) {
+function hostOwnedJsonPathFamily(filePath: string): 'workspaces' | 'chats' | null {
+  if (filePath === workspacesPath) return 'workspaces'
+  if (path.dirname(filePath) === chatsDir && path.extname(filePath) === '.json') return 'chats'
+  return null
+}
+
+function writeJson<T>(filePath: string, data: T): void {
+  const pathFamily = hostOwnedJsonPathFamily(filePath)
+  if (!pathFamily) {
+    writeJsonAdmitted(filePath, data)
+    return
+  }
+  runLegacyStoreWriteAdmission({ operation: 'write-json', pathFamily }, () => {
+    writeJsonAdmitted(filePath, data)
+  })
+}
+
+function writeJsonAdmitted<T>(filePath: string, data: T): void {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   let fd: number | null = null
   // T3a probe: null unless PERF_PRELOAD_PROBE=1, so the production path pays a
@@ -7037,6 +7060,17 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
+    return runLegacyStoreWriteAdmission(
+      { operation: 'save-chat', pathFamily: 'chats' },
+      (writerAdmission) => this.saveChatAdmitted(chat, options, writerAdmission)
+    )
+  }
+
+  private static saveChatAdmitted(
+    chat: ChatRecord,
+    options: ChatSaveOptions,
+    writerAdmission: LegacyStoreWriteAdmissionScope
+  ): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],
@@ -7234,9 +7268,7 @@ export class AppStore {
       // Normal streaming saves are now complete once their mutation append is
       // fsynced. Keep whole-record writes only at compatibility barriers.
       if (legacyWriteReason !== 'normal') {
-        saveCoalescer.schedule(
-          chatId,
-          () => {
+        const writeLegacyChat = (deferredSettlement: LegacyStoreDeferredSettlement): void => {
           const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
           // Everything that must happen AFTER the bytes land. Kept in one place
           // because the utility-write path runs it in the ACK continuation
@@ -7304,12 +7336,20 @@ export class AppStore {
           }
 
           outstandingUtilityWriteChatIds.add(chatId)
-          void enqueueUtilityWrite({
-            chatId,
-            filePath: chatPath,
-            data: normalizedChat,
-            revision: chatPersistenceRevision(normalizedChat)
-          })
+          let utilityWrite: Promise<void>
+          try {
+            utilityWrite = enqueueUtilityWrite({
+              chatId,
+              filePath: chatPath,
+              data: normalizedChat,
+              revision: chatPersistenceRevision(normalizedChat)
+            })
+          } catch (error) {
+            outstandingUtilityWriteChatIds.delete(chatId)
+            throw error
+          }
+          deferredSettlement.markAsyncContinuation()
+          void utilityWrite
             .then(() => {
               settleAfterDurableWrite()
             })
@@ -7321,9 +7361,15 @@ export class AppStore {
             })
             .finally(() => {
               outstandingUtilityWriteChatIds.delete(chatId)
+              deferredSettlement.asyncSettled()
             })
+        }
+        scheduleLegacyStoreDeferredWrite(
+          writerAdmission,
+          (write, onSettled) => {
+            saveCoalescer.schedule(chatId, write, legacyWriteReason, onSettled)
           },
-          legacyWriteReason
+          writeLegacyChat
         )
       }
     }
