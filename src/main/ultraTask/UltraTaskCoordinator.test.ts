@@ -22,10 +22,10 @@ function input(overrides: Partial<StartUltraTaskWorkflowInput> = {}): StartUltra
     },
     scouts: [
       { provider: 'codex', model: 'gpt-5.6-luna' },
-      { provider: 'claude', model: 'claude-sonnet-5' }
+      { provider: 'codex', model: 'gpt-5.6-terra' }
     ],
     worker: { provider: 'codex', model: 'gpt-5.6-sol' },
-    reviewer: { provider: 'muse', model: 'muse-spark-1.2' },
+    reviewer: { provider: 'codex', model: 'gpt-5.5' },
     synthesis: { provider: 'codex', model: 'gpt-5.6-terra' },
     workerEffect: 'workspace_write',
     ...overrides
@@ -160,6 +160,17 @@ describe('startUltraTaskWorkflow', () => {
     ).toThrow(/exact concrete model/i)
     expect(harness.deps.prepareStage).not.toHaveBeenCalled()
     expect(harness.deps.startExecutionGraph).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on mixed-provider stages until a composite ceiling exists', () => {
+    const harness = deps()
+    expect(() =>
+      startUltraTaskWorkflow(
+        input({ reviewer: { provider: 'claude', model: 'claude-sonnet-5' } }),
+        harness.deps
+      )
+    ).toThrow(/one provider authority ceiling.*composite ceiling/i)
+    expect(harness.deps.prepareStage).not.toHaveBeenCalled()
   })
 
   it('does not launch a graph when template preparation fails', () => {

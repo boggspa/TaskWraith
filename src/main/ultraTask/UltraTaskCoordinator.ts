@@ -184,6 +184,15 @@ export function startUltraTaskWorkflow(
   validateSeat(input.worker, 'worker')
   validateSeat(input.reviewer, 'reviewer')
   validateSeat(input.synthesis, 'synthesis')
+  const provider = input.worker.provider
+  const providerMismatch = [...input.scouts, input.reviewer, input.synthesis].find(
+    (seat) => seat.provider !== provider
+  )
+  if (providerMismatch) {
+    throw new Error(
+      'UltraTask staged graphs currently require one provider authority ceiling; mixed-provider stages need a signed composite ceiling.'
+    )
+  }
 
   const workflowId = text(deps.createId('workflow'), 'workflow id')
   const graphId = text(deps.createId('graph'), 'graph id')
