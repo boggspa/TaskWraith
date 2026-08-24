@@ -3,7 +3,8 @@ import { PI_READ_ONLY_TOOLS, PI_WRITE_TOOLS, buildPiProcessEnv, buildPiRpcArgs }
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
-  PI_MANAGED_SHELL_TOOL_NAMES
+  PI_MANAGED_SHELL_TOOL_NAMES,
+  PI_ULTRATASK_DELEGATION_TOOL_NAMES
 } from './PiEnsembleCoordination'
 
 describe('buildPiRpcArgs', () => {
@@ -132,6 +133,34 @@ describe('buildPiRpcArgs', () => {
     const tools = args[args.indexOf('--tools') + 1].split(',')
     expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_MANAGED_SHELL_TOOL_NAMES])
     expect(tools).not.toContain('bash')
+  })
+
+  it('adds only the explicit UltraTask delegation tools while native Pi stays read-only', () => {
+    const args = buildPiRpcArgs({
+      ...base,
+      writeCapable: false,
+      coordinationExtensionPath: '/tmp/taskwraith-pi-home/taskwraith-tools.mjs',
+      coordinationToolNames: PI_ULTRATASK_DELEGATION_TOOL_NAMES
+    })
+    const tools = args[args.indexOf('--tools') + 1].split(',')
+    expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_ULTRATASK_DELEGATION_TOOL_NAMES])
+    expect(tools).toContain('delegate_wave')
+    expect(tools).toContain('delegate_to_subthread')
+    expect(tools).toContain('ensemble_await')
+    expect(tools).not.toEqual(
+      expect.arrayContaining([
+        'bash',
+        'edit',
+        'write',
+        'run_shell_command',
+        'request_tool_permission'
+      ])
+    )
+
+    const ordinarySolo = buildPiRpcArgs({ ...base, writeCapable: false })
+    expect(ordinarySolo[ordinarySolo.indexOf('--tools') + 1].split(',')).toEqual([
+      ...PI_READ_ONLY_TOOLS
+    ])
   })
 
   it('attaches the tools-free repair extension without granting any tool', () => {

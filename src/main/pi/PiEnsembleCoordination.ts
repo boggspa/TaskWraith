@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { MESH_MCP_TOOL_NAMES, type MeshMcpToolName } from '../../shared/taskWraithMcpCatalog'
+import {
+  MCP_BROKER_LONG_POLL_TIMEOUT_MS,
+  MCP_BROKER_REQUEST_TIMEOUT_MS
+} from '../mcp/McpBrokerTimeouts'
 
 /**
  * The intentionally small coordination surface Pi receives in Ensemble mode.
@@ -48,6 +52,26 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'browser_console'
 ] as const)
 
+/**
+ * Exact delegated-review surface for a Pi run whose main-signed permission
+ * posture records `subThreadDelegationAutoAllowSource: 'ultratask'`.
+ *
+ * This list is deliberately separate from the ordinary Ensemble coordination
+ * surface above: a normal solo Pi run, and an Ensemble seat that did not select
+ * UltraTask, must not receive sub-thread spawn authority. Main opts this fixed
+ * list in only for the signed UltraTask run. `ensemble_await` is shared with
+ * Ensemble coordination so both solo and panel UltraTask seats can join the
+ * returned sub-thread/wave ids; the two read tools are the bounded inspection
+ * fallback when a join times out or lifecycle is unclear.
+ */
+export const PI_ULTRATASK_DELEGATION_TOOL_NAMES = Object.freeze([
+  'delegate_wave',
+  'delegate_to_subthread',
+  'ensemble_await',
+  'list_subthreads',
+  'read_subthread_result'
+] as const)
+
 /** Exact workspace mutation tools whose arguments can be locked and committed
  * inside TaskWraith's broker transaction. */
 export const PI_EXACT_FILE_TOOL_NAMES = Object.freeze([
@@ -68,10 +92,12 @@ export const PI_MANAGED_SHELL_TOOL_NAMES = Object.freeze([
 export const PI_MESH_TOOL_NAMES = Object.freeze([...MESH_MCP_TOOL_NAMES])
 
 export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
+export type PiUltraTaskDelegationToolName = (typeof PI_ULTRATASK_DELEGATION_TOOL_NAMES)[number]
 export type PiExactFileToolName = (typeof PI_EXACT_FILE_TOOL_NAMES)[number]
 export type PiManagedShellToolName = (typeof PI_MANAGED_SHELL_TOOL_NAMES)[number]
 export type PiTaskWraithToolName =
   | PiEnsembleCoordinationToolName
+  | PiUltraTaskDelegationToolName
   | PiExactFileToolName
   | PiManagedShellToolName
   | MeshMcpToolName
@@ -94,9 +120,19 @@ export function isPiEnsembleCoordinationToolName(
   )
 }
 
+export function isPiUltraTaskDelegationToolName(
+  value: unknown
+): value is PiUltraTaskDelegationToolName {
+  return (
+    typeof value === 'string' &&
+    (PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).includes(value)
+  )
+}
+
 export function isPiTaskWraithToolName(value: unknown): value is PiTaskWraithToolName {
   return (
     isPiEnsembleCoordinationToolName(value) ||
+    isPiUltraTaskDelegationToolName(value) ||
     (typeof value === 'string' &&
       ((PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value) ||
         (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(value) ||
@@ -240,6 +276,12 @@ export function piTaskWraithToolsReadyPromptAppendix(
   const coordinationTools = receipt.toolNames.filter((name) =>
     (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(name)
   )
+  const ultraTaskDelegationTools = receipt.toolNames.filter((name) =>
+    (PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).includes(name)
+  )
+  const ultraTaskDelegationEnabled = ultraTaskDelegationTools.some(
+    (name) => name === 'delegate_wave' || name === 'delegate_to_subthread'
+  )
   const meshTools = receipt.toolNames.filter((name) =>
     (PI_MESH_TOOL_NAMES as readonly string[]).includes(name)
   )
@@ -262,6 +304,13 @@ export function piTaskWraithToolsReadyPromptAppendix(
     ...(coordinationTools.length
       ? [
           '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.'
+        ]
+      : []),
+    ...(ultraTaskDelegationEnabled
+      ? [
+          '- UltraTask delegated-review transport is enabled for this run by the main-signed reasoning-picker consent. This does not widen native Pi file, shell, network, or generic MCP access.',
+          '- Prefer `delegate_wave` for the review fleet, use `delegate_to_subthread` only as the single-worker fallback, then immediately call `ensemble_await` with the returned `waveIds` or `subThreadIds`.',
+          '- Use `list_subthreads` / `read_subthread_result` only for bounded lifecycle or result inspection when a join times out or reports an unclear target.'
         ]
       : []),
     ...(meshTools.length
@@ -287,6 +336,7 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
   exactFileToolsExpected: boolean
   shellToolsExpected: boolean
   coordinationExpected: boolean
+  ultraTaskDelegationExpected?: boolean
   meshToolsExpected?: boolean
   reason?: string
 }): string {
@@ -305,6 +355,11 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
     ...(input.coordinationExpected
       ? [
           '- Do not call, search for, or retry `ensemble_*`, `blackboard_*`, or `scout_brief` tools. Use one unambiguous `@Role` or `@Model` mention instead.'
+        ]
+      : []),
+    ...(input.ultraTaskDelegationExpected
+      ? [
+          '- UltraTask delegation tools were expected but their run-bound transport did not prove ready. Do not invent a delegated review; report that `delegate_wave` is unavailable for this turn and continue with the evidence you can gather directly.'
         ]
       : []),
     ...(input.meshToolsExpected
@@ -442,6 +497,8 @@ const TOKEN = process.env.TASKWRAITH_PI_COORDINATION_TOKEN || ''
 const RUN_ID = process.env.TASKWRAITH_RUN_ID || ''
 const CHAT_ID = process.env.TASKWRAITH_CHAT_ID || ''
 const WORKSPACE_PATH = process.env.TASKWRAITH_WORKSPACE_PATH || ''
+const DEFAULT_BROKER_TIMEOUT_MS = ${MCP_BROKER_REQUEST_TIMEOUT_MS}
+const LONG_POLL_BROKER_TIMEOUT_MS = ${MCP_BROKER_LONG_POLL_TIMEOUT_MS}
 
 function resultText(result) {
   if (result && Array.isArray(result.content)) {
@@ -475,7 +532,7 @@ function brokerCall(tool, args) {
     }
     timeout = setTimeout(
       () => finish({ ok: false, error: 'TaskWraith coordination broker timed out.' }),
-      130000
+      tool === 'ensemble_await' ? LONG_POLL_BROKER_TIMEOUT_MS : DEFAULT_BROKER_TIMEOUT_MS
     )
     socket.setEncoding('utf8')
     socket.on('connect', () => {
@@ -522,8 +579,12 @@ function descriptionFor(name) {
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
     ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
-    ensemble_await: 'Wait (bounded) for named fan-out lanes to finish. Optional: laneIds, timeoutMs, reason.',
+    ensemble_await: 'Wait (bounded) for fan-out lanes, sub-threads, or waves to settle. Optional: laneIds, subThreadIds, waveIds, timeoutSeconds.',
     ensemble_lane_result: "Read one finished fan-out lane's structured output. Required: laneId; optional fanoutId.",
+    delegate_wave: 'Spawn a fresh delegated-review wave. Required: workers; optional lifecycle, allowMultiProvider, and join. Call ensemble_await with the returned waveId immediately.',
+    delegate_to_subthread: 'Spawn a fresh delegated reviewer, or recall one owned sub-thread. Required: provider and prompt; optional model, reasoningEffort, kimiThinking, returnResult, and subThreadId. Call ensemble_await with the returned subThreadId immediately.',
+    list_subthreads: 'List lifecycle-aware sub-threads owned by this parent. Optional: parentChatId, includeArchived, includePrompt, waveId.',
+    read_subthread_result: 'Read one owned sub-thread lifecycle/result projection. Required: subThreadId; optional depth, includeRuns, includeMessages, includeEvents, messageLimit, eventLimit.',
     ensemble_control: 'Compact Boss/Captain control surface. Required: action; optional params plus flat action fields (e.g. planSummary).',
     ensemble_bossman_control: 'Boss/Captain control surface (canonical name). Required: action; optional params plus flat action fields.',
     list_ensemble_participants: 'List Ensemble participants with roles, models, and availability.',
@@ -625,12 +686,71 @@ function parametersFor(name) {
       })
     case 'ensemble_await':
       return object({
-        laneIds: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
-        timeoutMs: Type.Optional(Type.Number()),
-        reason: optionalText()
+        laneIds: optionalTextArray(),
+        subThreadIds: optionalTextArray(),
+        waveIds: optionalTextArray(),
+        timeoutSeconds: Type.Optional(Type.Number())
       })
     case 'ensemble_lane_result':
       return object({ laneId: Type.String(), fanoutId: optionalText() })
+    case 'delegate_wave':
+      return object({
+        lifecycle: optionalText(),
+        allowMultiProvider: Type.Optional(Type.Boolean()),
+        workers: Type.Array(
+          Type.Object(
+            {
+              provider: optionalText(),
+              prompt: Type.String(),
+              role: optionalText(),
+              label: optionalText(),
+              model: optionalText(),
+              reasoningEffort: optionalText(),
+              kimiThinking: Type.Optional(Type.Boolean())
+            },
+            { additionalProperties: true }
+          ),
+          { minItems: 1, maxItems: 64 }
+        ),
+        join: Type.Optional(
+          Type.Object(
+            {
+              required: Type.Optional(Type.Boolean()),
+              quorum: Type.Optional(Type.Number()),
+              deadlineMs: Type.Optional(Type.Number()),
+              debounceMs: Type.Optional(Type.Number())
+            },
+            { additionalProperties: true }
+          )
+        )
+      })
+    case 'delegate_to_subthread':
+      return object({
+        provider: Type.String(),
+        prompt: Type.String(),
+        model: optionalText(),
+        reasoningEffort: optionalText(),
+        kimiThinking: Type.Optional(Type.Boolean()),
+        returnResult: Type.Optional(Type.Boolean()),
+        subThreadId: optionalText()
+      })
+    case 'list_subthreads':
+      return object({
+        parentChatId: optionalText(),
+        includeArchived: Type.Optional(Type.Boolean()),
+        includePrompt: Type.Optional(Type.Boolean()),
+        waveId: optionalText()
+      })
+    case 'read_subthread_result':
+      return object({
+        subThreadId: Type.String(),
+        depth: optionalText(),
+        includeRuns: Type.Optional(Type.Boolean()),
+        includeMessages: Type.Optional(Type.Boolean()),
+        includeEvents: Type.Optional(Type.Boolean()),
+        messageLimit: Type.Optional(Type.Number()),
+        eventLimit: Type.Optional(Type.Number())
+      })
     case 'ensemble_control':
     case 'ensemble_bossman_control':
       return object({

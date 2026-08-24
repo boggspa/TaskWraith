@@ -4,13 +4,19 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
 import {
+  MCP_BROKER_LONG_POLL_TIMEOUT_MS,
+  MCP_BROKER_REQUEST_TIMEOUT_MS
+} from '../mcp/McpBrokerTimeouts'
+import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
   PI_MANAGED_SHELL_TOOL_NAMES,
   PI_MESH_TOOL_NAMES,
+  PI_ULTRATASK_DELEGATION_TOOL_NAMES,
   isPiEnsembleCoordinationToolName,
   isPiTaskWraithToolName,
+  isPiUltraTaskDelegationToolName,
   piEnsembleCoordinationReadyPromptAppendix,
   piEnsembleCoordinationUnavailablePromptAppendix,
   piTaskWraithToolsReadyPromptAppendix,
@@ -62,7 +68,8 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(isPiEnsembleCoordinationToolName('run_shell_command')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('capability_invoke')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('write_file')).toBe(false)
-    // Delegate tools stay deliberately excluded from the coordination surface.
+    // Delegate tools stay excluded from the ORDINARY coordination surface;
+    // signed UltraTask runs opt into their own fixed list below.
     expect(isPiEnsembleCoordinationToolName('delegate_wave')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('delegate_to_subthread')).toBe(false)
   })
@@ -85,6 +92,37 @@ describe('Pi managed Ensemble coordination extension', () => {
     // Every admitted name must exist in the canonical TaskWraith MCP catalog.
     for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
       expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+  })
+
+  it('keeps the signed UltraTask delegated-review surface fixed and separate', () => {
+    expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES).toEqual([
+      'delegate_wave',
+      'delegate_to_subthread',
+      'ensemble_await',
+      'list_subthreads',
+      'read_subthread_result'
+    ])
+    for (const toolName of PI_ULTRATASK_DELEGATION_TOOL_NAMES) {
+      expect(isPiUltraTaskDelegationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+    // Join is shared with Ensemble; spawn/inspection remain UltraTask-only.
+    expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain('ensemble_await')
+    for (const toolName of [
+      'delegate_wave',
+      'delegate_to_subthread',
+      'list_subthreads',
+      'read_subthread_result'
+    ]) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).not.toContain(toolName)
+    }
+    // Keep cancellation, claim mutation, and the agent-callable convenience
+    // wrapper outside the consent-derived transport.
+    for (const outOfScope of ['cancel_subthread', 'claim_fleet_wave', 'ultra_task']) {
+      expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).not.toContain(outOfScope)
+      expect(isPiUltraTaskDelegationToolName(outOfScope)).toBe(false)
     }
   })
 
@@ -155,8 +193,11 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain("case 'browser_click'")
     expect(source).toContain("case 'browser_screenshot'")
     expect(source).toContain("case 'browser_console'")
-    expect(source).not.toContain("'delegate_wave'")
-    expect(source).not.toContain("'delegate_to_subthread'")
+    // The generated module contains schema branches for every fixed Pi surface,
+    // but this ordinary Ensemble credential registers exactly the coordination
+    // list and therefore cannot call either delegated-review tool.
+    expect(prepared.toolNames).not.toContain('delegate_wave')
+    expect(prepared.toolNames).not.toContain('delegate_to_subthread')
     expect(source).not.toContain("'canvas_render'")
     expect(source).not.toContain("'canvas_drive_report'")
     expect(source).toContain('throw new Error(resultText(result))')
@@ -164,6 +205,57 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain(
       `const TOOL_NAMES = ${JSON.stringify(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)}`
     )
+    expect(piTaskWraithToolsReadyPromptAppendix(prepared)).not.toContain(
+      'UltraTask delegated-review transport is enabled'
+    )
+  })
+
+  it('generates exact UltraTask delegation schemas under its fixed credential allowlist', () => {
+    const home = createCanonicalHome()
+    const prepared = preparePiTaskWraithExtension({
+      isolatedHomeDir: home,
+      toolNames: PI_ULTRATASK_DELEGATION_TOOL_NAMES
+    })
+    const source = readFileSync(prepared.path, 'utf8')
+
+    expect(prepared.toolNames).toEqual(PI_ULTRATASK_DELEGATION_TOOL_NAMES)
+    expect(source).toContain(
+      `const TOOL_NAMES = ${JSON.stringify(PI_ULTRATASK_DELEGATION_TOOL_NAMES)}`
+    )
+    expect(source).toContain("case 'delegate_wave'")
+    expect(source).toContain('workers: Type.Array(')
+    expect(source).toContain('{ minItems: 1, maxItems: 64 }')
+    expect(source).toContain('allowMultiProvider: Type.Optional(Type.Boolean())')
+    expect(source).toContain('deadlineMs: Type.Optional(Type.Number())')
+    expect(source).toContain("case 'delegate_to_subthread'")
+    expect(source).toContain('provider: Type.String()')
+    expect(source).toContain('prompt: Type.String()')
+    expect(source).toContain('returnResult: Type.Optional(Type.Boolean())')
+    expect(source).toContain('subThreadId: optionalText()')
+    expect(source).toContain("case 'ensemble_await'")
+    expect(source).toContain('subThreadIds: optionalTextArray()')
+    expect(source).toContain('waveIds: optionalTextArray()')
+    expect(source).toContain('timeoutSeconds: Type.Optional(Type.Number())')
+    expect(source).not.toContain('timeoutMs: Type.Optional(Type.Number())')
+    expect(source).toContain(`const DEFAULT_BROKER_TIMEOUT_MS = ${MCP_BROKER_REQUEST_TIMEOUT_MS}`)
+    expect(source).toContain(
+      `const LONG_POLL_BROKER_TIMEOUT_MS = ${MCP_BROKER_LONG_POLL_TIMEOUT_MS}`
+    )
+    expect(source).toContain(
+      "tool === 'ensemble_await' ? LONG_POLL_BROKER_TIMEOUT_MS : DEFAULT_BROKER_TIMEOUT_MS"
+    )
+    expect(source).not.toContain('\n      130000\n')
+    expect(source).toContain("case 'list_subthreads'")
+    expect(source).toContain('includeArchived: Type.Optional(Type.Boolean())')
+    expect(source).toContain("case 'read_subthread_result'")
+    expect(source).toContain('includeEvents: Type.Optional(Type.Boolean())')
+
+    const prompt = piTaskWraithToolsReadyPromptAppendix(prepared)
+    expect(prompt).toContain('main-signed reasoning-picker consent')
+    expect(prompt).toContain('Prefer `delegate_wave`')
+    expect(prompt).toContain('`delegate_to_subthread` only as the single-worker fallback')
+    expect(prompt).toContain('returned `waveIds` or `subThreadIds`')
+    expect(prompt).toContain('does not widen native Pi file, shell, network, or generic MCP access')
   })
 
   it('repairs Pi forked tool-call blocks before the message is dispatched', () => {
@@ -354,6 +446,10 @@ describe('Pi managed Ensemble coordination extension', () => {
           ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
           ...PI_MESH_TOOL_NAMES
         ]
+      }),
+      preparePiTaskWraithExtension({
+        isolatedHomeDir: createCanonicalHome(),
+        toolNames: PI_ULTRATASK_DELEGATION_TOOL_NAMES
       })
     ]
     for (const prepared of homes) {
@@ -394,6 +490,7 @@ describe('Pi managed Ensemble coordination extension', () => {
       exactFileToolsExpected: true,
       shellToolsExpected: true,
       coordinationExpected: false,
+      ultraTaskDelegationExpected: true,
       meshToolsExpected: true,
       reason: 'extension readiness timed out'
     })
@@ -402,6 +499,8 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(unavailable).toContain('exact command and cwd')
     expect(unavailable).toContain('extension readiness timed out')
     expect(unavailable).toContain('Mesh Canvas tools were expected')
+    expect(unavailable).toContain('UltraTask delegation tools were expected')
+    expect(unavailable).toContain('`delegate_wave` is unavailable')
     expect(unavailable).not.toContain('continuing read-only')
   })
 })
