@@ -1,11 +1,34 @@
 /*
- * Ensemble roster popover — this shard intentionally changes only layout.
+ * Compact Ensemble roster popover.
  *
- * The seat identity itself is `SeatStateChips`, the shared transcript / close-
- * out element. Do not re-skin it with menu pills or introduce replacement
- * provider marks here: the workspace is a larger table around the existing
- * vocabulary, not a new vocabulary of its own.
+ * This is a composer-sized reading of Settings → Ensemble roster: each seat
+ * retains the existing transcript/close-out runtime strip, then gets the
+ * familiar authority, stage, and brief controls in a shallow editor card.
+ * The shell is intentionally the only new glass surface; no provider/model
+ * vocabulary is recreated here.
  */
+
+.composer-ensemble-toggle-popover.has-roster {
+  min-height: min(340px, calc(100vh - 32px));
+  padding: 10px;
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-popover-header {
+  padding-bottom: 7px;
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
+  width: min(206px, 100%);
+  margin-top: 7px;
+}
+
+.composer-ensemble-roster-summary {
+  padding: 9px 2px 7px;
+}
+
+.composer-ensemble-roster-summary p {
+  max-width: 520px;
+}
 
 .composer-ensemble-toggle-popover.has-roster .composer-ensemble-roster-count {
   margin-top: 2px;
@@ -18,67 +41,109 @@
   font-weight: 500;
 }
 
+.composer-ensemble-roster-list {
+  padding: 0 2px 4px;
+}
+
 .composer-ensemble-roster-list-inner {
-  min-width: 744px;
-}
-
-.composer-ensemble-roster-columns,
-.composer-ensemble-roster-seat {
-  grid-template-columns: 46px minmax(145px, 0.78fr) minmax(300px, 1.35fr) minmax(230px, 0.95fr);
-  column-gap: 12px;
-}
-
-.composer-ensemble-roster-columns {
-  padding-inline: 3px;
-  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
-  font-weight: 650;
+  min-width: 0;
 }
 
 .composer-ensemble-roster-list ol {
-  gap: 0;
+  gap: 7px;
   padding: 0;
 }
 
 .composer-ensemble-roster-seat {
+  display: block;
+  width: 100%;
   min-height: 0;
-  padding: 8px 3px;
-  border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
-  border-radius: 0;
-  background: transparent;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+  color: var(--text-primary);
+  container-type: inline-size;
   transition:
+    border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease,
     opacity 140ms ease;
 }
 
-.composer-ensemble-roster-list li:last-child .composer-ensemble-roster-seat {
-  border-bottom: 0;
-}
-
-.composer-ensemble-roster-seat:hover,
-.composer-ensemble-roster-seat:focus-visible {
-  border-color: color-mix(in srgb, var(--panel-border) 44%, transparent);
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+.composer-ensemble-roster-seat:hover {
+  border-color: color-mix(in srgb, var(--panel-border) 94%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .composer-ensemble-roster-seat.is-selected {
-  border-color: color-mix(in srgb, var(--panel-border) 44%, transparent);
+  border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 54%, transparent);
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 7%, transparent);
-  box-shadow: inset 2px 0 0
-    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 62%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-disabled {
+  opacity: 0.62;
+}
+
+.composer-ensemble-roster-seat-select {
+  display: grid;
+  grid-template-columns: 32px minmax(122px, 0.68fr) minmax(0, 1.52fr);
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 37px;
+  padding: 8px 9px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  background: transparent;
+  color: inherit;
 }
 
 .composer-ensemble-roster-seat-order {
-  padding-left: 2px;
+  align-self: stretch;
+  padding-left: 1px;
+  border: 0;
+  background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
+  font: inherit;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-ensemble-roster-seat-order:hover,
+.composer-ensemble-roster-seat-order:focus-visible {
+  outline: none;
+  color: var(--text-primary);
 }
 
 .composer-ensemble-roster-seat-role {
+  min-width: 0;
   gap: 3px;
-  font-weight: 600;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 650;
+}
+
+.composer-ensemble-roster-seat-role input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: currentColor;
+  font: inherit;
+  font-weight: inherit;
+}
+
+.composer-ensemble-roster-seat-role input:focus {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+  text-underline-offset: 3px;
 }
 
 .composer-ensemble-roster-seat-role small {
@@ -91,21 +156,153 @@
   font-weight: 500;
 }
 
-.composer-ensemble-roster-seat-state.seat-state-chips {
-  gap: 9px;
-  overflow: visible;
+.composer-ensemble-roster-seat-picker-cluster {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.composer-ensemble-roster-seat-goal {
-  color: color-mix(in srgb, var(--text-secondary) 84%, transparent);
+.composer-ensemble-roster-seat-picker-cluster .composer-combined-picker-trigger {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.composer-ensemble-roster-seat-picker-cluster
+  .composer-combined-picker-trigger[data-composer-control='permission'] {
+  flex: 0 0 auto;
+}
+
+.composer-ensemble-roster-seat-controls {
+  display: grid;
+  grid-template-columns: 134px minmax(208px, 0.9fr) minmax(285px, 1.2fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 40%, transparent);
+}
+
+/* Reuse the existing participant-popover controls but flatten their layout
+ * into the settings-like control rail. `display: contents` lets their actual
+ * buttons remain the grid items, so their established tokens and behaviors
+ * remain intact. */
+.composer-ensemble-roster-seat-controls .ensemble-above-overflow-control-stack {
+  display: contents;
+}
+
+.composer-ensemble-roster-seat-controls .ensemble-above-overflow-quick-toggles {
+  grid-column: 1;
+  gap: 5px;
+}
+
+.composer-ensemble-roster-seat-controls .ensemble-above-overflow-toggle.is-enabled {
+  padding-inline: 9px;
+}
+
+.composer-ensemble-roster-seat-controls .ensemble-above-overflow-authority {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.composer-ensemble-roster-seat-controls .ensemble-above-overflow-stage {
+  display: grid;
+  grid-column: 3;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.composer-ensemble-roster-seat-controls
+  .ensemble-above-overflow-stage
+  .ensemble-above-overflow-label {
+  display: none;
+}
+
+.composer-ensemble-roster-seat-brief {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 9px 9px;
+}
+
+.composer-ensemble-roster-seat-brief > span {
+  padding-top: 5px;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.composer-ensemble-roster-seat-brief textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 82px;
+  resize: vertical;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 6px;
+  outline: none;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.composer-ensemble-roster-seat-brief textarea::placeholder {
+  color: color-mix(in srgb, var(--text-secondary) 64%, transparent);
+}
+
+.composer-ensemble-roster-seat-brief textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .composer-ensemble-roster-footnote {
+  margin-top: 7px;
+  padding-top: 7px;
   color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
 }
 
-@media (max-width: 720px) {
-  .composer-ensemble-roster-list-inner {
-    min-width: 680px;
+@container (max-width: 760px) {
+  .composer-ensemble-roster-seat-controls {
+    grid-template-columns: 122px minmax(188px, 1fr);
+  }
+
+  .composer-ensemble-roster-seat-controls .ensemble-above-overflow-stage {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 570px) {
+  .composer-ensemble-roster-seat-select {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .composer-ensemble-roster-seat-picker-cluster {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+
+  .composer-ensemble-roster-seat-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-ensemble-roster-seat-controls .ensemble-above-overflow-quick-toggles,
+  .composer-ensemble-roster-seat-controls .ensemble-above-overflow-authority,
+  .composer-ensemble-roster-seat-controls .ensemble-above-overflow-stage {
+    grid-column: 1;
+  }
+
+  .composer-ensemble-roster-seat-brief {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .composer-ensemble-roster-seat-brief > span {
+    padding-top: 0;
   }
 }

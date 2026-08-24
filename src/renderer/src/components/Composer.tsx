@@ -5300,6 +5300,42 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   chat={currentChat}
                   selectedParticipantId={effectiveSelectedParticipantId}
                   onSelectParticipant={handleSelectParticipant}
+                  onPatchParticipant={(participantId, patch) => {
+                    patchEnsembleParticipantById(participantId, patch)
+                  }}
+                  onLiveRosterMutation={(mutation) => {
+                    if (!currentChat) return
+                    void window.api
+                      .requestEnsembleUserRosterMutation({
+                        chatId: currentChat.appChatId,
+                        ...mutation
+                      })
+                      .then((result) => {
+                        if (!result.ok) {
+                          window.alert(result.message || 'Participant change failed.')
+                          return
+                        }
+                        const updatedChat = result.chat
+                        if (!updatedChat) return
+                        chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
+                        setCurrentChat((prev) =>
+                          prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
+                        )
+                        setChats((prev) =>
+                          prev.map((chat) =>
+                            chat.appChatId === updatedChat.appChatId ? updatedChat : chat
+                          )
+                        )
+                      })
+                      .catch((error) => {
+                        window.alert(
+                          error instanceof Error ? error.message : 'Participant change failed.'
+                        )
+                      })
+                  }}
+                  configuredProviderSnapshot={configuredProviderSnapshot}
+                  grokAvailable={grokProviderAvailable}
+                  cursorAvailable={cursorProviderAvailable}
                   composerStyle={appearance.composerStyle}
                   disabled={isCurrentChatRunning}
                   title={

@@ -2070,4 +2070,18 @@ describe('seat-change failure supersede display', () => {
     )
     expect(html).toContain('status-speaking')
   })
+
+  it('keeps composer chips free of the retired participant editor popover', () => {
+    const chat = makeChat([makeParticipant({ id: 'ensemble-claude', role: 'Explorer' })])
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId="ensemble-claude"
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+
+    expect(html).not.toContain('ensemble-above-overflow')
+  })
 })

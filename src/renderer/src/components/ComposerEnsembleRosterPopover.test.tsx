@@ -60,7 +60,7 @@ describe('ComposerEnsembleRosterPopover', () => {
     })
   })
 
-  it('shows a vertical live roster with state chips and each seat goal', () => {
+  it('shows the shared seat strip with orchestration controls and a two-line brief editor', () => {
     const roster = chat([
       participant(),
       participant({
@@ -78,12 +78,19 @@ describe('ComposerEnsembleRosterPopover', () => {
     )
 
     expect(html).toContain('Current roster')
-    expect(html).toContain('Runtime posture')
     expect(html).toContain('#1 Builder')
     expect(html).toContain('#2 Reviewer')
     expect(html).toContain('Implement the selected slice and verify it.')
     expect(html).toContain('Check the implementation against the requested experience.')
-    expect(html).toContain('seat-state-chips')
+    expect(html).toContain('composer-ensemble-roster-seat-picker-cluster')
+    expect(html).toContain('data-composer-control="model"')
+    expect(html).toContain('data-composer-control="permission"')
+    expect(html).toContain('>Enabled</button>')
+    expect(html).toContain('>Auto</button>')
+    expect(html).toContain('>Stage</span>')
+    expect(html).toContain('Goal / brief for #1 Builder')
+    expect(html).toContain('Role for seat 1')
+    expect(html).toContain('rows="4"')
     expect(html).toContain('composer-ensemble-roster-seat is-selected')
     expect(html).not.toContain('⠿')
   })

@@ -17,12 +17,12 @@
  *     accent border to signal selection.
  *   - Drag horizontally → reorder the speaking sequence (HTML5
  *     native drag-and-drop, persisted via onChatChange).
- *   - On the selected chip only, a `⋯` overflow button surfaces an
- *     inline mini-popover for the two affordances that don't have
- *     a natural home in the composer pickers: `enabled` toggle and
- *     `role` rename.
- *   - Disabled participants render dimmed; they're still selectable
- *     so the user can re-enable from the overflow.
+ *   - Chips are stateful, draggable roster markers only. The compact Ensemble
+ *     roster popover is the one editing surface for authority, stage, role,
+ *     and orchestration brief work; keeping that work out of per-chip flyouts
+ *     lets a fleet be authored as one coherent panel.
+ *   - Disabled participants render dimmed; they're still selectable so the
+ *     roster popover can re-enable them.
  *
  * Selection state lives in the parent (App.tsx) so the composer
  * pickers can read it. Auto-follow-active-speaker logic also lives
@@ -1344,24 +1344,9 @@ export function EnsembleParticipantsAboveRow({
               isSelected={isSelected}
               isDragOver={dragOverId === participant.id && dragId !== participant.id}
               isDragging={dragId === participant.id}
-              overflowOpen={overflowOpenId === participant.id}
-              onClick={() => {
-                // 1.0.5-EW22 — Second-click-on-selected opens the
-                // popover (replacing the ⋯ overflow button that
-                // used to live inline on the chip and overlapped
-                // into the next chip). First click selects.
-                // Click outside the chip + popover dismisses
-                // (handled by OverflowPopover's outside-click).
-                if (participant.id === selectedParticipantId) {
-                  setOverflowOpenId((curr) => (curr === participant.id ? null : participant.id))
-                } else {
-                  onSelectParticipant(participant.id)
-                  if (overflowOpenId && overflowOpenId !== participant.id) {
-                    setOverflowOpenId(null)
-                  }
-                }
-              }}
-              onCloseOverflow={() => setOverflowOpenId(null)}
+              overflowOpen={false}
+              onClick={() => onSelectParticipant(participant.id)}
+              onCloseOverflow={() => undefined}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
               isBossman={
                 participant.stageRole !== 'background' &&

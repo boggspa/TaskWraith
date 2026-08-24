@@ -104,9 +104,16 @@ export function buildParticipantReasoningSelectionPatch(
   return { reasoningEffort: value }
 }
 
+export type ParticipantPickerConfiguredProviderSnapshot = Omit<
+  ConfiguredProviderSnapshot,
+  'providerIds'
+> & {
+  providerIds: readonly ProviderId[]
+}
+
 interface ParticipantPickerClusterProps {
   participant: EnsembleParticipant
-  configuredProviderSnapshot?: ConfiguredProviderSnapshot
+  configuredProviderSnapshot?: ParticipantPickerConfiguredProviderSnapshot
   composerStyle: ComposerStyle
   agenticServices?: AgenticServicesSettings
   grokAvailable: boolean
@@ -116,6 +123,9 @@ interface ParticipantPickerClusterProps {
    *  edits (model/provider/permissions) persist immediately. */
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   onApplyPermissionsToAll?: (source: EnsembleParticipant) => void
+  /** Keep nested picker portals anchored while this cluster sits in a
+   * scrollable surface such as the compact Ensemble roster popover. */
+  repositionOnScroll?: boolean
 }
 
 export function buildParticipantPickerProviderGroups(
@@ -164,11 +174,16 @@ export function ParticipantPickerCluster({
   cursorAvailable,
   showApplyToAll = false,
   onPatch,
-  onApplyPermissionsToAll
+  onApplyPermissionsToAll,
+  repositionOnScroll = false
 }: ParticipantPickerClusterProps): JSX.Element {
+  const mutableProviderSnapshot: ConfiguredProviderSnapshot = {
+    ...configuredProviderSnapshot,
+    providerIds: [...configuredProviderSnapshot.providerIds]
+  }
   const resolved = resolveEnsembleParticipantSettings(participant)
   const defaults = getEnsembleModelDefaults(participant.provider)
-  const antigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []
+  const antigravityModels = mutableProviderSnapshot.modelsByProvider?.antigravity || []
   const modelOptions: CombinedModelPickerModelOption[] =
     participant.provider === 'antigravity'
       ? groupAntigravityModelRows(antigravityModels, participant.model)
@@ -183,7 +198,7 @@ export function ParticipantPickerCluster({
   const providerGroups = buildParticipantPickerProviderGroups(
     grokAvailable,
     cursorAvailable,
-    configuredProviderSnapshot,
+    mutableProviderSnapshot,
     participant.provider,
     selectedModelId
   )
@@ -321,7 +336,7 @@ export function ParticipantPickerCluster({
         fastModeCapableModelIds={defaults.fastModeCapableModelIds}
         fastModeEnabled={fastModeEnabled}
         onToggleFastMode={onToggleFastMode}
-        repositionOnScroll
+        repositionOnScroll={repositionOnScroll}
       />
       <CombinedPermissionsPicker
         provider={participant.provider}
@@ -338,7 +353,7 @@ export function ParticipantPickerCluster({
             ? () => onApplyPermissionsToAll(participant)
             : undefined
         }
-        repositionOnScroll
+        repositionOnScroll={repositionOnScroll}
       />
     </>
   )

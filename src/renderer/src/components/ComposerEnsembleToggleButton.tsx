@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ChatRecord } from '../../../main/store/types'
+import type { ChatRecord, ComposerStyle, EnsembleParticipant } from '../../../main/store/types'
+import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
+import type { ParticipantPickerConfiguredProviderSnapshot } from './ParticipantPickerCluster'
 import {
   computeComposerPlanPopoverPosition,
   type ComposerPlanPopoverPosition
@@ -19,6 +21,11 @@ interface ComposerEnsembleToggleButtonProps {
   chat?: ChatRecord | null
   selectedParticipantId?: string | null
   onSelectParticipant?: (participantId: string) => void
+  onPatchParticipant?: (participantId: string, patch: Partial<EnsembleParticipant>) => void
+  onLiveRosterMutation?: (mutation: EnsembleUserRosterMutation) => void
+  configuredProviderSnapshot?: ParticipantPickerConfiguredProviderSnapshot
+  grokAvailable?: boolean
+  cursorAvailable?: boolean
   composerStyle?: string
   disabled?: boolean
   title?: string
@@ -35,6 +42,11 @@ export function ComposerEnsembleToggleButton({
   chat,
   selectedParticipantId,
   onSelectParticipant,
+  onPatchParticipant,
+  onLiveRosterMutation,
+  configuredProviderSnapshot,
+  grokAvailable,
+  cursorAvailable,
   composerStyle = 'default',
   disabled = false,
   title: overrideTitle
@@ -95,6 +107,11 @@ export function ComposerEnsembleToggleButton({
       if (!target) return
       if (triggerRef.current?.contains(target)) return
       if (popoverRef.current?.contains(target)) return
+      // Provider/model/reasoning and permission pickers are intentionally
+      // portaled above the compact roster editor. Treat the nested picker as
+      // part of this dialog, otherwise choosing a row in it would collapse the
+      // roster beneath the user's pointer.
+      if (target instanceof Element && target.closest('.composer-combined-picker-popover')) return
       closePopover(false)
     }
     const handleReposition = (): void => updatePosition()
@@ -140,7 +157,7 @@ export function ComposerEnsembleToggleButton({
                       left: `${position.left}px`,
                       top: `${position.top}px`,
                       width: `${position.width}px`,
-                      height: `calc(${position.top}px - 8px)`,
+                      height: 'min(50vh, 820px)',
                       transform: 'translateY(-100%)'
                     }
                   : {
@@ -155,7 +172,6 @@ export function ComposerEnsembleToggleButton({
               <span className="composer-ensemble-toggle-popover-title">
                 {rosterWorkspace ? 'Ensemble roster' : 'Ensemble'}
               </span>
-              <span className="composer-ensemble-toggle-state">{enabled ? 'On' : 'Off'}</span>
             </div>
             <div
               className="segmented-control segmented-control--compact composer-ensemble-toggle-segmented"
@@ -186,6 +202,12 @@ export function ComposerEnsembleToggleButton({
                 chat={chat}
                 selectedParticipantId={selectedParticipantId}
                 onSelectParticipant={onSelectParticipant}
+                onPatchParticipant={onPatchParticipant}
+                onLiveRosterMutation={onLiveRosterMutation}
+                composerStyle={composerStyle as ComposerStyle}
+                configuredProviderSnapshot={configuredProviderSnapshot}
+                grokAvailable={grokAvailable}
+                cursorAvailable={cursorAvailable}
               />
             ) : null}
           </div>,
