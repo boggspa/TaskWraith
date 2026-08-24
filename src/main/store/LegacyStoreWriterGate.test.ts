@@ -77,4 +77,32 @@ describe('LegacyStoreWriterGate', () => {
     lease.release()
     await drained
   })
+
+  it('propagates exact nested admission context through async work and auto-releases runAdmitted', async () => {
+    const gate = createLegacyStoreWriterGate()
+    const lease = gate.admit({ operation: 'save', pathFamily: 'chats' })!
+    await lease.run(async () => {
+      expect(gate.hasActiveAdmissionContext()).toBe(true)
+      await Promise.resolve()
+      expect(gate.hasActiveAdmissionContext()).toBe(true)
+    })
+    await gate.runAdmitted({ operation: 'save', pathFamily: 'chats' }, async () => {
+      expect(gate.hasActiveAdmissionContext()).toBe(true)
+    })
+    const nested = gate.admit({ operation: 'save', pathFamily: 'chats' })!
+    nested.run(() => {
+      expect(gate.beginDrain()).toBe(true)
+      expect(gate.runAdmitted({ operation: 'deferred', pathFamily: 'chats' }, () => 'kept')).toBe(
+        'kept'
+      )
+    })
+    nested.release()
+    lease.release()
+    expect(() => lease.run(() => undefined)).toThrow()
+    expect(gate.snapshot().inFlight).toBe(0)
+    gate.beginDrain()
+    expect(() =>
+      gate.runAdmitted({ operation: 'save', pathFamily: 'chats' }, () => undefined)
+    ).toThrow()
+  })
 })

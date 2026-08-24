@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 /**
  * Desktop legacy-store writer admission gate.
  *
@@ -23,6 +25,15 @@ export interface LegacyStoreWriterGateSnapshot {
 export interface LegacyStoreWriterAdmissionLease {
   /** Exact-once opaque release; double/foreign calls never decrement again. */
   release(): boolean
+  /** Run nested sync/async callbacks under this exact live admission. */
+  run<T>(fn: () => T): T
+}
+
+export class LegacyStoreWriterGateClosedError extends Error {
+  constructor() {
+    super('Legacy store writer admission is closed.')
+    this.name = 'LegacyStoreWriterGateClosedError'
+  }
 }
 
 const MAX_METADATA = 200
@@ -44,6 +55,7 @@ export class LegacyStoreWriterGate {
   private readonly active = new Set<object>()
   private readonly drainedWaiters = new Set<() => void>()
   private ownershipValue?: Readonly<{ hostId: string; generation: number; cutoverId: string }>
+  private readonly context = new AsyncLocalStorage<readonly object[]>()
 
   admit(input: LegacyStoreWriterAdmission): LegacyStoreWriterAdmissionLease | null {
     if (!input || !canonical(input.operation) || !canonical(input.pathFamily)) return null
@@ -59,8 +71,51 @@ export class LegacyStoreWriterGate {
         this.inFlightValue -= 1
         this.notifyDrained()
         return true
+      },
+      run: <T>(fn: () => T): T => {
+        if (released || !this.active.has(token) || typeof fn !== 'function') {
+          throw new LegacyStoreWriterGateClosedError()
+        }
+        return this.context.run([...(this.context.getStore() ?? []), token], fn)
       }
     }
+  }
+
+  /** Acquire, run, and settle one admission around sync or Promise work. */
+  runAdmitted<T>(input: LegacyStoreWriterAdmission, fn: () => T): T {
+    // Nested/deferred callbacks of an already-admitted writer retain that
+    // admission through drain. They must not attempt a second admission.
+    if (this.hasActiveAdmissionContext()) {
+      if (typeof fn !== 'function') throw new LegacyStoreWriterGateClosedError()
+      return fn()
+    }
+    const lease = this.admit(input)
+    if (!lease || typeof fn !== 'function') throw new LegacyStoreWriterGateClosedError()
+    try {
+      const value = lease.run(fn)
+      if (value && typeof (value as unknown as PromiseLike<unknown>).then === 'function') {
+        return Promise.resolve(value).then(
+          (result) => {
+            lease.release()
+            return result
+          },
+          (error) => {
+            lease.release()
+            throw error
+          }
+        ) as unknown as T
+      }
+      lease.release()
+      return value
+    } catch (error) {
+      lease.release()
+      throw error
+    }
+  }
+
+  /** True only inside a still-live admission issued by this exact gate. */
+  hasActiveAdmissionContext(): boolean {
+    return (this.context.getStore() ?? []).some((token) => this.active.has(token))
   }
 
   beginDrain(): boolean {

@@ -332,4 +332,73 @@ describe('saveCoalescer', () => {
       expect(c.stats().discarded).toBe(2)
     })
   })
+
+  describe('settlement callbacks', () => {
+    it('settles exactly once on supersede, discard, flush, barrier, disabled, and thrown writes', () => {
+      const settled: string[] = []
+      const c = createSaveCoalescer(100)
+      c.schedule(
+        'a',
+        () => {},
+        'normal',
+        () => settled.push('a1')
+      )
+      c.schedule(
+        'a',
+        () => {},
+        'normal',
+        () => settled.push('a2')
+      )
+      c.discard('a')
+      c.schedule(
+        'b',
+        () => {},
+        'normal',
+        () => settled.push('b')
+      )
+      c.flush('b')
+      c.schedule(
+        'c',
+        () => {},
+        'terminal',
+        () => settled.push('c')
+      )
+      c.schedule(
+        'd',
+        () => {
+          throw new Error('write')
+        },
+        'normal',
+        () => settled.push('d')
+      )
+      vi.advanceTimersByTime(200)
+      const disabled = createSaveCoalescer(-1)
+      disabled.schedule(
+        'e',
+        () => {},
+        'normal',
+        () => settled.push('e')
+      )
+      expect(settled.sort()).toEqual(['a1', 'a2', 'b', 'c', 'd', 'e'])
+    })
+
+    it('contains settlement callback exceptions on sync, supersede, and discard paths', () => {
+      const c = createSaveCoalescer(100)
+      const bad = () => {
+        throw new Error('settle')
+      }
+      expect(() => c.schedule('sync', () => {}, 'terminal', bad)).not.toThrow()
+      expect(() => {
+        c.schedule('supersede', () => {}, 'normal', bad)
+        c.schedule(
+          'supersede',
+          () => {},
+          'normal',
+          () => {}
+        )
+      }).not.toThrow()
+      c.schedule('discard', () => {}, 'normal', bad)
+      expect(() => c.discard('discard')).not.toThrow()
+    })
+  })
 })
