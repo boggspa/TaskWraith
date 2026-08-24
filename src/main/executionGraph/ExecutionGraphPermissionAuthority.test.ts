@@ -75,7 +75,8 @@ function mint(
   templatePosture: ReturnType<typeof build>,
   input = request(),
   appRunId = 'graph-run-one',
-  runtimeProfileId?: string
+  runtimeProfileId?: string,
+  attemptRequest?: RunQueueRequestSnapshot
 ) {
   return mintExecutionGraphAttemptPermissionPosture({
     appRunId,
@@ -83,6 +84,7 @@ function mint(
     workspacePath: '/workspace',
     chatId: 'chat-one',
     request: input,
+    ...(attemptRequest ? { attemptRequest } : {}),
     ...(runtimeProfileId ? { runtimeProfileId } : {}),
     templatePosture,
     sign: (approvalMode, permissions, context) =>
@@ -239,6 +241,36 @@ describe('ExecutionGraphPermissionAuthority', () => {
           verifyRunPermissionPosture(secret, approvalMode, permissions, signature, context)
       })
     ).toThrow(/invalid or stale/i)
+  })
+
+  it('verifies the reusable template but signs a main-derived bound attempt prompt', () => {
+    const templateRequest = request()
+    const attemptRequest = {
+      ...templateRequest,
+      prompt:
+        '[EXECUTION GRAPH INPUTS BEGIN]\n{"worker":"untrusted result"}\n[EXECUTION GRAPH INPUTS END]\n\n' +
+        templateRequest.prompt
+    }
+    const posture = mint(
+      build(templateRequest),
+      templateRequest,
+      'graph-run-bound',
+      undefined,
+      attemptRequest
+    )
+
+    expect(verifyAttempt(posture, attemptRequest, 'graph-run-bound')).toMatchObject({
+      effectivePermissions: { presetId: 'workspace_write' }
+    })
+    expect(() => verifyAttempt(posture, templateRequest, 'graph-run-bound')).toThrow(
+      /invalid or stale/i
+    )
+    expect(() =>
+      mint(build(templateRequest), templateRequest, 'graph-run-mutated', undefined, {
+        ...attemptRequest,
+        selectedModelType: 'gpt-5.6-sol'
+      })
+    ).toThrow(/changed outside the bound prompt/i)
   })
 
   it('downgrades non-durable Full Access to workspace write', () => {

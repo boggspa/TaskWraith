@@ -54,7 +54,11 @@ export interface MintExecutionGraphAttemptPermissionPostureInput {
   /** Canonical primary workspace path resolved by main. */
   readonly workspacePath: string
   readonly chatId: string
+  /** Reusable template request verified in the template signature domain. */
   readonly request: RunQueueRequestSnapshot
+  /** Optional main-derived prompt binding for this exact attempt. Every field
+   * except `prompt` must remain identical to `request`. */
+  readonly attemptRequest?: RunQueueRequestSnapshot
   readonly runtimeProfileId?: string
   readonly templatePosture: RunPermissionPostureSnapshot
   readonly sign: BuildExecutionGraphPermissionPostureInput['sign']
@@ -166,6 +170,23 @@ function exactRunId(value: string): string {
     throw new Error('Execution graph app run id is invalid.')
   }
   return normalized
+}
+
+function assertAttemptRequestDerived(
+  templateRequest: RunQueueRequestSnapshot,
+  attemptRequest: RunQueueRequestSnapshot
+): void {
+  if (!attemptRequest.prompt.trim()) throw new Error('Execution graph attempt prompt is empty.')
+  const withoutPrompt = (request: RunQueueRequestSnapshot) => {
+    const { prompt: _prompt, ...rest } = request
+    return rest
+  }
+  if (
+    stableExecutionGraphStringify(withoutPrompt(templateRequest)) !==
+    stableExecutionGraphStringify(withoutPrompt(attemptRequest))
+  ) {
+    throw new Error('Execution graph attempt request changed outside the bound prompt.')
+  }
 }
 
 export function buildExecutionGraphPermissionPosture(
@@ -284,6 +305,8 @@ export function verifyExecutionGraphPermissionPosture(
 export function mintExecutionGraphAttemptPermissionPosture(
   input: MintExecutionGraphAttemptPermissionPostureInput
 ): RunPermissionPostureSnapshot {
+  const attemptRequest = input.attemptRequest ?? input.request
+  assertAttemptRequestDerived(input.request, attemptRequest)
   const frozen = verifyExecutionGraphPermissionPosture({
     provider: input.provider,
     workspacePath: input.workspacePath,
@@ -298,7 +321,7 @@ export function mintExecutionGraphAttemptPermissionPosture(
     provider: input.provider,
     workspacePath: input.workspacePath,
     chatId: input.chatId,
-    request: input.request,
+    request: attemptRequest,
     appRunId,
     ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     authorityDomain: EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN
@@ -309,7 +332,7 @@ export function mintExecutionGraphAttemptPermissionPosture(
   )
   return buildRunPermissionPostureSnapshot({
     approvalMode: frozen.approvalMode,
-    workflowMode: frozen.workflowMode,
+    workflowMode: workflowMode(attemptRequest),
     effectivePermissions: frozen.effectivePermissions,
     signature,
     context
