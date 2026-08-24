@@ -26,7 +26,7 @@
  * teardown assertions delete Host artifacts.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -464,7 +464,7 @@ function productionQuestionMutationOptions(): {
 }
 
 beforeEach(() => {
-  userDataPath = mkdtempSync(join(tmpdir(), 'tw-host-boot-proof-'))
+  userDataPath = realpathSync(mkdtempSync(join(tmpdir(), 'tw-host-boot-proof-')))
   supervisor = null
   client = null
 })
