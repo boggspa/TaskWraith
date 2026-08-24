@@ -1082,7 +1082,7 @@ Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral 
 
 ## ultra_task
 
-Execute an Ultra Task - highest reasoning with multi-agent orchestration. Auto-selects the maximum available reasoning tier for the provider/model and encourages delegate wave patterns (researcher/worker/reviewer) with automatic result aggregation via ensemble_await. For providers with explicit Ultra/Ultracode support, uses that tier; otherwise uses the highest available (max, xhigh, high, etc.).
+Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns 2–6 scout stages, their all-join, the worker artifact, independent review, synthesis, and final output. The initiating provider may finish after receiving the workflow id; it must not call `ensemble_await` for this graph. `cli-default`, `default`, and `custom` model sentinels are refused and the failure returns concrete model choices. `maxWorkers` is the legacy public name for the requested scout-stage count (2–64, clamped to 6; default 3). The staged V1 graph requires `enableFanout` and `enableReview` to remain true.
 
 - Access: governed by your run permission role
 - Required args: task

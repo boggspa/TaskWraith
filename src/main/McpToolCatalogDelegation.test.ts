@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
-import { ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS } from './ultraTask/UltraTaskToolRequest'
+import {
+  ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
+  ULTRA_TASK_MAX_EFFECTIVE_WORKERS
+} from './ultraTask/UltraTaskToolRequest'
 
 describe('delegate_to_subthread MCP schema', () => {
   it('advertises fresh-seat model controls and marks them spawn-only', () => {
@@ -110,6 +113,12 @@ describe('ultra_task MCP schema', () => {
     expect(maxWorkers?.description).toMatch(
       new RegExp(`default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}`)
     )
+    expect(maxWorkers?.description).toMatch(
+      new RegExp(`clamped to ${ULTRA_TASK_MAX_EFFECTIVE_WORKERS}`)
+    )
+    expect(definition?.description).toMatch(/durable staged UltraTask graph/i)
+    expect(definition?.description).toMatch(/TaskWraith owns.*all-join/i)
+    expect(definition?.description).not.toMatch(/ensemble_await/i)
   })
 
   it('requires concrete model identity and documents the model-list refusal', () => {
