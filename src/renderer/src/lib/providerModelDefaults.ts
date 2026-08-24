@@ -40,7 +40,18 @@ interface CodexModelOption {
   retiresAt?: string
 }
 
-const CODEX_DEFAULT_MODELS = activeCodexModelRows([
+/** Curated fallback rows are executable UltraTask candidates unless an exact
+ * row opts out. Custom ids stay unclassified until live discovery proves
+ * them; an explicit false (currently Claude Haiku) always wins. */
+function withCuratedUltraTaskSupport<T extends CodexModelOption>(
+  models: readonly T[]
+): Array<T & { ultraTaskSupported?: boolean }> {
+  return models.map((model) =>
+    model.id === 'custom' ? { ...model } : { ultraTaskSupported: true, ...model }
+  )
+}
+
+const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
   // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
   // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
   // developers.openai.com): hyphenated display names, Sol defaults to LOW,
@@ -144,6 +155,7 @@ const CODEX_DEFAULT_MODELS = activeCodexModelRows([
   // renderer fallback as well as the main-process catalog; this list is only
   // shown on mount before IPC resolves / on IPC failure.
 ] satisfies CodexModelOption[])
+const CODEX_DEFAULT_MODELS = withCuratedUltraTaskSupport(CODEX_DEFAULT_MODEL_ROWS)
 // The 5.6 trio now leads CODEX_DEFAULT_MODELS, so the default can't be [0] any
 // more — pin it to GPT-5.5 (falling back to the first row only if 5.5 is gone).
 const CODEX_DEFAULT_MODEL =
@@ -175,7 +187,7 @@ const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 // Labels omit the "Claude " prefix (provider header/chip already carries it —
 // see StaticProviderModels.ts); Legacy cluster sits below the current models.
-const CLAUDE_DEFAULT_MODELS = [
+const CLAUDE_DEFAULT_MODEL_ROWS = [
   {
     id: 'claude-opus-5',
     label: 'Opus 5',
@@ -226,10 +238,12 @@ const CLAUDE_DEFAULT_MODELS = [
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
     description: 'Fast & efficient',
-    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS,
+    ultraTaskSupported: false
   }
 ] satisfies CodexModelOption[]
-const KIMI_DEFAULT_MODELS = [
+const CLAUDE_DEFAULT_MODELS = withCuratedUltraTaskSupport(CLAUDE_DEFAULT_MODEL_ROWS)
+const KIMI_DEFAULT_MODEL_ROWS = [
   {
     id: 'kimi-k2.7-code',
     label: 'K2.7 Coding',
@@ -255,22 +269,24 @@ const KIMI_DEFAULT_MODELS = [
     defaultReasoningEffort: 'max'
   }
 ] satisfies CodexModelOption[]
+const KIMI_DEFAULT_MODELS = withCuratedUltraTaskSupport(KIMI_DEFAULT_MODEL_ROWS)
 const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id
 // Single source of truth for Gemini's composer model list. Mirrors the
 // claude/kimi constants above so `getProviderModelOptions` returns the
 // same `CodexModelOption[]` shape for every provider and the composer's
 // `<option>` rendering no longer needs a Gemini-only inline branch.
-const GEMINI_DEFAULT_MODELS = [
+const GEMINI_DEFAULT_MODEL_ROWS = [
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ] satisfies CodexModelOption[]
+const GEMINI_DEFAULT_MODELS = withCuratedUltraTaskSupport(GEMINI_DEFAULT_MODEL_ROWS)
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
 // Grok - the live Grok Build CLI now defaults to Grok 4.6. Grok 4.5 and
 // Composer 2.5 Fast remain selectable for historical/specialized runs.
 const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
-const GROK_DEFAULT_MODELS = [
+const GROK_DEFAULT_MODEL_ROWS = [
   {
     id: GROK_DEFAULT_MODEL,
     // Direct Grok CLI models run permanently in Fast mode, so the label
@@ -290,6 +306,7 @@ const GROK_DEFAULT_MODELS = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
+const GROK_DEFAULT_MODELS = withCuratedUltraTaskSupport(GROK_DEFAULT_MODEL_ROWS)
 // Mistral Vibe seat catalog. BARE ids only — a `mistral/<model>` id belongs to
 // Pi's BYOK upstream, a DIFFERENT provider that shares the brand word, and is
 // served through the `pi` group in this same picker.
@@ -299,7 +316,7 @@ const GROK_DEFAULT_MODELS = [
 // only mistral-medium-3.5 has thinking + vision; the seat's provider-level
 // `imageAttachments` is false because the default model has none.
 const MISTRAL_DEFAULT_MODEL = 'devstral-small'
-const MISTRAL_DEFAULT_MODELS = [
+const MISTRAL_DEFAULT_MODEL_ROWS = [
   {
     id: MISTRAL_DEFAULT_MODEL,
     label: 'Devstral Small',
@@ -372,9 +389,10 @@ const MISTRAL_DEFAULT_MODELS = [
     description: '262K context'
   }
 ] satisfies CodexModelOption[]
+const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
 // Muse Code CLI seat catalog (opaque exec). Decode-ready; not live-selectable yet.
 const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
-const MUSE_DEFAULT_MODELS = [
+const MUSE_DEFAULT_MODEL_ROWS = [
   {
     id: MUSE_DEFAULT_MODEL,
     label: 'Muse Spark 1.2',
@@ -382,10 +400,11 @@ const MUSE_DEFAULT_MODELS = [
     isDefault: true
   }
 ] satisfies CodexModelOption[]
+const MUSE_DEFAULT_MODELS = withCuratedUltraTaskSupport(MUSE_DEFAULT_MODEL_ROWS)
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
 const CURSOR_DEFAULT_MODEL = 'composer-2.5-fast'
-const CURSOR_DEFAULT_MODELS = [
+const CURSOR_DEFAULT_MODEL_ROWS = [
   { id: CURSOR_DEFAULT_MODEL, label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
@@ -405,7 +424,8 @@ const CURSOR_DEFAULT_MODELS = [
     additionalSpeedTiers: ['fast']
   }
 ] satisfies CodexModelOption[]
-const OLLAMA_DEFAULT_MODELS = [
+const CURSOR_DEFAULT_MODELS = withCuratedUltraTaskSupport(CURSOR_DEFAULT_MODEL_ROWS)
+const OLLAMA_DEFAULT_MODEL_ROWS = [
   {
     id: 'qwen3:4b-instruct',
     label: 'Qwen 3 (4B Param)',
@@ -587,6 +607,7 @@ const OLLAMA_DEFAULT_MODELS = [
   },
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]
+const OLLAMA_DEFAULT_MODELS = withCuratedUltraTaskSupport(OLLAMA_DEFAULT_MODEL_ROWS)
 const OLLAMA_DEFAULT_MODEL = OLLAMA_DEFAULT_MODELS[0].id
 
 // ---------------------------------------------------------------------------
@@ -787,6 +808,7 @@ export {
   GROK_DEFAULT_MODELS,
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_DEFAULT_MODELS,
+  MUSE_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,

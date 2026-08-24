@@ -11,8 +11,35 @@ import {
   KIMI_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
+  MISTRAL_DEFAULT_MODELS,
+  MUSE_DEFAULT_MODELS,
   isClaudeModelId
 } from './providerModelDefaults'
+
+describe('UltraTask fallback capability metadata', () => {
+  it('marks every curated concrete row explicitly and leaves custom ids unknown', () => {
+    const catalogs = [
+      CODEX_DEFAULT_MODELS,
+      CLAUDE_DEFAULT_MODELS,
+      GEMINI_DEFAULT_MODELS,
+      GROK_DEFAULT_MODELS,
+      KIMI_DEFAULT_MODELS,
+      CURSOR_DEFAULT_MODELS,
+      MISTRAL_DEFAULT_MODELS,
+      MUSE_DEFAULT_MODELS,
+      OLLAMA_DEFAULT_MODELS
+    ]
+    for (const model of catalogs.flat()) {
+      if (model.id === 'custom') {
+        expect(model.ultraTaskSupported).toBeUndefined()
+      } else if (model.id === 'claude-haiku-4-5') {
+        expect(model.ultraTaskSupported).toBe(false)
+      } else {
+        expect(model.ultraTaskSupported, model.id).toBe(true)
+      }
+    }
+  })
+})
 
 describe('Codex provider model defaults', () => {
   it('offers Light/low reasoning on every fallback Codex model row', () => {
@@ -114,6 +141,9 @@ describe('Claude provider model defaults', () => {
 
   it('uses Sonnet 5 as the concrete Claude fallback model', () => {
     expect(CLAUDE_DEFAULT_MODELS.find((model) => model.isDefault)?.id).toBe('claude-sonnet-5')
+    expect(
+      CLAUDE_DEFAULT_MODELS.find((model) => model.id === 'claude-haiku-4-5')?.ultraTaskSupported
+    ).toBe(false)
   })
 
   it('accepts returned Fable / Mythos selections while rejecting preview placeholders', () => {
@@ -247,7 +277,7 @@ describe('Ollama provider model defaults', () => {
     const classifications = OLLAMA_DEFAULT_MODELS.filter((model) => model.id !== 'custom').map(
       (model) => [model.id, resolveOllamaReasoningSupport({ modelId: model.id }).kind] as const
     )
-    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(23)
+    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(24)
     expect(classifications.filter(([, kind]) => kind === 'levels')).toEqual([
       ['gpt-oss:20b', 'levels']
     ])
