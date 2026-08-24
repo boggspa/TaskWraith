@@ -8634,3 +8634,150 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .daily-heatmap--settings-activity .daily-heatmap-grid {
   min-height: 72px;
 }
+
+/* Ensemble poll card (bossman polls) — interactive vote buttons with live
+ * vote-% meters. Extends .agent-question-card; only adds the divergent bits:
+ *   - Per-option meter rows (fill bar + % + count) replacing the flat
+ *     "Seat: choice" response list.
+ *   - Selected-state check + pending/error feedback so clicks are never
+ *     silently swallowed. */
+.ensemble-poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ensemble-poll-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ensemble-poll-option-button {
+  position: relative;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 18%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ensemble-poll-option-button:hover:not(:disabled),
+.ensemble-poll-option-button:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 42%, transparent);
+  background: color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 7%, transparent);
+}
+
+.ensemble-poll-option-button:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 14%, transparent);
+}
+
+.ensemble-poll-option-button:disabled {
+  cursor: default;
+}
+
+.ensemble-poll-option-button.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.ensemble-poll-option-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ensemble-poll-share, 0%);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  transition: width 240ms ease;
+  pointer-events: none;
+}
+
+.ensemble-poll-option-label,
+.ensemble-poll-option-meter,
+.ensemble-poll-option-count {
+  position: relative;
+  z-index: 1;
+}
+
+.ensemble-poll-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.ensemble-poll-option-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ensemble-poll-option-bar {
+  width: 64px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  overflow: hidden;
+}
+
+.ensemble-poll-option-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+  transition: width 240ms ease;
+}
+
+.ensemble-poll-option-pct {
+  min-width: 32px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ensemble-poll-option-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-primary));
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ensemble-poll-option-voters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ensemble-poll-voter-more {
+  font-weight: 800;
+}
+
+.ensemble-poll-status {
+  margin-top: 2px;
+}
+
+.ensemble-poll-error {
+  color: var(--danger, #ff6b6b);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+}
