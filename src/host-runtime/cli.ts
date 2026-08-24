@@ -3,8 +3,21 @@
 import { parseHostDiagnosticCli, HostDiagnosticCliError } from './HostDiagnosticCli'
 import { HostDiagnosticServer } from './HostDiagnosticServer'
 import { createHostNodeProductionFactory } from '../host-node/HostNodeProductionFactory'
+import { createHostNodeTerminalLauncher } from '../host-node/HostNodeTerminalLauncher'
+import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
 import { HostShutdownClient } from '../host-client/HostShutdownClient'
+
+export interface HostProductionCliStdio {
+  readonly stdin?: { readonly isTTY?: boolean }
+  readonly stdout?: { readonly isTTY?: boolean }
+  readonly stderr?: { readonly isTTY?: boolean }
+}
+
+export interface HostProductionCliRuntime {
+  readonly stdio?: HostProductionCliStdio
+  readonly createTerminalLauncher?: () => HostNodeMuseTerminalLauncher
+}
 
 export async function runHostDiagnosticCli(
   argv: readonly string[] = process.argv.slice(2)
@@ -17,16 +30,33 @@ export async function runHostDiagnosticCli(
 
 export async function runHostProductionCli(
   argv: readonly string[] = process.argv.slice(2),
-  createProduction: typeof createHostNodeProductionFactory = createHostNodeProductionFactory
+  createProduction: typeof createHostNodeProductionFactory = createHostNodeProductionFactory,
+  runtime: HostProductionCliRuntime = {}
 ): Promise<void> {
   const command = parseHostProductionCli(argv)
   if (command.command !== 'serve') throw new HostProductionCliError('Expected serve command.')
+  const terminalLauncher = interactiveTerminalLauncher(runtime)
   const host = createProduction({
     profilePath: command.profilePath,
-    ...(command.museBinary ? { museBinary: command.museBinary } : {})
+    ...(command.museBinary ? { museBinary: command.museBinary } : {}),
+    ...(terminalLauncher ? { terminalLauncher } : {})
   })
   await host.start()
   await host.waitForShutdown()
+}
+
+function interactiveTerminalLauncher(
+  runtime: HostProductionCliRuntime
+): HostNodeMuseTerminalLauncher | undefined {
+  const stdio = runtime.stdio ?? {
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr
+  }
+  if (stdio.stdin?.isTTY !== true || stdio.stdout?.isTTY !== true || stdio.stderr?.isTTY !== true) {
+    return undefined
+  }
+  return (runtime.createTerminalLauncher ?? createHostNodeTerminalLauncher)()
 }
 
 export async function runHostShutdownCli(
