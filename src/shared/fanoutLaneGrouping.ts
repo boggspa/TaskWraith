@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolActivity, TranscriptMediaRef } from '../main/store/types'
+import { coalesceMirroredTaskWraithActivities } from './toolActivityMirrorCoalesce'
 
 /**
  * Fan-out lane grouping — the presentation-time fold that turns one lane's
@@ -190,6 +191,20 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
     }
   }
 
+  // Fan-out is a transcript presentation mode, not a separate provider
+  // protocol. Apply the same proved native↔host mirror coalescing as ordinary
+  // tool runs, then reflect the retained activity in every rendered part so a
+  // Kimi/Mistral wrapper cannot hide the host's path or diff badge here.
+  const coalescedActivities = coalesceMirroredTaskWraithActivities(activities)
+  const coalescedById = new Map(coalescedActivities.map((activity) => [activity.id, activity]))
+  const coalescedParts = parts.flatMap((part): EnsembleFanoutTranscriptPart[] => {
+    if (part.kind === 'content') return [part]
+    const toolActivities = part.toolActivities
+      .map((activity) => coalescedById.get(activity.id))
+      .filter((activity): activity is ToolActivity => Boolean(activity))
+    return toolActivities.length > 0 ? [{ ...part, toolActivities }] : []
+  })
+
   const mediaRefs = mergeMediaRefs(run)
   return {
     ...base,
@@ -198,13 +213,13 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
     content: contentBlocks.join('\n\n'),
     timestamp: first.timestamp,
     runId: base.runId || first.runId,
-    ...(activities.length > 0 ? { toolActivities: activities } : {}),
+    ...(coalescedActivities.length > 0 ? { toolActivities: coalescedActivities } : {}),
     metadata: {
       ...base.metadata,
       kind: 'ensembleParticipant',
       groupedFanoutMessageIds,
       ...(groupedToolMessageIds.length > 0 ? { groupedToolMessageIds } : {}),
-      ensembleFanoutTranscriptParts: parts,
+      ensembleFanoutTranscriptParts: coalescedParts,
       ...(mediaRefs ? { mediaRefs } : {})
     }
   }

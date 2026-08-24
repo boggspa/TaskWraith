@@ -3000,12 +3000,26 @@ export function liveActivityRevision(activities: readonly ToolActivity[]): strin
   let outputLen = 0
   for (const activity of activities) {
     const outputLength = (activity.resultSummary || activity.outputPreview || '').length
+    const diff = activity.diffSummary
+    const diffToken = [
+      diff?.additions ?? '',
+      diff?.deletions ?? '',
+      diff?.source ?? '',
+      diff?.confidence ?? '',
+      ...(diff?.files || []).flatMap((file) => [
+        file.path || '',
+        file.additions ?? '',
+        file.deletions ?? '',
+        file.status || ''
+      ])
+    ].join(',')
     const token = [
       activity.id,
       activity.toolName || '',
       activity.category || '',
       activity.status || '',
-      outputLength
+      outputLength,
+      diffToken
     ].join(':')
     outputLen += activity.resultSummary?.length || activity.outputPreview?.length || 0
     for (let i = 0; i < token.length; i += 1) {

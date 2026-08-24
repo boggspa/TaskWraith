@@ -143,6 +143,12 @@ describe('groupAdjacentToolMessages', () => {
         endedAt: '2026-08-14T10:16:54.343Z',
         durationMs: 1,
         parameters: { ...parameters, cwd: '/workspace' },
+        diffSummary: {
+          additions: 7,
+          deletions: 3,
+          source: 'git_numstat',
+          confidence: 'exact'
+        },
         resultSummary,
         metadata: { provider: 'claude', ensembleProvider: 'claude' }
       }
@@ -156,6 +162,11 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped).toHaveLength(1)
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_fanout'])
     expect(grouped[0].toolActivities?.[0].durationMs).toBe(123)
+    expect(grouped[0].toolActivities?.[0].diffSummary).toMatchObject({
+      additions: 7,
+      deletions: 3,
+      confidence: 'exact'
+    })
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['provider-row', 'host-row'])
   })
 
@@ -188,6 +199,52 @@ describe('groupAdjacentToolMessages', () => {
     ])
 
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_images'])
+  })
+
+  it('keeps the enriched Mistral host receipt when a TaskWraith wrapper proves its mirror', () => {
+    const providerActivity = activity('MtlNbiz6L', 'unknown', {
+      toolName: 'TaskWraith_replace',
+      displayName: 'Ran replace',
+      status: 'success',
+      startedAt: '2026-08-24T02:16:29.026Z',
+      endedAt: '2026-08-24T02:16:29.537Z',
+      durationMs: 511,
+      parameters: {},
+      resultSummary: 'Ran replace',
+      metadata: { provider: 'mistral', ensembleProvider: 'mistral' }
+    })
+    const hostActivity = activity('mistral-mcp-replace-1787451389069-nk41h7ege1', 'write', {
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      status: 'success',
+      startedAt: '2026-08-24T02:16:29.069Z',
+      endedAt: '2026-08-24T02:16:29.531Z',
+      durationMs: 462,
+      parameters: { path: 'src/a.ts', old_string: 'before', new_string: 'after\nnext' },
+      filePath: 'src/a.ts',
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'string_replace',
+        confidence: 'estimated'
+      },
+      resultSummary: 'Ran replace',
+      metadata: { provider: 'mistral', ensembleProvider: 'mistral' }
+    })
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity])
+    ])
+
+    expect(grouped[0].toolActivities).toMatchObject([
+      {
+        id: hostActivity.id,
+        filePath: 'src/a.ts',
+        diffSummary: { additions: 2, deletions: 1 },
+        durationMs: 511
+      }
+    ])
   })
 
   it('coalesces Kimi empty ACP wrappers into their enriched host MCP activities', () => {

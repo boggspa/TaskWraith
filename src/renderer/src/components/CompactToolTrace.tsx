@@ -3,6 +3,8 @@ import type { ProviderId, ToolActivity } from '../../../main/store/types'
 import { MOTION_DURATIONS, usePresence } from '../hooks/usePanelPresence'
 import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
+import { DigitOdometer } from './DigitOdometer'
+import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
 import {
   REDACTION_HINT,
   buildFoldoutSections,
@@ -123,6 +125,7 @@ export function CompactToolTrace({
   const preview = buildResultPreview(activity)
   const duration = durationLabel(activity.durationMs)
   const status = statusLabel(activity.status)
+  const inlineStats = inlineStatsForActivity(activity)
   const provLabel = providerLabel(resolvedProvider)
   const urlTargets = extractToolUrlTargets(activity)
   const softLabel = globalScope ? friendlyGlobalToolLabel(activity) : null
@@ -224,6 +227,28 @@ export function CompactToolTrace({
               ·
             </span>
             <span className="compact-tool-trace-duration">{duration}</span>
+          </>
+        )}
+        {inlineStats.visible && (
+          <>
+            <span className="compact-tool-trace-sep" aria-hidden>
+              ·
+            </span>
+            <span className="activity-line-stats compact-tool-trace-diff-stats">
+              <DigitOdometer
+                value={inlineStats.additions}
+                sign="+"
+                className="activity-line-stat activity-line-stat-add"
+              />
+              <DigitOdometer
+                value={inlineStats.deletions}
+                sign="-"
+                className="activity-line-stat activity-line-stat-delete"
+              />
+              {inlineStats.confidence && inlineStats.confidence !== 'exact' && (
+                <span className="activity-line-stat-estimated">~</span>
+              )}
+            </span>
           </>
         )}
         {preview.hasContent && (

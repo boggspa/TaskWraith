@@ -150,6 +150,30 @@ describe('runItemProjection', () => {
     })
   })
 
+  it('retains root result diff evidence even when the result also has a parameter bag', () => {
+    const projection = projectRunItemToolEvents(
+      event({
+        kind: 'tool/outputDelta',
+        itemKind: undefined,
+        channel: undefined,
+        delta: 'done',
+        itemId: 'tool-1',
+        toolCallId: 'tool-1',
+        toolName: 'edit_file',
+        output: 'done',
+        data: {
+          parameters: { path: 'src/a.ts' },
+          changes: [{ path: 'src/a.ts', additions: 3, deletions: 1 }]
+        }
+      })
+    )[0]
+
+    expect(projection?.event.data.parameters).toMatchObject({
+      path: 'src/a.ts',
+      changes: [{ path: 'src/a.ts', additions: 3, deletions: 1 }]
+    })
+  })
+
   it('projects visible progress compat sidecars into paired tool use and result events', () => {
     const projections = projectRunItemToolEvents(
       event({

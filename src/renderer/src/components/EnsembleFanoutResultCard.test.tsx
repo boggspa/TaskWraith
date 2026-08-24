@@ -265,6 +265,48 @@ describe('EnsembleFanoutResultCard', () => {
     expect(expandedHtml).toContain('Read file')
   })
 
+  it('keeps folded write totals visible in a settled fan-out lane', () => {
+    const edit = toolActivity({
+      id: 'fanout-edit',
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      category: 'write',
+      parameters: { path: 'src/a.ts', old_string: 'old', new_string: 'new\nnext' },
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'string_replace',
+        confidence: 'estimated'
+      }
+    })
+    const message = fanoutMessage({
+      content: 'Writer completed.',
+      toolActivities: [edit],
+      metadata: {
+        ...fanoutMessage().metadata,
+        ensembleLaneIntent: 'write',
+        groupedFanoutMessageIds: ['fanout-edit'],
+        groupedToolMessageIds: ['fanout-edit'],
+        ensembleFanoutTranscriptParts: [
+          {
+            kind: 'tools',
+            id: 'fanout-edit',
+            messageIds: ['fanout-edit'],
+            toolActivities: [edit]
+          }
+        ]
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={message} onPreviewImage={() => {}} />
+    )
+
+    expect(html).toContain('collapsed-activity-stack-diff')
+    expect(html).toContain('+2')
+    expect(html).toContain('-1')
+  })
+
   it('folds completed history while keeping the current fan-out activity visible', () => {
     const completed = toolActivity({
       id: 'completed-read',

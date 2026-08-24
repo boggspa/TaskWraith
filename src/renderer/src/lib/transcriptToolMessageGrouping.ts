@@ -1,5 +1,10 @@
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
-import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
+import {
+  resolveCanonicalToolName,
+  resolveCatalogToolName
+} from '../../../shared/canonicalToolCoalesce'
+import { mergeToolDiffSummary } from '../../../shared/toolDiffSummaryMerge'
+import { coalesceMirroredTaskWraithActivities as coalesceToolActivityMirrors } from '../../../shared/toolActivityMirrorCoalesce'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
@@ -106,11 +111,19 @@ function taskWraithWrapperCanonicalToolName(activity: ToolActivity): string | nu
   // Canonical activity projection can replace a provider wrapper name (for
   // example mcp__TaskWraith__image_view -> image_view). Mirror proof still
   // needs the exact wrapper, so recover it from the retained raw event.
-  const wrapperName = /^mcp__(?:taskwraith|taskwraith-broker)__/i.test(activity.toolName)
-    ? activity.toolName
-    : rawActivityToolName(activity)
-  const match = wrapperName.match(/^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i)
-  return match ? resolveCanonicalToolName(match[1]) : null
+  const wrapperName = rawActivityToolName(activity) || activity.toolName
+  const isTaskWraithWrapper =
+    /^mcp__(?:taskwraith|taskwraith-broker)__/i.test(wrapperName) ||
+    /^taskwraith(?:[-_](?:broker|mistral|grok))?[_-]/i.test(wrapperName)
+  if (!isTaskWraithWrapper) return null
+  // Gateway calls are already projected to their strict target by the shared
+  // display normalizer, while `rawUseEvent` deliberately retains the outer
+  // capability_invoke provenance. Use that resolved activity identity for
+  // mirror proof; the host receipt names the same target.
+  if (/capability[_-]?invoke/i.test(wrapperName)) {
+    return resolveCatalogToolName(activity.toolName) || null
+  }
+  return resolveCatalogToolName(wrapperName) || null
 }
 
 function isMirroredClaudeTaskWraithActivity(
@@ -229,6 +242,66 @@ function mergeKimiMirrorTiming(
   }
 }
 
+/** Keep Claude's real provider duration while retaining any host-only diff
+ * receipt. The host row is a proved mirror, so it can enrich presentation but
+ * must not replace the provider row's identity or round-trip timing. */
+function mergeClaudeMirror(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): ToolActivity {
+  const diffSummary = hostActivity.diffSummary
+    ? mergeToolDiffSummary(providerActivity.diffSummary, hostActivity.diffSummary)
+    : providerActivity.diffSummary
+  return {
+    ...providerActivity,
+    ...(providerActivity.filePath || !hostActivity.filePath
+      ? {}
+      : { filePath: hostActivity.filePath }),
+    ...(diffSummary ? { diffSummary } : {})
+  }
+}
+
+/**
+ * Mistral ACP exposes an empty TaskWraith_* wrapper around a host-minted
+ * mistral-mcp-* receipt. There is no wire parent id in older transcripts, so
+ * coalesce only a strictly adjacent, same-target, same-provider pair whose
+ * host interval is nested in the wrapper's short round trip. Unmatched rows
+ * stay visible rather than guessing across simultaneous calls.
+ */
+function isMirroredMistralTaskWraithActivity(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): boolean {
+  const canonicalToolName = taskWraithWrapperCanonicalToolName(providerActivity)
+  if (!canonicalToolName) return false
+  if (
+    activityProvider(providerActivity) !== 'mistral' ||
+    activityProvider(hostActivity) !== 'mistral'
+  ) {
+    return false
+  }
+  const wrapperName = rawActivityToolName(providerActivity) || providerActivity.toolName
+  if (!/^taskwraith(?:[-_](?:broker|mistral|grok))?[_-]/i.test(wrapperName)) {
+    return false
+  }
+  if (Object.keys(providerActivity.parameters || {}).length > 0) return false
+  if (resolveCanonicalToolName(hostActivity.toolName) !== canonicalToolName) return false
+  if (!hostActivity.id.toLowerCase().startsWith(`mistral-mcp-${canonicalToolName}-`)) return false
+  const providerLive = isLiveActivityStatus(providerActivity.status)
+  const hostLive = isLiveActivityStatus(hostActivity.status)
+  if (!providerLive && !hostLive && providerActivity.status !== hostActivity.status) return false
+
+  const providerStart = parsedActivityTime(providerActivity.startedAt)
+  const providerEnd = parsedActivityTime(providerActivity.endedAt)
+  const hostStart = parsedActivityTime(hostActivity.startedAt)
+  const hostEnd = parsedActivityTime(hostActivity.endedAt)
+  if (providerStart === null || hostStart === null || hostStart < providerStart) return false
+  if (hostStart - providerStart > 1_000) return false
+  if (providerEnd !== null && hostStart > providerEnd + 250) return false
+  if (hostEnd !== null && hostEnd < hostStart) return false
+  return providerEnd === null || hostEnd === null || hostEnd <= providerEnd + 250
+}
+
 /**
  * Claude reports TaskWraith MCP execution twice: its provider-native `toolu_`
  * wrapper and the host's `claude-mcp-*` execution receipt. Keep the provider
@@ -248,7 +321,10 @@ export function coalesceMirroredTaskWraithActivities(
   const coalesced: ToolActivity[] = []
   for (const activity of activities) {
     const previous = coalesced[coalesced.length - 1]
-    if (previous && isMirroredClaudeTaskWraithActivity(previous, activity)) continue
+    if (previous && isMirroredClaudeTaskWraithActivity(previous, activity)) {
+      coalesced[coalesced.length - 1] = mergeClaudeMirror(previous, activity)
+      continue
+    }
 
     let kimiProviderIndex = -1
     for (let index = coalesced.length - 1; index >= 0; index -= 1) {
@@ -260,6 +336,19 @@ export function coalesceMirroredTaskWraithActivities(
     if (kimiProviderIndex >= 0) {
       const providerActivity = coalesced[kimiProviderIndex]
       coalesced.splice(kimiProviderIndex, 1)
+      coalesced.push(mergeKimiMirrorTiming(providerActivity, activity))
+      continue
+    }
+    let mistralProviderIndex = -1
+    for (let index = coalesced.length - 1; index >= 0; index -= 1) {
+      if (isMirroredMistralTaskWraithActivity(coalesced[index], activity)) {
+        mistralProviderIndex = index
+        break
+      }
+    }
+    if (mistralProviderIndex >= 0) {
+      const providerActivity = coalesced[mistralProviderIndex]
+      coalesced.splice(mistralProviderIndex, 1)
       coalesced.push(mergeKimiMirrorTiming(providerActivity, activity))
       continue
     }
@@ -275,7 +364,7 @@ export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage):
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
   if (run.length === 1) return run[0]
   const first = run[0]
-  const toolActivities = coalesceMirroredTaskWraithActivities(
+  const toolActivities = coalesceToolActivityMirrors(
     run.flatMap((message) => message.toolActivities || [])
   )
   return {

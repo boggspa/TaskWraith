@@ -1,7 +1,10 @@
 import type { ItemDeltaRunItemEvent, RunItemEvent } from '../../../shared/runItemEvents'
 import type { AssistantDeltaInput } from './applyAssistantDelta'
 import type { ProviderId } from '../../../main/store/types'
-import { extractToolInvocationParameters } from '../../../shared/toolInvocationPresentation'
+import {
+  extractToolInvocationParameters,
+  mergeToolResultParameters
+} from '../../../shared/toolInvocationPresentation'
 
 export interface RunItemAssistantProjection {
   chatId: string
@@ -174,6 +177,10 @@ export function projectRunItemToolEvents(
     const data = event.data && typeof event.data === 'object' ? event.data : {}
     const title = isVisibleProgress ? visibleProgressTitle(event, toolName) : event.title
     const output = isVisibleProgress ? visibleProgressOutput(event) : ''
+    // Run-item `data` is already the sidecar's canonical argument bag. Do
+    // not unwrap it a second time: capability_invoke deliberately owns an
+    // outer `{ name, arguments }` envelope which the transcript presenter
+    // needs in order to resolve the concrete target.
     const parameters = isVisibleProgress
       ? {
           title,
@@ -181,19 +188,15 @@ export function projectRunItemToolEvents(
           ...(output ? { summary: output } : {}),
           ...stripHiddenProgressFields(data)
         }
-      // Run-item `data` is already the sidecar's canonical argument bag. Do
-      // not unwrap it a second time: capability_invoke deliberately owns an
-      // outer `{ name, arguments }` envelope which the transcript presenter
-      // needs in order to resolve the concrete target.
       : data
     const fallbackParameters =
       !isVisibleProgress && Object.keys(parameters).length === 0
         ? {
-          ...(event.title ? { title: event.title } : {}),
-          ...(event.summary ? { summary: event.summary } : {}),
-          ...(event.status ? { status: event.status } : {}),
-          ...data
-        }
+            ...(event.title ? { title: event.title } : {}),
+            ...(event.summary ? { summary: event.summary } : {}),
+            ...(event.status ? { status: event.status } : {}),
+            ...data
+          }
         : parameters
 
     const projections: RunItemToolProjection[] = [
@@ -252,7 +255,7 @@ export function projectRunItemToolEvents(
     const toolId = event.toolCallId || event.itemId
     const toolName = event.toolName || 'unknown'
     const output = event.output || event.delta
-    const resultParameters = extractToolInvocationParameters(event.data)
+    const resultParameters = mergeToolResultParameters(undefined, event.data)
     return [
       {
         chatId: event.chatId,

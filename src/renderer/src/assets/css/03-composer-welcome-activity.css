@@ -13984,7 +13984,7 @@ button.diff-file-row {
 .activity-row-inline .activity-label-main {
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 .activity-row-inline .activity-inline-command {
   display: inline-block;
@@ -14001,6 +14001,7 @@ button.diff-file-row {
 
 .activity-row-inline .activity-line-stats {
   margin-left: 4px;
+  flex: 0 0 auto;
 }
 
 .activity-diff-preview-bubble {

@@ -613,6 +613,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.compact-tool-trace-diff-stats {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
 .compact-tool-trace-preview {
   flex: 1 1 auto;
   min-width: 0;

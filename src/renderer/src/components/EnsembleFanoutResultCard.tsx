@@ -324,6 +324,7 @@ export function EnsembleFanoutResultCard({
         expandedActivityIds={expandedActivityIds}
         onExpandedActivityIdsChange={onExpandedActivityIdsChange}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+        showDiffStats
         thinkingTraceActions={thinkingTraceActions}
       />
     )
@@ -342,6 +343,7 @@ export function EnsembleFanoutResultCard({
         header={null}
         activities={partActivities}
         providerHueClass={hueClass}
+        showDiffStats
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >

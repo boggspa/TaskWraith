@@ -9,6 +9,7 @@ import {
   buildTimelineSegments,
   compactGroupExpansionId,
   LIVE_THINKING_TRACE_RENDER_CHAR_CAP,
+  liveActivityRevision,
   liveThinkingTraceRenderBody,
   nextExpandedActivityIds,
   shouldDebounceActivityTimelineCollapse,
@@ -127,6 +128,32 @@ describe('ActivityStack provider accent scope', () => {
     expect(html).toContain('activity-inline-icon category-read')
     expect(html).toContain('M6.3 4.5 19.7 4.8 19.2 16.3 5.9 16Z')
     expect(html).toContain('--accent:var(--provider-codex-color, var(--accent))')
+  })
+})
+
+describe('liveActivityRevision', () => {
+  it('changes when a settled activity gains diff evidence without new output text', () => {
+    const base: ToolActivity = {
+      id: 'late-diff',
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      category: 'write',
+      status: 'success',
+      outputPreview: 'done',
+      parameters: { path: 'src/a.ts' }
+    }
+    const enriched: ToolActivity = {
+      ...base,
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'git_numstat',
+        confidence: 'exact',
+        files: [{ path: 'src/a.ts', additions: 2, deletions: 1, status: 'modified' }]
+      }
+    }
+
+    expect(liveActivityRevision([enriched])).not.toBe(liveActivityRevision([base]))
   })
 })
 
