@@ -64,9 +64,12 @@ describe('main process bootstrap', () => {
         notifySecondInstance = listener
         return () => order.push('unsubscribe')
       }),
+      prepareMainProcess: vi.fn(async () => {
+        order.push('prepare')
+        notifySecondInstance?.(...earlyEvent)
+      }),
       loadMainProcess: vi.fn(async () => {
         order.push('load')
-        notifySecondInstance?.(...earlyEvent)
       }),
       replaySecondInstance: vi.fn((args) => {
         order.push('replay')
@@ -76,9 +79,63 @@ describe('main process bootstrap', () => {
 
     await expect(bootstrapMainProcess(deps)).resolves.toBe('primary')
 
-    expect(order).toEqual(['lock', 'subscribe', 'load', 'unsubscribe', 'replay'])
+    expect(order).toEqual(['lock', 'subscribe', 'prepare', 'load', 'unsubscribe', 'replay'])
     expect(deps.replaySecondInstance).toHaveBeenCalledOnce()
     expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('never prepares helper or losing-secondary processes', async () => {
+    const prepare = vi.fn()
+    const cleanup = vi.fn()
+    await bootstrapMainProcess(
+      dependencies({
+        isHelperProcess: true,
+        prepareMainProcess: prepare,
+        cleanupPreparedMainProcess: cleanup
+      })
+    )
+    await bootstrapMainProcess(
+      dependencies({
+        requestSingleInstanceLock: () => false,
+        prepareMainProcess: prepare,
+        cleanupPreparedMainProcess: cleanup
+      })
+    )
+    expect(prepare).not.toHaveBeenCalled()
+    expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it('cleans preparation failure without importing or replaying', async () => {
+    const error = new Error('prepare failed')
+    const cleanup = vi.fn()
+    const deps = dependencies({
+      prepareMainProcess: async () => {
+        throw error
+      },
+      cleanupPreparedMainProcess: cleanup
+    })
+    await expect(bootstrapMainProcess(deps)).rejects.toBe(error)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(deps.loadMainProcess).not.toHaveBeenCalled()
+    expect(deps.replaySecondInstance).not.toHaveBeenCalled()
+  })
+
+  it('cleans after load failure while preserving the original failure', async () => {
+    const error = new Error('load failed')
+    const cleanup = vi.fn(async () => {
+      throw new Error('cleanup\nfailed')
+    })
+    const deps = dependencies({
+      prepareMainProcess: vi.fn(),
+      cleanupPreparedMainProcess: cleanup,
+      loadMainProcess: async () => {
+        throw error
+      }
+    })
+    await expect(bootstrapMainProcess(deps)).rejects.toBe(error)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('preparation cleanup failed'))
+    expect(deps.log).not.toHaveBeenCalledWith(expect.stringContaining('\n'))
   })
 
   it('removes the temporary listener when the main graph fails to load', async () => {

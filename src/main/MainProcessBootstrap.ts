@@ -11,10 +11,17 @@ export interface MainProcessBootstrapDependencies {
   isHelperProcess: boolean
   requestSingleInstanceLock: () => boolean
   quit: () => void
+  prepareMainProcess?: () => void | Promise<void>
+  cleanupPreparedMainProcess?: () => void | Promise<void>
   loadMainProcess: () => Promise<unknown>
   subscribeSecondInstance: (listener: (...args: SecondInstanceEventArguments) => void) => () => void
   replaySecondInstance: (args: SecondInstanceEventArguments) => void
   log: (message: string) => void
+}
+
+function boundedBootstrapError(error: unknown): string {
+  const value = error instanceof Error ? error.message : String(error)
+  return (value.replace(/\s+/g, ' ').trim() || 'unknown failure').slice(0, 300)
 }
 
 /**
@@ -48,8 +55,24 @@ export async function bootstrapMainProcess(
     pendingSecondInstances.push(args)
   })
 
+  let prepared = false
   try {
+    if (deps.prepareMainProcess) {
+      prepared = true
+      await deps.prepareMainProcess()
+    }
     await deps.loadMainProcess()
+  } catch (error) {
+    if (prepared && deps.cleanupPreparedMainProcess) {
+      try {
+        await deps.cleanupPreparedMainProcess()
+      } catch (cleanupError) {
+        deps.log(
+          `[main-bootstrap] preparation cleanup failed: ${boundedBootstrapError(cleanupError)}`
+        )
+      }
+    }
+    throw error
   } finally {
     unsubscribe()
   }
