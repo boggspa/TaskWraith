@@ -76,16 +76,16 @@ const DEVELOPER_ID_OUTPUT = [
 ].join('\n')
 
 describe('packaged Electron to TUI smoke handoff', () => {
-  it('runs the diagnostic Host smoke whenever either Host resource is packaged', () => {
+  it('requires and runs the production Host smoke for every packaged artifact', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
       'utf8'
     )
 
-    expect(source).toContain('runPackagedDiagnosticHostSmoke(packageRoot)')
+    expect(source).toContain('runPackagedProductionHostSmoke(packageRoot)')
     expect(source).toContain("path.join(resourcesDir, 'host')")
     expect(source).toContain("path.join(resourcesDir, 'host-bin')")
-    expect(source).toContain('resources are incomplete')
+    expect(source).toContain('production Host resources are incomplete')
     expect(source).toContain("TASKWRAITH_HOST_REQUIRE_PACKAGE: '1'")
   })
 

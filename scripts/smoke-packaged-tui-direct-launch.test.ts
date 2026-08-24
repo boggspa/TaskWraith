@@ -2,99 +2,33 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-describe('packaged TUI disposable macOS host launch', () => {
-  it('launches the ad-hoc copy inner executable without Launch Services', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
+describe('packaged TUI direct production Host launch', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'), 'utf8')
 
-    expect(source).toContain("const macosDir = path.join(packageRoot, 'Contents', 'MacOS')")
-    expect(source).toContain("assertExecutable(found, 'packaged macOS App executable')")
-    expect(source).toContain(
-      'const appExecutable = resolvePackagedAppExecutable(smokePackageRoot, packageTarget)'
-    )
-    expect(source).not.toContain("command: '/usr/bin/open'")
+  it('spawns the packaged production Host launcher directly with a disposable profile', () => {
+    expect(source).toContain("path.join(resourcesDir, 'host-bin')")
+    expect(source).toContain("'taskwraith-host.cmd'")
+    expect(source).toContain("const hostArgs = [")
+    expect(source).toContain("'--profile',")
+    expect(source).not.toContain("const hostArgs = ['serve'")
+    expect(source).toContain("'--muse-binary'")
+    expect(source).toContain("'--snapshot', '--no-start-host', '--user-data'")
   })
 
-  it('copies the disposable app across mounted DMG volume boundaries', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-
-    expect(source).toContain("'/usr/bin/ditto'")
-    expect(source).toContain('TASKWRAITH_TUI_BUNDLE_COPY_TIMEOUT_MS')
-    expect(source).not.toContain("['-cR', packageRoot, smokePackageRoot]")
+  it('uses safe Windows cmd invocation and never uses App/LaunchServices fallbacks', () => {
+    expect(source).toContain('createWindowsCmdInvocation(launcher, args)')
+    expect(source).not.toContain("'/usr/bin/open'")
+    expect(source).not.toContain("'/usr/bin/ditto'")
+    expect(source).not.toContain('isTaskWraithAlreadyRunning')
+    expect(source).not.toContain('TASKWRAITH_TUI_APP_EXECUTABLE')
+    expect(source).not.toContain('--taskwraith-headless-host')
+    expect(source).not.toContain('--taskwraith-headless-parent')
   })
 
-  it('preserves cmd.exe quoting when launching a packaged Windows TUI', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-
-    expect(source).toContain('...invocation.spawnOptions')
-  })
-
-  it('bounds retries while Windows releases disposable Chromium profile files', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-
-    expect(source).toContain('removeSmokeTree(userDataPath)')
-    expect(source).toContain('maxRetries: 10')
-    expect(source).toContain('retryDelay: 100')
-  })
-
-  it('makes packaged tw auto-start and authenticate its disposable windowless Host', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-    const start = source.indexOf('async function runPackagedHostLiveRoundTrip')
-    const end = source.indexOf('\nfunction removeSmokeTree', start)
-    const roundTrip = source.slice(start, end)
-
-    expect(roundTrip).toContain('taskwraith-host-v2.json')
-    expect(roundTrip).toContain("TASKWRAITH_TUI_PACKAGE_SMOKE: '1'")
-    expect(roundTrip).toContain('TASKWRAITH_TUI_APP_EXECUTABLE: appExecutable')
-    expect(roundTrip).toContain('assertSmokeHostCommand(appPid, userDataPath, packageTarget)')
-    expect(roundTrip).toContain('waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)')
-    expect(roundTrip).toContain('appPid = null')
-    expect(roundTrip).toContain('shutdownProven = true')
-    expect(roundTrip).toContain('preserving disposable package-smoke artifacts')
-    expect(roundTrip).not.toContain('stopProcess(')
-    expect(roundTrip).not.toContain("'--no-start-host'")
-    expect(roundTrip).not.toContain('app = spawn(')
-  })
-
-  it('requires the reusable Host client/shared payload and rejects Electron-main output', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-
-    expect(source).toContain('function assertTuiPayloadBoundary')
-    expect(source).toContain("['host-client', 'HostProjectionClient.js']")
-    expect(source).toContain("['host-shared', 'HostCommandIdentity.js']")
-    expect(source).toContain("['host-shared', 'TuiHeadlessHostLaunch.js']")
-    expect(source).toContain('must not contain an emitted main subtree')
-    expect(source).toContain('must not resolve a production require/import into main')
-    expect(source).toContain('must clear generated out/tui before compiling')
-  })
-
-  it('verifies the exact windowless smoke command on Windows before cleanup', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
-      'utf8'
-    )
-
-    expect(source).toContain("executable: 'powershell.exe'")
-    expect(source).toContain('Get-CimInstance Win32_Process')
-    expect(source).toContain(
-      'command.includes(`--taskwraith-package-smoke-user-data=${userDataPath}`)'
-    )
+  it('requires exact child shutdown and Host artifact cleanup while retaining identity', () => {
+    expect(source).toContain("spawned.kill('SIGTERM')")
+    expect(source).toContain('waitForChildExit(spawned, 10_000)')
+    expect(source).toContain("'taskwraith-host-authority-v1.json'")
+    expect(source).toContain("'host-install-identity.json'")
   })
 })

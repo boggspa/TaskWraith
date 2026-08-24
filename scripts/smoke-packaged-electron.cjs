@@ -93,7 +93,7 @@ async function main() {
   console.log(`node-pty native binding: ${path.relative(repoRoot, nativeBindings[0])}`)
   await runLaunchSmoke(packageRoot)
   runPackagedTuiSmoke(packageRoot)
-  runPackagedDiagnosticHostSmoke(packageRoot)
+  runPackagedProductionHostSmoke(packageRoot)
 }
 
 /**
@@ -138,26 +138,21 @@ function runPackagedTuiSmoke(packageRoot) {
 }
 
 /**
- * Optional diagnostic Node Host sidecar. Old packages predate it and remain
- * valid; once either Host resource directory is present the pair is mandatory
- * and its own authenticated subprocess smoke must pass.
+ * Production Node Host sidecar. Host payload and launcher resources are
+ * mandatory for every packaged Electron artifact.
  */
-function runPackagedDiagnosticHostSmoke(packageRoot) {
+function runPackagedProductionHostSmoke(packageRoot) {
   const resourcesDir = resolveResourcesDir(packageRoot)
   const hostRoot = path.join(resourcesDir, 'host')
   const hostBinRoot = path.join(resourcesDir, 'host-bin')
   const hasHostPayload = fs.existsSync(hostRoot)
   const hasHostLaunchers = fs.existsSync(hostBinRoot)
-  if (!hasHostPayload && !hasHostLaunchers) {
-    console.log('packaged diagnostic Host smoke skipped: Host resources are absent')
-    return
-  }
   if (!hasHostPayload || !hasHostLaunchers) {
-    fail('packaged diagnostic Host resources are incomplete (host and host-bin must ship together)')
+    fail('packaged production Host resources are incomplete (host and host-bin must ship together)')
   }
   const smokeScript = path.join(repoRoot, 'scripts/smoke-packaged-host.cjs')
   if (!fs.existsSync(smokeScript)) {
-    fail(`Missing packaged diagnostic Host smoke script: ${smokeScript}`)
+    fail(`Missing packaged production Host smoke script: ${smokeScript}`)
   }
   const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
     cwd: repoRoot,
@@ -171,7 +166,7 @@ function runPackagedDiagnosticHostSmoke(packageRoot) {
   if (result.stderr) process.stderr.write(result.stderr)
   if (result.status !== 0) {
     fail(
-      `packaged diagnostic Host smoke failed with exit ${result.status ?? 'null'}${
+      `packaged production Host smoke failed with exit ${result.status ?? 'null'}${
         result.error ? `: ${result.error.message}` : ''
       }`
     )
