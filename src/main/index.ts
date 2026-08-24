@@ -9483,7 +9483,7 @@ function refreshFleetWaveDoorbell(parentChatId: string): void {
     // to notify in the first place.
     if (!parent?.ensemble) return
     const nowMs = Date.now()
-    const parentLive = parent?.appRunId ? isChatRunLive(parent.appRunId) : false
+    const parentLive = hasActiveProviderRunForChat(parent.appChatId)
     const byWave = new Map<string, { total: number; settled: number }>()
     for (const child of AppStore.getChildChats(parentChatId)) {
       const groupId = child.delegationContext?.joinPolicy?.groupId?.trim()
@@ -9912,6 +9912,14 @@ function isChatRunLive(runId: string | undefined | null): boolean {
     job.status === 'active' ||
     job.status === 'paused' ||
     job.status === 'cancelling'
+  )
+}
+
+/** A chat can have historical persisted runs; only active sessions prove it is live now. */
+function hasActiveProviderRunForChat(chatId: string | undefined | null): boolean {
+  if (!chatId || typeof chatId !== 'string' || !chatId.trim()) return false
+  return RUN_MANAGER_PROVIDERS.some((provider) =>
+    runManager.getActiveByProvider(provider).some((session) => session.appChatId === chatId)
   )
 }
 
@@ -40608,7 +40616,9 @@ async function executeGeminiMcpTool(
         // join deadline has passed no longer blocks, the reaper fails it).
         findLiveEphemeralFleet: () => {
           const parentChat = AppStore.getChat(parentChatId)
-          const parentLive = parentChat?.appRunId ? isChatRunLive(parentChat.appRunId) : false
+          const parentLive = parentChat
+            ? hasActiveProviderRunForChat(parentChat.appChatId)
+            : false
           return findLiveEphemeralFleetWave({
             children: AppStore.getChildChats(parentChatId),
             nowMs: Date.now(),

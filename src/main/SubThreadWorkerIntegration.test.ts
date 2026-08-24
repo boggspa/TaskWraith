@@ -147,4 +147,14 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(single, 'toolName,')
     expectContains(indexSource, "toolName === 'ultra_task' ||")
   })
+
+  it('derives parent liveness from active RunManager sessions, never a persisted chat field', () => {
+    expectContains(indexSource, 'function hasActiveProviderRunForChat(')
+    expectContains(indexSource, 'runManager.getActiveByProvider(provider)')
+    expectContains(indexSource, 'session.appChatId === chatId')
+    expectContains(indexSource, 'hasActiveProviderRunForChat(parent.appChatId)')
+    expectContains(indexSource, 'hasActiveProviderRunForChat(parentChat.appChatId)')
+    expect(indexSource).not.toContain('parent?.appRunId')
+    expect(indexSource).not.toContain('parentChat?.appRunId')
+  })
 })
