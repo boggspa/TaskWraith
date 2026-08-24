@@ -3668,6 +3668,8 @@ export interface ChatMessage {
       deletions?: number
       owners?: DiffFileSummaryOwner[]
     }>
+    /** Full valid-path count when closeoutFileChanges stores a bounded prefix. */
+    closeoutFileChangesTotal?: number
     /**
      * Slim Sub-threads / Agent Invocation rows for the Task-complete epic stack.
      * Tombstoned at close-out time from durable parent delegation/return cards.

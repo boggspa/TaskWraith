@@ -58,6 +58,8 @@ struct TaskCompleteCard: View {
     /// Tombstoned File Changes rows from the close-out (desktop epic stack).
     /// Used when `run.fileChanges` / legacy diff are empty.
     var closeoutFileChanges: [RemoteThreadSnapshot.Row.CloseoutFileChange]? = nil
+    /// Full valid-path count when the tombstoned row list is bounded.
+    var closeoutFileChangesTotal: Int? = nil
     /// Tombstoned Sub-threads rows from the close-out (desktop epic stack).
     var closeoutSubThreads: [RemoteThreadSnapshot.Row.CloseoutSubThread]? = nil
     /// Whether the transcript above actually carries this run's failure
@@ -143,19 +145,27 @@ struct TaskCompleteCard: View {
 
     private var usesCloseoutFileChanges: Bool { !(closeoutFileChanges?.isEmpty ?? true) }
 
+    private var closeoutFileChangesAreTruncated: Bool {
+        usesCloseoutFileChanges && totalFilesChanged > fileRows.count
+    }
+
     private var totalAdditions: Int? {
+        if closeoutFileChangesAreTruncated { return nil }
         if usesCloseoutFileChanges { return fileRows.compactMap(\.additions).reduce(0, +) }
         if let additions = run.fileChanges?.additions ?? diff?.additions { return additions }
         return nil
     }
     private var totalDeletions: Int? {
+        if closeoutFileChangesAreTruncated { return nil }
         if usesCloseoutFileChanges { return fileRows.compactMap(\.deletions).reduce(0, +) }
         if let deletions = run.fileChanges?.deletions ?? diff?.deletions { return deletions }
         return nil
     }
     /// True changed-file count — the row list is capped on the wire.
     private var totalFilesChanged: Int {
-        if usesCloseoutFileChanges { return fileRows.count }
+        if usesCloseoutFileChanges {
+            return max(fileRows.count, closeoutFileChangesTotal ?? 0)
+        }
         return run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
     }
     private var hasFileChangeSummary: Bool {
@@ -176,7 +186,10 @@ struct TaskCompleteCard: View {
         }.count
         let deleted = fileRows.filter { $0.status == "deleted" }.count
         let modified = max(0, fileRows.count - created - deleted)
-        return "Created \(created) · Edited \(modified) · Deleted \(deleted)"
+        let summary = "Created \(created) · Edited \(modified) · Deleted \(deleted)"
+        return closeoutFileChangesAreTruncated
+            ? "\(summary) · Showing \(fileRows.count) of \(totalFilesChanged)"
+            : summary
     }
 
     private var title: String { twTaskCompleteTitle(for: effectiveStatus) }

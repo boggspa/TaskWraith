@@ -1975,6 +1975,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { path ?? "file" }
         }
         public let closeoutFileChanges: [CloseoutFileChange]?
+        /// Full valid-path count when closeoutFileChanges carries a bounded
+        /// prefix rather than every changed path.
+        public let closeoutFileChangesTotal: Int?
 
         /// One close-out Sub-threads row — the last epic-stack section that
         /// was desktop-only. `status` stays a plain String so a value a newer

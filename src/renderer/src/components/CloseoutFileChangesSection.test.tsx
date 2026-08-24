@@ -64,4 +64,23 @@ describe('CloseoutFileChangesSection line stats', () => {
     expect(html).toContain('>+0</span>')
     expect(html).not.toContain('>-0</span>')
   })
+
+  it('discloses paths omitted by the persisted close-out cap', () => {
+    const changes = Array.from({ length: 40 }, (_, index) => ({
+      path: `src/file-${index + 1}.ts`,
+      status: 'modified' as const,
+      additions: 1,
+      deletions: 0
+    }))
+    const html = renderToStaticMarkup(
+      <CloseoutFileChangesSection changes={changes} totalCount={75} />
+    )
+    const headerHtml = html.slice(0, html.indexOf('file-change-summary-list'))
+
+    expect(html).toContain('75 files · 40 captured')
+    expect(html).toContain('Showing 40 of 75 changed files; 35 additional paths were not captured')
+    // The line totals cover only the retained prefix, so hide them rather than
+    // accidentally presenting a 40-file subtotal as a 75-file total.
+    expect(headerHtml).not.toContain('file-change-summary-stats')
+  })
 })

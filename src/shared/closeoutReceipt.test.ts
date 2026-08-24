@@ -29,6 +29,18 @@ describe('closeoutReceipt', () => {
     expect(closeoutReceiptSentence(receipt)).toBe('Receipt recorded 2 commits and 2 changed files.')
   })
 
+  it('keeps an explicit full file count when the retained row list is capped', () => {
+    const receipt = buildCloseoutReceipt({
+      targetId: 'run-many-files',
+      scope: 'run',
+      fileChanges: Array.from({ length: 40 }, (_, index) => ({ path: `src/file-${index}.ts` })),
+      changedFileCount: 75
+    })
+
+    expect(receipt.observedChangedFileCount).toBe(75)
+    expect(closeoutReceiptSentence(receipt)).toBe('Receipt recorded 75 changed files.')
+  })
+
   it('renders participant outcomes from structured status rows', () => {
     const receipt = buildCloseoutReceipt({
       targetId: 'round-1',

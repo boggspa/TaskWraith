@@ -1028,8 +1028,10 @@ function superGroupParticipantKey(msg: ChatMessage): string {
 /** One merged fold of adjacent collapsed one-liners (see the super-group memo
  * in TranscriptPanel). Every member id maps to the same info object. */
 interface CollapsedSuperGroupInfo {
-  leadId: string
-  memberIds: string[]
+  /** Occurrence-safe projected identity, never the raw message id. */
+  leadRowKey: string
+  /** Occurrence-safe row keys of every member in transcript order. */
+  memberRowKeys: string[]
   size: number
   activities: ToolActivity[]
   systemCount: number
@@ -1044,10 +1046,10 @@ interface CollapsedSuperGroupInfo {
  * identity rather than assume the row is already visibly mounted.
  */
 export function collapsedSuperGroupLeadForRow(
-  groups: ReadonlyMap<string, { leadId: string }>,
-  row: Pick<VirtualRow, 'id'> | null
+  groups: ReadonlyMap<string, { leadRowKey: string }>,
+  row: Pick<VirtualRow, 'rowKey'> | null
 ): string | null {
-  return row ? groups.get(row.id)?.leadId || null : null
+  return row ? groups.get(row.rowKey)?.leadRowKey || null : null
 }
 
 /**
@@ -3160,13 +3162,14 @@ export const TranscriptPanel = memo(
       })
     }, [])
     // Second-level fold: super-groups of adjacent collapsed one-liners the
-    // user re-opened. Keyed by the group's lead (first member) message id.
+    // user re-opened. Keyed by the group's lead rowKey so imported duplicate
+    // message ids cannot share one disclosure state.
     const [expandedSuperGroups, setExpandedSuperGroups] = useState<Set<string>>(new Set())
-    const setSuperGroupExpanded = useCallback((leadId: string, expanded: boolean) => {
+    const setSuperGroupExpanded = useCallback((leadRowKey: string, expanded: boolean) => {
       setExpandedSuperGroups((prev) => {
         const next = new Set(prev)
-        if (expanded) next.add(leadId)
-        else next.delete(leadId)
+        if (expanded) next.add(leadRowKey)
+        else next.delete(leadRowKey)
         return next
       })
     }, [])
@@ -3568,6 +3571,11 @@ export const TranscriptPanel = memo(
       }
       return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
     }, [displayMessages, projectedRows])
+    const rowKeyByDisplayMessageIndex = useMemo(() => {
+      const rowKeys = new Map<number, string>()
+      for (const row of projectedRows) rowKeys.set(row.index, row.rowKey)
+      return rowKeys
+    }, [projectedRows])
     // Shared by the row-level live check (via `activeLiveRowKeys`) and the
     // super-group membership pass, so the two can never disagree about which
     // rows are still live.
@@ -3624,16 +3632,15 @@ export const TranscriptPanel = memo(
     // Settled-stack collapse boundary: the trailing message never collapses
     // (a freshly-settled stack stays open until the next assistant/panel
     // message actually arrives below it).
-    const lastDisplayMessageId =
-      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
-    
+    const lastDisplayRowKey = rowKeyByDisplayMessageIndex.get(displayMessages.length - 1) || null
+
     // All chats protect only the trailing message (the freshly-settled tail
     // stays open, and the live row stays open via isLiveRow).
-    const protectedFromCollapseMessageIds = useMemo(() => {
-      const ids = new Set<string>()
-      if (lastDisplayMessageId) ids.add(lastDisplayMessageId)
-      return ids
-    }, [lastDisplayMessageId])
+    const protectedFromCollapseRowKeys = useMemo(() => {
+      const rowKeys = new Set<string>()
+      if (lastDisplayRowKey) rowKeys.add(lastDisplayRowKey)
+      return rowKeys
+    }, [lastDisplayRowKey])
 
     // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
     // same-participant settled stacks plus interleaved plain system notices —
@@ -3642,13 +3649,13 @@ export const TranscriptPanel = memo(
     // so gutter/scroll-spy ordinals and virtualization are untouched).
     // Membership must mirror the per-row collapse conditions exactly, or a
     // row could be hidden as a member while rendering as a special card.
-    const superGroupByMessageId = useMemo(() => {
+    const superGroupByRowKey = useMemo(() => {
       const map = new Map<string, CollapsedSuperGroupInfo>()
       const pendingQuestionIds = new Set(
         pendingAgentQuestions.map((question) => question.messageId)
       )
-      const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
-        if (protectedFromCollapseMessageIds.has(msg.id)) return null
+      const membershipOf = (msg: ChatMessage, rowKey: string): 'stack' | 'system' | null => {
+        if (protectedFromCollapseRowKeys.has(rowKey)) return null
         if (typeof msg.metadata?.pinnedAt === 'number') return null
         if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
           // This deliberately calls the same predicate as the row renderer,
@@ -3658,8 +3665,8 @@ export const TranscriptPanel = memo(
           // "Activity · N system notices" summary that hid real notices.
           return shouldAutoCollapseActivityStack({
             activities: msg.toolActivities || [],
-            isLiveRow: liveMeasurementMessageIdSet.has(msg.id),
-            isLastRow: protectedFromCollapseMessageIds.has(msg.id)
+            isLiveRow: activeLiveRowKeys.has(rowKey),
+            isLastRow: protectedFromCollapseRowKeys.has(rowKey)
           })
             ? 'stack'
             : null
@@ -3674,12 +3681,12 @@ export const TranscriptPanel = memo(
         return null
       }
       let run: {
-        msgs: ChatMessage[]
+        members: Array<{ msg: ChatMessage; rowKey: string }>
         kinds: ('stack' | 'system')[]
         key: string | null
       } | null = null
       const flush = (): void => {
-        if (!run || run.msgs.length < 2) {
+        if (!run || run.members.length < 2) {
           run = null
           return
         }
@@ -3687,7 +3694,7 @@ export const TranscriptPanel = memo(
         let systemCount = 0
         let firstSystemPreview = ''
         let headerMessage: ChatMessage | null = null
-        run.msgs.forEach((member, index) => {
+        run.members.forEach(({ msg: member }, index) => {
           if (run!.kinds[index] === 'stack') {
             activities.push(...(member.toolActivities || []))
             if (!headerMessage) headerMessage = member
@@ -3697,48 +3704,55 @@ export const TranscriptPanel = memo(
           }
         })
         const info: CollapsedSuperGroupInfo = {
-          leadId: run.msgs[0].id,
-          memberIds: run.msgs.map((member) => member.id),
-          size: run.msgs.length,
+          leadRowKey: run.members[0].rowKey,
+          memberRowKeys: run.members.map((member) => member.rowKey),
+          size: run.members.length,
           activities,
           systemCount,
           firstSystemPreview,
           headerMessage
         }
-        for (const member of run.msgs) map.set(member.id, info)
+        for (const member of run.members) map.set(member.rowKey, info)
         run = null
       }
-      for (const msg of displayMessages) {
-        const kind = membershipOf(msg)
+      for (let index = 0; index < displayMessages.length; index += 1) {
+        const msg = displayMessages[index]
+        const rowKey = rowKeyByDisplayMessageIndex.get(index)
+        if (!rowKey) {
+          flush()
+          continue
+        }
+        const kind = membershipOf(msg, rowKey)
         if (!kind) {
           flush()
           continue
         }
         const key = kind === 'stack' ? superGroupParticipantKey(msg) : null
         if (!run) {
-          run = { msgs: [msg], kinds: [kind], key }
+          run = { members: [{ msg, rowKey }], kinds: [kind], key }
           continue
         }
         if (kind === 'stack') {
           if (run.key !== null && key !== run.key) {
             flush()
-            run = { msgs: [msg], kinds: [kind], key }
+            run = { members: [{ msg, rowKey }], kinds: [kind], key }
             continue
           }
           // A system-led run adopts the first stack's participant identity.
           if (run.key === null) run.key = key
         }
-        run.msgs.push(msg)
+        run.members.push({ msg, rowKey })
         run.kinds.push(kind)
       }
       flush()
       return map
     }, [
       displayMessages,
-      lastDisplayMessageId,
-      liveMeasurementMessageIdSet,
+      rowKeyByDisplayMessageIndex,
+      activeLiveRowKeys,
       pendingAgentQuestions,
-      pendingPlanChoice
+      pendingPlanChoice,
+      protectedFromCollapseRowKeys
     ])
 
     const expandedRowIdsWithLiveViewports = useMemo(() => {
@@ -3766,22 +3780,17 @@ export const TranscriptPanel = memo(
       }
       // A re-opened super group changes EVERY member row's height (hidden ↔
       // one-liner), so all members join the tall bucket together.
-      for (const leadId of expandedSuperGroups) {
-        const group = superGroupByMessageId.get(leadId)
+      for (const leadRowKey of expandedSuperGroups) {
+        const group = superGroupByRowKey.get(leadRowKey)
         if (!group) continue
-        for (const memberId of group.memberIds) {
-          const row =
-            projectedRowLookup.byMessageId.get(memberId) ||
-            projectedRowLookup.byConstituentId.get(memberId)
-          if (row) ids.add(row.rowKey)
-        }
+        for (const memberRowKey of group.memberRowKeys) ids.add(memberRowKey)
       }
       return ids
     }, [
       expandedLiveViewportStacks,
       expandedCollapsedStacks,
       expandedSuperGroups,
-      superGroupByMessageId,
+      superGroupByRowKey,
       expandedRowIds,
       projectedRowLookup
     ])
@@ -3806,7 +3815,7 @@ export const TranscriptPanel = memo(
     }>({ chatId: undefined, seen: new Set(), committed: new Set() })
     const foldingSuperGroups = useMemo(() => {
       void foldTick // re-derives after the commit timer moves leads to committed
-      if (superGroupByMessageId.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
+      if (superGroupByRowKey.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
       const foldState = superFoldStateRef.current
       const foldChatId = currentChat?.appChatId ?? null
       const isBaselinePass = foldState.chatId !== foldChatId
@@ -3818,27 +3827,30 @@ export const TranscriptPanel = memo(
       const reducedMotion = prefersReducedMotionNow()
       const liveLeads = new Set<string>()
       const folding = new Set<string>()
-      for (const group of superGroupByMessageId.values()) {
-        if (liveLeads.has(group.leadId)) continue
-        liveLeads.add(group.leadId)
-        if (!foldState.seen.has(group.leadId)) {
-          foldState.seen.add(group.leadId)
+      for (const group of superGroupByRowKey.values()) {
+        if (liveLeads.has(group.leadRowKey)) continue
+        liveLeads.add(group.leadRowKey)
+        if (!foldState.seen.has(group.leadRowKey)) {
+          foldState.seen.add(group.leadRowKey)
           // Baseline (chat open) and reduced motion commit instantly; only
           // groups that settle while the chat is on screen animate.
-          if (isBaselinePass || reducedMotion) foldState.committed.add(group.leadId)
+          if (isBaselinePass || reducedMotion) foldState.committed.add(group.leadRowKey)
         }
-        if (!foldState.committed.has(group.leadId) && !expandedSuperGroups.has(group.leadId)) {
-          folding.add(group.leadId)
+        if (
+          !foldState.committed.has(group.leadRowKey) &&
+          !expandedSuperGroups.has(group.leadRowKey)
+        ) {
+          folding.add(group.leadRowKey)
         }
       }
-      for (const leadId of foldState.seen) {
-        if (!liveLeads.has(leadId)) {
-          foldState.seen.delete(leadId)
-          foldState.committed.delete(leadId)
+      for (const leadRowKey of foldState.seen) {
+        if (!liveLeads.has(leadRowKey)) {
+          foldState.seen.delete(leadRowKey)
+          foldState.committed.delete(leadRowKey)
         }
       }
       return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
-    }, [superGroupByMessageId, expandedSuperGroups, currentChat?.appChatId, foldTick])
+    }, [superGroupByRowKey, expandedSuperGroups, currentChat?.appChatId, foldTick])
     // Arm-once commit timers. A deps-cleanup timer would re-arm on every
     // streaming render (memo identities churn each frame) and starve the
     // commit; an armed timer instead runs to completion, and any late
@@ -3856,7 +3868,7 @@ export const TranscriptPanel = memo(
       const observed = [...foldingSuperGroups]
       superFoldCommitTimerRef.current = window.setTimeout(() => {
         superFoldCommitTimerRef.current = null
-        for (const leadId of observed) superFoldStateRef.current.committed.add(leadId)
+        for (const leadRowKey of observed) superFoldStateRef.current.committed.add(leadRowKey)
         setFoldTick((tick) => tick + 1)
       }, SUPER_FOLD_COMMIT_MS)
     }, [foldingSuperGroups])
@@ -3947,26 +3959,22 @@ export const TranscriptPanel = memo(
     }, [agentQuestionTombstones])
 
     const superHiddenRowKeys = useMemo(() => {
-      if (superGroupByMessageId.size === 0) return EMPTY_HIDDEN_ROW_KEYS
+      if (superGroupByRowKey.size === 0) return EMPTY_HIDDEN_ROW_KEYS
       const keys = new Set<string>()
       const seenLeads = new Set<string>()
-      for (const group of superGroupByMessageId.values()) {
-        if (seenLeads.has(group.leadId)) continue
-        seenLeads.add(group.leadId)
-        if (expandedSuperGroups.has(group.leadId)) continue
+      for (const group of superGroupByRowKey.values()) {
+        if (seenLeads.has(group.leadRowKey)) continue
+        seenLeads.add(group.leadRowKey)
+        if (expandedSuperGroups.has(group.leadRowKey)) continue
         // Folding members are mid-animation at nonzero heights — pinning them
         // to 0 now would desync the height table; they join once committed.
-        if (foldingSuperGroups.has(group.leadId)) continue
-        for (const memberId of group.memberIds) {
-          if (memberId === group.leadId) continue
-          const row =
-            projectedRowLookup.byMessageId.get(memberId) ||
-            projectedRowLookup.byConstituentId.get(memberId)
-          if (row) keys.add(row.rowKey)
+        if (foldingSuperGroups.has(group.leadRowKey)) continue
+        for (const memberRowKey of group.memberRowKeys) {
+          if (memberRowKey !== group.leadRowKey) keys.add(memberRowKey)
         }
       }
       return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
-    }, [superGroupByMessageId, expandedSuperGroups, foldingSuperGroups, projectedRowLookup])
+    }, [superGroupByRowKey, expandedSuperGroups, foldingSuperGroups])
 
     /**
      * Every row that renders to zero height, for the virtualizer's height table.
@@ -4015,12 +4023,12 @@ export const TranscriptPanel = memo(
     const ensureSuperGroupExpandedForMessage = useCallback(
       (messageId: string, rowKey?: string): boolean => {
         const row = findProjectedRowForMessage(messageId, rowKey)
-        const leadId = collapsedSuperGroupLeadForRow(superGroupByMessageId, row)
-        if (!leadId || expandedSuperGroups.has(leadId)) return false
-        setSuperGroupExpanded(leadId, true)
+        const leadRowKey = collapsedSuperGroupLeadForRow(superGroupByRowKey, row)
+        if (!leadRowKey || expandedSuperGroups.has(leadRowKey)) return false
+        setSuperGroupExpanded(leadRowKey, true)
         return true
       },
-      [expandedSuperGroups, findProjectedRowForMessage, setSuperGroupExpanded, superGroupByMessageId]
+      [expandedSuperGroups, findProjectedRowForMessage, setSuperGroupExpanded, superGroupByRowKey]
     )
     const pendingFocusRowIndex = useMemo(() => {
       if (!pendingFocusTarget) return null
@@ -4127,6 +4135,8 @@ export const TranscriptPanel = memo(
       setMessageContextMenu(null)
       setExpandedUserMessages(new Set())
       setActivityExpansionByRow(new Map())
+      setExpandedCollapsedStacks(new Set())
+      setExpandedSuperGroups(new Set())
       setExpandedSubThreadResults(new Set())
       setActiveParticipantFilterKeys(new Set())
       rowElementCacheRef.current.clear()
@@ -4725,7 +4735,7 @@ export const TranscriptPanel = memo(
               shouldAutoCollapseActivityStack({
                 activities: msg.toolActivities || [],
                 isLiveRow: liveViewportActive,
-                isLastRow: protectedFromCollapseMessageIds.has(msg.id)
+                isLastRow: protectedFromCollapseRowKeys.has(rowKey)
               })
             const collapsedStackExpanded =
               stackAutoCollapsible && liveViewportStackKey
@@ -4746,24 +4756,24 @@ export const TranscriptPanel = memo(
               !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id)
             const systemAutoCollapsible =
               isPlainSystemNotice &&
-              msg.id !== lastDisplayMessageId &&
+              !protectedFromCollapseRowKeys.has(rowKey) &&
               !isPinned &&
               !isPinnedMessageTarget
             const collapsedSystemExpanded =
-              systemAutoCollapsible && expandedCollapsedStacks.has(msg.id)
+              systemAutoCollapsible && expandedCollapsedStacks.has(rowKey)
             let collapsedStackKey = stackAutoCollapsible
               ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
               : systemAutoCollapsible
                 ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
                 : ''
             // Second-level fold: adjacent one-liners condensed into one line.
-            const superGroup = superGroupByMessageId.get(msg.id) || null
-            const isSuperLead = Boolean(superGroup && superGroup.leadId === msg.id)
+            const superGroup = superGroupByRowKey.get(rowKey) || null
+            const isSuperLead = Boolean(superGroup && superGroup.leadRowKey === rowKey)
             const superGroupExpanded = Boolean(
-              superGroup && expandedSuperGroups.has(superGroup.leadId)
+              superGroup && expandedSuperGroups.has(superGroup.leadRowKey)
             )
             const superGroupFoldPhase = Boolean(
-              superGroup && !superGroupExpanded && foldingSuperGroups.has(superGroup.leadId)
+              superGroup && !superGroupExpanded && foldingSuperGroups.has(superGroup.leadRowKey)
             )
             const superGroupFolding = superGroupFoldPhase && !isSuperLead
             // The lead swaps to the merged one-liner while its members fold —
@@ -4778,7 +4788,7 @@ export const TranscriptPanel = memo(
             const questionReplyHidden = suppressedReplyMessageIds.has(msg.id)
             const questionTombstone = agentQuestionTombstones.get(msg.id) ?? null
             const superGroupKey = superGroup
-              ? `${superGroup.leadId}:${superGroup.size}:${
+              ? `${superGroup.leadRowKey}:${superGroup.size}:${
                   superGroupExpanded ? 'open' : superGroupFoldPhase ? 'folding' : 'closed'
                 }:${isSuperLead ? 'lead' : 'member'}`
               : ''
@@ -5126,7 +5136,7 @@ export const TranscriptPanel = memo(
                         errored={superSummary.errorCount > 0}
                         providerHueClass={superGroupProviderHueClass}
                         expanded={superGroupExpanded}
-                        onToggle={(expanded) => setSuperGroupExpanded(superGroup.leadId, expanded)}
+                        onToggle={(expanded) => setSuperGroupExpanded(superGroup.leadRowKey, expanded)}
                         ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
                       />
                     ) : null}
@@ -5538,7 +5548,7 @@ export const TranscriptPanel = memo(
                     errored={isContextCompaction && contextCompactionMessageFailed(msg)}
                     compact
                     expanded={collapsedSystemExpanded}
-                    onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
+                    onToggle={(expanded) => setCollapsedStackExpanded(rowKey, expanded)}
                     ariaTargetLabel={
                       isContextCompaction ? 'context compaction record' : 'system notice'
                     }
@@ -6084,6 +6094,11 @@ export const TranscriptPanel = memo(
                         const fileChanges = (Array.isArray(msg.metadata?.closeoutFileChanges)
                           ? msg.metadata.closeoutFileChanges
                           : null) as CloseoutFileChange[] | null
+                        const closeoutFileChangesTotal =
+                          typeof msg.metadata?.closeoutFileChangesTotal === 'number' &&
+                          Number.isFinite(msg.metadata.closeoutFileChangesTotal)
+                            ? Math.max(0, Math.floor(msg.metadata.closeoutFileChangesTotal))
+                            : undefined
                         const subagentDelegations = (Array.isArray(
                           msg.metadata?.closeoutSubagentDelegations
                         )
@@ -6183,6 +6198,7 @@ export const TranscriptPanel = memo(
                           closeoutFileChanges && closeoutFileChanges.length > 0 ? (
                             <CloseoutFileChangesSection
                               changes={closeoutFileChanges}
+                              totalCount={closeoutFileChangesTotal}
                               getMainActionLabel={(summary) =>
                                 onOpenFileChangeInWorkbench
                                   ? `Open Workbench diff for ${summary.path}`

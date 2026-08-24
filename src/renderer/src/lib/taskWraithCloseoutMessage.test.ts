@@ -10,6 +10,7 @@ import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import {
   buildTaskWraithRoundCloseoutMessage,
   buildTaskWraithRunCloseoutMessage,
+  CLOSEOUT_FILE_CHANGES_LIMIT,
   collectCloseoutSubagentDelegations,
   isSameTaskWraithCloseout,
   upsertTaskWraithCloseoutMessage
@@ -396,6 +397,34 @@ describe('taskWraithCloseoutMessage', () => {
     expect(JSON.stringify(closeout.metadata?.closeoutFileChanges)).not.toContain(
       'harvested/should-not-appear.ts'
     )
+  })
+
+  it('keeps a bounded file list honest about every changed path', () => {
+    const run: ChatRun = {
+      runId: 'run-many-files',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const fileChanges = Array.from({ length: CLOSEOUT_FILE_CHANGES_LIMIT + 5 }, (_, index) => ({
+      path: `src/file-${index + 1}.ts`,
+      status: 'modified' as const,
+      additions: 1,
+      deletions: 0
+    }))
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ runs: [run] }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      fileChanges
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toHaveLength(CLOSEOUT_FILE_CHANGES_LIMIT)
+    expect(closeout.metadata?.closeoutFileChangesTotal).toBe(fileChanges.length)
+    expect(closeout.metadata?.closeoutReceipt?.observedChangedFileCount).toBe(fileChanges.length)
+    expect(closeout.content).toContain(`${fileChanges.length} changed files`)
   })
 
   it('keeps a long assistant summary intact and flattens Markdown into prose', () => {

@@ -867,7 +867,8 @@ describe('RemoteThreadProjection', () => {
                   status: 'created',
                   additions: 18
                 }
-              ]
+              ],
+              closeoutFileChangesTotal: 75
             }
           })
         ]
@@ -908,6 +909,7 @@ describe('RemoteThreadProjection', () => {
           additions: 18
         }
       ])
+      expect(closeoutRow?.closeoutFileChangesTotal).toBe(75)
     })
 
     it('projects the close-out Sub-threads table (the last desktop-only epic section)', () => {

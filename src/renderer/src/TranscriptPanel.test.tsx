@@ -1133,7 +1133,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
                     additions: 3,
                     deletions: 1
                   }
-                ]
+                ],
+                closeoutFileChangesTotal: 2
               }
             }
           ]
@@ -1149,6 +1150,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Persist closeout epic')
     expect(html).toContain('File changes')
     expect(html).toContain('src/foo.ts')
+    expect(html).toContain('2 files · 1 captured')
+    expect(html).toContain('Showing 1 of 2 changed files; 1 additional path was not captured')
     expect(html).toContain('+3')
     expect(html).toContain('-1')
     // Epic is nested inside the Task Complete card — one outer card, one stack.
@@ -3183,15 +3186,68 @@ describe('collapsed one-liner super-groups', () => {
   })
 
   it('resolves a hidden jump target to its super-group lead before focus', () => {
-    const groups = new Map<string, { leadId: string }>([
-      ['super-lead', { leadId: 'super-lead' }],
-      ['super-member', { leadId: 'super-lead' }]
+    const groups = new Map<string, { leadRowKey: string }>([
+      ['super-lead#4', { leadRowKey: 'super-lead#4' }],
+      ['super-member#7', { leadRowKey: 'super-lead#4' }]
     ])
 
     expect(
-      collapsedSuperGroupLeadForRow(groups, { id: 'super-member' } as { id: string })
-    ).toBe('super-lead')
+      collapsedSuperGroupLeadForRow(groups, { rowKey: 'super-member#7' } as { rowKey: string })
+    ).toBe('super-lead#4')
     expect(collapsedSuperGroupLeadForRow(groups, null)).toBeNull()
+  })
+
+  it('keeps duplicate message-id super-groups independent by occurrence', () => {
+    const messages: ChatMessage[] = [
+      { id: 'start', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'duplicate-stack',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [shellActivity('first-shell')]
+      },
+      {
+        id: 'first-notice',
+        role: 'system',
+        content: 'FIRST_DUPLICATE_GROUP_NOTICE',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'separator',
+        role: 'assistant',
+        content: 'A non-foldable separator.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      },
+      {
+        id: 'duplicate-stack',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:04.000Z',
+        toolActivities: [shellActivity('second-shell-1'), shellActivity('second-shell-2')]
+      },
+      {
+        id: 'second-notice',
+        role: 'system',
+        content: 'SECOND_DUPLICATE_GROUP_NOTICE',
+        timestamp: '2026-01-01T00:00:05.000Z'
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-01-01T00:00:06.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html.match(/collapsed-activity-stack-summary/g)?.length).toBe(2)
+    expect(html.match(/Ran 1 command/g)?.length).toBe(1)
+    expect(html.match(/Ran 2 commands/g)?.length).toBe(1)
+    expect(html).not.toContain('FIRST_DUPLICATE_GROUP_NOTICE')
+    expect(html).not.toContain('SECOND_DUPLICATE_GROUP_NOTICE')
   })
 
   it('does not absorb all-hidden infrastructure into an empty super-group', () => {

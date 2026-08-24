@@ -1117,6 +1117,8 @@ export interface RemoteThreadRow {
    * Absent on older Macs and non-close-out rows; never carries diffText.
    */
   closeoutFileChanges?: RemoteCloseoutFileChange[]
+  /** Full valid-path count when closeoutFileChanges is a bounded prefix. */
+  closeoutFileChangesTotal?: number
   /** TaskWraith close-out Sub-threads rows — the last epic-stack section that
    * was desktop-only. Bounded at 24 (the desktop caps its own display). */
   closeoutSubThreads?: RemoteCloseoutSubThread[]
@@ -1456,6 +1458,9 @@ function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
     ...(row.closeoutRoundId ? { closeoutRoundId: row.closeoutRoundId } : {}),
     ...(row.closeoutStatus ? { closeoutStatus: row.closeoutStatus } : {}),
     ...(row.closeoutDurationMs ? { closeoutDurationMs: row.closeoutDurationMs } : {}),
+    ...(row.closeoutFileChangesTotal
+      ? { closeoutFileChangesTotal: row.closeoutFileChangesTotal }
+      : {}),
     ...(row.speaker ? { speaker: row.speaker } : {}),
     ...(row.threadMessage ? { threadMessage: row.threadMessage } : {}),
     ...(row.peopleContribution ? { peopleContribution: row.peopleContribution } : {}),
@@ -3030,6 +3035,10 @@ function buildRow(
     if (participantTable) row.closeoutParticipantTable = participantTable
     const fileChanges = buildCloseoutFileChanges(metadata)
     if (fileChanges) row.closeoutFileChanges = fileChanges
+    const closeoutFileChangesTotal = positiveNumber(metadata.closeoutFileChangesTotal)
+    if (closeoutFileChangesTotal && closeoutFileChangesTotal > (fileChanges?.length || 0)) {
+      row.closeoutFileChangesTotal = closeoutFileChangesTotal
+    }
     const commits = buildCloseoutCommits(metadata)
     if (commits) row.closeoutCommits = commits
     const subThreads = buildCloseoutSubThreads(metadata)

@@ -75,6 +75,14 @@ export type CloseoutFileChange = {
   owners?: DiffFileSummaryOwner[]
 }
 
+/** Persisted close-outs cap row bodies for bounded transcript storage, but keep
+ * the full valid-path count separately so every renderer can disclose the cap
+ * rather than calling the retained prefix the whole task. */
+type CloseoutFileChangeCapture = {
+  fileChanges: CloseoutFileChange[]
+  total: number
+}
+
 export function isMessageInRunWindow(
   message: ChatMessage,
   run: Pick<ChatRun, 'runId' | 'startedAt' | 'endedAt'>
@@ -105,10 +113,11 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   const includeRunMessage = (message: ChatMessage): boolean =>
     message.runId === run.runId || isMessageInRunWindow(message, run)
   const closeoutCommits = collectCloseoutCommits(chat.messages, includeRunMessage, { chat })
-  const closeoutFileChanges =
+  const closeoutFileChangeCapture =
     input.fileChanges !== undefined
-      ? normalizeCloseoutFileChanges(input.fileChanges)
-      : collectCloseoutFileChanges(chat.messages, includeRunMessage)
+      ? capCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChangeCapture(chat.messages, includeRunMessage)
+  const closeoutFileChanges = closeoutFileChangeCapture.fileChanges
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: runIds,
@@ -124,6 +133,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     totalTokens: totalTokensForRuns([run]),
     commits: closeoutCommits,
     fileChanges: closeoutFileChanges,
+    changedFileCount: closeoutFileChangeCapture.total,
     validations: validationReceipt
   })
   const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
@@ -171,6 +181,9 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       closeoutReceipt,
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutFileChangeCapture.total > closeoutFileChanges.length
+        ? { closeoutFileChangesTotal: closeoutFileChangeCapture.total }
+        : {}),
       ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
@@ -197,13 +210,14 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     (message) => message.metadata?.ensembleRoundId === round.roundId,
     { chat }
   )
-  const closeoutFileChanges =
+  const closeoutFileChangeCapture =
     input.fileChanges !== undefined
-      ? normalizeCloseoutFileChanges(input.fileChanges)
-      : collectCloseoutFileChanges(
+      ? capCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChangeCapture(
           chat.messages,
           (message) => message.metadata?.ensembleRoundId === round.roundId
         )
+  const closeoutFileChanges = closeoutFileChangeCapture.fileChanges
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: roundRunIds,
@@ -219,6 +233,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     totalTokens: totalTokensForRuns(roundRuns),
     commits: closeoutCommits,
     fileChanges: closeoutFileChanges,
+    changedFileCount: closeoutFileChangeCapture.total,
     participants: closeoutParticipants,
     validations: validationReceipt
   })
@@ -258,6 +273,9 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutFileChangeCapture.total > closeoutFileChanges.length
+        ? { closeoutFileChangesTotal: closeoutFileChangeCapture.total }
+        : {}),
       ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
@@ -274,12 +292,19 @@ export function collectCloseoutFileChanges(
   messages: ChatMessage[],
   includeMessage: (message: ChatMessage) => boolean
 ): CloseoutFileChange[] {
+  return collectCloseoutFileChangeCapture(messages, includeMessage).fileChanges
+}
+
+function collectCloseoutFileChangeCapture(
+  messages: ChatMessage[],
+  includeMessage: (message: ChatMessage) => boolean
+): CloseoutFileChangeCapture {
   const scoped = messages.filter(includeMessage)
-  if (scoped.length === 0) return []
+  if (scoped.length === 0) return { fileChanges: [], total: 0 }
   const summaries = getLiveToolFileDiffSummaries(scoped)
-  if (summaries.length === 0) return []
-  return normalizeCloseoutFileChanges(
-    summaries.slice(0, CLOSEOUT_FILE_CHANGES_LIMIT).map((summary) => ({
+  if (summaries.length === 0) return { fileChanges: [], total: 0 }
+  return capCloseoutFileChanges(
+    summaries.map((summary) => ({
       path: summary.path,
       status: summary.status,
       ...(typeof summary.additions === 'number' ? { additions: summary.additions } : {}),
@@ -287,6 +312,16 @@ export function collectCloseoutFileChanges(
       ...(summary.owners && summary.owners.length > 0 ? { owners: summary.owners } : {})
     }))
   )
+}
+
+function capCloseoutFileChanges(
+  fileChanges: CloseoutFileChange[] | undefined
+): CloseoutFileChangeCapture {
+  const normalized = normalizeCloseoutFileChanges(fileChanges)
+  return {
+    fileChanges: normalized.slice(0, CLOSEOUT_FILE_CHANGES_LIMIT),
+    total: normalized.length
+  }
 }
 
 function normalizeCloseoutFileChanges(
@@ -324,6 +359,7 @@ export function isSameTaskWraithCloseout(existing: ChatMessage, next: ChatMessag
       JSON.stringify(b?.closeoutParticipantTable ?? null) &&
     sameCloseoutTombstoneList(a?.closeoutCommits, b?.closeoutCommits) &&
     sameCloseoutTombstoneList(a?.closeoutFileChanges, b?.closeoutFileChanges) &&
+    a?.closeoutFileChangesTotal === b?.closeoutFileChangesTotal &&
     sameCloseoutTombstoneList(a?.closeoutSubagentDelegations, b?.closeoutSubagentDelegations)
   )
 }
@@ -353,6 +389,12 @@ export function upsertTaskWraithCloseoutMessage(
       previous.metadata.closeoutFileChanges.length > 0
     ) {
       nextMeta.closeoutFileChanges = previous.metadata.closeoutFileChanges
+    }
+    if (
+      typeof nextMeta.closeoutFileChangesTotal !== 'number' &&
+      typeof previous.metadata?.closeoutFileChangesTotal === 'number'
+    ) {
+      nextMeta.closeoutFileChangesTotal = previous.metadata.closeoutFileChangesTotal
     }
     if (
       (!Array.isArray(nextMeta.closeoutCommits) || nextMeta.closeoutCommits.length === 0) &&

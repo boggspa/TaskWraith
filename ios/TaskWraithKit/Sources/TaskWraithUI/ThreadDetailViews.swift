@@ -1561,16 +1561,18 @@ struct ThreadDetailView: View {
         [RemoteThreadSnapshot.Row.CloseoutFileChange]?,
         [RemoteThreadSnapshot.Row.CloseoutSubThread]?,
         String?,
+        Int?,
         Int?
     ) {
         let rows = snapshot?.rows ?? []
         if let row = twPreferredCloseoutRow(for: summary, rows: rows) {
             return (
                 row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
-                row.closeoutSubThreads, row.closeoutStatus, row.closeoutDurationMs
+                row.closeoutSubThreads, row.closeoutStatus, row.closeoutDurationMs,
+                row.closeoutFileChangesTotal
             )
         }
-        return (nil, nil, nil, nil, nil, nil)
+        return (nil, nil, nil, nil, nil, nil, nil)
     }
 
     private func headlineSummary(forRound roundId: String) -> RemoteThreadSnapshot.RunSummary? {
@@ -1881,6 +1883,7 @@ struct ThreadDetailView: View {
                             closeoutParticipantTable: epic.0,
                             closeoutCommits: epic.1,
                             closeoutFileChanges: epic.2,
+                            closeoutFileChangesTotal: epic.6,
                             closeoutSubThreads: epic.3,
                             hasFailureDetail: runCardHasFailureDetail(runCard),
                             closeoutStatus: epic.4,
@@ -1941,6 +1944,7 @@ struct ThreadDetailView: View {
                                 closeoutParticipantTable: epic.0,
                                 closeoutCommits: epic.1,
                                 closeoutFileChanges: epic.2,
+                                closeoutFileChangesTotal: epic.6,
                                 closeoutSubThreads: epic.3,
                                 hasFailureDetail: runCardHasFailureDetail(runCard),
                                 closeoutStatus: epic.4,
@@ -1997,6 +2001,7 @@ struct ThreadDetailView: View {
                         closeoutParticipantTable: epic.0,
                         closeoutCommits: epic.1,
                         closeoutFileChanges: epic.2,
+                        closeoutFileChangesTotal: epic.6,
                         closeoutSubThreads: epic.3,
                         hasFailureDetail: runCardHasFailureDetail(run),
                         closeoutStatus: epic.4,

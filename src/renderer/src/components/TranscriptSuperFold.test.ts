@@ -39,7 +39,13 @@ describe('super-group fold-out CSS', () => {
 
 describe('super-group fold-out wiring', () => {
   it('keeps folding members out of the virtualizer hidden-row set until commit', () => {
-    expect(panelSource).toContain('if (foldingSuperGroups.has(group.leadId)) continue')
+    expect(panelSource).toContain('if (foldingSuperGroups.has(group.leadRowKey)) continue')
+  })
+
+  it('keys super-group membership and disclosure by collision-proof rowKey', () => {
+    expect(panelSource).toContain('const superGroupByRowKey = useMemo')
+    expect(panelSource).toContain('leadRowKey: run.members[0].rowKey')
+    expect(panelSource).toContain('memberRowKeys: run.members.map((member) => member.rowKey)')
   })
 
   it('joins the fold phase into superGroupKey so the row render signature changes', () => {

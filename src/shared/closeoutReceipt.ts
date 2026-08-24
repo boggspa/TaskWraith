@@ -42,6 +42,8 @@ export type CloseoutReceiptInput = {
   totalTokens?: number
   commits?: ReadonlyArray<{ hash?: string }>
   fileChanges?: ReadonlyArray<{ path?: string }>
+  /** Full valid-path count when the persisted row list was intentionally capped. */
+  changedFileCount?: number
   participants?: ReadonlyArray<{ status?: string }>
   validations?: {
     passed?: readonly CloseoutValidationKind[]
@@ -85,6 +87,11 @@ export function buildCloseoutReceipt(input: CloseoutReceiptInput): CloseoutRecei
   const durationMs = boundedWholeNumber(input.durationMs)
   const totalTokens = boundedWholeNumber(input.totalTokens)
 
+  const observedChangedFileCount = Math.max(
+    uniqueNonEmptyCount((input.fileChanges || []).map((change) => change.path)),
+    boundedWholeNumber(input.changedFileCount) || 0
+  )
+
   return {
     version: CLOSEOUT_RECEIPT_VERSION,
     targetId: input.targetId.trim(),
@@ -93,9 +100,7 @@ export function buildCloseoutReceipt(input: CloseoutReceiptInput): CloseoutRecei
     ...(durationMs !== undefined && durationMs > 0 ? { durationMs } : {}),
     ...(totalTokens !== undefined && totalTokens > 0 ? { totalTokens } : {}),
     observedCommitCount: uniqueNonEmptyCount((input.commits || []).map((commit) => commit.hash)),
-    observedChangedFileCount: uniqueNonEmptyCount(
-      (input.fileChanges || []).map((change) => change.path)
-    ),
+    observedChangedFileCount,
     ...((input.participants?.length || 0) > 0
       ? {
           participants: {

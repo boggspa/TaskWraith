@@ -29,7 +29,7 @@ struct RunCompleteEpicStackTests {
              "closeoutFileChanges":[{
                "path":"src/main/RemoteThreadProjection.ts","status":"modified",
                "additions":18,"deletions":2
-             }],
+             }],"closeoutFileChangesTotal":75,
              "closeoutCommits":[{
                "hash":"18003ca96abcdef","subject":"Add TaskWraith transcript closeouts",
                "stats":"21 files","participantId":"p1",
@@ -49,6 +49,7 @@ struct RunCompleteEpicStackTests {
         #expect(files.first?.path == "src/main/RemoteThreadProjection.ts")
         #expect(files.first?.status == "modified")
         #expect(files.first?.additions == 18)
+        #expect(decoded.closeoutFileChangesTotal == 75)
         let commits = try #require(decoded.closeoutCommits)
         #expect(commits.count == 1)
         #expect(commits.first?.hash == "18003ca96abcdef")

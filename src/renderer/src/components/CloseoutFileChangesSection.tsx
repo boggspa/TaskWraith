@@ -95,6 +95,7 @@ export function CloseoutFileChangesSection({
   onScheduleClosePreview,
   previewPath,
   resolveSummary,
+  totalCount,
   workspacePath
 }: {
   changes: CloseoutFileChange[]
@@ -108,6 +109,8 @@ export function CloseoutFileChangesSection({
   onScheduleClosePreview?: () => void
   previewPath?: string | null
   resolveSummary?: (change: CloseoutFileChange) => DiffFileSummary
+  /** Full valid-path count when the persisted list was capped. */
+  totalCount?: number
   workspacePath?: string
 }): ReactNode {
   // Declared above the empty-list bail so the hook order never depends on the
@@ -115,6 +118,15 @@ export function CloseoutFileChangesSection({
   const [expanded, setExpanded] = useState(false)
 
   if (!Array.isArray(changes) || changes.length === 0) return null
+
+  const capturedCount = changes.length
+  const totalChangeCount = Math.max(
+    capturedCount,
+    typeof totalCount === 'number' && Number.isFinite(totalCount)
+      ? Math.max(0, Math.floor(totalCount))
+      : 0
+  )
+  const omittedCount = Math.max(0, totalChangeCount - capturedCount)
 
   // Totals stay over the WHOLE list: the cap below is a view window, not a
   // filter, so the header keeps describing the entire close-out.
@@ -131,10 +143,13 @@ export function CloseoutFileChangesSection({
   // The header describes the whole close-out, so only surface a total when
   // every listed file reported that side. A partial sum would be just as
   // misleading as the old invented zero.
-  const headerStats = getDiffHoverPreviewStats({
-    additions: additionsComplete ? adds : undefined,
-    deletions: deletionsComplete ? dels : undefined
-  })
+  const headerStats =
+    omittedCount > 0
+      ? []
+      : getDiffHoverPreviewStats({
+          additions: additionsComplete ? adds : undefined,
+          deletions: deletionsComplete ? dels : undefined
+        })
 
   const { visible: visibleChanges, hiddenCount } = closeoutFileChangeWindow(changes, expanded)
 
@@ -144,7 +159,8 @@ export function CloseoutFileChangesSection({
         <strong>File changes</strong>
         <div className="file-change-summary-meta">
           <span>
-            {changes.length} file{changes.length === 1 ? '' : 's'}
+            {totalChangeCount} file{totalChangeCount === 1 ? '' : 's'}
+            {omittedCount > 0 ? ` · ${capturedCount} captured` : ''}
           </span>
           <CloseoutLineStats className="file-change-summary-stats" stats={headerStats} />
         </div>
@@ -242,6 +258,12 @@ export function CloseoutFileChangesSection({
           >
             {expanded ? 'Show less' : `Show ${hiddenCount} more…`}
           </button>
+        )}
+        {omittedCount > 0 && (
+          <div className="file-change-summary-overflow" role="note">
+            Showing {capturedCount} of {totalChangeCount} changed files; {omittedCount} additional
+            path{omittedCount === 1 ? ' was' : 's were'} not captured in this close-out.
+          </div>
         )}
       </div>
     </section>

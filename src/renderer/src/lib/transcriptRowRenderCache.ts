@@ -161,6 +161,7 @@ function closeoutMetadataRenderSignature(message: ChatMessage): string {
     closeoutParticipantTable: metadata.closeoutParticipantTable,
     closeoutCommits: metadata.closeoutCommits,
     closeoutFileChanges: metadata.closeoutFileChanges,
+    closeoutFileChangesTotal: metadata.closeoutFileChangesTotal,
     closeoutSubagentDelegations: metadata.closeoutSubagentDelegations
   })
 }
