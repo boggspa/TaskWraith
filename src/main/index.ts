@@ -9795,9 +9795,10 @@ function isChatRunLive(runId: string | undefined | null): boolean {
   if (bridgeState && bridgeTranscriptActivityIsLive(bridgeState.lastActivityAt, Date.now())) {
     return true
   }
-  if (backgroundSubThreadTranscripts.has(id)) return true
-  if ([...backgroundSubThreadTranscripts.values()].some((state) => state.runId === id)) {
-    return true
+  const bgState = backgroundSubThreadTranscripts.get(id) || [...backgroundSubThreadTranscripts.values()].find((state) => state.runId === id)
+  if (bgState) {
+    if (bgState.status !== 'running') return false
+    return bridgeTranscriptActivityIsLive(bgState.lastActivityAt, Date.now())
   }
   const job = AppStore.getRunQueueJob(id)
   if (!job) return false
@@ -9979,6 +9980,10 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
       if (leaked.flushTimer) clearTimeout(leaked.flushTimer)
       bridgeRunTranscripts.delete(settlement.runId)
       releaseMainOwnedRunPersistenceHolds(settlement.runId)
+    }
+    const bgLeaked = backgroundSubThreadTranscripts.get(settlement.runId)
+    if (bgLeaked && !bgLeaked.finalized) {
+      finalizeBackgroundSubThreadTranscript(settlement.runId, 'failed', CHAT_RUN_STALE_REASON)
     }
     console.warn(
       `[chat-run-reconciler] settled stale ChatRun chat=${settlement.chatId} run=${settlement.runId} was=${settlement.previousStatus}: ${CHAT_RUN_STALE_REASON}`
