@@ -247,6 +247,7 @@ function resolveBundledNode(resources, target) {
 
 async function runProductionRoundTrip(launcher, target) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-packaged-host-smoke-'))
+  const canonicalProfile = fs.realpathSync(profile)
   const discoveryPath = path.join(profile, 'taskwraith-host-v2.json')
   const tokenPath = path.join(profile, 'taskwraith-host-v2.token')
   const leasePath = path.join(profile, 'taskwraith-host-authority-v1.json')
@@ -256,7 +257,7 @@ async function runProductionRoundTrip(launcher, target) {
   let child = null
   try {
     fs.mkdirSync(workspace)
-    const launcherArgs = ['--profile', profile]
+    const launcherArgs = ['--profile', canonicalProfile]
     const childEnv = {}
     if (target.platform !== 'win32') {
       fs.writeFileSync(museBinary, '#!/bin/sh\n')
@@ -393,12 +394,24 @@ async function runProductionRoundTrip(launcher, target) {
         fail('production Host receipt replay failed')
     }
 
-    const duplicate = spawnHostLauncher(launcher, ['--profile', profile], target)
+    const duplicate = spawnHostLauncher(launcher, ['--profile', canonicalProfile], target)
     const duplicateExit = await waitForExit(duplicate)
     if (duplicateExit.code === 0)
       fail('duplicate production Host profile launch unexpectedly succeeded')
 
-    child.kill('SIGTERM')
+    // Normal cleanup proves the authenticated lifecycle RPC rather than
+    // reaching into another process with a signal.
+    const stopper = spawnHostLauncher(
+      launcher,
+      ['stop', '--profile', canonicalProfile],
+      target,
+      childEnv
+    )
+    const stopResult = await waitForExit(stopper)
+    if (stopResult.code !== 0)
+      fail(
+        `production Host stop launcher exited ${String(stopResult.code)}: ${stopResult.stderr || 'no stderr'}`
+      )
     const stopped = await waitForExit(child)
     child = null
     if (stopped.code !== 0)
@@ -411,7 +424,11 @@ async function runProductionRoundTrip(launcher, target) {
       fail('production Host did not clean its socket on shutdown')
     }
   } finally {
-    if (child && child.exitCode === null) child.kill('SIGTERM')
+    // Emergency-only cleanup for a smoke failure before authenticated stop.
+    if (child && child.exitCode === null) {
+      child.kill('SIGTERM')
+      await waitForExit(child).catch(() => undefined)
+    }
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 }
@@ -521,7 +538,11 @@ async function waitFor(check, message) {
 }
 
 async function waitForExit(child) {
-  if (child.exitCode !== null) return { code: child.exitCode }
+  let stderr = ''
+  child.stderr?.on('data', (chunk) => {
+    stderr += String(chunk)
+  })
+  if (child.exitCode !== null) return { code: child.exitCode, stderr }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('production Host launcher did not exit')),
@@ -529,7 +550,7 @@ async function waitForExit(child) {
     )
     child.once('exit', (code) => {
       clearTimeout(timer)
-      resolve({ code })
+      resolve({ code, stderr })
     })
   })
 }

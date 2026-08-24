@@ -24,6 +24,8 @@ describe('packaged production Host smoke', () => {
 
     expect(smoke).toContain('function validateHostPayload')
     expect(smoke).toContain('function runProductionRoundTrip')
+    expect(smoke).toContain("['stop', '--profile', canonicalProfile]")
+    expect(smoke).toContain('Emergency-only cleanup')
     expect(smoke).toContain('TASKWRAITH_HOST_REQUIRE_PACKAGE')
     expect(smoke).toContain('host-bin')
     for (const launcher of [posix, cmd, powershell]) {
