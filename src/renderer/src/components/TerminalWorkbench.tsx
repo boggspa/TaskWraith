@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { terminalLaunchBus } from '../lib/TerminalSidebarStore'
+import { terminalLaunchBus, terminalSidebarStore } from '../lib/TerminalSidebarStore'
 import emptyGhostSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 
 const TUI_TERMINAL_THEME = {
@@ -56,6 +56,7 @@ export function TerminalWorkbench({
 
     const unsubscribeLaunch = terminalLaunchBus.subscribe((event) => {
       if (event.type === 'launch') {
+        terminalSidebarStore.recordRecipe(event.workspacePath)
         const newSessionId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         window.api.terminal.create(event.workspacePath, newSessionId).then(() => {
           setSessions(prev => {
