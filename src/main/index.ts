@@ -25,7 +25,6 @@ import {
   powerSaveBlocker,
   nativeImage,
   clipboard,
-  protocol,
   session,
   Tray,
   systemPreferences,
@@ -1387,7 +1386,7 @@ import {
   isSimulatorMcpToolName
 } from './mcp/SimulatorToolExecutors'
 import { MeshAssetStore } from './mesh/MeshAssetStore'
-import { registerMeshAssetProtocol, MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
+import { registerMeshAssetProtocol } from './mesh/MeshAssetProtocol'
 import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
 import { MeshSceneStore } from './mesh/MeshSceneStore'
 import { MeshTopologyStore } from './mesh/MeshTopologyStore'
@@ -1430,7 +1429,7 @@ import {
 } from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import type { AvPosterResult } from './media/AvMediaRef'
-import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { registerTwMediaProtocol } from './media/TwMediaProtocol'
 import { createTwMediaRequestGate } from './media/TwMediaRequestAuthority'
 import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
@@ -6517,36 +6516,6 @@ registerSimulatorControlSetupHandlers(ipcMain, {
   getSetup: () => simulatorControlSetup,
   isEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false
 })
-
-// Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
-app.commandLine.appendSwitch('enable-gpu-rasterization')
-app.commandLine.appendSwitch('enable-zero-copy')
-
-// The renderer holds the whole hydrated chat working set, but V8's default
-// old-space ceiling on 64-bit is ~4 GB no matter how much RAM the host has.
-// On 2026-08-19 a 10k-message / 19 MB chat under seven concurrent runs drove
-// the renderer to 5.4 GB RSS against a 3.76 GB heap limit and V8 aborted with
-// SIGTRAP (EXC_BREAKPOINT) — a hard process kill, not a catchable allocation
-// failure, so the window died with runs still live. The snapshot flood that
-// fed it is fixed at the delivery transport; this raises the wall itself so
-// the same pressure has somewhere to go. Chromium copies --js-flags onto
-// renderer command lines, so one switch covers both processes.
-//
-// Only raised where the host can spare it: a machine that cannot is better
-// served by the default, which fails sooner and nearer the real working set.
-const RENDERER_HEAP_CEILING_MAX_MB = 8_192
-const RENDERER_HEAP_CEILING_MIN_MB = 4_096
-const hostMemoryMb = Math.floor(os.totalmem() / (1024 * 1024))
-const rendererHeapCeilingMb = Math.min(RENDERER_HEAP_CEILING_MAX_MB, Math.floor(hostMemoryMb / 8))
-if (rendererHeapCeilingMb >= RENDERER_HEAP_CEILING_MIN_MB) {
-  app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererHeapCeilingMb}`)
-}
-
-// Register the twmedia:// scheme as privileged (standard + secure + stream) BEFORE
-// app `ready` — required, and callable only once, pre-ready. `stream:true` lets
-// <video>/<audio> stream + seek transcript media over HTTP Range (S0b). The handler
-// itself is registered post-ready in app.whenReady() below.
-protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE])
 
 // Swallow EPIPE on stderr writes. Common cause: the BridgeDaemon
 // subprocess streams chatty stderr lines through `onStderr → console.error`;

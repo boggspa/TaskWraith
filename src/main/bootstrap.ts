@@ -3,8 +3,9 @@
 import './devAppName'
 
 import * as fs from 'node:fs'
+import os from 'node:os'
 import { basename, isAbsolute, parse, resolve } from 'node:path'
-import { app } from 'electron'
+import { app, protocol } from 'electron'
 import type { Event } from 'electron'
 import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
 import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
@@ -15,6 +16,23 @@ import {
 } from './host/HostExternalPreparation'
 import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
+import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
+
+function configureElectronBeforeReady(): void {
+  app.commandLine.appendSwitch('enable-gpu-rasterization')
+  app.commandLine.appendSwitch('enable-zero-copy')
+  const rendererHeapCeilingMaxMb = 8_192
+  const rendererHeapCeilingMinMb = 4_096
+  const hostMemoryMb = Math.floor(os.totalmem() / (1024 * 1024))
+  const rendererHeapCeilingMb = Math.min(rendererHeapCeilingMaxMb, Math.floor(hostMemoryMb / 8))
+  if (rendererHeapCeilingMb >= rendererHeapCeilingMinMb) {
+    app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererHeapCeilingMb}`)
+  }
+  protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE])
+}
+
+configureElectronBeforeReady()
 
 function subscribeSecondInstance(
   listener: (...args: SecondInstanceEventArguments) => void
