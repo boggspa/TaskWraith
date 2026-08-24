@@ -211,6 +211,11 @@ function shouldCompact(lineCount: number, chatCount: number): boolean {
   return lineCount > chatCount * 4 && lineCount > 100
 }
 
+export interface ChatListIndexStoreOptions {
+  /** Dynamic authority for durable migrations and index mutations. */
+  canWrite?: () => boolean
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -226,11 +231,25 @@ export class ChatListIndexStore {
   /** size of indexPath when `cache` was last stamped from disk. */
   private cacheSize = -1
   private migrated = false
+  private readonly canWrite: () => boolean
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: ChatListIndexStoreOptions = {}) {
     this.indexPath = path.join(userDataPath, 'chat-list-index.jsonl')
     this.summariesDir = path.join(userDataPath, 'chat-list-summaries')
     this.legacyPath = path.join(userDataPath, 'chat-list-index.json')
+    this.canWrite = options.canWrite ?? (() => true)
+  }
+
+  private isWritable(): boolean {
+    try {
+      return this.canWrite() === true
+    } catch {
+      return false
+    }
+  }
+
+  private assertWritable(): void {
+    if (!this.isWritable()) throw new Error('Chat list index is read-only')
   }
 
   // -----------------------------------------------------------------------
@@ -273,6 +292,12 @@ export class ChatListIndexStore {
         }
       }
     } catch {
+      // A read-only Host may still project a pre-JSONL profile. Migration is
+      // deliberately deferred until authority is restored, so preserve the
+      // legacy record in memory rather than creating any new artifact here.
+      if (!this.isWritable() && !fs.existsSync(this.indexPath)) {
+        return this.readLegacyIndexReadOnly()
+      }
       return {}
     }
 
@@ -294,7 +319,7 @@ export class ChatListIndexStore {
     // Historical fat lines stay on disk until compacted. Force one rewrite so
     // the 98.7 MB install actually shrinks; projecting on write alone cannot
     // reach lines that were already written.
-    if (sawEnsemble) {
+    if (sawEnsemble && this.isWritable()) {
       this.compact()
     }
 
@@ -321,6 +346,7 @@ export class ChatListIndexStore {
    * per-chat summary file. Compacts periodically.
    */
   writeEntry(chatId: string, item: ChatListItem): void {
+    this.assertWritable()
     this.ensureMigrated()
     ensureDir(path.dirname(this.indexPath))
     ensureDir(this.summariesDir)
@@ -362,6 +388,7 @@ export class ChatListIndexStore {
    * (NON-NEGOTIABLE #4).
    */
   removeEntries(chatIds: string[]): void {
+    this.assertWritable()
     this.ensureMigrated()
     if (chatIds.length === 0) return
 
@@ -455,6 +482,7 @@ export class ChatListIndexStore {
   }
 
   private compact(): void {
+    this.assertWritable()
     let records: JsonlRecord[]
     try {
       const raw = fs.readFileSync(this.indexPath, 'utf-8')
@@ -496,7 +524,40 @@ export class ChatListIndexStore {
   // Migration
   // -----------------------------------------------------------------------
 
+  /**
+   * Project the pre-JSONL index without migrating it. This is only reached
+   * while writes are unavailable, and intentionally leaves `migrated` false
+   * so a later writable operation can perform the durable migration.
+   */
+  private readLegacyIndexReadOnly(): Record<string, ChatListItem> {
+    let legacyIndex: Record<string, ChatListItem>
+    try {
+      legacyIndex = JSON.parse(fs.readFileSync(this.legacyPath, 'utf-8')) as Record<
+        string,
+        ChatListItem
+      >
+    } catch {
+      return {}
+    }
+
+    const index: Record<string, ChatListItem> = {}
+    for (const [chatId, item] of Object.entries(legacyIndex)) {
+      if (!item || typeof item !== 'object') continue
+      const entry = stripSummaries(item)
+      index[chatId] = mergeEntry(entry, extractSummaries(item))
+    }
+
+    this.cache = index
+    this.cacheLineCount = Object.keys(index).length
+    this.cacheMtimeMs = -1
+    this.cacheSize = -1
+    return { ...index }
+  }
+
   private ensureMigrated(): void {
+    if (!this.isWritable()) {
+      return
+    }
     if (this.migrated) return
     this.migrated = true
 

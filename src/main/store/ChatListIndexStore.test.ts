@@ -82,6 +82,41 @@ function fatEnsemble() {
   }
 }
 
+type TreeSnapshot = Record<
+  string,
+  {
+    type: 'directory' | 'file'
+    mtimeMs: number
+    bytes?: string
+  }
+>
+
+/** Capture every durable byte and mtime beneath a test store root. */
+function snapshotTree(root: string): TreeSnapshot {
+  const snapshot: TreeSnapshot = {}
+
+  const visit = (currentPath: string): void => {
+    const stat = fs.statSync(currentPath)
+    const relativePath = path.relative(root, currentPath) || '.'
+    if (stat.isDirectory()) {
+      snapshot[relativePath] = { type: 'directory', mtimeMs: stat.mtimeMs }
+      for (const child of fs.readdirSync(currentPath).sort()) {
+        visit(path.join(currentPath, child))
+      }
+      return
+    }
+
+    snapshot[relativePath] = {
+      type: 'file',
+      mtimeMs: stat.mtimeMs,
+      bytes: fs.readFileSync(currentPath).toString('base64')
+    }
+  }
+
+  if (fs.existsSync(root)) visit(root)
+  return snapshot
+}
+
 describe('ChatListIndexStore cache + projection', () => {
   let dir: string
   let store: ChatListIndexStore
@@ -297,5 +332,97 @@ describe('ChatListIndexStore cache + projection', () => {
 
     expect(store.isCacheValid()).toBe(false)
     expect(store.readAll()['chat-a']?.title).toBe('External')
+  })
+
+  it('does not create a missing store or permit mutations while dynamically read-only', () => {
+    const missingDir = path.join(dir, 'missing')
+    const readOnly = new ChatListIndexStore(missingDir, { canWrite: () => false })
+    const before = snapshotTree(missingDir)
+
+    expect(readOnly.readAll()).toEqual({})
+    expect(readOnly.readEntry('chat-a')).toBeUndefined()
+    expect(() => readOnly.writeEntry('chat-a', makeItem('chat-a'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(() => readOnly.removeEntries([])).toThrow('Chat list index is read-only')
+    expect(snapshotTree(missingDir)).toEqual(before)
+    expect(fs.existsSync(missingDir)).toBe(false)
+  })
+
+  it('reads an unmigrated legacy index in memory without migrating or changing durable bytes', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    const legacy = { 'chat-legacy': makeItem('chat-legacy', { title: 'Legacy chat' }) }
+    fs.writeFileSync(legacyPath, JSON.stringify(legacy), 'utf-8')
+    const before = snapshotTree(dir)
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    expect(readOnly.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(readOnly.readEntry('chat-legacy')?.appChatId).toBe('chat-legacy')
+    expect(fs.existsSync(path.join(dir, 'chat-list-index.jsonl'))).toBe(false)
+    expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  it('projects compaction-worthy legacy ensemble data without compacting it while read-only', () => {
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    const fatEntry = {
+      ...makeItem('chat-fat', { chatKind: 'ensemble' }),
+      ensemble: fatEnsemble()
+    }
+    fs.writeFileSync(
+      indexPath,
+      JSON.stringify({ chatId: 'chat-fat', entry: fatEntry }) + '\n',
+      'utf-8'
+    )
+    const before = snapshotTree(dir)
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    const entry = readOnly.readEntry('chat-fat')
+    expect(entry?.ensemble?.participants).toHaveLength(40)
+    expect(JSON.stringify(entry)).not.toContain(ROSTER_MARKER)
+    expect(fs.readFileSync(indexPath, 'utf-8')).toContain(ROSTER_MARKER)
+    expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  it('honours authority changes dynamically while preserving the default writable behavior', () => {
+    let writable = false
+    const gated = new ChatListIndexStore(dir, { canWrite: () => writable })
+    const before = snapshotTree(dir)
+
+    expect(() => gated.writeEntry('chat-a', makeItem('chat-a'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(snapshotTree(dir)).toEqual(before)
+
+    writable = true
+    gated.writeEntry('chat-a', makeItem('chat-a'))
+    expect(gated.readEntry('chat-a')?.title).toBe('Chat chat-a')
+
+    writable = false
+    const afterWrite = snapshotTree(dir)
+    expect(() => gated.removeEntries(['chat-a'])).toThrow('Chat list index is read-only')
+    expect(gated.readEntry('chat-a')?.appChatId).toBe('chat-a')
+    expect(snapshotTree(dir)).toEqual(afterWrite)
+
+    // Existing callers that pass no option retain the historical writable default.
+    const defaultStore = new ChatListIndexStore(path.join(dir, 'default'))
+    defaultStore.writeEntry('chat-default', makeItem('chat-default'))
+    expect(defaultStore.readEntry('chat-default')?.appChatId).toBe('chat-default')
+  })
+
+  it('treats a write-authority callback failure as read-only', () => {
+    store.writeEntry('chat-a', makeItem('chat-a'))
+    const before = snapshotTree(dir)
+    const unavailable = new ChatListIndexStore(dir, {
+      canWrite: () => {
+        throw new Error('authority unavailable')
+      }
+    })
+
+    expect(unavailable.readAll()['chat-a']?.appChatId).toBe('chat-a')
+    expect(() => unavailable.writeEntry('chat-b', makeItem('chat-b'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(() => unavailable.removeEntries(['chat-a'])).toThrow('Chat list index is read-only')
+    expect(snapshotTree(dir)).toEqual(before)
   })
 })
