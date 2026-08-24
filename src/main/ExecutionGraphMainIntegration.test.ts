@@ -18,6 +18,28 @@ function between(start: string, end: string): string {
 }
 
 describe('execution graph main integration', () => {
+  it('routes solo UltraTask through the durable unanchored graph owner', () => {
+    const dispatcher = between(
+      "} else if (toolName === 'ultra_task') {",
+      "} else if (toolName === 'delegate_wave') {"
+    )
+    const initialization = between(
+      'executionGraphRepositoryRef = executionGraphRepository',
+      '// Phase C5 scaffold: APNs wake-on-approval.'
+    )
+
+    expect(dispatcher).toContain("markDispatchHandled('subthread-control')")
+    expect(dispatcher).toContain('resolveUltraTaskToolRequest(')
+    expect(dispatcher).toContain("toolName: 'ultra_task'")
+    expect(dispatcher).toContain('startUltraTaskGraphRef')
+    expect(dispatcher).toContain("status: 'running'")
+    expect(dispatcher).toContain('Every join is automatic')
+    expect(dispatcher).not.toContain('executeDelegateWaveTool(')
+    expect(initialization).toContain('startUltraTaskGraphRef = (input) =>')
+    expect(initialization).toContain('startPreparedUltraTaskGraph(input, {')
+    expect(initialization).toContain('executionGraphCoordinator.startExecutionGraph(request)')
+  })
+
   it('owns queue lease, composition, and adapter dispatch without a renderer pump', () => {
     const dispatcher = between(
       'const dispatchMainOwnedExecutionGraphAttempt =',

@@ -2094,6 +2094,11 @@ import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { resolveSubThreadWorkerPermissions } from './SubThreadPermissions'
 import { hasUltraTaskDelegationAutoAllow } from './UltraTaskDelegationConsent'
 import { resolveUltraTaskToolRequest } from './ultraTask/UltraTaskToolRequest'
+import {
+  startPreparedUltraTaskGraph,
+  type StartUltraTaskGraphInput
+} from './ultraTask/UltraTaskGraphStartService'
+import type { StartedUltraTaskWorkflow } from './ultraTask/UltraTaskCoordinator'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 import { shouldAutoAllowUserRequestedEnsembleImport } from './EnsembleRosterImportConsent'
@@ -8391,6 +8396,9 @@ let runQueueServiceRef: RunQueueService | null = null
 let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
 let executionGraphRepositoryRef: ExecutionGraphRepository | null = null
 let executionGraphCoordinatorRef: ExecutionGraphCoordinator | null = null
+let startUltraTaskGraphRef:
+  | ((input: StartUltraTaskGraphInput) => StartedUltraTaskWorkflow)
+  | null = null
 let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
 
@@ -40618,10 +40626,133 @@ async function executeGeminiMcpTool(
             ? '; its final result will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +
           `\nReuse this id by passing subThreadId="${subThread.appChatId}" on the next delegate_to_subthread call if you want to continue the conversation with this same sub-agent.`
-    } else if (toolName === 'delegate_wave' || toolName === 'ultra_task') {
+    } else if (toolName === 'ultra_task') {
       markDispatchHandled('subthread-control')
-      let waveArgs = args
-      let ultraTaskNotice: string | undefined
+      const parentChatId = context.appChatId
+      if (!parentChatId || !context.appRunId) {
+        throw new Error('ultra_task requires an active parent run and chat context.')
+      }
+      if (wasScheduledOccurrenceRunIdObserved(context.appRunId)) {
+        throw new Error('Scheduled occurrences cannot launch an UltraTask workflow.')
+      }
+      const parentChat = AppStore.getChat(parentChatId)
+      if (
+        !parentChat ||
+        parentChat.archived ||
+        parentChat.parentChatId ||
+        parentChat.chatKind === 'ensemble' ||
+        parentChat.ensemble?.enabled
+      ) {
+        throw new Error(
+          'ultra_task graph execution requires an active top-level solo chat; Ensemble seats should use ensemble_fanout.'
+        )
+      }
+      if (
+        parentChat.scope !== 'workspace' ||
+        !parentChat.workspaceId ||
+        !parentChat.workspacePath ||
+        context.scope !== 'workspace'
+      ) {
+        throw new Error('ultra_task graph execution requires a workspace-scoped chat.')
+      }
+      const ultraTaskRequest = resolveUltraTaskToolRequest(args, {
+        provider: parentProvider,
+        model: context.model,
+        allowedProviders: selectableProviderIds(AppStore.getSettings())
+      })
+      if (!ultraTaskRequest.ok) throw new Error(ultraTaskRequest.message)
+      const resolved = ultraTaskRequest.value
+      const stageCount = 5 // two scouts + worker + reviewer + synthesis
+      if (delegationApprovalBudget.remaining(context.appRunId) < stageCount) {
+        throw new Error(
+          `ultra_task requires ${stageCount} stage slots but this parent run has only ` +
+            `${delegationApprovalBudget.remaining(context.appRunId)} delegation slot(s) remaining.`
+        )
+      }
+      const approved = await requestAgenticServiceApproval(
+        context.sender,
+        parentProvider,
+        'subThreadDelegation',
+        context.workspacePath,
+        {
+          method: `${parentProvider}-mcp/ultra_task`,
+          title: `${providerLabel(parentProvider)} wants to start a durable UltraTask workflow`,
+          body:
+            `Task: ${resolved.task}\n\nTaskWraith will run two read-only scouts, one ` +
+            `${context.effectivePermissions?.readOnly ? 'read-only' : 'workspace-scoped'} worker, ` +
+            `one read-only reviewer, and one read-only synthesis stage using ` +
+            `${resolved.provider}/${resolved.model}. The graph owns every join and continues if ` +
+            `the initiating provider turn finishes.`,
+          preview: {
+            kind: 'subthread-delegation-wave',
+            toolName: 'ultra_task',
+            parentProvider,
+            workers: resolved.waveArgs.workers,
+            workspacePath: context.workspacePath,
+            params: args
+          },
+          runId: context.appRunId,
+          forcePrompt: false
+        }
+      )
+      if (!approved) throw new Error('UltraTask workflow approval was declined.')
+      const runAfterApproval = runManager.get(context.appRunId)
+      if (
+        !runAfterApproval ||
+        runAfterApproval.appChatId !== parentChatId ||
+        !isActiveRunSessionStatus(runAfterApproval.status) ||
+        runManager.getClaimedTerminalStatus(context.appRunId) ||
+        historyClearAdmissionBlocked(context.appRunId, context.workspacePath, parentChatId)
+      ) {
+        throw new Error('UltraTask workflow was cancelled because the parent run changed.')
+      }
+      for (let index = 0; index < stageCount; index += 1) {
+        if (delegationApprovalBudget.tryConsume(context.appRunId) === 'exhausted') {
+          delegationApprovalBudget.release(context.appRunId, index)
+          throw new Error('UltraTask delegation budget changed before graph launch.')
+        }
+      }
+      const startGraph = startUltraTaskGraphRef
+      if (!startGraph) {
+        delegationApprovalBudget.release(context.appRunId, stageCount)
+        throw new Error('UltraTask durable graph runtime is unavailable.')
+      }
+      let started: StartedUltraTaskWorkflow
+      try {
+        started = startGraph({
+          title: `UltraTask · ${resolved.model}`,
+          task: resolved.task,
+          provider: resolved.provider,
+          model: resolved.model,
+          reasoningEffort: resolved.reasoningEffort,
+          workspaceId: parentChat.workspaceId,
+          workspacePath: parentChat.workspacePath,
+          rootChatId: parentChat.appChatId,
+          parentApprovalMode:
+            context.effectivePermissions?.approvalMode || context.approvalMode || 'default',
+          parentPermissionPresetId: context.effectivePermissions?.presetId || 'default',
+          parentWorkflowMode: context.workflowMode,
+          workerEffect: context.effectivePermissions?.readOnly ? 'read_only' : 'workspace_write',
+          scoutCount: 2
+        })
+      } catch (error) {
+        delegationApprovalBudget.release(context.appRunId, stageCount)
+        throw error
+      }
+      text = mcpJson({
+        ok: true,
+        tool: 'ultra_task',
+        status: 'running',
+        workflowId: started.workflowId,
+        executionId: started.executionId,
+        stageIds: started.stageIds,
+        message:
+          'UltraTask is now owned by TaskWraith’s durable graph. Every join is automatic; ' +
+          'this provider turn may finish without cancelling the workflow.'
+      })
+    } else if (toolName === 'delegate_wave') {
+      markDispatchHandled('subthread-control')
+      const waveArgs = args
       // Batch spawn-only wave. Business logic lives in SubThreadDelegateWave;
       // this branch is composition-root wiring (context, approval, spawn ports).
       if (parentProvider === 'ollama') {
@@ -40665,16 +40796,6 @@ async function executeGeminiMcpTool(
         (provider) => provider !== 'ollama'
       )
       const waveAllowedProviderSet = new Set<string>(waveAllowedProviders)
-      if (toolName === 'ultra_task') {
-        const ultraTaskRequest = resolveUltraTaskToolRequest(args, {
-          provider: parentProvider,
-          model: context.model,
-          allowedProviders: waveAllowedProviders
-        })
-        if (!ultraTaskRequest.ok) throw new Error(ultraTaskRequest.message)
-        waveArgs = ultraTaskRequest.value.waveArgs
-        ultraTaskNotice = ultraTaskRequest.value.notice
-      }
       const callerParticipantId =
         context.ensembleRun?.participantId ||
         (context.appRunId
@@ -41176,7 +41297,7 @@ async function executeGeminiMcpTool(
           // Best-effort audit.
         }
       }
-      text = ultraTaskNotice ? `${waveOutcome.text}\n\nNote: ${ultraTaskNotice}` : waveOutcome.text
+      text = waveOutcome.text
     }
 
     if (!handledDispatchOwner) {
@@ -43519,9 +43640,30 @@ if (isGeminiMcpBridgeProcess) {
       })
       executionGraphRepositoryRef = executionGraphRepository
       executionGraphCoordinatorRef = executionGraphCoordinator
+      startUltraTaskGraphRef = (input) =>
+        startPreparedUltraTaskGraph(input, {
+          resolvePermissionPosture: ({ provider, request, workspacePath, rootChatId }) =>
+            buildExecutionGraphPermissionPosture({
+              provider,
+              workspacePath,
+              chatId: rootChatId,
+              request,
+              settings: runtimeSettings(AppStore.getSettings()),
+              sign: signRunPosture
+            }),
+          saveRunTemplate: (content) => executionGraphRepository.saveRunTemplate(content),
+          saveRevision: (revision) => executionGraphRepository.saveRevision(revision),
+          startExecutionGraph: (request) => executionGraphCoordinator.startExecutionGraph(request),
+          createId: (kind) =>
+            kind === 'workflow'
+              ? `ultratask-${randomUUID()}`
+              : `ultratask-graph-${randomUUID()}`,
+          now: () => new Date().toISOString()
+        })
     } catch (error) {
       executionGraphRepositoryRef = null
       executionGraphCoordinatorRef = null
+      startUltraTaskGraphRef = null
       executionGraphServiceDiagnostics = [
         {
           code: 'initialization_failed',

@@ -157,11 +157,8 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch("toolName === 'write_file'", ['write_file'], 'workspace-tools'),
   branch("toolName === 'replace'", ['replace'], 'workspace-tools'),
   branch("toolName === 'delegate_to_subthread'", ['delegate_to_subthread'], 'subthread-control'),
-  branch(
-    "toolName === 'delegate_wave' || toolName === 'ultra_task'",
-    ['delegate_wave', 'ultra_task'],
-    'subthread-control'
-  )
+  branch("toolName === 'ultra_task'", ['ultra_task'], 'subthread-control'),
+  branch("toolName === 'delegate_wave'", ['delegate_wave'], 'subthread-control')
 ] as const satisfies readonly DispatcherBranchContract[]
 
 const indexPath = resolve(__dirname, '..', 'index.ts')
