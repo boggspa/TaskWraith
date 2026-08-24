@@ -23,6 +23,7 @@ export interface UltraTaskReasoningCapability {
    * axis but may still support the orchestration contract. */
   mode: 'configurable' | 'fixed' | 'none'
   ceiling?: string
+  supported?: readonly string[]
 }
 
 export interface UltraTaskModelCapabilityCandidate {
@@ -168,9 +169,14 @@ function routeOrder(left: UltraTaskRouteCandidate, right: UltraTaskRouteCandidat
 function validReasoningCapability(reasoning: UltraTaskReasoningCapability): boolean {
   const ceiling = normalizedText(reasoning.ceiling)
   if (reasoning.mode === 'configurable' || reasoning.mode === 'fixed') {
-    return Boolean(ceiling) && !FORBIDDEN_MODEL_SENTINELS.has(ceiling.toLowerCase())
+    if (!ceiling || FORBIDDEN_MODEL_SENTINELS.has(ceiling.toLowerCase())) return false
+    if (reasoning.supported) {
+      const supported = reasoning.supported.map((entry) => normalizedText(entry)).filter(Boolean)
+      if (supported.length === 0 || !supported.includes(ceiling)) return false
+    }
+    return true
   }
-  return !ceiling
+  return !ceiling && reasoning.supported === undefined
 }
 
 /**

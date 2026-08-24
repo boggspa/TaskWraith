@@ -157,7 +157,7 @@ describe('resolveUltraTaskCapability', () => {
           provider: 'kimi',
           modelId: 'kimi-k2.7-code',
           label: 'K2.7 Coding',
-          reasoning: { mode: 'fixed', ceiling: 'on' }
+          reasoning: { mode: 'fixed', ceiling: 'on', supported: ['on'] }
         })
       ],
       routes: [route({ kind: 'taskwraith_delegation' })]
@@ -167,7 +167,7 @@ describe('resolveUltraTaskCapability', () => {
       capability: {
         provider: 'kimi',
         modelId: 'kimi-k2.7-code',
-        reasoning: { mode: 'fixed', ceiling: 'on' }
+        reasoning: { mode: 'fixed', ceiling: 'on', supported: ['on'] }
       }
     })
   })
