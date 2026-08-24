@@ -13,6 +13,7 @@ import {
 } from '../shared/hostProtocol'
 import {
   AppStoreHostAuthority,
+  createHostStandaloneAuthorityActivationPermit,
   type AppStoreHostAuthorityOptions,
   type AppStoreHostAuthorityPorts,
   type AppStoreHostAuthoritySnapshotDonorFamilies,
@@ -201,6 +202,62 @@ describe('AppStoreHostAuthority', () => {
           ports
         })
     ).toThrow(/pre-cutover|activation permit/)
+  })
+
+  it('requires a lease-minted standalone permit and rejects deferred/no-longer-held calls before receipts', async () => {
+    let held = true
+    const lease = {
+      assertHeld: vi.fn(() => {
+        if (!held) throw new Error('lease lost')
+      })
+    }
+    const permit = createHostStandaloneAuthorityActivationPermit(lease)
+    const authority = new AppStoreHostAuthority({
+      mode: 'standalone',
+      activationPermit: permit,
+      now: () => NOW,
+      ports: {
+        ...ports,
+        authorityEvaluator: () => ({ decision: 'deferred' })
+      }
+    })
+    const deferred = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'standalone-deferred',
+        idempotencyKey: 'standalone-deferred-key',
+        actor: ACTOR_A
+      })
+    )
+    expect(deferred).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(runtime.receiptStore.size).toBe(0)
+
+    held = false
+    const lost = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'standalone-lost',
+        idempotencyKey: 'standalone-lost-key',
+        actor: ACTOR_A
+      })
+    )
+    expect(lost).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(runtime.receiptStore.size).toBe(0)
+    await expect(authority.health(contextFor(ACTOR_A, CLIENT_A))).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    await expect(
+      authority.deltas(contextFor(ACTOR_A, CLIENT_A), { generation: 0, cursor: 0 })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
+    await expect(
+      authority.receipt(contextFor(ACTOR_A, CLIENT_A), { commandId: 'standalone-command-1' })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
+    await expect(authority.shutdown(contextFor(ACTOR_A, CLIENT_A))).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    expect(lease.assertHeld).toHaveBeenCalled()
   })
 
   it('does not call ports when construction is fenced', () => {

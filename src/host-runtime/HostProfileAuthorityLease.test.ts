@@ -1,5 +1,5 @@
 import * as nodeFs from 'node:fs'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -94,6 +94,29 @@ describe('HostProfileAuthorityLease', () => {
       ).toThrow(HostProfileAuthorityLeaseBlockedError)
       expect(nodeFs.lstatSync(ownerPath(linkedProfile)).isSymbolicLink()).toBe(true)
     }
+  })
+
+  it('assertHeld proves the exact unreleased owner inode/token', () => {
+    const profile = createProfile()
+    const lease = HostProfileAuthorityLease.acquire(hostOptions(profile, { pid: 101 }))
+    expect(() => lease.assertHeld()).not.toThrow()
+    writeFileSync(ownerPath(profile), JSON.stringify({ ...lease.owner, pid: 999 }) + '\n')
+    if (process.platform !== 'win32') nodeFs.chmodSync(ownerPath(profile), 0o600)
+    expect(() => lease.assertHeld()).toThrow(HostProfileAuthorityLeaseBlockedError)
+    writeFileSync(ownerPath(profile), JSON.stringify(lease.owner) + '\n')
+    if (process.platform !== 'win32') nodeFs.chmodSync(ownerPath(profile), 0o600)
+    expect(() => lease.assertHeld()).not.toThrow()
+    unlinkSync(ownerPath(profile))
+    expect(() => lease.assertHeld()).toThrow(HostProfileAuthorityLeaseBlockedError)
+
+    const replacement = HostProfileAuthorityLease.acquire(hostOptions(profile, { pid: 202 }))
+    expect(() => lease.assertHeld()).toThrow(HostProfileAuthorityLeaseBlockedError)
+    expect(() => replacement.assertHeld()).not.toThrow()
+    expect(replacement.release()).toBe(true)
+
+    const released = HostProfileAuthorityLease.acquire(hostOptions(profile, { pid: 303 }))
+    expect(released.release()).toBe(true)
+    expect(() => released.assertHeld()).toThrow(HostProfileAuthorityLeaseBlockedError)
   })
 
   it('reclaims only a proven-stale owner and an old lease cannot release its successor', () => {

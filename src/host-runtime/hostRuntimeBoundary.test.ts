@@ -41,7 +41,8 @@ const REQUIRED_RUNTIME_MODULES = [
   'HostProductionSuppliers.ts',
   'HostProductionAuthorityEvaluator.ts',
   'HostProfileDomainStore.ts',
-  'HostProfileDomainProjection.ts'
+  'HostProfileDomainProjection.ts',
+  'HostStandaloneComposition.ts'
 ] as const
 const LEGACY_MAIN_HOST_MODULES = REQUIRED_RUNTIME_MODULES.map((name) =>
   resolve(REPO_ROOT, 'src/main/host', name)

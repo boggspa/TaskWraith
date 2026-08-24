@@ -269,6 +269,39 @@ export class HostProfileAuthorityLease {
   }
 
   /**
+   * Proves this exact lease remains live before a profile-backed operation.
+   * A released lease, missing/malformed owner record, opaque-token mismatch,
+   * or inode replacement all fail closed.
+   */
+  assertHeld(): void {
+    if (this.released) {
+      throw new HostProfileAuthorityLeaseBlockedError('Profile authority lease was released.')
+    }
+    const options: ResolvedOptions = {
+      fs: this.fs,
+      platform: this.platform,
+      processPort: this.processPort,
+      clock: this.clock,
+      identity: this.identity,
+      profilePath: this.profilePath,
+      ownerPath: this.ownerPath,
+      reclaimGuardPath: this.reclaimGuardPath,
+      onReclaimGuardAcquired: this.onReclaimGuardAcquired
+    }
+    const observed = readOptionalOwnerRecord(options, this.ownerPath, 'profile authority owner')
+    if (
+      !observed ||
+      observed.record.token !== this.ownerRecord.token ||
+      serializeRecord(observed.record) !== serializeRecord(this.ownerRecord) ||
+      !sameFileIdentity(observed.identity, this.ownerFileIdentity)
+    ) {
+      throw new HostProfileAuthorityLeaseBlockedError(
+        'Profile authority lease is no longer the exact owner record.'
+      )
+    }
+  }
+
+  /**
    * Removes only the same inode and same opaque token this instance acquired.
    * Repeated calls are harmless. A missing, replaced, or malformed path is
    * deliberately left in place rather than risking a successor's authority.

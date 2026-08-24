@@ -93,8 +93,8 @@ import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
 
-/** Literal activation mode — migration/rollback only. */
-export type AppStoreHostAuthorityMode = 'in-process-migration'
+/** Explicit activation modes; neither silently falls back to the other. */
+export type AppStoreHostAuthorityMode = 'in-process-migration' | 'standalone'
 
 /**
  * Explicit pre-cutover permit. Construction fails when Host-owned state may
@@ -102,6 +102,34 @@ export type AppStoreHostAuthorityMode = 'in-process-migration'
  */
 export interface AppStoreHostAuthorityActivationPermit {
   readonly hostOwnedStateMayHaveAdvanced: false
+}
+
+/** Narrow lease shape; factory synchronously proves it before minting a permit. */
+export interface HostStandaloneAuthorityLeasePort {
+  assertHeld(): void
+}
+
+declare const standalonePermitBrand: unique symbol
+export interface HostStandaloneAuthorityActivationPermit {
+  readonly [standalonePermitBrand]: 'host-standalone-authority'
+}
+
+const standalonePermits = new WeakMap<object, HostStandaloneAuthorityLeasePort>()
+
+/**
+ * Mint an unforgeable same-process standalone activation permit only after the
+ * profile authority lease proves its exact owner record is still held.
+ */
+export function createHostStandaloneAuthorityActivationPermit(
+  lease: HostStandaloneAuthorityLeasePort
+): HostStandaloneAuthorityActivationPermit {
+  if (!lease || typeof lease.assertHeld !== 'function') {
+    throw new Error('Standalone Host authority requires a lease assertHeld port')
+  }
+  lease.assertHeld()
+  const permit = Object.freeze({})
+  standalonePermits.set(permit, lease)
+  return permit as HostStandaloneAuthorityActivationPermit
 }
 
 /** Compact snapshot families from current authority — never trusted for position. */
@@ -234,7 +262,9 @@ export interface AppStoreHostAuthorityPorts {
 
 export interface AppStoreHostAuthorityOptions {
   readonly mode: AppStoreHostAuthorityMode
-  readonly activationPermit: AppStoreHostAuthorityActivationPermit
+  readonly activationPermit:
+    | AppStoreHostAuthorityActivationPermit
+    | HostStandaloneAuthorityActivationPermit
   readonly ports: AppStoreHostAuthorityPorts
   /** Optional ISO clock for receipt completion timestamps in tests. */
   readonly now?: () => string
@@ -377,21 +407,28 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly domainPublisher: HostDomainDeltaPublisher
   private readonly completionCoordinator: HostMutationCompletionCoordinator
   private readonly now: () => string
+  private readonly mode: AppStoreHostAuthorityMode
+  private readonly standaloneLease?: HostStandaloneAuthorityLeasePort
   private stopped = false
 
   constructor(options: AppStoreHostAuthorityOptions) {
-    if (!options || options.mode !== 'in-process-migration') {
-      throw new Error('AppStoreHostAuthority requires mode "in-process-migration"')
+    if (!options || (options.mode !== 'in-process-migration' && options.mode !== 'standalone')) {
+      throw new Error('AppStoreHostAuthority requires mode "in-process-migration" or "standalone"')
     }
     const permit = options.activationPermit
-    if (
-      !permit ||
-      permit.hostOwnedStateMayHaveAdvanced !== false ||
-      (permit as { hostOwnedStateMayHaveAdvanced?: unknown }).hostOwnedStateMayHaveAdvanced === true
-    ) {
-      throw new Error(
-        'AppStoreHostAuthority requires an explicit pre-cutover activation permit (hostOwnedStateMayHaveAdvanced: false)'
-      )
+    if (options.mode === 'in-process-migration') {
+      if (
+        !permit ||
+        (permit as AppStoreHostAuthorityActivationPermit).hostOwnedStateMayHaveAdvanced !== false ||
+        (permit as { hostOwnedStateMayHaveAdvanced?: unknown }).hostOwnedStateMayHaveAdvanced ===
+          true
+      ) {
+        throw new Error(
+          'AppStoreHostAuthority requires an explicit pre-cutover activation permit (hostOwnedStateMayHaveAdvanced: false)'
+        )
+      }
+    } else if (!permit || typeof permit !== 'object' || !standalonePermits.has(permit)) {
+      throw new Error('AppStoreHostAuthority requires a lease-minted standalone activation permit')
     }
     const ports = options.ports
     if (
@@ -417,11 +454,15 @@ export class AppStoreHostAuthority implements HostAuthority {
       (ports.historySinceProvider !== undefined &&
         typeof ports.historySinceProvider !== 'function') ||
       typeof ports.onShutdown !== 'function' ||
-      (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk))
+      (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk)) ||
+      (options.mode === 'standalone' && ports.deferredAsk !== undefined)
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
     this.runtime = ports.runtime
+    this.mode = options.mode
+    this.standaloneLease =
+      options.mode === 'standalone' ? standalonePermits.get(permit as object) : undefined
     this.snapshotDonor = ports.snapshotDonor
     this.authorityEvaluator = ports.authorityEvaluator
     this.commandExecutor = ports.commandExecutor
@@ -449,8 +490,21 @@ export class AppStoreHostAuthority implements HostAuthority {
 
   private gate(context: HostAuthorityCallContext): HostAuthorityResult<true> {
     if (this.stopped) return { ok: false, error: 'shutting_down' }
+    const lease = this.assertStandaloneLease()
+    if (!lease.ok) return lease
     if (!contextActorMatchesClient(context)) return { ok: false, error: 'invalid_lookup' }
     return { ok: true, value: true }
+  }
+
+  private assertStandaloneLease(): HostAuthorityResult<true> {
+    if (this.mode !== 'standalone') return { ok: true, value: true }
+    try {
+      if (!this.standaloneLease) return { ok: false, error: 'host_unavailable' }
+      this.standaloneLease.assertHeld()
+      return { ok: true, value: true }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
   }
 
   async snapshot(
@@ -663,6 +717,8 @@ export class AppStoreHostAuthority implements HostAuthority {
     lookup: HostAuthorityReceiptLookup
   ): Promise<HostAuthorityReceiptResult> {
     if (this.stopped) return { ok: false, error: 'shutting_down' }
+    const lease = this.assertStandaloneLease()
+    if (!lease.ok) return lease
     const parsed = parseHostAuthorityReceiptLookup(lookup)
     if (!parsed) return { ok: false, error: 'invalid_lookup' }
     if (!contextActorMatchesClient(context)) {
@@ -732,6 +788,12 @@ export class AppStoreHostAuthority implements HostAuthority {
         evaluation.decision !== 'denied' &&
         evaluation.decision !== 'deferred')
     ) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+
+    // Standalone Host has no deferred bridge/envelope/pipeline. Refuse before
+    // durable begin so an `ask` can never leave a pending receipt behind.
+    if (this.mode === 'standalone' && evaluation.decision === 'deferred') {
       return { ok: false, error: 'host_unavailable' }
     }
 
@@ -1199,6 +1261,8 @@ export class AppStoreHostAuthority implements HostAuthority {
     if (this.stopped) {
       return { ok: true, value: { stopped: true, alreadyStopped: true } }
     }
+    const lease = this.assertStandaloneLease()
+    if (!lease.ok) return lease
     try {
       this.runtime.flush()
     } catch {
