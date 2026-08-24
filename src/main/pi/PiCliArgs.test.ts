@@ -144,6 +144,7 @@ describe('buildPiRpcArgs', () => {
     })
     const tools = args[args.indexOf('--tools') + 1].split(',')
     expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_ULTRATASK_DELEGATION_TOOL_NAMES])
+    expect(tools).toContain('ultra_task')
     expect(tools).toContain('delegate_wave')
     expect(tools).toContain('delegate_to_subthread')
     expect(tools).toContain('ensemble_await')

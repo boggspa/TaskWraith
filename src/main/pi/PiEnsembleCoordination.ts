@@ -59,12 +59,14 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
  * This list is deliberately separate from the ordinary Ensemble coordination
  * surface above: a normal solo Pi run, and an Ensemble seat that did not select
  * UltraTask, must not receive sub-thread spawn authority. Main opts this fixed
- * list in only for the signed UltraTask run. `ensemble_await` is shared with
- * Ensemble coordination so both solo and panel UltraTask seats can join the
- * returned sub-thread/wave ids; the two read tools are the bounded inspection
- * fallback when a join times out or lifecycle is unclear.
+ * list in only for the signed UltraTask run. `ultra_task` launches the
+ * main-owned durable graph for solo workspace runs. `ensemble_await` remains
+ * available for panel coordination and the legacy wave fallback; the two read
+ * tools are the bounded inspection fallback when a join times out or lifecycle
+ * is unclear.
  */
 export const PI_ULTRATASK_DELEGATION_TOOL_NAMES = Object.freeze([
+  'ultra_task',
   'delegate_wave',
   'delegate_to_subthread',
   'ensemble_await',
@@ -280,8 +282,9 @@ export function piTaskWraithToolsReadyPromptAppendix(
     (PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).includes(name)
   )
   const ultraTaskDelegationEnabled = ultraTaskDelegationTools.some(
-    (name) => name === 'delegate_wave' || name === 'delegate_to_subthread'
+    (name) => name === 'ultra_task' || name === 'delegate_wave' || name === 'delegate_to_subthread'
   )
+  const mainOwnedUltraTaskEnabled = ultraTaskDelegationTools.includes('ultra_task')
   const meshTools = receipt.toolNames.filter((name) =>
     (PI_MESH_TOOL_NAMES as readonly string[]).includes(name)
   )
@@ -309,7 +312,12 @@ export function piTaskWraithToolsReadyPromptAppendix(
     ...(ultraTaskDelegationEnabled
       ? [
           '- UltraTask delegated-review transport is enabled for this run by the main-signed reasoning-picker consent. This does not widen native Pi file, shell, network, or generic MCP access.',
-          '- Prefer `delegate_wave` for the review fleet, use `delegate_to_subthread` only as the single-worker fallback, then immediately call `ensemble_await` with the returned `waveIds` or `subThreadIds`.',
+          ...(mainOwnedUltraTaskEnabled
+            ? [
+                '- In a solo workspace chat, call `ultra_task` once with the current task. TaskWraith owns every staged worker and join; after it returns a workflow id, this provider turn may finish without cancelling the workflow.'
+              ]
+            : []),
+          '- In an Ensemble, or only when `ultra_task` is unavailable, use `delegate_wave` / `delegate_to_subthread` and immediately call `ensemble_await` with the returned `waveIds` or `subThreadIds`.',
           '- Use `list_subthreads` / `read_subthread_result` only for bounded lifecycle or result inspection when a join times out or reports an unclear target.'
         ]
       : []),
@@ -359,7 +367,7 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
       : []),
     ...(input.ultraTaskDelegationExpected
       ? [
-          '- UltraTask delegation tools were expected but their run-bound transport did not prove ready. Do not invent a delegated review; report that `delegate_wave` is unavailable for this turn and continue with the evidence you can gather directly.'
+          '- UltraTask delegation tools were expected but their run-bound transport did not prove ready. Do not invent a delegated review; report that `ultra_task` is unavailable for this turn and continue with the evidence you can gather directly.'
         ]
       : []),
     ...(input.meshToolsExpected
@@ -581,6 +589,7 @@ function descriptionFor(name) {
     ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
     ensemble_await: 'Wait (bounded) for fan-out lanes, sub-threads, or waves to settle. Optional: laneIds, subThreadIds, waveIds, timeoutSeconds.',
     ensemble_lane_result: "Read one finished fan-out lane's structured output. Required: laneId; optional fanoutId.",
+    ultra_task: 'Start one host-owned staged UltraTask workflow. Required: task; optional exact provider/model, enableFanout, enableReview, maxWorkers, reasoningEffort, and returnResult. The provider does not join this graph.',
     delegate_wave: 'Spawn a fresh delegated-review wave. Required: workers; optional lifecycle, allowMultiProvider, and join. Call ensemble_await with the returned waveId immediately.',
     delegate_to_subthread: 'Spawn a fresh delegated reviewer, or recall one owned sub-thread. Required: provider and prompt; optional model, reasoningEffort, kimiThinking, returnResult, and subThreadId. Call ensemble_await with the returned subThreadId immediately.',
     list_subthreads: 'List lifecycle-aware sub-threads owned by this parent. Optional: parentChatId, includeArchived, includePrompt, waveId.',
@@ -693,6 +702,17 @@ function parametersFor(name) {
       })
     case 'ensemble_lane_result':
       return object({ laneId: Type.String(), fanoutId: optionalText() })
+    case 'ultra_task':
+      return object({
+        task: Type.String(),
+        provider: optionalText(),
+        model: optionalText(),
+        enableFanout: Type.Optional(Type.Boolean()),
+        enableReview: Type.Optional(Type.Boolean()),
+        maxWorkers: Type.Optional(Type.Number()),
+        reasoningEffort: optionalText(),
+        returnResult: Type.Optional(Type.Boolean())
+      })
     case 'delegate_wave':
       return object({
         lifecycle: optionalText(),

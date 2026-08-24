@@ -97,6 +97,7 @@ describe('Pi managed Ensemble coordination extension', () => {
 
   it('keeps the signed UltraTask delegated-review surface fixed and separate', () => {
     expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES).toEqual([
+      'ultra_task',
       'delegate_wave',
       'delegate_to_subthread',
       'ensemble_await',
@@ -118,9 +119,8 @@ describe('Pi managed Ensemble coordination extension', () => {
     ]) {
       expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).not.toContain(toolName)
     }
-    // Keep cancellation, claim mutation, and the agent-callable convenience
-    // wrapper outside the consent-derived transport.
-    for (const outOfScope of ['cancel_subthread', 'claim_fleet_wave', 'ultra_task']) {
+    // Keep cancellation and claim mutation outside the consent-derived transport.
+    for (const outOfScope of ['cancel_subthread', 'claim_fleet_wave']) {
       expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).not.toContain(outOfScope)
       expect(isPiUltraTaskDelegationToolName(outOfScope)).toBe(false)
     }
@@ -222,6 +222,10 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain(
       `const TOOL_NAMES = ${JSON.stringify(PI_ULTRATASK_DELEGATION_TOOL_NAMES)}`
     )
+    expect(source).toContain("case 'ultra_task'")
+    expect(source).toContain('enableFanout: Type.Optional(Type.Boolean())')
+    expect(source).toContain('enableReview: Type.Optional(Type.Boolean())')
+    expect(source).toContain('maxWorkers: Type.Optional(Type.Number())')
     expect(source).toContain("case 'delegate_wave'")
     expect(source).toContain('workers: Type.Array(')
     expect(source).toContain('{ minItems: 1, maxItems: 64 }')
@@ -252,8 +256,9 @@ describe('Pi managed Ensemble coordination extension', () => {
 
     const prompt = piTaskWraithToolsReadyPromptAppendix(prepared)
     expect(prompt).toContain('main-signed reasoning-picker consent')
-    expect(prompt).toContain('Prefer `delegate_wave`')
-    expect(prompt).toContain('`delegate_to_subthread` only as the single-worker fallback')
+    expect(prompt).toContain('call `ultra_task` once')
+    expect(prompt).toContain('TaskWraith owns every staged worker and join')
+    expect(prompt).toContain('only when `ultra_task` is unavailable')
     expect(prompt).toContain('returned `waveIds` or `subThreadIds`')
     expect(prompt).toContain('does not widen native Pi file, shell, network, or generic MCP access')
   })
@@ -500,7 +505,7 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(unavailable).toContain('extension readiness timed out')
     expect(unavailable).toContain('Mesh Canvas tools were expected')
     expect(unavailable).toContain('UltraTask delegation tools were expected')
-    expect(unavailable).toContain('`delegate_wave` is unavailable')
+    expect(unavailable).toContain('`ultra_task` is unavailable')
     expect(unavailable).not.toContain('continuing read-only')
   })
 })

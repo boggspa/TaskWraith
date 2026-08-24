@@ -512,7 +512,7 @@ function exampleDelegationProvider(provider: ProviderId): ProviderId {
   return 'codex'
 }
 
-/** The four ULTRA-TASK enforcement lines, shared by the full runtime preamble
+/** The ULTRA-TASK enforcement lines, shared by the full runtime preamble
  * and the standalone note so their wording can never drift apart. */
 function buildUltraTaskLines(provider: ProviderId): string[] {
   if (provider === 'muse') {
@@ -524,14 +524,15 @@ function buildUltraTaskLines(provider: ProviderId): string[] {
     ]
   }
   const fanoutTool = taskWraithToolNameForProvider(provider, 'ensemble_fanout')
+  const ultraTaskTool = taskWraithToolNameForProvider(provider, 'ultra_task')
   const delegateWaveTool = taskWraithToolNameForProvider(provider, 'delegate_wave')
   const delegateTool = taskWraithToolNameForProvider(provider, 'delegate_to_subthread')
   const awaitTool = taskWraithToolNameForProvider(provider, 'ensemble_await')
   return [
     'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-    `Priority order: ${fanoutTool} (Ensemble only) > ${delegateWaveTool} (all chats) > ${delegateTool} (fallback).`,
-    'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
-    `After ANY delegation call, immediately invoke ${awaitTool} with the returned IDs to block and retain turn ownership.`
+    `In an Ensemble, call ${fanoutTool} and then ${awaitTool}. In a solo workspace chat, call ${ultraTaskTool} once with the current task; TaskWraith owns the scouts, worker, reviewer, synthesis, and every join.`,
+    `After ${ultraTaskTool} returns a workflow id, you may finish this provider turn without cancelling it. Only if ${ultraTaskTool} is unavailable, fall back to ${delegateWaveTool} or ${delegateTool} and immediately join those returned ids with ${awaitTool}.`,
+    'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.'
   ]
 }
 
@@ -1842,12 +1843,12 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // - per-turn: not subject to the runtime preamble's once-per-session
   //   suppression on resumed Claude/Codex/Gemini sessions;
   // - posture-independent: exact UltraTask selection is the user's consent to
-  //   delegation, including Ask/Plan and global chats;
+  //   delegation in a workspace, including Ask/Plan posture;
   // - provider-aware: Muse uses its native subagent_spawn/join route while
   //   broker-backed providers use the TaskWraith delegation tools;
   // - adjacent: recency at the moment the model chooses how to execute.
   // The runtime preamble itself no longer carries these lines (v11 -> v12).
-  if (isUltraTask) {
+  if (isUltraTask && !isGlobalRun) {
     const ultraTaskNote = buildUltraTaskStandaloneNote(provider)
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
     const markerIndex = contextualPrompt.lastIndexOf(currentRequestMarker)

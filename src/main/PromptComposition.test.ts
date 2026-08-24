@@ -821,7 +821,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(result.contextualPrompt).toContain('Priority order:')
+    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
     // The block must sit IMMEDIATELY before the current user request.
     expect(result.contextualPrompt).toMatch(
       /\[ULTRATASK CONTEXT END\]\n\nCurrent user request:\nDo a big refactor\./
@@ -850,13 +850,10 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(result.contextualPrompt).toContain('Priority order:')
+    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
   })
 
-  it.each([
-    { label: 'Ask/Plan posture', approvalMode: 'plan', isGlobalRun: false },
-    { label: 'global chat', approvalMode: 'default', isGlobalRun: true }
-  ])('keeps exact UltraTask enforcement active in $label', ({ approvalMode, isGlobalRun }) => {
+  it('keeps exact UltraTask enforcement active in Ask/Plan posture for a workspace', () => {
     const result = composeRunPrompt({
       instructionContext: null,
       provider: 'codex',
@@ -864,14 +861,33 @@ describe('composeRunPrompt sub-thread returns', () => {
       messages: [],
       chatContextTurns: 6,
       codexHandoffsApplied: [],
-      isGlobalRun,
-      approvalMode,
+      isGlobalRun: false,
+      approvalMode: 'plan',
       providerLabel: 'Codex',
       reasoningEffort: 'ultraTask'
     })
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
     expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
+  })
+
+  it('does not advertise a workspace-backed UltraTask graph in a global chat', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Run the independent review.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: true,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      reasoningEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).not.toContain('TaskWraith__ultra_task')
   })
 
   it.each(['ultra', 'ultracode', 'max'])(
