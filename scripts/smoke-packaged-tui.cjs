@@ -420,7 +420,9 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
   const launcher = resolvePackagedLauncher(packageRoot, packageTarget)
   const hostLauncher = resolvePackagedHostLauncher(resourcesDir, packageTarget)
   if (!launcher || !hostLauncher) fail('packaged TUI/production Host launcher is missing')
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-'))
+  const userDataPath = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-'))
+  )
   const museBinary = path.join(userDataPath, 'muse')
   const discoveryPath = path.join(userDataPath, 'taskwraith-host-v2.json')
   const tokenPath = path.join(userDataPath, 'taskwraith-host-v2.token')
@@ -453,13 +455,47 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
     assertOwnerOnlyFile(discoveryPath, 'control discovery')
     assertOwnerOnlyFile(tokenPath, 'control token')
   } finally {
-    if (!spawned.killed) spawned.kill('SIGTERM')
-    await waitForChildExit(spawned, 10_000)
-    if (fs.existsSync(discoveryPath) || fs.existsSync(tokenPath) || (discovery?.socketPath && fs.existsSync(discovery.socketPath)) || fs.existsSync(path.join(userDataPath, 'taskwraith-host-authority-v1.json'))) {
-      fail('direct packaged Host did not clean control artifacts/lease')
+    try {
+      const graceful = spawnPackagedLauncherSync(
+        hostLauncher,
+        ['stop', '--profile', userDataPath],
+        packageTarget,
+        {
+          cwd: resourcesDir,
+          encoding: 'utf8',
+          timeout: 10_000,
+          windowsHide: true,
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
+        }
+      )
+      if (
+        graceful.status !== 0 &&
+        spawned.exitCode === null &&
+        spawned.signalCode === null
+      ) {
+        spawned.kill('SIGTERM')
+      }
+      await waitForChildExit(spawned, 10_000)
+      if (graceful.status !== 0) {
+        fail(`packaged authenticated Host stop failed: ${graceful.stderr || graceful.status}`)
+      }
+      if (spawned.exitCode !== 0) {
+        fail(`direct packaged Host exited ${String(spawned.exitCode)} after graceful stop`)
+      }
+      if (
+        fs.existsSync(discoveryPath) ||
+        fs.existsSync(tokenPath) ||
+        (discovery?.socketPath && fs.existsSync(discovery.socketPath)) ||
+        fs.existsSync(path.join(userDataPath, 'taskwraith-host-authority-v1.json'))
+      ) {
+        fail('direct packaged Host did not clean control artifacts/lease')
+      }
+      if (!fs.existsSync(path.join(userDataPath, 'host-runtime', 'host-install-identity.json'))) {
+        fail('direct packaged Host did not retain identity')
+      }
+    } finally {
+      removeSmokeTree(userDataPath)
     }
-    if (!fs.existsSync(path.join(userDataPath, 'host-runtime', 'host-install-identity.json'))) fail('direct packaged Host did not retain identity')
-    removeSmokeTree(userDataPath)
   }
   console.log('packaged TUI live control smoke ok (direct production Host + packaged tw --no-start-host)')
 }

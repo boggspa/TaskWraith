@@ -26,6 +26,8 @@ describe('packaged TUI direct production Host launch', () => {
   })
 
   it('requires exact child shutdown and Host artifact cleanup while retaining identity', () => {
+    expect(source).toContain("['stop', '--profile', userDataPath]")
+    expect(source).toContain('packaged authenticated Host stop failed')
     expect(source).toContain("spawned.kill('SIGTERM')")
     expect(source).toContain('waitForChildExit(spawned, 10_000)')
     expect(source).toContain("'taskwraith-host-authority-v1.json'")

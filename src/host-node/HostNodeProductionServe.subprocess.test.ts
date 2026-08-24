@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
@@ -48,7 +56,7 @@ async function waitForAsync(
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-function stop(child: ChildProcess): Promise<void> {
+function waitForExit(child: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve()
     const timer = setTimeout(() => reject(new Error('production Host did not exit')), 10_000)
@@ -57,7 +65,6 @@ function stop(child: ChildProcess): Promise<void> {
       clearTimeout(timer)
       resolve()
     })
-    child.kill('SIGTERM')
   })
 }
 
@@ -255,7 +262,23 @@ describe('production Host CLI subprocess', () => {
     } finally {
       client?.close()
       reconnected?.close()
-      await stop(child)
+      const graceful = spawnSync(
+        process.execPath,
+        [cli, 'stop', '--profile', realpathSync(profile)],
+        {
+          env: { ...process.env, PATH: '' },
+          encoding: 'utf8',
+          timeout: 10_000
+        }
+      )
+      if (graceful.status === 0) {
+        await waitForExit(child)
+        expect(child.exitCode).toBe(0)
+      } else if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM')
+        await waitForExit(child)
+      }
+      expect(graceful.status, `${graceful.stdout || ''}${graceful.stderr || ''}`).toBe(0)
     }
     expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)
