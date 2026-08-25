@@ -6,6 +6,13 @@ const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 // worktrees. The Swift package is exercised by `swift test`; the live
 // Swift<->Node driver is opt-in via RUN_SWIFT_INTEROP.
 export default defineConfig({
+  // Align the test transform with the app's JSX runtime. tsconfig.web.json sets
+  // "jsx": "react-jsx" (automatic), but esbuild only honors a *nearest*
+  // tsconfig.json — it does not follow project references from the root
+  // solution file, so without this explicit setting .tsx tests are transformed
+  // with the classic runtime and any JSX evaluated without `import React`
+  // throws "ReferenceError: React is not defined".
+  esbuild: { jsx: 'automatic' },
   test: {
     // The Windows CI runner is materially slower than the other legs -- the same
     // suite takes ~505s there against ~150s elsewhere -- and tests that are
