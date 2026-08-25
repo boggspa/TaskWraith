@@ -33,6 +33,12 @@ import {
 } from '../../../shared/retiredProviders'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
+  PROVIDER_DIAGNOSTIC_PAYLOAD_TYPE,
+  formatProviderDiagnosticNotice,
+  isProviderDiagnosticLogLine,
+  readProviderDiagnosticNotice
+} from '../../../shared/providerDiagnosticNotice'
+import {
   extractDelegationAuditItems,
   providerDelegationChips,
   summarizeDelegationActivity
@@ -565,9 +571,7 @@ function DiffTab(props: InspectorProps) {
             effectiveWorkspacePath ? (path) => void openDiffFileInEditor(path) : undefined
           }
           onStageFile={effectiveWorkspacePath ? (path) => void stageDiffFile(path) : undefined}
-          onUnstageFile={
-            effectiveWorkspacePath ? (path) => void unstageDiffFile(path) : undefined
-          }
+          onUnstageFile={effectiveWorkspacePath ? (path) => void unstageDiffFile(path) : undefined}
         />
       </div>
     </div>
@@ -894,7 +898,8 @@ function DelegationTab(props: InspectorProps) {
           )
           .join('')
       : '<li>No delegated agent activity detected yet.</li>'
-    auditWindow.document.write(`<!doctype html><html><head><title>TaskWraith Agent Audit</title><style>
+    auditWindow.document
+      .write(`<!doctype html><html><head><title>TaskWraith Agent Audit</title><style>
       body{margin:0;padding:20px;background:#111;color:#eee;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
       h1{font-size:18px;margin:0 0 12px}
       .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
@@ -937,8 +942,8 @@ function DelegationTab(props: InspectorProps) {
             }}
           >
             Agent invocation activity is audited across the enabled participant providers. Native
-            provider events remain provider-owned; TaskWraith displays them beside durable sub-thread
-            activity in one inspector language.
+            provider events remain provider-owned; TaskWraith displays them beside durable
+            sub-thread activity in one inspector language.
           </p>
         )}
         {isEnsemble && (
@@ -2107,11 +2112,17 @@ function CapabilitiesTab(props: InspectorProps) {
         ))}
         <div className="safety-card">
           <h4>Sessions and review</h4>
-          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: '0 0 var(--space-sm) 0' }}>
+          <p
+            style={{
+              fontSize: 'var(--font-size-sm)',
+              color: 'var(--text-secondary)',
+              margin: '0 0 var(--space-sm) 0'
+            }}
+          >
             Native provider forks are unavailable on {label}. TaskWraith can still create an
             emulated fork that duplicates this chat transcript into an isolated sibling chat.
-            Rollback stays disabled until {label} exposes stable structured session IDs. Diff
-            Studio remains shared for file changes.
+            Rollback stays disabled until {label} exposes stable structured session IDs. Diff Studio
+            remains shared for file changes.
           </p>
           <PillButton
             variant="primary"
@@ -2646,6 +2657,122 @@ function EnsembleSafetyTab(props: InspectorProps) {
   )
 }
 
+/** Distinct notices shown before the card starts dropping the oldest. */
+const MAX_PROVIDER_DIAGNOSTIC_ROWS = 8
+
+/**
+ * Every provider diagnostic this chat can still account for, newest lane last.
+ *
+ * Two lanes, because neither one alone spans a chat's life:
+ *
+ *  - `rawLogs` carries the formatted line — from the live raw_event lane, or
+ *    from the run-event summary when the ring was rehydrated from history. It
+ *    is the only lane that survives a run sealing, but the Inspector's copy is
+ *    refreshed on chat selection rather than streamed, since raw-log
+ *    presentation (which materializes every deferred entry) is deliberately
+ *    gated to the Raw/Delegation tabs.
+ *  - the chat's own tool activities carry `parameters.message` — live and
+ *    current, but deleted at run-terminal by ChatToolDetailExternalization,
+ *    which moves them behind a `detailRef`.
+ *
+ * So the activity lane covers the live window the raw-log lane lags on, and the
+ * raw-log lane covers the history the activity lane has lost. They overlap in
+ * the middle, which costs nothing: both format through
+ * `formatProviderDiagnosticNotice`, so an overlapping notice is the same string
+ * and collapses. Counts are per-lane maxima rather than sums for that reason —
+ * one emission seen twice is still one emission.
+ */
+function collectProviderDiagnosticNotices(
+  rawLogs: InspectorProps['rawLogs'],
+  chat?: ChatRecord | null
+): Array<{ text: string; count: number }> {
+  const order: string[] = []
+  const best = new Map<string, number>()
+  const note = (text: string, laneCount: number) => {
+    const previous = best.get(text)
+    if (previous === undefined) order.push(text)
+    best.set(text, Math.max(previous ?? 0, laneCount))
+  }
+
+  const fromLogs = new Map<string, number>()
+  for (const entry of rawLogs || []) {
+    // Read `content` directly — a deferred entry is an unmaterialized provider
+    // payload with an empty content field, and materializing the whole ring to
+    // look for a prefix is exactly the cost the deferral exists to avoid.
+    const text = typeof entry?.content === 'string' ? entry.content.trim() : ''
+    if (!isProviderDiagnosticLogLine(text)) continue
+    fromLogs.set(text, (fromLogs.get(text) ?? 0) + 1)
+  }
+  for (const [text, count] of fromLogs) note(text, count)
+
+  const fromActivities = new Map<string, number>()
+  for (const message of chat?.messages || []) {
+    for (const activity of message.toolActivities || []) {
+      if (activity.toolName !== PROVIDER_DIAGNOSTIC_PAYLOAD_TYPE) continue
+      const notice = readProviderDiagnosticNotice({
+        ...(activity.parameters || {}),
+        type: PROVIDER_DIAGNOSTIC_PAYLOAD_TYPE
+      })
+      if (!notice) continue
+      const text = formatProviderDiagnosticNotice(notice)
+      fromActivities.set(text, (fromActivities.get(text) ?? 0) + 1)
+    }
+  }
+  for (const [text, count] of fromActivities) note(text, count)
+
+  return order.map((text) => ({ text, count: best.get(text) ?? 1 }))
+}
+
+/**
+ * TaskWraith's own provider notices for this chat.
+ *
+ * `sendAgentCompatLine` emits them as `provider_diagnostic` payloads — Kimi
+ * runtime admission, the Kimi/Pi compatibility filter. The transcript card they
+ * used to get was hidden in `d53ef81f`, because it rendered as a meaningless
+ * "Used Provider Diagnostic" row with the emitting check sitting in the card's
+ * file-path slot, in path-blue, where it read as a local file the provider had
+ * gone and read. The message itself still matters — "Kimi is running under the
+ * explicit unattested-development bypass" is exactly the sort of thing you want
+ * to be able to find later — so it lands here instead of nowhere.
+ */
+function ProviderDiagnosticsCard({
+  rawLogs,
+  chat
+}: {
+  rawLogs: InspectorProps['rawLogs']
+  chat?: ChatRecord | null
+}) {
+  const notices = collectProviderDiagnosticNotices(rawLogs, chat)
+  if (notices.length === 0) return null
+  return (
+    <div className="safety-card">
+      <h4>Provider diagnostics</h4>
+      <p
+        style={{
+          fontSize: 'var(--font-size-sm)',
+          color: 'var(--text-secondary)',
+          margin: '0 0 var(--space-md) 0'
+        }}
+      >
+        Checks TaskWraith ran itself before or during this chat's runs. These are not provider
+        output, and the bracketed label is the check that emitted the line — never a file.
+      </p>
+      {notices.slice(-MAX_PROVIDER_DIAGNOSTIC_ROWS).map((notice) => (
+        <div
+          key={notice.text}
+          className="safety-row"
+          style={{ alignItems: 'flex-start', gap: 'var(--space-sm)' }}
+        >
+          <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice.text}</span>
+          {notice.count > 1 && (
+            <span style={{ flex: '0 0 auto', color: 'var(--text-tertiary)' }}>{notice.count}×</span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function SafetyTab(props: InspectorProps) {
   const {
     provider,
@@ -2674,6 +2801,7 @@ function SafetyTab(props: InspectorProps) {
       approvalMode === 'auto_edit' || approvalMode === 'plan' ? 'never' : 'on-request'
     return (
       <div className="safety-panel">
+        <ProviderDiagnosticsCard rawLogs={props.rawLogs} chat={props.currentChat} />
         <div className="safety-card">
           <h4>Codex safety</h4>
           <p
@@ -2772,8 +2900,8 @@ function SafetyTab(props: InspectorProps) {
             }}
           >
             TaskWraith reads quota data from its private Codex home after sign-in. An explicitly
-            imported session is encrypted with Electron safeStorage when available and powers
-            meters only; it does not authenticate TaskWraith Codex runs.
+            imported session is encrypted with Electron safeStorage when available and powers meters
+            only; it does not authenticate TaskWraith Codex runs.
           </p>
           {codexStatus?.codexUsage?.error && (
             <p
@@ -2855,6 +2983,7 @@ function SafetyTab(props: InspectorProps) {
             : 'TaskWraith gateway approvals'
     return (
       <div className="safety-panel">
+        <ProviderDiagnosticsCard rawLogs={props.rawLogs} chat={props.currentChat} />
         <div className="safety-card">
           <h4>{label} safety</h4>
           <p
@@ -2941,6 +3070,7 @@ function SafetyTab(props: InspectorProps) {
 
   return (
     <div className="safety-panel">
+      <ProviderDiagnosticsCard rawLogs={props.rawLogs} chat={props.currentChat} />
       <div className="safety-card">
         <h4>Workspace Trust</h4>
         <p

@@ -25,6 +25,23 @@ describe('provider dispatch integration', () => {
   // this scan green and the app un-launchable. Its spread list was also a frozen
   // four names, so it never grew with the roster it claimed to cover.
 
+  it('spells a provider diagnostic into the durable run-event summary', () => {
+    // The compat payload itself is dropped unless storeRawEvents is on, and the
+    // transcript card for these notices is hidden, so the summary is the only
+    // field that durably carries the message. A bare `Provider output:
+    // provider_diagnostic` summary loses it outright.
+    const compat = sourceBetween('function sendAgentCompatLine(', 'function sendAgentCompatError(')
+    const noticeAt = compat.indexOf('readProviderDiagnosticNotice(payload)')
+    const appendAt = compat.indexOf('appendDurableRunEventForRoute(')
+    const formatAt = compat.indexOf('formatProviderDiagnosticNotice(diagnosticNotice)')
+    const fallbackAt = compat.indexOf('`Provider output${')
+
+    expect(noticeAt).toBeGreaterThanOrEqual(0)
+    expect(noticeAt).toBeLessThan(appendAt)
+    expect(formatAt).toBeGreaterThan(appendAt)
+    expect(fallbackAt).toBeGreaterThan(formatAt)
+  })
+
   it('drains display-only side channels before flushing terminal assistant text', () => {
     const runner = sourceBetween(
       'async function runCliProviderProcess(',

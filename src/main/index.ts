@@ -132,6 +132,10 @@ import {
 } from './kimi/KimiProductionContainment'
 import { isKimiAcpProductionPosture } from '../shared/kimiAcpPosture'
 import {
+  formatProviderDiagnosticNotice,
+  readProviderDiagnosticNotice
+} from '../shared/providerDiagnosticNotice'
+import {
   appendAgentQuestionMarker,
   appendAgentQuestionReply
 } from '../shared/agentQuestionTranscript'
@@ -26564,6 +26568,12 @@ function sendAgentCompatLine(
     durableKind !== 'provider_raw' ||
     !transcriptVisible ||
     shouldPersistCompatProviderRawEvent(payload, AppStore.getSettings().storeRawEvents === true)
+  // TaskWraith's own pre-launch findings (Kimi runtime admission, the Kimi/Pi
+  // compatibility filter) carry their whole meaning in `message`. The raw
+  // payload is dropped unless `storeRawEvents` is on, and the transcript card
+  // that used to show them is hidden, so the summary is the only field that
+  // durably survives — spell the notice into it rather than the bare type.
+  const diagnosticNotice = readProviderDiagnosticNotice(payload)
   if (shouldPersistProviderOutput) {
     appendDurableRunEventForRoute(
       provider,
@@ -26574,7 +26584,9 @@ function sendAgentCompatLine(
         ? 'Ollama thinking trace'
         : payload?.type === 'compaction_event' && payload?.compaction?.telemetry
           ? formatContextCompactionSummary(payload.compaction)
-          : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
+          : diagnosticNotice
+            ? formatProviderDiagnosticNotice(diagnosticNotice)
+            : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
       payload,
       'provider'
     )

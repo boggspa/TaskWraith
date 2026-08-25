@@ -5,6 +5,7 @@ import { buildDelegationTree } from '../lib/DelegationTree'
 import type { ChatRecord, ProviderCapabilityContract, ProviderId } from '../../../main/store/types'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import { Inspector, inferProviderFromRawLogContent } from './Inspector'
+import { formatProviderDiagnosticNotice } from '../../../shared/providerDiagnosticNotice'
 
 function makeChat(overrides: Partial<ChatRecord> & Pick<ChatRecord, 'appChatId'>): ChatRecord {
   const { appChatId, ...rest } = overrides
@@ -357,6 +358,147 @@ describe('Inspector capabilities', () => {
       expect(html).toContain('unattested-development')
       expect(html).not.toContain('reviewed tuple')
     }
+  })
+
+  it('surfaces provider diagnostic notices in the Safety tab for every provider branch', () => {
+    // d53ef81f hid the synthetic "Used Provider Diagnostic" transcript card.
+    // The message it carried must stay readable somewhere the user can reach.
+    const notice = formatProviderDiagnosticNotice({
+      provider: 'kimi',
+      source: 'kimi-runtime-admission',
+      message:
+        'Kimi is running under the explicit unattested-development bypass; this is not credentialed live-canary evidence.'
+    })
+    for (const provider of ['kimi', 'codex', 'pi'] as ProviderId[]) {
+      const html = renderInspector({
+        rightTab: 'safety',
+        provider,
+        currentChat: makeChat({ appChatId: `solo-${provider}`, provider }),
+        providerCapabilities: makeCapabilityContract(provider),
+        rawLogs: [
+          { type: 'stdout', content: 'ordinary provider chatter' },
+          { type: 'info', content: notice }
+        ]
+      })
+      expect(html).toContain('Provider diagnostics')
+      expect(html).toContain('unattested-development bypass')
+      expect(html).toContain('kimi-runtime-admission')
+    }
+  })
+
+  it('collapses a diagnostic repeated once per launch into a single counted row', () => {
+    const notice = formatProviderDiagnosticNotice({
+      provider: 'kimi',
+      source: 'kimi-runtime-admission',
+      message: 'repeated every launch'
+    })
+    const html = renderInspector({
+      rightTab: 'safety',
+      provider: 'kimi',
+      currentChat: makeChat({ appChatId: 'solo-kimi', provider: 'kimi' }),
+      providerCapabilities: makeCapabilityContract('kimi'),
+      rawLogs: [
+        { type: 'info', content: notice },
+        { type: 'info', content: notice },
+        { type: 'info', content: notice }
+      ]
+    })
+    expect(html.match(/repeated every launch/g)?.length).toBe(1)
+    expect(html).toContain('3\u00d7')
+  })
+
+  it('reads the live activity lane, which covers the window raw logs lag on', () => {
+    // Raw-log presentation is gated to the Raw/Delegation tabs, so a notice
+    // emitted while the user sits on Safety during a run reaches the Inspector
+    // only through the tool activity — whose `parameters` survive exactly until
+    // the run seals and ChatToolDetailExternalization moves them to a detailRef.
+    const html = renderInspector({
+      rightTab: 'safety',
+      provider: 'kimi',
+      rawLogs: [],
+      currentChat: makeChat({
+        appChatId: 'solo-kimi',
+        provider: 'kimi',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            timestamp: '2026-08-25T00:00:00.000Z',
+            toolActivities: [
+              {
+                id: 'a1',
+                toolName: 'provider_diagnostic',
+                displayName: 'Used Provider Diagnostic',
+                category: 'unknown',
+                status: 'success',
+                parameters: {
+                  provider: 'kimi',
+                  source: 'kimi-runtime-admission',
+                  message: 'live lane message'
+                }
+              }
+            ]
+          }
+        ]
+      } as Parameters<typeof makeChat>[0])
+    })
+    expect(html).toContain('Provider diagnostics')
+    expect(html).toContain('live lane message')
+    expect(html).toContain('kimi-runtime-admission')
+  })
+
+  it('counts one emission once when both lanes carry it', () => {
+    const notice = formatProviderDiagnosticNotice({
+      provider: 'kimi',
+      source: 'kimi-runtime-admission',
+      message: 'seen by both lanes'
+    })
+    const html = renderInspector({
+      rightTab: 'safety',
+      provider: 'kimi',
+      rawLogs: [{ type: 'info', content: notice }],
+      currentChat: makeChat({
+        appChatId: 'solo-kimi',
+        provider: 'kimi',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            timestamp: '2026-08-25T00:00:00.000Z',
+            toolActivities: [
+              {
+                id: 'a1',
+                toolName: 'provider_diagnostic',
+                displayName: 'Used Provider Diagnostic',
+                category: 'unknown',
+                status: 'success',
+                parameters: {
+                  provider: 'kimi',
+                  source: 'kimi-runtime-admission',
+                  message: 'seen by both lanes'
+                }
+              }
+            ]
+          }
+        ]
+      } as Parameters<typeof makeChat>[0])
+    })
+    expect(html.match(/seen by both lanes/g)?.length).toBe(1)
+    // Per-lane maxima, not a sum: one emission observed twice is still one.
+    expect(html).not.toContain('2\u00d7')
+  })
+
+  it('renders no diagnostics card when the chat produced none', () => {
+    const html = renderInspector({
+      rightTab: 'safety',
+      provider: 'kimi',
+      currentChat: makeChat({ appChatId: 'solo-kimi', provider: 'kimi' }),
+      providerCapabilities: makeCapabilityContract('kimi'),
+      rawLogs: [{ type: 'stdout', content: 'ordinary provider chatter' }]
+    })
+    expect(html).not.toContain('Provider diagnostics')
   })
 
   it('keeps the Gemini panel for historical gemini chats', () => {

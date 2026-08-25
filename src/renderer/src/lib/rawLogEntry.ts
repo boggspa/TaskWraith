@@ -1,6 +1,7 @@
 import type { RunEventRecord } from '../../../main/store/types'
 import { redactLog } from './ErrorClassifier'
 import { rawLogPayloadForStringify } from './rawLogPayload'
+import { isProviderDiagnosticLogLine } from '../../../shared/providerDiagnosticNotice'
 
 export type RawLogEntry = {
   type: 'stdout' | 'stderr' | 'tool' | 'info'
@@ -67,7 +68,16 @@ export const rawLogFromRunEvent = (event: RunEventRecord): RawLogEntry | null =>
   if (event.kind === 'provider_error')
     return { type: 'stderr', content: redactLog(payloadText), ...metadata }
   if (event.kind === 'provider_raw')
-    return { type: 'stdout', content: redactLog(payloadText), ...metadata }
+    return {
+      // A rehydrated ring falls back to the event summary, which for one of
+      // TaskWraith's own provider notices IS the notice (main formats it there
+      // because the raw payload is dropped unless storeRawEvents is on). Bucket
+      // it as `info` so it matches the eager line the live lane appends rather
+      // than masquerading as provider stdout.
+      type: isProviderDiagnosticLogLine(payloadText) ? 'info' : 'stdout',
+      content: redactLog(payloadText),
+      ...metadata
+    }
   if (event.kind === 'tool') return { type: 'tool', content: redactLog(payloadText), ...metadata }
   if (
     event.kind === 'approval_request' ||

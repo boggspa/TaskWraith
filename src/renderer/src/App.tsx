@@ -407,6 +407,10 @@ import {
 } from './lib/queuedMessageRows'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
+import {
+  formatProviderDiagnosticNotice,
+  readProviderDiagnosticNotice
+} from '../../shared/providerDiagnosticNotice'
 import { resolveChatApprovalMode } from './lib/chatComposerSelection'
 import { decideFirstSendWorkspaceConsent } from './lib/approvalElevation'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
@@ -15121,6 +15125,19 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'raw_event') {
+          // TaskWraith's own provider notices (Kimi runtime admission, the
+          // Kimi/Pi compatibility filter) no longer get a transcript card, and
+          // the deferred entry below is an unreadable JSON dump until something
+          // materializes it. Emit an eager, prefixed line so the Inspector has
+          // one shape to find — byte-identical to the run-event summary main
+          // persists for the same payload, so a rehydrated ring reads the same.
+          const diagnosticNotice = readProviderDiagnosticNotice(event.data)
+          if (diagnosticNotice) {
+            appendThreadRawLog(runChatId, {
+              type: 'info',
+              content: formatProviderDiagnosticNotice(diagnosticNotice)
+            })
+          }
           // Keep the parsed payload unformatted in the bounded ring. Recursive
           // truncation, pretty-printing and redaction happen only when a
           // visible Raw Events/terminal consumer asks for this entry.
