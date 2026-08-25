@@ -1082,7 +1082,7 @@ Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral 
 
 ## ultra_task
 
-Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns 2–6 scout stages, their all-join, the worker artifact, independent review, synthesis, and final output. The initiating provider may finish after receiving the workflow id; it must not call `ensemble_await` for this graph. `cli-default`, `default`, and `custom` model sentinels are refused and the failure returns concrete model choices. `maxWorkers` is the legacy public name for the requested scout-stage count (2–64, clamped to 6; default 3). The staged V1 graph requires `enableFanout` and `enableReview` to remain true.
+Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns 2-6 scout stages, their all-join, the worker artifact, independent review, synthesis, and final output. The initiating provider may finish after receiving the workflow id; cli-default/default/custom models are refused.
 
 - Access: governed by your run permission role
 - Required args: task
