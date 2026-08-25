@@ -77,7 +77,7 @@ function makeClientHello(
 }
 
 function makeRequest(
-  kind: HostLocalTransportClientFrame extends { type: 'request'; kind: infer K } ? K : never,
+  kind: Extract<HostLocalTransportClientFrame, { type: 'request' }>['kind'],
   id: string,
   params?: Record<string, unknown>
 ): HostLocalTransportClientFrame {
@@ -633,7 +633,7 @@ describe('HostLocalServer', () => {
         JSON.stringify(
           makeClientHello(
             readFileSync(server.tokenPath, 'utf8').trim(),
-            capabilities as HostCapability[],
+            [...capabilities],
             { clientId, clientClass, clientVersion: '1.0.0' }
           )
         )
