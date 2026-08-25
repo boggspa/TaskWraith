@@ -241,7 +241,13 @@ describe('ComposerService', () => {
 
     expect(payload.prompt).not.toContain('Secret prior-thread instruction.')
     expect(payload.ollamaRunProfile).toBeUndefined()
-    expect(payload.composer.providerMetadataPatch).toBeUndefined()
+    // Execution-graph isolation drops root-chat memory and run-profile
+    // inheritance, but the runtime preamble stamp is session bookkeeping,
+    // not memory: a stale chat-supplied version is still refreshed.
+    expect(payload.composer.providerMetadataPatch).toEqual({
+      taskWraithRuntimePreambleProvider: 'ollama',
+      taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION
+    })
   })
 
   it('composes a main-owned Channel agent turn with exact posture and no chat inheritance', async () => {
@@ -711,6 +717,11 @@ describe('ComposerService', () => {
   })
 
   it('keeps exact UltraTask consent and enforcement in a global chat', async () => {
+    // v11 -> v12: the ULTRA-TASK enforcement note is posture- and
+    // scope-aware — it ships per-turn into WORKSPACE chats immediately
+    // before the current request, but global chats keep only the consent
+    // side effect (subThreadDelegationAutoAllowSource) and the runtime
+    // preamble's delegation guidance.
     const payload = await compose(
       {
         provider: 'codex',
@@ -723,8 +734,7 @@ describe('ComposerService', () => {
     )
 
     expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
-    expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(payload.prompt).toContain('TaskWraith__delegate_wave')
+    expect(payload.prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
   })
 
   it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', async () => {
@@ -980,7 +990,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
@@ -1154,7 +1164,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     // Recall guidance — observed bug: Codex spawning a fresh sub-thread
     // on every status check, getting "first turn, no prior actions"
     // back from sub-agents with legitimately no history.
@@ -1383,6 +1393,9 @@ describe('ComposerService', () => {
   })
 
   it('injects active goals using the provider that will handle the next run', async () => {
+    // 7be1d4493 replaced the <taskwraith_active_goal> prompt block with the
+    // canonical work contract: a native-mode goal is referenced, never
+    // duplicated, and no "Provider mode:" line is composed anymore.
     const payload = await compose(
       {
         provider: 'ollama',
@@ -1399,8 +1412,21 @@ describe('ComposerService', () => {
       {}
     )
 
-    expect(payload.prompt).toContain('Provider mode: Ollama managed')
-    expect(payload.prompt).not.toContain('Provider mode: Native Codex goal')
+    // An Ollama run rewrites the codex-native goal into Ollama-managed state
+    // (resolveActiveGoalForProvider) and carries it as structured run state —
+    // the goal is never duplicated as prompt prose, and no "Provider mode:"
+    // steering line is composed anymore.
+    expect(payload.activeGoal).toEqual({
+      id: 'goal-1',
+      objective: 'Keep the portable goal mode honest',
+      status: 'active',
+      mode: 'ollama_harness',
+      provider: 'ollama',
+      createdAt: '2026-06-13T12:00:00Z',
+      updatedAt: '2026-06-13T12:00:00Z'
+    })
+    expect(payload.prompt).not.toContain('Provider mode:')
+    expect(payload.prompt).not.toContain('provider-native Goal state (codex_native)')
   })
 
   it('carries Grok native goals as structured run state without prompt steering', async () => {
@@ -1510,7 +1536,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'codex'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
