@@ -62,6 +62,8 @@ export interface NormalizedPiRunEvent {
   text?: string
   sessionId?: string
   model?: string
+  /** Display label for the model, distinct from the wire/model id. */
+  modelLabel?: string
   /** Terminal status on a 'result' event ('success' or a failure reason). */
   status?: string
   /** Summed token usage across every turn_end, on the terminal 'result'. */
@@ -316,7 +318,7 @@ export class PiRpcTurnReducer {
       ...(this.sawUsage ? { usage: { ...this.usageTotals } } : {}),
       ...(this.lastUsage ? { lastUsage: { ...this.lastUsage } } : {}),
       ...(this.sessionId ? { sessionId: this.sessionId } : {}),
-      ...(this.modelLabel ? { model: this.modelLabel } : {}),
+      ...(this.modelLabel ? { modelLabel: this.modelLabel } : {}),
       raw
     }
   }

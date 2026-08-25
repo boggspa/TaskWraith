@@ -359,7 +359,8 @@ describe('PiRpcTurnReducer', () => {
       })
     )
     const settled = reducer.ingest(jsonLine({ type: 'agent_settled' }))
-    expect(settled[0]).toMatchObject({ sessionId: 'sess-9', model: 'DeepSeek V4 Pro' })
+    expect(settled[0]).toMatchObject({ sessionId: 'sess-9', modelLabel: 'DeepSeek V4 Pro' })
+    expect(settled[0]).not.toHaveProperty('model')
   })
 
   it('treats a rejected prompt command as a terminal failure', () => {

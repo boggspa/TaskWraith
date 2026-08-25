@@ -31,6 +31,26 @@ describe('BridgeTranscriptActivity', () => {
     })
   })
 
+  it('treats a Pi terminal label as modelLabel without clobbering the wire model id', () => {
+    const metadata = bridgeModelMetadataFromEvent({
+      type: 'result',
+      status: 'success',
+      modelLabel: 'DeepSeek V4 Pro'
+    })
+
+    expect(metadata).toEqual({ modelLabel: 'DeepSeek V4 Pro' })
+    expect(
+      bridgeAssistantMessageMetadata({
+        provider: 'pi',
+        actualModel: metadata.model,
+        modelLabel: metadata.modelLabel
+      })
+    ).toEqual({
+      assistantProvider: 'pi',
+      providerModelLabel: 'DeepSeek V4 Pro'
+    })
+  })
+
   it('stamps non-Ollama bridge assistant provider and model metadata too', () => {
     expect(
       bridgeAssistantMessageMetadata({
