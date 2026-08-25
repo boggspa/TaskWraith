@@ -20,7 +20,10 @@ import {
 } from '../shared/hostProtocol'
 import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
-import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
+import {
+  defaultTaskWraithUserDataPath,
+  taskWraithControlSocketPath
+} from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
   TaskWraithControlParticipant,
@@ -483,7 +486,9 @@ export class TaskWraithTui {
 
   private revivePending(): boolean {
     const threshold = this.options.reviveFailureThreshold ?? HOST_REVIVE_FAILURE_THRESHOLD
-    return this.everConnected && Boolean(this.options.reviveHost) && this.reconnectAttempts >= threshold
+    return (
+      this.everConnected && Boolean(this.options.reviveHost) && this.reconnectAttempts >= threshold
+    )
   }
 
   private scheduleReconnect(): void {
@@ -632,15 +637,18 @@ export class TaskWraithTui {
       }
       return
     }
-    const page = await this.client.getThreadHistory({ threadId, limit: 50, ...(before ? { before } : {}) })
+    const page = await this.client.getThreadHistory({
+      threadId,
+      limit: 50,
+      ...(before ? { before } : {})
+    })
     if (page.threadId !== threadId) throw new Error('Host returned history for a different thread.')
     if (this.state.selectedThreadId !== threadId) return
     const pageRows = mapHostHistoryEntriesToTranscriptRows(page.entries)
     const current = this.state.history
-    const currentRows = current?.threadId === threadId && !current.previewOnly ? this.state.thread?.rows ?? [] : []
-    const rows = before
-      ? mergeTranscriptRows(pageRows, currentRows)
-      : pageRows
+    const currentRows =
+      current?.threadId === threadId && !current.previewOnly ? (this.state.thread?.rows ?? []) : []
+    const rows = before ? mergeTranscriptRows(pageRows, currentRows) : pageRows
     if (this.state.thread) this.state.thread = { ...this.state.thread, rows }
     this.state.history = {
       threadId,
@@ -695,7 +703,10 @@ export class TaskWraithTui {
     if (!this.state.thread || this.state.selectedThreadId !== threadId) return
     let rows = [...this.state.thread.rows]
     for (const delta of result.deltas) {
-      const id = delta.kind === 'remove' ? `host-history:${delta.entryId}` : `host-history:${delta.entry.entryId}`
+      const id =
+        delta.kind === 'remove'
+          ? `host-history:${delta.entryId}`
+          : `host-history:${delta.entry.entryId}`
       if (delta.kind === 'remove') {
         rows = rows.filter((row) => row.id !== id)
         continue
@@ -751,7 +762,11 @@ export class TaskWraithTui {
       this.stop()
       return
     }
-    if (this.state.coldStart && this.state.coldStart.kind !== 'ready' && this.state.overlay !== 'setup') {
+    if (
+      this.state.coldStart &&
+      this.state.coldStart.kind !== 'ready' &&
+      this.state.overlay !== 'setup'
+    ) {
       this.state.overlay = 'setup'
       void this.handleColdStartKey(input, key).catch((error) => {
         this.setNotice(
@@ -871,14 +886,14 @@ export class TaskWraithTui {
       const history = this.state.history
       const transcriptRows = this.state.thread?.rows.length ?? 0
       const transcriptViewportRows = Math.max(1, this.options.output.rows - 3)
-      const atTop =
-        this.state.scrollOffset >= Math.max(0, transcriptRows - transcriptViewportRows)
+      const atTop = this.state.scrollOffset >= Math.max(0, transcriptRows - transcriptViewportRows)
       if (history?.nextBefore && !history.loadingOlder && atTop) {
         this.state.history = { ...history, loadingOlder: true }
         void this.loadThreadHistory(history.threadId, history.nextBefore)
           .catch((error) => this.surfaceProjectionSyncError(error))
           .finally(() => {
-            if (this.state.history) this.state.history = { ...this.state.history, loadingOlder: false }
+            if (this.state.history)
+              this.state.history = { ...this.state.history, loadingOlder: false }
             this.render()
           })
       }
@@ -1030,7 +1045,8 @@ export class TaskWraithTui {
       const posture = cold.offers.postures.filter((candidate) => candidate.available)[
         this.state.coldStartPostureIndex ?? 0
       ]
-      if (posture?.requiresExplicitConsent) this.state.coldStart = acknowledgeColdStartPosture(cold, posture.postureId)
+      if (posture?.requiresExplicitConsent)
+        this.state.coldStart = acknowledgeColdStartPosture(cold, posture.postureId)
       this.render()
       return
     }
@@ -1051,7 +1067,8 @@ export class TaskWraithTui {
       this.state.coldStartProviderChoices = undefined
       this.state.coldStartProviderIndex = 0
       if (status.status === 'auth_required') {
-        if (!this.client.supports('provider-auth')) throw new Error('Provider auth capability is unavailable.')
+        if (!this.client.supports('provider-auth'))
+          throw new Error('Provider auth capability is unavailable.')
         const auth = await this.client.getProviderAuthStatus(status.providerId)
         this.state.coldStart =
           auth.state === 'authenticated'
@@ -1063,7 +1080,10 @@ export class TaskWraithTui {
               )
         this.state.coldStartAuthFlowIndex = 0
       } else {
-        this.state.coldStart = coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
+        this.state.coldStart = coldStartOffers(
+          provider,
+          await this.client.getProviderOffers(status.providerId)
+        )
       }
       this.resetColdStartConfigureIndices()
     } else if (cold.kind === 'auth') {
@@ -1074,12 +1094,24 @@ export class TaskWraithTui {
       }
       const flow = cold.flows[this.state.coldStartAuthFlowIndex ?? 0]
       if (!flow) throw new Error('No provider auth flow is currently available.')
-      const command = buildProviderAuthBeginCommand({ actor, providerId: cold.providerId, flowId: flow.flowId })
-      this.state.coldStart = beginColdStartProviderAuth(cold, flow.flowId, this.pendingFrom(command))
+      const command = buildProviderAuthBeginCommand({
+        actor,
+        providerId: cold.providerId,
+        flowId: flow.flowId
+      })
+      this.state.coldStart = beginColdStartProviderAuth(
+        cold,
+        flow.flowId,
+        this.pendingFrom(command)
+      )
       await this.runColdStartCommand(command, { preserveColdPending: true })
     } else if (cold.kind === 'offers') {
       await this.runColdStartCommand(
-        buildThreadCreateCommand({ actor, scope: cold.workspaceId ? 'workspace' : 'global', workspaceId: cold.workspaceId })
+        buildThreadCreateCommand({
+          actor,
+          scope: cold.workspaceId ? 'workspace' : 'global',
+          workspaceId: cold.workspaceId
+        })
       )
     } else if (cold.kind === 'thread') {
       this.state.coldStart = coldStartConfigure(cold)
@@ -1091,7 +1123,8 @@ export class TaskWraithTui {
         this.state.coldStartPostureIndex ?? 0
       ]
       if (!model || !posture) throw new Error('Host offers contain no available configuration.')
-      const consented = !posture.requiresExplicitConsent || cold.acknowledgedPostureIds.includes(posture.postureId)
+      const consented =
+        !posture.requiresExplicitConsent || cold.acknowledgedPostureIds.includes(posture.postureId)
       const selection = selectColdStartConfiguration(cold, {
         providerId: cold.providerId,
         modelId: model.modelId,
@@ -1110,7 +1143,9 @@ export class TaskWraithTui {
       })
       this.state.coldStart = selection
       if (selection.kind !== 'configure' || !selection.selection) return
-      await this.runColdStartCommand(buildThreadConfigureCommand({ actor, selection: selection.selection }))
+      await this.runColdStartCommand(
+        buildThreadConfigureCommand({ actor, selection: selection.selection })
+      )
     }
     this.render()
   }
@@ -1129,14 +1164,17 @@ export class TaskWraithTui {
     options: { preserveColdPending?: boolean } = {}
   ): Promise<void> {
     if (!this.state.coldStart) return
-    if (!options.preserveColdPending) this.state.coldStart = coldStartPending(this.state.coldStart, this.pendingFrom(command))
+    if (!options.preserveColdPending)
+      this.state.coldStart = coldStartPending(this.state.coldStart, this.pendingFrom(command))
     await this.runHostMutation(command, {
       onTerminalReceipt: (receipt) => {
-        if (this.state.coldStart) this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+        if (this.state.coldStart)
+          this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
       },
       onSucceeded: async () => {
         const cold = this.state.coldStart
-        if (cold?.kind === 'workspace') this.setNotice('Workspace registered · choose provider', 'good')
+        if (cold?.kind === 'workspace')
+          this.setNotice('Workspace registered · choose provider', 'good')
         if (cold?.kind === 'thread') this.setNotice('Thread created · configure it', 'good')
         if (cold?.kind === 'auth' && cold.operationId) await this.pollColdStartAuth(cold.providerId)
         if (cold?.kind === 'ready') {
@@ -1151,7 +1189,8 @@ export class TaskWraithTui {
   }
 
   private async refreshColdStartAuth(providerId: string): Promise<void> {
-    if (!this.client?.connected || !this.state.coldStart || this.state.coldStart.kind !== 'auth') return
+    if (!this.client?.connected || !this.state.coldStart || this.state.coldStart.kind !== 'auth')
+      return
     const status = await this.client.getProviderAuthStatus(providerId)
     if (status.state !== 'authenticated') {
       this.setNotice(
@@ -1182,7 +1221,11 @@ export class TaskWraithTui {
       })
     }
     if (this.state.coldStart?.kind === 'auth') {
-      this.setNotice('Authentication is still pending · press Enter to refresh when complete.', 'warning', 4_000)
+      this.setNotice(
+        'Authentication is still pending · press Enter to refresh when complete.',
+        'warning',
+        4_000
+      )
     }
   }
 
@@ -1196,7 +1239,8 @@ export class TaskWraithTui {
     const pending = this.state.coldStart?.pending
     if (!pending || !this.client?.connected) return
     const receipt = await this.client.lookupReceipt({ commandId: pending.commandId })
-    if (this.state.coldStart) this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+    if (this.state.coldStart)
+      this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
     if (this.state.coldStart?.kind === 'auth' && this.state.coldStart.operationId) {
       await this.refreshColdStartAuth(this.state.coldStart.providerId)
     }
@@ -1593,7 +1637,8 @@ export class TaskWraithTui {
   }
 
   private async runCommand(raw: string): Promise<void> {
-    const command = raw.trim().toLowerCase()
+    const [name = '', ...arguments_] = raw.trim().slice(1).split(/\s+/)
+    const command = `/${name.toLowerCase()}`
     if (command === '/quit' || command === '/q') {
       this.stop()
       return
@@ -1622,11 +1667,193 @@ export class TaskWraithTui {
       await this.cancelRun()
       return
     }
-    if (command === '/model' || command === '/seats' || command === '/tune') {
+    if (command === '/clear') {
+      this.state.scrollOffset = 0
+      this.setNotice('Scrollback reset for this TUI session.', 'neutral', 2_000)
+      this.render()
+      return
+    }
+    if (command === '/status') {
+      this.showStatus()
+      return
+    }
+    if (command === '/new') {
+      await this.createSoloThread()
+      return
+    }
+    if (command === '/model' || command === '/m') {
+      if (!arguments_.length) {
+        this.toggleTuneOverlay()
+        return
+      }
+      if (arguments_.length !== 1) {
+        this.setNotice('/model expects one offered model id.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.stageModel(arguments_[0])
+      return
+    }
+    if (command === '/think' || command === '/reasoning') {
+      if (arguments_.length > 1) {
+        this.setNotice(
+          `/think expects one offered level, not "${arguments_.join(' ')}".`,
+          'warning',
+          3_000
+        )
+        this.render()
+        return
+      }
+      await this.stageReasoning(arguments_[0])
+      return
+    }
+    if (command === '/seats' || command === '/tune') {
       this.toggleTuneOverlay()
       return
     }
     this.setNotice(`Unknown command: ${raw}`, 'warning', 3_000)
+    this.render()
+  }
+
+  private async commandOffers(): Promise<TaskWraithControlThreadOffers | undefined> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) {
+      this.setNotice('Open a thread before choosing a model or reasoning level.', 'warning', 3_000)
+      this.render()
+      return undefined
+    }
+    await this.loadOffers()
+    const offers = this.state.offers
+    if (!offers || offers.threadId !== threadId) return undefined
+    if (offers.locked) {
+      this.setNotice(offers.locked, 'warning', 3_000)
+      this.render()
+      return undefined
+    }
+    if (!offers.models.length) {
+      this.setNotice(
+        'The Host returned no selectable model offers for this thread.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return undefined
+    }
+    return offers
+  }
+
+  private async stageModel(modelId: string): Promise<void> {
+    const offers = await this.commandOffers()
+    if (!offers) return
+    const modelIndex = offers.models.findIndex((model) => model.id === modelId)
+    if (modelIndex < 0) {
+      this.setNotice(
+        `Unknown model "${modelId}". Offered: ${offers.models.map((model) => model.id).join(', ')}`,
+        'warning',
+        4_000
+      )
+      this.render()
+      return
+    }
+    this.state.overlayIndex = modelIndex
+    this.state.tuneEffortIndex = this.effortIndexFor(offers, modelIndex)
+    this.applyTuneSelection(offers.models[modelIndex])
+  }
+
+  private async stageReasoning(level?: string): Promise<void> {
+    const offers = await this.commandOffers()
+    if (!offers) return
+    const stagedModel = this.state.pendingSelection?.model
+    const modelIndex = stagedModel
+      ? offers.models.findIndex((model) => model.id === stagedModel)
+      : offers.models.findIndex((model) => model.current)
+    const selectedIndex = modelIndex >= 0 ? modelIndex : 0
+    const model = offers.models[selectedIndex]
+    if (!model) return
+    const ladder = model.reasoningEfforts
+    if (!level) {
+      const current =
+        this.state.pendingSelection?.model === model.id
+          ? this.state.pendingSelection.reasoningEffort
+          : (offers.currentReasoningEffort ?? model.defaultReasoningEffort)
+      this.setNotice(
+        `Reasoning for ${model.label ?? model.id}: ${current ?? 'not set'} · offered: ${
+          ladder.map((effort) => effort.id).join(', ') || 'none'
+        }`,
+        'neutral',
+        4_000
+      )
+      this.render()
+      return
+    }
+    const effortIndex = ladder.findIndex((effort) => effort.id === level)
+    if (effortIndex < 0) {
+      this.setNotice(
+        `Unknown reasoning level "${level}" for ${model.label ?? model.id}. Offered: ${
+          ladder.map((effort) => effort.id).join(', ') || 'none'
+        }`,
+        'warning',
+        4_000
+      )
+      this.render()
+      return
+    }
+    this.state.overlayIndex = selectedIndex
+    this.state.tuneEffortIndex = effortIndex
+    this.applyTuneSelection(model)
+  }
+
+  private async createSoloThread(): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot create Host threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread creation.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const workspaceId =
+      this.state.thread?.thread.workspaceId ?? this.state.snapshot?.workspaces[0]?.id
+    const command = buildThreadCreateCommand({
+      actor,
+      scope: workspaceId ? 'workspace' : 'global',
+      ...(workspaceId ? { workspaceId } : {})
+    })
+    let createdThreadId: string | undefined
+    await this.runHostMutation(command, {
+      onSucceeded: async (receipt) => {
+        createdThreadId =
+          receipt.resultRef?.kind === 'thread' ? receipt.resultRef.threadId : undefined
+        await this.refreshHostSnapshot()
+        if (!createdThreadId) {
+          this.setNotice('Host created a thread without a thread locator.', 'warning', 4_000)
+        }
+      }
+    })
+    if (createdThreadId) await this.openThread(createdThreadId)
+  }
+
+  private showStatus(): void {
+    const profilePath = this.options.userDataPath ?? defaultTaskWraithUserDataPath()
+    const thread = this.state.thread?.thread
+    const capabilities = this.client?.welcome?.capabilities.join(', ') || 'none advertised'
+    const model = this.state.pendingSelection?.model ?? thread?.provider.model ?? 'none'
+    const reasoning = this.state.pendingSelection?.reasoningEffort ?? thread?.reasoning ?? 'default'
+    this.setNotice(
+      `Node Host ${this.state.connection} · profile ${profilePath} · socket ${taskWraithControlSocketPath(
+        profilePath
+      )} · ${thread ? `${thread.provider.displayProvider} / ${model} / ${reasoning}` : 'no thread'} · caps ${capabilities}`,
+      'neutral',
+      6_000
+    )
     this.render()
   }
 
@@ -1863,7 +2090,7 @@ export class TaskWraithTui {
     command: HostCommand,
     options: {
       composerRestore?: string
-      onSucceeded?: () => Promise<void> | void
+      onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
       onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     } = {}
   ): Promise<void> {
@@ -1931,7 +2158,7 @@ export class TaskWraithTui {
     receipt: HostCommandReceipt,
     options: {
       composerRestore?: string
-      onSucceeded?: () => Promise<void> | void
+      onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
       onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     }
   ): Promise<void> {
@@ -1944,7 +2171,7 @@ export class TaskWraithTui {
     options.onTerminalReceipt?.(receipt)
     if (receipt.status === 'succeeded') {
       const noticeBefore = this.state.notice
-      await options.onSucceeded?.()
+      await options.onSucceeded?.(receipt)
       // Prefer a specific notice from onSucceeded (e.g. "Opened …") over the
       // generic "Host accepted <name>" so the HUD still names the thread.
       if (this.state.notice === noticeBefore) {

@@ -410,7 +410,10 @@ class FakeHostV2 {
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
         id,
         ok: true,
-        result: { kind: 'provider.auth.status', status: this.handlers.providerAuthStatus(providerId) }
+        result: {
+          kind: 'provider.auth.status',
+          status: this.handlers.providerAuthStatus(providerId)
+        }
       })
       return
     }
@@ -723,7 +726,9 @@ async function setupHost(
 
 function startTui(
   userDataPath: string,
-  options: { projectionRefreshMs?: number } & Partial<ConstructorParameters<typeof TaskWraithTui>[0]> = {}
+  options: { projectionRefreshMs?: number } & Partial<
+    ConstructorParameters<typeof TaskWraithTui>[0]
+  > = {}
 ) {
   const { input, output } = makeTty()
   const tui = new TaskWraithTui({
@@ -975,6 +980,106 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       model: 'claude-opus-5',
       reasoningEffort: 'high'
     })
+  }, 12_000)
+
+  it('handles inline model, reasoning, status, and local scrollback commands', async () => {
+    const { host, userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, '/m claude-opus-5\r')
+    await waitFor(() => output.lastFrame.includes('Next send uses Opus 5'), 'inline model staged')
+
+    feed(input, '/reasoning medium\r')
+    await waitFor(
+      () => output.lastFrame.includes('Next send uses Opus 5 · medium'),
+      'inline reasoning staged'
+    )
+
+    feed(input, '/think\r')
+    await waitFor(
+      () => output.lastFrame.includes('Reasoning for Opus 5: medium · offered: medium, high'),
+      'reasoning ladder shown'
+    )
+
+    feed(input, '/status\r')
+    await waitFor(() => output.lastFrame.includes('Node Host connected'), 'Host status shown')
+
+    feed(input, '/clear\r')
+    await waitFor(
+      () => output.lastFrame.includes('Scrollback reset for this TUI session.'),
+      'scrollback reset'
+    )
+
+    feed(input, 'use the inline selection\r')
+    await waitFor(
+      () => output.lastFrame.includes('Host accepted composer.send'),
+      'inline selection accepted',
+      5_000
+    )
+    const composer = [...host.commands]
+      .reverse()
+      .find((command) => command.name === 'composer.send')
+    expect(composer?.arguments).toMatchObject({
+      model: 'claude-opus-5',
+      reasoningEffort: 'medium'
+    })
+
+    feed(input, '/model unavailable\r')
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Unknown model "unavailable"') &&
+        output.lastFrame.includes('claude-opus-5'),
+      'invalid model notice'
+    )
+  }, 12_000)
+
+  it('creates and opens a fresh workspace solo thread with /new', async () => {
+    let snapshot = makeHostSnapshot()
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-thread-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => snapshot,
+      resultRef: (command) => {
+        if (command.name !== 'thread.create') return undefined
+        snapshot = makeHostSnapshot({
+          threads: [
+            ...snapshot.threads,
+            {
+              id: 'thread-new',
+              workspaceId: 'ws-1',
+              title: 'Fresh solo thread',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 11,
+              messageCount: 0,
+              providerId: 'claude',
+              latestPreview: 'Ready for a fresh prompt',
+              previewTruncated: false
+            }
+          ]
+        })
+        return { kind: 'thread', threadId: 'thread-new' }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+    feed(input, '/new\r')
+    await waitFor(() => output.lastFrame.includes('Fresh solo thread'), 'new thread opened')
+
+    const create = [...host.commands].reverse().find((command) => command.name === 'thread.create')
+    expect(create?.arguments).toEqual({ scope: 'workspace', workspaceId: 'ws-1' })
+    expect(
+      host.commands.some(
+        (command) => command.name === 'thread.select' && command.target.threadId === 'thread-new'
+      )
+    ).toBe(true)
   }, 12_000)
 
   it('surfaces deferred Host asks and never treats pending as success until y accepts', async () => {
@@ -1327,10 +1432,16 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     const { tui, input, output } = startTui(userDataPath)
 
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('Current bounded history entry'), 'initial history page')
+    await waitFor(
+      () => output.lastFrame.includes('Current bounded history entry'),
+      'initial history page'
+    )
     feed(input, '\u001b[5~')
     await waitFor(() => historyRequests >= 2, 'older history page request')
-    await waitFor(() => output.lastFrame.includes('Older bounded history entry'), 'older history render')
+    await waitFor(
+      () => output.lastFrame.includes('Older bounded history entry'),
+      'older history render'
+    )
   })
 
   it('drives Host setup through exact result refs before enabling the composer', async () => {
@@ -1386,7 +1497,10 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     const { tui, input, output } = startTui(userDataPath)
 
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('absolute workspace path'), 'workspace setup prompt')
+    await waitFor(
+      () => output.lastFrame.includes('absolute workspace path'),
+      'workspace setup prompt'
+    )
     feed(input, '/tmp/tui-cold-start')
     feed(input, '\r')
     await waitFor(
@@ -1408,7 +1522,10 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await waitFor(() => output.lastFrame.includes('Workspace write'), 'configuration choices')
     feed(input, '\u001b[C')
     feed(input, ' ')
-    await waitFor(() => output.lastFrame.includes('Workspace write · acknowledged'), 'posture acknowledgement')
+    await waitFor(
+      () => output.lastFrame.includes('Workspace write · acknowledged'),
+      'posture acknowledgement'
+    )
     feed(input, '\r')
     await waitFor(() => output.lastFrame.includes('Ask TaskWraith'), 'composer enabled')
 
@@ -1469,7 +1586,10 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     const { tui, input, output } = startTui(userDataPath, { reconnectBaseDelayMs: 10 })
 
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('absolute workspace path'), 'workspace setup prompt')
+    await waitFor(
+      () => output.lastFrame.includes('absolute workspace path'),
+      'workspace setup prompt'
+    )
     feed(input, '/tmp/tui-auth-start')
     feed(input, '\r')
     await waitFor(
@@ -1485,22 +1605,34 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       () => host.commands.filter((command) => command.name === 'provider.auth.begin').length === 1,
       'provider auth begin command'
     )
-    await waitFor(() => output.lastFrame.includes('Authentication is still pending'), 'pending auth status')
+    await waitFor(
+      () => output.lastFrame.includes('Authentication is still pending'),
+      'pending auth status'
+    )
 
     feed(input, '\r')
     await new Promise((resolve) => setTimeout(resolve, 25))
-    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(
+      1
+    )
 
     host.dropAllClients()
     await waitFor(() => host.welcomeCount >= 2, 'Host reconnect')
     feed(input, '\r')
     await new Promise((resolve) => setTimeout(resolve, 25))
-    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(
+      1
+    )
 
     authenticated = true
     feed(input, '\r')
-    await waitFor(() => output.lastFrame.includes('create a thread'), 'authenticated provider offers')
-    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(1)
+    await waitFor(
+      () => output.lastFrame.includes('create a thread'),
+      'authenticated provider offers'
+    )
+    expect(host.commands.filter((command) => command.name === 'provider.auth.begin')).toHaveLength(
+      1
+    )
   })
 })
 
