@@ -455,7 +455,7 @@ function activitySpeakerMessage(
   }
 }
 
-function activityStackSpeakerPresentation({
+export function activityStackSpeakerPresentation({
   message,
   chat,
   run,
@@ -480,7 +480,16 @@ function activityStackSpeakerPresentation({
     labelProvider,
     {
       isEnsembleChat: chat?.chatKind === 'ensemble',
-      soloModelId: messageRun?.actualModel || messageRun?.requestedModel || null
+      // Mirrors the assistant-bubble fallback below: a row whose run lookup
+      // misses would otherwise resolve an empty model and drop the Pi/Ollama
+      // upstream override, leaving this header disagreeing with the bubble
+      // beside it. Ensemble rows carry their own per-seat model instead.
+      soloModelId:
+        messageRun?.actualModel ||
+        messageRun?.requestedModel ||
+        (chat?.chatKind === 'ensemble'
+          ? null
+          : mostRecentSoloRunModel(chat?.runs, labelProvider))
     }
   )
 }
