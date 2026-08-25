@@ -234,16 +234,16 @@ describe('production Host CLI subprocess', () => {
           )
         )
         expect(configured.status).toBe('succeeded')
-        const sent = await client.submitCommand(
+        const sent = await client!.submitCommand(
           command('composer.send', 'cmd-send', { threadId }, { text: 'execute Muse' })
         )
         expect(sent.status).toBe('succeeded')
         await waitForAsync(async () => {
-          const history = await client.getThreadHistory({ threadId, limit: 20 })
+          const history = await client!.getThreadHistory({ threadId, limit: 20 })
           return history.entries.some((entry) => entry.text === 'subprocess muse completed')
         }, 'Muse assistant transcript')
         await waitForAsync(async () => {
-          const snapshot = await client.getSnapshot()
+          const snapshot = await client!.getSnapshot()
           return snapshot.snapshot.runs.some(
             (run) => run.runId === 'cmd-send' && run.providerOutcome === 'completed'
           )

@@ -16,8 +16,12 @@ function harness(overrides: Record<string, unknown> = {}) {
     })
   }
   const listener = {
-    start: vi.fn(async () => order.push('listener.start')),
-    stop: vi.fn(async () => order.push('listener.stop'))
+    start: vi.fn(async () => {
+      order.push('listener.start')
+    }),
+    stop: vi.fn(async () => {
+      order.push('listener.stop')
+    })
   }
   const composition = {
     authority: {},
@@ -38,7 +42,9 @@ function harness(overrides: Record<string, unknown> = {}) {
     providerAuthStatus: vi.fn(),
     threadHistory: vi.fn(),
     historySince: vi.fn(),
-    shutdown: vi.fn(async () => order.push('domain.shutdown'))
+    shutdown: vi.fn(async () => {
+      order.push('domain.shutdown')
+    })
   }
   const signalListeners = new Map<string, () => void>()
   const server = new HostNodeProductionServer({
@@ -169,7 +175,7 @@ describe('HostNodeProductionServer', () => {
     expect(h.signalListeners.has('SIGHUP')).toBe(false)
     h.eventPublish()
     h.eventPublish()
-    await new Promise((resolve) => queueMicrotask(resolve))
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
     expect(h.composition.reconcileProjection).toHaveBeenCalledTimes(1)
     h.signalListeners.get('SIGTERM')?.()
     await h.server.waitForShutdown()
