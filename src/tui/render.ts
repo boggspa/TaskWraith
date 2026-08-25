@@ -17,6 +17,7 @@ import {
   visibleWidth,
   wrapPlainText
 } from './ansi'
+import { resolveGhostBanner } from './ghostBanner'
 import type { TaskWraithTuiState } from './state'
 import {
   TUI_GLYPHS_UNICODE,
@@ -24,6 +25,7 @@ import {
   TUI_MOTION,
   TUI_TONE,
   resolveTuiDensity,
+  tuiGlyphsAreUnicode,
   tuiStatusGlyph,
   tuiToneHex,
   type TuiGlyphSet,
@@ -373,6 +375,27 @@ function renderWorkingBlock(
   ]
 }
 
+/**
+ * Home-screen connection copy.
+ *
+ * Every string here names the *Host* rather than Electron: the TUI has spawned
+ * an ordinary Node `taskwraith-host` since the pure-Node cutover, and the App
+ * need never be running. Separator and ellipsis come from the glyph set so the
+ * line degrades with the rest of the chrome under `--ascii`.
+ */
+function homeConnectionStatus(state: TaskWraithTuiState, glyphs: TuiGlyphSet): string {
+  const sep = ` ${glyphs.separator} `
+  if (state.connection === 'connecting') return `Looking for the TaskWraith Host${glyphs.ellipsis}`
+  if (state.connection === 'reconnecting') {
+    return `Reconnecting to the TaskWraith Host${glyphs.ellipsis}`
+  }
+  if (state.connection === 'offline') return `Host offline${sep}retrying`
+  if (state.connection === 'incompatible-protocol') {
+    return `Host protocol mismatch${sep}update TaskWraith`
+  }
+  return 'No thread selected'
+}
+
 function renderHome(
   state: TaskWraithTuiState,
   width: number,
@@ -380,30 +403,35 @@ function renderHome(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
-  const lines = Array.from({ length: Math.max(1, height) }, () => '')
+  const canvasHeight = Math.max(1, height)
+  const lines = Array.from({ length: canvasHeight }, () => '')
   const center = Math.max(1, Math.floor(width / 2))
-  const start = Math.max(0, Math.floor(height / 2) - 5)
-  const place = (row: number, text: string, offset = 0) => {
+  const place = (row: number, text: string) => {
     if (row < 0 || row >= lines.length) return
-    const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2) + offset)
+    const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2))
     lines[row] = fitAnsiLine(`${' '.repeat(left)}${text}`, width)
   }
-  place(start, ansi.dim(`${glyphs.separator}                 ${glyphs.star}`), -5)
-  place(start + 1, ansi.dim(`       ${glyphs.separator}`))
-  place(start + 3, ansi.provider(glyphs.ghost, TUI_TONE.ensemble))
-  place(start + 5, ansi.bold('TaskWraith'))
-  const status =
-    state.connection === 'connecting'
-      ? 'Looking for the Electron host…'
-      : state.connection === 'reconnecting'
-        ? 'Reconnecting to the TaskWraith host…'
-        : state.connection === 'offline'
-          ? 'Electron host offline · retrying locally'
-          : state.connection === 'incompatible-protocol'
-            ? 'Open TaskWraith to update the App · protocol mismatch'
-            : 'No thread selected'
-  place(start + 6, ansi.dim(status))
-  place(start + 8, ansi.dim('Ctrl+K threads · Ctrl+P commands'))
+  const banner = resolveGhostBanner({
+    width,
+    height: canvasHeight,
+    variant: tuiGlyphsAreUnicode(glyphs) ? 'unicode' : 'ascii',
+    markGlyph: glyphs.ghost
+  })
+  // Every banner row shares one visible width, so centring each row by its own
+  // width centres the block. `place` must not be given a per-row offset here.
+  const block = [
+    ...banner.lines.map((line) => ansi.provider(line, TUI_TONE.ensemble)),
+    '',
+    ansi.bold('TaskWraith'),
+    '',
+    ansi.dim(homeConnectionStatus(state, glyphs)),
+    '',
+    ansi.dim(`Ctrl+K threads ${glyphs.separator} /help commands`)
+  ]
+  const start = Math.max(0, Math.floor((canvasHeight - block.length) / 2))
+  block.forEach((text, index) => {
+    if (text) place(start + index, text)
+  })
   return lines
 }
 
@@ -972,24 +1000,55 @@ function renderHelpOverlay(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
+  // Separators come from the glyph set: this overlay is one of the surfaces
+  // the packaged `--ascii` smoke renders, and a hard-coded `·`/`—` mojibakes
+  // on a terminal that never advertised UTF-8.
+  const sep = ` ${glyphs.separator} `
   const lines = [
     borderTitle('Commands', width, ansi, glyphs),
     overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
     overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
     overlayValue('Ctrl+R', 'live and historical missions', width, ansi, glyphs),
-    overlayValue('Ctrl+G', 'tune lens — model/reasoning or seats', width, ansi, glyphs),
-    overlayValue('Ctrl+P', 'commands', width, ansi, glyphs),
+    overlayValue('Ctrl+G', `tune lens${sep}model/reasoning or seats`, width, ansi, glyphs),
     overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
     overlayValue('Enter', 'send prompt / choose item', width, ansi, glyphs),
     overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
-    overlayValue('/model', 'stage a model/reasoning switch (solo)', width, ansi, glyphs),
-    overlayValue('/seats', 'enable or disable ensemble seats', width, ansi, glyphs),
-    overlayValue('/missions', 'open active mission control', width, ansi, glyphs),
-    overlayValue('/history', 'open completed mission history', width, ansi, glyphs),
-    overlayValue('/cancel', 'request cancellation of the active run', width, ansi, glyphs),
-    overlayValue('/quit', 'leave the sidecar; the host keeps running', width, ansi, glyphs),
+    overlayValue(
+      '/model',
+      `stage a model for the next send${sep}/model <id>${sep}/m`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue(
+      '/think',
+      `stage reasoning effort${sep}/think <level>${sep}/reasoning`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue('/new', 'start a fresh solo thread', width, ansi, glyphs),
+    overlayValue('/status', 'Host, connection, and thread detail', width, ansi, glyphs),
+    overlayValue('/clear', 'clear the local transcript view', width, ansi, glyphs),
+    overlayValue(
+      '/threads',
+      `switch thread${sep}/context for workspace detail`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue('/seats', `enable or disable ensemble seats${sep}/tune lens`, width, ansi, glyphs),
+    overlayValue(
+      '/missions',
+      `mission control${sep}/history for completed runs`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue('/cancel', `stop the active run${sep}/dismiss a question`, width, ansi, glyphs),
+    overlayValue('/quit', 'leave the CLI; the Host keeps running', width, ansi, glyphs),
     borderedLine(
-      ansi.dim('Esc close · state is still governed by Electron main'),
+      ansi.dim(`Esc close${sep}Ctrl+P reopen${sep}the TaskWraith Host owns thread state`),
       width,
       ansi,
       glyphs
@@ -1361,7 +1420,9 @@ function renderComposer(
       ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
       : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
           state.connection === 'offline'
-            ? 'Start TaskWraith to compose'
+            ? // The App is not the dependency here: `tw` talks to an ordinary
+              // Node Host it can start itself, so offline means "reconnecting".
+              `Waiting for the TaskWraith Host${glyphs.ellipsis}`
             : pendingApproval
               ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
               : openQuestion

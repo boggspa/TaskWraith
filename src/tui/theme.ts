@@ -224,6 +224,20 @@ export function resolveTuiGlyphs(unicode: boolean): TuiGlyphSet {
   return unicode ? TUI_GLYPHS_UNICODE : TUI_GLYPHS_ASCII
 }
 
+/**
+ * Which vocabulary a resolved glyph set belongs to.
+ *
+ * Surfaces that draw multi-line art (the home banner) need the same answer
+ * `resolveTuiGlyphs` was given, but they only ever receive the resolved set.
+ * The question is answered here rather than by each caller sniffing a
+ * character, and deliberately *not* by adding a boolean to `TuiGlyphSet`:
+ * that interface is a map of drawable glyphs, and the ASCII set is checked
+ * elsewhere by iterating its values and asserting each is one column wide.
+ */
+export function tuiGlyphsAreUnicode(glyphs: TuiGlyphSet): boolean {
+  return glyphs.ghost === TUI_GLYPHS_UNICODE.ghost
+}
+
 /* -------------------------------------------------------------------------
  * Unified status vocabulary
  * ---------------------------------------------------------------------- */

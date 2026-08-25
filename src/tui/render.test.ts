@@ -1,7 +1,49 @@
 import { describe, expect, it } from 'vitest'
 import { Ansi, stripAnsi, visibleWidth } from './ansi'
+import {
+  GHOST_BANNER_COLUMNS,
+  GHOST_BANNER_ROWS,
+  ghostBannerArt,
+  resolveGhostBanner
+} from './ghostBanner'
 import { renderTaskWraithTui } from './render'
-import { createTaskWraithTuiDemoState } from './state'
+import {
+  createTaskWraithTuiDemoState,
+  type TaskWraithTuiState,
+  type TuiConnectionState
+} from './state'
+import { TUI_GLYPHS_ASCII, TUI_GLYPHS_UNICODE } from './theme'
+
+/**
+ * The home screen renders when no thread is selected, so it cannot be reached
+ * from the demo state (which always carries one).
+ */
+function homeState(connection: TuiConnectionState): TaskWraithTuiState {
+  return {
+    connection,
+    input: '',
+    inputCursor: 0,
+    overlay: 'none',
+    overlayIndex: 0,
+    scrollOffset: 0,
+    missionFilter: 'active'
+  } as unknown as TaskWraithTuiState
+}
+
+function renderedHome(
+  width: number,
+  height: number,
+  connection: TuiConnectionState = 'connecting',
+  glyphs = TUI_GLYPHS_UNICODE
+): string[] {
+  return renderTaskWraithTui(homeState(connection), {
+    width,
+    height,
+    ansi: new Ansi('none'),
+    animationEnabled: false,
+    glyphs
+  }).split('\n')
+}
 
 function renderedLines(
   width: number,
@@ -400,5 +442,109 @@ describe('TaskWraith TUI renderer', () => {
     })
     expect(missionOutput).not.toContain('\u001b[2J')
     expect(stripAnsi(missionOutput)).toContain('Mission[2J')
+  })
+
+  it('keeps every ghost banner row a column-exact line of printable characters', () => {
+    // The home screen centres the banner as a block by centring each row on its
+    // own visible width, which is only correct while every row shares a width.
+    for (const variant of ['unicode', 'ascii'] as const) {
+      const art = ghostBannerArt(variant)
+      expect(art).toHaveLength(GHOST_BANNER_ROWS)
+      for (const row of art) {
+        expect(visibleWidth(row)).toBe(GHOST_BANNER_COLUMNS)
+        const control = [...row].filter((character) => {
+          const codePoint = character.codePointAt(0) ?? 0
+          return codePoint < 32 || codePoint === 127
+        })
+        expect(control).toEqual([])
+      }
+    }
+  })
+
+  it('draws the Monoline Ghost banner and Host-accurate copy on the home screen', () => {
+    const lines = renderedHome(80, 24, 'connecting')
+    const output = lines.join('\n')
+
+    expect(lines).toHaveLength(24)
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('unicode')) {
+      expect(output).toContain(row.trim())
+    }
+    expect(output).toContain('TaskWraith')
+    expect(output).toContain('Looking for the TaskWraith Host')
+    expect(output).toContain('/help commands')
+    // The TUI has spawned an ordinary Node Host since the pure-Node cutover.
+    expect(output).not.toContain('Electron')
+    expect(output).not.toContain('retrying locally')
+  })
+
+  it('degrades the ghost banner to pure ASCII without changing its geometry', () => {
+    const lines = renderedHome(80, 24, 'offline', TUI_GLYPHS_ASCII)
+    const output = lines.join('\n')
+
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('ascii')) {
+      expect(output).toContain(row.trim())
+    }
+    expect(output).toContain('Host offline')
+    // Nothing Unicode may survive `--ascii` — banner, separators, or status.
+    const nonAscii = [...output].filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint !== 10 && (codePoint < 32 || codePoint > 126)
+    })
+    expect(nonAscii).toEqual([])
+  })
+
+  it('falls back to the single ghost mark when the terminal cannot hold the banner', () => {
+    const eyes = ghostBannerArt('unicode')[4].trim()
+
+    const narrow = renderedHome(24, 24).join('\n')
+    expect(narrow).not.toContain(eyes)
+    expect(narrow).toContain(TUI_GLYPHS_UNICODE.ghost)
+
+    const short = renderedHome(80, 12).join('\n')
+    expect(short).not.toContain(eyes)
+    expect(short).toContain(TUI_GLYPHS_UNICODE.ghost)
+
+    expect(
+      resolveGhostBanner({ width: 24, height: 24, variant: 'unicode', markGlyph: 'x' })
+    ).toEqual({ kind: 'mark', lines: ['x'], width: 1 })
+    expect(
+      resolveGhostBanner({ width: 80, height: 24, variant: 'unicode', markGlyph: 'x' }).kind
+    ).toBe('full')
+  })
+
+  it('names the Host rather than the App while the composer is offline', () => {
+    const output = renderedHome(80, 24, 'offline').join('\n')
+    expect(output).toContain('Waiting for the TaskWraith Host')
+    expect(output).not.toContain('Start TaskWraith to compose')
+  })
+
+  it('documents the inline-argument slash commands in the help overlay', () => {
+    const lines = renderedLines(80, 24, 'help')
+    const output = lines.join('\n')
+
+    for (const entry of [
+      '/model <id>',
+      '/m',
+      '/think <level>',
+      '/reasoning',
+      '/new',
+      '/status',
+      '/clear',
+      '/threads',
+      '/seats',
+      '/missions',
+      '/cancel',
+      '/quit'
+    ]) {
+      expect(output).toContain(entry)
+    }
+    // The overlay must stay inside the canvas: a clipped bottom border reads as
+    // a broken frame, and the ensemble footer leaves the least room.
+    expect(output).toContain('the TaskWraith Host owns thread state')
+    expect(lines.some((line) => line.startsWith('└'))).toBe(true)
+    expect(output).not.toContain('Electron')
+    expect(output).not.toContain('sidecar')
   })
 })
