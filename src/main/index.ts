@@ -1769,6 +1769,10 @@ import {
   type GrokUsageSnapshot,
   type GrokPtyLike
 } from './grok/GrokUsage'
+import {
+  coalesceGrokUsageToActivePeriod,
+  readGrokBillingLogUsage
+} from './grok/GrokBillingLogUsage'
 import { resolveGrokUsageProbeBinary } from './grok/GrokUsageBinaryOverride'
 import {
   createProviderAdapterRegistry,
@@ -55945,14 +55949,10 @@ if (isGeminiMcpBridgeProcess) {
       return fetchCodexUsageSnapshot({ force: options?.force === true })
     })
 
-    // Grok subscription-credit usage. UNLIKE the token/cost meters above, this
-    // reports the SuperGrok credit pool (percent + reset window), which has no
-    // noninteractive command — the only safe source is the interactive
-    // `/usage` → "Show Usage" screen captured via PTY. No prompt is ever sent
-    // (no model call / credit consumption); we never read ~/.grok credentials.
-    // Safe by construction: no prompt is sent (no model call / credit
-    // consumption) and it returns 'unavailable' (never throws) when the grok
-    // binary is missing.
+    // Grok subscription usage. The live `/usage` TUI remains primary, while
+    // the CLI's own bounded billing-log tail repairs an upgrade transition in
+    // which the active X Premium/SuperGrok period metadata temporarily omits
+    // its percentage. No prompt is ever sent and no credential file is read.
     ipcMain.handle('grok-usage:probe', async (): Promise<GrokUsageSnapshot> => {
       const now = (): string => new Date().toISOString()
       // Serve a fresh cached observed snapshot so a second consumer (the
@@ -55964,13 +55964,34 @@ if (isGeminiMcpBridgeProcess) {
       ) {
         return grokUsageProbeCache.snapshot
       }
+      const billingLogSnapshot = await readGrokBillingLogUsage(
+        join(app.getPath('home'), '.grok', 'logs', 'unified.jsonl')
+      )
+      const retainObservedSnapshot = async (
+        candidate: GrokUsageSnapshot
+      ): Promise<GrokUsageSnapshot> => {
+        if (candidate.confidence !== 'observed') return candidate
+        grokUsageProbeCache = { snapshot: candidate, fetchedAt: Date.now() }
+        try {
+          await fs.writeFile(
+            join(app.getPath('userData'), 'grok-usage-snapshot.json'),
+            JSON.stringify(candidate, null, 2),
+            'utf8'
+          )
+        } catch {
+          // Best-effort bridge write for external local readers.
+        }
+        return candidate
+      }
       const resolved = await resolveGrokUsageProbeBinary({
         env: process.env,
         resolveDefault: () => resolveCliProviderBinary('grok')
       })
       const binaryPath = resolved.binaryPath
       if (!binaryPath) {
-        return parseGrokUsage('', now())
+        return retainObservedSnapshot(
+          coalesceGrokUsageToActivePeriod(parseGrokUsage('', now()), billingLogSnapshot)
+        )
       }
       // A throwaway empty cwd keeps the probe out of any real workspace.
       let probeCwd = os.tmpdir()
@@ -55981,7 +56002,7 @@ if (isGeminiMcpBridgeProcess) {
       }
       const isTempDir = probeCwd !== os.tmpdir()
       try {
-        const grokUsageSnapshot = await probeGrokUsage({
+        const tuiSnapshot = await probeGrokUsage({
           spawnPty: (): GrokPtyLike => {
             const term = pty.spawn(binaryPath, ['--no-auto-update', '--no-alt-screen'], {
               name: 'xterm-256color',
@@ -56007,23 +56028,9 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
         })
-        // Bridge for external readers (e.g. the "Limit Counter" macOS
-        // app, which is sandboxed and cannot spawn the grok CLI itself):
-        // persist the observed SuperGrok credit snapshot to a small JSON
-        // file in userData. Best-effort — never block or fail the probe.
-        if (grokUsageSnapshot.confidence === 'observed') {
-          grokUsageProbeCache = { snapshot: grokUsageSnapshot, fetchedAt: Date.now() }
-          try {
-            await fs.writeFile(
-              join(app.getPath('userData'), 'grok-usage-snapshot.json'),
-              JSON.stringify(grokUsageSnapshot, null, 2),
-              'utf8'
-            )
-          } catch {
-            // best-effort bridge write
-          }
-        }
-        return grokUsageSnapshot
+        return retainObservedSnapshot(
+          coalesceGrokUsageToActivePeriod(tuiSnapshot, billingLogSnapshot)
+        )
       } finally {
         if (isTempDir) {
           await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})

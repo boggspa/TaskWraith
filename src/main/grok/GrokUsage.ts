@@ -33,7 +33,7 @@ import { GROK_46_MODEL_ID, isGrok45ReasoningModelId } from '../../shared/grok45M
 
 export interface GrokUsageSnapshot {
   provider: 'grok'
-  source: 'grok-cli-usage'
+  source: 'grok-cli-usage' | 'grok-cli-billing-log'
   usageKind: 'subscription_credits' | 'weekly_limit'
   /** Parsed USED percent (0–100). null when only a coarse band like "<1%" is known. */
   creditsUsedPercent: number | null
@@ -45,6 +45,9 @@ export interface GrokUsageSnapshot {
   resetAt: string | null
   /** Monthly credit window (legacy) or 7-day weekly window when parseable. */
   limitWindowSeconds: number | null
+  /** Billing-period boundaries when the CLI log exposes them. */
+  periodStartAt?: string | null
+  periodEndAt?: string | null
   /** Plan label when shown (e.g. "Free credits with SuperGrok"). */
   planLabel: string | null
   payAsYouGoEnabled: boolean | null
