@@ -1723,7 +1723,8 @@ describe('MCP bridge stream writes', () => {
         name: 'delegate_wave',
         description: 'Canonical delegate_wave prose kept for non-v13 seats.'
       },
-      { name: 'ensemble_roster_edit' }
+      { name: 'ensemble_roster_edit' },
+      { name: 'ultra_task', description: 'Canonical ultra_task prose kept for non-v13 seats.' }
     ]
     const list = (env: Record<string, string>) => {
       const chunks: string[] = []
