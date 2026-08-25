@@ -7,6 +7,10 @@
     "src/preload/*.d.ts",
     "src/main/store/types.ts"
   ],
+  "references": [
+    { "path": "./tsconfig.node.json" }
+  ],
+  "exclude": ["src/renderer/src/lib"],
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",

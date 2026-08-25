@@ -1,6 +1,29 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*"],
+  "include": [
+    "electron.vite.config.*",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "src/host-client/**/*",
+    "src/host-runtime/**/*",
+    "src/host-shared/**/*",
+    "src/host-node/**/*",
+    "src/tui/**/*",
+    "relay/**/*",
+    "src/renderer/src/lib/workingIndicatorPresentation.ts",
+    "src/renderer/src/lib/composerChipFormat.ts",
+    "src/renderer/src/lib/modelDisplayName.ts",
+    "src/renderer/src/lib/ollamaDisplayBrand.ts",
+    "src/renderer/src/lib/providerLabels.ts",
+    "src/renderer/src/lib/ensembleProviderDefaults.ts",
+    "src/renderer/src/lib/combinedModelPickerTypes.ts",
+    "src/renderer/src/lib/providerModelDefaults.ts",
+    "src/renderer/src/lib/welcomeUsageDashboard.ts",
+    "src/renderer/src/lib/providerRateEstimate.ts",
+    "src/renderer/src/lib/UsageHeatmap.ts",
+    "src/renderer/src/lib/host/hostSnapshotProjection.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "types": ["electron-vite/node"]
