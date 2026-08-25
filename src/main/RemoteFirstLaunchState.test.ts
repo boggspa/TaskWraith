@@ -417,7 +417,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'cursor',
       'muse',
       'mistral',
-      'ollama'
+      'ollama',
+      'pi'
     ])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
@@ -452,9 +453,11 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.groups?.find((group) => group.provider === 'meta')).toBeUndefined()
     // Mistral is deliberately BACK: `068867185` retired the Pi and Mistral
     // additions (which is where this guard came from), then `aff6db7f9`
-    // re-added the Mistral entries and `717f43933` refreshed them. Only the
-    // guard was left behind. Pi is still retired.
-    expect(newAdditions?.groups?.find((group) => group.provider === 'pi')).toBeUndefined()
+    // re-added the Mistral entries and `717f43933` refreshed them. Pi was
+    // likewise re-added afterwards, so both now assert presence.
+    const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
+    expect(piGroup?.label).toBe('Pi')
+    expect(piGroup?.models.length).toBeGreaterThan(0)
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

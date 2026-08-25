@@ -51,8 +51,8 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.windows?.map((windowEntry) => windowEntry.label)).toEqual([
       'Session',
       'Weekly',
-      'GPT-5.3-Codex-Spark 5h',
-      'GPT-5.3-Codex-Spark Weekly'
+      'Spark 5h',
+      'Spark Weekly'
     ])
     expect(snapshot.windows?.[2].usedPercent).toBe(0)
     expect(snapshot.accountId).toBe('accoun...7890')
@@ -94,7 +94,7 @@ describe('ProviderQuotaSnapshots', () => {
       },
       {
         id: 'additional-0-5h',
-        label: 'GPT-5.3-Codex-Spark 5h',
+        label: 'Spark 5h',
         windowKind: 'session',
         usedPercent: 6,
         limitWindowSeconds: 18_000
@@ -174,7 +174,7 @@ describe('ProviderQuotaSnapshots', () => {
 
     const labels = snapshot.windows?.map((windowEntry) => windowEntry.label)
     expect(labels).toContain('Session')
-    expect(labels).toContain('GPT-5.3-Codex-Spark 5h')
+    expect(labels).toContain('Spark 5h')
   })
 
   it('renders Claude Fable utilization even without a reset timestamp', () => {
