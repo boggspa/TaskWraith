@@ -199,10 +199,11 @@ describe('immutable v1 MCP profile snapshots', () => {
     // v18 receipt and spent no DIRECT slot. CORE was deliberately skipped: it
     // sits at 59/60 and does not advertise delegate_wave either.
     // 2026-08-20: five structured verbs + report/verify — 161 → 168.
-    // 2026-08-23: ultra_task — 168 → 169.
+    // 2026-08-23: ultra_task — 168 → 169. Source literal landed with this
+    // re-pin (the original commit bumped only the length expectation).
     expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(169)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      'af09570b636a13d8f87d2277bf5efa306f762e6e61f5dffbdd724fefef293442'
+      'ce5d1e653cf7cd0ef3feb690bd3ffd8c3a39e89f05b11ef4d0f9c779c24e693d'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -245,9 +246,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // 2026-08-07: appshots + appshots_status — 120 → 122 via FULL filter().
     // 2026-08-20: claim_fleet_wave — 122 → 123, same FULL filter() route.
     // 2026-08-20: five structured verbs + report/verify — 123 → 130.
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(130)
+    // 2026-08-23: ultra_task — 130 → 131 via FULL filter() (discoverable).
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(131)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '42d3190b6df1d298db4c566e7a4b80c9d8b16af786add9bbca8a055dc8ab2e4e'
+      '7881ac0c0efbbaf7d6cd07f2c0d57ad59c1a794453c3398e092e4fa9d1d35912'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -1337,12 +1339,13 @@ describe('catalogue reachability', () => {
     // 2026-08-07: 142 → 144 (appshots + appshots_status).
     // 2026-08-20: 144 → 145 (claim_fleet_wave), same FULL-only route.
     // 2026-08-20: five structured verbs + report/verify — 145 → 152.
-    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(152)
+    // 2026-08-23: 152 → 153 (ultra_task), same FULL-only route.
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(153)
     expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'd8d1e403a7425b467a3a556753aee2fac425d17e54d882955d785cf0412d4b63'
+      '110fec4c2b6eb766211e16d3af4778d0374a24f3123b40d10ecb0137a99efa83'
     )
     expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'd8d1e403a7425b467a3a556753aee2fac425d17e54d882955d785cf0412d4b63'
+      '110fec4c2b6eb766211e16d3af4778d0374a24f3123b40d10ecb0137a99efa83'
     )
   })
 

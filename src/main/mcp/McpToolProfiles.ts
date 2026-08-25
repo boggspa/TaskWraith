@@ -70,6 +70,12 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'read_subthread_result',
   'cancel_subthread',
   'claim_fleet_wave',
+  // 2026-08-23: ultra_task joins the FULL surface (e3256cbcb wired its
+  // execution and v13 birth-direct slot but missed this literal). Same
+  // FULL-only placement as claim_fleet_wave: gateway seats reach it through
+  // the V1_HIDDEN filter, so no immutable-v1 DIRECT budget is spent and every
+  // derived hidden catalogue gains it as DISCOVERABLE (re-pinned in tests).
+  'ultra_task',
   'workspace_symbols',
   'browser_open',
   'browser_click',
@@ -797,9 +803,24 @@ const GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
 // plus the largest remaining delegation definition. This keeps both normal and
 // Mesh fresh births below the 40k provider transport ceiling without removing
 // a capability or changing any pre-v17 receipt.
+//
+// Re-measured 2026-08-23 after ultra_task joined the fresh direct surface
+// (v13 birth-direct) and ensemble_roster_edit's canonical guidance grew: both
+// fresh transports breached the hard ceiling (41,327 / 42,369). The roster
+// editor is the single largest uncompacted payload on the wire (11,186 chars
+// canonical); todo_write / ask_user_question / ensemble_send carry the next-
+// largest prose that survives every earlier compactor. Canonical catalogue
+// prose is untouched; names, schemas, enums, and behavior are unchanged.
 const GATEWAY_V17_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   image_view: 'View up to 8 existing workspace/chat raster images. Read-only.',
-  delegate_to_subthread: 'Delegate one task to a provider sub-thread. Gated.'
+  delegate_to_subthread: 'Delegate one task to a provider sub-thread. Gated.',
+  ensemble_roster_edit: 'Edit Ensemble roster participants/settings. Gated.',
+  todo_write:
+    'Publish/update the goal-step checklist: items[{id,content,status}]; keep one in_progress; merge:true adds follow-ups.',
+  ask_user_question:
+    "Pause with a modal question card; optional options (2–4) and context. Returns the user's answer.",
+  ensemble_send:
+    'Send one visible note to participant aliases and/or User. User aliases are transcript-only; @All stays roster-only.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
 function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {
