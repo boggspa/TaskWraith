@@ -207,11 +207,13 @@ describe('the renderer ensemble-editor mirror', () => {
   // A FOURTH hand-maintained copy of this catalog (main, shared, iOS, and the
   // ensemble seat editor). It has drifted before, which puts two different
   // names for one model in front of the same user; pin ids and labels together.
+  // Anchor on the literal PI_MODEL_ROWS array — PI_MODELS is a derived
+  // withCuratedUltraTaskSupport(...) wrapper, not the inline list.
   const source = readFileSync(
     join(process.cwd(), 'src/renderer/src/lib/ensembleProviderDefaults.ts'),
     'utf8'
   )
-  const block = source.slice(source.indexOf('const PI_MODELS'))
+  const block = source.slice(source.indexOf('const PI_MODEL_ROWS'))
   const listed = [
     ...block.slice(0, block.indexOf('\n]')).matchAll(/\{ id: '([^']+)', label: '([^']+)' \}/g)
   ]
