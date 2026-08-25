@@ -14,6 +14,8 @@ describe('providerPlanName', () => {
     ['kimi', 'Intermediate', 'Allegretto'],
     ['kimi', 'Advanced', 'Allegro'],
     ['kimi', 'Maximum', 'Vivace'],
+    ['kimi', 'LEVEL_STANDARD', 'Vivace'],
+    ['kimi', 'STANDARD', 'Vivace'],
     ['cursor', 'pro_plus', 'Pro +'],
     ['grok', 'Free credits with SuperGrok', 'SuperGrok'],
     ['grok', 'SuperGrok Heavy', 'SuperGrok Heavy']
