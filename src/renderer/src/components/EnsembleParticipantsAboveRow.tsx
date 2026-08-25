@@ -2910,10 +2910,44 @@ export interface EnsembleChipRolePickerRow {
   title?: string
 }
 
+/** Generic participant glyph for the role-agnostic `Any` stage choice. */
+export function EnsembleAnyStageIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 19c.8-4 3.1-6 6.5-6s5.7 2 6.5 6" />
+    </svg>
+  )
+}
+
+export function resolveEnsembleChipStageRolePatch(
+  currentStageRole: EnsembleParticipant['stageRole'],
+  nextStageRole: EnsembleParticipantStageChoice
+): Pick<EnsembleParticipant, 'stageRole'> {
+  return {
+    stageRole:
+      nextStageRole === 'any' || currentStageRole === nextStageRole
+        ? undefined
+        : nextStageRole
+  }
+}
+
 /**
  * Pure row model for the double-click seat-role picker, split at the
  * authority/stage divider: authority rows (Boss / Captain / Agent) first,
- * stage rows (Scout / Work / Review / BG) second. Mirrors the disabled /
+ * stage rows (Any / Scout / Work / Review / BG) second. Mirrors the disabled /
  * title rules of `EnsembleParticipantAuthorityControls` and
  * `EnsembleParticipantStageControl` so both surfaces stay consistent.
  */
@@ -2963,6 +2997,7 @@ export function resolveEnsembleChipRolePickerRows({
       }
     ],
     stageRows: [
+      { value: 'any', label: 'Any', disabled: locked },
       { value: 'scout', label: 'Scout', disabled: locked },
       { value: 'worker', label: 'Work', disabled: locked },
       { value: 'reviewer', label: 'Review', disabled: locked },
@@ -2996,6 +3031,93 @@ interface EnsembleChipRolePickerProps {
   onClose: () => void
 }
 
+interface EnsembleChipNameFieldProps {
+  participantId: string
+  name: string
+  providerLabel: string
+  locked: boolean
+  onPatch: (patch: Partial<EnsembleParticipant>) => void
+}
+
+export function resolveEnsembleParticipantNamePatch(
+  committedName: string,
+  draftName: string,
+  locked: boolean
+): Pick<EnsembleParticipant, 'role'> | null {
+  if (locked || draftName === committedName) return null
+  return { role: draftName }
+}
+
+/**
+ * The compact picker's participant name editor. Participant names are stored
+ * in the roster's `role` field, matching the inline editor in the full roster
+ * popover. Keep keystrokes local and persist at an edit boundary so a chat-save
+ * echo cannot replace the controlled value while the user is typing.
+ */
+export function EnsembleChipNameField({
+  participantId,
+  name,
+  providerLabel,
+  locked,
+  onPatch
+}: EnsembleChipNameFieldProps): React.JSX.Element {
+  const [nameDraft, setNameDraft] = useState(name)
+  const onPatchRef = useRef(onPatch)
+  onPatchRef.current = onPatch
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
+  const nameDraftRef = useRef(nameDraft)
+  nameDraftRef.current = nameDraft
+  const committedNameRef = useRef(name)
+
+  useEffect(() => {
+    setNameDraft(name)
+    committedNameRef.current = name
+  }, [participantId, name])
+
+  const commitName = useCallback((): void => {
+    const patch = resolveEnsembleParticipantNamePatch(
+      committedNameRef.current,
+      nameDraftRef.current,
+      lockedRef.current
+    )
+    if (!patch) return
+    committedNameRef.current = nameDraftRef.current
+    onPatchRef.current(patch)
+  }, [])
+
+  // Outside-click and Escape unmount the portaled picker before a blur is
+  // guaranteed, so flush the final draft as a safety net just like the full
+  // roster popover does for its freely typed fields.
+  useEffect(() => {
+    return () => {
+      commitName()
+    }
+  }, [commitName])
+
+  return (
+    <label className="ensemble-chip-role-picker-name">
+      <span className="ensemble-above-overflow-label">Edit name</span>
+      <input
+        type="text"
+        value={nameDraft}
+        disabled={locked}
+        data-composer-control="participant-name"
+        aria-label={`Edit name for ${providerLabel}`}
+        placeholder={`${providerLabel} name`}
+        onChange={(event) => setNameDraft(event.target.value)}
+        onBlur={commitName}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          commitName()
+          event.currentTarget.blur()
+        }}
+      />
+    </label>
+  )
+}
+
 /**
  * 2026-08 tactile roles — the compact seat-role picker that opens when the
  * user double-clicks a participant chip in the above row.
@@ -3009,9 +3131,9 @@ interface EnsembleChipRolePickerProps {
  * `.composer-combined-picker-row` so hover/selected/disabled states match
  * the permissions list exactly.
  *
- * Layout: Enabled + Auto quick toggles (existing pill styles), then a
- * vertical authority list (Boss / Captain / Agent), a divider, then the
- * stage list (Scout / Work / Review / BG).
+ * Layout: participant name, Enabled + Auto quick toggles (existing pill
+ * styles), then a vertical authority list (Boss / Captain / Agent), a divider,
+ * then the stage list (Any / Scout / Work / Review / BG).
  */
 export function EnsembleChipRolePicker({
   anchor,
@@ -3043,9 +3165,9 @@ export function EnsembleChipRolePicker({
       const rect = anchor.getBoundingClientRect()
       const flyoutWidth = 208
       const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
-      // 2 toggle rows + 7 list rows ≈ 348px; only used for the flip test,
-      // never as an explicit height.
-      const estimatedHeight = 348
+      // Name field + toggles + 8 list rows ≈ 430px; only used for the flip
+      // test, never as an explicit height.
+      const estimatedHeight = 430
       const fitsBelow = rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
       setPosition(
         fitsBelow
@@ -3114,6 +3236,13 @@ export function EnsembleChipRolePicker({
       aria-label={`Seat roles for ${participant.role || providerLabel}`}
     >
       <div className="composer-combined-picker-column ensemble-chip-role-picker-column">
+        <EnsembleChipNameField
+          participantId={participant.id}
+          name={participant.role}
+          providerLabel={providerLabel}
+          locked={locked}
+          onPatch={onPatch}
+        />
         <div
           className="ensemble-above-overflow-quick-toggles ensemble-chip-role-picker-toggles"
           role="group"
@@ -3176,40 +3305,50 @@ export function EnsembleChipRolePicker({
           </button>
         ))}
         <div className="ensemble-chip-role-picker-divider" role="separator" />
-        {stageRows.map((row) => (
-          <button
-            key={row.value}
-            type="button"
-            className={`composer-combined-picker-row ensemble-chip-role-picker-row ${participant.stageRole === row.value ? 'is-selected' : ''}`}
-            onClick={() =>
-              onPatch({
-                stageRole:
-                  participant.stageRole === row.value
-                    ? undefined
-                    : (row.value as NonNullable<EnsembleParticipant['stageRole']>)
-              })
-            }
-            disabled={row.disabled}
-            title={
-              row.title ||
-              ENSEMBLE_PARTICIPANT_STAGE_OPTIONS.find((option) => option.value === row.value)
-                ?.title
-            }
-          >
-            <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
-              <EnsembleStageRoleIcon
-                stageRole={row.value as NonNullable<EnsembleParticipant['stageRole']>}
-                className="ensemble-chip-role-picker-icon"
-              />
-              <span>{row.label}</span>
-            </span>
-            {participant.stageRole === row.value && (
-              <span className="composer-combined-picker-check" aria-hidden>
-                ✓
+        {stageRows.map((row) => {
+          const selected =
+            row.value === 'any'
+              ? participant.stageRole === undefined
+              : participant.stageRole === row.value
+          return (
+            <button
+              key={row.value}
+              type="button"
+              className={`composer-combined-picker-row ensemble-chip-role-picker-row ${selected ? 'is-selected' : ''}`}
+              onClick={() =>
+                onPatch(
+                  resolveEnsembleChipStageRolePatch(
+                    participant.stageRole,
+                    row.value as EnsembleParticipantStageChoice
+                  )
+                )
+              }
+              disabled={row.disabled}
+              title={
+                row.title ||
+                ENSEMBLE_PARTICIPANT_STAGE_OPTIONS.find((option) => option.value === row.value)
+                  ?.title
+              }
+            >
+              <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
+                {row.value === 'any' ? (
+                  <EnsembleAnyStageIcon className="ensemble-chip-role-picker-icon" />
+                ) : (
+                  <EnsembleStageRoleIcon
+                    stageRole={row.value as NonNullable<EnsembleParticipant['stageRole']>}
+                    className="ensemble-chip-role-picker-icon"
+                  />
+                )}
+                <span>{row.label}</span>
               </span>
-            )}
-          </button>
-        ))}
+              {selected && (
+                <span className="composer-combined-picker-check" aria-hidden>
+                  ✓
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
     </div>
   )

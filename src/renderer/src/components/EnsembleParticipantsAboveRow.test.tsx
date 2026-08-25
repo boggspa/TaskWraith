@@ -5,11 +5,15 @@ import {
   BOSS_AUTO_APPROVAL_CONSENT_MESSAGE,
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleAddParticipantFields,
+  EnsembleAnyStageIcon,
+  EnsembleChipNameField,
   EnsembleParticipantDuplicateRow,
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
   resolveEnsembleChipRolePickerRows,
+  resolveEnsembleChipStageRolePatch,
+  resolveEnsembleParticipantNamePatch,
   applyEnsembleAddReasoningSelection,
   buildEnsembleAddProviderGroups,
   buildEnsembleParticipantAddition,
@@ -83,6 +87,52 @@ describe('EnsembleParticipantsAboveRow', () => {
   })
 
   describe('double-click chip seat-role picker', () => {
+    it('edits the participant name through a buffered field above the picker controls', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleChipNameField
+          participantId="ensemble-claude"
+          name="Explorer"
+          providerLabel="Claude"
+          locked={false}
+          onPatch={() => undefined}
+        />
+      )
+
+      expect(html).toContain('class="ensemble-chip-role-picker-name"')
+      expect(html).toContain('>Edit name</span>')
+      expect(html).toContain('data-composer-control="participant-name"')
+      expect(html).toContain('aria-label="Edit name for Claude"')
+      expect(html).toContain('value="Explorer"')
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Boardmaster', false)).toEqual({
+        role: 'Boardmaster'
+      })
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Explorer', false)).toBeNull()
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Boardmaster', true)).toBeNull()
+
+      const source = readFileSync(
+        new URL('./EnsembleParticipantsAboveRow.tsx', import.meta.url),
+        'utf8'
+      )
+      const pickerSource = source.slice(
+        source.indexOf('export function EnsembleChipRolePicker('),
+        source.indexOf('export function EnsembleParticipantOverflowPopover(')
+      )
+      expect(pickerSource.indexOf('<EnsembleChipNameField')).toBeLessThan(
+        pickerSource.indexOf('ensemble-chip-role-picker-toggles')
+      )
+
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      expect(css).toMatch(
+        /\.ensemble-chip-role-picker-name\s*\{[^}]*flex-direction: column;[^}]*border-bottom:/
+      )
+      expect(css).toMatch(
+        /\.ensemble-chip-role-picker-name input\s*\{[^}]*width: 100%;[^}]*background: var\(--input-bg\);/
+      )
+    })
+
     it('lists authority roles, then stage roles, in the tactile-picker order', () => {
       const { authorityRows, stageRows } = resolveEnsembleChipRolePickerRows({
         isBossman: false,
@@ -92,7 +142,25 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
       expect(authorityRows.map((row) => row.label)).toEqual(['Boss', 'Captain', 'Agent'])
       // The divider sits between these two lists — authority first, stages second.
-      expect(stageRows.map((row) => row.label)).toEqual(['Scout', 'Work', 'Review', 'BG'])
+      expect(stageRows.map((row) => row.label)).toEqual([
+        'Any',
+        'Scout',
+        'Work',
+        'Review',
+        'BG'
+      ])
+      expect(resolveEnsembleChipStageRolePatch('worker', 'any')).toEqual({
+        stageRole: undefined
+      })
+      expect(resolveEnsembleChipStageRolePatch(undefined, 'scout')).toEqual({
+        stageRole: 'scout'
+      })
+
+      const anyIcon = renderToStaticMarkup(
+        <EnsembleAnyStageIcon className="ensemble-chip-role-picker-icon" />
+      )
+      expect(anyIcon).toContain('class="ensemble-chip-role-picker-icon"')
+      expect(anyIcon).toContain('<circle')
     })
 
     it('restricts Boss/Captain for BG seats and BG while the seat is Boss', () => {

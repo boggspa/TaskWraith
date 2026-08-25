@@ -2085,6 +2085,39 @@
   padding: 2px 0;
 }
 
+.ensemble-chip-role-picker-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 55%, transparent);
+}
+
+.ensemble-chip-role-picker-name input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.ensemble-chip-role-picker-name input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-color, var(--accent)) 65%, var(--border-color));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, var(--accent)) 18%, transparent);
+}
+
+.ensemble-chip-role-picker-name input:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .ensemble-chip-role-picker-toggles {
   margin-bottom: 4px;
 }
