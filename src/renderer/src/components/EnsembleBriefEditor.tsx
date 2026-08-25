@@ -25,6 +25,8 @@ interface EnsembleBriefEditorProps {
   textareaRef?: RefObject<HTMLTextAreaElement | null>
   spellCheck?: boolean
   syncEpoch?: string | number
+  showPresetControls?: boolean
+  textareaAriaLabel?: string
   commitLabel?: string
   commitTitle?: string
   onCommit?: () => void
@@ -69,6 +71,8 @@ export function EnsembleBriefEditor({
   textareaRef,
   spellCheck = true,
   syncEpoch = 'ensemble-brief-editor',
+  showPresetControls = true,
+  textareaAriaLabel,
   commitLabel = 'Save',
   commitTitle = 'Save changes',
   onCommit,
@@ -79,15 +83,17 @@ export function EnsembleBriefEditor({
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const resolvedTextareaRef = textareaRef || internalTextareaRef
   const [userPresets, setUserPresets] = useState<EnsembleBriefPreset[]>(() =>
-    listUserEnsembleBriefPresets()
+    showPresetControls ? listUserEnsembleBriefPresets() : []
   )
   const [selectedPresetId, setSelectedPresetId] = useState('')
 
   useEffect(() => {
+    if (!showPresetControls) return
+    setUserPresets(listUserEnsembleBriefPresets())
     return subscribeEnsembleBriefPresets(() => {
       setUserPresets(listUserEnsembleBriefPresets())
     })
-  }, [])
+  }, [showPresetControls])
 
   const selectedPreset = selectedPresetId ? getEnsembleBriefPreset(selectedPresetId) : null
   const selectedUserPreset = selectedPreset?.source === 'user' ? selectedPreset : null
@@ -128,66 +134,68 @@ export function EnsembleBriefEditor({
     <div className={`ensemble-brief-editor${editorClassName ? ` ${editorClassName}` : ''}`}>
       <div className="ensemble-brief-editor-head">
         <span className={labelClassName || 'ensemble-brief-editor-label'}>{label}</span>
-        <div className="ensemble-brief-preset-controls">
-          {onCommit ? (
-            <button
-              type="button"
-              className="ensemble-brief-preset-action ensemble-brief-commit-action"
+        {showPresetControls ? (
+          <div className="ensemble-brief-preset-controls">
+            {onCommit ? (
+              <button
+                type="button"
+                className="ensemble-brief-preset-action ensemble-brief-commit-action"
+                disabled={disabled}
+                onClick={onCommit}
+                title={commitTitle}
+              >
+                {commitLabel}
+              </button>
+            ) : null}
+            <select
+              className="ensemble-brief-preset-select"
+              value={selectedPresetId}
               disabled={disabled}
-              onClick={onCommit}
-              title={commitTitle}
+              aria-label={`${label} preset`}
+              onChange={(event) => handleApplyPreset(event.target.value)}
             >
-              {commitLabel}
-            </button>
-          ) : null}
-          <select
-            className="ensemble-brief-preset-select"
-            value={selectedPresetId}
-            disabled={disabled}
-            aria-label={`${label} preset`}
-            onChange={(event) => handleApplyPreset(event.target.value)}
-          >
-            <option value="">Brief preset…</option>
-            <optgroup label="Role presets">
-              {BUILT_IN_ENSEMBLE_BRIEF_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id} title={preset.brief}>
-                  {preset.name}
-                </option>
-              ))}
-            </optgroup>
-            {userPresets.length > 0 && (
-              <optgroup label="My briefs">
-                {userPresets.map((preset) => (
+              <option value="">Brief preset…</option>
+              <optgroup label="Role presets">
+                {BUILT_IN_ENSEMBLE_BRIEF_PRESETS.map((preset) => (
                   <option key={preset.id} value={preset.id} title={preset.brief}>
                     {preset.name}
                   </option>
                 ))}
               </optgroup>
-            )}
-          </select>
-          <button
-            type="button"
-            className="ensemble-brief-preset-action"
-            disabled={disabled || !value.trim()}
-            onClick={handleSavePreset}
-            title="Save this brief as a reusable preset"
-          >
-            Save preset
-          </button>
-          <button
-            type="button"
-            className="ensemble-brief-preset-action"
-            disabled={disabled || !selectedUserPreset}
-            onClick={handleRenamePreset}
-            title={
-              selectedUserPreset
-                ? 'Rename selected saved brief'
-                : 'Select a saved brief before renaming'
-            }
-          >
-            Rename
-          </button>
-        </div>
+              {userPresets.length > 0 && (
+                <optgroup label="My briefs">
+                  {userPresets.map((preset) => (
+                    <option key={preset.id} value={preset.id} title={preset.brief}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            <button
+              type="button"
+              className="ensemble-brief-preset-action"
+              disabled={disabled || !value.trim()}
+              onClick={handleSavePreset}
+              title="Save this brief as a reusable preset"
+            >
+              Save preset
+            </button>
+            <button
+              type="button"
+              className="ensemble-brief-preset-action"
+              disabled={disabled || !selectedUserPreset}
+              onClick={handleRenamePreset}
+              title={
+                selectedUserPreset
+                  ? 'Rename selected saved brief'
+                  : 'Select a saved brief before renaming'
+              }
+            >
+              Rename
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="ensemble-brief-textarea-wrap">
         <textarea
@@ -199,6 +207,7 @@ export function EnsembleBriefEditor({
           value={value}
           disabled={disabled}
           spellCheck={spellCheck}
+          aria-label={textareaAriaLabel}
           onChange={(event) => {
             setSelectedPresetId('')
             onChange(event.target.value)

@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 import {
   ComposerEnsembleRosterPopover,
-  ensemblePopoverSeatState
+  ensemblePopoverSeatState,
+  resolveComposerEnsembleRosterBriefPatch
 } from './ComposerEnsembleRosterPopover'
 
 function participant(overrides: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
@@ -93,5 +94,31 @@ describe('ComposerEnsembleRosterPopover', () => {
     expect(html).toContain('rows="4"')
     expect(html).toContain('composer-ensemble-roster-seat is-selected')
     expect(html).not.toContain('⠿')
+  })
+
+  it('renders coloured participant mentions through the shared autosaving brief editor', () => {
+    const roster = chat([
+      participant({ instructions: 'Coordinate with @Reviewer before landing.' }),
+      participant({
+        id: 'reviewer',
+        role: 'Reviewer',
+        order: 2,
+        provider: 'claude',
+        model: 'claude-sonnet-5'
+      })
+    ])
+
+    const html = renderToStaticMarkup(<ComposerEnsembleRosterPopover chat={roster} />)
+
+    expect(html).toContain('composer-ensemble-roster-seat-brief')
+    expect(html).toContain('has-mention-overlay')
+    expect(html).toContain('composer-textarea-highlight')
+    expect(html).toContain('composer-mention-token')
+    expect(html).toContain('var(--provider-claude-color, var(--accent))')
+    expect(html).not.toContain('ensemble-brief-preset-controls')
+    expect(resolveComposerEnsembleRosterBriefPatch('Old brief', 'Updated brief')).toEqual({
+      instructions: 'Updated brief'
+    })
+    expect(resolveComposerEnsembleRosterBriefPatch('Same brief', 'Same brief')).toBeNull()
   })
 })

@@ -57,4 +57,27 @@ describe('EnsembleBriefEditor', () => {
     expect(html).toContain('Save changes')
     expect(html).toContain('Save this participant')
   })
+
+  it('keeps mention highlighting while omitting preset controls in compact hosts', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleBriefEditor
+        label="Goal / brief"
+        value="Coordinate with @Captain on the next step."
+        participants={[participant()]}
+        rows={4}
+        textareaClassName="compact-roster-brief"
+        textareaAriaLabel="Goal / brief for Captain"
+        showPresetControls={false}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('aria-label="Goal / brief for Captain"')
+    expect(html).toContain('has-mention-overlay')
+    expect(html).toContain('composer-textarea-highlight')
+    expect(html).toContain('composer-mention-token')
+    expect(html).toContain('var(--provider-codex-color, var(--accent))')
+    expect(html).not.toContain('ensemble-brief-preset-controls')
+    expect(html).not.toContain('Brief preset…')
+  })
 })

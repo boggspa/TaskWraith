@@ -227,13 +227,22 @@
   padding: 8px 9px 9px;
 }
 
-.composer-ensemble-roster-seat-brief > span {
+.composer-ensemble-roster-seat-brief > .ensemble-brief-editor-head {
+  display: block;
+  min-width: 0;
   padding-top: 5px;
+}
+
+.composer-ensemble-roster-seat-brief-label {
   color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.045em;
   text-transform: uppercase;
+}
+
+.composer-ensemble-roster-seat-brief > .ensemble-brief-textarea-wrap {
+  min-width: 0;
 }
 
 .composer-ensemble-roster-seat-brief textarea {
@@ -302,7 +311,7 @@
     gap: 4px;
   }
 
-  .composer-ensemble-roster-seat-brief > span {
+  .composer-ensemble-roster-seat-brief > .ensemble-brief-editor-head {
     padding-top: 0;
   }
 }

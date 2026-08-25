@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatRecord, ComposerStyle, EnsembleParticipant } from '../../../main/store/types'
 import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
@@ -14,6 +14,7 @@ import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import type { ParticipantPickerConfiguredProviderSnapshot } from './ParticipantPickerCluster'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { seatAccentVar } from './SeatChangeRow'
+import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 
 function stageRoleForSeat(
   value: EnsembleParticipant['stageRole']
@@ -74,7 +75,89 @@ interface ComposerEnsembleRosterSeatDraft {
   authority?: EnsembleParticipantAuthority
   stageRole?: EnsembleParticipant['stageRole'] | null
   role?: string
-  brief?: string
+}
+
+export function resolveComposerEnsembleRosterBriefPatch(
+  committedBrief: string,
+  draftBrief: string
+): Pick<EnsembleParticipant, 'instructions'> | null {
+  if (draftBrief === committedBrief) return null
+  return { instructions: draftBrief }
+}
+
+interface ComposerEnsembleRosterSeatBriefEditorProps {
+  participant: EnsembleParticipant
+  participantLabel: string
+  participants: EnsembleParticipant[]
+  onPatchParticipant?: (participantId: string, patch: Partial<EnsembleParticipant>) => void
+}
+
+/**
+ * Mention-aware per-seat brief editor with a close-safe local draft. The
+ * roster popover is portaled and can unmount on outside mousedown before the
+ * textarea blurs, so the cleanup flush is part of the persistence contract.
+ */
+export function ComposerEnsembleRosterSeatBriefEditor({
+  participant,
+  participantLabel,
+  participants,
+  onPatchParticipant
+}: ComposerEnsembleRosterSeatBriefEditorProps): React.JSX.Element {
+  const [briefDraft, setBriefDraft] = useState(participant.instructions)
+  const briefDraftRef = useRef(briefDraft)
+  briefDraftRef.current = briefDraft
+  const committedBriefRef = useRef(participant.instructions)
+  const participantIdRef = useRef(participant.id)
+  participantIdRef.current = participant.id
+  const onPatchParticipantRef = useRef(onPatchParticipant)
+  onPatchParticipantRef.current = onPatchParticipant
+
+  useEffect(() => {
+    briefDraftRef.current = participant.instructions
+    committedBriefRef.current = participant.instructions
+    setBriefDraft(participant.instructions)
+  }, [participant.id, participant.instructions])
+
+  const commitBrief = useCallback((): void => {
+    const patch = resolveComposerEnsembleRosterBriefPatch(
+      committedBriefRef.current,
+      briefDraftRef.current
+    )
+    if (!patch) return
+    committedBriefRef.current = briefDraftRef.current
+    onPatchParticipantRef.current?.(participantIdRef.current, patch)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      commitBrief()
+    }
+  }, [commitBrief])
+
+  const updateBriefDraft = (value: string): void => {
+    // Keep the ref synchronous with the input event. The popover can close in
+    // the same event turn, before React renders the queued state update.
+    briefDraftRef.current = value
+    setBriefDraft(value)
+  }
+
+  return (
+    <EnsembleBriefEditor
+      label="Goal / brief"
+      value={briefDraft}
+      participants={participants}
+      rows={4}
+      editorClassName="composer-ensemble-roster-seat-brief"
+      labelClassName="composer-ensemble-roster-seat-brief-label"
+      textareaClassName="composer-ensemble-roster-seat-brief-field"
+      textareaAriaLabel={`Goal / brief for ${participantLabel}`}
+      placeholder="What should this participant focus on each turn?"
+      syncEpoch={`${participant.id}:${participants.length}`}
+      showPresetControls={false}
+      onChange={updateBriefDraft}
+      onBlur={commitBrief}
+    />
+  )
 }
 
 /**
@@ -178,8 +261,6 @@ export function ComposerEnsembleRosterPopover({
                 .filter(Boolean)
                 .join(' · ')
               const selected = participant.id === selectedParticipantId
-              const brief = draft?.brief ?? participant.instructions
-
               return (
                 <li
                   key={participant.id}
@@ -264,19 +345,12 @@ export function ComposerEnsembleRosterPopover({
                       }}
                     />
                   </div>
-                  <label className="composer-ensemble-roster-seat-brief">
-                    <span>Goal / brief</span>
-                    <textarea
-                      rows={4}
-                      value={brief}
-                      onChange={(event) =>
-                        updateDraft(participant.id, { brief: event.target.value })
-                      }
-                      onBlur={() => onPatchParticipant?.(participant.id, { instructions: brief })}
-                      placeholder="What should this participant focus on each turn?"
-                      aria-label={`Goal / brief for ${role}`}
-                    />
-                  </label>
+                  <ComposerEnsembleRosterSeatBriefEditor
+                    participant={participant}
+                    participantLabel={role}
+                    participants={participants}
+                    onPatchParticipant={onPatchParticipant}
+                  />
                 </li>
               )
             })}
