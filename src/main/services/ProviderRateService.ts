@@ -710,6 +710,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'ornith-1.5:9b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Ornith 1.5 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'ornith-1.5:35b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
@@ -1255,6 +1265,36 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://openrouter.ai/stealth/ox-alpha',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'OpenRouter Ox Alpha is the Pi seat’s single-model, free-usage exception.'
+      },
+      {
+        modelId: 'openrouter/zai/glm-5.2',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/zai/glm-5.2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free on OpenRouter (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/poolside/laguna-s-2.1',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/poolside/laguna-s-2.1',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free on OpenRouter (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
       }
     ]
   },
