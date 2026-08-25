@@ -31,6 +31,11 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // Reuses the Alibaba/Qwen purple already in the palette — see module note.
   'qwen-token-plan': { label: 'Qwen', hueClass: 'qwen' },
   minimax: { label: 'MiniMax', hueClass: 'minimax' },
+  // The three Xiaomi token-plan regions share one brand hue; the region is
+  // carried by the model label suffix, not a separate colour.
+  'xiaomi-token-plan-cn': { label: 'Xiaomi', hueClass: 'xiaomi' },
+  'xiaomi-token-plan-sgp': { label: 'Xiaomi', hueClass: 'xiaomi' },
+  'xiaomi-token-plan-ams': { label: 'Xiaomi', hueClass: 'xiaomi' },
   mistral: { label: 'Mistral', hueClass: 'mistral' },
   groq: { label: 'Groq', hueClass: 'groq' },
   cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
@@ -66,6 +71,15 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'qwen-token-plan/qwen3.8-max-preview': 'Qwen3.8 Max Preview',
   'minimax/MiniMax-M3': 'MiniMax M3',
   'minimax/MiniMax-M2.7': 'MiniMax M2.7',
+  'xiaomi-token-plan-cn/mimo-v2-pro': 'MiMo V2 Pro (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.5': 'MiMo V2.5 (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.5-pro': 'MiMo V2.5 Pro (CN)',
+  'xiaomi-token-plan-sgp/mimo-v2-pro': 'MiMo V2 Pro (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.5': 'MiMo V2.5 (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.5-pro': 'MiMo V2.5 Pro (SGP)',
+  'xiaomi-token-plan-ams/mimo-v2-pro': 'MiMo V2 Pro (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.5': 'MiMo V2.5 (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.5-pro': 'MiMo V2.5 Pro (AMS)',
   'mistral/zai-glm-5-2': 'GLM-5.2 (via Mistral)',
   'mistral/mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral/mistral-medium-latest': 'Mistral Medium (Latest)',

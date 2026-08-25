@@ -32,6 +32,9 @@ export type PiUpstreamId =
   | 'zai'
   | 'qwen-token-plan'
   | 'minimax'
+  | 'xiaomi-token-plan-cn'
+  | 'xiaomi-token-plan-sgp'
+  | 'xiaomi-token-plan-ams'
   | 'mistral'
   | 'groq'
   | 'cerebras'
@@ -42,6 +45,9 @@ export const PI_ALLOWED_UPSTREAMS: readonly PiUpstreamId[] = [
   'zai',
   'qwen-token-plan',
   'minimax',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-sgp',
+  'xiaomi-token-plan-ams',
   'mistral',
   'groq',
   'cerebras',
@@ -54,6 +60,9 @@ export const PI_UPSTREAM_KEY_ENV: Readonly<Record<PiUpstreamId, string>> = {
   zai: 'ZAI_API_KEY',
   'qwen-token-plan': 'QWEN_TOKEN_PLAN_API_KEY',
   minimax: 'MINIMAX_API_KEY',
+  'xiaomi-token-plan-cn': 'XIAOMI_TOKEN_PLAN_CN_API_KEY',
+  'xiaomi-token-plan-sgp': 'XIAOMI_TOKEN_PLAN_SGP_API_KEY',
+  'xiaomi-token-plan-ams': 'XIAOMI_TOKEN_PLAN_AMS_API_KEY',
   mistral: 'MISTRAL_API_KEY',
   groq: 'GROQ_API_KEY',
   cerebras: 'CEREBRAS_API_KEY',
@@ -65,11 +74,28 @@ export const PI_UPSTREAM_LABELS: Readonly<Record<PiUpstreamId, string>> = {
   zai: 'Z.ai (GLM)',
   'qwen-token-plan': 'Qwen Token Plan',
   minimax: 'MiniMax',
+  'xiaomi-token-plan-cn': 'Xiaomi MiMo (China)',
+  'xiaomi-token-plan-sgp': 'Xiaomi MiMo (Singapore)',
+  'xiaomi-token-plan-ams': 'Xiaomi MiMo (Amsterdam)',
   mistral: 'Mistral',
   groq: 'Groq',
   cerebras: 'Cerebras',
   openrouter: 'OpenRouter'
 }
+
+/**
+ * The three Xiaomi token-plan upstreams are one USER-FACING card with a region
+ * picker (Settings → Providers → Pi): the picker decides which regional
+ * upstream id the stored key is filed under, and saving a key to one region
+ * clears the other two so exactly one regional catalog is ever visible in the
+ * pickers. All three regions serve identical MiMo catalogs via pi's own
+ * bundled data; only baseUrl and the credential env var differ.
+ */
+export const XIAOMI_TOKEN_PLAN_UPSTREAMS: readonly PiUpstreamId[] = [
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-sgp',
+  'xiaomi-token-plan-ams'
+]
 
 /**
  * OpenRouter is intentionally a narrow exception. Keep this exact list

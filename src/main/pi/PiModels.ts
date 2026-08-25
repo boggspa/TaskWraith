@@ -50,6 +50,18 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   // MiniMax
   { wireId: 'minimax/MiniMax-M3', upstream: 'minimax', modelId: 'MiniMax-M3', label: 'MiniMax M3', contextWindow: 1_000_000, maxOutputTokens: 128_000, thinking: true, images: true },
   { wireId: 'minimax/MiniMax-M2.7', upstream: 'minimax', modelId: 'MiniMax-M2.7', label: 'MiniMax M2.7', contextWindow: 204_800, maxOutputTokens: 131_072, thinking: true, images: false },
+  // Xiaomi token plan — three regional deployments of the SAME catalog; the
+  // Settings card's region picker files the key under exactly one of them.
+  // Metadata from pi 0.82.1's bundled xiaomi-token-plan-{cn,sgp,ams} catalogs.
+  { wireId: 'xiaomi-token-plan-cn/mimo-v2-pro', upstream: 'xiaomi-token-plan-cn', modelId: 'mimo-v2-pro', label: 'MiMo V2 Pro (CN)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
+  { wireId: 'xiaomi-token-plan-cn/mimo-v2.5', upstream: 'xiaomi-token-plan-cn', modelId: 'mimo-v2.5', label: 'MiMo V2.5 (CN)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true },
+  { wireId: 'xiaomi-token-plan-cn/mimo-v2.5-pro', upstream: 'xiaomi-token-plan-cn', modelId: 'mimo-v2.5-pro', label: 'MiMo V2.5 Pro (CN)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
+  { wireId: 'xiaomi-token-plan-sgp/mimo-v2-pro', upstream: 'xiaomi-token-plan-sgp', modelId: 'mimo-v2-pro', label: 'MiMo V2 Pro (SGP)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
+  { wireId: 'xiaomi-token-plan-sgp/mimo-v2.5', upstream: 'xiaomi-token-plan-sgp', modelId: 'mimo-v2.5', label: 'MiMo V2.5 (SGP)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true },
+  { wireId: 'xiaomi-token-plan-sgp/mimo-v2.5-pro', upstream: 'xiaomi-token-plan-sgp', modelId: 'mimo-v2.5-pro', label: 'MiMo V2.5 Pro (SGP)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
+  { wireId: 'xiaomi-token-plan-ams/mimo-v2-pro', upstream: 'xiaomi-token-plan-ams', modelId: 'mimo-v2-pro', label: 'MiMo V2 Pro (AMS)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
+  { wireId: 'xiaomi-token-plan-ams/mimo-v2.5', upstream: 'xiaomi-token-plan-ams', modelId: 'mimo-v2.5', label: 'MiMo V2.5 (AMS)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: true },
+  { wireId: 'xiaomi-token-plan-ams/mimo-v2.5-pro', upstream: 'xiaomi-token-plan-ams', modelId: 'mimo-v2.5-pro', label: 'MiMo V2.5 Pro (AMS)', contextWindow: 1_048_576, maxOutputTokens: 131_072, thinking: true, images: false },
   // Mistral API — includes Mistral-hosted third-party and Labs deployments.
   // Pi 0.82.1 does not bundle six of these ids; PiMistralModelRegistration
   // registers only the selected missing row inside its isolated per-run home.

@@ -3153,6 +3153,9 @@
 .welcome-usage-model-dot.provider-cerebras,
 .welcome-usage-model-meter-fill.provider-cerebras,
 .welcome-usage-bar-segment.provider-cerebras { color: var(--provider-cerebras-color); }
+.welcome-usage-model-dot.provider-xiaomi,
+.welcome-usage-model-meter-fill.provider-xiaomi,
+.welcome-usage-bar-segment.provider-xiaomi { color: var(--provider-xiaomi-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);

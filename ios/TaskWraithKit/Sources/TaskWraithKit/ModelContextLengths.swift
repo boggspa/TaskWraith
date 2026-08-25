@@ -97,6 +97,7 @@ public enum ModelContextLengths {
                 (id: "zai/glm-5.2",                 label: "GLM-5.2"),
                 (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
                 (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
+                (id: "xiaomi-token-plan-sgp/mimo-v2.5-pro", label: "MiMo V2.5 Pro (SGP)"),
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
                 (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
                 (id: "openrouter/zai/glm-5.2",      label: "GLM 5.2"),

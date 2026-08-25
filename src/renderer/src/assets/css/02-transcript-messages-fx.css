@@ -5262,6 +5262,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-cerebras {
   color: var(--provider-cerebras-color) !important;
 }
+.message-meta.provider-xiaomi {
+  color: var(--provider-xiaomi-color) !important;
+}
 .message-meta.provider-antigravity {
   color: var(--provider-antigravity-color) !important;
 }
@@ -5370,6 +5373,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .message-group:has(.message-meta.provider-cerebras) {
   --message-working-accent: var(--provider-cerebras-color);
+}
+.message-group:has(.message-meta.provider-xiaomi) {
+  --message-working-accent: var(--provider-xiaomi-color);
 }
 .message-group:has(.message-meta.provider-antigravity) {
   --message-working-accent: var(--provider-antigravity-color);
@@ -6520,6 +6526,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .participant-health-chip.provider-cerebras {
   color: var(--provider-cerebras-color, var(--text-primary));
+}
+.participant-health-chip.provider-xiaomi {
+  color: var(--provider-xiaomi-color, var(--text-primary));
 }
 
 /* Context-compaction transcript row — the durable record of a provider (or

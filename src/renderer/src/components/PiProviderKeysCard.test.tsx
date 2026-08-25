@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   PI_CARD_UPSTREAMS,
+  XIAOMI_TOKEN_PLAN_REGIONS,
   PiProviderKeysCardView,
   type PiProviderKeysCardViewProps
 } from './PiProviderKeysCard'
@@ -17,9 +18,13 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
     cerebrasCapDraft: '16384',
     cerebrasCapBusy: false,
     cerebrasCapError: null,
+    xiaomiRegion: 'xiaomi-token-plan-sgp',
     onDraftChange: () => {},
     onSave: () => {},
     onClear: () => {},
+    onXiaomiRegionChange: () => {},
+    onSaveXiaomi: () => {},
+    onClearXiaomi: () => {},
     onCerebrasCapDraftChange: () => {},
     onSaveCerebrasCap: () => {},
     onClearCerebrasCap: () => {},
@@ -40,8 +45,43 @@ describe('PiProviderKeysCardView', () => {
     for (const forbidden of ['Anthropic', 'OpenAI', 'GitHub Copilot', 'Kimi']) {
       expect(html, forbidden).not.toContain(`>${forbidden}<`)
     }
-    expect(PI_CARD_UPSTREAMS).toHaveLength(8)
+    expect(PI_CARD_UPSTREAMS).toHaveLength(9)
     expect(html).toContain('Ox Alpha only')
+  })
+
+  it('renders the Xiaomi Token Plan as one card entry with a region picker beneath the field', () => {
+    const html = render()
+    expect(html).toContain('Xiaomi Token Plan')
+    expect(html).toContain('aria-label="Xiaomi Token Plan region"')
+    // Every regional upstream is selectable; Singapore is the default because
+    // Xiaomi auto-routes most newly issued keys there.
+    for (const region of XIAOMI_TOKEN_PLAN_REGIONS) {
+      expect(html, region.id).toContain(`value="${region.id}"`)
+    }
+    const sgp = html.match(/<option value="xiaomi-token-plan-sgp"[^>]*>/)
+    expect(sgp?.[0]).toContain('selected')
+  })
+
+  it('names the stored Xiaomi region and lights one dot while unconfigured stays dark', () => {
+    const stored = render({
+      status: {
+        encryptionAvailable: true,
+        configuredUpstreams: ['xiaomi-token-plan-sgp'],
+        recordUnreadable: false
+      }
+    })
+    expect(stored).toContain('Key stored — Singapore (SGP)')
+
+    const unconfigured = render({
+      status: {
+        encryptionAvailable: true,
+        configuredUpstreams: ['xiaomi-token-plan-sgp', 'deepseek'],
+        recordUnreadable: false
+      },
+      drafts: {}
+    })
+    // The generic rows still count per-upstream keys.
+    expect(unconfigured).toContain('2 upstream keys configured')
   })
 
   it('reports the configured count and marks configured rows', () => {

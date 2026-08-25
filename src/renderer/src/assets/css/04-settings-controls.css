@@ -8371,6 +8371,18 @@ input:disabled, select:disabled, textarea:disabled {
   min-width: 120px;
   max-width: 240px;
 }
+/* Xiaomi Token Plan region picker — lives beneath the key entry field. */
+.settings-pi-upstream-controls.settings-pi-xiaomi-region {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.settings-pi-xiaomi-region select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+.settings-pi-xiaomi-region .settings-pi-upstream-hint {
+  flex: 1 1 auto;
+}
 
 /* ── Notification banner settings ─────────────────────────────────────────
    The preview approximates an iOS notification card so preset differences are

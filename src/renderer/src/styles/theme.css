@@ -269,6 +269,10 @@
   --provider-zai-color: #177DAA;
   --provider-minimax-color: #C044A4;
   --provider-mistral-color: #D44404;
+  /* Xiaomi MiMo token plan — burnt amber-orange in the brand family, held to
+   * the same both-sides AA band as the rest of this palette (Mistral keeps
+   * the redder slice of the orange family). */
+  --provider-xiaomi-color: #B36004;
   --provider-cerebras-color: #BB584A;
   --provider-groq-color: #088482;
   --provider-openrouter-color: #E02948;

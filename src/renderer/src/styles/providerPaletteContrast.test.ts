@@ -66,7 +66,8 @@ const STATIC_PROVIDER_COLORS = {
   muse: '#1671EA',
   cerebras: '#BB584A',
   groq: '#088482',
-  openrouter: '#E02948'
+  openrouter: '#E02948',
+  xiaomi: '#B36004'
 } as const
 
 const PROVIDER_ALIASES = {

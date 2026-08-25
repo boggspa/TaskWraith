@@ -1635,6 +1635,9 @@
 .ensemble-above-chip.provider-cerebras .ensemble-above-chip-role {
   color: var(--provider-cerebras-color);
 }
+.ensemble-above-chip.provider-xiaomi .ensemble-above-chip-role {
+  color: var(--provider-xiaomi-color);
+}
 
 /* 2026-08 chip polish — live shimmer sweep + failed icon re-ink.
  * (Replaces the 2026-07 text-shadow glows, which clashed with the
@@ -1889,6 +1892,9 @@
 }
 .ensemble-above-chip-tooltip.provider-cerebras .ensemble-above-chip-tooltip-title {
   color: var(--provider-cerebras-color);
+}
+.ensemble-above-chip-tooltip.provider-xiaomi .ensemble-above-chip-tooltip-title {
+  color: var(--provider-xiaomi-color);
 }
 
 /* Neutralise the per-provider chip-border overrides — the chip

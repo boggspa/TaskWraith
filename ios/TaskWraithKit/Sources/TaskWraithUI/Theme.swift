@@ -198,6 +198,7 @@ public enum TWTheme {
         case "zai": return 0x177DAA
         case "minimax": return 0xC044A4
         case "mistral": return 0xD44404
+        case "xiaomi": return 0xB36004
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
         case "openrouter": return 0xE02948
@@ -239,7 +240,7 @@ public enum TWTheme {
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
-        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter"
+        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

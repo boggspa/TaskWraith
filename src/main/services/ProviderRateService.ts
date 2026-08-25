@@ -1097,6 +1097,90 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
       },
+      // Xiaomi token plan — three regional deployments of the SAME prepaid
+      // MiMo catalog; pi publishes no per-token price, so 0 means "no
+      // per-token projection", NOT "free" (same rule as Z.ai/Qwen above).
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
       {
         modelId: 'minimax/MiniMax-M2.7',
         inputUsdPerMillion: 0.3,
