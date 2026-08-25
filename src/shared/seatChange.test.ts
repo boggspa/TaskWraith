@@ -18,6 +18,12 @@ import {
 
 const T0 = Date.parse('2026-08-05T12:00:00.000Z')
 
+/** The structural slice the coalescer needs, plus the ChatMessage identity
+ * fields these tests read back off the returned rows. */
+interface SeatCarrierWithId extends SeatChangeCarrierMessage {
+  id: string
+}
+
 function seat(provider: string, model: string, presetId: string) {
   return { provider, model, permissionPresetId: presetId }
 }
@@ -28,7 +34,7 @@ function seatChangeMessage(
   appliedAtMs: number,
   before = seat('cursor', 'grok-4.5', 'default'),
   after = seat('claude', 'claude-fable-5', 'workspace_write')
-): SeatChangeCarrierMessage {
+): SeatCarrierWithId {
   return {
     id,
     role: 'system',
@@ -43,16 +49,16 @@ function seatChangeMessage(
         appliedAt: new Date(appliedAtMs).toISOString()
       }
     }
-  } as unknown as SeatChangeCarrierMessage
+  } as unknown as SeatCarrierWithId
 }
 
-function plain(id: string): SeatChangeCarrierMessage {
+function plain(id: string): SeatCarrierWithId {
   return {
     id,
     role: 'system',
     content: 'notice',
     timestamp: new Date(T0).toISOString()
-  } as unknown as SeatChangeCarrierMessage
+  } as unknown as SeatCarrierWithId
 }
 
 const nextPayload: SeatChangePayload = {
@@ -106,7 +112,7 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
       content: 'x',
       timestamp: new Date(T0).toISOString(),
       metadata: { seatChange: { participantId: 'p1', appliedAt: 'not-a-date' } }
-    } as unknown as SeatChangeCarrierMessage
+    } as unknown as SeatCarrierWithId
     const r1 = coalesceSeatChangeMessages([other], nextPayload, T0)
     expect(r1.messages.map((m) => m.id)).toEqual(['other'])
     expect(r1.payload).toEqual(nextPayload)
@@ -121,7 +127,7 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
     // whole flurry. Letting the latest tweak's (absent) flag win would un-say a
     // brief change the reader was already shown — the note would blink out.
     const prior = seatChangeMessage('m1', 'p1', T0 - 30_000)
-    prior.metadata!.seatChange!.briefUpdated = true
+    ;(prior.metadata!.seatChange as SeatChangePayload).briefUpdated = true
     expect(nextPayload.briefUpdated).toBeUndefined()
     const { payload } = coalesceSeatChangeMessages([prior], nextPayload, T0)
     expect(payload.briefUpdated).toBe(true)
@@ -137,7 +143,7 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
 
   it('keeps the latest enabled state across a coalesced flurry', () => {
     const disabled = seatChangeMessage('m1', 'p1', T0 - 30_000)
-    disabled.metadata!.seatChange!.enabledChangedTo = false
+    ;(disabled.metadata!.seatChange as SeatChangePayload).enabledChangedTo = false
 
     // A later non-toggle edit keeps the earlier status annotation alive.
     const afterUnrelatedEdit = coalesceSeatChangeMessages([disabled], nextPayload, T0).payload
