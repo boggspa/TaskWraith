@@ -11,6 +11,7 @@ import {
   type HostCommand,
   type HostHealthProjection
 } from '../shared/hostProtocol'
+import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import {
   AppStoreHostAuthority,
   createHostStandaloneAuthorityActivationPermit,
@@ -410,9 +411,11 @@ describe('AppStoreHostAuthority', () => {
   it('fails closed on invalid or identity-mismatched read provider output while preserving shutdown', async () => {
     const authority = open({
       ports: {
-        providerStatusesProvider: () => [
-          { providerId: 'codex', status: 'invented', label: 'Codex' }
-        ],
+        providerStatusesProvider: () =>
+          [
+            // Deliberately invalid status: the authority must fail closed.
+            { providerId: 'codex', status: 'invented', label: 'Codex' }
+          ] as unknown as readonly HostProviderStatusProjection[],
         providerOffersProvider: () => ({
           providerId: 'different-provider',
           offerRevision: 'revision-1',

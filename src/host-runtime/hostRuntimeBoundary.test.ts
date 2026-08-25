@@ -173,7 +173,7 @@ describe('standalone Host runtime boundary', () => {
   it('owns the durable journal and command-validation closure rather than compatibility copies', async () => {
     const files = await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)
     const names = files.map((file) => file.slice(file.lastIndexOf('/') + 1))
-    expect(names).toEqual(expect.arrayContaining(REQUIRED_RUNTIME_MODULES))
+    expect(names).toEqual(expect.arrayContaining([...REQUIRED_RUNTIME_MODULES]))
 
     const legacyStillPresent = (
       await Promise.all(

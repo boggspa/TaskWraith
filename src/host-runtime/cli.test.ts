@@ -65,7 +65,7 @@ it('does not advertise a terminal handoff for background or detached stdio', asy
 })
 
 it('dispatches stop through an injected authenticated shutdown client', async () => {
-  const shutdown = vi.fn(async () => 'stopping')
+  const shutdown = vi.fn(async () => 'stopping' as const)
   await runHostShutdownCli(['stop', '--profile', '/tmp/host-cli-profile'], () => ({ shutdown }))
   expect(shutdown).toHaveBeenCalledOnce()
 })

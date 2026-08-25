@@ -46,7 +46,7 @@ function ports(): HostSetupCommandExecutorPorts {
       cancel: vi.fn(({ providerId, operationId }) => ({
         providerId,
         operationId,
-        outcome: 'cancelled'
+        outcome: 'cancelled' as const
       }))
     },
     currentOffers: {

@@ -16,10 +16,7 @@ import type {
   HostCommandReceiptRecord,
   HostCommandReceiptStatus
 } from './HostCommandReceiptStore'
-import type {
-  HostBridgeCommandExecutor,
-  HostBridgeCommandExecutorResult
-} from './HostCommandExecutionResult'
+import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import {
   HostDeferredCommandEnvelopeResolver,
   type HostDeferredCommandEnvelopeResolverEnvelopePort,
@@ -27,7 +24,8 @@ import {
   type HostDeferredCommandEnvelopeResolverInput,
   type HostDeferredCommandEnvelopeResolverIndeterminateCode,
   type HostDeferredCommandEnvelopeResolverResult,
-  type HostDeferredCommandEnvelopeResolverVerifyResult
+  type HostDeferredCommandEnvelopeResolverVerifyResult,
+  type HostDeferredCommandEnvelopeResolverExecutor
 } from './HostDeferredCommandEnvelopeResolver'
 
 const ACTOR: HostActorIdentity = {
@@ -121,7 +119,7 @@ function makeReceiptRecord(
   }
 }
 
-function succeedResult(): HostBridgeCommandExecutorResult {
+function succeedResult(): HostCommandExecutionResult {
   return { status: 'succeeded', resultSummary: 'done' }
 }
 
@@ -154,8 +152,8 @@ function mockReceiptPort(
 }
 
 function mockExecutor(
-  executeImpl: () => Promise<HostBridgeCommandExecutorResult> = async () => succeedResult()
-): Pick<HostBridgeCommandExecutor, 'execute'> {
+  executeImpl: () => Promise<HostCommandExecutionResult> = async () => succeedResult()
+): Pick<HostDeferredCommandEnvelopeResolverExecutor, 'execute'> {
   return {
     execute: vi.fn().mockImplementation(executeImpl)
   }
@@ -166,7 +164,7 @@ async function execute(
   opts?: {
     envelope?: Partial<HostDeferredCommandEnvelopeResolverEnvelopePort>
     receipt?: Partial<HostDeferredCommandEnvelopeResolverReceiptPort>
-    executor?: Pick<HostBridgeCommandExecutor, 'execute'>
+    executor?: Pick<HostDeferredCommandEnvelopeResolverExecutor, 'execute'>
   }
 ): Promise<HostDeferredCommandEnvelopeResolverResult> {
   const resolver = new HostDeferredCommandEnvelopeResolver({
@@ -1026,7 +1024,7 @@ function makeHarness(overrides?: {
     overrides?.envelope?.markQuarantined ??
     vi.fn().mockReturnValue({ kind: 'updated', state: 'quarantined' })
   const executeMock = vi.fn().mockImplementation(async () => succeedResult())
-  const executor: Pick<HostBridgeCommandExecutor, 'execute'> = { execute: executeMock }
+  const executor: Pick<HostDeferredCommandEnvelopeResolverExecutor, 'execute'> = { execute: executeMock }
   const resolver = new HostDeferredCommandEnvelopeResolver({
     envelopeStore: mockEnvelopePort({ ...overrides?.envelope, markQuarantined }),
     receiptStore: mockReceiptPort(overrides?.receipt),
