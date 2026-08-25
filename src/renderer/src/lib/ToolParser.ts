@@ -474,14 +474,22 @@ export function isReasoningToolName(toolName: string): boolean {
 }
 
 /**
- * Synthetic AntiGravity housekeeping activities that carry no user-facing
- * value and are hidden from transcript presentation:
+ * Synthetic housekeeping activities that carry no user-facing value and are
+ * hidden from transcript presentation:
  *   - `antigravity_init` — TaskWraith's own cold-start liveness emission.
  *   - `generic` — agy brain-transcript steps whose native type is GENERIC
  *     (unclassified model activity), which would otherwise render as a
  *     meaningless "Used Generic" card.
+ *   - `provider_diagnostic` — main's Kimi/Pi compatibility-filter notices
+ *     (sendAgentCompatLine), which name no explicit tool and so fall back to
+ *     their raw `type`, rendering as a meaningless "Used Provider
+ *     Diagnostic" card.
  */
-const HIDDEN_INFRASTRUCTURE_TOOL_NAMES = new Set(['antigravity_init', 'generic'])
+const HIDDEN_INFRASTRUCTURE_TOOL_NAMES = new Set([
+  'antigravity_init',
+  'generic',
+  'provider_diagnostic'
+])
 
 export function isHiddenInfrastructureToolName(toolName: string): boolean {
   return HIDDEN_INFRASTRUCTURE_TOOL_NAMES.has(stripToolNamespace((toolName || '').toLowerCase()))

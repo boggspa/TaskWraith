@@ -36,10 +36,11 @@ const write = (path: string, additions: number, deletions: number): ToolActivity
   })
 
 describe('summarizeCollapsedActivityStack', () => {
-  it('excludes hidden infrastructure activities (antigravity_init, generic) from the fold', () => {
+  it('excludes hidden infrastructure activities (antigravity_init, generic, provider_diagnostic) from the fold', () => {
     const summary = summarizeCollapsedActivityStack([
       activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
       activity({ toolName: 'generic', displayName: 'Used Generic' }),
+      activity({ toolName: 'provider_diagnostic', displayName: 'Used Provider Diagnostic' }),
       write('src/a.ts', 3, 1)
     ])
     expect(summary.activityCount).toBe(1)
@@ -226,7 +227,8 @@ describe('shouldAutoCollapseActivityStack', () => {
   it('does not collapse a stack made only of hidden infrastructure activity', () => {
     const hidden = [
       activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
-      activity({ toolName: 'generic', displayName: 'Used Generic' })
+      activity({ toolName: 'generic', displayName: 'Used Generic' }),
+      activity({ toolName: 'provider_diagnostic', displayName: 'Used Provider Diagnostic' })
     ]
     expect(
       shouldAutoCollapseActivityStack({ activities: hidden, isLiveRow: false, isLastRow: false })

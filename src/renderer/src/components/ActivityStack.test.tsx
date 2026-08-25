@@ -909,10 +909,11 @@ describe('ActivityStack compact tool groups', () => {
     expect(shouldDebounceActivityTimelineCollapse(running, warning)).toBe(false)
   })
 
-  it('drops hidden infrastructure activities (antigravity_init, generic) from the timeline', () => {
+  it('drops hidden infrastructure activities (antigravity_init, generic, provider_diagnostic) from the timeline', () => {
     const items = buildTimelineItems([
       makeReadActivity({ id: 'tool-init', toolName: 'antigravity_init' }),
       makeReadActivity({ id: 'tool-generic', toolName: 'generic' }),
+      makeReadActivity({ id: 'tool-diagnostic', toolName: 'provider_diagnostic' }),
       makeReadActivity({ id: 'tool-read-1' })
     ])
     const activityIds = items.flatMap((item) =>
