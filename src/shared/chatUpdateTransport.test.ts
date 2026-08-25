@@ -621,11 +621,11 @@ describe('chat update transport', () => {
       status: 'done' as const
     }))
     const first = chat(1, [message('a', 'A')], {
-      runs: bulkyRuns as ChatRecord['runs'],
+      runs: bulkyRuns as unknown as ChatRecord['runs'],
       title: 'Same title'
     })
     const next = chat(2, [message('a', 'A'), message('b', 'B')], {
-      runs: bulkyRuns as ChatRecord['runs'],
+      runs: bulkyRuns as unknown as ChatRecord['runs'],
       title: 'Same title'
     })
     const { messages: _m1, ...prevRecord } = first

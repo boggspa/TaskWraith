@@ -84,7 +84,6 @@ describe('TUI Host process manager', () => {
   })
 
   it('resolves a built development Host through an injected ordinary Node executable', async () => {
-    const repoRoot = '/repo'
     const executable = '/usr/local/bin/node'
     const cli = '/repo/out/host/host-runtime/cli.js'
     const required = new Set([executable, cli])

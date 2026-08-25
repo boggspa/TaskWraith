@@ -19,6 +19,10 @@ function transcriptInputs(over: Partial<TranscriptInputs> = {}): TranscriptInput
     serverEphemeralPubKeyB64: 'cw==',
     clientNonceB64: 'bg==',
     serverNonceB64: 'Tg==',
+    // Both long-lived identities are bound into the transcript; these fixed
+    // stand-ins are enough because the assertions only pin determinism.
+    macIdentityPubKeyB64: 'bWFjLWlkZW50aXR5',
+    iphoneIdentityPubKeyB64: 'aXBob25lLWlkZW50aXR5',
     ...over
   }
 }

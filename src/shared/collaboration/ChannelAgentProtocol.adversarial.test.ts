@@ -390,10 +390,13 @@ describe('ChannelAgentProtocol adversarial review', () => {
       { runAuthorityHash: 'c'.repeat(64) },
       { clientMessageId: 'client-rebound' }
     ]) {
-      const changed = clone(proof)
-      changed.signedPost = {
-        ...changed.signedPost,
-        post: { ...changed.signedPost.post, ...mutation }
+      // Non-mutating rebuild: signedPost is a readonly field on the proof.
+      const changed = {
+        ...clone(proof),
+        signedPost: {
+          ...proof.signedPost,
+          post: { ...proof.signedPost.post, ...mutation }
+        }
       }
       expect(verify(changed).ok).toBe(false)
     }

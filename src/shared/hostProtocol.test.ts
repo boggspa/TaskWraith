@@ -973,7 +973,7 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       })
     ).toMatchObject({ ok: false, error: 'unsupported protocol version' })
 
-    const missingHealth = createEmptyHostSnapshot({ generation: 1, cursor: 0 }) as Record<
+    const missingHealth = createEmptyHostSnapshot({ generation: 1, cursor: 0 }) as unknown as Record<
       string,
       unknown
     >

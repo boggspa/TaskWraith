@@ -161,7 +161,7 @@ async function assertProductionWelcome(): Promise<void> {
   try {
     const welcome = await client.connect()
     expect(welcome.hostVersion).toBe(HOST_SERVER_PRODUCTION_VERSION)
-    expect(welcome.capabilities).toEqual(expect.arrayContaining(PRODUCTION_CAPABILITY_FLOOR))
+    expect(welcome.capabilities).toEqual(expect.arrayContaining([...PRODUCTION_CAPABILITY_FLOOR]))
     expect((await client.getSnapshot()).snapshot).toMatchObject({ workspaces: [], threads: [] })
   } finally {
     client.close()

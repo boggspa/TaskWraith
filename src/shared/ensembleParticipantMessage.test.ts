@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ChatMessage } from '../main/store/types'
 import {
   isEnsembleParticipantAuthoredMessage,
   isEnsembleYieldMessage
@@ -53,13 +54,16 @@ describe('ensemble participant-authored system carriers', () => {
   })
 
   it('recognizes only a valid participant carrier addressed to the User', () => {
-    const metadata = { kind: 'ensembleSideMessage', toUser: true }
+    const metadata = { kind: 'ensembleSideMessage', toUser: true } as const
+    // These guards read only role + metadata, so a minimal carrier cast to the
+    // full ChatMessage shape is enough to pin the role gate behavior.
+    const carrier = (role: string): ChatMessage => ({ role, metadata }) as unknown as ChatMessage
 
-    expect(isEnsembleSideMessageToUser({ role: 'system', metadata })).toBe(true)
-    expect(isEnsembleSideMessageToUser({ role: 'assistant', metadata })).toBe(true)
-    expect(isEnsembleParticipantAuthoredMessage({ role: 'system', metadata })).toBe(true)
-    expect(isEnsembleSideMessageToUser({ role: 'tool', metadata })).toBe(false)
-    expect(isEnsembleSideMessageToUser({ role: 'error', metadata })).toBe(false)
+    expect(isEnsembleSideMessageToUser(carrier('system'))).toBe(true)
+    expect(isEnsembleSideMessageToUser(carrier('assistant'))).toBe(true)
+    expect(isEnsembleParticipantAuthoredMessage(carrier('system'))).toBe(true)
+    expect(isEnsembleSideMessageToUser(carrier('tool'))).toBe(false)
+    expect(isEnsembleSideMessageToUser(carrier('error'))).toBe(false)
   })
 
   it('moves a User-directed lane id to source provenance without changing wave metadata', () => {

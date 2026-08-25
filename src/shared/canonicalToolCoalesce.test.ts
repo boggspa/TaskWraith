@@ -126,7 +126,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
       'get_diagnostics',
       'launch_start',
       'launch_stop'
-    ]) {
+    ] as const) {
       expect(catalogToolAgenticService(tool)).toBe('shellCommands')
     }
     // launch reads stay on the softer bucket
@@ -150,7 +150,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
       'apply_patch',
       'git_stage',
       'git_commit'
-    ]) {
+    ] as const) {
       expect(catalogToolAgenticService(tool)).toBe('fileChanges')
     }
   })
@@ -187,7 +187,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('simulator_tap')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_type')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_scroll')).toBe('simulatorCanvas')
-    for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events']) {
+    for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events'] as const) {
       expect(catalogToolAgenticService(tool)).toBe('crossThreadRead')
     }
   })

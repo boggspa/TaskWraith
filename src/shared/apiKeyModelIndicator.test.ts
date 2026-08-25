@@ -54,7 +54,7 @@ describe('modelRequiresApiKey', () => {
   // subscription/CLI rows it would mark nearly everything and say nothing.
   it('never marks a subscription or CLI-login provider', () => {
     const pureSubscriptionProviders = LIVE_SELECTABLE_PROVIDER_IDS.filter(
-      (id) => id !== 'pi' && id !== 'antigravity' && id !== 'mistral'
+      (id: string) => id !== 'pi' && id !== 'antigravity' && id !== 'mistral'
     )
     expect(pureSubscriptionProviders.length).toBeGreaterThan(0)
     for (const provider of pureSubscriptionProviders) {
