@@ -14931,6 +14931,9 @@ button.diff-file-row {
 .notification-newadditions-model.provider-qwen {
   color: var(--provider-qwen-color, #615ced);
 }
+.notification-newadditions-model.provider-xiaomi {
+  color: var(--provider-xiaomi-color, #008844);
+}
 .notification-newadditions-model.provider-openrouter {
   color: var(--provider-openrouter-color, #e02948);
 }

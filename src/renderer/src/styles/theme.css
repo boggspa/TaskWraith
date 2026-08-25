@@ -269,10 +269,16 @@
   --provider-zai-color: #177DAA;
   --provider-minimax-color: #C044A4;
   --provider-mistral-color: #D44404;
-  /* Xiaomi MiMo token plan — burnt amber-orange in the brand family, held to
-   * the same both-sides AA band as the rest of this palette (Mistral keeps
-   * the redder slice of the orange family). */
-  --provider-xiaomi-color: #B36004;
+  /* Xiaomi MiMo token plan — a THIRD forced departure, on the same grounds as
+   * Groq and Z.ai above. Xiaomi's brand orange darkens to #B36004 at this
+   * palette's luminance, which sat 0.6 degrees of hue from Claude's #B16105 at
+   * identical luminance: CIEDE2000 dE 0.7, i.e. the same colour. The warm 6-32
+   * degree band already holds openbmb, cerebras, mistral, deep-reinforce and
+   * Claude, so the orange family has no room left. This is Cohere's sea green
+   * pivoted 4 degrees (154 -> 150) and taken to full chroma (S 0.14 -> 1.0),
+   * which clears every neighbour by dE 7.6+ (nearest: ollama, antigravity).
+   * Same both-sides AA band as every other seat colour. */
+  --provider-xiaomi-color: #008844;
   --provider-mimo-color: var(--provider-xiaomi-color);
   --provider-cerebras-color: #BB584A;
   --provider-groq-color: #088482;

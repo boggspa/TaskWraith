@@ -198,7 +198,7 @@ public enum TWTheme {
         case "zai": return 0x177DAA
         case "minimax": return 0xC044A4
         case "mistral": return 0xD44404
-        case "xiaomi": return 0xB36004
+        case "xiaomi": return 0x008844
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
         case "openrouter": return 0xE02948
