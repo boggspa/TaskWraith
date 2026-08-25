@@ -2509,6 +2509,9 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'blackboard_post',
     'blackboard_read',
     'blackboard_delete',
+    // Durable staged UltraTask graphs (scouts → workers → review → synthesis)
+    // are ensemble orchestration, not runtime process control.
+    'ultra_task',
     'ask_user_question'
   ],
   goals: [

@@ -154,7 +154,8 @@ describe('notification registry', () => {
       'cursor',
       'muse',
       'mistral',
-      'ollama'
+      'ollama',
+      'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
       'AntiGravity',
@@ -162,12 +163,12 @@ describe('notification registry', () => {
       'Cursor',
       'Muse',
       'Mistral',
-      'Ollama'
+      'Ollama',
+      'Pi'
     ])
     // Dropped from the card once they stopped being the newest story.
     expect(groups.map((g) => g.provider)).not.toContain('claude')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
-    expect(groups.map((g) => g.provider)).not.toContain('pi')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
     expect(antigravity?.models.map((m) => m.name)).toEqual([
