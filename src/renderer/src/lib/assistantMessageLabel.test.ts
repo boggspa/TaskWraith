@@ -482,3 +482,75 @@ describe('mostRecentSoloRunModel', () => {
     expect(mostRecentSoloRunModel(undefined, 'pi')).toBeNull()
   })
 })
+
+describe('cli-default sentinel expansion', () => {
+  it('expands the sentinel from the seat model for a solo Pi row', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'cli-default',
+        seatModelId: 'qwen-token-plan/qwen3.7-max'
+      })
+    ).toMatchObject({
+      label: 'Qwen',
+      providerClass: 'qwen',
+      modelBadge: 'Qwen3.7 Max'
+    })
+  })
+
+  it('falls back to the provider default when the seat carries no configured model', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'cli-default'
+      })
+    ).toMatchObject({
+      label: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelBadge: 'DeepSeek V4 Flash'
+    })
+  })
+
+  it('expands the sentinel from the seat model for a solo Ollama row', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Ollama', 'ollama', {
+        soloModelId: 'cli-default',
+        seatModelId: 'deepseek-r1:8b'
+      })
+    ).toMatchObject({
+      label: 'DeepSeek',
+      providerClass: 'deepseek'
+    })
+  })
+
+  it('expands an ensemble sentinel from the captured seat snapshot', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'pi',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'cli-default',
+          ensembleSeatSnapshot: { schemaVersion: 1, provider: 'pi', model: 'zai/glm-5.2' }
+        }),
+        'Pi',
+        'pi',
+        { isEnsembleChat: true }
+      )
+    ).toMatchObject({
+      label: 'Z.ai / Reviewer',
+      providerClass: 'zai',
+      modelBadge: 'GLM-5.2'
+    })
+  })
+
+  it('never lets the seat model override a concrete recorded model', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'zai/glm-5.2',
+        seatModelId: 'qwen-token-plan/qwen3.7-max'
+      })
+    ).toMatchObject({
+      label: 'Z.ai',
+      providerClass: 'zai',
+      modelBadge: 'GLM-5.2'
+    })
+  })
+})

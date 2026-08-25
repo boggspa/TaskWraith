@@ -489,7 +489,8 @@ export function activityStackSpeakerPresentation({
         messageRun?.requestedModel ||
         (chat?.chatKind === 'ensemble'
           ? null
-          : mostRecentSoloRunModel(chat?.runs, labelProvider))
+          : mostRecentSoloRunModel(chat?.runs, labelProvider)),
+      seatModelId: chat?.requestedModel
     }
   )
 }
@@ -5872,7 +5873,8 @@ export const TranscriptPanel = memo(
                             assistantRunProvider,
                             {
                               isEnsembleChat: currentChat?.chatKind === 'ensemble',
-                              soloModelId: assistantRunModel
+                              soloModelId: assistantRunModel,
+                              seatModelId: currentChat?.requestedModel
                             }
                           )
                         // 1.0.7 — participant-rename continuity. The

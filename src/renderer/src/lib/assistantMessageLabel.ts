@@ -72,6 +72,37 @@ type FormatAssistantMessageLabelOptions = {
    * does not carry provider model metadata. */
   soloModelId?: string | null
   soloModelLabel?: string | null
+  /**
+   * The seat's OWN configured model (`chat.requestedModel`), used only to
+   * expand a legacy `cli-default` row. Never overrides a concrete recorded
+   * model — a settled run's model is a fact, the seat config is only a guess
+   * about a row that never recorded one.
+   */
+  seatModelId?: string | null
+}
+
+const DEFAULT_MODEL_SENTINELS = new Set(['default', 'cli-default'])
+
+/**
+ * Expand the legacy `cli-default` sentinel to a concrete wire id before brand
+ * resolution.
+ *
+ * The sentinel means "whatever this seat was configured to", so the seat's own
+ * model is the only honest expansion. Going straight to the provider-wide
+ * default — what `canonicalModelIdForProvider` returns, and which drifts as new
+ * models ship — re-brands an old row with today's pick: an Ollama seat running
+ * DeepSeek R1 was painted Alibaba purple because the humanised sentinel label
+ * read "Qwen 3". Prefer the seat, keep the provider default as the floor.
+ */
+function expandDefaultModelSentinel(
+  provider: ProviderId | null,
+  modelId: string,
+  seatModelId?: string | null
+): string {
+  if (!modelId || !DEFAULT_MODEL_SENTINELS.has(modelId.trim().toLowerCase())) return modelId
+  const seat = String(seatModelId || '').trim()
+  if (seat && !DEFAULT_MODEL_SENTINELS.has(seat.toLowerCase())) return seat
+  return provider ? canonicalModelIdForProvider(provider, modelId) || modelId : modelId
 }
 
 const ollamaBrandPresentation = (
@@ -273,7 +304,7 @@ const formatAssistantMessageLabel = (
     const assistantProvider = assistantProviderForMessage(message)
     const soloProvider = assistantProvider || fallbackProvider
     const allowSoloModel = !options?.isEnsembleChat
-    const soloModel =
+    const recordedSoloModel =
       allowSoloModel &&
       typeof message.metadata?.providerModel === 'string' &&
       message.metadata.providerModel
@@ -281,6 +312,11 @@ const formatAssistantMessageLabel = (
         : allowSoloModel
           ? options?.soloModelId || ''
           : ''
+    const soloModel = expandDefaultModelSentinel(
+      soloProvider,
+      recordedSoloModel,
+      options?.seatModelId
+    )
     const soloModelLabel =
       allowSoloModel &&
       typeof message.metadata?.providerModelLabel === 'string' &&
@@ -340,8 +376,11 @@ const formatAssistantMessageLabel = (
   // the only thing that visually distinguishes them in the transcript.
   // Falls back to no badge when the participant doesn't carry a model
   // (legacy ensemble chats from before this metadata existed).
-  const ensembleModel =
-    textValue(message.metadata?.ensembleModel) || textValue(snapshot?.model)
+  const ensembleModel = expandDefaultModelSentinel(
+    provider,
+    textValue(message.metadata?.ensembleModel) || textValue(snapshot?.model),
+    textValue(snapshot?.model)
+  )
   const ensembleReasoningEffort =
     textValue(message.metadata?.ensembleReasoningEffort) || textValue(snapshot?.reasoningEffort)
   const ensembleThinkingEnabled =
