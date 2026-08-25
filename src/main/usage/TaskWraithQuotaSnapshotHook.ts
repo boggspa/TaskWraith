@@ -14,6 +14,11 @@ import {
   type DeepSeekApiUsageBilling,
   type MetaApiUsageBilling
 } from '../../shared/apiUsageBilling'
+import type {
+  UsageWebSessionProviderId,
+  UsageWebSessionReading
+} from '../../shared/usageWebSession'
+import { readUsageWebSessionReading } from '../providers/UsageWebSessionClient'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const DEEPSEEK_RESPONSE_LIMIT_BYTES = 1024 * 1024
@@ -33,6 +38,9 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   getApiUsageBilling: () => ApiUsageBillingSettings | null | undefined
   getMuseConfigured: () => boolean | Promise<boolean>
   getMuseMonthlySpendCapUsd: () => number | null | undefined
+  readUsageWebSession?: (
+    provider: UsageWebSessionProviderId
+  ) => Promise<UsageWebSessionReading | null>
   fetchImpl?: FetchLike
   now?: () => number
   deepSeekCacheTtlMs?: number
@@ -140,6 +148,16 @@ function formatMoney(amount: number, currency = 'USD'): string {
 
 function roundMoney(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 1_000_000) / 1_000_000
+}
+
+function supportedBillingCurrency(
+  imported: string | undefined,
+  fallback: ApiUsageBillingCurrency | undefined
+): ApiUsageBillingCurrency {
+  const normalized = imported?.trim().toUpperCase()
+  return normalized === 'GBP' || normalized === 'EUR' || normalized === 'USD'
+    ? normalized
+    : (fallback ?? 'USD')
 }
 
 function fetchedAt(now: number): string {
@@ -451,11 +469,13 @@ function deepSeekSnapshot(
 
 function cerebrasSnapshot(
   billing: CerebrasApiUsageBilling | undefined,
-  now: number
+  now: number,
+  imported: UsageWebSessionReading | null
 ): QuotaSnapshotHookSnapshot {
-  const currency = billing?.currency ?? 'USD'
+  const currency = supportedBillingCurrency(imported?.currency, billing?.currency)
   const purchased = billing?.purchasedCredits
-  const current = billing?.currentBalance
+  const current = imported?.balance ?? billing?.currentBalance
+  const importedSpend = imported?.spend
   const hasCreditAnchor = purchased !== undefined && current !== undefined
   const windows: QuotaSnapshotHookWindow[] = []
   if (hasCreditAnchor) {
@@ -466,17 +486,49 @@ function cerebrasSnapshot(
         amount: Math.max(0, Math.min(purchased, purchased - current)),
         total: purchased,
         currency,
-        subtitle: 'Manual Cerebras billing anchor'
+        subtitle:
+          imported?.balance !== undefined
+            ? 'Imported Cerebras billing session'
+            : 'Manual Cerebras billing anchor'
+      })
+    )
+  } else if (importedSpend !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'cerebras-credit-used',
+        label: 'Credit used',
+        amount: importedSpend,
+        total: billing?.monthlyBudgetUsd,
+        currency,
+        subtitle: 'Imported Cerebras billing session'
+      })
+    )
+  } else if (current !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'cerebras-available-balance',
+        label: 'Available balance',
+        amount: current,
+        currency,
+        subtitle: 'Imported Cerebras billing session',
+        windowKind: 'balance'
       })
     )
   }
+  const importedAt = imported ? Date.parse(imported.capturedAt) : Number.NaN
   return {
     provider: 'cerebras',
     source: 'taskwraith-native',
     configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
-    planType: hasCreditAnchor ? 'Cloud billing anchor' : 'TaskWraith estimate',
+    fetchedAt: imported ? imported.capturedAt : fetchedAt(now),
+    stale:
+      imported !== null &&
+      (!Number.isFinite(importedAt) || now - importedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS),
+    planType: imported
+      ? 'API Credits'
+      : hasCreditAnchor
+        ? 'Cloud billing anchor'
+        : 'TaskWraith estimate',
     windows,
     balances: [
       ...(current !== undefined
@@ -486,7 +538,10 @@ function cerebrasSnapshot(
               label: 'Current balance',
               amount: current,
               unit: currency,
-              subtitle: 'Manual billing anchor'
+              subtitle:
+                imported?.balance !== undefined
+                  ? 'Imported browser session'
+                  : 'Manual billing anchor'
             }
           ]
         : []),
@@ -507,16 +562,18 @@ function cerebrasSnapshot(
 
 function metaSnapshot(
   billing: MetaApiUsageBilling | undefined,
+  imported: UsageWebSessionReading | null,
   localSpendSinceAnchorUsd: number,
   fxRates: unknown,
   now: number
 ): QuotaSnapshotHookSnapshot {
-  const currency = billing?.currency ?? 'USD'
+  const currency = supportedBillingCurrency(imported?.currency, billing?.currency)
   const perUsd = fxRatePerUsd(fxRates, currency)
   const preload = billing?.preloadCredits
   const threshold = billing?.paymentThreshold
-  const remaining = billing?.remainingBalance
-  const localIncrement = billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
+  const remaining = imported?.balance ?? billing?.remainingBalance
+  const localIncrement =
+    imported?.capturedAt || billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
   const effectiveRemaining =
     remaining === undefined ? undefined : roundMoney(Math.max(0, remaining - localIncrement))
   const windows: QuotaSnapshotHookWindow[] = []
@@ -535,14 +592,32 @@ function metaSnapshot(
             : 'Configured preload minus remaining Meta balance'
       })
     )
+  } else if (imported?.spend !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'meta-credit-used',
+        label: 'Credit used',
+        amount: imported.spend + localIncrement,
+        total: billing?.monthlyBudgetUsd,
+        currency,
+        subtitle:
+          localIncrement > 0
+            ? 'Imported Meta spend, advanced by tracked Muse usage'
+            : 'Imported Meta billing session'
+      })
+    )
   }
+
+  const importedAt = imported ? Date.parse(imported.capturedAt) : Number.NaN
 
   return {
     provider: 'meta',
     source: 'taskwraith-native',
     configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
+    fetchedAt: imported ? imported.capturedAt : fetchedAt(now),
+    stale:
+      imported !== null &&
+      (!Number.isFinite(importedAt) || now - importedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS),
     planType: billing?.planName ?? (billing ? 'API Credits' : 'Muse local estimate'),
     windows,
     balances: [
@@ -567,7 +642,9 @@ function metaSnapshot(
               subtitle:
                 localIncrement > 0
                   ? 'Manual remaining minus tracked Muse spend since anchor'
-                  : 'Manual billing anchor'
+                  : imported?.balance !== undefined
+                    ? 'Imported browser session'
+                    : 'Manual billing anchor'
             }
           ]
         : []),
@@ -583,6 +660,45 @@ function metaSnapshot(
           ]
         : [])
     ]
+  }
+}
+
+function tokenPlanSnapshot(
+  provider: 'qwen' | 'mimo',
+  reading: UsageWebSessionReading | null,
+  now: number
+): QuotaSnapshotHookSnapshot {
+  if (!reading) return emptySnapshot(provider, now, false)
+  const capturedAt = Date.parse(reading.capturedAt)
+  const usedPercent = reading.quotaUsedPercent
+  if (usedPercent === undefined) {
+    return emptySnapshot(
+      provider,
+      now,
+      true,
+      `${provider === 'qwen' ? 'Qwen' : 'MiMo'} session imported, but no quota meter was captured. Re-import after the plan page finishes loading.`
+    )
+  }
+  const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+  return {
+    provider,
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: reading.capturedAt,
+    stale: !Number.isFinite(capturedAt) || now - capturedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
+    planType: reading.planName ?? (provider === 'qwen' ? 'Token Plan' : 'MiMo Token Plan'),
+    windows: [
+      {
+        id: provider === 'qwen' ? 'qwen-7-day-quota' : 'mimo-plan-quota',
+        label: provider === 'qwen' ? '7-Day Quota' : 'Plan Quota',
+        usedPercent,
+        remainingPercent,
+        limitLabel: `${remainingPercent}% remaining · imported browser session`,
+        ...(reading.resetAt ? { resetAt: reading.resetAt } : {}),
+        ...(provider === 'qwen' ? { limitWindowSeconds: 7 * 24 * 60 * 60 } : {})
+      }
+    ],
+    balances: []
   }
 }
 
@@ -681,6 +797,7 @@ export function createTaskWraithQuotaSnapshotHook(
   dependencies: TaskWraithQuotaSnapshotHookDependencies
 ): () => Promise<QuotaSnapshotHookSnapshot[]> {
   const now = () => dependencies.now?.() ?? Date.now()
+  const readWebSession = dependencies.readUsageWebSession ?? readUsageWebSessionReading
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch
   const successTtlMs = Math.max(0, dependencies.deepSeekCacheTtlMs ?? DEEPSEEK_CACHE_TTL_MS)
   const failureRetryMs = Math.max(
@@ -796,22 +913,12 @@ export function createTaskWraithQuotaSnapshotHook(
     // DeepSeek needs no summary: its key alone gates it.
     const cerebrasSpend = summarizeSpend(usageRecords, providerRates, 'cerebras', readAt)
     const metaSpend = summarizeSpend(usageRecords, providerRates, 'meta', readAt)
-    const metaAnchorMs = apiUsageBilling.meta?.anchorUpdatedAt
-      ? Date.parse(apiUsageBilling.meta.anchorUpdatedAt)
-      : null
-    const metaSpendSinceAnchorUsd = summarizeSpendSince(
-      usageRecords,
-      providerRates,
-      'meta',
-      metaAnchorMs !== null && Number.isFinite(metaAnchorMs) ? metaAnchorMs : null,
-      readAt
-    )
     const deepSeekKey = typeof keys.deepseek === 'string' ? keys.deepseek.trim() : ''
     const cerebrasKey = typeof keys.cerebras === 'string' ? keys.cerebras.trim() : ''
     activeDeepSeekKey = deepSeekKey || null
     if (!deepSeekKey) deepSeekCache = null
 
-    const [deepSeek, museConfigured] = await Promise.all([
+    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, qwenWeb, mimoWeb]] = await Promise.all([
       deepSeekKey
         ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
         : Promise.resolve(
@@ -827,19 +934,41 @@ export function createTaskWraithQuotaSnapshotHook(
       Promise.resolve()
         .then(() => dependencies.getMuseConfigured())
         .then(Boolean)
-        .catch(() => false)
+        .catch(() => false),
+      Promise.all([
+        readWebSession('cerebras').catch(() => null),
+        readWebSession('meta').catch(() => null),
+        readWebSession('qwen').catch(() => null),
+        readWebSession('mimo').catch(() => null)
+      ])
     ])
+
+    const metaAnchorValue = metaWeb?.capturedAt ?? apiUsageBilling.meta?.anchorUpdatedAt
+    const metaAnchorMs = metaAnchorValue ? Date.parse(metaAnchorValue) : null
+    const metaSpendSinceAnchorUsd = summarizeSpendSince(
+      usageRecords,
+      providerRates,
+      'meta',
+      metaAnchorMs !== null && Number.isFinite(metaAnchorMs) ? metaAnchorMs : null,
+      readAt
+    )
 
     return [
       deepSeek,
       cerebrasKey ||
       cerebrasSpend.runs > 0 ||
+      cerebrasWeb !== null ||
       hasApiUsageBillingProvider(apiUsageBilling, 'cerebras')
-        ? cerebrasSnapshot(apiUsageBilling.cerebras, readAt)
+        ? cerebrasSnapshot(apiUsageBilling.cerebras, readAt, cerebrasWeb)
         : emptySnapshot('cerebras', readAt, false),
-      museConfigured || metaSpend.runs > 0 || hasApiUsageBillingProvider(apiUsageBilling, 'meta')
-        ? metaSnapshot(apiUsageBilling.meta, metaSpendSinceAnchorUsd, fxRates, readAt)
-        : emptySnapshot('meta', readAt, false)
+      museConfigured ||
+      metaSpend.runs > 0 ||
+      metaWeb !== null ||
+      hasApiUsageBillingProvider(apiUsageBilling, 'meta')
+        ? metaSnapshot(apiUsageBilling.meta, metaWeb, metaSpendSinceAnchorUsd, fxRates, readAt)
+        : emptySnapshot('meta', readAt, false),
+      ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
+      ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])
     ]
   }
 }

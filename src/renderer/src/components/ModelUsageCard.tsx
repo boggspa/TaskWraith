@@ -163,9 +163,11 @@ export const EXPANDED_USAGE_PROVIDER_ORDER: readonly ModelUsageProviderId[] = [
   'antigravity',
   'ollama',
   'mistral',
+  'mimo',
+  'qwen',
+  'meta',
   'deepseek',
   'cerebras',
-  'meta',
   'gemini',
   'pi',
   'muse'
@@ -223,7 +225,9 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   muse: 'Muse',
   deepseek: 'DeepSeek',
   cerebras: 'Cerebras',
-  meta: 'Meta'
+  meta: 'Meta',
+  mimo: 'MiMo',
+  qwen: 'Qwen'
 }
 const COMPACT_USAGE_ROWS = [
   { key: 'fiveHour', label: '5H' },
@@ -310,6 +314,8 @@ function modelUsageProviderName(provider?: ModelUsageProviderId): string {
   if (provider === 'deepseek') return 'DeepSeek'
   if (provider === 'cerebras') return 'Cerebras'
   if (provider === 'meta') return 'Meta API'
+  if (provider === 'mimo') return 'MiMo Token Plan'
+  if (provider === 'qwen') return 'Qwen Token Plan'
   return getProviderName(provider)
 }
 
@@ -546,7 +552,13 @@ function compactCellsForEntry(
     return cells
   }
 
-  if (provider === 'deepseek' || provider === 'cerebras' || provider === 'meta') {
+  if (
+    provider === 'deepseek' ||
+    provider === 'cerebras' ||
+    provider === 'meta' ||
+    provider === 'mimo' ||
+    provider === 'qwen'
+  ) {
     assign('extraOne', entry?.windows?.[0])
     assign('extraTwo', entry?.windows?.[1])
   }
@@ -687,9 +699,11 @@ export function CompactModelUsageGrid({
     ...(hasOllamaCells || ollamaReason ? (['ollama'] as const) : []),
     ...(hasAntigravityCells || antigravityReason ? (['antigravity'] as const) : []),
     ...(mistralCell ? (['mistral'] as const) : []),
+    ...(entriesByProvider.has('mimo') ? (['mimo'] as const) : []),
+    ...(entriesByProvider.has('qwen') ? (['qwen'] as const) : []),
+    ...(entriesByProvider.has('meta') ? (['meta'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
-    ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : []),
-    ...(entriesByProvider.has('meta') ? (['meta'] as const) : [])
+    ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(

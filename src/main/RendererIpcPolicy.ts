@@ -379,6 +379,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // billing readings from another local app. Only the primary Model Usage
   // surface may request that account-level telemetry.
   'quota-snapshot-hook:get',
+  // These account-level browser imports capture and mutate encrypted console
+  // credentials. Only the primary Settings/Model Usage surface may use them.
+  'usage-web-session:get-status',
+  'usage-web-session:import',
+  'usage-web-session:clear',
 
   // Declaring the Mistral plan and anchoring the quota meter to a console
   // reading are Settings-level acts that rewrite how every seat's burn is

@@ -13,6 +13,11 @@ import {
   type OllamaWebSubscriptionResult
 } from '../ollama/OllamaWebSubscriptionClient'
 import type { WebSessionStatus } from './WebSessionCookieStore'
+import type {
+  UsageWebSessionProviderId,
+  UsageWebSessionReading
+} from '../../shared/usageWebSession'
+import { parseUsageWebSessionReading, USAGE_WEB_SESSION_SPECS } from './UsageWebSessionClient'
 
 /**
  * Import Web Session: open the provider's own sign-in page in an embedded
@@ -189,13 +194,18 @@ export async function importKimiWebSession(): Promise<CapturedWebSession<KimiWeb
     let settled = false
     let lastAttemptedKey: string | null = null
 
-    const settle = async (result: CapturedWebSession<KimiWebMonthlyReading> | null): Promise<void> => {
+    const settle = async (
+      result: CapturedWebSession<KimiWebMonthlyReading> | null
+    ): Promise<void> => {
       if (settled) return
       settled = true
       clearInterval(interval)
       // Wipe the sign-in from the in-memory partition either way; on success
       // the tokens now live in the encrypted store.
-      void electronSession.fromPartition('websession-import:kimi').clearStorageData().catch(() => {})
+      void electronSession
+        .fromPartition('websession-import:kimi')
+        .clearStorageData()
+        .catch(() => {})
       if (!win.isDestroyed()) win.close()
       resolve(result)
     }
@@ -209,7 +219,10 @@ export async function importKimiWebSession(): Promise<CapturedWebSession<KimiWeb
         }
         try {
           const raw = await win.webContents.executeJavaScript(KIMI_TOKEN_CAPTURE_SCRIPT, true)
-          const parsed = JSON.parse(String(raw)) as { accessToken?: unknown; refreshToken?: unknown }
+          const parsed = JSON.parse(String(raw)) as {
+            accessToken?: unknown
+            refreshToken?: unknown
+          }
           const accessToken =
             typeof parsed.accessToken === 'string' ? parsed.accessToken.trim() : ''
           if (!accessToken) return
@@ -220,7 +233,10 @@ export async function importKimiWebSession(): Promise<CapturedWebSession<KimiWeb
           const key = `${accessToken}:${refreshToken ?? ''}`
           if (key === lastAttemptedKey) return
           lastAttemptedKey = key
-          const result = await fetchKimiWebMonthlyUsage({ accessToken, ...(refreshToken ? { refreshToken } : {}) })
+          const result = await fetchKimiWebMonthlyUsage({
+            accessToken,
+            ...(refreshToken ? { refreshToken } : {})
+          })
           // A valid session may legitimately report zero usage at the start of
           // a cycle — only a failed fetch (null reading) keeps polling.
           if (result.reading) {
@@ -264,5 +280,90 @@ export async function importOllamaWebSession(): Promise<CapturedWebSession<Ollam
       return joinCookies(cookies)
     },
     validate: (cookieHeader) => fetchOllamaWebSubscription(cookieHeader)
+  })
+}
+
+const RENDERED_BODY_CAPTURE_SCRIPT = `document.body ? document.body.innerText : ''`
+
+/**
+ * Meta, Cerebras, Qwen, and MiMo expose their useful reading only after the
+ * signed-in console has rendered. Poll the visible body and accept the import
+ * only when the provider-specific parser finds a real billing/quota value.
+ * The validated reading travels only to the main-process encrypted store; the
+ * cookie never crosses IPC.
+ */
+export async function importUsageWebSession(
+  provider: UsageWebSessionProviderId
+): Promise<CapturedWebSession<UsageWebSessionReading> | null> {
+  const spec = USAGE_WEB_SESSION_SPECS[provider]
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 980,
+      height: 720,
+      title: spec.windowTitle,
+      autoHideMenuBar: true,
+      webPreferences: {
+        partition: spec.partition,
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    })
+
+    let settled = false
+    let polling = false
+    let lastAttemptedSignature: string | null = null
+
+    const settle = (result: CapturedWebSession<UsageWebSessionReading> | null): void => {
+      if (settled) return
+      settled = true
+      clearInterval(interval)
+      void electronSession
+        .fromPartition(spec.partition)
+        .clearStorageData()
+        .catch(() => {})
+      if (!win.isDestroyed()) win.close()
+      resolve(result)
+    }
+
+    const interval = setInterval(() => {
+      void (async () => {
+        if (settled || polling) return
+        if (win.isDestroyed()) {
+          settle(null)
+          return
+        }
+        polling = true
+        try {
+          const [cookies, rawText] = await Promise.all([
+            win.webContents.session.cookies.get({}),
+            win.webContents.executeJavaScript(RENDERED_BODY_CAPTURE_SCRIPT, true)
+          ])
+          const scoped = cookies.filter((cookie) =>
+            cookieMatchesDomain(cookie, spec.cookieDomainSuffixes)
+          )
+          if (!scoped.length || typeof rawText !== 'string') return
+          const cookieHeader = joinCookies(scoped)
+          const signature = `${cookieHeader}\n${rawText}`
+          if (signature === lastAttemptedSignature) return
+          lastAttemptedSignature = signature
+          const reading = parseUsageWebSessionReading(provider, rawText)
+          const hasRequiredReading =
+            reading &&
+            ((provider !== 'qwen' && provider !== 'mimo') || reading.quotaUsedPercent !== undefined)
+          if (hasRequiredReading) settle({ cookieHeader, summary: reading })
+        } catch {
+          // The page is still loading or has not completed sign-in; keep polling.
+        } finally {
+          polling = false
+        }
+      })()
+    }, CAPTURE_POLL_MS)
+
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https:\/\//i.test(url)) void win.loadURL(url)
+      return { action: 'deny' }
+    })
+    win.on('closed', () => settle(null))
+    void win.loadURL(spec.startUrl)
   })
 }

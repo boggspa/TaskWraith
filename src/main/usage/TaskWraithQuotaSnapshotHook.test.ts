@@ -398,6 +398,86 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     )
   })
 
+  it('projects imported Meta/Cerebras billing and Qwen/MiMo token-plan readings', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const readUsageWebSession = vi.fn(async (provider: string) => {
+      if (provider === 'meta') {
+        return { balance: 15, spend: 0, currency: 'GBP', capturedAt }
+      }
+      if (provider === 'cerebras') {
+        return { balance: 11.56, spend: 0, currency: 'USD', capturedAt }
+      }
+      if (provider === 'qwen') {
+        return { quotaUsedPercent: 0, capturedAt }
+      }
+      if (provider === 'mimo') {
+        return {
+          quotaUsedPercent: 0,
+          planName: 'Lite Monthly Plan',
+          resetAt: '2026-09-25T23:59:59.000Z',
+          capturedAt
+        }
+      }
+      return null
+    })
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        cerebras: { purchasedCredits: 11.56, currentBalance: 5, currency: 'USD' },
+        meta: { preloadCredits: 15, remainingBalance: 5, currency: 'GBP' }
+      }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession,
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    expect(readUsageWebSession).toHaveBeenCalledTimes(4)
+    expect(snapshots).toEqual([
+      expect.objectContaining({ provider: 'deepseek', configured: false }),
+      expect.objectContaining({
+        provider: 'cerebras',
+        fetchedAt: capturedAt,
+        windows: [
+          expect.objectContaining({ label: 'Credit used', valueText: '$0.00', usedPercent: 0 })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Current balance', amount: 11.56 })
+        ])
+      }),
+      expect.objectContaining({
+        provider: 'meta',
+        fetchedAt: capturedAt,
+        windows: [
+          expect.objectContaining({ label: 'Credit used', valueText: '£0.00', usedPercent: 0 })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Remaining balance', amount: 15 })
+        ])
+      }),
+      expect.objectContaining({
+        provider: 'mimo',
+        planType: 'Lite Monthly Plan',
+        windows: [
+          expect.objectContaining({
+            label: 'Plan Quota',
+            usedPercent: 0,
+            resetAt: '2026-09-25T23:59:59.000Z'
+          })
+        ]
+      }),
+      expect.objectContaining({
+        provider: 'qwen',
+        planType: 'Token Plan',
+        windows: [expect.objectContaining({ label: '7-Day Quota', usedPercent: 0 })]
+      })
+    ])
+  })
+
   it('fills DeepSeek credit usage against its soft budget when no top-up anchor exists', async () => {
     const read = createTaskWraithQuotaSnapshotHook({
       loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),

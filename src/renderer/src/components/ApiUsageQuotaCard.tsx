@@ -13,6 +13,7 @@ import {
   EMPTY_API_USAGE_BILLING_DRAFTS,
   type ApiUsageBillingDrafts
 } from './ApiUsageQuotaCardModel'
+import { UsageWebSessionControls } from './UsageWebSessionControls'
 
 export interface ApiUsageQuotaCardViewProps {
   drafts: ApiUsageBillingDrafts
@@ -118,7 +119,6 @@ export function ApiUsageQuotaCardView({
           onChange={(value) => onChange('deepseekMonthlyBudgetUsd', value)}
         />
       </div>
-
       <div className="settings-provider-auth-divider" />
       <strong>Cerebras</strong>
       <div className="settings-field-row">
@@ -150,6 +150,7 @@ export function ApiUsageQuotaCardView({
           onChange={(value) => onChange('cerebrasMonthlyBudgetUsd', value)}
         />
       </div>
+      <UsageWebSessionControls provider="cerebras" />
 
       <div className="settings-provider-auth-divider" />
       <strong>Meta / Muse</strong>
@@ -218,6 +219,12 @@ export function ApiUsageQuotaCardView({
           />
         </label>
       </div>
+      <UsageWebSessionControls provider="meta" />
+
+      <div className="settings-provider-auth-divider" />
+      <strong>Token plan browser imports</strong>
+      <UsageWebSessionControls provider="mimo" />
+      <UsageWebSessionControls provider="qwen" />
 
       <div className="settings-provider-auth-actions">
         <PillButton size="compact" onClick={onSave} disabled={busy}>

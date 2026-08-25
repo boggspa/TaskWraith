@@ -91,6 +91,11 @@ import type {
   RendererChatTranscriptMutationResult
 } from '../shared/rendererChatTranscriptMutation'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type {
+  UsageWebSessionImportOutcome,
+  UsageWebSessionProviderId,
+  UsageWebSessionStatus
+} from '../shared/usageWebSession'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
@@ -915,6 +920,17 @@ declare global {
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
       getDailyUsageRollup: () => Promise<DailyUsageRollupPayload>
       getQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
+      getUsageWebSessionStatus: (
+        provider: UsageWebSessionProviderId
+      ) => Promise<UsageWebSessionStatus>
+      importUsageWebSession: (
+        provider: UsageWebSessionProviderId
+      ) => Promise<UsageWebSessionImportOutcome>
+      clearUsageWebSession: (provider: UsageWebSessionProviderId) => Promise<{
+        ok: boolean
+        status: UsageWebSessionStatus
+        error?: string
+      }>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       /** Locally accumulated Mistral burn estimate; null until the seat has run. */
       getMistralQuotaEstimate: () => Promise<MistralQuotaSnapshot | null>

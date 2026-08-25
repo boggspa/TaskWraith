@@ -165,6 +165,8 @@ describe('ModelUsageCard', () => {
       'deepseek',
       'codex',
       'mistral',
+      'qwen',
+      'mimo',
       'antigravity',
       'cerebras',
       'cursor',
@@ -173,7 +175,7 @@ describe('ModelUsageCard', () => {
     ] as const
 
     expect(orderExpandedUsageProviders(scrambled)).toEqual(
-      EXPANDED_USAGE_PROVIDER_ORDER.slice(0, 11)
+      EXPANDED_USAGE_PROVIDER_ORDER.slice(0, 13)
     )
   })
 

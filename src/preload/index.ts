@@ -75,6 +75,7 @@ import type {
   ExternalProviderThreadImportResult
 } from '../shared/externalProviderThreadImport'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { UsageWebSessionProviderId } from '../shared/usageWebSession'
 import type {
   LiveSteeringCancelRequest,
   LiveSteeringCancelResult,
@@ -529,7 +530,8 @@ const api = {
   hostPlatform: process.platform,
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
   terminal: {
-    create: (workspacePath, sessionId) => ipcRenderer.invoke('terminal:create', workspacePath, sessionId),
+    create: (workspacePath, sessionId) =>
+      ipcRenderer.invoke('terminal:create', workspacePath, sessionId),
     write: (sessionId, data) => ipcRenderer.invoke('terminal:write', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
     detach: (sessionId) => ipcRenderer.invoke('terminal:detach', sessionId),
@@ -537,12 +539,14 @@ const api = {
     list: () => ipcRenderer.invoke('terminal:list'),
     getScrollback: (sessionId) => ipcRenderer.invoke('terminal:getScrollback', sessionId),
     onData: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) => callback(sessionId, data)
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) =>
+        callback(sessionId, data)
       ipcRenderer.on('terminal:data', handler)
       return () => ipcRenderer.removeListener('terminal:data', handler)
     },
     onExit: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) => callback(sessionId, exitCode)
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) =>
+        callback(sessionId, exitCode)
       ipcRenderer.on('terminal:exit', handler)
       return () => ipcRenderer.removeListener('terminal:exit', handler)
     }
@@ -784,6 +788,12 @@ const api = {
   // crosses the contextBridge deep-copy cheaply where a record array does not.
   getDailyUsageRollup: () => ipcRenderer.invoke('get-daily-usage-rollup'),
   getQuotaSnapshotHook: () => ipcRenderer.invoke('quota-snapshot-hook:get'),
+  getUsageWebSessionStatus: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:get-status', provider),
+  importUsageWebSession: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:import', provider),
+  clearUsageWebSession: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:clear', provider),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
   // Mistral's estimated monthly burn. Not a probe and not a vendor figure:
   // Mistral publishes no quota and exposes no usage endpoint, so this reads the

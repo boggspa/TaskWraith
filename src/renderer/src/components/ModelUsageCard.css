@@ -589,6 +589,14 @@
   --compact-quota-color: var(--provider-meta-color);
 }
 
+.model-usage-compact-cell.provider-mimo {
+  --compact-quota-color: var(--provider-mimo-color);
+}
+
+.model-usage-compact-cell.provider-qwen {
+  --compact-quota-color: var(--provider-qwen-color);
+}
+
 .model-usage-compact-cell.provider-mistral.is-estimated {
   opacity: 0.72;
   font-style: italic;

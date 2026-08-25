@@ -1676,6 +1676,7 @@ import {
   configureKimiWebSessionStore,
   kimiWebSessionStore
 } from './kimi/KimiWebSessionStore'
+import { configureUsageWebSessionStores } from './providers/UsageWebSessionStore'
 import { createKimiWebUsageFetcher } from './kimi/KimiWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
@@ -1972,6 +1973,7 @@ import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerOllamaAuthHandlers } from './ipc/ollamaAuthHandlers'
 import { registerKimiWebSessionHandlers } from './ipc/kimiWebSessionHandlers'
+import { registerUsageWebSessionHandlers } from './ipc/usageWebSessionHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
@@ -43835,6 +43837,14 @@ if (isGeminiMcpBridgeProcess) {
     configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     configureKimiWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
+    configureUsageWebSessionStores({ userDataPath: app.getPath('userData'), safeStorage })
+    registerUsageWebSessionHandlers({
+      ipcMain,
+      isMainRendererSender,
+      onSessionChanged: () => {
+        mainWindow?.webContents.send('usage-changed')
+      }
+    })
     // The lanes that turn those sessions into quota readings. Both read the
     // stores lazily, so construction order here is not load-bearing.
     const mistralWebUsageLane = createMistralWebUsageLane({
