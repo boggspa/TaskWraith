@@ -405,6 +405,20 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'get-kimi-web-session-status',
   'import-kimi-web-session',
   'clear-kimi-web-session',
+  // Writing a captured Kimi console cookie is a credential mutation on the
+  // same footing as the session channels above.
+  'set-kimi-web-session',
+
+  // Terminal sessions spawn host processes scoped to a registered workspace
+  // and stream raw PTY data. Only the primary App renderer may create,
+  // drive, resize, or read them; secondary renderers stay fail-closed.
+  'terminal:create',
+  'terminal:write',
+  'terminal:resize',
+  'terminal:detach',
+  'terminal:kill',
+  'terminal:list',
+  'terminal:getScrollback',
 
   // Canvas WebContentsView state belongs to the primary window. Popouts and
   // other secondary renderers must not create or reposition an overlay over it.
