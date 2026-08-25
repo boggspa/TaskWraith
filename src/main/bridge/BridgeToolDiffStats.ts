@@ -327,6 +327,21 @@ export function bridgeToolDiffStats(
       (typeof input.contents === 'string' && input.contents) ||
       undefined
     if (content !== undefined) {
+      // A tool_result's `content` can ride into merged result parameters
+      // carrying a unified diff rather than created-file body text (plain
+      // ensemble Edit results do exactly this). Count it structurally when
+      // it has diff shape instead of minting inflated +N/-0 'content' stats
+      // that would shadow the real result-side derivation downstream.
+      const structural = bridgeUnifiedDiffStats(content)
+      if (structural) {
+        const files = parsePatchFileStats(content)
+        return {
+          ...structural,
+          ...(files.length > 0 ? { files } : {}),
+          source: 'result_diff',
+          confidence: 'estimated'
+        }
+      }
       return {
         additions: lineCount(content),
         deletions: 0,
