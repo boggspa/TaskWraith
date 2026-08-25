@@ -52,7 +52,15 @@ if (process.env.TASKWRAITH_RELAY_APNS_GATEWAY === '1') {
         log: (line: string) => console.log(line)
       })
       sender = {
-        send: (args) => client.send(args)
+        // The gateway's sender seam passes the aps payload as a structured
+        // object with an unvalidated numeric priority; ApnsClient writes the
+        // body raw to the wire and requires the exact APNs priority set.
+        send: (args) =>
+          client.send({
+            ...args,
+            priority: args.priority === 5 ? 5 : 10,
+            body: JSON.stringify(args.body)
+          })
       }
       // eslint-disable-next-line no-console
       console.log('[taskwraith-relay] APNs sender ready (key mounted)')
