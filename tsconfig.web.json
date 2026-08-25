@@ -1,5 +1,14 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  // KNOWN ISSUE (documented residual): running `tsc --noEmit -p tsconfig.web.json`
+  // reports exactly one TS6305 ("Output file 'src/main/store/types.d.ts' has not
+  // been built from source 'src/main/store/types.ts'"). This is a --noEmit-mode
+  // artifact of project-reference compositing: this config both includes
+  // src/main/store/types.ts as an explicit root AND references
+  // ./tsconfig.node.json (composite), so TS expects that project's built .d.ts
+  // emit even under --noEmit. It is NOT a code defect. Do NOT restructure the
+  // include lists or references to silence it — prior probes regressed badly
+  // (1,156 TS6305 + 374 TS6307). See papercuts/2026-08-25-ts6305-noemit-residual.md.
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
