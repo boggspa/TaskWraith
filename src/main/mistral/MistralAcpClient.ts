@@ -435,6 +435,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
   })
   const handle = runAcpTurn({
     prompt: options.prompt,
+    cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: buildMistralInitializeParams(options.appVersion),

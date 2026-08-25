@@ -149,6 +149,12 @@ export interface AcpTurnOptions {
    * read-only seat never leaves the write-capable `default` mode.
    */
   sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  /**
+   * Lifetime of `cwd` as a provider-visible workspace identity. A native
+   * session may be resumed only when the path remains valid for that session's
+   * whole lifetime; disposable run scratch must never be used for resume.
+   */
+  cwdLifetime: 'run' | 'session'
   cwd: string
   /** Spawns the provider's ACP stdio process (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -415,6 +421,10 @@ export function createAcpTurnAbortController(handle: { cancel: () => void }): Ab
  * synthesizes the canonical result/exit from `onClose`.
  */
 export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
+  const requestedResumeSessionId = nonEmptyString(options.resumeSessionId)
+  if (requestedResumeSessionId && options.cwdLifetime !== 'session') {
+    throw new Error('ACP session/resume requires a session-scoped cwd.')
+  }
   // Create both join authorities before spawning. `onProcess` is deliberately
   // invoked only after child close/error listeners are installed below.
   let resolveClosed!: () => void
@@ -436,7 +446,6 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   let carry = ''
   let sessionId = ''
-  const requestedResumeSessionId = nonEmptyString(options.resumeSessionId)
   const resumeRequested = Boolean(requestedResumeSessionId)
   let resumeRpcSent = false
   let fallbackFromResume = false

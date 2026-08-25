@@ -504,6 +504,7 @@ describe('KimiOAuthCredentialAuthority', () => {
     expect(first.ok).toBe(true)
     if (!first.ok) return
     await first.noteProviderProcess(1_102)
+    await privateDirectory(join(f.homeA, 'runtime-cwd', 'session'))
     const rotated = credential(2_000, 'R1-same-seat')
     await privateFile(join(f.homeA, 'credentials', 'kimi-code.json'), rotated)
 
@@ -526,7 +527,9 @@ describe('KimiOAuthCredentialAuthority', () => {
       rotated
     )
     expect(await fs.readFile(join(f.homeA, 'credentials', 'kimi-code.json'), 'utf8')).toBe(rotated)
+    expect((await fs.lstat(join(f.homeA, 'runtime-cwd', 'session'))).isDirectory()).toBe(true)
     await restarted.cleanup()
+    expect((await fs.lstat(join(f.homeA, 'runtime-cwd', 'session'))).isDirectory()).toBe(true)
   }, 20_000)
 })
 

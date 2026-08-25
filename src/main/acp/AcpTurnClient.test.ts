@@ -70,6 +70,7 @@ const baseOptions = (
   const events: AcpRunEvent[] = []
   const handle = runAcpTurn({
     prompt: 'hi',
+    cwdLifetime: overrides.cwdLifetime ?? (overrides.resumeSessionId ? 'session' : 'run'),
     cwd: '/tmp/ws',
     spawnProcess: () => child,
     initializeParams: {
@@ -234,6 +235,17 @@ describe('runAcpTurn — neutral core', () => {
       text: 'ACP provider startup authority could not be committed; the process was stopped.'
     })
     expect(JSON.stringify(events)).not.toContain('private authority failure')
+  })
+
+  it('rejects native resume before spawn when the provider cwd is run-scoped', () => {
+    const child = new FakeAcpChild()
+    expect(() =>
+      baseOptions(child, {
+        resumeSessionId: 'session-existing',
+        cwdLifetime: 'run'
+      })
+    ).toThrow('session/resume requires a session-scoped cwd')
+    expect(child.sent()).toEqual([])
   })
 
   it('resumes an advertised native session before sending the prompt', () => {

@@ -227,6 +227,7 @@ async function probe(prompt: string): Promise<ProbeEvidence> {
       }
       const handle = runKimiAcpTurn({
         prompt,
+        cwdLifetime: 'run',
         cwd: workspace,
         fsRoots: [workspace],
         fs: recordingFs,

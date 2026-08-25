@@ -4,6 +4,7 @@ import {
   chmod,
   lstat,
   realpath,
+  readFile,
   readdir,
   rm,
   symlink,
@@ -32,6 +33,7 @@ import {
 const cleanupRoots: string[] = []
 
 const realFs: KimiPrivateCwdFs = {
+  readFile: (path) => readFile(path, 'utf8'),
   mkdir: async (path) => {
     await mkdir(path, { recursive: true, mode: 0o700 })
   },
@@ -400,6 +402,94 @@ describe('Kimi production ACP containment', () => {
     await cwd.assertReadyForSpawn()
     await cwd.cleanup()
     await expect(lstat(cwd.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('retains one stable empty cwd across durable seat turns', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-kimi-posture-'))
+    cleanupRoots.push(root)
+    const home = join(root, 'seat-home')
+    await mkdir(home, { mode: 0o700 })
+
+    const first = await prepareKimiPrivateRunCwd({
+      isolatedHome: home,
+      fs: realFs,
+      lifetime: 'session'
+    })
+    expect(first.cwd).toBe(join(home, 'runtime-cwd', 'session'))
+    await first.cleanup()
+    await expect(lstat(first.cwd)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
+
+    const followUp = await prepareKimiPrivateRunCwd({
+      isolatedHome: home,
+      fs: realFs,
+      lifetime: 'session'
+    })
+    expect(followUp.cwd).toBe(first.cwd)
+    expect(await readdir(followUp.cwd)).toEqual([])
+    await followUp.assertReadyForSpawn()
+  })
+
+  it('recreates the bounded legacy run cwd persisted by an existing native session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-kimi-posture-'))
+    cleanupRoots.push(root)
+    const home = join(root, 'seat-home')
+    const legacyCwd = join(home, 'runtime-cwd', 'run-nQSVy4')
+    await mkdir(home, { mode: 0o700 })
+    await writeFile(
+      join(home, 'session_index.jsonl'),
+      `${JSON.stringify({ sessionId: 'session_existing', workDir: legacyCwd })}\n`
+    )
+
+    const resumed = await prepareKimiPrivateRunCwd({
+      isolatedHome: home,
+      fs: realFs,
+      lifetime: 'session',
+      resumeSessionId: 'session_existing'
+    })
+    expect(resumed.cwd).toBe(legacyCwd)
+    expect(await readdir(legacyCwd)).toEqual([])
+    await resumed.cleanup()
+    await expect(lstat(legacyCwd)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
+  })
+
+  it('rejects a persisted resume cwd outside the private runtime root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-kimi-posture-'))
+    cleanupRoots.push(root)
+    const home = join(root, 'seat-home')
+    await mkdir(home, { mode: 0o700 })
+    await writeFile(
+      join(home, 'session_index.jsonl'),
+      `${JSON.stringify({ sessionId: 'session_escape', workDir: join(root, 'outside') })}\n`
+    )
+
+    await expect(
+      prepareKimiPrivateRunCwd({
+        isolatedHome: home,
+        fs: realFs,
+        lifetime: 'session',
+        resumeSessionId: 'session_escape'
+      })
+    ).rejects.toThrow('escaped its private runtime root')
+  })
+
+  it('rejects a pre-planted symlink at the stable session cwd before chmod', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-kimi-posture-'))
+    cleanupRoots.push(root)
+    const home = join(root, 'seat-home')
+    const runtimeRoot = join(home, 'runtime-cwd')
+    const outside = join(root, 'outside')
+    await mkdir(runtimeRoot, { recursive: true, mode: 0o700 })
+    await mkdir(outside, { mode: 0o755 })
+    await symlink(outside, join(runtimeRoot, 'session'))
+
+    await expect(
+      prepareKimiPrivateRunCwd({
+        isolatedHome: home,
+        fs: realFs,
+        lifetime: 'session'
+      })
+    ).rejects.toThrow('session cwd is not a real directory')
+    if (process.platform !== 'win32') expect((await lstat(outside)).mode & 0o077).not.toBe(0)
   })
 
   it('fails closed if project config or any other file appears before spawn', async () => {

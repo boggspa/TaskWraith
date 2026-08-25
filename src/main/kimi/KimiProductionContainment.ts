@@ -1,11 +1,12 @@
 import type { Dirent, Stats } from 'fs'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
 
 export { KIMI_ACP_PRODUCTION_POSTURE_VERSION }
 
 export interface KimiPrivateCwdFs {
+  readFile: (path: string) => Promise<string>
   mkdir: (path: string) => Promise<void>
   mkdtemp: (prefix: string) => Promise<string>
   chmod: (path: string, mode: number) => Promise<void>
@@ -20,9 +21,11 @@ export interface KimiPrivateRunCwd {
   cwd: string
   /** Re-check the private directory immediately before the provider spawn. */
   assertReadyForSpawn: () => Promise<void>
-  /** Idempotently remove the per-run directory. */
+  /** Idempotently remove run-scoped storage or retain session continuity. */
   cleanup: () => Promise<void>
 }
+
+export type KimiPrivateCwdLifetime = 'run' | 'session'
 
 /** Join every terminal callback to one cleanup operation. ACP may emit both a
  * child `error` and `close`; neither callback may release the seat early. */
@@ -190,13 +193,19 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 /**
- * Allocate an unguessable, mode-0700, empty cwd under the isolated Kimi home.
+ * Allocate a mode-0700, empty cwd under the isolated Kimi home. Ephemeral runs
+ * get an unguessable directory; resumable seats keep one stable workspace
+ * identity for the native session lifetime.
  * The real workspace is intentionally not an input: it can only be reached by
  * the governed TaskWraith HTTP MCP gateway.
  */
 export async function prepareKimiPrivateRunCwd(input: {
   isolatedHome: string
   fs: KimiPrivateCwdFs
+  /** A resumable native session owns its cwd until the seat is deleted. */
+  lifetime?: KimiPrivateCwdLifetime
+  /** Existing native session whose original synthetic cwd may need repair. */
+  resumeSessionId?: string | null
 }): Promise<KimiPrivateRunCwd> {
   const runtimeRoot = join(input.isolatedHome, 'runtime-cwd')
   const [homeReal, homeStat] = await Promise.all([
@@ -234,7 +243,55 @@ export async function prepareKimiPrivateRunCwd(input: {
   ) {
     throw new Error('Kimi private runtime root escaped the isolated home.')
   }
-  const cwd = await input.fs.mkdtemp(join(runtimeRoot, 'run-'))
+  const lifetime = input.lifetime ?? 'run'
+  const requestedResumeSessionId = String(input.resumeSessionId || '').trim()
+  let persistedResumeCwd: string | null = null
+  if (lifetime === 'session' && requestedResumeSessionId) {
+    try {
+      const index = await input.fs.readFile(join(input.isolatedHome, 'session_index.jsonl'))
+      const records = index.split(/\r?\n/).filter(Boolean).reverse()
+      for (const line of records) {
+        let record: Record<string, unknown>
+        try {
+          record = JSON.parse(line) as Record<string, unknown>
+        } catch {
+          continue
+        }
+        if (record.sessionId !== requestedResumeSessionId) continue
+        if (typeof record.workDir !== 'string' || !record.workDir.trim()) break
+        const candidate = resolve(record.workDir)
+        const candidateName = basename(candidate)
+        const directChild = dirname(candidate) === resolve(runtimeRoot)
+        const ownedName = candidateName === 'session' || /^run-[A-Za-z0-9]+$/.test(candidateName)
+        if (!directChild || !ownedName) {
+          throw new Error('Kimi persisted session cwd escaped its private runtime root.')
+        }
+        persistedResumeCwd = candidate
+        break
+      }
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'ENOENT') throw error
+    }
+  }
+
+  // New durable sessions share one stable empty workspace identity per seat.
+  // Existing v1 sessions keep the exact run-* identity Kimi persisted; recreate
+  // it inside the verified root when old per-run cleanup removed it.
+  const cwd =
+    lifetime === 'session'
+      ? persistedResumeCwd || join(runtimeRoot, 'session')
+      : await input.fs.mkdtemp(join(runtimeRoot, 'run-'))
+  if (lifetime === 'session') {
+    try {
+      const existing = await input.fs.lstat(cwd)
+      if (!existing.isDirectory() || existing.isSymbolicLink()) {
+        throw new Error('Kimi private session cwd is not a real directory.')
+      }
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'ENOENT') throw error
+      await input.fs.mkdir(cwd)
+    }
+  }
   await input.fs.chmod(cwd, 0o700)
 
   let cleaned = false
@@ -267,6 +324,7 @@ export async function prepareKimiPrivateRunCwd(input: {
 
   const cleanup = async (): Promise<void> => {
     if (cleaned) return
+    if (lifetime === 'session') return
     await input.fs.rm(cwd)
     cleaned = true
   }
@@ -275,7 +333,9 @@ export async function prepareKimiPrivateRunCwd(input: {
     await assertReadyForSpawn()
     return { cwd, assertReadyForSpawn, cleanup }
   } catch (error) {
-    await cleanup().catch(() => undefined)
+    // A failed boundary/emptiness check must not turn malformed continuity
+    // state into a durable path, even when ordinary cleanup retains the cwd.
+    await input.fs.rm(cwd).catch(() => undefined)
     throw error
   }
 }

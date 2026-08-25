@@ -337,6 +337,8 @@ describe('provider dispatch integration', () => {
     )
 
     expect(kimiAcpProvider).toContain('prepareKimiPrivateRunCwd')
+    expect(kimiAcpProvider).toContain("lifetime: preserveKimiSessionState ? 'session' : 'run'")
+    expect(kimiAcpProvider).toContain('resumeSessionId: productionSession.resumeSessionId')
     expect(kimiAcpProvider).toContain('launchKimiProductionAcp')
     expect(kimiAcpProvider).toContain('assertRuntimeReadyForSpawn')
     expect(kimiAcpProvider).toContain('buildKimiContainedProcessEnv')
@@ -348,6 +350,9 @@ describe('provider dispatch integration', () => {
       kimiAcpProvider.indexOf('launchKimiProductionAcp')
     )
     expect(kimiAcpProvider).toContain('cwd: production.cwd')
+    expect(kimiAcpProvider).toContain(
+      "cwdLifetime: preserveKimiSessionState ? 'session' : 'run'"
+    )
     expect(kimiAcpProvider).toContain('initializeParams: production.initializeParams')
     expect(kimiAcpProvider).toContain('mcpServers: production.mcpServers')
     expect(kimiAcpProvider).not.toContain('cwd: payload.workspace')

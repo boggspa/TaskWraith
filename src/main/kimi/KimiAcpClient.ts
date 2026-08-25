@@ -36,6 +36,8 @@ export interface KimiAcpRunOptions {
   allowResumeFallback?: boolean
   /** Model/thinking selections to re-assert on a resumed native session. */
   resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  /** Must be `session` for every durable seat, including its first turn. */
+  cwdLifetime: 'run' | 'session'
   cwd: string
   spawnProcess: () => AcpChildProcess
   /** Defaults to the exact fs-free production initialize posture. */
@@ -100,6 +102,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
     resumeFallbackPrompt: options.resumeFallbackPrompt,
     allowResumeFallback: options.allowResumeFallback,
     resumeConfigOptions: options.resumeConfigOptions,
+    cwdLifetime: options.cwdLifetime,
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: options.initializeParams ?? buildKimiProductionInitializeParams('1.0.6'),

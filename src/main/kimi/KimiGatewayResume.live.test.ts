@@ -32,7 +32,11 @@ import { prepareKimiIsolatedHome, hasConfiguredKimiApiKey } from './KimiAcpHome'
 import { prepareKimiOAuthCredentialProjection } from './KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './KimiAcpClient'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './KimiHttpMcpBridge'
-import { buildKimiProductionInitializeParams } from './KimiProductionContainment'
+import {
+  buildKimiProductionInitializeParams,
+  prepareKimiPrivateRunCwd,
+  type KimiPrivateCwdFs
+} from './KimiProductionContainment'
 
 const SOURCE_HOME = resolve(
   process.env.TASKWRAITH_KIMI_CANARY_HOME || join(homedir(), '.kimi-code')
@@ -77,6 +81,19 @@ const homeFsAdapter = {
   lstat: (p: string) => fsp.lstat(p),
   realpath: (p: string) => fsp.realpath(p),
   prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
+}
+
+const privateCwdFsAdapter: KimiPrivateCwdFs = {
+  readFile: (p) => fsp.readFile(p, 'utf8'),
+  mkdir: async (p) => {
+    await fsp.mkdir(p, { recursive: true, mode: 0o700 })
+  },
+  mkdtemp: (prefix) => fsp.mkdtemp(prefix),
+  chmod: (p, mode) => fsp.chmod(p, mode),
+  lstat: (p) => fsp.lstat(p),
+  realpath: (p) => fsp.realpath(p),
+  readdir: (p) => fsp.readdir(p),
+  rm: (p) => fsp.rm(p, { recursive: true, force: true })
 }
 
 function kimiSubprocessEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
@@ -208,6 +225,7 @@ async function runLiveTurn(options: {
     const handle = runKimiAcpTurn({
       prompt: options.prompt,
       resumeSessionId: options.resumeSessionId,
+      cwdLifetime: 'session',
       resumeFallbackPrompt: options.resumeFallbackPrompt,
       confirmResumedSession: options.confirmResumedSession,
       cwd: options.cwd,
@@ -273,15 +291,19 @@ describe.skipIf(!ENABLED)(
         // the compaction-mint shape from the original incident).
         const mint = await startEchoBridge('A-mint')
         let home = await prepare()
-        const mintCwd = join(root, 'cwd-mint')
-        await fsp.mkdir(mintCwd, { recursive: true })
+        const mintCwd = await prepareKimiPrivateRunCwd({
+          isolatedHome: home.home,
+          fs: privateCwdFsAdapter,
+          lifetime: 'session'
+        })
         const minted = await runLiveTurn({
           home,
-          cwd: mintCwd,
+          cwd: mintCwd.cwd,
           bridge: mint.bridge,
           prompt: 'Reply with exactly: OK'
         })
         await mint.bridge.close()
+        await mintCwd.cleanup()
         await home.cleanup()
         expect(minted.session?.sessionId ?? '').toMatch(/^session_/)
         const mintedSessionId = minted.session!.sessionId
@@ -296,11 +318,16 @@ describe.skipIf(!ENABLED)(
           'you, reply with exactly: NO-PROBE-TOOL'
         const act = await startEchoBridge('A-act')
         home = await prepare()
-        const actCwd = join(root, 'cwd-act')
-        await fsp.mkdir(actCwd, { recursive: true })
+        const actCwd = await prepareKimiPrivateRunCwd({
+          isolatedHome: home.home,
+          fs: privateCwdFsAdapter,
+          lifetime: 'session',
+          resumeSessionId: mintedSessionId
+        })
+        expect(actCwd.cwd).toBe(mintCwd.cwd)
         const acted = await runLiveTurn({
           home,
-          cwd: actCwd,
+          cwd: actCwd.cwd,
           bridge: act.bridge,
           prompt:
             'SLIM RESUME PROMPT. Call the tool mcp__taskwraith__probe_echo with ' +
@@ -310,6 +337,7 @@ describe.skipIf(!ENABLED)(
           confirmResumedSession: async () => false
         })
         await act.bridge.close()
+        await actCwd.cleanup()
         await home.cleanup()
 
         // Reminted, not resumed: a fresh session id born from session/new.
@@ -352,15 +380,19 @@ describe.skipIf(!ENABLED)(
       try {
         const mint = await startEchoBridge('B-mint')
         let home = await prepare()
-        const mintCwd = join(root, 'cwd-mint')
-        await fsp.mkdir(mintCwd, { recursive: true })
+        const mintCwd = await prepareKimiPrivateRunCwd({
+          isolatedHome: home.home,
+          fs: privateCwdFsAdapter,
+          lifetime: 'session'
+        })
         const minted = await runLiveTurn({
           home,
-          cwd: mintCwd,
+          cwd: mintCwd.cwd,
           bridge: mint.bridge,
           prompt: 'Reply with exactly: OK'
         })
         await mint.bridge.close()
+        await mintCwd.cleanup()
         await home.cleanup()
         expect(minted.session?.sessionId ?? '').toMatch(/^session_/)
         const mintedSessionId = minted.session!.sessionId
@@ -371,11 +403,16 @@ describe.skipIf(!ENABLED)(
         // grace must pass without costing the seat its native session.
         const act = await startEchoBridge('B-act')
         home = await prepare()
-        const actCwd = join(root, 'cwd-act')
-        await fsp.mkdir(actCwd, { recursive: true })
+        const actCwd = await prepareKimiPrivateRunCwd({
+          isolatedHome: home.home,
+          fs: privateCwdFsAdapter,
+          lifetime: 'session',
+          resumeSessionId: mintedSessionId
+        })
+        expect(actCwd.cwd).toBe(mintCwd.cwd)
         const acted = await runLiveTurn({
           home,
-          cwd: actCwd,
+          cwd: actCwd.cwd,
           bridge: act.bridge,
           prompt:
             'Call the tool mcp__taskwraith__probe_echo with {"text":"resumed"} and reply with ' +
@@ -387,6 +424,7 @@ describe.skipIf(!ENABLED)(
         })
         const contacted = act.bridge.contacted()
         await act.bridge.close()
+        await actCwd.cleanup()
         await home.cleanup()
 
         // The native session survived the gate.

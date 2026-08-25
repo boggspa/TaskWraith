@@ -130,7 +130,13 @@ function makeFakeFs(seed: Record<string, string>): {
               released = 'rotated'
             }
             for (const entry of await fs.readdir!(isolatedHome)) {
-              if (entry === 'sessions' || entry === 'session_index.jsonl') continue
+              if (
+                entry === 'sessions' ||
+                entry === 'session_index.jsonl' ||
+                entry === 'runtime-cwd'
+              ) {
+                continue
+              }
               await fs.rm(`${isolatedHome}/${entry}`)
             }
             oauthLeaseHeld = false
@@ -469,6 +475,7 @@ describe('prepareKimiIsolatedHome', () => {
       ...seededSource(),
       '/iso/sessions/session-1/context.jsonl': '{"role":"user"}',
       '/iso/session_index.jsonl': '{"id":"session-1"}\n',
+      '/iso/runtime-cwd/session/.keep-out': 'remove-me',
       '/iso/future-autoload/hooks/launch.js': 'run()',
       // Model a credential residue left by a prior crashed process. Preparation
       // must replace it before the new process starts.
@@ -481,6 +488,8 @@ describe('prepareKimiIsolatedHome', () => {
     dirs.add('/iso')
     dirs.add('/iso/sessions')
     dirs.add('/iso/sessions/session-1')
+    dirs.add('/iso/runtime-cwd')
+    dirs.add('/iso/runtime-cwd/session')
     dirs.add('/iso/future-autoload')
     dirs.add('/iso/future-autoload/hooks')
     dirs.add('/iso/credentials')
@@ -502,12 +511,44 @@ describe('prepareKimiIsolatedHome', () => {
     expect(dirs.has('/iso')).toBe(true)
     expect(files.get('/iso/sessions/session-1/context.jsonl')).toBe('{"role":"user"}')
     expect(files.get('/iso/session_index.jsonl')).toBe('{"id":"session-1"}\n')
+    // Non-empty cwd residue is scrubbed; the session-cwd allocator recreates
+    // the same owned directory before native resume.
+    expect(dirs.has('/iso/runtime-cwd')).toBe(false)
     expect(files.has('/iso/credentials/kimi-code.json')).toBe(false)
     expect(files.has('/iso/oauth/kimi-code')).toBe(false)
     expect(files.has('/iso/device_id')).toBe(false)
     expect(files.has('/iso/config.toml')).toBe(false)
     expect(files.has('/iso/mcp.json')).toBe(false)
     expect(files.has('/iso/future-autoload/hooks/launch.js')).toBe(false)
+  })
+
+  it('preserves an empty private session cwd as durable resume continuity', async () => {
+    const { fs, files, dirs } = makeFakeFs({
+      ...seededSource(),
+      '/iso/sessions/session-1/context.jsonl': '{}',
+      '/iso/session_index.jsonl': '{"id":"session-1"}\n'
+    })
+    dirs.add('/iso')
+    dirs.add('/iso/sessions')
+    dirs.add('/iso/sessions/session-1')
+    dirs.add('/iso/runtime-cwd')
+    dirs.add('/iso/runtime-cwd/session')
+
+    const result = await prepareKimiIsolatedHome({
+      runId: 'durable-cwd',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      preserveSessionState: true,
+      strictCleanup: true,
+      fs
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    await result.cleanup()
+    expect(dirs.has('/iso/runtime-cwd')).toBe(true)
+    expect(dirs.has('/iso/runtime-cwd/session')).toBe(true)
+    expect(files.has('/iso/config.toml')).toBe(false)
   })
 
   it('strict durable cleanup rejects residue and succeeds on a joined retry', async () => {

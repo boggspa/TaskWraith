@@ -190,6 +190,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   })
   const handle = runAcpTurn({
     prompt: options.prompt,
+    cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: {

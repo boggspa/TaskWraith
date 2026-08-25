@@ -24505,8 +24505,9 @@ const kimiHomeFsAdapter: KimiHomeFs = {
   prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
 }
 
-/** Node fs adapter for the TaskWraith-owned per-run synthetic Kimi cwd. */
+/** Node fs adapter for TaskWraith-owned run- or session-scoped synthetic Kimi cwd. */
 const kimiPrivateCwdFsAdapter: KimiPrivateCwdFs = {
+  readFile: (path) => fs.readFile(path, 'utf8'),
   mkdir: async (path) => {
     await fs.mkdir(path, { recursive: true, mode: 0o700 })
   },
@@ -24701,11 +24702,36 @@ async function runKimiAcpProvider(
       return
     }
 
+    const persistedSeat = providerSeatStoreTarget(
+      payload.appChatId,
+      'kimi',
+      payload.ensembleRun?.participantId
+    )
+    const persistedPostureVersion = (() => {
+      if (!persistedSeat || persistedSeat.linkedProviderSessionId !== payload.providerSessionId) {
+        return undefined
+      }
+      if (persistedSeat.participantId) {
+        return persistedSeat.chat.ensemble?.participants.find(
+          (participant) => participant.id === persistedSeat.participantId
+        )?.kimiAcpPostureVersion
+      }
+      return persistedSeat.chat.providerMetadata?.kimiAcpPostureVersion
+    })()
+    const productionSession = buildKimiProductionSessionPlan({
+      prompt: payload.prompt,
+      resumeFallbackPrompt: payload.resumeFallbackPrompt,
+      requestedResumeSessionId: preserveKimiSessionState ? payload.providerSessionId : null,
+      persistedPostureVersion
+    })
+
     let privateCwd: KimiPrivateRunCwd
     try {
       privateCwd = await prepareKimiPrivateRunCwd({
         isolatedHome: home.home,
-        fs: kimiPrivateCwdFsAdapter
+        fs: kimiPrivateCwdFsAdapter,
+        lifetime: preserveKimiSessionState ? 'session' : 'run',
+        resumeSessionId: productionSession.resumeSessionId
       })
     } catch (error) {
       await home.cleanup()
@@ -24731,28 +24757,6 @@ async function runKimiAcpProvider(
       return
     }
 
-    const persistedSeat = providerSeatStoreTarget(
-      payload.appChatId,
-      'kimi',
-      payload.ensembleRun?.participantId
-    )
-    const persistedPostureVersion = (() => {
-      if (!persistedSeat || persistedSeat.linkedProviderSessionId !== payload.providerSessionId) {
-        return undefined
-      }
-      if (persistedSeat.participantId) {
-        return persistedSeat.chat.ensemble?.participants.find(
-          (participant) => participant.id === persistedSeat.participantId
-        )?.kimiAcpPostureVersion
-      }
-      return persistedSeat.chat.providerMetadata?.kimiAcpPostureVersion
-    })()
-    const productionSession = buildKimiProductionSessionPlan({
-      prompt: payload.prompt,
-      resumeFallbackPrompt: payload.resumeFallbackPrompt,
-      requestedResumeSessionId: payload.providerSessionId,
-      persistedPostureVersion
-    })
     if (productionSession.legacyResumeRejected && payload.prompt.trim() === '/compact') {
       await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
       const message =
@@ -24994,7 +24998,7 @@ async function runKimiAcpProvider(
           appVersion: app.getVersion(),
           prompt: payload.prompt,
           resumeFallbackPrompt: payload.resumeFallbackPrompt,
-          requestedResumeSessionId: payload.providerSessionId,
+          requestedResumeSessionId: preserveKimiSessionState ? payload.providerSessionId : null,
           persistedPostureVersion
         },
         launch: (production, transportCleanup, admittedBinaryPath) => {
@@ -25007,6 +25011,7 @@ async function runKimiAcpProvider(
           return runKimiAcpTurn({
             prompt: production.session.prompt,
             resumeSessionId: production.session.resumeSessionId,
+            cwdLifetime: preserveKimiSessionState ? 'session' : 'run',
             resumeFallbackPrompt: payload.resumeFallbackPrompt,
             // The recovery-prompt swap happens INSIDE AcpTurnClient when a
             // resume rejects, so only this hook sees the true wire text —
@@ -28553,7 +28558,9 @@ async function compactKimiProviderContext(payload: {
   try {
     privateCwd = await prepareKimiPrivateRunCwd({
       isolatedHome: home.home,
-      fs: kimiPrivateCwdFsAdapter
+      fs: kimiPrivateCwdFsAdapter,
+      lifetime: 'session',
+      resumeSessionId: payload.providerSessionId
     })
   } catch (error) {
     await home.cleanup()
@@ -28675,6 +28682,7 @@ async function compactKimiProviderContext(payload: {
           handle = runKimiAcpTurn({
             prompt: production.session.prompt,
             resumeSessionId: production.session.resumeSessionId,
+            cwdLifetime: 'session',
             allowResumeFallback: false,
             cwd: production.cwd,
             initializeParams: production.initializeParams,

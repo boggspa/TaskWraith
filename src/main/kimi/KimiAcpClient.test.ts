@@ -62,6 +62,7 @@ describe('runKimiAcpTurn', () => {
     })
     const handle = runKimiAcpTurn({
       prompt: 'hi',
+      cwdLifetime: 'run',
       cwd: '/private/empty',
       spawnProcess: () => child,
       onEvent: () => {},
@@ -102,6 +103,7 @@ describe('runKimiAcpTurn', () => {
     const child = new FakeChild()
     runKimiAcpTurn({
       prompt: 'hi',
+      cwdLifetime: 'run',
       cwd: '/private/empty',
       spawnProcess: () => child,
       onEvent: () => {}
@@ -123,6 +125,7 @@ describe('runKimiAcpTurn', () => {
     const child = new FakeChild()
     runKimiAcpTurn({
       prompt: 'hi',
+      cwdLifetime: 'run',
       cwd: '/private/empty',
       spawnProcess: () => child,
       onEvent: () => {}

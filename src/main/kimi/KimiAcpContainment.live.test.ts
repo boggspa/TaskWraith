@@ -247,6 +247,7 @@ async function trace(options: {
       }
       const handle = runKimiAcpTurn({
         prompt: options.prompt,
+        cwdLifetime: 'run',
         cwd: ws,
         fsRoots: [ws],
         fs: recordingFs,
