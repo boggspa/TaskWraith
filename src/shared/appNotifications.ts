@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-23'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-25'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, Pi BYOK models via DeepSeek, Z.ai, Qwen, Mistral, and others, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.',
+    body: "AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup (Mistral Medium 3, 3.1 and Latest, Mistral Large 3, Mistral Small 4, Devstral Small and Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3), Ollama Cloud GLM 5.2 and MiniMax M3 alongside local Ornith 1.5, Gemma 4 (31B-MLX), Qwen 3.8, Muse Glimmer, Nemotron 3.5 Lightning, North Mini Code, GLM-4.7-Flash and Rnj-1, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, OpenRouter, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -149,18 +149,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Gemini 3.7 Flash',
             blurb:
               'The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI.'
-          },
-          {
-            name: 'Sonnet 4.6',
-            blurb: 'A top-tier model with better long-form reasoning and coding context.'
-          },
-          {
-            name: 'Opus 4.6',
-            blurb: 'A premium reasoning model tuned for nuanced instruction following.'
-          },
-          {
-            name: 'GPT-OSS-120B',
-            blurb: 'OpenAI 120B OSS model with broad capability and strong tool use.'
           }
         ]
       },
@@ -264,11 +252,29 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         ]
       },
       {
-        // Curated local tags wear their upstream brand hue via accentProvider
-        // (shared/ollamaBrandTable). The Ollama heading stays Ollama green.
+        // Curated local tags and signed-in Cloud rows both wear their upstream
+        // brand hue via accentProvider (shared/ollamaBrandTable). The Ollama
+        // heading stays Ollama green.
         provider: 'ollama',
         label: 'Ollama',
         models: [
+          {
+            name: 'GLM 5.2 (Cloud)',
+            blurb:
+              "Z.ai's 1M-context flagship on Ollama Cloud — signed in, no local VRAM required.",
+            accentProvider: 'zai'
+          },
+          {
+            name: 'MiniMax M3 (Cloud)',
+            blurb:
+              'MiniMax M3 on Ollama Cloud — a 1M context window for long-horizon agentic work.',
+            accentProvider: 'minimax'
+          },
+          {
+            name: 'Ornith 1.5 (9B & 35B)',
+            blurb: "Deep Reinforce's 262K agentic coder, local in both a 9B and a 35B size.",
+            accentProvider: 'deep-reinforce'
+          },
           {
             name: 'Gemma 4 (31B-MLX)',
             blurb: 'Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.',
@@ -331,23 +337,32 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             accentProvider: 'qwen'
           },
           {
+            name: 'Xiaomi MiMo',
+            blurb:
+              'MiMo V2 Pro, V2.5, and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.',
+            accentProvider: 'xiaomi'
+          },
+          {
             name: 'Mistral Large 3',
             blurb: 'Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.',
             accentProvider: 'mistral'
           },
           {
-            name: 'GLM-4.7 (Cerebras)',
-            blurb: 'GLM-4.7 served via Cerebras on Pi — fast inference with a 262K context window.',
-            accentProvider: 'cerebras'
+            name: 'Ox Alpha',
+            blurb:
+              "OpenRouter's unbranded stealth lane on Pi — a preview that can be withdrawn any day.",
+            accentProvider: 'openrouter'
           },
           {
             name: 'Laguna S 2.1',
-            blurb: 'Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.',
+            blurb:
+              'Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.',
             accentProvider: 'poolside'
           },
           {
             name: 'Nemotron 3 Ultra',
-            blurb: 'NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.',
+            blurb:
+              'NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.',
             accentProvider: 'nvidia'
           }
         ]

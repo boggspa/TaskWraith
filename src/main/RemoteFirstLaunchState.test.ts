@@ -433,6 +433,9 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'GLM 5.2 (Cloud)',
+      'MiniMax M3 (Cloud)',
+      'Ornith 1.5 (9B & 35B)',
       'Gemma 4 (31B-MLX)',
       'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
@@ -442,6 +445,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'zai',
+      'minimax',
+      'deep-reinforce',
       'google',
       'qwen',
       'meta',
@@ -457,7 +463,26 @@ describe('buildRemoteFirstLaunchState', () => {
     // likewise re-added afterwards, so both now assert presence.
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
-    expect(piGroup?.models.length).toBeGreaterThan(0)
+    expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'DeepSeek V4 Flash',
+      'GLM-5.2',
+      'Qwen3.8 Max Preview',
+      'Xiaomi MiMo',
+      'Mistral Large 3',
+      'Ox Alpha',
+      'Laguna S 2.1',
+      'Nemotron 3 Ultra'
+    ])
+    expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'qwen',
+      'xiaomi',
+      'mistral',
+      'openrouter',
+      'poolside',
+      'nvidia'
+    ])
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

@@ -171,12 +171,7 @@ describe('notification registry', () => {
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
-    expect(antigravity?.models.map((m) => m.name)).toEqual([
-      'Gemini 3.7 Flash',
-      'Sonnet 4.6',
-      'Opus 4.6',
-      'GPT-OSS-120B'
-    ])
+    expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])
     expect(antigravity?.models[0]?.blurb).toMatch(/Low.*Medium.*High.*official agy CLI/i)
     expect(antigravity?.models[0]?.blurb).not.toMatch(/API key|separately billed/i)
 
@@ -214,8 +209,12 @@ describe('notification registry', () => {
     expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
 
     const ollama = groups.find((g) => g.provider === 'ollama')
-    // Newest curated local tags — each spoofs its upstream brand hue.
+    // Signed-in Cloud rows lead, then the newest curated local tags. Each
+    // spoofs its upstream brand hue whichever source serves it.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'GLM 5.2 (Cloud)',
+      'MiniMax M3 (Cloud)',
+      'Ornith 1.5 (9B & 35B)',
       'Gemma 4 (31B-MLX)',
       'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
@@ -225,6 +224,9 @@ describe('notification registry', () => {
       'Rnj-1'
     ])
     expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'zai',
+      'minimax',
+      'deep-reinforce',
       'google',
       'qwen',
       'meta',
@@ -233,6 +235,32 @@ describe('notification registry', () => {
       'zai',
       'essential'
     ])
+    const pi = groups.find((g) => g.provider === 'pi')
+    expect(pi?.models.map((m) => m.name)).toEqual([
+      'DeepSeek V4 Flash',
+      'GLM-5.2',
+      'Qwen3.8 Max Preview',
+      'Xiaomi MiMo',
+      'Mistral Large 3',
+      'Ox Alpha',
+      'Laguna S 2.1',
+      'Nemotron 3 Ultra'
+    ])
+    // Every Pi row wears the hue of the BYOK upstream that serves it — a
+    // missing accent would silently fall back to the Pi seat slate.
+    expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'qwen',
+      'xiaomi',
+      'mistral',
+      'openrouter',
+      'poolside',
+      'nvidia'
+    ])
+    // GLM-4.7 (Cerebras) was retired from the card, so no row wears cerebras.
+    expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('cerebras')
+
     // Muse Glimmer is an Ollama runtime entry even though Meta also has its own
     // provider surface; do not split either new local model into a new group.
     expect(groups.find((g) => g.provider === 'meta')).toBeUndefined()
