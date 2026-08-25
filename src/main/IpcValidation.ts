@@ -518,7 +518,17 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'clear-ollama-web-session': [],
   'get-kimi-web-session-status': [],
   'import-kimi-web-session': [],
+  'set-kimi-web-session': ['nonEmptyString'],
   'clear-kimi-web-session': [],
+  // Terminal session channels (src/main/ipc/terminalHandlers.ts). The
+  // sessionId argument is the renderer-supplied session key.
+  'terminal:create': ['workspacePath', 'nonEmptyString'],
+  'terminal:write': ['nonEmptyString', 'string'],
+  'terminal:resize': ['nonEmptyString', 'number', 'number'],
+  'terminal:detach': ['nonEmptyString'],
+  'terminal:kill': ['nonEmptyString'],
+  'terminal:list': [],
+  'terminal:getScrollback': ['nonEmptyString'],
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
