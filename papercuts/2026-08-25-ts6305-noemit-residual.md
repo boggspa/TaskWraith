@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-25
 - **Owner:** build/tooling maintainers (documented by Ensemble round, Work3 seat)
-- **Status:** accepted known issue — no code defect; do not restructure configs
+- **Status:** RESOLVED (2026-08-25) — fixed in tsconfig.web.json; see "Resolution" below
 
 ## User-visible scar
 
@@ -38,6 +38,22 @@ errors; web = exactly this one reference-resolution error.
 - Do **not** delete cross-project imports from consumers (e.g. gutting
   `src/preload/index.d.ts`) — that erases the `window.api` type surface and
   floods renderers with TS2339.
-- The inline comment at the top of `tsconfig.web.json` points here.
-- Acceptable future fix if CI adopts build-mode checking: run `tsc -b` before
-  `typecheck:web` so composite declaration outputs exist.
+- Do **not** remove `src/main/store/types.ts` from the web include list as a
+  standalone change: without the explicit root, TypeScript resolves ALL
+  cross-project imports through the reference's declaration outputs and the
+  typecheck floods with TS6305s (reproduced 2026-08-25).
+
+## Resolution (2026-08-25)
+
+Three coordinated changes in `tsconfig.web.json`, verified to leave
+`npm run typecheck` at zero errors:
+
+1. Removed the `"references": [{ "path": "./tsconfig.node.json" }]` block.
+   The typecheck scripts run `tsc -p --noEmit` (never build mode), so the
+   reference only ever caused TS6305 expectations of built declaration
+   outputs.
+2. Added `"disableSourceOfProjectReferenceRedirect": true` so any remaining
+   cross-project module resolution reads `.ts` sources directly instead of
+   demanding `.d.ts` emit.
+3. Kept `src/main/store/types.ts` as an explicit include root (see the
+   warning above).
