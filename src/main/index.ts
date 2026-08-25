@@ -1827,6 +1827,7 @@ import {
   fetchAuthenticatedAgyQuotaSnapshot,
   type AgyPtyLike
 } from './antigravity/AntigravityUsage'
+import { fetchAntigravityCliQuotaSummary } from './antigravity/AntigravityQuotaSummary'
 import {
   createProviderCapabilityProbe,
   parseCapabilityJsonItems,
@@ -55704,12 +55705,15 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    // Keep agy as the sole credential owner. TaskWraith opens the documented
-    // `/usage` panel in a private temporary PTY, parses only the Gemini quota
-    // rows, and schedules those reads on the former Limit Counter cadence.
-    // No OAuth token file or credential material is read by TaskWraith.
+    // The already-consented official agy session can expose the complete quota
+    // summary (including Claude/GPT 5H) without a model call. The credential
+    // stays in main memory and never crosses IPC. If that official summary is
+    // unavailable, retain the documented `/usage` PTY as a credential-opaque
+    // fallback. Both paths share the former Limit Counter refresh cadence.
     const readAntigravityQuota = createAntigravityQuotaClient({
       fetchQuota: async () => {
+        const summary = await fetchAntigravityCliQuotaSummary()
+        if (summary?.windows?.length) return summary
         let probeCwd = os.tmpdir()
         try {
           probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'agy-usage-'))
