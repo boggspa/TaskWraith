@@ -1,0 +1,39 @@
+/* Validated CSS hex values keep their source text and gain an inert visual
+ * preview. The checkerboard remains visible beneath alpha-bearing colours. */
+.message-markdown-pro .markdown-color-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28em;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.message-markdown-pro .markdown-color-token-swatch {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 0.76em;
+  height: 0.76em;
+  border-radius: 3px;
+  background:
+    linear-gradient(var(--markdown-color-token), var(--markdown-color-token)),
+    conic-gradient(
+        rgb(255 255 255 / 0.94) 25%,
+        rgb(174 181 194 / 0.62) 0 50%,
+        rgb(255 255 255 / 0.94) 0 75%,
+        rgb(174 181 194 / 0.62) 0
+      )
+      0 0 / 6px 6px;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.24),
+    0 0 0 1px rgb(255 255 255 / 0.13);
+  user-select: none;
+  print-color-adjust: exact;
+}
+
+@media (forced-colors: active) {
+  .message-markdown-pro .markdown-color-token-swatch {
+    outline: 1px solid CanvasText;
+    outline-offset: 1px;
+    forced-color-adjust: none;
+  }
+}

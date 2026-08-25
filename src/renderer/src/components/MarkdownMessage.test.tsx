@@ -285,6 +285,47 @@ describe('MarkdownMessage', () => {
     expect((html.match(/markdown-inline-diff-stat is-deletion/g) || []).length).toBe(1)
   })
 
+  it('adds inert color swatches to bounded prose and exact inline-code hex values', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          'Use #B73BD5 with **#11223344**, keep #0f08 literal, and preview `#abc`.',
+          '',
+          'Keep [linked #112233](https://example.com/#112233) literal.',
+          '',
+          '```css',
+          'color: #445566;',
+          '```'
+        ].join('\n')}
+      />
+    )
+
+    expect((html.match(/class="markdown-color-token"/g) || []).length).toBe(3)
+    expect(html).toContain('data-color-token="#B73BD5"')
+    expect(html).toContain('data-color-token="#11223344"')
+    expect(html).toContain('data-color-token="#AABBCC"')
+    expect(html).not.toContain('data-color-token="#00FF0088"')
+    expect(html).toContain('#0f08 literal')
+    expect(html).toContain('<code>#abc</code>')
+    expect(html).toContain('linked #112233')
+    expect(html).toContain('#445566;')
+    expect(html).not.toContain('data-color-token="#445566"')
+    expect(html).toContain('message-code-shell')
+  })
+
+  it('adds color metadata only after safe HTML has been sanitised', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'<span data-color-token="#FF0000">fake</span> #00FF00'}
+        allowSafeHtml
+      />
+    )
+
+    expect((html.match(/class="markdown-color-token"/g) || []).length).toBe(1)
+    expect(html).not.toContain('data-color-token="#FF0000"')
+    expect(html).toContain('data-color-token="#00FF00"')
+  })
+
   it('PR3: replaces a resolvable markdown image with its safe data: thumbnail', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage

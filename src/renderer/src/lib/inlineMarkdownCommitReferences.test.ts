@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   isInlineMarkdownCommitHash,
+  rehypeInlineMarkdownCommitReferences,
   tokeniseInlineMarkdownCommitReferences
 } from './inlineMarkdownCommitReferences'
+import type { Root } from 'hast'
 
 describe('inline Markdown commit-reference candidates', () => {
   it('finds bounded abbreviated and full hashes without changing source text', () => {
@@ -34,5 +36,28 @@ describe('inline Markdown commit-reference candidates', () => {
 
   it('recognises exact inline-code candidates with the same length bounds', () => {
     expect(isInlineMarkdownCommitHash('6a561c53e')).toBe(true)
+  })
+
+  it('treats an annotated eight-digit color as atomic rather than a commit', () => {
+    const tree: Root = {
+      type: 'root',
+      children: [
+        {
+          type: 'element',
+          tagName: 'span',
+          properties: { dataColorToken: '#11223344' },
+          children: [{ type: 'text', value: '#11223344' }]
+        }
+      ]
+    }
+
+    rehypeInlineMarkdownCommitReferences()(tree)
+
+    expect(tree.children[0]).toEqual({
+      type: 'element',
+      tagName: 'span',
+      properties: { dataColorToken: '#11223344' },
+      children: [{ type: 'text', value: '#11223344' }]
+    })
   })
 })

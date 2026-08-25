@@ -34,10 +34,15 @@ import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/s
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { MarkdownCommitReference } from './MarkdownCommitReference'
+import { MarkdownColorToken } from './MarkdownColorToken'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import { rehypeInlineMarkdownDiffStats } from '../lib/inlineMarkdownDiffStats'
+import {
+  normalizeInlineMarkdownColor,
+  rehypeInlineMarkdownColorTokens
+} from '../lib/inlineMarkdownColorTokens'
 import {
   isInlineMarkdownCommitHash,
   rehypeInlineMarkdownCommitReferences
@@ -586,6 +591,10 @@ const MARKDOWN_COMPONENTS: Components = {
     )
   },
   span({ node, children, ...props }) {
+    const color = node?.properties?.dataColorToken
+    if (typeof color === 'string') {
+      return <MarkdownColorToken color={color}>{children}</MarkdownColorToken>
+    }
     const hash = node?.properties?.dataCommitReference
     if (typeof hash === 'string') {
       return <MarkdownCommitReference hash={hash}>{children}</MarkdownCommitReference>
@@ -612,6 +621,14 @@ const MARKDOWN_COMPONENTS: Components = {
     const languageMatch = /language-([\w-]+)/.exec(className || '')
     const isBlock = Boolean(languageMatch) || rawContent.includes('\n')
     if (!isBlock) {
+      const color = normalizeInlineMarkdownColor(rawContent)
+      if (color) {
+        return (
+          <MarkdownColorToken color={color}>
+            <code className={className}>{children}</code>
+          </MarkdownColorToken>
+        )
+      }
       if (isInlineMarkdownCommitHash(rawContent)) {
         return (
           <MarkdownCommitReference hash={rawContent}>
@@ -684,6 +701,7 @@ const MARKDOWN_COMPONENTS: Components = {
 
 const REMARK_PLUGINS = [remarkGfm]
 const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
+  rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
   rehypeInlineMarkdownCommitReferences
 ]
@@ -708,6 +726,7 @@ const SAFE_HTML_SCHEMA = {
 const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   rehypeRaw,
   [rehypeSanitize, SAFE_HTML_SCHEMA],
+  rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
   rehypeInlineMarkdownCommitReferences
 ]
