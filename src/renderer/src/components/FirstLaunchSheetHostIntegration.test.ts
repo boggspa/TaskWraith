@@ -11,7 +11,7 @@ describe('FirstLaunchSheet host integration', () => {
     )
 
     expect(mount).toContain(
-      "antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes(\n          'antigravity'\n        )}"
+      "antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes('antigravity')}"
     )
     expect(mount).not.toContain('antigravityConsentGranted=')
     expect(mount).not.toContain('antigravityCredentialConfigured=')
