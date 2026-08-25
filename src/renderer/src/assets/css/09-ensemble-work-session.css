@@ -2304,12 +2304,12 @@
 .composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 124px;
-  grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto;
+  grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto;
   width: min(520px, calc(100vw - 16px));
   min-width: min(520px, calc(100vw - 16px));
   max-width: min(520px, calc(100vw - 16px));
-  height: min(570px, calc(100dvh - 16px));
-  max-height: min(570px, calc(100dvh - 16px));
+  height: min(610px, calc(100dvh - 16px));
+  max-height: min(610px, calc(100dvh - 16px));
 }
 
 .is-ensemble-add-participant > .composer-combined-picker-top-content {
@@ -2415,6 +2415,49 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.ensemble-add-participant-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ensemble-add-participant-bottom-row > .ensemble-add-participant-duplicate-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ensemble-add-participant-management-action {
+  flex: 0 0 auto;
+}
+
+.composer-ensemble-participant-remove-action {
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, #e5484d 46%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #e5484d 8%, transparent);
+  color: color-mix(in srgb, #e5484d 82%, var(--text-primary));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 680;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.composer-ensemble-participant-remove-action:hover:not(:disabled),
+.composer-ensemble-participant-remove-action:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, #e5484d 68%, var(--panel-border));
+  background: color-mix(in srgb, #e5484d 14%, transparent);
+  color: #f06a6f;
+}
+
+.composer-ensemble-participant-remove-action:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .ensemble-add-participant-duplicate-label {

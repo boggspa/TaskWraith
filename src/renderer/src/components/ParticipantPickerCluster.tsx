@@ -126,6 +126,8 @@ interface ParticipantPickerClusterProps {
   /** Keep nested picker portals anchored while this cluster sits in a
    * scrollable surface such as the compact Ensemble roster popover. */
   repositionOnScroll?: boolean
+  /** Caller-specific class shared by both body-portaled picker surfaces. */
+  nestedPopoverClassName?: string
 }
 
 export function buildParticipantPickerProviderGroups(
@@ -175,7 +177,8 @@ export function ParticipantPickerCluster({
   showApplyToAll = false,
   onPatch,
   onApplyPermissionsToAll,
-  repositionOnScroll = false
+  repositionOnScroll = false,
+  nestedPopoverClassName
 }: ParticipantPickerClusterProps): JSX.Element {
   const mutableProviderSnapshot: ConfiguredProviderSnapshot = {
     ...configuredProviderSnapshot,
@@ -337,6 +340,7 @@ export function ParticipantPickerCluster({
         fastModeEnabled={fastModeEnabled}
         onToggleFastMode={onToggleFastMode}
         repositionOnScroll={repositionOnScroll}
+        popoverClassName={nestedPopoverClassName}
       />
       <CombinedPermissionsPicker
         provider={participant.provider}
@@ -354,6 +358,7 @@ export function ParticipantPickerCluster({
             : undefined
         }
         repositionOnScroll={repositionOnScroll}
+        popoverClassName={nestedPopoverClassName}
       />
     </>
   )

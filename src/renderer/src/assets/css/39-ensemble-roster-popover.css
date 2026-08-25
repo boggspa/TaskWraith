@@ -8,6 +8,13 @@
  * vocabulary is recreated here.
  */
 
+/* The roster shell and its model/permission pickers are sibling body portals.
+ * Keep only roster-owned nested pickers above the shell's 12000 layer; ordinary
+ * combined pickers remain in the shared 10060 popover band. */
+.composer-combined-picker-popover.is-ensemble-roster-nested-picker {
+  z-index: 12010;
+}
+
 .composer-ensemble-toggle-popover.has-roster {
   min-height: min(340px, calc(100vh - 32px));
   padding: 10px;
@@ -20,6 +27,58 @@
 .composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
   width: min(206px, 100%);
   margin-top: 7px;
+}
+
+.composer-ensemble-toggle-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+  margin: 7px 2px 0;
+}
+
+.composer-ensemble-toggle-popover.has-roster
+  .composer-ensemble-toggle-mode-row
+  .composer-ensemble-toggle-segmented {
+  margin: 0;
+}
+
+.composer-ensemble-participant-manager-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 33px;
+  margin-right: auto;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 68%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 82%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 680;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.composer-ensemble-participant-manager-trigger:hover:not(:disabled),
+.composer-ensemble-participant-manager-trigger:focus-visible {
+  outline: none;
+  border-color: color-mix(
+    in srgb,
+    var(--provider-ensemble-color, var(--accent)) 46%,
+    var(--panel-border)
+  );
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.composer-ensemble-participant-manager-trigger:disabled {
+  cursor: default;
+  opacity: 0.48;
 }
 
 .composer-ensemble-roster-summary {
@@ -283,6 +342,21 @@
 
   .composer-ensemble-roster-seat-controls .ensemble-above-overflow-stage {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 570px) {
+  .composer-ensemble-toggle-mode-row {
+    flex-wrap: wrap;
+    margin-inline: 0;
+  }
+
+  .composer-ensemble-participant-manager-trigger,
+  .composer-ensemble-toggle-popover.has-roster
+    .composer-ensemble-toggle-mode-row
+    .composer-ensemble-toggle-segmented {
+    width: 100%;
+    margin-right: 0;
   }
 }
 

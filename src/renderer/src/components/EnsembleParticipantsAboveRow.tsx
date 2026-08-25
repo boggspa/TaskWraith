@@ -29,7 +29,7 @@
  * upstream — this component is otherwise display-only beyond click +
  * drag + the overflow editor.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   BossmanCrownIcon,
   CaptainHatIcon,
@@ -97,6 +97,7 @@ import {
 } from './ComposerProviderPicker'
 import {
   CombinedModelPicker,
+  type CombinedModelPickerCustomTrigger,
   type CombinedModelPickerProviderGroup,
   type CombinedModelPickerReasoningOption
 } from './CombinedModelPicker'
@@ -841,6 +842,46 @@ export function resolveParticipantSelectionAfterRemoval(
   const removedIndex = participants.findIndex((participant) => participant.id === removedId)
   if (removedIndex === -1) return null
   return participants[removedIndex - 1]?.id ?? participants[removedIndex + 1]?.id ?? null
+}
+
+type EnsembleAddMutation = Extract<EnsembleUserRosterMutation, { action: 'add' }>
+type EnsembleRemoveMutation = Extract<EnsembleUserRosterMutation, { action: 'remove' }>
+
+export function buildEnsembleParticipantAddMutation(
+  participants: EnsembleParticipant[],
+  selectedParticipantId: string | null,
+  configuration: EnsembleParticipantAddDraft
+): { mutation: EnsembleAddMutation; participantId: string } {
+  const { participant, insertIndex } = buildEnsembleParticipantAddition(
+    participants,
+    selectedParticipantId,
+    configuration
+  )
+  return {
+    mutation: {
+      action: 'add',
+      participant: { ...participant, order: insertIndex + 1 },
+      authority: configuration.authority,
+      autoApprovalsEnabled: configuration.autoApprovalsEnabled
+    },
+    participantId: participant.id
+  }
+}
+
+export function buildEnsembleParticipantRemoveMutation(
+  participants: EnsembleParticipant[],
+  selectedParticipantId: string | null
+): { mutation: EnsembleRemoveMutation; nextSelection: string | null } | null {
+  if (!selectedParticipantId) return null
+  if (!participants.some((participant) => participant.id === selectedParticipantId)) return null
+  return {
+    mutation: { action: 'remove', participantId: selectedParticipantId },
+    nextSelection: resolveParticipantSelectionAfterRemoval(
+      participants,
+      selectedParticipantId,
+      selectedParticipantId
+    )
+  }
 }
 
 export function EnsembleParticipantsAboveRow({
@@ -1646,8 +1687,9 @@ export function EnsembleParticipantsAboveRow({
   )
 }
 
-function EnsembleAddParticipantButton({
+export function EnsembleAddParticipantButton({
   disabled,
+  addDisabled = false,
   title,
   composerStyle,
   grokAvailable,
@@ -1660,9 +1702,13 @@ function EnsembleAddParticipantButton({
   captainAssignmentDisabled,
   bossmanAutoApprovals,
   initialProvider,
-  onAdd
+  onAdd,
+  customTrigger,
+  popoverClassName,
+  managementContent
 }: {
   disabled: boolean
+  addDisabled?: boolean
   title: string
   composerStyle: ComposerStyle
   grokAvailable: boolean
@@ -1676,12 +1722,17 @@ function EnsembleAddParticipantButton({
   bossmanAutoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
   initialProvider: ProviderId
   onAdd: (configuration: EnsembleParticipantAddDraft) => void
+  customTrigger?: CombinedModelPickerCustomTrigger
+  popoverClassName?: string
+  managementContent?: ReactNode
 }): React.JSX.Element {
   const availableProviderGroups = useMemo(
     () => resolveEnsembleAddProviderGroups(providerGroups, grokAvailable, cursorAvailable),
     [cursorAvailable, grokAvailable, providerGroups]
   )
-  const pickerDisabled = disabled || availableProviderGroups.length === 0
+  const pickerDisabled =
+    disabled || (availableProviderGroups.length === 0 && managementContent === undefined)
+  const addCommitDisabled = pickerDisabled || addDisabled || availableProviderGroups.length === 0
   const duplicableProviderIds = useMemo(
     () =>
       new Set(
@@ -1888,10 +1939,10 @@ function EnsembleAddParticipantButton({
   }, [])
 
   const commitDraft = useCallback((): boolean => {
-    if (pickerDisabled) return false
+    if (addCommitDisabled) return false
     onAdd({ ...draft, ...detailsDraft })
     return true
-  }, [detailsDraft, draft, onAdd, pickerDisabled])
+  }, [addCommitDisabled, detailsDraft, draft, onAdd])
 
   const handleAddAnother = useCallback(() => {
     if (!commitDraft()) return
@@ -1992,36 +2043,49 @@ function EnsembleAddParticipantButton({
         />
       }
       bottomContent={
-        participants.length > 0 ? (
-          <EnsembleParticipantDuplicateRow
-            participants={participants}
-            selectedSourceId={duplicateSourceId}
-            duplicableProviderIds={duplicableProviderIds}
-            disabled={pickerDisabled}
-            onDuplicate={handleDuplicate}
-          />
+        participants.length > 0 || managementContent ? (
+          <div className="ensemble-add-participant-bottom-row">
+            {participants.length > 0 ? (
+              <EnsembleParticipantDuplicateRow
+                participants={participants}
+                selectedSourceId={duplicateSourceId}
+                duplicableProviderIds={duplicableProviderIds}
+                disabled={pickerDisabled}
+                onDuplicate={handleDuplicate}
+              />
+            ) : null}
+            {managementContent ? (
+              <div className="ensemble-add-participant-management-action">{managementContent}</div>
+            ) : null}
+          </div>
         ) : undefined
       }
-      popoverClassName="is-ensemble-add-participant"
+      popoverClassName={`is-ensemble-add-participant${
+        popoverClassName ? ` ${popoverClassName}` : ''
+      }`}
       dialogAriaLabel="Configure and add Ensemble participant"
-      customTrigger={{
-        className: 'ensemble-above-add-participant',
-        content: '+',
-        title:
-          !disabled && availableProviderGroups.length === 0
-            ? 'Connect a provider before adding a participant.'
-            : title,
-        ariaLabel: 'Add Ensemble participant'
-      }}
+      customTrigger={
+        customTrigger || {
+          className: 'ensemble-above-add-participant',
+          content: '+',
+          title:
+            !disabled && availableProviderGroups.length === 0
+              ? 'Connect a provider before adding a participant.'
+              : title,
+          ariaLabel: 'Add Ensemble participant'
+        }
+      }
       confirmActions={[
         {
           label: 'Add',
           onConfirm: handleAddAnother,
+          disabled: addCommitDisabled,
           keepOpen: true
         },
         {
           label: 'Done',
           onConfirm: commitDraft,
+          disabled: pickerDisabled,
           submitOnEnter: true
         }
       ]}

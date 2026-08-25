@@ -52,6 +52,8 @@ interface CombinedPermissionsPickerProps {
    * Roster passes true because its pickers live inside a scrolling list.
    */
   repositionOnScroll?: boolean
+  /** Optional class on the body-portaled surface for caller-specific layering. */
+  popoverClassName?: string
 }
 
 export function CombinedPermissionsPicker({
@@ -65,7 +67,8 @@ export function CombinedPermissionsPicker({
   onApplyToAllParticipants,
   onStartTrustedSession,
   onStopTrustedSession,
-  repositionOnScroll
+  repositionOnScroll,
+  popoverClassName
 }: CombinedPermissionsPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -187,7 +190,9 @@ export function CombinedPermissionsPicker({
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
-      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}`}
+      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}${
+        popoverClassName ? ` ${popoverClassName}` : ''
+      }`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,

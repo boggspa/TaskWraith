@@ -311,6 +311,7 @@ export function ComposerEnsembleRosterPopover({
                         cursorAvailable={cursorAvailable}
                         onPatch={(patch) => onPatchParticipant?.(participant.id, patch)}
                         repositionOnScroll
+                        nestedPopoverClassName="is-ensemble-roster-nested-picker"
                       />
                     </div>
                   </div>

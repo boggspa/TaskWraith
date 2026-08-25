@@ -53,4 +53,9 @@ describe('CombinedPermissionsPicker', () => {
     const html = renderPicker()
     expect(html).not.toContain('Apply to all participants')
   })
+
+  it('accepts a caller-owned class for its body-portaled layer', () => {
+    expect(pickerSource).toContain('popoverClassName?: string')
+    expect(pickerSource).toContain("popoverClassName ? ` ${popoverClassName}` : ''")
+  })
 })

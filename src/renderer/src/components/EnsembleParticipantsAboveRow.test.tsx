@@ -747,8 +747,10 @@ describe('EnsembleParticipantsAboveRow', () => {
         '.composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant'
       )
       expect(css).toContain('grid-template-columns: minmax(0, 1fr) 124px')
-      expect(css).toContain('grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto')
-      expect(css).toContain('height: min(570px, calc(100dvh - 16px))')
+      expect(css).toContain(
+        'grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto'
+      )
+      expect(css).toContain('height: min(610px, calc(100dvh - 16px))')
       expect(css).toContain('.is-ensemble-add-participant > .composer-combined-picker-top-content')
       expect(css).toContain('border-bottom: 1px solid')
       expect(css).toContain('.ensemble-add-participant-fields-primary')

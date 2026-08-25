@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
@@ -164,6 +165,11 @@ describe('buildParticipantProviderModelPatch', () => {
 })
 
 describe('ParticipantPickerCluster', () => {
+  it('forwards one nested-layer class to both body-portaled pickers', () => {
+    const source = readFileSync(new URL('./ParticipantPickerCluster.tsx', import.meta.url), 'utf8')
+    expect(source.match(/popoverClassName=\{nestedPopoverClassName\}/g) || []).toHaveLength(2)
+  })
+
   it('always offers live-selectable providers even when discovery omits them', () => {
     expect(
       buildParticipantPickerProviderGroups(

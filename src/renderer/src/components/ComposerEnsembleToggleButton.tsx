@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatRecord, ComposerStyle, EnsembleParticipant } from '../../../main/store/types'
 import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
-import type { ParticipantPickerConfiguredProviderSnapshot } from './ParticipantPickerCluster'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
+import { MAX_ENSEMBLE_CAPTAINS } from '../../../shared/ensembleAuthority'
+import { MIN_LIVE_ENSEMBLE_PARTICIPANTS } from '../lib/ensembleRosterFloor'
+import {
+  buildParticipantPickerProviderGroups,
+  type ParticipantPickerConfiguredProviderSnapshot
+} from './ParticipantPickerCluster'
 import {
   computeComposerPlanPopoverPosition,
   type ComposerPlanPopoverPosition
@@ -12,6 +18,12 @@ import {
   type ComposerSurfacePopoverPosition
 } from '../lib/composerSurfacePopover'
 import { ComposerEnsembleRosterPopover } from './ComposerEnsembleRosterPopover'
+import {
+  EnsembleAddParticipantButton,
+  buildEnsembleParticipantAddMutation,
+  buildEnsembleParticipantRemoveMutation,
+  type EnsembleParticipantAddDraft
+} from './EnsembleParticipantsAboveRow'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 
 interface ComposerEnsembleToggleButtonProps {
@@ -135,10 +147,94 @@ export function ComposerEnsembleToggleButton({
 
   const title = overrideTitle || (enabled ? 'Ensemble on' : 'Ensemble off')
   const rosterWorkspace = enabled && Boolean(chat?.ensemble)
+  const participants = [...(chat?.ensemble?.participants || [])].sort(
+    (left, right) => left.order - right.order
+  )
+  const selectedParticipant = participants.find(
+    (participant) => participant.id === selectedParticipantId
+  )
+  const bossmanParticipantId = chat?.ensemble?.bossmanParticipantId
+  const captainParticipantIds = chat?.ensemble?.captainParticipantIds || []
+  const hasLeadership = participants.some(
+    (participant) => participant.stageRole !== 'background' && participant.enabled
+  )
+  const providerSnapshot = {
+    ready: configuredProviderSnapshot?.ready ?? false,
+    providerIds: [...(configuredProviderSnapshot?.providerIds || [])],
+    ...(configuredProviderSnapshot?.modelsByProvider
+      ? { modelsByProvider: configuredProviderSnapshot.modelsByProvider }
+      : {})
+  }
+  const addProviderGroups = buildParticipantPickerProviderGroups(
+    Boolean(grokAvailable),
+    Boolean(cursorAvailable),
+    providerSnapshot,
+    selectedParticipant?.provider || participants[participants.length - 1]?.provider || 'codex'
+  )
+  const participantManagerDisabled = disabled || !onLiveRosterMutation
+  const participantAddDisabled = participants.length >= MAX_ENSEMBLE_PARTICIPANTS
+  const participantRemoveDisabled =
+    participantManagerDisabled ||
+    !selectedParticipant ||
+    selectedParticipant.id === bossmanParticipantId ||
+    participants.length <= MIN_LIVE_ENSEMBLE_PARTICIPANTS
+  const participantRemoveTitle = !selectedParticipant
+    ? 'Select a participant in the roster first.'
+    : selectedParticipant.id === bossmanParticipantId
+      ? 'Assign another Boss before removing this participant.'
+      : participants.length <= MIN_LIVE_ENSEMBLE_PARTICIPANTS
+        ? 'An Ensemble must retain two participants; switch Ensemble Off to collapse it.'
+        : `Remove ${selectedParticipant.role || selectedParticipant.provider}`
+
+  const addParticipant = (configuration: EnsembleParticipantAddDraft): void => {
+    if (!onLiveRosterMutation || participantAddDisabled) return
+    const result = buildEnsembleParticipantAddMutation(
+      participants,
+      selectedParticipantId ?? null,
+      configuration
+    )
+    onLiveRosterMutation(result.mutation)
+    onSelectParticipant?.(result.participantId)
+  }
+
+  const removeSelectedParticipant = (): void => {
+    if (!onLiveRosterMutation || !selectedParticipant || participantRemoveDisabled) return
+    const result = buildEnsembleParticipantRemoveMutation(participants, selectedParticipant.id)
+    if (!result) return
+    onLiveRosterMutation(result.mutation)
+    if (result.nextSelection) onSelectParticipant?.(result.nextSelection)
+  }
+
   const selectMode = (nextEnabled: boolean): void => {
     setOpen(false)
     if (nextEnabled !== enabled) onToggle(nextEnabled)
   }
+  const segmentedModeControl = (
+    <div
+      className="segmented-control segmented-control--compact composer-ensemble-toggle-segmented"
+      role="radiogroup"
+      aria-label="Ensemble mode"
+    >
+      <button
+        type="button"
+        className={`segmented-control-segment ${enabled ? 'is-active' : ''}`}
+        onClick={() => selectMode(true)}
+        role="radio"
+        aria-checked={enabled}
+      >
+        On
+      </button>
+      <button
+        type="button"
+        className={`segmented-control-segment ${enabled ? '' : 'is-active'}`}
+        onClick={() => selectMode(false)}
+        role="radio"
+        aria-checked={!enabled}
+      >
+        Off
+      </button>
+    </div>
+  )
 
   const popover =
     open && typeof document !== 'undefined'
@@ -173,30 +269,52 @@ export function ComposerEnsembleToggleButton({
                 {rosterWorkspace ? 'Ensemble roster' : 'Ensemble'}
               </span>
             </div>
-            <div
-              className="segmented-control segmented-control--compact composer-ensemble-toggle-segmented"
-              role="radiogroup"
-              aria-label="Ensemble mode"
-            >
-              <button
-                type="button"
-                className={`segmented-control-segment ${enabled ? 'is-active' : ''}`}
-                onClick={() => selectMode(true)}
-                role="radio"
-                aria-checked={enabled}
-              >
-                On
-              </button>
-              <button
-                type="button"
-                className={`segmented-control-segment ${enabled ? '' : 'is-active'}`}
-                onClick={() => selectMode(false)}
-                role="radio"
-                aria-checked={!enabled}
-              >
-                Off
-              </button>
-            </div>
+            {rosterWorkspace ? (
+              <div className="composer-ensemble-toggle-mode-row">
+                <EnsembleAddParticipantButton
+                  disabled={participantManagerDisabled}
+                  addDisabled={participantAddDisabled}
+                  title="Add or remove Ensemble participants"
+                  composerStyle={composerStyle as ComposerStyle}
+                  grokAvailable={Boolean(grokAvailable)}
+                  cursorAvailable={Boolean(cursorAvailable)}
+                  providerGroups={addProviderGroups}
+                  participants={participants}
+                  hasLeadership={hasLeadership}
+                  bossmanParticipantId={bossmanParticipantId}
+                  captainParticipantIds={captainParticipantIds}
+                  captainAssignmentDisabled={captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS}
+                  bossmanAutoApprovals={chat?.ensemble?.bossmanAutoApprovals}
+                  initialProvider={
+                    selectedParticipant?.provider ||
+                    participants[participants.length - 1]?.provider ||
+                    'codex'
+                  }
+                  onAdd={addParticipant}
+                  customTrigger={{
+                    className: 'composer-ensemble-participant-manager-trigger',
+                    content: 'Add / remove participant',
+                    title: 'Add a participant or remove the selected participant',
+                    ariaLabel: 'Add or remove Ensemble participant'
+                  }}
+                  popoverClassName="is-ensemble-roster-nested-picker"
+                  managementContent={
+                    <button
+                      type="button"
+                      className="composer-ensemble-participant-remove-action"
+                      onClick={removeSelectedParticipant}
+                      disabled={participantRemoveDisabled}
+                      title={participantRemoveTitle}
+                    >
+                      Remove selected
+                    </button>
+                  }
+                />
+                {segmentedModeControl}
+              </div>
+            ) : (
+              segmentedModeControl
+            )}
             {rosterWorkspace ? (
               <ComposerEnsembleRosterPopover
                 chat={chat}
