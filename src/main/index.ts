@@ -11500,6 +11500,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
       approvalMode: 'default'
     }),
     actualModel: state.actualModel || existingRun?.actualModel,
+    modelLabel: state.modelLabel || existingRun?.modelLabel,
     providerThreadId: state.providerSessionId || existingRun?.providerThreadId,
     stats: state.stats || existingRun?.stats,
     status: final ? finalStatus : 'running',
@@ -12469,6 +12470,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
       promptMessageId: state.promptMessageId
     }),
     actualModel: state.actualModel || existingRun?.actualModel,
+    modelLabel: state.modelLabel || existingRun?.modelLabel,
     providerThreadId: state.providerSessionId || existingRun?.providerThreadId,
     stats: state.stats || existingRun?.stats,
     ...(state.runDiff ? { runDiff: state.runDiff } : {}),
@@ -13169,6 +13171,10 @@ function materializeBridgeRunProviderOutput(
 
   if (payload?.type === 'init' && typeof payload.model === 'string' && payload.model.trim()) {
     state.actualModel = payload.model
+    // The wire id stays authoritative; the label rides beside it so a
+    // shortened Ollama tag can still resolve its maker from the catalog name.
+    const initModelLabel = bridgeModelMetadataFromEvent(payload).modelLabel
+    if (initModelLabel) state.modelLabel = initModelLabel
     if (!state.flushedOnce) flushBridgeRunTranscript(runId)
     return
   }
@@ -13313,6 +13319,10 @@ function materializeBackgroundSubThreadProviderOutput(
 
   if (payload?.type === 'init' && typeof payload.model === 'string' && payload.model.trim()) {
     state.actualModel = payload.model
+    // The wire id stays authoritative; the label rides beside it so a
+    // shortened Ollama tag can still resolve its maker from the catalog name.
+    const initModelLabel = bridgeModelMetadataFromEvent(payload).modelLabel
+    if (initModelLabel) state.modelLabel = initModelLabel
     if (!state.flushedOnce) flushBackgroundSubThreadTranscript(runId)
     return
   }

@@ -3795,6 +3795,14 @@ export interface ChatRun {
   promptMessageId?: string
   requestedModel?: string
   actualModel?: string
+  /**
+   * Provider-reported human model name, kept beside the wire id rather than
+   * replacing it. The Ollama brand matcher tries the id first and this second,
+   * so a shortened tag ("north-mini:30b") can still resolve its maker from the
+   * catalog label. Never treat it as an identity: labels arrive stale, which is
+   * why the id stays authoritative.
+   */
+  modelLabel?: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
   permissionPosture?: RunPermissionPostureSnapshot

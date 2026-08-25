@@ -60,6 +60,8 @@ export interface BackgroundSubThreadTranscriptState {
   content: string
   mediaRefs?: TranscriptMediaRef[]
   actualModel?: string
+  /** Provider-reported human model name; persisted to `ChatRun.modelLabel`. */
+  modelLabel?: string
   providerSessionId?: string
   stats?: unknown
   status: 'running' | 'success' | 'failed' | 'cancelled'

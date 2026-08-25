@@ -490,6 +490,7 @@ export function activityStackSpeakerPresentation({
         (chat?.chatKind === 'ensemble'
           ? null
           : mostRecentSoloRunModel(chat?.runs, labelProvider)),
+      soloModelLabel: messageRun?.modelLabel,
       seatModelId: chat?.requestedModel
     }
   )
@@ -5874,6 +5875,7 @@ export const TranscriptPanel = memo(
                             {
                               isEnsembleChat: currentChat?.chatKind === 'ensemble',
                               soloModelId: assistantRunModel,
+                              soloModelLabel: assistantRun?.modelLabel,
                               seatModelId: currentChat?.requestedModel
                             }
                           )

@@ -115,3 +115,52 @@ describe('activityStackSpeakerPresentation branding fallback', () => {
     expect(presentation.providerClass).toBe('pi')
   })
 })
+
+/**
+ * Cause 4: the Ollama brand matcher tries the wire id first and the human label
+ * second, but `ChatRun` carried no label, so the second chance was unreachable
+ * from any run-derived row. Ollama tags are routinely shortened ("north-mini:30b")
+ * while the catalog label keeps the full name the needle matches.
+ */
+describe('run model label branding', () => {
+  const ollamaRun = (requestedModel: string, modelLabel?: string): ChatRun => ({
+    runId: 'run-1',
+    provider: 'ollama',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    requestedModel,
+    ...(modelLabel ? { modelLabel } : {})
+  })
+
+  it('brands an Ollama row from the run model label when the wire id misses every needle', () => {
+    const presentation = activityStackSpeakerPresentation({
+      message: toolMessage('run-1'),
+      chat: chatWith([ollamaRun('north-mini:30b', 'North Mini Code 1.0 (30B-A3B Q4)')]),
+      fallbackProvider: 'ollama',
+      fallbackProviderLabel: 'Ollama'
+    })
+    expect(presentation.label).toBe('Cohere')
+    expect(presentation.providerClass).toBe('cohere')
+  })
+
+  it('keeps the wire id authoritative when a stale label names another maker', () => {
+    const presentation = activityStackSpeakerPresentation({
+      message: toolMessage('run-1'),
+      chat: chatWith([ollamaRun('deepseek-r1:8b', 'Qwen 3 (4B Param)')]),
+      fallbackProvider: 'ollama',
+      fallbackProviderLabel: 'Ollama'
+    })
+    expect(presentation.label).toBe('DeepSeek')
+    expect(presentation.providerClass).toBe('deepseek')
+  })
+
+  it('falls back to the humanised id when the run carries no label', () => {
+    const presentation = activityStackSpeakerPresentation({
+      message: toolMessage('run-1'),
+      chat: chatWith([ollamaRun('qwen3:8b')]),
+      fallbackProvider: 'ollama',
+      fallbackProviderLabel: 'Ollama'
+    })
+    expect(presentation.label).toBe('Alibaba')
+    expect(presentation.providerClass).toBe('alibaba')
+  })
+})
