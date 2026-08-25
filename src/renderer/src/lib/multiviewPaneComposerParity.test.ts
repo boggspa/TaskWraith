@@ -53,9 +53,9 @@ describe('Multiview pane Composer context parity', () => {
     )
     expect(render).toContain('const fresh = buildPaneComposerCtx(viewerChatId, viewerPaneIndex)')
     expect(render).toContain('paneComposerRuntimeRegistryRef.current.stabilize(')
-    expect(render).toContain(
-      'viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()'
-    )
+    expect(render).toContain('const effectivePaneComposerCtx = viewerOwnsHostProjection')
+    expect(render).toContain('? composerCtx')
+    expect(render).toContain(': resolveRestingPaneComposerCtx()')
   })
 
   it('derives linked-child state from each pane chat instead of forcing it on', () => {

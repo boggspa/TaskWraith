@@ -115,9 +115,9 @@ describe('Multiview focused workspace presentation', () => {
     expect(layoutSource).toContain('{!focusedHostOverlayRequired && channelMemberControl}')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
     expect(layoutSource).not.toContain('(!isChatPopoutWindow && !showWorkspaceSidebar)')
-    expect(source).toContain(
-      'viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()'
-    )
+    expect(source).toContain('const effectivePaneComposerCtx = viewerOwnsHostProjection')
+    expect(source).toContain('? composerCtx')
+    expect(source).toContain(': resolveRestingPaneComposerCtx()')
   })
 
   it('guards workspace trust refreshes against late ownership changes', () => {
@@ -155,7 +155,7 @@ describe('Multiview focused workspace presentation', () => {
     )
     expect(paneComposer).toContain('resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot')
     expect(paneComposer).toContain(
-      'paneCtxHelpers.handleReviewDiffForChat(\n            viewerChat,\n            viewerProvider,\n            viewerWorkspace'
+      'paneCtxHelpers.handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)'
     )
     expect(paneComposer).toContain(
       'paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning)'
