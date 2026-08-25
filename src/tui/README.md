@@ -103,6 +103,19 @@ are under `Resources/host-bin` (`.cmd`/`.ps1` on Windows). The package's
 `tui-runtime` Node binary runs both; no system Node, Electron executable, or
 windowless parent process is required.
 
+### Front page
+
+The home frame (`renderHome`) is the solo-CLI landing: a hand-authored
+Monoline Ghost banner from [`ghostBanner.ts`](./ghostBanner.ts), the
+TaskWraith wordmark, and Host status lines. The mark follows
+`design-assets/ghost/ghost-guy-mark-monoline.svg` (rounded crown, two
+rectangular eyes, wavy/pleated base). `ghostBanner.ts` is a presentation
+module only: Unicode vs `--ascii` selection, the compact-width fallback
+glyph (`theme.ts` `ghost`: `ᜊ` / `*`), and any colour/tone come from
+[`theme.ts`](./theme.ts). Full banner when width allows; below the minimum
+width it falls back to that single glyph. The ASCII variant is sized to
+remain inside `tw --ascii --width 80`.
+
 ### Controls and layout
 
 `--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
@@ -117,30 +130,61 @@ while transcript prose stays neutral and detail remains in transient lenses.
 | `Page Up` / `Page Down`                          | Scroll transcript/history                  |
 | `Esc`, `Ctrl+U`, `Ctrl+C`                        | Close lens, clear composer, clear/quit     |
 
-Slash commands include `/context`, `/threads`, `/missions`, `/history`,
-`/model`, `/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. Every setup,
-cancellation, and configuration action remains a bounded Host command with
-capability, actor, offer, and receipt validation. Approval/question actions are
-available only when the connected Host actually negotiates those capabilities.
+Slash commands (COMMAND SPEC v1). Inline args are optional; invalid args are
+non-fatal notices and never throw out of the keypress loop. `/model` and
+`/think` reuse the existing offers/tune plumbing (`getThreadOffers`,
+`TuiPendingSelection`, `applyTuneSelection`). `/new` uses the existing
+`thread.create` flow with a solo/`single` chatKind default.
+
+| Command                                         | Action                                                                                                                          |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `/model [id]`, `/m`                             | No argument opens the existing tune/model picker. With an id, stage that model for the next send; unknown id lists offered ids. |
+| `/think [level]`, `/reasoning`                  | Set reasoning against the **thread's offered ladder** (never a hardcoded list). No argument shows current + ladder.             |
+| `/new`                                          | Create and switch to a fresh solo thread.                                                                                       |
+| `/status`                                       | Host kind + connection, socket/profile path, thread provider/model/reasoning, advertised capabilities.                          |
+| `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                  |
+| `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                       |
+| `/seats`, `/tune`                               | Seat roster / tune lens.                                                                                                        |
+| `/help`                                         | Command cheat sheet.                                                                                                            |
+| `/cancel`                                       | Cancel the active run.                                                                                                          |
+| `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                |
+| `/quit`, `/q`                                   | Exit the TUI; the Host remains running.                                                                                         |
+
+Every setup, cancellation, and configuration action remains a bounded Host
+command with capability, actor, offer, and receipt validation.
+Approval/question actions are available only when the connected Host actually
+negotiates those capabilities. Muse standalone production currently does not
+advertise them (see Current boundary).
 
 ### Current boundary
 
 The Node Host owns private discovery/token/socket artifacts and the versioned
-local protocol. Standalone production currently supports Muse through its
-Node-owned resource/run ports. The TUI supports cold workspace registration,
+local protocol (`node-host-v1`). Standalone production currently supports Muse
+through its Node-owned resource/run ports
+([`HostNodeProductionFactory.ts`](../host-node/HostNodeProductionFactory.ts)
+composes `HostNodeMuse*` only). The TUI supports cold workspace registration,
 thread creation/configuration/archive, provider offers/auth metadata, bounded
 history, and receipt replay through that Host. It deliberately omits arbitrary
 AppStore writes, permission bodies, credentials, raw provider payloads,
 desktop-only drag/drop/canvas/glass surfaces, and unbounded terminal control.
 
+Goal `goal-1787698539643-zyrznc` (user-ruled 2026-08-25) intends to expand
+that factory to the live multi-provider inventory with capability-gated
+approvals/questions. That expansion is **not** shipped in this pass; do not
+read this README as claiming it.
+
 ## Desktop coexistence rollout
 
-The production transport supports simultaneous authenticated Desktop and TUI
-clients, and a Desktop disconnect does not stop the Host or its provider run.
-The Desktop pre-import migration, writer drain, read-only compatibility stores,
-external lifecycle adapter, and update shutdown barrier are implemented. The
-Desktop selection is temporarily enabled with
-`TASKWRAITH_DESKTOP_EXTERNAL_HOST=1` while its remaining synchronous provider
-and arbitrary AppStore mutation paths are converted to Host commands. Without
-that explicit rollout switch Desktop retains its existing in-process Host and
-all current capabilities; the standalone TUI path remains independent.
+The standalone TUI path does **not** require the desktop app. `tw` reuses or
+auto-starts the pure-Node Host (`taskwraith-host serve --mode production
+--profile <path>`); `tw --no-start-host` is connect-only.
+
+Desktop is **not** cut over to that Host. The app still composes its own Host
+inside Electron main by default. An external-host path exists
+([`HostExternalSupervisor`](../main/host/HostExternalSupervisor.ts)) but is
+gated off unless `TASKWRAITH_DESKTOP_EXTERNAL_HOST=1`
+([`bootstrap.ts`](../main/bootstrap.ts)). Landed as `7e633fa7e`. Without that
+flag, Desktop and TUI **coexist as two hosts over one profile** (`e8622883d`),
+both writing `<profile>/chats/<id>.json` and `workspaces.json`.
+`LegacyStoreWriterGate` is the unfinished cross-process single-writer fence.
+The standalone TUI path remains independent either way.

@@ -28,6 +28,16 @@ Rules:
 4. If an affordance cannot be expressed in a static cell grid, it does not
    get a token — and therefore does not belong in the TUI.
 
+## Ghost banner
+
+The home-frame Monoline Ghost lives in [`ghostBanner.ts`](./ghostBanner.ts).
+It is a **theme-token-respecting module**: Unicode vs ASCII selection, the
+compact-width fallback glyph (`ghost` in the Unicode / ASCII sets), and any
+colour/tone are consumed from `theme.ts`. Do not add banner-local colour
+hex, a second glyph set, or a parallel density resolver. `theme.ts` stays
+the sole token authority; `ghostBanner.ts` composes printable banner lines
+from those tokens (hand-authored art, not an SVG→ASCII generator).
+
 ## Density by named affordance
 
 Width adaptation is resolved **once** through `resolveTuiDensity(width)`.
