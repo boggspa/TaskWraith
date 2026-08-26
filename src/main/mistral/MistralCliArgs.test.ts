@@ -8,6 +8,7 @@ import {
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
   mistralCredentialEnvScrubbed,
+  mistralSessionModeFallbacksForSeat,
   mistralSessionModeForSeat,
   mistralSessionModeIsGated,
   mistralWriteCapable,
@@ -54,9 +55,11 @@ describe('mistralWriteCapable', () => {
 })
 
 describe('session mode selection', () => {
-  it('maps a read-only seat to plan and a write seat to default', () => {
+  it('maps a read-only seat to plan and a write seat to ask with a legacy fallback', () => {
     expect(mistralSessionModeForSeat(true)).toBe('plan')
-    expect(mistralSessionModeForSeat(false)).toBe('default')
+    expect(mistralSessionModeFallbacksForSeat(true)).toEqual([])
+    expect(mistralSessionModeForSeat(false)).toBe('ask')
+    expect(mistralSessionModeFallbacksForSeat(false)).toEqual(['default'])
   })
 
   it('never selects a mode that bypasses the host approval gate', () => {
@@ -73,6 +76,8 @@ describe('session mode selection', () => {
   it('classifies the ungated modes as ungated', () => {
     expect(mistralSessionModeIsGated('auto-approve')).toBe(false)
     expect(mistralSessionModeIsGated('accept-edits')).toBe(false)
+    expect(mistralSessionModeIsGated('ask')).toBe(true)
+    expect(mistralSessionModeIsGated('default')).toBe(true)
     expect(mistralSessionModeIsGated('chat')).toBe(true)
   })
 })

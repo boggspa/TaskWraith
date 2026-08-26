@@ -151,7 +151,7 @@ import {
   kimiMeshArgumentsFromAcpToolCall
 } from './kimi/KimiMeshApprovalRelay'
 import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from './kimi/KimiAcpUsage'
-import { createAcpTurnAbortController } from './acp/AcpTurnClient'
+import { createAcpTurnAbortController, type AcpSessionConfigSelection } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
   GeminiToolContext,
@@ -1636,6 +1636,7 @@ import {
   MISTRAL_CREDENTIAL_ENV_VARS,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
+  mistralSessionModeFallbacksForSeat,
   mistralSessionModeForSeat,
   mistralWriteCapable,
   normalizeMistralPlanId,
@@ -24130,15 +24131,20 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // security decision, then model, then thinking.
   const mistralThinkingLevel = normalizeMistralThinkingLevel(payload.reasoningEffort)
   const mistralSessionMode = mistralSessionModeForSeat(mistralReadOnlySeat)
-  const mistralSessionConfigOptions: { configId: string; value: string }[] = [
-    // `plan` for a read-only seat, `default` for a write seat. Built through
-    // mistralSessionModeForSeat, never a literal: Vibe's `accept-edits` and
+  const mistralSessionConfigOptions: AcpSessionConfigSelection[] = [
+    // `plan` for a read-only seat, `ask` for a current write seat, with gated
+    // `default` accepted from older Vibe versions. Built through the helpers,
+    // never literals: Vibe's `accept-edits` and
     // `auto-approve` modes auto-approve INSIDE the agent, so the tool never
     // reaches session/request_permission and never reaches the host gate —
     // selecting either would delete this seat's approval boundary while every
     // TaskWraith control still rendered as armed. They are unreachable from
     // that helper by design.
-    { configId: 'mode', value: mistralSessionMode },
+    {
+      configId: 'mode',
+      value: mistralSessionMode,
+      fallbackValues: mistralSessionModeFallbacksForSeat(mistralReadOnlySeat)
+    },
     // Without this the run silently uses whatever `active_model` sits in the
     // user's global ~/.vibe/config.toml — a different model, a different price,
     // and a meter that is then measuring the wrong thing.

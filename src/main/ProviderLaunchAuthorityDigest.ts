@@ -172,10 +172,11 @@ export interface GrokLaunchControls {
 export interface MistralLaunchControls {
   /** Mistral Vibe is ACP-only — `vibe-acp`. There is no second transport. */
   readonly transport: 'acp'
-  /** The Vibe ACP session mode actually selected via session/set_mode. `plan`
-   *  and `chat` are Vibe's read-only modes; `auto-approve` bypasses every tool
-   *  gate, so which one ran is authority-relevant, not cosmetic. */
-  readonly sessionMode: 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
+  /** The Vibe ACP session mode selected via session/set_config_option. `ask`
+   *  (legacy `default`) is approval-gated, while `plan` and `chat` are
+   *  read-only; `auto-approve` bypasses every tool gate, so which one ran is
+   *  authority-relevant, not cosmetic. */
+  readonly sessionMode: 'ask' | 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
   readonly readOnlySeat: boolean
   /** `initialize` never advertises `clientCapabilities.fs` — the ACP core never
    *  wires onInboundRequest, so an advertised fs capability would be answered

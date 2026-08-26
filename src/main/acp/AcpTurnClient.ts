@@ -96,6 +96,14 @@ export interface AcpDeniedToolRecovery {
   warning?: string | ((context: AcpToolRecoveryContext) => string)
 }
 
+export interface AcpSessionConfigSelection {
+  configId: string
+  /** Preferred value for the current provider version. */
+  value: string
+  /** Older/newer provider spellings with equivalent semantics, in priority order. */
+  fallbackValues?: readonly string[]
+}
+
 export interface AcpTurnOptions {
   prompt: string
   /**
@@ -135,7 +143,7 @@ export interface AcpTurnOptions {
    * native session, so process-level defaults alone cannot change them on a
    * resumed turn.
    */
-  resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  resumeConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   /**
    * Config selections to apply to a FRESHLY opened session, after session/new
    * and before the prompt.
@@ -146,9 +154,10 @@ export interface AcpTurnOptions {
    * at all (`[-h] [-v] [--setup]`), so its model AND its permission mode can
    * only be selected here. Without it a Vibe seat silently inherits whatever
    * `active_model` sits in the user's global ~/.vibe/config.toml, and a
-   * read-only seat never leaves the write-capable `default` mode.
+   * read-only seat never leaves Vibe's write-capable `ask` mode (called
+   * `default` by older versions).
    */
-  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   /**
    * Lifetime of `cwd` as a provider-visible workspace identity. A native
    * session may be resumed only when the path remains valid for that session's
@@ -457,7 +466,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let closed = false
   let nextPromptRpcId = ACP_ID.prompt
   let nextConfigRpcId = ACP_CONFIG_RPC_START
-  let resumeConfigQueue: Array<{ configId: string; value: string }> = []
+  let sessionConfigQueue: Array<{ configId: string; values: string[] }> = []
+  let configSessionKind: 'new' | 'resumed' = 'new'
   const pendingConfigRpcs = new Map<number, { configId: string; value: string }>()
   let activePromptRpcId: number | null = null
   let deniedPromptRpcId: number | null = null
@@ -771,40 +781,49 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     return true
   }
 
-  const applyNextResumeConfig = (result: unknown): void => {
-    if (resumeConfigQueue.length === 0) {
+  const applyNextSessionConfig = (result: unknown): void => {
+    if (sessionConfigQueue.length === 0) {
       sendPromptOnce()
       return
     }
     const advertised = advertisedConfigOptions(result)
-    const desired = resumeConfigQueue.shift()!
+    const desired = sessionConfigQueue.shift()!
     const option = advertised.find((candidate) => candidate.id === desired.configId)
     if (!option) {
       options.onEvent({
         type: 'provider_warning',
-        text: `ACP resumed session did not advertise config option "${desired.configId}"; keeping its persisted value.`
+        text: `ACP ${configSessionKind} session did not advertise config option "${desired.configId}"; keeping its persisted value.`
       })
-      applyNextResumeConfig(result)
+      applyNextSessionConfig(result)
       return
     }
-    if (String(option.currentValue ?? '') === desired.value) {
-      applyNextResumeConfig(result)
+    const currentValue = String(option.currentValue ?? '')
+    if (desired.values.includes(currentValue)) {
+      applyNextSessionConfig(result)
       return
     }
-    if (option.values.length > 0 && !option.values.includes(desired.value)) {
+    const selectedValue =
+      option.values.length === 0
+        ? desired.values[0]
+        : desired.values.find((value) => option.values.includes(value))
+    if (!selectedValue) {
+      const requested =
+        desired.values.length === 1
+          ? `"${desired.values[0]}"`
+          : `any allowed value (${desired.values.map((value) => `"${value}"`).join(', ')})`
       options.onEvent({
         type: 'provider_warning',
-        text: `ACP resumed session does not offer "${desired.value}" for config option "${desired.configId}"; keeping its persisted value.`
+        text: `ACP ${configSessionKind} session does not offer ${requested} for config option "${desired.configId}"; keeping its persisted value.`
       })
-      applyNextResumeConfig(result)
+      applyNextSessionConfig(result)
       return
     }
     const rpcId = nextConfigRpcId++
-    pendingConfigRpcs.set(rpcId, desired)
+    pendingConfigRpcs.set(rpcId, { configId: desired.configId, value: selectedValue })
     writeRpc(rpcId, 'session/set_config_option', {
       sessionId,
       configId: desired.configId,
-      value: desired.value
+      value: selectedValue
     })
   }
 
@@ -818,13 +837,16 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // and both end at sendPromptOnce().
     const requestedConfig = resumed ? options.resumeConfigOptions : options.sessionConfigOptions
     if (requestedConfig?.length) {
-      resumeConfigQueue = requestedConfig
-        .map((option) => ({
-          configId: nonEmptyString(option.configId),
-          value: nonEmptyString(option.value)
-        }))
-        .filter((option) => option.configId && option.value)
-      applyNextResumeConfig(result)
+      configSessionKind = resumed ? 'resumed' : 'new'
+      sessionConfigQueue = requestedConfig
+        .map((option) => {
+          const values = [option.value, ...(option.fallbackValues ?? [])]
+            .map(nonEmptyString)
+            .filter((value, index, all) => value && all.indexOf(value) === index)
+          return { configId: nonEmptyString(option.configId), values }
+        })
+        .filter((option) => option.configId && option.values.length > 0)
+      applyNextSessionConfig(result)
     } else {
       sendPromptOnce()
     }
@@ -1019,7 +1041,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             rpcError?.message || 'request error'
           }`
         })
-        applyNextResumeConfig({ configOptions: [] })
+        applyNextSessionConfig({ configOptions: [] })
         continue
       }
       if (message.id === ACP_ID.initialize && message.result) {
@@ -1088,7 +1110,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         pendingConfigRpcs.has(message.id)
       ) {
         pendingConfigRpcs.delete(message.id)
-        applyNextResumeConfig(message.result)
+        applyNextSessionConfig(message.result)
         continue
       }
       // Any OTHER inbound agent→client request: give a provider hook first

@@ -7,7 +7,7 @@
 //
 //   usage: vibe-acp [-h] [-v] [--setup]
 //
-// (verified against vibe-acp 2.22.0, 2026-07-26). There is no model flag, no
+// (verified against vibe-acp 2.22.0 and 2.24.3). There is no model flag, no
 // mode flag, no tool/deny flag, no sandbox flag. `buildMistralAcpCliArgs`
 // therefore returns an EMPTY argv, and it exists precisely so that fact is
 // explicit, single-sourced and bound into the launch seal rather than being an
@@ -20,9 +20,10 @@
 // per tier is the security decision this module encodes.
 //
 // ── THE MODE LADDER ───────────────────────────────────────────────────────
-// `session/new` advertises five modes. Two of them are traps:
+// `session/new` advertises gated and ungated modes. Two are traps:
 //
-//   default        Requires approval for tool executions   ← WRITE tier
+//   ask             Requires approval for tool executions   ← WRITE tier (Vibe 2.24+)
+//   default         Same gated mode id on Vibe <=2.23        ← legacy fallback
 //   plan           Read-only agent for exploration          ← READ-ONLY tier
 //   accept-edits   Auto-approves file edits only            ← NEVER
 //   auto-approve   Auto-approves ALL tool executions        ← NEVER
@@ -36,9 +37,9 @@
 // `mistralSessionModeForSeat`, and `ScheduledOccurrenceSeal` refuses a sealed
 // occurrence that claims one.
 //
-// `default` is the write tier BECAUSE it gates: every tool execution raises
-// `session/request_permission`, which the host answers. `plan` is the
-// read-only tier and is defence-in-depth — the host gate still auto-denies
+// `ask`/legacy `default` is the write tier BECAUSE it gates: every tool
+// execution raises `session/request_permission`, which the host answers.
+// `plan` is the read-only tier and is defence-in-depth — the host gate still auto-denies
 // mutations underneath it.
 
 import type { MistralPlanId } from './MistralQuotaEstimate'
@@ -66,7 +67,13 @@ export const MISTRAL_TOKEN_ENV = 'MISTRAL_TOKEN'
 
 export const MISTRAL_CREDENTIAL_ENV_VARS = [MISTRAL_API_KEY_ENV, MISTRAL_TOKEN_ENV] as const
 
-export type MistralSessionMode = 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
+export type MistralSessionMode =
+  | 'ask'
+  | 'default'
+  | 'plan'
+  | 'accept-edits'
+  | 'auto-approve'
+  | 'chat'
 
 /** Modes that auto-approve inside the agent, bypassing the host gate entirely. */
 export const MISTRAL_UNGATED_SESSION_MODES: readonly MistralSessionMode[] = [
@@ -96,7 +103,14 @@ export function mistralWriteCapable(approvalMode: string | null | undefined): bo
  * for both tiers; the ungated modes are not reachable from here by design.
  */
 export function mistralSessionModeForSeat(readOnlySeat: boolean): MistralSessionMode {
-  return readOnlySeat ? 'plan' : 'default'
+  return readOnlySeat ? 'plan' : 'ask'
+}
+
+/** Equivalent older Vibe mode ids accepted when the preferred id is absent. */
+export function mistralSessionModeFallbacksForSeat(
+  readOnlySeat: boolean
+): readonly MistralSessionMode[] {
+  return readOnlySeat ? [] : ['default']
 }
 
 /**
@@ -109,7 +123,8 @@ export const MISTRAL_NATIVE_TOOL_POLICY = {
   containment: 'acp-session-mode',
   argvContainment: 'none-available',
   readOnlyModeId: 'plan',
-  writeModeId: 'default',
+  writeModeId: 'ask',
+  legacyWriteModeIds: ['default'],
   ungatedModesNeverSelected: [...MISTRAL_UNGATED_SESSION_MODES],
   allToolCallsRaisePermissionRequest: true,
   clientFsCapabilityAdvertised: false

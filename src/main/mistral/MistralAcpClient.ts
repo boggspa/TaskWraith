@@ -36,6 +36,7 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpSessionConfigSelection,
   type AcpSteerPromptContext,
   type AcpToolRecoveryContext,
   type AcpTurnHandle
@@ -335,11 +336,12 @@ export interface MistralAcpRunOptions {
    * in the user's global `~/.vibe/config.toml`. Neither failure announces
    * itself — the session opens, the prompt succeeds, and the wrong thing runs.
    *
-   * Build the `mode` value with `mistralSessionModeForSeat` (MistralCliArgs),
-   * never a literal: the ungated `accept-edits` / `auto-approve` modes are
-   * unreachable through that helper by design.
+   * Build the `mode` selection with the MistralCliArgs helpers, never literals:
+   * current Vibe calls its gated write mode `ask`, older versions called it
+   * `default`, and the ungated `accept-edits` / `auto-approve` modes must remain
+   * unreachable.
    */
-  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   onEvent: (event: NormalizedGrokRunEvent) => void
   onProcess?: (child: AcpChildProcess) => void
   /**

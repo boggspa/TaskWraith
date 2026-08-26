@@ -461,6 +461,68 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it.each([
+    { offered: ['ask', 'plan'], expected: 'ask' },
+    { offered: ['default', 'plan'], expected: 'default' }
+  ])('selects the advertised equivalent for a versioned fresh-session config: $expected', (row) => {
+    const child = new FakeAcpChild()
+    const { events } = baseOptions(child, {
+      sessionConfigOptions: [{ configId: 'mode', value: 'ask', fallbackValues: ['default'] }]
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { agentCapabilities: {} } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        sessionId: 'session-new',
+        configOptions: [
+          {
+            id: 'mode',
+            currentValue: 'accept-edits',
+            options: row.offered.map((value) => ({ value }))
+          }
+        ]
+      }
+    })
+    expect(child.sent()[2]).toMatchObject({
+      id: 1000,
+      method: 'session/set_config_option',
+      params: { configId: 'mode', value: row.expected }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1000,
+      result: {
+        configOptions: [
+          { id: 'mode', currentValue: row.expected, options: [{ value: row.expected }] }
+        ]
+      }
+    })
+    expect(child.sent().at(-1)).toMatchObject({ id: 3, method: 'session/prompt' })
+    expect(events.filter((event) => event.type === 'provider_warning')).toEqual([])
+  })
+
+  it('names a fresh session accurately when no allowed config value is advertised', () => {
+    const child = new FakeAcpChild()
+    const { events } = baseOptions(child, {
+      sessionConfigOptions: [{ configId: 'mode', value: 'ask', fallbackValues: ['default'] }]
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { agentCapabilities: {} } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        sessionId: 'session-new',
+        configOptions: [{ id: 'mode', currentValue: 'plan', options: [{ value: 'plan' }] }]
+      }
+    })
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP new session does not offer any allowed value ("ask", "default") for config option "mode"; keeping its persisted value.'
+    })
+    expect(child.sent().at(-1)).toMatchObject({ id: 3, method: 'session/prompt' })
+  })
+
   it('continues a resumed turn when an optional session config update rejects', () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {

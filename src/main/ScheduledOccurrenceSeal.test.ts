@@ -532,7 +532,7 @@ function contradictoryPosturePlan(
       // some other invariant would reject first and mask the real assertion.
       return {
         ...plan,
-        controls: { ...plan.controls, readOnlySeat: false, sessionMode: 'default' }
+        controls: { ...plan.controls, readOnlySeat: false, sessionMode: 'ask' }
       } as ProviderLaunchAuthorityInputByProvider['mistral']
     case 'cursor':
       // Keep the default tool surface (profile intact) so the read-only

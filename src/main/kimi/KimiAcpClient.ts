@@ -5,7 +5,12 @@
 // profile; the only workspace surface is TaskWraith's governed HTTP MCP
 // gateway. This avoids both provider-side fallback and path check/use races.
 
-import { runAcpTurn, type AcpChildProcess, type AcpTurnHandle } from '../acp/AcpTurnClient'
+import {
+  runAcpTurn,
+  type AcpChildProcess,
+  type AcpSessionConfigSelection,
+  type AcpTurnHandle
+} from '../acp/AcpTurnClient'
 import type { AcpRunEvent, AcpPermissionRequest, AcpPermissionDecision } from '../acp/AcpProtocol'
 import { buildKimiProductionInitializeParams } from './KimiProductionContainment'
 
@@ -35,7 +40,7 @@ export interface KimiAcpRunOptions {
   /** Native maintenance turns such as /compact must never cold-start. */
   allowResumeFallback?: boolean
   /** Model/thinking selections to re-assert on a resumed native session. */
-  resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  resumeConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   /** Must be `session` for every durable seat, including its first turn. */
   cwdLifetime: 'run' | 'session'
   cwd: string

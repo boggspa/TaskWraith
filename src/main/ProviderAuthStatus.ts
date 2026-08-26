@@ -61,9 +61,9 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   antigravity: false,
   // Pi ships no permission prompts; posture is enforced via its tool allowlist.
   pi: false,
-  // Mistral's Vibe CLI is write-capable in its 'default' approval mode (unlike
-  // Grok's still-read-only G3 posture), so its tool calls genuinely route
-  // through TaskWraith's main approval gate — same as Kimi.
+  // Mistral's Vibe CLI is write-capable in its 'ask' approval mode ('default'
+  // on older Vibe; unlike Grok's still-read-only G3 posture), so its tool calls
+  // genuinely route through TaskWraith's main approval gate — same as Kimi.
   mistral: true,
   // Native Muse tools are provider-owned; no host per-tool approval cards in v1.
   muse: false
