@@ -414,6 +414,9 @@ describe('GitService', () => {
     if (!selected.ok) return
     expect(selected.data.branch).toBe('feature/isolated')
 
+    const configuredCheckout = await service.snapshot(repo)
+    expect(configuredCheckout).toMatchObject({ ok: true, data: { branch: 'main' } })
+
     const removed = await service.removeWorktree({ repoPath: repo, path: gitTargetRoot })
     expect(removed.ok).toBe(true)
   }, WORKTREE_LIFECYCLE_TIMEOUT_MS)
