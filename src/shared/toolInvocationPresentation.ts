@@ -152,19 +152,57 @@ function collectResultEvidence(value: unknown, depth = 0): ToolInvocationParamet
 }
 
 /**
+ * Free-text output carriers a terminal result reports — the same fields the
+ * `extractResultOutput`-style readers treat as the tool's output, which the
+ * transcript already keeps as the (capped) result summary. When the call has
+ * its own input arguments these are echo, not arguments: folding them into
+ * the presented parameters persisted a read's whole file body under
+ * `parameters.content` (tens of KB per row) and handed the diff estimators
+ * output text to count as an edit.
+ */
+const RESULT_OUTPUT_TEXT_KEYS = new Set([
+  'content',
+  'contents',
+  'output',
+  'result',
+  'stdout',
+  'stderr',
+  'summary',
+  'message',
+  'text'
+])
+
+function omitResultOutputText(parameters: ToolInvocationParameters): ToolInvocationParameters {
+  const scrubbed: ToolInvocationParameters = {}
+  for (const key of Object.keys(parameters)) {
+    if (RESULT_OUTPUT_TEXT_KEYS.has(key)) continue
+    scrubbed[key] = parameters[key]
+  }
+  return scrubbed
+}
+
+/**
  * Keep input arguments as the display baseline while allowing a terminal
  * result to contribute the only fields it can authoritatively know: measured
  * line counts, `changes`, and patch evidence. This prevents a tool-result
  * `content` preview from replacing the original write body while still
  * letting result-only providers light the same `+N -N` row.
+ *
+ * A call WITH input keeps only the result's non-output fields (paths, ids,
+ * evidence) — its output echo already lives in the result summary, never in
+ * the persisted parameters. A call WITHOUT input (result-only providers put
+ * the tool INPUT on the result event) keeps the whole result root, byte for
+ * byte the old behaviour, because the root is then the only argument source
+ * — a content-only write must still light its `+N -0` row from it.
  */
 export function mergeToolResultParameters(
   input: ToolInvocationParameters | undefined,
   resultPayload: unknown
 ): ToolInvocationParameters {
   const resultParameters = extractToolInvocationParameters(resultPayload)
+  const hasInput = Boolean(input && Object.keys(input).length > 0)
   return {
-    ...resultParameters,
+    ...(hasInput ? omitResultOutputText(resultParameters) : resultParameters),
     ...(input || {}),
     ...collectResultEvidence(resultParameters),
     ...collectResultEvidence(resultPayload)

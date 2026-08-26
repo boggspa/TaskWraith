@@ -49,6 +49,69 @@ describe('tool invocation presentation', () => {
     })
   })
 
+  it('drops result output echoes from the parameters of a call that has input', () => {
+    // Muse `exec --json` compat tool_result lines duplicate the whole output
+    // string into `content` (and `output`); the un-scrubbed fold persisted a
+    // read's entire file body inside `parameters` — tens of KB per row — and
+    // handed the diff estimators output text to count.
+    const merged = mergeToolResultParameters(
+      { path: 'src/App.tsx' },
+      {
+        type: 'tool_result',
+        tool_id: 'call_1',
+        provider: 'muse',
+        output: 'line 1\nline 2\nline 3',
+        content: 'line 1\nline 2\nline 3'
+      }
+    )
+    expect(merged).toMatchObject({ path: 'src/App.tsx' })
+    expect(merged).not.toHaveProperty('content')
+    expect(merged).not.toHaveProperty('output')
+  })
+
+  it('keeps the whole result root for a result-only call (no input arguments)', () => {
+    // Result-only providers put the tool INPUT on the result event; the root
+    // is then the only argument source, and a content-only write must still
+    // light its `+N -0` row from it.
+    expect(
+      mergeToolResultParameters(undefined, {
+        path: 'notes.md',
+        content: 'one\ntwo\nthree'
+      })
+    ).toMatchObject({ path: 'notes.md', content: 'one\ntwo\nthree' })
+    expect(
+      mergeToolResultParameters(
+        {},
+        {
+          path: 'notes.md',
+          content: 'one\ntwo\nthree'
+        }
+      )
+    ).toMatchObject({ path: 'notes.md', content: 'one\ntwo\nthree' })
+  })
+
+  it('keeps measured counts and patch evidence flowing while output text is scrubbed', () => {
+    const merged = mergeToolResultParameters(
+      { path: 'src/a.ts', old_string: 'a', new_string: 'b' },
+      {
+        content: 'Edited src/a.ts',
+        additions: 1,
+        deletions: 1,
+        diff: '@@ -1 +1 @@\n-a\n+b',
+        kind: 'edit',
+        status: 'success'
+      }
+    )
+    expect(merged).toMatchObject({
+      path: 'src/a.ts',
+      additions: 1,
+      deletions: 1,
+      diff: '@@ -1 +1 @@\n-a\n+b',
+      kind: 'edit'
+    })
+    expect(merged).not.toHaveProperty('content')
+  })
+
   it('projects a valid capability invocation to its concrete target', () => {
     expect(
       presentToolInvocation('mcp__TaskWraith__capability_invoke', {

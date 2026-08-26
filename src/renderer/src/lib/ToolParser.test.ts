@@ -1193,6 +1193,11 @@ describe('ToolParser', () => {
       })
       expect(paired.category).toBe('read')
       expect(paired.diffSummary).toBeUndefined()
+      // The result output must not persist inside parameters either — that is
+      // the storage-bloat half of the same defect (a 1327-line read used to
+      // save its whole body under `parameters.content`).
+      expect(paired.parameters).not.toHaveProperty('content')
+      expect(paired.parameters).not.toHaveProperty('output')
     })
 
     it('keeps write pairing deriving from its own input after a string result merges in', () => {
@@ -1211,6 +1216,9 @@ describe('ToolParser', () => {
         provider: 'muse'
       })
       expect(paired.diffSummary).toMatchObject({ additions: 3, deletions: 0 })
+      // The INPUT body stays the persisted `content`; the result's status echo
+      // ("Wrote notes.md") must not replace or accompany it.
+      expect(paired.parameters.content).toBe('one\ntwo\nthree')
     })
   })
 })
