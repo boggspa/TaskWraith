@@ -332,4 +332,94 @@ describe('ActivityInlineStats', () => {
       expect(result.deletions).toBe(2)
     })
   })
+
+  /**
+   * The odometer only estimates for edit-like rows. Providers whose
+   * tool_result compat lines duplicate the whole output into a string
+   * `content` field (Muse `exec --json` does this on every call) pollute the
+   * merged parameters, and the un-gated estimator painted `+656 -0` on file
+   * READS and `+1 -0` on MCP calls. Provided summaries still render — except
+   * estimator-sourced ones persisted by the old bug — so measured
+   * (`git_numstat`) attributions keep their pill on any row.
+   */
+  describe('edit-like gating of the odometer', () => {
+    it('stays silent for a read row whose parameters gained result content (Muse shape)', () => {
+      const result = computeInlineStats({
+        toolName: 'read_file',
+        status: 'success',
+        category: 'read',
+        parameters: { path: 'src/App.tsx', content: 'a\nb\nc' },
+        resultText: 'a\nb\nc'
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('stays silent for an unknown/MCP tool carrying a string content parameter', () => {
+      const result = computeInlineStats({
+        toolName: 'mcp__taskwraith__ensemble_control',
+        status: 'success',
+        parameters: { content: 'ok' }
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('ignores a persisted content-estimated summary on a non-edit row', () => {
+      // Activities saved while the estimator was un-gated carry the bogus
+      // summary in chat history; the odometer must not resurrect it.
+      const result = computeInlineStats({
+        toolName: 'read_file',
+        status: 'success',
+        category: 'read',
+        parameters: { path: 'src/App.tsx' },
+        diffSummary: { additions: 656, deletions: 0, source: 'content', confidence: 'exact' }
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('keeps a measured git_numstat summary visible wherever it was attributed', () => {
+      const result = computeInlineStats({
+        toolName: 'run_shell_command',
+        status: 'success',
+        category: 'shell',
+        parameters: { command: 'scripts/apply.sh' },
+        diffSummary: { additions: 3, deletions: 1, source: 'git_numstat', confidence: 'exact' }
+      })
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(3)
+      expect(result.deletions).toBe(1)
+    })
+
+    it('keeps a freeform-titled write lighting via its category evidence', () => {
+      const result = computeInlineStats({
+        toolName: 'Overwrite settings',
+        status: 'success',
+        category: 'write',
+        parameters: { filePath: 'settings.json', content: 'a\nb' }
+      })
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(2)
+    })
+
+    it('totals only the edit rows when a stack mixes reads and edits', () => {
+      const totals = sumActivityDiffTotals([
+        {
+          id: 'r1',
+          toolName: 'read_file',
+          displayName: 'Read src/a.ts',
+          category: 'read',
+          status: 'success',
+          parameters: { path: 'src/a.ts', content: 'x\ny\nz' }
+        },
+        {
+          id: 'e1',
+          toolName: 'edit_file',
+          displayName: 'Edited src/a.ts',
+          category: 'write',
+          status: 'success',
+          parameters: { file_path: 'src/a.ts', old_string: 'x', new_string: 'x\nq' }
+        }
+      ])
+      expect(totals).toEqual({ additions: 2, deletions: 1, estimated: true })
+    })
+  })
 })

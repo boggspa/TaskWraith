@@ -871,6 +871,62 @@ function looksLikeStringReplacement(parameters?: Record<string, unknown>): boole
   )
 }
 
+/**
+ * ACP-style freeform tool titles ("Write `notes.md`", "Edit main.py",
+ * AntiGravity TitleCase variants) — a human label rather than an identifier.
+ * Only a title that LEADS with a mutation verb counts: the verb must be
+ * followed by whitespace/backtick/quote, so identifiers (`write_file`,
+ * `update_topic`) never match and stay on catalog resolution.
+ */
+function looksLikeFreeformEditTitle(toolName: string): boolean {
+  return /^(?:edit|write|create|delete|remove|replace|patch|rewrite|modify|move|rename|update)[\s`'"]/i.test(
+    (toolName || '').trim()
+  )
+}
+
+/**
+ * May diff stats be DERIVED (estimated) for this tool call?
+ *
+ * Estimation reads whatever lands in the merged presentation parameters and
+ * result text — and `mergeToolResultParameters` folds result-only fields in,
+ * so a provider whose tool_result carries the whole output as a string
+ * `content` (Muse `exec --json` compat lines duplicate `output` into
+ * `content`) made a 656-line file READ count as a `+656 -0` edit, and a shell
+ * transcript containing `diff --git` markers surfaced as a phantom patch on a
+ * run_shell_command row. Provider-declared summaries (codex `changes`,
+ * bridge/ensemble seeds, measured `git_numstat`) are not estimation and are
+ * not gated here.
+ *
+ * Edit evidence, any one of which admits:
+ *  - the ACTIVITY was classified write (ACP `tool_kind: 'edit'` rows whose
+ *    freeform titles can't be name-resolved),
+ *  - the name resolves to a write category (catalog `workspace.mutate`
+ *    aliases in every spelling, `write_to_file`, …),
+ *  - a namespaced `…__write_file`-style suffix outside the known prefixes,
+ *  - a freeform title leading with a mutation verb,
+ *  - an unambiguous replacement pair (`old_string`/`new_string` in any
+ *    spelling) in the parameters — results never fabricate one.
+ */
+export function mayDeriveToolDiffStats(
+  toolName: string,
+  parameters?: Record<string, unknown>,
+  category?: ToolActivity['category']
+): boolean {
+  if (category === 'write') return true
+  if (getToolCategory(toolName) === 'write') return true
+  const normalized = (toolName || '').trim().toLowerCase()
+  if (
+    /__(?:write_file|create_file|edit_file|replace|apply_patch|create_directory|delete_path|move_path|rename_path|edit|write)$/.test(
+      normalized
+    )
+  ) {
+    return true
+  }
+  if (looksLikeFreeformEditTitle(toolName)) return true
+  if (looksLikeStringReplacement(parameters)) return true
+  return false
+}
+
 export function estimateLineChanges(parameters?: Record<string, unknown>): {
   additions?: number
   deletions?: number
@@ -1140,7 +1196,8 @@ function getPatchPreview(parameters?: Record<string, unknown>, resultText?: stri
 export function deriveToolDiffSummary(
   toolName: string,
   parameters?: Record<string, unknown>,
-  resultText?: string
+  resultText?: string,
+  options?: { category?: ToolActivity['category'] }
 ): ToolDiffSummary | undefined {
   // Reasoning / thinking pseudo-activities (`grok_thinking`, `kimi_thinking`, …) carry
   // free-form prose as their "result", never a file edit. Never derive a diff for them
@@ -1150,6 +1207,11 @@ export function deriveToolDiffSummary(
   if (typeof parameters?.kind === 'string' && parameters.kind.toLowerCase() === 'reasoning') {
     return undefined
   }
+  // Estimation is for edits. Result-merged parameters and result text carry
+  // arbitrary tool output (a read's file body under `content`, a shell
+  // transcript that happens to contain diff markers) — without edit evidence,
+  // counting them invents a `+N -M` for a call that changed nothing.
+  if (!mayDeriveToolDiffStats(toolName, parameters, options?.category)) return undefined
   const category = getToolCategory(toolName)
   const changesSummary = parseChanges(parameters?.changes)
   if (
@@ -1247,7 +1309,7 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
     startedAt: new Date().toISOString(),
     parameters,
     filePath,
-    diffSummary: deriveToolDiffSummary(toolName, parameters),
+    diffSummary: deriveToolDiffSummary(toolName, parameters, undefined, { category }),
     rawUseEvent: toolUseEvent,
     parentToolCallId,
     ...(provider ? { metadata: { provider } } : {}),
@@ -1395,7 +1457,9 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     // that; every estimate-versus-estimate outcome below is unchanged.
     diffSummary: preserveMeasuredDiffSummary(
       activity.diffSummary,
-      deriveToolDiffSummary(presentedToolName, pairedParameters, resultOutput) ||
+      deriveToolDiffSummary(presentedToolName, pairedParameters, resultOutput, {
+        category: pairedCategory
+      }) ||
         inferred.diffSummary ||
         activity.diffSummary
     ),

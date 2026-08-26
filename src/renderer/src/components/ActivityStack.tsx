@@ -4060,7 +4060,8 @@ const ToolActivityRow = memo(function ToolActivityRow({
       deriveToolDiffSummary(
         activity.toolName,
         parameters,
-        activity.resultSummary || activity.outputPreview
+        activity.resultSummary || activity.outputPreview,
+        { category: activity.category }
       )
   // Pure helper that decides whether the per-row Codex-style `+X -Y` odometer
   // renders and what numbers it carries — handles MultiEdit `edits[]`,

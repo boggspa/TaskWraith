@@ -1124,4 +1124,93 @@ describe('ToolParser', () => {
       expect(isToolResultEvent({ type: 'other' })).toBe(false)
     })
   })
+
+  /**
+   * Diff stats may only be DERIVED for edit-like calls. Providers whose
+   * tool_result lines carry the whole output as a string `content` field
+   * (Muse `exec --json` compat lines duplicate `output` into `content`)
+   * pollute the merged presentation parameters, and `estimateLineChanges`
+   * then read a 656-line file READ as a `+656 -0` edit. The same class let a
+   * shell result whose transcript happened to contain `diff --git` markers
+   * (git diff / git show output) surface as a phantom patch on a
+   * run_shell_command row.
+   */
+  describe('diff derivation gating (edit-like tools only)', () => {
+    it('never derives a diff for a read tool whose merged parameters carry result content', () => {
+      expect(
+        deriveToolDiffSummary('read_file', {
+          file_path: 'src/App.tsx',
+          content: Array.from({ length: 656 }, (_, i) => `line ${i}`).join('\n')
+        })
+      ).toBeUndefined()
+    })
+
+    it('never derives a diff for an MCP tool with a string content result', () => {
+      expect(
+        deriveToolDiffSummary('mcp__taskwraith__ensemble_control', { content: 'ok' })
+      ).toBeUndefined()
+    })
+
+    it('never parses a shell result transcript as a patch preview', () => {
+      const gitDiffOutput = [
+        'diff --git a/a.ts b/a.ts',
+        '--- a/a.ts',
+        '+++ b/a.ts',
+        '@@ -1,2 +1,3 @@',
+        ' line',
+        '-old',
+        '+new'
+      ].join('\n')
+      expect(
+        deriveToolDiffSummary('run_shell_command', { command: 'git diff' }, gitDiffOutput)
+      ).toBeUndefined()
+    })
+
+    it('still derives for an unrecognised name when the activity CATEGORY is write', () => {
+      // ACP tool_kind 'edit' classifies rows whose human title resolution
+      // cannot ("Apply my change") — the category evidence must keep the pill.
+      expect(
+        deriveToolDiffSummary('Apply my change', { filePath: 'a.ts', content: 'one\ntwo' }, undefined, {
+          category: 'write'
+        })
+      ).toMatchObject({ additions: 2, deletions: 0 })
+    })
+
+    it('keeps read pairing free of diffs end-to-end (Muse compat tool_result shape)', () => {
+      const activity = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'call_r1',
+        tool_name: 'read_file',
+        parameters: { path: 'src/App.tsx' },
+        provider: 'muse'
+      })
+      const paired = pairToolResult(activity, {
+        type: 'tool_result',
+        tool_id: 'call_r1',
+        output: 'a\nb\nc\nd',
+        content: 'a\nb\nc\nd',
+        provider: 'muse'
+      })
+      expect(paired.category).toBe('read')
+      expect(paired.diffSummary).toBeUndefined()
+    })
+
+    it('keeps write pairing deriving from its own input after a string result merges in', () => {
+      const activity = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'call_w1',
+        tool_name: 'write_file',
+        parameters: { file_path: 'notes.md', content: 'one\ntwo\nthree' },
+        provider: 'muse'
+      })
+      const paired = pairToolResult(activity, {
+        type: 'tool_result',
+        tool_id: 'call_w1',
+        output: 'Wrote notes.md',
+        content: 'Wrote notes.md',
+        provider: 'muse'
+      })
+      expect(paired.diffSummary).toMatchObject({ additions: 3, deletions: 0 })
+    })
+  })
 })
