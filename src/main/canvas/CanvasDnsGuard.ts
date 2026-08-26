@@ -20,14 +20,6 @@ async function defaultResolveHost(host: string): Promise<string[]> {
   return records.map((record) => record.address)
 }
 
-function allowlistMatches(rawHost: string, allowlist: string[]): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
-  const allow = allowlist
-    .map((entry) => entry.toLowerCase().trim().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, ''))
-    .filter(Boolean)
-  return allow.some((entry) => host === entry || host.endsWith(`.${entry}`))
-}
-
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('dns_timeout')), ms)
@@ -44,36 +36,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-function resolvedAddressAllowed(
-  addressClass: CanvasHostClass,
-  rawHost: string,
-  address: string,
-  allowlist: string[]
-): boolean {
-  if (addressClass === 'public') return true
-  if (addressClass === 'private') {
-    return allowlistMatches(rawHost, allowlist) || allowlistMatches(address, allowlist)
-  }
-  // A public DNS name resolving to loopback is a rebinding vector unless the
-  // user explicitly allowlisted the loopback address itself. Direct
-  // localhost/127/::1 was already allowed before DNS resolution.
-  if (addressClass === 'loopback') {
-    return allowlistMatches(address, allowlist)
-  }
-  return false
+function resolvedAddressAllowed(addressClass: CanvasHostClass): boolean {
+  return addressClass === 'public' || addressClass === 'private' || addressClass === 'loopback'
 }
 
 /**
- * DNS layer for Canvas SSRF protection. The pure URL validator catches literal
- * IPs and metadata hostnames; this closes the common rebinding case where a
- * public-looking hostname resolves to loopback, private LAN, or link-local IPs.
- *
- * Canvas intentionally differs from web_fetch: loopback is allowed for dev
- * servers, and allowlisted private hosts may be opened for local-network apps.
+ * DNS layer for the Canvas Browser's fixed metadata deny rule. Public names may
+ * intentionally resolve to loopback or private addresses (local dev aliases,
+ * routers, lab services); only link-local/cloud-metadata resolution is denied.
  */
 export async function assertCanvasDnsAllowed(
   rawUrl: string,
-  allowlist: string[] = [],
   resolveHost: CanvasResolveHost = defaultResolveHost
 ): Promise<void> {
   let parsed: URL
@@ -90,11 +63,8 @@ export async function assertCanvasDnsAllowed(
 
   const rawHost = parsed.hostname
   const hostClass = classifyCanvasHost(rawHost)
-  if (hostClass === 'loopback') return
+  if (hostClass === 'loopback' || hostClass === 'private') return
   if (hostClass === 'linklocal') throw new CanvasDnsBlockedError(rawUrl, 'host_linklocal')
-  if (hostClass === 'private' && !allowlistMatches(rawHost, allowlist)) {
-    throw new CanvasDnsBlockedError(rawUrl, 'host_private')
-  }
   if (hostClass !== 'public') return
 
   let addresses: string[]
@@ -107,7 +77,7 @@ export async function assertCanvasDnsAllowed(
 
   for (const address of addresses) {
     const addressClass = classifyCanvasHost(address)
-    if (!resolvedAddressAllowed(addressClass, rawHost, address, allowlist)) {
+    if (!resolvedAddressAllowed(addressClass)) {
       throw new CanvasDnsBlockedError(rawUrl, `resolved_${addressClass}`)
     }
   }
@@ -115,11 +85,10 @@ export async function assertCanvasDnsAllowed(
 
 export async function isCanvasDnsBlocked(
   rawUrl: string,
-  allowlist: string[] = [],
   resolveHost: CanvasResolveHost = defaultResolveHost
 ): Promise<boolean> {
   try {
-    await assertCanvasDnsAllowed(rawUrl, allowlist, resolveHost)
+    await assertCanvasDnsAllowed(rawUrl, resolveHost)
     return false
   } catch {
     return true

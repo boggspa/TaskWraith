@@ -968,21 +968,11 @@ function validateCanvasOpenArgs(channel: string, value: unknown): void {
   validateKnownKeys(
     channel,
     value,
-    new Set(['url', 'originAllowlist', 'chatId', ...(embedded ? ['presentation'] : [])])
+    new Set(['url', 'chatId', ...(embedded ? ['presentation'] : [])])
   )
   if (value.url !== undefined) {
     if (typeof value.url !== 'string' || !value.url.trim() || value.url.length > 8_192) {
       throw new Error(`${channel} url must be a non-empty string of at most 8192 characters.`)
-    }
-  }
-  if (value.originAllowlist !== undefined) {
-    if (!Array.isArray(value.originAllowlist) || value.originAllowlist.length > 64) {
-      throw new Error(`${channel} originAllowlist must be an array of at most 64 strings.`)
-    }
-    for (const origin of value.originAllowlist) {
-      if (typeof origin !== 'string' || !origin.trim() || origin.length > 2_048) {
-        throw new Error(`${channel} originAllowlist entries must be non-empty bounded strings.`)
-      }
     }
   }
   if (value.presentation !== undefined && value.presentation !== 'dock') {

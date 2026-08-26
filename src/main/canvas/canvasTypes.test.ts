@@ -31,22 +31,14 @@ describe('validateCanvasUrl', () => {
     expect(validateCanvasUrl('javascript:alert(1)').ok).toBe(false)
   })
 
-  it('blocks link-local / cloud-metadata even when allowlisted', () => {
+  it('blocks link-local / cloud-metadata with a fixed deny rule', () => {
     expect(validateCanvasUrl('http://169.254.169.254/latest/meta-data').ok).toBe(false)
-    // An agent-supplied allowlist can NOT re-enable the metadata endpoint.
-    expect(validateCanvasUrl('http://169.254.169.254/', ['169.254.169.254']).ok).toBe(false)
   })
 
-  it('permits public http(s) when no allowlist is given (open is user-gated)', () => {
+  it('permits arbitrary public and private http(s) hosts without an origin list', () => {
     expect(validateCanvasUrl('https://example.com').ok).toBe(true)
-  })
-
-  it('enforces a non-empty allowlist (exact + dotted-suffix)', () => {
-    expect(validateCanvasUrl('https://evil.com', ['staging.myapp.com']).ok).toBe(false)
-    expect(validateCanvasUrl('https://staging.myapp.com', ['staging.myapp.com']).ok).toBe(true)
-    expect(validateCanvasUrl('https://api.staging.myapp.com', ['myapp.com']).ok).toBe(true)
-    // suffix match must respect the dot boundary — notmyapp.com is NOT myapp.com
-    expect(validateCanvasUrl('https://notmyapp.com', ['myapp.com']).ok).toBe(false)
+    expect(validateCanvasUrl('http://router.local').ok).toBe(true)
+    expect(validateCanvasUrl('http://192.168.1.20:8080').ok).toBe(true)
   })
 
   it('rejects invalid urls', () => {
@@ -92,14 +84,13 @@ describe('resolveViewport', () => {
   })
 })
 
-describe('validateCanvasUrl — IP-class SSRF policy', () => {
-  it('blocks RFC1918 / ULA / CGNAT by default, allows when allowlisted', () => {
-    expect(validateCanvasUrl('http://192.168.1.1:3000').ok).toBe(false)
-    expect(validateCanvasUrl('http://10.0.0.5/').ok).toBe(false)
-    expect(validateCanvasUrl('http://172.16.0.1/').ok).toBe(false)
-    expect(validateCanvasUrl('http://[fd00::1]/').ok).toBe(false)
-    expect(validateCanvasUrl('http://100.64.0.1/').ok).toBe(false)
-    expect(validateCanvasUrl('http://192.168.1.1:3000', ['192.168.1.1']).ok).toBe(true)
+describe('validateCanvasUrl — host classes', () => {
+  it('allows RFC1918 / ULA / CGNAT addresses', () => {
+    expect(validateCanvasUrl('http://192.168.1.1:3000').ok).toBe(true)
+    expect(validateCanvasUrl('http://10.0.0.5/').ok).toBe(true)
+    expect(validateCanvasUrl('http://172.16.0.1/').ok).toBe(true)
+    expect(validateCanvasUrl('http://[fd00::1]/').ok).toBe(true)
+    expect(validateCanvasUrl('http://100.64.0.1/').ok).toBe(true)
   })
 
   it('blocks IPv4-mapped-IPv6 metadata (both dotted and Node hex form) + metadata DNS', () => {
@@ -128,11 +119,11 @@ describe('classifyCanvasHost', () => {
 })
 
 describe('isCanvasRequestBlocked (per-request subresource gate)', () => {
-  it('blocks internal ranges, allows public + loopback + inert', () => {
+  it('blocks metadata while allowing private, public, loopback, and inert URLs', () => {
     expect(isCanvasRequestBlocked('http://169.254.169.254/latest/meta-data')).toBe(true)
     expect(isCanvasRequestBlocked('http://[::ffff:169.254.169.254]/')).toBe(true)
-    expect(isCanvasRequestBlocked('http://10.0.0.1/admin')).toBe(true)
-    expect(isCanvasRequestBlocked('http://192.168.1.1/', ['192.168.1.1'])).toBe(false)
+    expect(isCanvasRequestBlocked('http://10.0.0.1/admin')).toBe(false)
+    expect(isCanvasRequestBlocked('http://192.168.1.1/')).toBe(false)
     expect(isCanvasRequestBlocked('https://cdn.example.com/app.js')).toBe(false)
     expect(isCanvasRequestBlocked('http://localhost:3000/api')).toBe(false)
     expect(isCanvasRequestBlocked('ws://localhost:3000/hmr')).toBe(false)

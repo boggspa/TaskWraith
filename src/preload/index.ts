@@ -1351,8 +1351,7 @@ const api = {
   // audit-event broadcast the main process emits for every canvas action.
   canvas: {
     openWindow: (args: {
-      url: string
-      originAllowlist?: string[]
+      url?: string
       chatId: string
     }): Promise<
       | {
@@ -1365,8 +1364,7 @@ const api = {
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-window', args),
     openEmbedded: (args: {
-      url: string
-      originAllowlist?: string[]
+      url?: string
       chatId: string
       presentation?: 'dock'
     }): Promise<

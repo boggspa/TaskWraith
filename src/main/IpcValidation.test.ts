@@ -305,10 +305,12 @@ describe('IpcValidation', () => {
       validateIpcArgs('canvas:open-window', [
         {
           url: 'http://localhost:5173',
-          originAllowlist: ['http://localhost:5173'],
           chatId: 'chat-1'
         }
       ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
     ).not.toThrow()
     expect(() =>
       validateIpcArgs('canvas:open-embedded', [
@@ -339,6 +341,11 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('canvas:open-window', [
         { url: 'https://x.test', chatId: 'chat-1', presentation: 'dock' }
+      ])
+    ).toThrow(/unknown field/)
+    expect(() =>
+      validateIpcArgs('canvas:open-window', [
+        { url: 'https://x.test', chatId: 'chat-1', originAllowlist: ['x.test'] }
       ])
     ).toThrow(/unknown field/)
     expect(() =>
