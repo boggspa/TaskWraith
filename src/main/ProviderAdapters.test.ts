@@ -241,6 +241,11 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.imageAttachments).toBe(true)
   })
 
+  it('pi advertises its model-gated RPC image transport', () => {
+    const cap = defaultProviderDescriptor('pi').capabilities
+    expect(cap.imageAttachments).toBe(true)
+  })
+
   it('claude supports reasoning effort + fast mode', () => {
     const cap = defaultProviderDescriptor('claude').capabilities
     expect(cap.reasoningEffort).toBe(true)

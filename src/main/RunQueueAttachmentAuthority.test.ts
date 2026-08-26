@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createMainOwnedRunQueueAttachmentStager,
+  resolveMainOwnedQueuedComposerAttachments,
   resolveOwnedPersistedRunQueueAttachment
 } from './RunQueueAttachmentAuthority'
 import { MAX_DURABLE_ATTACHMENT_REFS } from './ScheduledAttachmentDurability'
 import { TranscriptMediaAssetStore } from './services/TranscriptMediaAssetStore'
+import type { RunQueueImageAttachmentSnapshot, RunQueueJob } from './store/types'
 
 const roots: string[] = []
 
@@ -66,6 +68,98 @@ describe('resolveOwnedPersistedRunQueueAttachment', () => {
         appChatId: 'chat-attacker'
       })
     ).toBe(false)
+  })
+})
+
+describe('resolveMainOwnedQueuedComposerAttachments', () => {
+  function queuedJob(
+    attachment: RunQueueImageAttachmentSnapshot,
+    overrides: Partial<RunQueueJob> = {}
+  ): RunQueueJob {
+    return {
+      id: 'run-queued',
+      runId: 'run-queued',
+      provider: 'pi',
+      source: 'manual',
+      status: 'starting',
+      priority: 0,
+      attempt: 1,
+      chatId: 'chat-owner',
+      enqueuedAt: '2026-08-25T14:32:52.031Z',
+      createdAt: '2026-08-25T14:32:52.031Z',
+      updatedAt: '2026-08-25T14:36:02.719Z',
+      request: {
+        prompt: 'Inspect this screenshot.',
+        selectedModelType: 'openrouter/stealth/ox-alpha',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [attachment]
+      },
+      ...overrides
+    }
+  }
+
+  it('restores exact chat-owned snapshots for a leased queued run', () => {
+    const { store, persisted } = ownedFixture()
+    const job = queuedJob({ ...persisted, id: 'image-1', name: 'screen.png' })
+
+    expect(
+      resolveMainOwnedQueuedComposerAttachments({
+        store,
+        job,
+        appRunId: 'run-queued',
+        appChatId: 'chat-owner',
+        provider: 'pi'
+      })
+    ).toMatchObject({
+      imageAttachments: [
+        {
+          persistenceVersion: 1,
+          id: 'image-1',
+          path: persisted.path,
+          name: 'screen.png',
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          byteLength: persisted.byteLength
+        }
+      ]
+    })
+  })
+
+  it('rejects non-leased, cross-chat, raw-path, and directory attachments', () => {
+    const { store, persisted } = ownedFixture()
+    const resolve = (job: RunQueueJob, appChatId = 'chat-owner') =>
+      resolveMainOwnedQueuedComposerAttachments({
+        store,
+        job,
+        appRunId: 'run-queued',
+        appChatId,
+        provider: 'pi'
+      })
+
+    expect(resolve(queuedJob(persisted, { status: 'queued' }))).toBeNull()
+    expect(resolve(queuedJob(persisted), 'chat-other')).toBeNull()
+    expect(resolve(queuedJob({ path: '/tmp/raw.png' }))).toBeNull()
+    expect(resolve(queuedJob({ path: '/tmp/folder', kind: 'directory' }))).toBeNull()
+    expect(
+      resolveMainOwnedQueuedComposerAttachments({
+        store,
+        job: queuedJob(persisted),
+        appRunId: 'run-other',
+        appChatId: 'chat-owner',
+        provider: 'pi'
+      })
+    ).toBeNull()
+    expect(
+      resolveMainOwnedQueuedComposerAttachments({
+        store,
+        job: queuedJob(persisted),
+        appRunId: 'run-queued',
+        appChatId: 'chat-owner',
+        provider: 'codex'
+      })
+    ).toBeNull()
   })
 })
 

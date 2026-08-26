@@ -880,7 +880,10 @@ import {
   registerExecutionGraphHandlers,
   type ExecutionGraphServiceDiagnostic
 } from './ipc/executionGraphHandlers'
-import { createMainOwnedRunQueueAttachmentStager } from './RunQueueAttachmentAuthority'
+import {
+  createMainOwnedRunQueueAttachmentStager,
+  resolveMainOwnedQueuedComposerAttachments
+} from './RunQueueAttachmentAuthority'
 import {
   authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
@@ -1709,9 +1712,10 @@ import {
 } from './pi/PiEnsembleCoordination'
 import { resolvePiTaskWraithToolSelection } from './pi/PiTaskWraithToolSelection'
 import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
-import { splitPiWireModelId } from './pi/PiModels'
+import { findPiStaticModel, splitPiWireModelId } from './pi/PiModels'
 import { PiKeyStore } from './pi/PiKeyStore'
 import { createPiIsolatedHome } from './pi/PiIsolatedHome'
+import { loadPiRpcImageContents } from './pi/PiImageContent'
 import {
   enrichPiCerebrasRateLimitError,
   isPiCerebrasRateLimitError,
@@ -7451,7 +7455,8 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
   const resolvedImages = resolveImagePathsForProvider(
     payload.provider,
     imagePaths,
-    providerLabel(payload.provider)
+    providerLabel(payload.provider),
+    payload.model
   )
   if (resolvedImages.warning) {
     payload.imagePaths = []
@@ -22337,6 +22342,28 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     return
   }
 
+  let piImages: Awaited<ReturnType<typeof loadPiRpcImageContents>> = []
+  if (payload.imagePaths?.length) {
+    if (findPiStaticModel(model)?.images !== true) {
+      failFast(`Pi model '${model}' does not accept image input.`, false)
+      return
+    }
+    try {
+      piImages = await loadPiRpcImageContents(payload.imagePaths, {
+        readFile: (imagePath) => fs.readFile(imagePath),
+        convertToSupported: convertImageBufferForClaudeAttachment
+      })
+    } catch (error) {
+      failFast(error instanceof Error ? error.message : String(error), false)
+      return
+    }
+    console.log(
+      `[pi-rpc] delivering ${piImages.length} image attachment(s) as prompt content blocks for run=${route.appRunId}`
+    )
+  }
+  const piPromptLine = (message: string): string =>
+    piPromptCommand(message, undefined, piImages)
+
   // Reuse the opt-in Kimi compatibility pass for the Pi upstreams that need
   // it. The resolver is deliberately allowlisted: Qwen, MiniMax, Mistral,
   // Groq, and Cerebras keep their unmodified ensemble prompts.
@@ -22668,8 +22695,15 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       text: piNoBrokerText,
       transforms:
         piNoBrokerText === payload.prompt
-          ? ['pi JSON-RPC prompt command wrap']
-          : ['managed-tools-unavailable appendix', 'pi JSON-RPC prompt command wrap']
+          ? [
+              'pi JSON-RPC prompt command wrap',
+              ...(piImages.length > 0 ? ['base64 image content blocks appended'] : [])
+            ]
+          : [
+              'managed-tools-unavailable appendix',
+              'pi JSON-RPC prompt command wrap',
+              ...(piImages.length > 0 ? ['base64 image content blocks appended'] : [])
+            ]
     })
   }
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
@@ -22686,14 +22720,14 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     stdinPlan: preparedTaskWraithTools
       ? {
           initialLines: [
-            piPromptCommand(
+            piPromptLine(
               `${payload.prompt}\n\n${piTaskWraithToolsReadyPromptAppendix(preparedTaskWraithTools)}`
             )
           ],
           readiness: {
             marker: PI_TASKWRAITH_TOOLS_READY_MARKER,
             timeoutMs: 3_000,
-            fallbackInitialLines: [piPromptCommand(managedToolsFallbackPrompt)],
+            fallbackInitialLines: [piPromptLine(managedToolsFallbackPrompt)],
             onReady: () => {
               emitWirePromptCapture({
                 appRunId: route.appRunId,
@@ -22702,7 +22736,11 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                 transport: 'pi-rpc',
                 part: 'stdin (tools ready)',
                 text: `${payload.prompt}\n\n${piTaskWraithToolsReadyPromptAppendix(preparedTaskWraithTools)}`,
-                transforms: ['managed-tools-ready appendix', 'pi JSON-RPC prompt command wrap']
+                transforms: [
+                  'managed-tools-ready appendix',
+                  'pi JSON-RPC prompt command wrap',
+                  ...(piImages.length > 0 ? ['base64 image content blocks appended'] : [])
+                ]
               })
               appendDurableRunEventForRoute(
                 'pi',
@@ -22764,7 +22802,8 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                 attempt: 2,
                 transforms: [
                   'managed-tools-unavailable appendix',
-                  'pi JSON-RPC prompt command wrap'
+                  'pi JSON-RPC prompt command wrap',
+                  ...(piImages.length > 0 ? ['base64 image content blocks appended'] : [])
                 ]
               })
               const detail =
@@ -22806,7 +22845,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         }
       : {
           initialLines: [
-            piPromptCommand(
+            piPromptLine(
               exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected
                 ? managedToolsFallbackPrompt
                 : payload.prompt
@@ -53973,6 +54012,14 @@ if (isGeminiMcpBridgeProcess) {
             const graphInput = graphOwnedComposerInput(appRunId)
             return graphInput ? { input: graphInput, mainOwnedAttachments: true } : null
           },
+          resolveQueuedComposerAttachments: ({ appRunId, appChatId, provider }) =>
+            resolveMainOwnedQueuedComposerAttachments({
+              store: getTranscriptMediaAssetStore(),
+              job: AppStore.getRunQueueJob(appRunId),
+              appRunId,
+              appChatId,
+              provider
+            }),
           canonicalizePath: canonicalPath
         })
       },

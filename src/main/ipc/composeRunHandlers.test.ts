@@ -248,6 +248,32 @@ describe('registerComposeRunHandlers', () => {
     })
   })
 
+  it('uses exact main-owned queued attachments without a replacement renderer receipt', async () => {
+    const deps = createDeps()
+    const input = {
+      ...inputFor('chat-test-1'),
+      appRunId: 'run-queued',
+      imageAttachments: [{ path: '/forged/secret.png' }]
+    }
+    deps.resolveSenderComposeAuthority = vi.fn((_event, raw) => ({
+      input: {
+        ...raw,
+        imageAttachments: [{ path: '/main-cas/queued.png', name: 'queued.png' }]
+      },
+      mainOwnedAttachments: true
+    }))
+    registerComposeRunHandlers(deps)
+
+    await handlerFor('compose-run')({ sender: { id: 1 } }, input)
+
+    expect(deps.resolveSenderAttachmentPaths).not.toHaveBeenCalled()
+    expect(deps.composeRun).toHaveBeenCalledWith({
+      ...input,
+      imageAttachments: [{ path: '/main-cas/queued.png', name: 'queued.png' }]
+    })
+    expect(deps.onScheduledRunComposed).toBeUndefined()
+  })
+
   it('issues a dispatch receipt only after canonical scheduled composition succeeds', async () => {
     const deps = createDeps()
     const composed = { provider: 'codex' } as ComposerRunPayload

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ComposerInput } from './services/ComposerService'
 import type { ChatRecord, ScheduledTask } from './store/types'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
@@ -208,6 +208,42 @@ describe('resolveComposerRunAuthority', () => {
       sessionTrust: true,
       handoffSourceRunId: 'renderer-handoff'
     })
+  })
+
+  it('replaces renderer attachment paths with exact main-owned queued snapshots', () => {
+    const durable = chat()
+    const resolveQueuedComposerAttachments = vi.fn(() => ({
+      imageAttachments: [
+        {
+          id: 'queued-image',
+          path: '/main-cas/queued.png',
+          name: 'queued.png'
+        }
+      ]
+    }))
+    const result = resolveComposerRunAuthority({
+      input: input({
+        provider: 'pi',
+        imageAttachments: [{ id: 'forged', path: '/renderer/secret.png' }],
+        attachments: [{ id: 'forged-file', path: '/renderer/secret.txt' }]
+      }),
+      chat: durable,
+      isMainRenderer: true,
+      resolveQueuedComposerAttachments,
+      canonicalizePath
+    })
+
+    expect(resolveQueuedComposerAttachments).toHaveBeenCalledWith({
+      appRunId: 'run-interactive',
+      appChatId: 'chat-test-1',
+      provider: 'pi'
+    })
+    expect(result.mainOwnedAttachments).toBe(true)
+    expect(result.input.imageAttachments).toEqual([
+      { id: 'queued-image', path: '/main-cas/queued.png', name: 'queued.png' }
+    ])
+    expect(result.input.attachments).toBeUndefined()
+    expect(result.input.userInput).toBe('Renderer prompt.')
   })
 
   it('rejects graph authority that does not match the exact run and durable target', () => {

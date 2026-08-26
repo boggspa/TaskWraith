@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus, RunQueueRequestSnapshot } from '../store/types'
 import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
+import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 interface PromoteQueuedJobForSteerRequest {
   runId: string
@@ -547,6 +548,25 @@ export class RunLifecycleCoordinator {
                 typeof (entry as { id?: unknown }).id === 'string'
                   ? (entry as { id?: string }).id
                   : undefined
+              if (isPersistedAttachmentRef(entry)) {
+                return {
+                  persistenceVersion: 1 as const,
+                  ...(id ? { id } : {}),
+                  path: entry.path,
+                  ...(name ? { name } : {}),
+                  sha256: entry.sha256,
+                  mimeType: entry.mimeType,
+                  byteLength: entry.byteLength
+                }
+              }
+              if ((entry as { kind?: unknown }).kind === 'directory') {
+                return {
+                  ...(id ? { id } : {}),
+                  path,
+                  ...(name ? { name } : {}),
+                  kind: 'directory' as const
+                }
+              }
               return {
                 ...(id ? { id } : {}),
                 path,

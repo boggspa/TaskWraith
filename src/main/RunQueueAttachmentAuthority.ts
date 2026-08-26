@@ -3,9 +3,13 @@ import type {
   DirectoryAttachmentRef,
   ExternalPathGrant,
   PersistedAttachmentRef,
+  RunQueueJob,
   RunQueueImageAttachmentSnapshot
 } from './store/types'
-import type { TranscriptMediaAssetStore } from './services/TranscriptMediaAssetStore'
+import {
+  isPersistedAttachmentRef,
+  type TranscriptMediaAssetStore
+} from './services/TranscriptMediaAssetStore'
 import { snapshotRasterOrPdfAttachment } from './services/TranscriptMediaService'
 import { MAX_DURABLE_ATTACHMENT_REFS } from './ScheduledAttachmentDurability'
 import { isDirectoryComposerAttachment } from '../shared/composerAttachment'
@@ -18,6 +22,10 @@ type RunQueueAttachmentStore = Pick<
 export type OwnedPersistedRunQueueAttachmentResult =
   | { ok: true; attachment: PersistedAttachmentRef }
   | { ok: false; reason: 'invalid_reference' | 'not_owner' }
+
+export interface MainOwnedQueuedComposerAttachments {
+  imageAttachments: PersistedAttachmentRef[]
+}
 
 /**
  * A renderer may replay a durable content-addressed reference, but possession
@@ -44,6 +52,57 @@ export function resolveOwnedPersistedRunQueueAttachment(input: {
     return { ok: false, reason: 'not_owner' }
   }
   return existing
+}
+
+/**
+ * Recover the exact chat-owned snapshots for a queued renderer dispatch.
+ *
+ * A queued file attachment stops being renderer-owned when RunQueueService
+ * copies it into transcript-media. The later renderer may be a different
+ * window (or a replacement renderer after restart), so requiring its ephemeral
+ * picker receipt for that main-owned path is both impossible and incorrect.
+ * Only a leased, previously-enqueued job with exact chat/provider/run identity
+ * may cross this seam, and every ref is re-resolved through the chat ownership
+ * ledger before it is returned. Directory references stay renderer-authorized
+ * because their live contents cannot be snapshotted.
+ */
+export function resolveMainOwnedQueuedComposerAttachments(input: {
+  store: Pick<TranscriptMediaAssetStore, 'owns' | 'resolvePersistedAttachment'>
+  job: RunQueueJob | null | undefined
+  appRunId: string
+  appChatId: string
+  provider?: string
+}): MainOwnedQueuedComposerAttachments | null {
+  const job = input.job
+  if (
+    !job ||
+    job.runId !== input.appRunId ||
+    job.chatId !== input.appChatId ||
+    job.status !== 'starting' ||
+    !job.enqueuedAt ||
+    !job.request ||
+    (input.provider && job.provider !== input.provider)
+  ) {
+    return null
+  }
+
+  const imageAttachments: PersistedAttachmentRef[] = []
+  for (const attachment of job.request.imageAttachments) {
+    if (isDirectoryComposerAttachment(attachment)) return null
+    if (!isPersistedAttachmentRef(attachment)) return null
+    const resolved = resolveOwnedPersistedRunQueueAttachment({
+      store: input.store,
+      attachment,
+      appChatId: input.appChatId
+    })
+    if (!resolved.ok) return null
+    imageAttachments.push({
+      ...resolved.attachment,
+      ...(attachment.id ? { id: attachment.id } : {}),
+      ...(attachment.name ? { name: attachment.name } : {})
+    })
+  }
+  return { imageAttachments }
 }
 
 export interface MainOwnedRunQueueAttachmentStageInput {

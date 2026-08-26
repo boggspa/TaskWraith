@@ -16,6 +16,16 @@ export interface ComposerRunAuthorityInput {
    * into it.
    */
   resolveGraphOwnedComposerInput?: (appRunId: string) => GraphOwnedComposerInputResolution | null
+  /**
+   * Restore only the attachment field from an exact leased queue job. Prompt,
+   * contextual selections, and run-only renderer inputs keep their existing
+   * composition path; the queued media refs themselves are main-owned.
+   */
+  resolveQueuedComposerAttachments?: (input: {
+    appRunId: string
+    appChatId: string
+    provider?: string
+  }) => { imageAttachments: NonNullable<ComposerInput['imageAttachments']> } | null
   canonicalizePath: (value: string) => string
 }
 
@@ -198,6 +208,22 @@ export function resolveComposerRunAuthority(
     delete authoritativeInput.workspace
   } else {
     authoritativeInput.workspace = chat.workspacePath
+  }
+
+  const queuedAttachments =
+    appRunId && input.resolveQueuedComposerAttachments
+      ? input.resolveQueuedComposerAttachments({
+          appRunId,
+          appChatId: chat.appChatId,
+          ...(input.input.provider ? { provider: input.input.provider } : {})
+        })
+      : null
+  if (queuedAttachments) {
+    authoritativeInput.imageAttachments = queuedAttachments.imageAttachments.map((attachment) => ({
+      ...attachment
+    }))
+    delete authoritativeInput.attachments
+    return { input: authoritativeInput, mainOwnedAttachments: true }
   }
   return { input: authoritativeInput }
 }

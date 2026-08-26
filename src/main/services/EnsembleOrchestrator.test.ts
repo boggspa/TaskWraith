@@ -5092,6 +5092,36 @@ describe('EnsembleOrchestrator', () => {
     expect(piRound?.status).not.toBe('failed')
   })
 
+  it('forwards images to a vision-capable Pi model', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'pi-vision',
+        provider: 'pi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        model: 'openrouter/stealth/ox-alpha',
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Inspect this screenshot.',
+      imageAttachments: [{ id: 'img-1', path: '/tmp/pi-vision.png', name: 'pi-vision.png' }],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0]).toMatchObject({
+      provider: 'pi',
+      model: 'openrouter/stealth/ox-alpha',
+      imagePaths: ['/tmp/pi-vision.png']
+    })
+  })
+
   it('starts an ensemble round when attachments are the only prompt content', async () => {
     const harness = makeHarness()
 

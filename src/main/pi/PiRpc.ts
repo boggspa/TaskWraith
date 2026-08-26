@@ -17,6 +17,7 @@
  */
 
 import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../shared/contextUsage'
+import type { PiRpcImageContent } from './PiImageContent'
 
 export interface PiUsage {
   inputTokens?: number
@@ -544,8 +545,17 @@ export class PiRpcTurnReducer {
 }
 
 /** JSONL commands written to pi's stdin. */
-export function piPromptCommand(message: string, id?: string): string {
-  return JSON.stringify({ type: 'prompt', message, ...(id ? { id } : {}) })
+export function piPromptCommand(
+  message: string,
+  id?: string,
+  images: readonly PiRpcImageContent[] = []
+): string {
+  return JSON.stringify({
+    type: 'prompt',
+    message,
+    ...(images.length > 0 ? { images } : {}),
+    ...(id ? { id } : {})
+  })
 }
 
 export function piAbortCommand(): string {

@@ -392,7 +392,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         // effort picker.
         reasoningEffort: false,
         speedTiers: [],
-        imageAttachments: false,
+        // RPC carries image content blocks. The dispatch gate additionally
+        // requires the selected Pi catalog row to declare image input.
+        imageAttachments: true,
         contextInjection: false,
         sessionResumption: true,
         perThreadMcp: true,

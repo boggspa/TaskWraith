@@ -73,7 +73,15 @@ describe('RunLifecycleCoordinator', () => {
         workflowMode: 'plan',
         customModel: '',
         imageAttachments: [
-          { path: '/tmp/a.png', id: 'img-1', name: 'a.png' } as RunQueueRequestSnapshot['imageAttachments'][number]
+          {
+            persistenceVersion: 1,
+            path: '/tmp/a.png',
+            id: 'img-1',
+            name: 'a.png',
+            sha256: 'a'.repeat(43),
+            mimeType: 'image/png',
+            byteLength: 128
+          }
         ],
         dmTargetParticipantId: 'participant-codex',
         displayPrompt: '   Clean this up.   '
@@ -112,7 +120,17 @@ describe('RunLifecycleCoordinator', () => {
         approvalMode: 'default',
         workflowMode: 'plan',
         sessionTrust: false,
-        imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+        imageAttachments: [
+          {
+            persistenceVersion: 1,
+            id: 'img-1',
+            path: '/tmp/a.png',
+            name: 'a.png',
+            sha256: 'a'.repeat(43),
+            mimeType: 'image/png',
+            byteLength: 128
+          }
+        ],
         dmTargetParticipantId: 'participant-codex',
         displayPrompt: '   Clean this up.   '
       },

@@ -18263,7 +18263,8 @@ export class EnsembleOrchestrator {
     const resolved = resolveImagePathsForProvider(
       participant.provider,
       imagePathsForEnsembleAttachments(runtime.imageAttachments),
-      providerLabel(participant.provider)
+      providerLabel(participant.provider),
+      participant.model
     )
     return resolved.imagePaths
   }

@@ -8,6 +8,7 @@
 // imports — so the matrix is unit-testable.
 
 import type { ProviderId } from './store/types'
+import { findPiStaticModel, PI_DEFAULT_MODEL_WIRE_ID } from './pi/PiModels'
 
 /**
  * Delivery mechanisms, per lane:
@@ -19,6 +20,8 @@ import type { ProviderId } from './store/types'
  *   loadImageParts); CLI lane grants read access via --include-directories
  *   and the prompt names the attached files so the model knows to read them.
  * - kimi: wire prompt user_input content parts (image_url → local path).
+ * - pi: RPC `prompt.images` content blocks, only when the selected Pi model's
+ *   curated catalog row declares image input.
  * - Everything else has no image transport today. ollama could grow one for
  *   multimodal tags (API `images` field) — until then images are omitted with
  *   a visible warning rather than failing the whole turn.
@@ -31,13 +34,18 @@ const PROVIDER_IMAGE_ATTACHMENT_DELIVERY: Record<ProviderId, boolean> = {
   ollama: false,
   cursor: false,
   grok: false,
-  pi: false,
+  pi: true,
   mistral: false,
   muse: false,
   antigravity: false
 }
 
-export function providerDeliversImageAttachments(provider: string): boolean {
+export function providerDeliversImageAttachments(provider: string, model?: string): boolean {
+  if (provider === 'pi') {
+    const normalizedModel =
+      !model || model === 'cli-default' || model === 'default' ? PI_DEFAULT_MODEL_WIRE_ID : model
+    return findPiStaticModel(normalizedModel)?.images === true
+  }
   return PROVIDER_IMAGE_ATTACHMENT_DELIVERY[provider as ProviderId] === true
 }
 
@@ -51,7 +59,7 @@ export function describeImageAttachmentOmissionWarning(
     `${providerLabel} cannot receive image attachments, so ${noun} ` +
     `will not be delivered to the model. Continuing without ${pronoun}. ` +
     `Remove the attachment or switch to a provider that supports images ` +
-    `(Claude, Codex, Gemini, or Kimi).`
+    `(Claude, Codex, Gemini, Kimi, or a vision-capable Pi model).`
   )
 }
 
@@ -67,11 +75,12 @@ export function describeImageAttachmentRefusal(providerLabel: string, imageCount
 export function resolveImagePathsForProvider(
   provider: string,
   imagePaths: readonly string[],
-  providerLabel: string
+  providerLabel: string,
+  model?: string
 ): { imagePaths: string[]; warning?: string } {
   const paths = imagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)
   if (paths.length === 0) return { imagePaths: [] }
-  if (providerDeliversImageAttachments(provider)) {
+  if (providerDeliversImageAttachments(provider, model)) {
     return { imagePaths: paths }
   }
   return {

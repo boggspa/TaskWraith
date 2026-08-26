@@ -13,12 +13,14 @@ describe('providerDeliversImageAttachments', () => {
     expect(providerDeliversImageAttachments('codex')).toBe(true)
     expect(providerDeliversImageAttachments('gemini')).toBe(true)
     expect(providerDeliversImageAttachments('kimi')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/stealth/ox-alpha')).toBe(true)
   })
 
   it('refuses every lane without one', () => {
-    for (const provider of ['ollama', 'cursor', 'grok', 'pi', 'mistral', 'antigravity', 'muse']) {
+    for (const provider of ['ollama', 'cursor', 'grok', 'mistral', 'antigravity', 'muse']) {
       expect(providerDeliversImageAttachments(provider)).toBe(false)
     }
+    expect(providerDeliversImageAttachments('pi', 'openrouter/zai/glm-5.2')).toBe(false)
   })
 
   it('fails closed for unknown provider strings', () => {
@@ -37,7 +39,7 @@ describe('describeImageAttachmentOmissionWarning', () => {
     const plural = describeImageAttachmentOmissionWarning('Pi', 3)
     expect(plural).toContain('the 3 attached images')
     expect(plural).toContain('Continuing without them')
-    expect(plural).toContain('Claude, Codex, Gemini, or Kimi')
+    expect(plural).toContain('vision-capable Pi model')
   })
 
   it('keeps the refusal alias on the same warn-and-continue copy', () => {
@@ -52,10 +54,18 @@ describe('resolveImagePathsForProvider', () => {
     expect(resolveImagePathsForProvider('codex', ['/tmp/a.png', ''], 'Codex')).toEqual({
       imagePaths: ['/tmp/a.png']
     })
+    expect(
+      resolveImagePathsForProvider('pi', ['/tmp/a.png'], 'Pi', 'openrouter/stealth/ox-alpha')
+    ).toEqual({ imagePaths: ['/tmp/a.png'] })
   })
 
   it('strips unsupported lanes and returns an omission warning', () => {
-    const resolved = resolveImagePathsForProvider('pi', ['/tmp/a.png', '/tmp/b.png'], 'Pi')
+    const resolved = resolveImagePathsForProvider(
+      'pi',
+      ['/tmp/a.png', '/tmp/b.png'],
+      'Pi',
+      'openrouter/zai/glm-5.2'
+    )
     expect(resolved.imagePaths).toEqual([])
     expect(resolved.warning).toContain('Pi cannot receive image attachments')
     expect(resolved.warning).toContain('Continuing without them')
