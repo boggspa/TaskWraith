@@ -206,3 +206,80 @@ export function edgeFadeState(metrics: {
     bottom: distance > EDGE_FADE_OVERFLOW_PX
   }
 }
+
+/**
+ * Marker class raised on a viewport for the single reveal it is allowed. CSS
+ * that wants an entrance hangs off this rather than off durable state: a CSS
+ * animation restarts every time its rule STARTS matching, so a selector built
+ * from `.is-working` (re-supplied on every render from the working-indicator
+ * presentation) or `.is-collapsed` (flipped by every expand/collapse) replays
+ * the entrance for as long as the surface lives.
+ */
+export const VIEWPORT_REVEALING_CLASS = 'is-revealing'
+
+/**
+ * Identity for "this viewport has already had its one reveal", or null when the
+ * viewport cannot be identified.
+ *
+ * Keyed by the OWNING MESSAGE, never by the transcript row: `rowKey` embeds the
+ * list index and is what the React key is built from, so it churns -- and
+ * remounts the row -- whenever anything is inserted, removed or reordered ahead
+ * of it. A fan-out wave does exactly that the moment its second lane card lands
+ * and the wave relocates to its anchor. The message id is the part of the row
+ * identity that survives all of it.
+ *
+ * The surface is folded in because a fan-out lane nests a SECOND viewport (the
+ * tools block) inside the first, under the same message. Sharing one claim
+ * between them would let whichever mounted first spend the lane's reveal.
+ */
+export function viewportRevealKey(
+  messageId: string | null | undefined,
+  surface: string | null | undefined
+): string | null {
+  if (!messageId) return null
+  return `${messageId} ${surface || ''}`
+}
+
+/**
+ * Ledger of viewports that have already played their reveal.
+ *
+ * Deliberately outlives the React tree: a component-instance ref would be lost
+ * on exactly the remounts this exists to survive (rowKey churn, virtualisation
+ * evicting a row past the overscan band and re-rendering it on scroll-back, and
+ * StrictMode's development double-mount).
+ *
+ * The claim is two-stage because those causes are not the same shape. A claim is
+ * SEALED when the browser reports the animation actually started, and only a
+ * sealed claim blocks a later reveal. StrictMode's teardown runs synchronously,
+ * before any animationstart can be dispatched, so it RELEASES an unsealed claim
+ * and the real mount still gets its reveal -- while a genuine unmount, which
+ * happens long after the animation began, finds the claim sealed and leaves it.
+ */
+export interface ViewportRevealLedger {
+  /** True when the caller may play the reveal. */
+  claim(key: string): boolean
+  /** The animation started, so this key is spent for good. */
+  seal(key: string): void
+  /** The claimant went away before it ever animated; hand the reveal back. */
+  release(key: string): void
+}
+
+export function createViewportRevealLedger(): ViewportRevealLedger {
+  const claims = new Map<string, 'pending' | 'sealed'>()
+  return {
+    claim(key) {
+      if (claims.get(key) === 'sealed') return false
+      claims.set(key, 'pending')
+      return true
+    },
+    seal(key) {
+      claims.set(key, 'sealed')
+    },
+    release(key) {
+      if (claims.get(key) === 'pending') claims.delete(key)
+    }
+  }
+}
+
+/** Process-wide ledger. See {@link createViewportRevealLedger}. */
+export const viewportRevealLedger = createViewportRevealLedger()

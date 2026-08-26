@@ -37,6 +37,13 @@
  *
  * Guarded by styles/windowIdlePauseCss.test.ts: a new entrance animation whose
  * first keyframe is invisible belongs on this list.
+ *
+ * Resuming a reveal only covers the animation being PAUSED. It cannot cover one
+ * that never started — an occluded window produces no frames to start it on —
+ * so a reveal must not be the only thing putting its content on screen. The
+ * fan-out lane carries its band on a plain declaration and fills its reveal
+ * neither backwards nor both, which is why its selector here now needs the
+ * `.is-revealing` marker: see the block comment in 02-transcript-messages-fx.css.
  */
 .is-window-idle .message-group,
 .is-window-idle .transcript-message-block.is-stack-collapsing > *,
@@ -45,7 +52,7 @@
 .is-window-idle .ensemble-above-row-entering,
 .is-window-idle
   .ensemble-fanout-result-card.is-working
-  .ensemble-fanout-result-viewport.is-collapsed
+  .ensemble-fanout-result-viewport.is-collapsed.is-revealing
   > .live-activity-viewport-scroll,
 .is-window-idle .chat-context-application-pill,
 .is-window-idle .transcript-jump-to-latest-pill,

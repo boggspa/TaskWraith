@@ -4,15 +4,19 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type AnimationEvent,
   type CSSProperties,
   type ReactNode
 } from 'react'
 import {
   ACTIVITY_REVEAL_EVENT,
   REVEAL_HEADER_ALLOWANCE_PX,
+  VIEWPORT_REVEALING_CLASS,
   distanceFromBottom,
   edgeFadeState,
   nextAutoFollow,
+  viewportRevealKey,
+  viewportRevealLedger,
   revealGrownMaxHeight,
   revealScrollAdjustment,
   shouldRepinOnContentGrowth,
@@ -126,6 +130,63 @@ export function LiveActivityViewport({
   /** Reveal-grown clamp height (smart growth), null while at the base clamp. */
   const [grownMaxHeight, setGrownMaxHeight] = useState<number | null>(null)
   const activeCollapsedMaxHeight = grownMaxHeight ?? collapsedMaxHeight
+
+  /**
+   * One-shot entrance marker (see `VIEWPORT_REVEALING_CLASS`). A surface that
+   * wants an entrance animation hangs it off this class instead of off the
+   * durable classes below, because a CSS animation restarts every time its rule
+   * starts matching: the fan-out lane's reveal was bound to the card's
+   * `.is-working` and this viewport's `.is-collapsed`, so it replayed on every
+   * working-indicator flip, every expand/collapse round trip, and every one of
+   * the remounts the transcript performs when a row's index-embedded key
+   * churns. The marker is raised at most once per message and retired the
+   * moment the animation reports it has finished.
+   */
+  const [revealing, setRevealing] = useState(false)
+  const revealKeyRef = useRef<string | null>(null)
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    // The owning message id, read from the DOM rather than threaded as a prop:
+    // this component is nested inside cached row elements and inside other
+    // viewports, and `data-message-id` is already the transcript's published
+    // per-row identity (the virtualiser reads its siblings the same way).
+    const owner = el.closest('[data-message-id]')
+    const key = viewportRevealKey(owner?.getAttribute('data-message-id'), className)
+    revealKeyRef.current = key
+    if (key === null || !viewportRevealLedger.claim(key)) return
+    setRevealing(true)
+    // Unmounting before the animation was ever reported as started means this
+    // mount never showed anything — hand the reveal back so the real mount can
+    // use it. StrictMode's double-mount is exactly that case.
+    return () => viewportRevealLedger.release(key)
+    // Mount-only on purpose: a reveal belongs to the viewport's first
+    // appearance, so re-running on a `className` change would re-arm it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Seal on the browser's own report that the animation began, not on mount:
+   * StrictMode tears the first mount down synchronously, before any
+   * animationstart can be dispatched, so a mount-time seal would spend the
+   * reveal on a mount nobody saw and development would never show one.
+   * Filtered to this viewport's own box — animation events bubble, and the
+   * children are a caller's arbitrary activity rows.
+   */
+  const handleAnimationStart = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.target !== scrollRef.current) return
+    const key = revealKeyRef.current
+    if (key !== null) viewportRevealLedger.seal(key)
+  }
+
+  const handleAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.target !== scrollRef.current) return
+    // Retiring the marker is the other half of "once": left in place it would
+    // re-arm the animation the next time a durable class in the same selector
+    // was re-applied.
+    setRevealing(false)
+  }
 
   // Growth is a collapsed-state affordance; entering or leaving the expanded
   // free-flow view always returns the clamp to base.
@@ -284,7 +345,9 @@ export function LiveActivityViewport({
         active ? ' is-active' : ''
       }${following ? ' is-following' : ''}${fadeTop ? ' has-fade-top' : ''}${
         fadeBottom ? ' has-fade-bottom' : ''
-      }${hasSkipAction ? ' has-skip-action' : ''}${className ? ` ${className}` : ''}`}
+      }${hasSkipAction ? ' has-skip-action' : ''}${
+        revealing ? ` ${VIEWPORT_REVEALING_CLASS}` : ''
+      }${className ? ` ${className}` : ''}`}
       data-following={following ? 'true' : 'false'}
       data-active={active ? 'true' : 'false'}
     >
@@ -314,6 +377,8 @@ export function LiveActivityViewport({
               } as CSSProperties)
         }
         onScroll={handleScroll}
+        onAnimationStart={handleAnimationStart}
+        onAnimationEnd={handleAnimationEnd}
         role="log"
         aria-label={label}
         aria-live={active ? 'polite' : 'off'}

@@ -7110,9 +7110,40 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   .ensemble-fanout-result-viewport.is-collapsed
   > .live-activity-viewport-scroll {
   height: var(--live-activity-collapsed-height);
-  /* The reveal replaces the growth, so it must not ALSO inherit the shared
-     `transition: max-height` — the cap never changes here. */
-  animation: fanout-lane-viewport-reveal 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* ------------------------------------------------------------
+ * The reveal, layered on top of a band that is already there
+ * ------------------------------------------------------------
+ * THE BAND IS NEVER PRODUCED BY THE ANIMATION. These were one rule, and the
+ * height came from `animation: … both`. `both` includes `backwards`, so the 0%
+ * keyframe — `height: 0` — is what the element uses for the animation's BEFORE
+ * phase, the phase an animation sits in until the document produces a frame to
+ * start it on. An occluded or unfocused window produces none, so a lane that
+ * appeared while the user was in another app stayed at height 0 and the card
+ * read as empty until the window was refocused. The idle-pause exemption in
+ * 32-window-idle-pause.css resumes a PAUSED reveal; nothing can resume one that
+ * never started. Without the fill, the before phase contributes nothing and the
+ * reservation above is simply in effect — which is also what reduce-motion and
+ * a browser that drops the animation entirely now get.
+ *
+ * `.is-revealing` IS A ONE-SHOT MARKER, NOT STATE. A CSS animation restarts
+ * every time its rule starts matching, so the old selector replayed the reveal
+ * on every `.is-working` flip (it is re-supplied per render from the
+ * working-indicator presentation), on every expand/collapse round trip, and on
+ * every remount — and transcript rows remount constantly, because `rowKey`
+ * embeds the list index and a fan-out wave relocates to its anchor the moment
+ * its second lane card lands. LiveActivityViewport raises the marker at most
+ * once per owning message (`viewportRevealLedger`) and retires it on
+ * animationend, so neither a re-applied class nor a rebuilt row can replay it.
+ *
+ * The reveal replaces the growth, so it must not ALSO inherit the shared
+ * `transition: max-height` — the cap never changes here.
+ * ------------------------------------------------------------ */
+.ensemble-fanout-result-card.is-working
+  .ensemble-fanout-result-viewport.is-collapsed.is-revealing
+  > .live-activity-viewport-scroll {
+  animation: fanout-lane-viewport-reveal 260ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 @keyframes fanout-lane-viewport-reveal {
@@ -7126,10 +7157,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* Both reduce-motion signals. The RESERVATION survives — it is the fix, not the
  * decoration; only the reveal is dropped, so the band simply exists at full
- * height from the first frame. */
+ * height from the first frame. Now that the two live in separate rules, these
+ * only have to reach the reveal: the reservation is not theirs to cancel. */
 @media (prefers-reduced-motion: reduce) {
   .ensemble-fanout-result-card.is-working
-    .ensemble-fanout-result-viewport.is-collapsed
+    .ensemble-fanout-result-viewport.is-collapsed.is-revealing
     > .live-activity-viewport-scroll {
     animation: none;
   }
@@ -7137,7 +7169,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 :root[data-reduce-motion='true']
   .ensemble-fanout-result-card.is-working
-  .ensemble-fanout-result-viewport.is-collapsed
+  .ensemble-fanout-result-viewport.is-collapsed.is-revealing
   > .live-activity-viewport-scroll {
   animation: none;
 }
