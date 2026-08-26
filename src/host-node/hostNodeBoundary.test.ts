@@ -34,6 +34,7 @@ const PURE_MUSE_CLOSURE = new Set([
   'MuseCronAssert.ts',
   'MuseExecJson.ts',
   'MuseIsolatedHome.ts',
+  'MuseMcpConfig.ts',
   'MuseProbe.ts',
   'MuseRun.ts',
   'MuseSessionLog.ts',
