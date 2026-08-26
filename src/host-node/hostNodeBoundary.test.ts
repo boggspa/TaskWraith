@@ -19,7 +19,13 @@ const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeProductionFactory.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeMuseResources.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeMuseCatalog.ts'),
-  resolve(HOST_NODE_ROOT, 'HostNodeMuseAuthHandoff.ts')
+  resolve(HOST_NODE_ROOT, 'HostNodeMuseAuthHandoff.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProvider.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProviderRegistry.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeInteractionRegistry.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeProviderResources.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeTerminalLauncher.ts'),
+  resolve(HOST_SHARED_ROOT, 'HostProviderCatalog.ts')
 ]
 
 /** Deliberate production closure required by the Node Muse adapter. */

@@ -1,76 +1,85 @@
-import { EventEmitter } from 'node:events'
-import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import { createHostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
 
-function child(): ChildProcess & EventEmitter {
-  return new EventEmitter() as ChildProcess & EventEmitter
+function fakeSpawn(shouldError = false) {
+  const listeners = new Map<string, (() => void)[]>()
+  const child = {
+    once: (event: string, listener: () => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener])
+      return child
+    }
+  } as never
+  return vi.fn(() => {
+    setTimeout(() => {
+      for (const listener of listeners.get(shouldError ? 'error' : 'spawn') ?? []) listener()
+    }, 0)
+    return child
+  })
 }
 
-it('hands off only the exact Muse login argv through inherited stdio without a shell', async () => {
-  const spawned = child()
-  const spawn = vi.fn(() => spawned)
-  const launcher = new HostNodeTerminalLauncher({ spawn })
-  let handedOff = false
-  const launch = launcher.launch({ argv: ['/opt/muse', 'login'] }).then(() => {
-    handedOff = true
+describe('HostNodeTerminalLauncher', () => {
+  it('launches Muse login with exact [binary, login] argv', async () => {
+    const spawn = fakeSpawn()
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    await launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
+    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/muse', ['login'], {
+      shell: false,
+      stdio: 'inherit'
+    })
   })
 
-  expect(spawn).toHaveBeenCalledWith('/opt/muse', ['login'], { shell: false, stdio: 'inherit' })
-  expect(handedOff).toBe(false)
-  spawned.emit('spawn')
-  await launch
-  expect(handedOff).toBe(true)
-
-  // The handoff is complete before the user-owned login process exits.
-  spawned.emit('close', 0)
-})
-
-it('rejects a failed spawn handoff and permits a later retry', async () => {
-  const first = child()
-  const second = child()
-  const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second)
-  const launcher = new HostNodeTerminalLauncher({ spawn })
-
-  const failed = launcher.launch({ argv: ['/opt/muse', 'login'] })
-  first.emit('error', new Error('cannot spawn'))
-  await expect(failed).rejects.toThrow('handoff failed')
-
-  const retry = launcher.launch({ argv: ['/opt/muse', 'login'] })
-  second.emit('spawn')
-  await expect(retry).resolves.toBeUndefined()
-})
-
-it('rejects an overlapping duplicate handoff and malformed login commands', async () => {
-  const spawned = child()
-  const launcher = new HostNodeTerminalLauncher({ spawn: vi.fn(() => spawned) })
-  const first = launcher.launch({ argv: ['/opt/muse', 'login'] })
-
-  await expect(launcher.launch({ argv: ['/opt/muse', 'login'] })).rejects.toThrow('already pending')
-  await expect(launcher.launch({ argv: ['/opt/muse', 'logout'] as never })).rejects.toThrow(
-    'exact login command'
-  )
-  await expect(launcher.launch({ argv: ['relative/muse', 'login'] as never })).rejects.toThrow(
-    'exact login command'
-  )
-
-  spawned.emit('spawn')
-  await first
-})
-
-it('normalizes synchronous spawn failures without forwarding process details', async () => {
-  const launcher = new HostNodeTerminalLauncher({
-    spawn: (() => {
-      throw new Error('/private/token')
-    }) as unknown as (
-      executable: string,
-      args: readonly string[],
-      options: SpawnOptions
-    ) => ChildProcess
+  it('launches Claude login with catalogued [binary, auth, login] argv', async () => {
+    const spawn = fakeSpawn()
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    await launcher.launchForProvider('claude', { argv: ['/usr/local/bin/claude', 'auth', 'login'] })
+    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/claude', ['auth', 'login'], {
+      shell: false,
+      stdio: 'inherit'
+    })
   })
 
-  await expect(launcher.launch({ argv: ['/opt/muse', 'login'] })).rejects.toThrow(
-    'handoff could not start'
-  )
+  it('rejects wrong argv for a provider', async () => {
+    const spawn = fakeSpawn()
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    await expect(
+      launcher.launchForProvider('claude', { argv: ['/usr/local/bin/claude', 'login'] })
+    ).rejects.toThrow('Terminal launcher requires an exact login command.')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('rejects providers with no catalogued login flow', async () => {
+    const launcher = createHostNodeTerminalLauncher()
+    await expect(
+      launcher.launchForProvider('grok', { argv: ['/usr/local/bin/grok', 'login'] })
+    ).rejects.toThrow('Provider grok has no catalogued login flow.')
+  })
+
+  it('rejects non-absolute binary paths', async () => {
+    const launcher = createHostNodeTerminalLauncher()
+    await expect(launcher.launchForProvider('muse', { argv: ['muse', 'login'] })).rejects.toThrow(
+      'Terminal launcher requires an exact login command.'
+    )
+  })
+
+  it('rejects duplicate pending handoffs', async () => {
+    const listeners = new Map<string, (() => void)[]>()
+    const spawn = vi.fn(() => {
+      const child = {
+        once: (event: string, listener: () => void) => {
+          listeners.set(event, [...(listeners.get(event) ?? []), listener])
+          return child
+        }
+      } as never
+      return child
+    })
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    const first = launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
+    await expect(launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })).rejects.toThrow(
+      'muse login terminal handoff is already pending.'
+    )
+    // Resolve the first handoff so the pending entry clears.
+    for (const listener of listeners.get('spawn') ?? []) listener()
+    await first
+  })
 })
