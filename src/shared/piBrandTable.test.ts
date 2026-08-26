@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PI_MODEL_LABELS,
   PI_UPSTREAM_BRANDS,
+  canonicalPiWireModelId,
   resolvePiModelLabel,
   resolvePiUpstreamBrand,
   splitPiWireModelId
@@ -79,6 +80,13 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
     expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
+  })
+
+  it('canonicalizes the retired Qwen preview id for dispatch and historical labels', () => {
+    expect(canonicalPiWireModelId('qwen-token-plan/qwen3.8-max-preview')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+    expect(resolvePiModelLabel('qwen-token-plan/qwen3.8-max-preview')).toBe('Qwen3.8 Max')
   })
 
   it('keeps the disambiguating suffix on models two upstreams both serve', () => {

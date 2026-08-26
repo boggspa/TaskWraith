@@ -466,7 +466,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(piGroup?.models.map((model) => model.name)).toEqual([
       'DeepSeek V4 Flash',
       'GLM-5.2',
-      'Qwen3.8 Max Preview',
+      'Qwen3.8 Max',
       'Xiaomi MiMo',
       'Mistral Large 3',
       'Ox Alpha',

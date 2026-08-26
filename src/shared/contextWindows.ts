@@ -34,7 +34,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gemini-api:gemini-2.5-flash': 1_048_576,
   'gemini-api:gemini-2.5-flash-lite': 1_048_576,
   'gemini-api:gemini-2.0-flash': 1_048_576,
-  // Pi seat wire ids (`<upstream>/<model>`, pi 0.82.1 bundled catalog).
+  // Pi seat wire ids (`<upstream>/<model>`, pi 0.84.2 bundled catalog).
   'deepseek/deepseek-v4-pro': 1_000_000,
   'deepseek/deepseek-v4-flash': 1_000_000,
   'zai/glm-5.2': 1_000_000,
@@ -42,6 +42,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'zai/glm-4.7': 204_800,
   'qwen-token-plan/qwen3.7-max': 1_000_000,
   'qwen-token-plan/qwen3.7-plus': 1_000_000,
+  'qwen-token-plan/qwen3.8-max': 1_000_000,
+  // Historical persisted id; dispatch canonicalizes it to the GA row above.
   'qwen-token-plan/qwen3.8-max-preview': 1_000_000,
   'minimax/MiniMax-M3': 1_000_000,
   'minimax/MiniMax-M2.7': 204_800,

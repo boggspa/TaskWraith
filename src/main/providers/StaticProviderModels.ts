@@ -33,6 +33,7 @@ import {
 } from '../../shared/mistralModels'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
+import { canonicalPiWireModelId } from '../../shared/piBrandTable'
 
 export {
   activeCodexModelRows,
@@ -1264,7 +1265,8 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') {
       return PI_DEFAULT_MODEL_WIRE_ID
     }
-    return PI_MODEL_WIRE_IDS.has(trimmed) ? trimmed : PI_DEFAULT_MODEL_WIRE_ID
+    const canonicalModel = canonicalPiWireModelId(trimmed)
+    return PI_MODEL_WIRE_IDS.has(canonicalModel) ? canonicalModel : PI_DEFAULT_MODEL_WIRE_ID
   }
   if (provider === 'antigravity') {
     // S3 intentionally has no static AntiGravity model catalogue. Preserve a

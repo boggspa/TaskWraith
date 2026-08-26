@@ -332,8 +332,8 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             accentProvider: 'zai'
           },
           {
-            name: 'Qwen3.8 Max Preview',
-            blurb: 'Qwen3.8 Max Preview via Pi — cutting-edge multimodal reasoning from Alibaba.',
+            name: 'Qwen3.8 Max',
+            blurb: 'Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.',
             accentProvider: 'qwen'
           },
           {

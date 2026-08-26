@@ -239,7 +239,7 @@ describe('notification registry', () => {
     expect(pi?.models.map((m) => m.name)).toEqual([
       'DeepSeek V4 Flash',
       'GLM-5.2',
-      'Qwen3.8 Max Preview',
+      'Qwen3.8 Max',
       'Xiaomi MiMo',
       'Mistral Large 3',
       'Ox Alpha',

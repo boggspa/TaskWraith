@@ -68,7 +68,7 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'zai/glm-4.7': 'GLM-4.7',
   'qwen-token-plan/qwen3.7-max': 'Qwen3.7 Max',
   'qwen-token-plan/qwen3.7-plus': 'Qwen3.7 Plus',
-  'qwen-token-plan/qwen3.8-max-preview': 'Qwen3.8 Max Preview',
+  'qwen-token-plan/qwen3.8-max': 'Qwen3.8 Max',
   'minimax/MiniMax-M3': 'MiniMax M3',
   'minimax/MiniMax-M2.7': 'MiniMax M2.7',
   'xiaomi-token-plan-cn/mimo-v2-pro': 'MiMo V2 Pro (CN)',
@@ -110,6 +110,20 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
  * there is exactly one literal.
  */
 export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
+
+/**
+ * Persisted Pi model ids whose upstream renamed the same offered model. Keep
+ * these out of PI_MODEL_LABELS/PI_STATIC_MODELS so dead rows never reappear in
+ * pickers; dispatch and historical presentation canonicalize through here.
+ */
+export const PI_MODEL_WIRE_ID_ALIASES: Readonly<Record<string, string>> = {
+  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max'
+}
+
+export function canonicalPiWireModelId(wireModelId: string): string {
+  const wire = wireModelId.trim()
+  return PI_MODEL_WIRE_ID_ALIASES[wire] ?? wire
+}
 
 /**
  * Split a Pi wire id on the FIRST slash: upstream vs pi model id.
@@ -165,7 +179,7 @@ export function resolvePiUpstreamBrand(
  * fragment of an id we cannot vouch for.
  */
 export function resolvePiModelLabel(wireModelId: string | null | undefined): string | null {
-  const wire = String(wireModelId || '').trim()
+  const wire = canonicalPiWireModelId(String(wireModelId || ''))
   if (!wire) return null
   const known = PI_MODEL_LABELS[wire]
   if (known) return known

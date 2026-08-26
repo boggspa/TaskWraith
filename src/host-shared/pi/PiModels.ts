@@ -15,7 +15,7 @@
  * Static-floor rationale (the AntiGravity lesson): a provider whose model
  * list can transiently be empty vanishes from every picker, so the seat
  * ships a bundled list rather than shelling out to `pi --list-models`.
- * Built-in metadata below is extracted from pi 0.82.1's bundled catalog
+ * Built-in metadata below is extracted from pi 0.84.2's bundled catalog
  * (@earendil-works/pi-ai providers/data). Newer Mistral deployments and the
  * user-approved OpenRouter Ox Alpha exception are registered per run; re-check
  * both sources on pi upgrades.
@@ -28,6 +28,7 @@
  */
 
 import { isPiModelRetired } from '../../shared/piModelLifecycle'
+import { canonicalPiWireModelId, splitPiWireModelId } from '../../shared/piBrandTable'
 import type { PiUpstreamId } from './PiModelPolicy'
 
 export interface PiModelDefinition {
@@ -118,10 +119,10 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: true
   },
   {
-    wireId: 'qwen-token-plan/qwen3.8-max-preview',
+    wireId: 'qwen-token-plan/qwen3.8-max',
     upstream: 'qwen-token-plan',
-    modelId: 'qwen3.8-max-preview',
-    label: 'Qwen3.8 Max Preview',
+    modelId: 'qwen3.8-max',
+    label: 'Qwen3.8 Max',
     contextWindow: 1_000_000,
     maxOutputTokens: 131_072,
     thinking: true,
@@ -150,7 +151,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   },
   // Xiaomi token plan — three regional deployments of the SAME catalog; the
   // Settings card's region picker files the key under exactly one of them.
-  // Metadata from pi 0.82.1's bundled xiaomi-token-plan-{cn,sgp,ams} catalogs.
+  // Metadata from pi 0.84.2's bundled xiaomi-token-plan-{cn,sgp,ams} catalogs.
   {
     wireId: 'xiaomi-token-plan-cn/mimo-v2-pro',
     upstream: 'xiaomi-token-plan-cn',
@@ -471,10 +472,11 @@ export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
  * src/main runtime edge). Re-exported here so main call sites are unchanged and
  * there is exactly ONE splitter — the Groq two-slash rule cannot drift.
  */
-export { splitPiWireModelId } from '../../shared/piBrandTable'
+export { canonicalPiWireModelId, splitPiWireModelId }
 
 export function findPiStaticModel(wireId: string): PiModelDefinition | undefined {
-  return PI_STATIC_MODELS.find((model) => model.wireId === wireId)
+  const canonicalWireId = canonicalPiWireModelId(wireId)
+  return PI_STATIC_MODELS.find((model) => model.wireId === canonicalWireId)
 }
 
 /** Models whose upstream has a configured key (the picker's visible set). */

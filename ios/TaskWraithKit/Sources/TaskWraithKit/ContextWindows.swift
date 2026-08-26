@@ -64,6 +64,8 @@ public enum ContextWindows {
         "zai/glm-4.7": 204_800,
         "qwen-token-plan/qwen3.7-max": 1_000_000,
         "qwen-token-plan/qwen3.7-plus": 1_000_000,
+        "qwen-token-plan/qwen3.8-max": 1_000_000,
+        // Historical persisted id; desktop dispatch canonicalizes it to GA.
         "qwen-token-plan/qwen3.8-max-preview": 1_000_000,
         "minimax/MiniMax-M3": 1_000_000,
         "minimax/MiniMax-M2.7": 204_800,

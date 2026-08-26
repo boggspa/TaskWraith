@@ -66,7 +66,7 @@ public enum PiBrandTable {
         "zai/glm-4.7": "GLM-4.7",
         "qwen-token-plan/qwen3.7-max": "Qwen3.7 Max",
         "qwen-token-plan/qwen3.7-plus": "Qwen3.7 Plus",
-        "qwen-token-plan/qwen3.8-max-preview": "Qwen3.8 Max Preview",
+        "qwen-token-plan/qwen3.8-max": "Qwen3.8 Max",
         "minimax/MiniMax-M3": "MiniMax M3",
         "minimax/MiniMax-M2.7": "MiniMax M2.7",
         "xiaomi-token-plan-cn/mimo-v2-pro": "MiMo V2 Pro (CN)",
@@ -148,6 +148,9 @@ public enum PiBrandTable {
     public static func modelLabel(forWireModelId wireId: String?) -> String? {
         let wire = (wireId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wire.isEmpty else { return nil }
+        // The Token Plan preview graduated to this GA id. Keep old transcripts
+        // readable without putting the retired preview back in modelLabels.
+        if wire == "qwen-token-plan/qwen3.8-max-preview" { return "Qwen3.8 Max" }
         if let known = modelLabels[wire] { return known }
         guard let split = splitWireModelId(wire), upstreams[split.upstream] != nil else {
             return nil

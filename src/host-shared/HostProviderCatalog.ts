@@ -216,7 +216,7 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('zai/glm-4.7', 'GLM-4.7', STANDARD_REASONING),
         model('qwen-token-plan/qwen3.7-max', 'Qwen3.7 Max', STANDARD_REASONING),
         model('qwen-token-plan/qwen3.7-plus', 'Qwen3.7 Plus', STANDARD_REASONING),
-        model('qwen-token-plan/qwen3.8-max-preview', 'Qwen3.8 Max Preview', STANDARD_REASONING),
+        model('qwen-token-plan/qwen3.8-max', 'Qwen3.8 Max', STANDARD_REASONING),
         model('minimax/MiniMax-M3', 'MiniMax M3', STANDARD_REASONING),
         model('minimax/MiniMax-M2.7', 'MiniMax M2.7', STANDARD_REASONING),
         model('xiaomi-token-plan-cn/mimo-v2-pro', 'MiMo V2 Pro (CN)', STANDARD_REASONING),

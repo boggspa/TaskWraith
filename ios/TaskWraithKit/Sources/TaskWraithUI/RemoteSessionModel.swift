@@ -2437,7 +2437,7 @@ public final class RemoteSessionModel: ObservableObject {
             {"provider":"pi","label":"Pi","models":[
               {"name":"DeepSeek V4 Flash","blurb":"DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.","accentProvider":"deepseek"},
               {"name":"GLM-5.2","blurb":"Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.","accentProvider":"zai"},
-              {"name":"Qwen3.8 Max Preview","blurb":"Qwen3.8 Max Preview via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},
+              {"name":"Qwen3.8 Max","blurb":"Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},
               {"name":"Xiaomi MiMo","blurb":"MiMo V2 Pro, V2.5, and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.","accentProvider":"xiaomi"},
               {"name":"Mistral Large 3","blurb":"Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.","accentProvider":"mistral"},
               {"name":"Ox Alpha","blurb":"OpenRouter's unbranded stealth lane on Pi — a preview that can be withdrawn any day.","accentProvider":"openrouter"},

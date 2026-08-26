@@ -1089,7 +1089,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
       },
       {
-        modelId: 'qwen-token-plan/qwen3.8-max-preview',
+        modelId: 'qwen-token-plan/qwen3.8-max',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
         subscriptionLane: true,

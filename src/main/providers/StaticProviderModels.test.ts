@@ -247,6 +247,15 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
   })
 
+  it('migrates the retired Qwen 3.8 preview wire id to the GA Pi model', () => {
+    expect(normalizeCliProviderModel('pi', 'qwen-token-plan/qwen3.8-max-preview')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+    expect(normalizeCliProviderModel('pi', 'qwen-token-plan/qwen3.8-max')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+  })
+
   it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
     expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
