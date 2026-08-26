@@ -718,6 +718,25 @@ describe('deriveWorkspaceMutationClaims', () => {
     })
   })
 
+  it('keeps refusing to invent claims for an opaque background process', async () => {
+    // The async-access ladder lives in admission, NOT here. This pure derivation
+    // must never learn a tier and must never answer "no claims" for a process
+    // whose writes it cannot see — otherwise an empty claim set would read as
+    // "proved harmless" instead of "unprovable".
+    const workspacePath = await temporaryWorkspace()
+
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'start_background_process',
+        args: { command: 'python3 -m http.server 4173', cwd: 'website' }
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-call',
+      message: expect.stringContaining('cannot prove an exact file/hunk mutation scope')
+    })
+  })
+
   it('uses one exact git metadata mutex instead of a workspace claim', async () => {
     const workspacePath = await temporaryWorkspace()
 

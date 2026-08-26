@@ -21,6 +21,27 @@ const MAX_ARGUMENT_BYTES = 64 * 1024
 const UNPROVABLE_MUTATION_SCOPE_PATTERN =
   /\bcannot prove an exact (?:file\/hunk )?mutation scope\b/i
 
+/**
+ * Tools whose effects are an opaque OS process rather than a declarable edit
+ * set. Caller-declared paths can never prove their mutation scope, so refusing
+ * them an approval mirror is a dead end rather than a safety boundary: the seat
+ * is told "use exact file tools" for work that no file tool can do.
+ *
+ * Both members carry the same `shellCommands` agentic service in the taxonomy,
+ * so a run whose resolved policy already authorizes shell has, by construction,
+ * authorized these too. They still differ in containment — see
+ * `buildToolPermissionRetryApprovalPrompt` — and this exemption covers ONLY the
+ * unprovable-scope failure. A lane FILE-scope denial stays non-retriable.
+ */
+const UNSCOPED_PROCESS_AUTHORITY_TOOLS = new Set<TaskWraithMcpToolName>([
+  'run_shell_command',
+  'start_background_process'
+])
+
+export function isUnscopedProcessAuthorityTool(toolName: TaskWraithMcpToolName): boolean {
+  return UNSCOPED_PROCESS_AUTHORITY_TOOLS.has(toolName)
+}
+
 const NON_RETRIABLE_ENSEMBLE_LANE_PATTERNS = [
   /\b(?:lane|participant)\b.{0,160}\bnot approved to write\b/i,
   /\boutside the approved lane scope\b/i,
@@ -205,7 +226,10 @@ export function validateToolPermissionRetryRequest(input: {
         'A one-shot permission retry cannot expand an Ensemble lane write scope. Report the blocked path to the orchestrator instead of asking the user to retry the same invocation.'
     }
   }
-  if (rawToolName !== 'run_shell_command' && UNPROVABLE_MUTATION_SCOPE_PATTERN.test(failure)) {
+  if (
+    !isUnscopedProcessAuthorityTool(rawToolName) &&
+    UNPROVABLE_MUTATION_SCOPE_PATTERN.test(failure)
+  ) {
     return {
       ok: false,
       code: 'non_retriable_failure',
@@ -317,7 +341,9 @@ export function buildToolPermissionRetryInstruction(input: {
     message:
       validation.request.toolName === 'run_shell_command'
         ? 'Opaque shell process effects cannot be proven as exact file locks; ask for one auditable host execution of the exact command and cwd below.'
-        : 'If this is a policy boundary rather than a user decision, ask for a one-shot retry with the exact invocation below.',
+        : validation.request.toolName === 'start_background_process'
+          ? 'A persistent process cannot be proven as exact file locks; ask for one auditable async-access start of the exact command and cwd below. It stays registered, readable, and cancellable.'
+          : 'If this is a policy boundary rather than a user decision, ask for a one-shot retry with the exact invocation below.',
     targetArgumentsSha256: argumentsFingerprint(validation.request.arguments),
     tool: 'capability_invoke',
     arguments: {
@@ -390,13 +416,20 @@ export function buildToolPermissionRetryApprovalPrompt(input: {
       : input.request.failure
   const targetPreview = isRecord(input.targetPreview) ? input.targetPreview : {}
   const unscopedHostShell = input.request.toolName === 'run_shell_command'
+  // A background process is opaque like a shell command but NOT unsandboxed:
+  // TaskWraith keeps it in the background-process registry with a workspace-
+  // jailed cwd, captured logs, and an explicit kill. Reusing the shell copy
+  // here would over-warn and under-describe what the user is actually allowing.
+  const managedBackgroundProcess = input.request.toolName === 'start_background_process'
   return {
     method: 'toolPermissionRetry',
     title: `Allow ${input.providerLabel} to retry ${input.request.toolName} once?`,
     body: unscopedHostShell
       ? 'The agent could not express this shell command as exact file locks. Accepting runs this exact command once in the TaskWraith host process, outside a workspace sandbox and without workspace locks; it may race active writers. Review the command and cwd shown below. This does not create a session or workspace grant.'
-      : `The agent reports that ${input.request.toolName} hit a permission boundary. ` +
-        'Accepting retries only the exact invocation shown below and does not create a session or workspace grant.',
+      : managedBackgroundProcess
+        ? 'The agent could not express this long-running process as exact file locks. Accepting starts this exact command once as a managed TaskWraith background process: its working directory stays inside the workspace, its output is captured, and you can stop it at any time from the background process list. It keeps running after the tool call ends, and it is not covered by workspace locks, so it may race active writers. This does not create a session or workspace grant.'
+        : `The agent reports that ${input.request.toolName} hit a permission boundary. ` +
+          'Accepting retries only the exact invocation shown below and does not create a session or workspace grant.',
     preview: {
       ...targetPreview,
       permissionRetry: {
@@ -408,6 +441,14 @@ export function buildToolPermissionRetryApprovalPrompt(input: {
           ? {
               executionBoundary: 'host-unsandboxed-one-shot',
               workspaceMutationContainment: 'none-explicit-user-one-shot',
+              exactCommand: input.request.arguments.command,
+              exactCwd: input.request.arguments.cwd
+            }
+          : {}),
+        ...(managedBackgroundProcess
+          ? {
+              executionBoundary: 'managed-background-process-one-shot',
+              workspaceMutationContainment: 'registry-managed-cancellable',
               exactCommand: input.request.arguments.command,
               exactCwd: input.request.arguments.cwd
             }
@@ -551,16 +592,20 @@ export function approvedShellAuthorityAuthorizesUnscopedShell(input: {
     input.decision?.decisionSource === 'user' &&
     DIRECT_USER_ACCEPT_ACTIONS.has(input.decision.action)
   if (
-    input.toolName !== 'run_shell_command' ||
+    !isUnscopedProcessAuthorityTool(input.toolName) ||
     !input.allowed ||
     (!input.automaticApproval && !directUserApproval)
   ) {
     return false
   }
   const command = input.arguments.command
-  return (
-    typeof command === 'string' && command.trim().length > 0 && !isReadOnlyShellCommand(command)
-  )
+  if (typeof command !== 'string' || !command.trim()) return false
+  // A read-only ONE-SHOT needs no mutation escape hatch, but a read-looking
+  // command started as a PERSISTENT process is still an opaque long-lived
+  // child (`tail -f`, a watcher, a server). Classifying it as read-only would
+  // route it back into claim derivation and re-create the dead end.
+  if (input.toolName === 'start_background_process') return true
+  return !isReadOnlyShellCommand(command)
 }
 
 export interface ToolPermissionRetryOrchestrationResult<TResult> {

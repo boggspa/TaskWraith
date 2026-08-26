@@ -2105,6 +2105,7 @@ import {
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   buildToolPermissionRetryInstruction,
   approvedShellAuthorityAuthorizesUnscopedShell,
+  isUnscopedProcessAuthorityTool,
   isOneOffToolPermissionRetryForTarget,
   oneOffToolPermissionRetryGuardError,
   orchestrateToolPermissionRetry,
@@ -37871,7 +37872,12 @@ async function executeGeminiMcpTool(
       acquisitionStillWanted: () =>
         canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority),
       allowApprovedUnscopedShell:
-        (exactOneOffPermissionRetry && toolName === 'run_shell_command') || approvedUnscopedShell
+        (exactOneOffPermissionRetry && isUnscopedProcessAuthorityTool(toolName)) ||
+        approvedUnscopedShell,
+      // A standing tier and a user's decision on this exact invocation are both
+      // valid authorities, but only the latter may start an opaque process from
+      // inside a path-scoped writer lane. Keep them distinguishable.
+      unscopedProcessAuthority: exactOneOffPermissionRetry ? 'explicit-one-shot' : 'resolved-policy'
     })
   } catch (error) {
     workspaceMutationOperationDone?.finish()

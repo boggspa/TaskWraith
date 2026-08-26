@@ -228,7 +228,10 @@ describe('retry guidance and preserved hard guards', () => {
     ).toBeNull()
   })
 
-  it('does not advertise an impossible mutation-scope retry for non-shell tools', () => {
+  it('offers an async-access retry for start_background_process instead of a dead end', () => {
+    // A persistent process cannot express exact file locks, exactly like a
+    // shell command. Refusing BOTH the admission and the approval mirror left
+    // the seat with no sanctioned path to a dev server at all.
     const failure =
       'start_background_process cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.'
 
@@ -236,23 +239,29 @@ describe('retry guidance and preserved hard guards', () => {
       buildToolPermissionRetryInstruction({
         available: true,
         toolName: 'start_background_process',
-        arguments: { command: "printf 'hello' > notes.txt" },
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
         failure,
         definitions,
         isAutoAllowed
       })
-    ).toBeNull()
+    ).toMatchObject({
+      available: true,
+      scope: 'one_exact_invocation',
+      arguments: {
+        arguments: { toolName: 'start_background_process' }
+      }
+    })
     expect(
       validateToolPermissionRetryRequest({
         value: {
           toolName: 'start_background_process',
-          arguments: { command: "printf 'hello' > notes.txt" },
+          arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
           failure
         },
         definitions,
         isAutoAllowed
       })
-    ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+    ).toMatchObject({ ok: true })
 
     expect(
       buildToolPermissionRetryInstruction({
@@ -269,6 +278,139 @@ describe('retry guidance and preserved hard guards', () => {
         arguments: { toolName: 'run_shell_command' }
       }
     })
+  })
+
+  it('still refuses an impossible mutation-scope retry for exact-path tools', () => {
+    // The exemption is only for tools whose effects are genuinely opaque. A
+    // tool that CAN name its target must still be told to name it.
+    for (const toolName of ['write_file', 'apply_patch'] as const) {
+      const failure = `${toolName} cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.`
+      expect(
+        buildToolPermissionRetryInstruction({
+          available: true,
+          toolName,
+          arguments: { path: 'notes.txt', content: 'hello' },
+          failure,
+          definitions,
+          isAutoAllowed
+        }),
+        `${toolName} must not gain an unprovable-scope retry`
+      ).toBeNull()
+      expect(
+        validateToolPermissionRetryRequest({
+          value: { toolName, arguments: { path: 'notes.txt' }, failure },
+          definitions,
+          isAutoAllowed
+        })
+      ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+    }
+  })
+
+  it('never lets an async-access retry widen an Ensemble lane FILE scope', () => {
+    // Only the UNPROVABLE-SCOPE failure becomes retriable for a background
+    // process. A lane FILE-scope denial must stay non-retriable, or the new
+    // async-access ladder doubles as a lane escape hatch.
+    //
+    // run_shell_command is deliberately NOT asserted here: it has always been
+    // exempt from the lane-pattern check because its retry is an explicitly
+    // user-approved host one-shot. That pre-existing behaviour is out of scope
+    // for this fix and is left exactly as it was.
+    expect(
+      validateToolPermissionRetryRequest({
+        value: {
+          toolName: 'start_background_process',
+          arguments: { command: 'npm run dev' },
+          failure:
+            'This participant lane is not approved to write src/main/index.ts; it is outside the approved lane scope.'
+        },
+        definitions,
+        isAutoAllowed
+      })
+    ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+  })
+
+  it('describes a managed cancellable process, not an unsandboxed host shell, for async access', () => {
+    const prompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: 'Claude',
+      request: {
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
+        failure: 'start_background_process cannot prove an exact file/hunk mutation scope'
+      },
+      targetPreview: {}
+    })
+
+    // A registered, listable, killable process is a materially different
+    // promise from the unsandboxed one-shot the shell ladder describes.
+    expect(prompt.preview.permissionRetry).toMatchObject({
+      kind: 'tool_permission_retry',
+      targetToolName: 'start_background_process',
+      executionBoundary: 'managed-background-process-one-shot',
+      workspaceMutationContainment: 'registry-managed-cancellable',
+      exactCommand: 'python3 -m http.server 4173',
+      exactCwd: 'website'
+    })
+    expect(prompt.body).toMatch(/cancel|stop|kill/i)
+    expect(prompt.body).not.toMatch(/outside a workspace sandbox/i)
+
+    // The shell ladder keeps its own, harsher disclosure verbatim.
+    const shellPrompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: 'Claude',
+      request: {
+        toolName: 'run_shell_command',
+        arguments: { command: 'npm test', cwd: '.' },
+        failure: 'run_shell_command cannot prove an exact file/hunk mutation scope'
+      },
+      targetPreview: {}
+    })
+    expect(shellPrompt.preview.permissionRetry).toMatchObject({
+      executionBoundary: 'host-unsandboxed-one-shot',
+      workspaceMutationContainment: 'none-explicit-user-one-shot'
+    })
+    expect(shellPrompt.body).toMatch(/outside a workspace sandbox/i)
+  })
+
+  it('treats resolved shell-service policy as authority for a background process', () => {
+    // start_background_process carries the SAME 'shellCommands' agentic service
+    // as run_shell_command, so a broad-write tier has already authorized it at
+    // the central gate. No separate tier plumbing is required.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+
+    // No resolved authority => no direct path; the seat takes the one-shot.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173' },
+        allowed: false,
+        automaticApproval: true
+      })
+    ).toBe(false)
+
+    // A read-only command still spawns a persistent, opaque process, so the
+    // background tool keeps its authority where the one-shot shell does not.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'grep -r needle .' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: { command: 'grep -r needle .' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(false)
   })
 
   it('uses the portable Ensemble name when the immutable profile omits the legacy name', () => {

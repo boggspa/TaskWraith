@@ -117,6 +117,19 @@ export interface WorkspaceLockMcpAdmissionInput<
    * to the approved command/cwd arguments and retain the exact command receipt.
    */
   allowApprovedUnscopedShell?: boolean
+  /**
+   * Which authority produced `allowApprovedUnscopedShell`.
+   *
+   * `resolved-policy` is the run's standing tier/grant (broad-write presets
+   * resolve `shellCommands: 'allow'`). `explicit-one-shot` is a user decision
+   * on this exact invocation.
+   *
+   * They are NOT interchangeable for an opaque background process: a standing
+   * tier cannot authorize starting one from inside a path-scoped writer lane,
+   * because the process can write outside that lane's FILE scope. Only a
+   * direct user approval can. Absent means `resolved-policy`.
+   */
+  unscopedProcessAuthority?: 'resolved-policy' | 'explicit-one-shot'
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -215,6 +228,31 @@ export class WorkspaceLockMcpAdmissionCoordinator {
         canonicalClaims: [],
         claimsHeld: false,
         releaseAfterOperation: false
+      }
+    }
+
+    // A managed background process is opaque in the same way a shell command
+    // is: claim derivation can only ever refuse it. Admitting with NO claims is
+    // therefore the honest answer, but ONLY where an authority already covers
+    // opaque effects.
+    //
+    // The lane carve-out is the load-bearing part. A standing tier authorizes
+    // opaque effects across the whole workspace, which is strictly wider than a
+    // path-scoped writer lane — so inside a lane, a tier alone must NOT admit,
+    // or the lane's FILE scope silently stops binding. Falling through reaches
+    // claim derivation, whose refusal now carries an async-access retry offer,
+    // routing that seat to an explicit user approval instead of a dead end.
+    if (input.allowApprovedUnscopedShell && input.toolName === 'start_background_process') {
+      const laneScoped = Boolean(input.context.ensembleRun?.laneId)
+      const explicitOneShot = input.unscopedProcessAuthority === 'explicit-one-shot'
+      if (!laneScoped || explicitOneShot) {
+        return {
+          ok: true,
+          claims: [],
+          canonicalClaims: [],
+          claimsHeld: false,
+          releaseAfterOperation: false
+        }
       }
     }
 
