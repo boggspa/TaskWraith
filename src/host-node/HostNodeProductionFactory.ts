@@ -3,8 +3,9 @@ import {
   HostNodeMuseAuthHandoff,
   type HostNodeMuseTerminalLauncher
 } from './HostNodeMuseAuthHandoff'
-import { hostNodeMuseInventory, hostNodeMuseOffers } from './HostNodeMuseCatalog'
+import { hostNodeMuseOffers } from './HostNodeMuseCatalog'
 import { createHostNodeMuseResources } from './HostNodeMuseResources'
+import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
 
 export interface HostNodeProductionFactoryOptions {
@@ -42,16 +43,19 @@ export function createHostNodeProductionServer(
             : undefined
         return {
           domainOptions: {
-            museResources: resources,
-            museOffers: hostNodeMuseOffers(available),
+            providers: [
+              createHostNodeMuseProviderFactory({
+                offers: hostNodeMuseOffers(available),
+                resources,
+                ...(handoff ? { manualAuthHandoff: handoff } : {})
+              })
+            ],
             health: () => ({
               hostStatus: available ? ('ok' as const) : ('degraded' as const),
               connectionPhase: 'live' as const,
               supervised: false,
               freshness: 'live' as const
-            }),
-            providerInventory: () => hostNodeMuseInventory(available),
-            ...(handoff ? { manualAuthHandoff: handoff } : {})
+            })
           },
           dispose: () => resources.dispose()
         }

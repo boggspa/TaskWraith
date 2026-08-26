@@ -422,13 +422,8 @@ describe('HostNodeMuseProvider', () => {
 
     await expect(provider.getStatus()).resolves.toEqual({
       providerId: 'muse',
-      available: true,
-      setupRequired: false,
-      authState: 'authenticated',
-      binaryAvailable: true,
-      credentialPresent: true,
-      configured: true,
-      checkedAt: new Date(NOW).toISOString()
+      status: 'ready',
+      label: 'Muse'
     })
     const source = await readFile(
       resolve(process.cwd(), 'src/host-node/HostNodeMuseProvider.ts'),

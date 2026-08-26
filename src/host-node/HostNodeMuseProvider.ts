@@ -9,6 +9,12 @@
 
 import { randomUUID } from 'node:crypto'
 
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import { isMuseSessionUuid, resolveMuseExecSessionId } from '../main/muse/MuseCliArgs'
 import { parseMuseAuthJsonCredential } from '../main/muse/MuseProbe'
 import {
@@ -39,6 +45,20 @@ import {
   normalizeHostProviderRunUpdate,
   validateHostProviderRunPrompt
 } from '../host-runtime/HostProviderRunPort'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderRunRequest,
+  HostNodeProviderRunResult
+} from './HostNodeProvider'
+
+export interface HostNodeManualAuthHandoff {
+  begin(input: { readonly providerId: string; readonly operationId: string }): void | Promise<void>
+  cancel?(input: {
+    readonly providerId: string
+    readonly operationId: string
+  }): boolean | Promise<boolean>
+}
 
 const MUSE_PROVIDER_ID = 'muse'
 const SAFE_IDENTIFIER_MAX_CHARS = 512
@@ -73,6 +93,7 @@ export interface HostNodeMuseProviderOptions {
   readonly now?: () => number
   /** Generates only a Muse session UUID, never a caller-controlled run id. */
   readonly createSessionId?: () => string
+  readonly manualAuthHandoff?: HostNodeManualAuthHandoff
 }
 
 export interface HostNodeMuseRunRequest {
@@ -280,6 +301,7 @@ function validateConfiguredMuseThread(thread: HostProviderRunThread): HostProvid
  * cancellation is registered by exact run id through the Host port instead.
  */
 export class HostNodeMuseProvider {
+  readonly providerId = MUSE_PROVIDER_ID
   private readonly activeRuns = new Map<string, ActiveMuseRun>()
   private readonly runMuse: (input: MuseRunInput) => Promise<MuseRunOutcome>
   private readonly now: () => number
@@ -291,21 +313,66 @@ export class HostNodeMuseProvider {
     this.createSessionId = options.createSessionId ?? randomUUID
   }
 
-  async getStatus(): Promise<HostNodeMuseProviderStatus> {
+  async getStatus(): Promise<HostProviderStatusProjection> {
     const [binary, credential] = await Promise.all([
       this.options.resources.resolveBinary().catch(() => ({ binaryPath: null })),
       this.resolveCredential().catch(() => ({ present: false, apiKey: null, authJsonText: null }))
     ])
+    const state = binary.binaryPath && credential.present ? 'ready' : 'auth_required'
     return {
       providerId: MUSE_PROVIDER_ID,
-      available: Boolean(binary.binaryPath),
-      setupRequired: !binary.binaryPath || !credential.present,
-      authState: credential.present ? 'authenticated' : 'missing',
-      binaryAvailable: Boolean(binary.binaryPath),
-      credentialPresent: credential.present,
-      configured: Boolean(binary.binaryPath) && credential.present,
-      checkedAt: this.isoNow()
+      status: binary.binaryPath ? state : 'unavailable',
+      label: 'Muse',
+      ...(state === 'auth_required' ? { detail: 'Muse requires local setup.' } : {})
     }
+  }
+
+  async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {
+    const credential = await this.resolveCredential().catch(() => ({
+      present: false,
+      apiKey: null,
+      authJsonText: null
+    }))
+    return {
+      providerId: MUSE_PROVIDER_ID,
+      state: credential.present ? 'authenticated' : 'unauthenticated'
+    }
+  }
+
+  async getAuthFlows(): Promise<readonly HostProviderAuthFlowProjection[]> {
+    if (!this.options.manualAuthHandoff) return []
+    const credential = await this.resolveCredential().catch(() => ({
+      present: false,
+      apiKey: null,
+      authJsonText: null
+    }))
+    if (credential.present) return []
+    return [
+      {
+        flowId: 'muse.manual-login',
+        kind: 'manual',
+        label: 'Complete Muse login in your terminal',
+        available: true
+      }
+    ]
+  }
+
+  async beginAuth(operationId: string): Promise<void> {
+    if (!this.options.manualAuthHandoff) {
+      throw new Error('Muse manual auth handoff is not configured')
+    }
+    await this.options.manualAuthHandoff.begin({
+      providerId: MUSE_PROVIDER_ID,
+      operationId
+    })
+  }
+
+  async cancelAuth(operationId: string): Promise<boolean> {
+    if (!this.options.manualAuthHandoff?.cancel) return false
+    return this.options.manualAuthHandoff.cancel({
+      providerId: MUSE_PROVIDER_ID,
+      operationId
+    })
   }
 
   /** Exact run cancellation; closing a delivery target never calls this method. */
@@ -318,7 +385,7 @@ export class HostNodeMuseProvider {
     return true
   }
 
-  async run(request: HostNodeMuseRunRequest): Promise<HostNodeMuseRunResult> {
+  async run(request: HostNodeProviderRunRequest): Promise<HostNodeProviderRunResult> {
     if (!isCanonicalIdentifier(request.runId) || !isCanonicalIdentifier(request.threadId)) {
       throw new HostNodeMuseProviderValidationError('Muse run and thread ids must be canonical.')
     }
@@ -750,8 +817,55 @@ export class HostNodeMuseProvider {
       throw new HostNodeMuseProviderPersistenceError('clearCancel')
     }
   }
+
+  /** Muse runs are tracked by their promise; shutdown cancels every active run once. */
+  async shutdown(): Promise<void> {
+    for (const active of this.activeRuns.values()) {
+      if (!active.cancelled) {
+        active.cancelled = true
+        active.handle?.kill('SIGTERM')
+      }
+    }
+  }
 }
 
 const unavailableMuseSpawn: MuseRunSpawn = () => {
   throw new HostNodeMuseProviderValidationError('Muse process spawn is unavailable.')
+}
+
+export interface HostNodeMuseProviderFactoryOptions {
+  readonly offers: HostProviderOffersProjection
+  readonly resources: HostNodeMuseResourcePort
+  readonly manualAuthHandoff?: HostNodeManualAuthHandoff
+  readonly runMuseProvider?: (input: MuseRunInput) => Promise<MuseRunOutcome>
+  readonly now?: () => number
+  readonly createSessionId?: () => string
+}
+
+/** Static Muse factory implementing the generic HostNodeProvider contract. */
+export function createHostNodeMuseProviderFactory(
+  options: HostNodeMuseProviderFactoryOptions
+): HostNodeProvider {
+  if (options.offers.providerId !== MUSE_PROVIDER_ID) {
+    throw new Error('Muse provider factory requires Muse offers')
+  }
+  return {
+    providerId: MUSE_PROVIDER_ID,
+    displayProvider: 'Muse',
+    shortCode: 'MUSE',
+    offers: options.offers,
+    supportsApprovals: false,
+    supportsQuestions: false,
+    create({ runPort, interactions }) {
+      void interactions
+      return new HostNodeMuseProvider({
+        runPort,
+        resources: options.resources,
+        manualAuthHandoff: options.manualAuthHandoff,
+        runMuseProvider: options.runMuseProvider,
+        now: options.now,
+        createSessionId: options.createSessionId
+      }) as HostNodeProviderInstance
+    }
+  }
 }

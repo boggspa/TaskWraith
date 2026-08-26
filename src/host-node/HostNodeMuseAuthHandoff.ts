@@ -1,4 +1,4 @@
-import type { HostNodeManualAuthHandoff } from './HostNodeDomainPorts'
+import type { HostNodeManualAuthHandoff } from './HostNodeMuseProvider'
 
 export interface HostNodeMuseTerminalLauncher {
   launch(input: { readonly argv: readonly [string, 'login'] }): void | Promise<void>

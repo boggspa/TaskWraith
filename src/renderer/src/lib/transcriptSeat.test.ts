@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRun } from '../../../main/store/types'
+import type { ChatRecord, ChatRun } from '../../../main/store/types'
 import {
   composedSeatRole,
   seatFromApprovalAttribution,
   seatFromChatRun,
   seatFromEnsembleMetadata,
+  seatFromProviderNativeRun,
   seatFromSubThreadMetadata
 } from './transcriptSeat'
 
@@ -287,6 +288,84 @@ describe('seatFromChatRun', () => {
 
   it('makes no authority claim — a run does not record one', () => {
     expect(seatFromChatRun(run())).not.toHaveProperty('authority')
+  })
+})
+
+describe('seatFromProviderNativeRun', () => {
+  it('reads the selected provider/model/reasoning from the immutable run', () => {
+    expect(
+      seatFromProviderNativeRun({
+        fallbackProvider: 'kimi',
+        run: {
+          runId: 'run-kimi',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: {
+            kimiReasoningEffort: 'max',
+            kimiThinkingEnabled: true
+          }
+        }
+      })
+    ).toEqual({
+      provider: 'kimi',
+      model: 'kimi-k3',
+      reasoningEffort: 'max',
+      thinkingEnabled: true
+    })
+  })
+
+  it('expands a default model from the selected chat configuration', () => {
+    expect(
+      seatFromProviderNativeRun({
+        fallbackProvider: 'codex',
+        run: {
+          runId: 'run-default',
+          provider: 'codex',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'cli-default'
+        },
+        chat: {
+          provider: 'codex',
+          requestedModel: 'gpt-5.6-sol',
+          providerMetadata: { codexReasoningEffort: 'xhigh' }
+        } as ChatRecord
+      })
+    ).toEqual({
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh'
+    })
+  })
+
+  it('uses an Ensemble snapshot but deliberately omits role and permission', () => {
+    const seat = seatFromProviderNativeRun({
+      run: {
+        runId: 'run-ensemble',
+        provider: 'claude',
+        startedAt: '2026-08-26T00:00:00.000Z',
+        ensembleRole: 'Boss',
+        ensembleOrder: 1,
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'claude',
+          model: 'claude-opus-5',
+          reasoningEffort: 'max',
+          configuredPermissionPresetId: 'full_access'
+        }
+      }
+    })
+    expect(seat).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-5',
+      reasoningEffort: 'max'
+    })
+    expect(seat).not.toHaveProperty('role')
+    expect(seat).not.toHaveProperty('permissionPresetId')
+  })
+
+  it('returns null rather than inventing a selected agent without a model', () => {
+    expect(seatFromProviderNativeRun({ fallbackProvider: 'kimi' })).toBeNull()
   })
 })
 

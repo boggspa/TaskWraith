@@ -79,10 +79,11 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { setRefStateIfChanged } from '../lib/setRefStateIfChanged'
 import {
-  agentInvocationRouteLabel,
   childAgentInteractivityLabel,
   childAgentStateLabel
 } from '../lib/AgentInvocationPresentation'
+import { seatFromProviderNativeRun } from '../lib/transcriptSeat'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
@@ -99,6 +100,8 @@ import {
   resolveImageViewCount
 } from '../../../shared/imageViewIdentity'
 import { useHydratedToolActivities } from '../lib/toolActivityDetailHydration'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -3159,6 +3162,15 @@ export function ActivityStack({
   // participants array reference so we don't re-key every render when
   // the chat object has unrelated mutations.
   const participants = useMemo(() => chat?.ensemble?.participants, [chat?.ensemble?.participants])
+  const providerNativeSeat = useMemo(
+    () =>
+      seatFromProviderNativeRun({
+        run: runId ? chat?.runs?.find((run) => run.runId === runId) : undefined,
+        chat,
+        fallbackProvider: provider
+      }),
+    [chat, provider, runId]
+  )
 
   const childThreads = useMemo(() => {
     if (!provider || !activities || activities.length === 0) return [] as ChildAgentThread[]
@@ -3414,6 +3426,7 @@ export function ActivityStack({
         workspacePath={workspacePath}
         childThread={thread}
         childActivities={thread ? resolveThreadActivities(thread) : undefined}
+        childAgentSeat={providerNativeSeat}
         provider={provider}
         participants={participants}
         todoItems={mergedTodosByActivityId.get(item.activity.id)}
@@ -3692,28 +3705,27 @@ function ActivityDiffFiles({
 function ChildAgentThreadCard({
   thread,
   activities,
+  selectedSeat,
   workspacePath,
   shimmerNow
 }: {
   thread: ChildAgentThread
   activities: ToolActivity[]
+  selectedSeat?: SeatChangeSeatState | null
   workspacePath?: string
   shimmerNow?: number
 }) {
-  const [expanded, setExpanded] = useState(thread.state === 'running')
-  // Fan-out-viewport rule: a lane collapses to its one-liner once settled.
-  // Track the previous state so only real transitions drive auto-collapse /
-  // auto-expand — a user's manual toggle after settle sticks (the effect
-  // won't fire again without another state change).
+  // Provider-native agents enter as compact one-liners. Their parent activity
+  // already says "Used agent", and an empty expanded body only repeats that
+  // the child has not returned yet. A user may still open one explicitly.
+  const [expanded, setExpanded] = useState(false)
+  // Once a manually-expanded live card settles, collapse it to the same
+  // resting one-liner as fan-out lanes. Queued → running never auto-expands.
   const previousStateRef = useRef(thread.state)
   useEffect(() => {
     const previous = previousStateRef.current
     previousStateRef.current = thread.state
     if (previous === thread.state) return
-    if (thread.state === 'running') {
-      setExpanded(true)
-      return
-    }
     if (thread.state === 'completed' || thread.state === 'failed' || thread.state === 'cancelled') {
       setExpanded(false)
     }
@@ -3721,12 +3733,12 @@ function ChildAgentThreadCard({
   const interactivityLabel = childAgentInteractivityLabel(thread.interactivity)
   const stateLabel = childAgentStateLabel(thread.state)
 
-  // Resolve identity (assigned via assignAgentIdentity during thread derive).
-  // When present, the colored name + dot replace the generic "Task #N" label.
+  // The identicon distinguishes provider-native children visually, but its
+  // generated nickname is implementation detail. The selected run seat below
+  // tells the reader what actually executed: provider, model, and reasoning.
   const identity = thread.identity
-  const displayName = identity?.name || thread.name
-  const identityRole = identity?.role || thread.role
   const identityColor = identity?.color
+  const selectedSeatAccent = selectedSeat ? seatAccentVar(selectedSeat) : undefined
 
   return (
     <div
@@ -3734,8 +3746,8 @@ function ChildAgentThreadCard({
       data-agent-id={thread.id}
       data-provider={thread.provider}
       style={
-        identityColor
-          ? ({ ['--agent-identity-color' as string]: identityColor } as Record<string, string>)
+        selectedSeatAccent
+          ? ({ '--subagent-seat-accent': selectedSeatAccent } as CSSProperties)
           : undefined
       }
     >
@@ -3752,13 +3764,17 @@ function ChildAgentThreadCard({
         >
           <AgentIdentityIcon identity={identity} seed={thread.id} color={identityColor} size={22} />
         </span>
-        <span
-          className="child-agent-thread-name"
-          style={identityColor ? { color: identityColor } : undefined}
-        >
-          {displayName}
-        </span>
-        {identityRole && <span className="child-agent-thread-role">{identityRole}</span>}
+        {selectedSeat ? (
+          <SeatStateChips seat={selectedSeat} className="child-agent-thread-seat" />
+        ) : (
+          <span className="child-agent-thread-provider-fallback">
+            <ProviderBrandLogoIcon
+              provider={thread.provider}
+              wrapperClassName="child-agent-thread-provider-logo"
+            />
+            <span>{getProviderLabel(thread.provider)}</span>
+          </span>
+        )}
         <span className={`child-agent-thread-state state-${thread.state}`}>{stateLabel}</span>
         <span className="child-agent-thread-interactivity">{interactivityLabel}</span>
         {durationLabel(thread.durationMs) && (
@@ -3781,9 +3797,6 @@ function ChildAgentThreadCard({
       </button>
       {expanded && (
         <div className="child-agent-thread-body">
-          <div className="agent-invocation-route-note">
-            {agentInvocationRouteLabel('provider-native')}
-          </div>
           {thread.seedPrompt && (
             <div className="child-agent-section">
               <div className="child-agent-section-title">Prompt</div>
@@ -3836,6 +3849,8 @@ type ActivityRowProps = {
   liveThinkingTrim?: boolean
   childThread?: ChildAgentThread
   childActivities?: ToolActivity[]
+  /** Selected provider/model/reasoning inherited by provider-native children. */
+  childAgentSeat?: SeatChangeSeatState | null
   /** 1.4.2 — merged goal-step checklist state at this activity. */
   todoItems?: TodoItem[]
   /** 1.0.4 — ensemble participants for resolving an `ensemble_yield`
@@ -3877,6 +3892,7 @@ function activityRowPropsAreEqual(prev: ActivityRowProps, next: ActivityRowProps
   if (prev.todoItems !== next.todoItems) return false
   if (prev.childThread !== next.childThread) return false
   if (prev.childActivities !== next.childActivities) return false
+  if (prev.childAgentSeat !== next.childAgentSeat) return false
   if (prev.onOpenFileChangeInWorkbench !== next.onOpenFileChangeInWorkbench) return false
   if (prev.activity === next.activity) return true
   return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
@@ -3895,6 +3911,7 @@ const ThinkingTraceActivityRow = memo(
     progressNote,
     childThread,
     childActivities,
+    childAgentSeat,
     workspacePath,
     shimmerNow
   }: {
@@ -3905,6 +3922,7 @@ const ThinkingTraceActivityRow = memo(
     progressNote: { title: string; body?: string }
     childThread?: ChildAgentThread
     childActivities?: ToolActivity[]
+    childAgentSeat?: SeatChangeSeatState | null
     workspacePath?: string
     shimmerNow?: number
   }) {
@@ -3921,6 +3939,7 @@ const ThinkingTraceActivityRow = memo(
           <ChildAgentThreadCard
             thread={childThread}
             activities={childActivities || []}
+            selectedSeat={childAgentSeat}
             workspacePath={workspacePath}
             shimmerNow={shimmerNow}
           />
@@ -3935,6 +3954,7 @@ const ThinkingTraceActivityRow = memo(
     if (prev.progressNote !== next.progressNote) return false
     if (prev.childThread !== next.childThread) return false
     if (prev.childActivities !== next.childActivities) return false
+    if (prev.childAgentSeat !== next.childAgentSeat) return false
     if (prev.workspacePath !== next.workspacePath) return false
     if (prev.activity === next.activity) return true
     return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
@@ -3947,6 +3967,7 @@ function ActivityRow(props: ActivityRowProps) {
     forceCompact = false,
     childThread,
     childActivities,
+    childAgentSeat,
     provider,
     thinkingTraceActions,
     liveThinkingTrim = false,
@@ -3966,6 +3987,7 @@ function ActivityRow(props: ActivityRowProps) {
         progressNote={progressNote}
         childThread={childThread}
         childActivities={childActivities}
+        childAgentSeat={childAgentSeat}
         workspacePath={workspacePath}
       />
     )
@@ -3978,6 +4000,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
   workspacePath,
   childThread,
   childActivities,
+  childAgentSeat,
   provider,
   participants,
   todoItems,
@@ -4452,6 +4475,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
         <ChildAgentThreadCard
           thread={childThread}
           activities={childActivities || []}
+          selectedSeat={childAgentSeat}
           workspacePath={workspacePath}
         />
       )}

@@ -14,7 +14,7 @@
  * table and the peer-message capture already follow.
  */
 
-import type { ChatRun } from '../../../main/store/types'
+import type { ChatRecord, ChatRun, ProviderId } from '../../../main/store/types'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { resolveSeatAuthority } from '../../../shared/seatChange'
 import type { AgentApprovalEnsembleAttribution } from './agentApprovalAttribution'
@@ -143,6 +143,76 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
       ? { thinkingEnabled: snapshot.thinkingEnabled }
       : {}),
     ...(permissionPresetId ? { permissionPresetId } : {})
+  }
+}
+
+const PROVIDER_REASONING_METADATA_KEY: Partial<Record<ProviderId, string>> = {
+  codex: 'codexReasoningEffort',
+  claude: 'claudeReasoningEffort',
+  kimi: 'kimiReasoningEffort',
+  grok: 'grokReasoningEffort',
+  cursor: 'cursorReasoningEffort',
+  ollama: 'ollamaReasoningEffort',
+  antigravity: 'antigravityReasoningEffort',
+  pi: 'piReasoningEffort',
+  mistral: 'mistralReasoningEffort',
+  muse: 'museReasoningEffort'
+}
+
+function providerNativeMetadataValue(
+  key: string,
+  run: ChatRun | null | undefined,
+  chat: ChatRecord | null | undefined
+): unknown {
+  return run?.providerMetadata?.[key] ?? chat?.providerMetadata?.[key]
+}
+
+/**
+ * The selected provider/model/reasoning control behind a provider-native
+ * subagent invocation. Unlike an Ensemble seat, this intentionally carries no
+ * role, roster ordinal, authority, or permission chip: the subagent inherits
+ * the current provider run, and the card's identicon remains its only child
+ * identity. Run data outranks mutable chat configuration; configuration only
+ * expands legacy/default sentinels or fills an unstamped live run.
+ */
+export function seatFromProviderNativeRun(input: {
+  run?: ChatRun | null
+  chat?: ChatRecord | null
+  fallbackProvider?: ProviderId
+}): SeatChangeSeatState | null {
+  const { run, chat } = input
+  const snapshot = run?.ensembleSeatSnapshot
+  const provider =
+    run?.providerReroute?.to ||
+    snapshot?.provider ||
+    run?.provider ||
+    input.fallbackProvider ||
+    chat?.provider
+  if (!provider) return null
+
+  const configuredModel =
+    trimmed(chat?.requestedModel) || trimmed(chat?.providerMetadata?.selectedModelType)
+  const recordedModel =
+    trimmed(run?.actualModel) || trimmed(snapshot?.model) || trimmed(run?.requestedModel)
+  const model =
+    recordedModel === 'cli-default' || recordedModel === 'default'
+      ? configuredModel || recordedModel
+      : recordedModel || configuredModel || trimmed(chat?.lastActualModel)
+  if (!model) return null
+
+  const reasoningKey = PROVIDER_REASONING_METADATA_KEY[provider]
+  const reasoningEffort =
+    trimmed(snapshot?.reasoningEffort) ||
+    (reasoningKey ? trimmed(providerNativeMetadataValue(reasoningKey, run, chat)) : '') ||
+    trimmed(providerNativeMetadataValue('reasoningEffort', run, chat))
+  const thinkingValue =
+    snapshot?.thinkingEnabled ?? providerNativeMetadataValue('kimiThinkingEnabled', run, chat)
+
+  return {
+    provider,
+    model,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(typeof thinkingValue === 'boolean' ? { thinkingEnabled: thinkingValue } : {})
   }
 }
 

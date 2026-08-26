@@ -61,9 +61,10 @@ Interactive keys:
   PgUp/PgDn scroll  Enter send/open  Ctrl+C clear/quit  /cancel active run
   y/n             Answer a pending Host approval ask
 
-The normal sidecar connects to the authenticated TaskWraith Host v2 socket.
-Snapshots, ordered deltas, commands, receipts and .twmission export use that
-same connection. Imported .twmission files are detached replay projections:
+The standalone TUI connects to the authenticated pure-Node TaskWraith Host.
+Unless --no-start-host is set, it starts that Host when offline. Snapshots,
+ordered deltas, commands, receipts and .twmission export use the same connection.
+Imported .twmission files are detached replay projections:
 they cannot issue commands or write live Host state.`
 }
 

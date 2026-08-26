@@ -1,8 +1,15 @@
+/**
+ * Standalone Node Host domain ports. No Electron/Bridge/desktop-store imports:
+ * profile state, delivery, provider registry, inventory, and auth handoff are
+ * all injected at composition time.
+ */
+
 import type {
+  HostApprovalDecideDecision,
   HostAuthorityDecision,
   HostCommand,
   HostHealthProjection,
-  HostProviderModelProjection
+  HostQuestionAnswerDecision
 } from '../shared/hostProtocol'
 import type {
   HostHistorySinceRequest,
@@ -28,34 +35,21 @@ import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
 import { HostSetupCommandExecutor } from '../host-runtime/HostSetupCommandExecutor'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import {
-  HostNodeMuseProvider,
-  type HostNodeMuseProviderOptions,
-  type HostNodeMuseResourcePort
-} from './HostNodeMuseProvider'
+  HostNodeInteractionRegistry,
+  type HostNodeInteractionActor
+} from './HostNodeInteractionRegistry'
+import type { HostNodeProvider } from './HostNodeProvider'
+import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 
-const MUSE_PROVIDER_ID = 'muse'
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
-
-export interface HostNodeManualAuthHandoff {
-  begin(input: { readonly providerId: string; readonly operationId: string }): void | Promise<void>
-  cancel?(input: {
-    readonly providerId: string
-    readonly operationId: string
-  }): boolean | Promise<boolean>
-}
 
 export interface HostNodeDomainPortsOptions {
   readonly store: HostProfileDomainStore
   readonly events: HostNodeRunEventSink
-  /** Pass a fully constructed provider, or resources from which this class constructs one. */
-  readonly museProvider?: HostNodeMuseProvider
-  readonly museResources?: HostNodeMuseResourcePort
-  readonly museProviderOptions?: Omit<HostNodeMuseProviderOptions, 'runPort' | 'resources'>
-  readonly museOffers: HostProviderOffersProjection
+  /** Live provider factories; the domain constructs one registry from them. */
+  readonly providers: readonly HostNodeProvider[]
   readonly health: () => HostHealthProjection
-  readonly providerInventory: () => readonly HostProviderModelProjection[]
-  readonly manualAuthHandoff?: HostNodeManualAuthHandoff
   readonly now?: () => number
   /** Lease release must not proceed while a provider child may still be alive. */
   readonly shutdownTimeoutMs?: number
@@ -104,14 +98,10 @@ function isSetupMutationName(name: HostCommand['name']): boolean {
   )
 }
 
-/**
- * Standalone Node Host domain ports. No Electron/Bridge/desktop-store imports:
- * profile state, delivery, provider resources, inventory, and auth handoff are
- * all injected at composition time.
- */
 export class HostNodeDomainPorts {
   readonly runPort: HostNodeProfileRunPort
-  readonly museProvider: HostNodeMuseProvider
+  readonly registry: HostNodeProviderRegistry
+  readonly interactions: HostNodeInteractionRegistry
   readonly setupExecutor: HostSetupCommandExecutor
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
@@ -124,20 +114,16 @@ export class HostNodeDomainPorts {
 
   constructor(private readonly options: HostNodeDomainPortsOptions) {
     this.now = options.now ?? (() => Date.now())
-    this.assertMuseOffers(options.museOffers)
     this.runPort = new HostNodeProfileRunPort({ store: options.store, events: options.events })
-    if (options.museProvider) {
-      this.museProvider = options.museProvider
-    } else if (options.museResources) {
-      this.museProvider = new HostNodeMuseProvider({
-        runPort: this.runPort,
-        resources: options.museResources,
-        ...(options.museProviderOptions ?? {})
-      })
-    } else {
-      throw new Error('HostNodeDomainPorts requires a Muse provider or Node Muse resources')
-    }
-    this.recoverInterruptedMuseRuns()
+    this.interactions = new HostNodeInteractionRegistry({
+      onSettled: () => this.queueReconciliation()
+    })
+    this.registry = new HostNodeProviderRegistry({
+      providers: options.providers,
+      runPort: this.runPort,
+      interactions: this.interactions
+    })
+    this.recoverInterruptedRuns()
     this.setupExecutor = new HostSetupCommandExecutor({
       workspace: {
         register: (input) => ({ workspaceId: options.store.registerWorkspace(input).id })
@@ -145,7 +131,7 @@ export class HostNodeDomainPorts {
       thread: {
         create: (input) => {
           if (input.scope !== 'workspace')
-            throw new Error('Standalone Muse threads require a workspace')
+            throw new Error('Standalone Host threads require a workspace')
           return { threadId: options.store.createThread(input).appChatId }
         },
         configure: (input) => this.configureThread(input),
@@ -166,53 +152,30 @@ export class HostNodeDomainPorts {
     return projectHostProfileDomainSnapshot({
       store: this.options.store,
       health: this.options.health(),
-      providers: [...this.options.providerInventory()]
+      providers: [...this.registry.providerInventory()]
     })
   }
 
   providerOffers(providerId: string): HostProviderOffersProjection {
-    if (providerId !== MUSE_PROVIDER_ID) throw new Error('Unknown standalone provider')
-    return this.options.museOffers
+    const offers = this.registry.getOffers(providerId)
+    if (!offers) throw new Error('Unknown standalone provider')
+    return offers
   }
 
-  async providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {
-    const status = await this.museProvider.getStatus()
-    const state = status.configured
-      ? 'ready'
-      : status.binaryAvailable
-        ? 'auth_required'
-        : 'unavailable'
-    return [
-      {
-        providerId: MUSE_PROVIDER_ID,
-        status: state,
-        label: 'Muse',
-        ...(status.setupRequired ? { detail: 'Muse requires local setup.' } : {})
-      }
-    ]
+  providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {
+    return this.registry.providerStatuses()
   }
 
   async providerAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection> {
-    if (providerId !== MUSE_PROVIDER_ID) throw new Error('Unknown standalone provider')
-    const status = await this.museProvider.getStatus()
-    return {
-      providerId: MUSE_PROVIDER_ID,
-      state: status.authState === 'authenticated' ? 'authenticated' : 'unauthenticated'
-    }
+    const status = await this.registry.providerAuthStatus(providerId)
+    if (!status) throw new Error('Unknown standalone provider')
+    return status
   }
 
   async providerAuthFlows(providerId: string): Promise<readonly HostProviderAuthFlowProjection[]> {
-    if (providerId !== MUSE_PROVIDER_ID || !this.options.manualAuthHandoff) return []
-    const status = await this.museProvider.getStatus()
-    if (status.authState === 'authenticated') return []
-    return [
-      {
-        flowId: 'muse.manual-login',
-        kind: 'manual',
-        label: 'Complete Muse login in your terminal',
-        available: true
-      }
-    ]
+    const flows = await this.registry.providerAuthFlows(providerId)
+    if (!flows) throw new Error('Unknown standalone provider')
+    return flows
   }
 
   threadHistory(request: HostThreadHistoryRequest): HostThreadHistoryPage {
@@ -250,22 +213,53 @@ export class HostNodeDomainPorts {
     if (isSetupMutationName(command.name)) return { decision: 'allow' }
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return { decision: 'deny', reason: 'invalid_command' }
+
+    if (command.name === 'approval.decide') {
+      if (!this.registry.supportsApprovals) {
+        return { decision: 'deny', reason: 'standalone_command_unsupported' }
+      }
+      const id = command.target.approvalId
+      if (!isCanonicalId(id)) return { decision: 'deny', reason: 'invalid_command' }
+      const decision = command.arguments.decision as HostApprovalDecideDecision
+      const result = this.interactions.decide({ id, decision, actor: actorFromContext(context) })
+      return result.settled
+        ? { decision: 'allow' }
+        : { decision: 'deny', reason: 'standalone_approval_not_found' }
+    }
+
+    if (command.name === 'question.answer') {
+      if (!this.registry.supportsQuestions) {
+        return { decision: 'deny', reason: 'standalone_command_unsupported' }
+      }
+      const id = command.target.questionId
+      if (!isCanonicalId(id)) return { decision: 'deny', reason: 'invalid_command' }
+      const decision = command.arguments.decision as HostQuestionAnswerDecision
+      const answer = command.arguments.answer as string | undefined
+      const result = this.interactions.answer({
+        id,
+        decision,
+        answer,
+        actor: actorFromContext(context)
+      })
+      return result.settled
+        ? { decision: 'allow' }
+        : { decision: 'deny', reason: 'standalone_question_not_found' }
+    }
+
     if (command.name !== 'composer.send' && command.name !== 'run.cancel') {
       return { decision: 'deny', reason: 'standalone_command_unsupported' }
     }
-    if (!this.runPort.getThread(command.target.threadId)) {
-      return { decision: 'deny', reason: 'standalone_muse_thread_required' }
+    const thread = this.runPort.getThread(command.target.threadId)
+    if (!thread) {
+      return { decision: 'deny', reason: 'standalone_thread_required' }
     }
     if (command.name === 'composer.send') {
-      const thread = this.runPort.getThread(command.target.threadId)
-      if (
-        !thread ||
-        (typeof command.arguments.model === 'string' &&
-          command.arguments.model !== thread.modelId) ||
-        (typeof command.arguments.reasoningEffort === 'string' &&
-          command.arguments.reasoningEffort !== thread.reasoningId)
-      ) {
-        return { decision: 'deny', reason: 'standalone_muse_configuration_mismatch' }
+      if (!this.registry.hasProvider(thread.providerId)) {
+        return { decision: 'deny', reason: 'standalone_provider_not_composed' }
+      }
+      const offers = this.registry.getOffers(thread.providerId)
+      if (!offers || !this.sendSelectionIsCurrent(thread, command.arguments, offers)) {
+        return { decision: 'deny', reason: 'standalone_configuration_mismatch' }
       }
     }
     return { decision: 'allow' }
@@ -281,15 +275,49 @@ export class HostNodeDomainPorts {
     if (isSetupMutationName(command.name)) return this.setupExecutor.execute(command, context)
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return failed('command_invalid')
+
     if (command.name === 'run.cancel') {
       const outcome = this.runPort.cancelThread(command.target.threadId)
       return outcome === 'cancelled'
-        ? { status: 'succeeded', resultSummary: 'muse_run_cancellation_requested' }
+        ? { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
         : failed(outcome === 'not_found' ? 'run_not_found' : 'run_not_cancellable')
     }
+
+    if (command.name === 'approval.decide') {
+      const id = command.target.approvalId
+      const decision = command.arguments.decision as HostApprovalDecideDecision
+      const result = this.interactions.decide({ id, decision, actor: actorFromContext(context) })
+      return result.settled
+        ? { status: 'succeeded', resultSummary: 'approval_decided' }
+        : failed('approval_not_found')
+    }
+
+    if (command.name === 'question.answer') {
+      const id = command.target.questionId
+      const decision = command.arguments.decision as HostQuestionAnswerDecision
+      const answer = command.arguments.answer as string | undefined
+      const result = this.interactions.answer({
+        id,
+        decision,
+        answer,
+        actor: actorFromContext(context)
+      })
+      return result.settled
+        ? { status: 'succeeded', resultSummary: 'question_answered' }
+        : failed('question_not_found')
+    }
+
     if (command.name !== 'composer.send') return failed('command_unsupported')
 
-    const completion = this.museProvider.run({
+    const thread = this.runPort.getThread(command.target.threadId)
+    if (!thread) return failed('thread_not_found')
+    const provider = this.registry.getInstance(thread.providerId)
+    if (!provider) return failed('provider_not_composed')
+
+    const effectiveThread = this.effectiveThread(thread, command.arguments)
+    if (!effectiveThread) return failed('standalone_configuration_mismatch')
+
+    const completion = provider.run({
       runId: command.commandId,
       threadId: command.target.threadId,
       prompt: command.arguments.text as string,
@@ -302,25 +330,20 @@ export class HostNodeDomainPorts {
       .then(() => undefined)
     this.runCompletions.set(command.commandId, tracked)
     void tracked.finally(() => this.runCompletions.delete(command.commandId))
-    // `run()` persists begin + user/system transcript before its first await.
-    // Yield once, then prove the durable start exists before acknowledging.
     await Promise.resolve()
     if (
       !this.hasPersistedStart(command.commandId, command.target.threadId, command.arguments.text)
     ) {
-      // The durable start proof failed while the provider promise may still
-      // own a child process. Signal its exact cancel before clearing the
-      // profile registration; tracked completion still holds shutdown open.
       try {
-        this.museProvider.cancel(command.commandId)
+        provider.cancel(command.commandId)
       } catch {
         // Completion tracking/lease retention remains authoritative if cancel
         // signalling itself cannot be observed here.
       }
       this.terminalizeRejectedStart(command.commandId, command.target.threadId)
-      return failed('muse_run_not_started')
+      return failed('run_not_started')
     }
-    return { status: 'succeeded', resultSummary: 'muse_run_started' }
+    return { status: 'succeeded', resultSummary: 'run_started' }
   }
 
   private configureThread(input: {
@@ -332,25 +355,23 @@ export class HostNodeDomainPorts {
     readonly postureConsent?: true
     readonly title?: string
   }): { readonly threadId: string } {
-    if (input.providerId !== undefined && input.providerId !== MUSE_PROVIDER_ID) {
-      throw new Error('Standalone Host supports Muse only')
+    if (input.providerId !== undefined && !this.registry.hasProvider(input.providerId)) {
+      throw new Error('Standalone Host does not compose that provider')
     }
     const postureId = input.postureId
-    if (
-      postureId !== undefined &&
-      postureId !== 'read_only' &&
-      postureId !== 'plan' &&
-      postureId !== 'default' &&
-      postureId !== 'workspace_write'
-    ) {
-      throw new Error('Unknown Muse posture')
+    if (postureId !== undefined) {
+      const offers = input.providerId ? this.registry.getOffers(input.providerId) : undefined
+      const posture = offers?.postures.find((p) => p.postureId === postureId && p.available)
+      if (!posture) throw new Error('Unknown posture')
     }
     const thread = this.options.store.configureThread({
       threadId: input.threadId,
       ...(input.providerId ? { providerId: input.providerId } : {}),
       ...(input.modelId ? { modelId: input.modelId } : {}),
       ...(input.reasoningId ? { reasoningId: input.reasoningId } : {}),
-      ...(postureId ? { postureId } : {}),
+      ...(postureId
+        ? { postureId: postureId as 'read_only' | 'plan' | 'default' | 'workspace_write' }
+        : {}),
       ...(input.postureConsent ? { postureConsent: true as const } : {}),
       ...(input.title ? { title: input.title } : {})
     })
@@ -362,26 +383,23 @@ export class HostNodeDomainPorts {
     readonly flowId: string
     readonly operationId: string
   }): Promise<{ readonly providerId: string; readonly operationId: string }> {
-    if (
-      input.providerId !== MUSE_PROVIDER_ID ||
-      input.flowId !== 'muse.manual-login' ||
-      !isCanonicalId(input.operationId) ||
-      !this.options.manualAuthHandoff ||
-      this.authOperations.has(input.operationId)
-    ) {
-      throw new Error('Muse manual auth cannot begin')
+    if (!isCanonicalId(input.providerId) || !isCanonicalId(input.operationId)) {
+      throw new Error('Manual auth input is invalid')
     }
-    await this.options.manualAuthHandoff.begin({
-      providerId: MUSE_PROVIDER_ID,
-      operationId: input.operationId
-    })
+    const flows = await this.registry.providerAuthFlows(input.providerId)
+    if (!flows || !flows.some((flow) => flow.flowId === input.flowId && flow.available)) {
+      throw new Error('Manual auth flow is not current')
+    }
+    const provider = this.registry.getInstance(input.providerId)
+    if (!provider) throw new Error('Manual auth provider is not composed')
+    await provider.beginAuth(input.operationId)
     this.authOperations.set(input.operationId, {
-      providerId: MUSE_PROVIDER_ID,
+      providerId: input.providerId,
       operationId: input.operationId,
       startedAt: new Date(this.now()).toISOString(),
       cancelled: false
     })
-    return { providerId: MUSE_PROVIDER_ID, operationId: input.operationId }
+    return { providerId: input.providerId, operationId: input.operationId }
   }
 
   private async cancelManualAuth(input: {
@@ -396,10 +414,10 @@ export class HostNodeDomainPorts {
     if (!operation || operation.providerId !== input.providerId) {
       return { ...input, outcome: 'not_found' }
     }
-    if (operation.cancelled || !this.options.manualAuthHandoff?.cancel) {
-      return { ...input, outcome: 'not_cancellable' }
-    }
-    const cancelled = await this.options.manualAuthHandoff.cancel(input)
+    if (operation.cancelled) return { ...input, outcome: 'not_cancellable' }
+    const provider = this.registry.getInstance(input.providerId)
+    if (!provider) return { ...input, outcome: 'not_cancellable' }
+    const cancelled = await provider.cancelAuth(input.operationId)
     if (!cancelled) return { ...input, outcome: 'not_cancellable' }
     operation.cancelled = true
     return { ...input, outcome: 'cancelled' }
@@ -418,19 +436,20 @@ export class HostNodeDomainPorts {
     )
   }
 
-  /** A fresh profile lease cannot prove an inherited running Muse child still exists. */
-  private recoverInterruptedMuseRuns(): void {
+  /** A fresh profile lease cannot prove an inherited running provider child still exists. */
+  private recoverInterruptedRuns(): void {
+    const composedProviderIds = new Set(this.registry.providerIds)
     const endedAt = new Date(this.now()).toISOString()
     for (const thread of this.options.store.listThreads()) {
-      if (thread.provider !== MUSE_PROVIDER_ID) continue
+      if (!thread.provider || !composedProviderIds.has(thread.provider)) continue
       for (const run of thread.runs ?? []) {
-        if (run.provider !== MUSE_PROVIDER_ID || run.status !== 'running') continue
+        if (run.provider !== thread.provider || run.status !== 'running') continue
         this.options.store.updateRun({
           threadId: thread.appChatId,
           runId: run.runId,
           status: 'failed',
           endedAt,
-          warningSummaries: ['Muse running state recovered after Host restart.'],
+          warningSummaries: ['Provider running state recovered after Host restart.'],
           errorCode: 'provider_failed'
         })
       }
@@ -441,7 +460,7 @@ export class HostNodeDomainPorts {
     try {
       const thread = this.options.store.getThread(threadId)
       const run = thread?.runs?.find(
-        (candidate) => candidate.runId === runId && candidate.provider === MUSE_PROVIDER_ID
+        (candidate) => candidate.runId === runId && candidate.provider === thread.provider
       )
       if (run?.status !== 'running') return
       this.options.store.updateRun({
@@ -449,7 +468,7 @@ export class HostNodeDomainPorts {
         runId,
         status: 'failed',
         endedAt: new Date(this.now()).toISOString(),
-        warningSummaries: ['Muse run start could not be durably acknowledged.'],
+        warningSummaries: ['Provider run start could not be durably acknowledged.'],
         errorCode: 'provider_failed'
       })
     } catch {
@@ -464,6 +483,73 @@ export class HostNodeDomainPorts {
     }
   }
 
+  private sendSelectionIsCurrent(
+    thread: {
+      readonly providerId: string
+      readonly modelId: string
+      readonly reasoningId?: string
+    },
+    args: Record<string, unknown>,
+    offers: HostProviderOffersProjection
+  ): boolean {
+    if (typeof args.offerRevision === 'string' && offers.offerRevision !== args.offerRevision) {
+      return false
+    }
+    const modelId = args.model
+    const reasoningId = args.reasoningEffort
+    const model =
+      typeof modelId === 'string'
+        ? offers.models.find((m) => m.modelId === modelId && m.available)
+        : undefined
+    if (typeof modelId === 'string' && !model) return false
+    const effectiveModelId = typeof modelId === 'string' ? modelId : thread.modelId
+    if (effectiveModelId !== thread.modelId) return false
+    if (typeof reasoningId === 'string') {
+      const reasoning = model?.reasoning.find((r) => r.reasoningId === reasoningId && r.available)
+      if (!reasoning) return false
+    }
+    return true
+  }
+
+  private effectiveThread(
+    thread: {
+      readonly threadId: string
+      readonly workspace: { readonly workspaceId: string; readonly canonicalPath: string }
+      readonly providerId: string
+      readonly modelId: string
+      readonly reasoningId?: string
+      readonly providerSessionId?: string
+      readonly posture: { readonly postureId: string; readonly approvalMode: string }
+    },
+    args: Record<string, unknown>
+  ): {
+    readonly threadId: string
+    readonly workspace: { readonly workspaceId: string; readonly canonicalPath: string }
+    readonly providerId: string
+    readonly modelId: string
+    readonly reasoningId?: string
+    readonly providerSessionId?: string
+    readonly posture: { readonly postureId: string; readonly approvalMode: string }
+  } | null {
+    const offers = this.registry.getOffers(thread.providerId)
+    if (!offers) return null
+    if (!this.sendSelectionIsCurrent(thread, args, offers)) return null
+    const modelId = typeof args.model === 'string' ? (args.model as string) : thread.modelId
+    const reasoningId =
+      typeof args.reasoningEffort === 'string'
+        ? (args.reasoningEffort as string)
+        : thread.reasoningId
+    return {
+      threadId: thread.threadId,
+      workspace: thread.workspace,
+      providerId: thread.providerId,
+      modelId,
+      ...(reasoningId !== undefined ? { reasoningId } : {}),
+      ...(thread.providerSessionId ? { providerSessionId: thread.providerSessionId } : {}),
+      posture: thread.posture
+    }
+  }
+
   private async awaitShutdown(): Promise<{
     readonly stopped: true
     readonly alreadyStopped: boolean
@@ -471,6 +557,7 @@ export class HostNodeDomainPorts {
   }> {
     const cancelledRuns = this.runPort.cancelAll()
     const completions = [...this.runCompletions.values()]
+    await Promise.all([this.registry.shutdown(), this.interactions.shutdown()])
     if (completions.length) await this.awaitWithinShutdownTimeout(Promise.all(completions))
     return { stopped: true, alreadyStopped: false, cancelledRuns }
   }
@@ -494,9 +581,20 @@ export class HostNodeDomainPorts {
     }
   }
 
-  private assertMuseOffers(offers: HostProviderOffersProjection): void {
-    if (!offers || offers.providerId !== MUSE_PROVIDER_ID || !isCanonicalId(offers.offerRevision)) {
-      throw new Error('HostNodeDomainPorts requires canonical Muse offers')
-    }
+  private reconcileQueued = false
+  private queueReconciliation(): void {
+    if (this.reconcileQueued) return
+    this.reconcileQueued = true
+    queueMicrotask(() => {
+      this.reconcileQueued = false
+    })
+  }
+}
+
+function actorFromContext(context: HostAuthorityCallContext): HostNodeInteractionActor {
+  return {
+    clientId: context.client.clientId,
+    clientClass: context.client.clientClass,
+    actorId: context.actor.actorId
   }
 }

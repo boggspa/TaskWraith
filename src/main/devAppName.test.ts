@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -28,7 +29,8 @@ vi.mock('electron', () => ({ app: fakeApp }))
 import {
   instanceRelayPortOffset,
   isStaticMcpBridgeRouteLaunch,
-  resolveDevAppNamePosture
+  resolveDevAppNamePosture,
+  shouldServeMcpBridgeHandshakeWithoutAuthority
 } from './devAppName'
 
 // resolve() so the fixture is CANONICAL on the host. readSocketPath in
@@ -314,5 +316,74 @@ describe('devAppName packaged-private posture seam', () => {
         })
       ).toMatchObject({ kind: 'invalid', isPackaged: false })
     }
+  })
+})
+
+describe('shouldServeMcpBridgeHandshakeWithoutAuthority', () => {
+  const packaged = ['/Applications/TaskWraith.app/Contents/MacOS/TaskWraith']
+  const devApp = resolve('/Users/example/AGBench/out/main')
+
+  it('serves the persisted packaged registration a foreign client would launch', () => {
+    expect(
+      shouldServeMcpBridgeHandshakeWithoutAuthority([
+        ...packaged,
+        MCP_BRIDGE_ENTRY_ARG,
+        MCP_BRIDGE_ROUTE_FROM_ENV_ARG
+      ])
+    ).toBe(true)
+  })
+
+  it('serves the dev launcher framing of the same registration', () => {
+    expect(
+      shouldServeMcpBridgeHandshakeWithoutAuthority([
+        ...packaged,
+        devApp,
+        MCP_BRIDGE_ENTRY_ARG,
+        MCP_BRIDGE_ROUTE_FROM_ENV_ARG
+      ])
+    ).toBe(true)
+  })
+
+  it('refuses hard for an ordinary launch — only a bridge argv gets a handshake', () => {
+    expect(shouldServeMcpBridgeHandshakeWithoutAuthority(packaged)).toBe(false)
+    expect(
+      shouldServeMcpBridgeHandshakeWithoutAuthority([...packaged, '--some-other-flag'])
+    ).toBe(false)
+  })
+
+  it('refuses a route selector smuggled into a wider argv', () => {
+    expect(
+      shouldServeMcpBridgeHandshakeWithoutAuthority([
+        ...packaged,
+        MCP_BRIDGE_ENTRY_ARG,
+        MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
+        '--taskwraith-mcp-gateway-subset'
+      ])
+    ).toBe(false)
+    expect(
+      shouldServeMcpBridgeHandshakeWithoutAuthority([
+        ...packaged,
+        MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
+        MCP_BRIDGE_ROUTE_FROM_ENV_ARG
+      ])
+    ).toBe(false)
+  })
+})
+
+describe('failClosedStartup source contract', () => {
+  it('offers the empty handshake BEFORE the generic refusal exit', async () => {
+    const source = await readFile(new URL('./devAppName.ts', import.meta.url), 'utf8')
+    const body = source.slice(source.indexOf('function failClosedStartup'))
+
+    expect(body).toMatch(
+      /if \(!serveStaticMcpBridgeHandshakeWithoutAuthority\(\)\) \{\s*console\.error\('\[instance-posture\] startup refused\.'\)\s*app\.exit\(1\)\s*\}/
+    )
+  })
+
+  it('never discloses argv or endpoint values in the refusal log', async () => {
+    const source = await readFile(new URL('./devAppName.ts', import.meta.url), 'utf8')
+    const body = source.slice(source.indexOf('function failClosedStartup'))
+
+    expect(body).not.toMatch(/console\.error\([^)]*(argv|process\.env|socketPath|brokerToken)/)
   })
 })
