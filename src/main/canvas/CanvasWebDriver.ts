@@ -750,6 +750,10 @@ export interface CanvasWebDriverDeps {
   onNavState?: (state: CanvasNavState) => void
   /** Fired once per committed main-frame / in-page navigation (url settled). */
   onNavigationCommitted?: (state: CanvasNavState) => void
+  /** Human floating-window chrome route (service-owned for audit/serialization). */
+  onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+  /** Human asks to move this standalone surface into the app dock. */
+  onDockRequest?: () => void | Promise<void>
   /** Shared in production; injectable so driver tests stay session-local. */
   browserProfile?: CanvasBrowserProfileController
 }
@@ -770,7 +774,6 @@ export class CanvasWebDriver implements CanvasDriver {
 
   private surface: CanvasHostSurface | null = null
   private readonly partition: string
-  private allowlist: string[] = []
   private readonly networkBuffer: CanvasNetworkEntry[] = []
   private readonly networkById = new Map<number, CanvasNetworkEntry>()
   private readonly consoleEntries: CanvasConsoleEntry[] = []
@@ -795,6 +798,8 @@ export class CanvasWebDriver implements CanvasDriver {
   private userActiveUntil = 0
   private readonly onNavState?: (state: CanvasNavState) => void
   private readonly onNavigationCommitted?: (state: CanvasNavState) => void
+  private readonly onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+  private readonly onDockRequest?: () => void | Promise<void>
   private readonly browserProfile: CanvasBrowserProfileController
   private releaseProfileRegistration: (() => void) | null = null
 
@@ -808,6 +813,8 @@ export class CanvasWebDriver implements CanvasDriver {
     this.resolveHost = deps.resolveHost
     this.onNavState = deps.onNavState
     this.onNavigationCommitted = deps.onNavigationCommitted
+    this.onHumanNavigate = deps.onHumanNavigate
+    this.onDockRequest = deps.onDockRequest
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -845,20 +852,20 @@ export class CanvasWebDriver implements CanvasDriver {
     }
     const lifecycleGeneration = this.lifecycleGeneration
     const assertOpenStillLive = (): void => {
-      if (
-        this.closeRequested ||
-        lifecycleGeneration !== this.lifecycleGeneration
-      ) {
+      if (this.closeRequested || lifecycleGeneration !== this.lifecycleGeneration) {
         throw new Error('Canvas open was cancelled because the driver was closed.')
       }
     }
     const rawUrl = (input.url || '').trim()
-    this.allowlist = Array.isArray(input.originAllowlist) ? input.originAllowlist : []
-    const verdict = validateCanvasUrl(rawUrl, this.allowlist)
-    if (!verdict.ok || !verdict.normalizedUrl) {
-      throw new Error(verdict.reason || 'Canvas URL was rejected.')
+    let initialUrl: string | null = null
+    if (rawUrl) {
+      const verdict = validateCanvasUrl(rawUrl)
+      if (!verdict.ok || !verdict.normalizedUrl) {
+        throw new Error(verdict.reason || 'Canvas URL was rejected.')
+      }
+      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
+      initialUrl = verdict.normalizedUrl
     }
-    await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
     assertOpenStillLive()
     const viewport = resolveViewport({
       width: input.viewport?.width,
@@ -867,18 +874,23 @@ export class CanvasWebDriver implements CanvasDriver {
 
     const surface = this.createSurface({
       partition: this.partition,
+      kind: 'web',
       width: viewport.width,
       height: viewport.height
     })
     this.surface = surface
     const wc = surface.webContents
+    surface.onNavigateRequest?.((input) =>
+      this.onHumanNavigate ? this.onHumanNavigate(input) : this.navigate(input)
+    )
+    if (this.onDockRequest) surface.onDockRequest?.(this.onDockRequest)
 
     // Single-page-browser popup policy: no new window EVER escapes the canvas,
     // but a target=_blank / window.open link navigates THIS surface in place
     // (when the URL passes the same open-gate policy), matching what a user
     // expects from a one-pane browser. A rejected URL is simply dropped.
     wc.setWindowOpenHandler((details) => {
-      const verdict = validateCanvasUrl(details.url || '', this.allowlist)
+      const verdict = validateCanvasUrl(details.url || '')
       if (verdict.ok && verdict.normalizedUrl && !this.closeRequested) {
         void wc.loadURL(verdict.normalizedUrl).catch(() => {
           // Load failures surface through did-fail-load / nav-state; never throw here.
@@ -891,12 +903,10 @@ export class CanvasWebDriver implements CanvasDriver {
     // http(s) requests, but only will-navigate can refuse a scheme change
     // (file:, chrome:, custom protocols) before Chromium commits it.
     wc.on('will-navigate', (event, url) => {
-      if (!validateCanvasUrl(url || '', this.allowlist).ok) event.preventDefault()
+      if (!validateCanvasUrl(url || '').ok) event.preventDefault()
     })
     this.hardenWebContents(wc)
-    // The origin allowlist is enforced per-request in attachNetwork via
-    // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
-    // and websockets — the navigation events only see the main frame).
+    // The fixed metadata deny rule is enforced per request in attachNetwork.
     wc.on('console-message', (details) => {
       this.pushConsole({
         level: normalizeConsoleLevel((details as { level?: unknown }).level),
@@ -914,10 +924,11 @@ export class CanvasWebDriver implements CanvasDriver {
       this.releaseBrowserProfile()
     })
 
-    await this.loadUrl(wc, verdict.normalizedUrl)
+    if (initialUrl) await this.loadUrl(wc, initialUrl)
     assertOpenStillLive()
+    surface.setNavigationState?.(this.navState())
     return {
-      url: wc.getURL() || verdict.normalizedUrl,
+      url: wc.getURL() || initialUrl || 'about:blank',
       title: surface.getTitle(),
       viewport
     }
@@ -1006,11 +1017,13 @@ export class CanvasWebDriver implements CanvasDriver {
    * committed callback's consumer redacts before any durable write).
    */
   private attachNavigationWatch(wc: WebContents): void {
-    if (!this.onNavState && !this.onNavigationCommitted) return
+    if (!this.onNavState && !this.onNavigationCommitted && !this.surface?.setNavigationState) return
     const emitState = (): void => {
       if (this.closeRequested || !this.surface || this.surface.isDestroyed()) return
       try {
-        this.onNavState?.(this.navState())
+        const state = this.navState()
+        this.surface.setNavigationState?.(state)
+        this.onNavState?.(state)
       } catch {
         // A chrome listener must never break the page lifecycle.
       }
@@ -1042,7 +1055,7 @@ export class CanvasWebDriver implements CanvasDriver {
       // Teardown tolerance: report a chrome-safe default.
     }
     return {
-      url: wc.getURL() || '',
+      url: wc.getURL() || 'about:blank',
       title: surface.getTitle(),
       isLoading,
       canGoBack: history.canGoBack,
@@ -1092,13 +1105,13 @@ export class CanvasWebDriver implements CanvasDriver {
       throw new Error('Provide exactly one of `url` or `action` to navigate.')
     }
     if (rawUrl) {
-      // Same open-gate + DNS policy as the initial load: http(s) only,
-      // link-local/metadata blocked, private hosts only via the allowlist.
-      const verdict = validateCanvasUrl(rawUrl, this.allowlist)
+      // Same open gate + DNS policy as the initial load: http(s) only, with a
+      // fixed link-local/metadata deny rule and no host allowlist.
+      const verdict = validateCanvasUrl(rawUrl)
       if (!verdict.ok || !verdict.normalizedUrl) {
         throw new Error(verdict.reason || 'Canvas URL was rejected.')
       }
-      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
+      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
       if (this.closeRequested) {
         throw new Error('Canvas navigation was cancelled because the driver was closed.')
       }
@@ -1184,9 +1197,9 @@ export class CanvasWebDriver implements CanvasDriver {
     this.releaseBrowserProfile()
     this.releaseProfileRegistration = this.browserProfile.register(wc, {
       shouldBlock: (details) => {
-        // Egress-cut during eval takes precedence over per-host SSRF policy:
+        // Egress-cut during eval takes precedence over the metadata deny rule:
         // while a script is running, NOTHING leaves this canvas.
-        if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url, this.allowlist)) {
+        if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url)) {
           return true
         }
         return this.dnsBlocked(details.url).catch(() => true)
@@ -1233,10 +1246,10 @@ export class CanvasWebDriver implements CanvasDriver {
       return Promise.resolve(false)
     }
     if (!parsed.hostname) return Promise.resolve(false)
-    const key = `${parsed.protocol}//${parsed.hostname}|${this.allowlist.join(',')}`
+    const key = `${parsed.protocol}//${parsed.hostname}`
     let cached = this.dnsBlockCache.get(key)
     if (!cached) {
-      cached = isCanvasDnsBlocked(url, this.allowlist, this.resolveHost)
+      cached = isCanvasDnsBlocked(url, this.resolveHost)
       this.dnsBlockCache.set(key, cached)
       if (this.dnsBlockCache.size > 256) {
         const first = this.dnsBlockCache.keys().next().value

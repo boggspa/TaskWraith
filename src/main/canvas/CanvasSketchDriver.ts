@@ -420,6 +420,7 @@ export interface CanvasSketchDriverDeps {
   now?: () => string
   initialDocument?: CanvasSketchDocument
   onDocumentChange?: (document: CanvasSketchDocument) => void
+  onDockRequest?: () => void | Promise<void>
 }
 
 function unsupported(verb: string): never {
@@ -625,6 +626,7 @@ export class CanvasSketchDriver implements CanvasDriver {
   private readonly nowFn: () => string
   private readonly initialDocument?: CanvasSketchDocument
   private readonly onDocumentChange?: (document: CanvasSketchDocument) => void
+  private readonly onDockRequest?: () => void | Promise<void>
   private consoleEntries: CanvasConsoleEntry[] = []
   private lastDocument: CanvasSketchDocument | null = null
   private persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -635,6 +637,7 @@ export class CanvasSketchDriver implements CanvasDriver {
     this.nowFn = deps.now ?? (() => new Date().toISOString())
     this.initialDocument = deps.initialDocument
     this.onDocumentChange = deps.onDocumentChange
+    this.onDockRequest = deps.onDockRequest
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -665,10 +668,12 @@ export class CanvasSketchDriver implements CanvasDriver {
     const viewport = resolveViewport({ width: input.viewport?.width, height: input.viewport?.height })
     const surface = this.createSurface({
       partition: this.partition,
+      kind: 'sketch',
       width: viewport.width,
       height: viewport.height
     })
     this.surface = surface
+    if (this.onDockRequest) surface.onDockRequest?.(this.onDockRequest)
     surface.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.hardenSession(surface.webContents)
     surface.webContents.on('console-message', (details) => {
