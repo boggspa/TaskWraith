@@ -55168,7 +55168,7 @@ if (isGeminiMcpBridgeProcess) {
       getRunLifecycleCoordinator: () => runLifecycleCoordinatorRef,
       getRunEvents: (filter = {}) => getRunRepository().getRunEventsAsync(filter || {}),
       getToolActivityDetails: (refs) => AppStore.getToolActivityDetails(refs),
-      getRunEventReplay: (runId) => getRunRepository().getRunEventReplay(runId),
+      getRunEventReplay: (runId) => getRunRepository().getRunEventReplayAsync(runId),
       getBridgeDaemon: () => bridgeDaemonRef,
       sanitizeRunAnalystRequest,
       normalizeRunAnalystResult,
