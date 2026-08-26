@@ -21,7 +21,8 @@ export default defineConfig(
       // — and it can only ever fail LOCALLY, since a fresh checkout has no
       // .local-only at all. A gate that is red for things you cannot ship is a gate
       // people stop reading.
-      '.local-only/**'
+      '.local-only/**',
+      'website/**'
     ]
   },
   tseslint.configs.recommended,

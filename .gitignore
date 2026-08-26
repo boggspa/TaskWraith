@@ -24,6 +24,7 @@ out
 
 # Local-only planning/release material kept out of the public source tree
 .local-only/
+/website/
 /SECURITY_ENGINEERING_LEDGER.md
 papercuts/*
 !papercuts/README.md

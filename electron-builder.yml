@@ -71,6 +71,7 @@ files:
   - '!swift/**'
   - '!ios/**'
   - '!design-assets/**'
+  - '!website/**'
   # Dev/release-only material that has no business in a distributed app.asar
   # (a security reviewer found .local-only + docs + AGENTS.md shipping in
   # 1.4.9). This `files` list is a denylist, so anything not excluded here
