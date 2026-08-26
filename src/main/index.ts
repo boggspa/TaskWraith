@@ -1651,6 +1651,7 @@ import {
   type MuseIpcBridgeDeps
 } from './muse/MuseIpcBridge'
 import { isMuseCredentialPresent } from './muse/MuseProbe'
+import { prepareMuseTaskWraithMcpInvocation } from './muse/MuseTaskWraithMcpBridge'
 import {
   clearMistralQuotaAnchor,
   configureMistralQuotaStore,
@@ -35143,52 +35144,17 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   },
   readAuthJsonText: () => readDefaultMuseAuthJsonText(),
   readMetaApiKeyEnv: () => process.env.META_API_KEY,
-  prepareTaskWraithMcp: async ({
-    appRunId,
-    appChatId,
-    workspacePath,
-    approvalMode,
-    taskWraithMcpProfileId
-  }) => {
-    if (!taskWraithMcpProfileId) {
-      throw new Error('The composed Muse broker request has no TaskWraith MCP profile.')
-    }
-    const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-    if (!bridgeCommandStatus.available) {
-      throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
-    }
-    await mcpBridgeRuntime.startGeminiMcpBroker()
-    const safeSubset = approvalMode?.trim() === 'plan'
-    const profile = {
-      safeSubset,
-      planSubset: false,
-      coreSubset: isCoreTaskWraithMcpProfile(taskWraithMcpProfileId),
-      gatewaySubset: isGatewayTaskWraithMcpProfile(taskWraithMcpProfileId),
-      portableEnsembleControl: isPortableEnsembleControlMcpProfile(taskWraithMcpProfileId),
-      meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
-      meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
-      sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
-      orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(taskWraithMcpProfileId),
-      auditSubset: false
-    }
-    return {
-      command: bridgeCommandStatus.command,
-      args: taskwraithMcpBridgeStaticRegistrationArgs(),
-      env: {
-        [GEMINI_MCP_BRIDGE_ENV]: '1',
-        ...mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
-          route: { appRunId, appChatId },
-          parentProvider: 'muse',
-          workspacePath,
-          profile,
-          isolatedInstanceId:
-            instanceLaunchPosture.kind === 'packaged-isolated'
-              ? instanceLaunchPosture.instanceId
-              : undefined
-        })
-      }
-    }
-  }
+  prepareTaskWraithMcp: (input) =>
+    prepareMuseTaskWraithMcpInvocation(input, {
+      runtime: mcpBridgeRuntime,
+      getCommandStatus: taskwraithMcpBridgeCommandStatus,
+      unavailableMessage: taskwraithMcpBridgeUnavailableMessage,
+      staticRegistrationArgs: taskwraithMcpBridgeStaticRegistrationArgs,
+      isolatedInstanceId:
+        instanceLaunchPosture.kind === 'packaged-isolated'
+          ? instanceLaunchPosture.instanceId
+          : undefined
+    })
 }
 
 async function getMuseProviderStatus() {

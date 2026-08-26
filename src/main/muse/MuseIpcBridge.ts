@@ -18,6 +18,7 @@ import {
   type MuseTaskWraithMcpInvocation
 } from './MuseMcpConfig'
 import { parseMuseAuthJsonCredential, type MuseProbeBinary } from './MuseProbe'
+import type { MuseTaskWraithMcpPreparationInput } from './MuseTaskWraithMcpBridge'
 import {
   runMuseProvider,
   type MuseRunOutcome,
@@ -82,20 +83,14 @@ export interface MuseIpcBridgeDeps {
   hasInjectedCredential?: () => boolean | Promise<boolean>
   /** Build the app-owned, exact-route MCP child invocation for a Muse turn. */
   prepareTaskWraithMcp?: (
-    input: MuseIpcMcpPreparationInput
+    input: MuseTaskWraithMcpPreparationInput
   ) => Promise<MuseTaskWraithMcpInvocation | null>
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
   now?: () => number
 }
 
-export interface MuseIpcMcpPreparationInput {
-  readonly appRunId: string
-  readonly appChatId?: string
-  readonly workspacePath: string
-  readonly approvalMode?: string | null
-  readonly taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
-}
+export type { MuseTaskWraithMcpPreparationInput as MuseIpcMcpPreparationInput } from './MuseTaskWraithMcpBridge'
 
 const MUSE_LOGIN_HINT =
   'Muse is not signed in. Run `muse login` (Settings → Providers → Muse → Open Terminal), or set META_API_KEY.'
