@@ -113,6 +113,27 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
+  it('preserves fixed-256K K3 as a distinct route with the same effort ladder', () => {
+    expect(
+      resolveSubThreadDelegationRunSettings({
+        provider: 'kimi',
+        model: 'kimi-k3-256k',
+        reasoningEffort: 'LOW'
+      })
+    ).toEqual({
+      ok: true,
+      requestedModel: 'kimi-k3-256k',
+      reasoningEffort: 'low',
+      kimiThinking: true,
+      runPayload: { model: 'kimi-k3-256k', reasoningEffort: 'low', kimiThinking: true },
+      providerMetadataPatch: {
+        selectedModelType: 'kimi-k3-256k',
+        kimiReasoningEffort: 'low',
+        kimiThinkingEnabled: true
+      }
+    })
+  })
+
   it('normalizes K2.7 to its fixed On setting and rejects unknown controls before dispatch', () => {
     expect(
       resolveSubThreadDelegationRunSettings({ provider: 'kimi', reasoningEffort: 'high' })

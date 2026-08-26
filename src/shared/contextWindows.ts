@@ -132,9 +132,10 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   opus: 200_000,
   haiku: 200_000,
   // Kimi
-  'kimi-k3': 256_000,
-  'kimi-k2.7-code': 256_000,
-  'kimi-k2.6': 256_000,
+  'kimi-k3': 262_144,
+  'kimi-k3-256k': 262_144,
+  'kimi-k2.7-code': 262_144,
+  'kimi-k2.6': 262_144,
   // Grok
   'grok-composer-2.5-fast': 200_000,
   'grok-4.5': 500_000,
@@ -255,7 +256,7 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   gemini: 1_048_576,
   codex: 1_050_000,
   claude: 200_000,
-  kimi: 256_000,
+  kimi: 262_144,
   grok: 500_000,
   cursor: 200_000,
   // Ollama - local models vary by tag, so keep the fallback conservative.
@@ -301,7 +302,6 @@ export function resolveContextWindow(
     return statsTotalTokenLimit
   }
   if (
-    provider === 'ollama' &&
     typeof liveModelContextLength === 'number' &&
     Number.isFinite(liveModelContextLength) &&
     liveModelContextLength > 0

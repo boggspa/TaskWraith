@@ -4,10 +4,10 @@ import Foundation
 ///
 /// Ported from the desktop's single source of truth,
 /// `src/shared/contextWindows.ts` — keep the two tables in sync when
-/// the desktop list changes. The phone only receives raw token counts in the
-/// thread snapshot (no run-reported `totalTokenLimit` / live-Ollama metadata),
-/// so `resolve` covers the provider-model override → model-id → provider-
-/// fallback → default chain.
+/// the desktop list changes. The phone receives account-specific model context
+/// metadata when the paired Mac can discover it (currently Kimi); otherwise
+/// `resolve` covers the provider-model override → model-id → provider-fallback
+/// → default chain.
 public enum ContextWindows {
     /// Model id → context window (tokens). Mirrors `CONTEXT_WINDOWS_BY_MODEL`.
     static let byModel: [String: Int] = [
@@ -124,9 +124,10 @@ public enum ContextWindows {
         "openrouter/poolside/laguna-s-2.1": 256_000,
         "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": 1_000_000,
         // Kimi
-        "kimi-k3": 256_000,
-        "kimi-k2.7-code": 256_000,
-        "kimi-k2.6": 256_000,
+        "kimi-k3": 262_144,
+        "kimi-k3-256k": 262_144,
+        "kimi-k2.7-code": 262_144,
+        "kimi-k2.6": 262_144,
         // Grok
         "grok-composer-2.5-fast": 200_000,
         "grok-4.6": 500_000,
@@ -235,7 +236,7 @@ public enum ContextWindows {
         "gemini": 1_048_576,
         "codex": 1_050_000,
         "claude": 200_000,
-        "kimi": 256_000,
+        "kimi": 262_144,
         "grok": 500_000,
         "cursor": 200_000,
         "ollama": 262_144,
@@ -250,9 +251,15 @@ public enum ContextWindows {
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's
-    /// `resolveContextWindow`: provider-scoped model id wins, then global model
-    /// id, then the provider fallback, then a universal 200k default.
-    public static func resolve(provider: String?, model: String?) -> Int {
+    /// `resolveContextWindow`: a positive provider-discovered limit wins, then
+    /// provider-scoped model id, global model id, provider fallback, and the
+    /// universal 200k default.
+    public static func resolve(
+        provider: String?, model: String?, discoveredContextWindow: Int? = nil
+    ) -> Int {
+        if let discoveredContextWindow, discoveredContextWindow > 0 {
+            return discoveredContextWindow
+        }
         if let provider, let model,
             let hit = providerModelOverrides[provider.lowercased()]?[model.lowercased()]
         {

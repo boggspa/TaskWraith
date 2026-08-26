@@ -834,6 +834,14 @@ describe('EnsembleParticipantsAboveRow', () => {
         fastModeEnabled: false,
         serviceTier: 'standard'
       })
+      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3-256k')).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k3-256k',
+        reasoningEffort: 'max',
+        thinkingEnabled: true,
+        fastModeEnabled: false,
+        serviceTier: 'standard'
+      })
       expect(createEnsembleParticipantAddConfiguration('ollama', 'ornith-1.5:35b')).toMatchObject({
         provider: 'ollama',
         model: 'ornith-1.5:35b',

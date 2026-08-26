@@ -48,9 +48,12 @@ describe('estimateKimiAcpTokenUsage', () => {
 })
 
 describe('kimiCostRateModel', () => {
-  it('keeps K3 on its own rate even if a stale fast tier is supplied', () => {
+  it('keeps each K3 route on its own rate even if a stale fast tier is supplied', () => {
     expect(kimiCostRateModel('kimi-k3', 'fast')).toBe('kimi-k3')
     expect(kimiCostRateModel('kimi-code/k3', 'fast')).toBe('kimi-k3')
+    expect(kimiCostRateModel('kimi-k3-256k', 'fast')).toBe('kimi-k3-256k')
+    expect(kimiCostRateModel('k3-256k', 'fast')).toBe('kimi-k3-256k')
+    expect(kimiCostRateModel('kimi-code/k3-256k', 'fast')).toBe('kimi-k3-256k')
   })
 
   it('maps K2.7 fast mode to the published Highspeed pricing row', () => {

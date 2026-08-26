@@ -914,6 +914,7 @@ declare global {
           }>
           defaultReasoningEffort?: string | null
           additionalSpeedTiers?: string[]
+          contextWindow?: number
           ultraTaskSupported?: boolean
         }>
       >

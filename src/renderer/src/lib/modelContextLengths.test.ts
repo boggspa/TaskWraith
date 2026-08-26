@@ -86,7 +86,7 @@ describe('buildModelContextLengthGroups', () => {
     expect(kimiGroup).toBeDefined()
     const row = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.7-code')
     expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(256_000)
+    expect(row!.contextWindow).toBe(262_144)
     expect(row!.formatted).toBe('256k')
   })
 
@@ -97,10 +97,23 @@ describe('buildModelContextLengthGroups', () => {
       ?.models.find((model) => model.modelId === 'kimi-k3')
 
     expect(row).toMatchObject({
-      contextWindow: 256_000,
+      contextWindow: 262_144,
       maxContextWindow: 1_048_576,
       formatted: '256k–1.0M'
     })
+  })
+
+  it('shows the quota-efficient K3 route as an exact fixed 256k window', () => {
+    const groups = buildModelContextLengthGroups()
+    const row = groups
+      .find((group) => group.provider === 'kimi')
+      ?.models.find((model) => model.modelId === 'kimi-k3-256k')
+
+    expect(row).toMatchObject({
+      contextWindow: 262_144,
+      formatted: '256k'
+    })
+    expect(row?.maxContextWindow).toBeUndefined()
   })
 
   it('gemini flash-lite resolves to 200k', () => {

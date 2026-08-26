@@ -438,7 +438,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     expect(data.totalTokens).toBeGreaterThan(5_000)
   })
 
-  it('keeps canonical K2.7 Coding and K3 plus legacy K2.6 variants and relabels them', () => {
+  it('keeps K2.7 Coding, both K3 routes, and legacy K2.6 variants with distinct labels', () => {
     const records: UsageRecord[] = [
       baseRecord({
         id: 'k3',
@@ -446,6 +446,13 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
         provider: 'kimi',
         model: 'kimi-k3',
         totalTokens: 3_000
+      }),
+      baseRecord({
+        id: 'k3-256k',
+        timestamp: NOW - 20_000,
+        provider: 'kimi',
+        model: 'kimi-k3-256k',
+        totalTokens: 2_500
       }),
       baseRecord({
         id: 'k27',
@@ -492,7 +499,8 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ]
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
     expect(data.modelBreakdown.map((m) => m.label)).toEqual([
-      'K3',
+      'K3 (up to 1M)',
+      'K3 256K',
       'K2.7 Coding',
       'Kimi K2.6',
       'Kimi K2.6 Thinking'

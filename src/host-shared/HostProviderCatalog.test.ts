@@ -75,6 +75,23 @@ describe('HostProviderCatalog', () => {
     ])
   })
 
+  it('offers both K3 routes as regular-speed models with the full K3 effort ladder', () => {
+    const entry = hostProviderCatalogEntry('kimi')
+    expect(entry).not.toBeNull()
+    expect(entry!.models.map((model) => model.modelId)).toEqual([
+      'kimi-k2.7-code',
+      'kimi-k3',
+      'kimi-k3-256k'
+    ])
+    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
+      expect(entry!.models.find((model) => model.modelId === modelId)?.reasoning).toEqual([
+        { reasoningId: 'low', label: 'Low', available: true },
+        { reasoningId: 'high', label: 'High', available: true },
+        { reasoningId: 'max', label: 'Max', available: true }
+      ])
+    }
+  })
+
   it('marks providers without manual login flows as empty', () => {
     expect(hostProviderAuthFlows('grok')).toEqual([])
     expect(hostProviderAuthFlows('pi')).toEqual([])

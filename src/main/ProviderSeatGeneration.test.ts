@@ -70,6 +70,26 @@ describe('ProviderSeatGeneration', () => {
     expect(first.ordinal).toBe(1)
   })
 
+  it('rotates Kimi continuity when switching between the 1M and fixed-256K routes', () => {
+    const longRoute = { ...input('kimi'), model: 'kimi-k3' }
+    const previous = planProviderSeatGeneration(undefined, longRoute).generation
+    const runtime = planProviderSeatRuntime(
+      previous,
+      { ...longRoute, model: 'kimi-k3-256k' },
+      { linkedProviderSessionId: 'session-kimi-long' }
+    )
+
+    expect(runtime).toMatchObject({
+      shouldRotateSession: true,
+      transition: {
+        freshSessionRequired: true,
+        cacheImpact: 'full',
+        causes: ['model'],
+        generation: { ordinal: 2 }
+      }
+    })
+  })
+
   it('models Claude system and thinking invalidation by cache tier', () => {
     const initial = planProviderSeatGeneration(undefined, input()).generation
     const first = recordProviderSeatCacheEvidence(initial, { cacheReadInputTokens: 12 })

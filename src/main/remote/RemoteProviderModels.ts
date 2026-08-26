@@ -12,6 +12,7 @@ interface ProviderModelSourceRow {
   disabledReason?: unknown
   supportedReasoningEfforts?: unknown
   defaultReasoningEffort?: unknown
+  contextWindow?: unknown
 }
 
 function isProviderModelSourceRow(value: unknown): value is ProviderModelSourceRow {
@@ -59,7 +60,12 @@ function normalizeProviderModel(row: ProviderModelSourceRow): ProviderModelOptio
     ...(typeof row.disabledReason === 'string' ? { disabledReason: row.disabledReason } : {}),
     supportedReasoningEfforts: normalizeReasoningOptions(row.supportedReasoningEfforts),
     defaultReasoningEffort:
-      typeof row.defaultReasoningEffort === 'string' ? row.defaultReasoningEffort : null
+      typeof row.defaultReasoningEffort === 'string' ? row.defaultReasoningEffort : null,
+    ...(typeof row.contextWindow === 'number' &&
+    Number.isSafeInteger(row.contextWindow) &&
+    row.contextWindow > 0
+      ? { contextWindow: row.contextWindow }
+      : {})
   }
 }
 

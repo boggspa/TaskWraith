@@ -67,6 +67,7 @@ describe('resolveUltraTaskReasoningEffort', () => {
     it('returns max for kimi-k3', () => {
       const result = resolveUltraTaskReasoningEffort('kimi', 'kimi-k3')
       expect(result).toBe('max')
+      expect(resolveUltraTaskReasoningEffort('kimi', 'kimi-k3-256k')).toBe('max')
     })
 
     it('returns high for kimi-k2.7-code', () => {
@@ -138,6 +139,7 @@ describe('isUltraTaskSupported', () => {
 
   it('returns true for kimi-k3', () => {
     expect(isUltraTaskSupported('kimi', 'kimi-k3')).toBe(true)
+    expect(isUltraTaskSupported('kimi', 'kimi-k3-256k')).toBe(true)
   })
 
   it('returns true for grok-4.6', () => {
@@ -174,6 +176,7 @@ describe('getAvailableReasoningEfforts', () => {
     expect(efforts).toContain('low')
     // Should not contain ultracode since Kimi's highest is max
     expect(efforts).not.toContain('ultracode')
+    expect(getAvailableReasoningEfforts('kimi', 'kimi-k3-256k')).toEqual(efforts)
   })
 
   it('returns at least high for any provider', () => {

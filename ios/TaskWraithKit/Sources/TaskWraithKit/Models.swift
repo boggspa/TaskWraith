@@ -476,6 +476,7 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
     public let disabledReason: String?
     public let supportedReasoningEfforts: [ReasoningEffortOption]?
     public let defaultReasoningEffort: String?
+    public let contextWindow: Int?
 
     public init(
         id: String,
@@ -484,7 +485,8 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
         disabled: Bool? = nil,
         disabledReason: String? = nil,
         supportedReasoningEfforts: [ReasoningEffortOption]? = nil,
-        defaultReasoningEffort: String? = nil
+        defaultReasoningEffort: String? = nil,
+        contextWindow: Int? = nil
     ) {
         self.id = id
         self.label = label
@@ -493,6 +495,7 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
         self.disabledReason = disabledReason
         self.supportedReasoningEfforts = supportedReasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort
+        self.contextWindow = contextWindow
     }
 }
 

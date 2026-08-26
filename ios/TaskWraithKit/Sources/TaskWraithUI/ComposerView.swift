@@ -971,6 +971,21 @@ struct Composer: View {
     /// usage (the ring only surfaces once a run has consumed context), so a
     /// fresh composer stays clean. Window size comes from the model-id →
     /// provider-fallback table; usage is the latest run summary's total tokens.
+    private func discoveredContextWindow(provider: String?, modelId: String?) -> Int? {
+        guard let provider, let modelId else { return nil }
+        let key = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawModel = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let catalogModelId: String
+        if key == "kimi", ["k3", "kimi-code/k3"].contains(rawModel) {
+            catalogModelId = "kimi-k3"
+        } else if key == "kimi", ["k3-256k", "kimi-code/k3-256k"].contains(rawModel) {
+            catalogModelId = "kimi-k3-256k"
+        } else {
+            catalogModelId = modelId
+        }
+        return model.providerModels[key]?.first { $0.id == catalogModelId }?.contextWindow
+    }
+
     private var contextUsedPercent: Double? {
         // Ensemble: the donut reflects the per-participant rows — the participant
         // CLOSEST to its own window (max %), so the ring agrees with the popover.
@@ -988,7 +1003,10 @@ struct Composer: View {
         let used = active.totalTokens ?? ((active.tokensIn ?? 0) + (active.tokensOut ?? 0))
         guard used > 0 else { return nil }
         let window = ContextWindows.resolve(
-            provider: active.provider ?? card.provider, model: active.model)
+            provider: active.provider ?? card.provider,
+            model: active.model,
+            discoveredContextWindow: discoveredContextWindow(
+                provider: active.provider ?? card.provider, modelId: active.model))
         guard window > 0 else { return nil }
         return min(100, Double(used) / Double(window) * 100)
     }
@@ -1018,7 +1036,10 @@ struct Composer: View {
                         model: entry.model,
                         usedTokens: entry.contextTokens ?? 0,
                         windowTokens: ContextWindows.resolve(
-                            provider: entry.provider, model: entry.model))
+                            provider: entry.provider,
+                            model: entry.model,
+                            discoveredContextWindow: discoveredContextWindow(
+                                provider: entry.provider, modelId: entry.model)))
                 }
         }
         // Solo only — an ensemble without a projected roster shows nothing rather
@@ -1037,7 +1058,11 @@ struct Composer: View {
                 provider: providerStr,
                 model: active.model,
                 usedTokens: used,
-                windowTokens: ContextWindows.resolve(provider: providerStr, model: active.model))
+                windowTokens: ContextWindows.resolve(
+                    provider: providerStr,
+                    model: active.model,
+                    discoveredContextWindow: discoveredContextWindow(
+                        provider: providerStr, modelId: active.model)))
         ]
     }
 

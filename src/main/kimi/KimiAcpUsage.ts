@@ -11,6 +11,11 @@
  */
 
 import { estimateTokensFromChars } from '../../shared/tokenEstimate'
+import {
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_MODEL_ID,
+  canonicalKimiK3ModelId
+} from '../../shared/kimiModels'
 
 export const KIMI_ACP_TOKEN_ESTIMATE_SOURCE = 'kimi-acp-visible-text-estimate'
 
@@ -60,9 +65,9 @@ export function kimiCostRateModel(model: string, serviceTier?: string | null): s
   const normalized = String(model || '')
     .trim()
     .toLowerCase()
-  if (normalized === 'kimi-k3' || normalized === 'k3' || normalized === 'kimi-code/k3') {
-    return 'kimi-k3'
-  }
+  const canonicalK3 = canonicalKimiK3ModelId(normalized)
+  if (canonicalK3 === KIMI_K3_MODEL_ID) return KIMI_K3_MODEL_ID
+  if (canonicalK3 === KIMI_K3_256K_MODEL_ID) return KIMI_K3_256K_MODEL_ID
   return serviceTier === 'fast' ? 'kimi-k2.7-code-highspeed' : 'kimi-k2.7-code'
 }
 

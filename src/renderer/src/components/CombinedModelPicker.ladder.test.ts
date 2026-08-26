@@ -226,6 +226,9 @@ describe('unavailable reasoning presentation', () => {
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
       mutable: true
     })
+    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3-256k', kimiMutable)).toEqual({
+      mutable: true
+    })
     const ollamaToggle = buildLadderModel('ollama', [
       { value: 'off', label: 'Off' },
       { value: 'on', label: 'On' }

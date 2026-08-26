@@ -144,6 +144,7 @@ import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/com
 import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
+import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -4383,6 +4384,7 @@ function App(): React.JSX.Element {
     if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
+    if (provider === 'kimi') return agentModelsByProvider.kimi || KIMI_DEFAULT_MODELS
     // Pi was missing here and fell through to `[]`, so its picker group was
     // permanently empty ("Loading models…" is this picker's EMPTY state, not a
     // pending one) no matter how many upstream keys were stored. Main already
@@ -4392,7 +4394,7 @@ function App(): React.JSX.Element {
     // therefore state-backed and CANNOT move to the static switch, where `[]`
     // would instead mean "permanently unusable".
     if (provider === 'pi') return agentModelsByProvider.pi || []
-    // Everything else is a fixed catalogue (gemini/kimi/grok/cursor/mistral).
+    // Everything else is a fixed catalogue (gemini/grok/cursor/mistral).
     // Mistral belongs here rather than with Pi above: the Vibe seat's two
     // models are fixed in the CLI's own bundled config and need no key
     // discovery.
@@ -7014,7 +7016,9 @@ function App(): React.JSX.Element {
       const models = await window.api.getAgentModels(provider)
       const normalized =
         provider === 'kimi'
-          ? KIMI_DEFAULT_MODELS
+          ? Array.isArray(models) && models.length > 0
+            ? models.map((model) => ({ ...model, label: model.label || model.id }))
+            : KIMI_DEFAULT_MODELS
           : provider === 'ollama'
             ? mergeOllamaModelCatalog(
                 Array.isArray(models)
@@ -22918,13 +22922,25 @@ function App(): React.JSX.Element {
       )?.contextLength,
     [installedOllamaModelsForContext]
   )
-  const ollamaLiveContextLength =
-    currentProvider === 'ollama' ? resolveLiveOllamaContextLength(contextModelId) : undefined
+  const resolveLiveKimiContextLength = useCallback(
+    (modelId?: string | null): number | undefined => {
+      const canonical = canonicalKimiTaskWraithModelId(modelId)
+      if (!canonical) return undefined
+      return agentModelsByProvider.kimi?.find((model) => model.id === canonical)?.contextWindow
+    },
+    [agentModelsByProvider.kimi]
+  )
+  const liveProviderContextLength =
+    currentProvider === 'ollama'
+      ? resolveLiveOllamaContextLength(contextModelId)
+      : currentProvider === 'kimi'
+        ? resolveLiveKimiContextLength(contextModelId)
+        : undefined
   const contextWindowSize = resolveContextWindow(
     isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
     contextModelId,
     latestRunLimits.totalTokenLimit,
-    ollamaLiveContextLength
+    liveProviderContextLength
   )
   // Honest current-context proxy for the donut (NOT cumulativeChatTokens, which
   // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
@@ -22972,7 +22988,9 @@ function App(): React.JSX.Element {
           resolveWindowTokens: (participant) =>
             participant.provider === 'ollama'
               ? resolveLiveOllamaContextLength(participant.model)
-              : undefined,
+              : participant.provider === 'kimi'
+                ? resolveLiveKimiContextLength(participant.model)
+                : undefined,
           messages: currentChat?.messages || []
         }
       )

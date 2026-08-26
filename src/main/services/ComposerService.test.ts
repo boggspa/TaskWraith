@@ -922,6 +922,22 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
+  it('threads fixed-256K K3 effort while rejecting a stale Fast selection', async () => {
+    const payload = await compose(
+      { provider: 'kimi' },
+      {
+        selectedModelType: 'kimi-k3-256k',
+        kimiReasoningEffort: 'low',
+        kimiFastMode: true,
+        kimiThinkingEnabled: false
+      }
+    )
+    expect(payload.model).toBe('kimi-k3-256k')
+    expect(payload.reasoningEffort).toBe('low')
+    expect(payload.serviceTier).toBe('standard')
+    expect(payload.kimiThinking).toBe(true)
+  })
+
   it('threads Muse Meta /effort onto payload.reasoningEffort', async () => {
     const payload = await compose(
       { provider: 'muse' },

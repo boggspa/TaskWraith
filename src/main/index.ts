@@ -117,6 +117,7 @@ import {
 import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
 import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './kimi/KimiAcpClient'
+import { discoverKimiManagedModelRows } from './kimi/KimiModelCatalog'
 import {
   KIMI_ACP_PRODUCTION_POSTURE_VERSION,
   assertKimiSpawnAuthority,
@@ -56914,6 +56915,13 @@ if (isGeminiMcpBridgeProcess) {
           return staticFallback
         }
       }
+      if (provider === 'kimi') {
+        const discovered = await discoverKimiManagedModelRows(
+          join(os.homedir(), '.kimi-code'),
+          staticFallback
+        )
+        return discovered ? publishLiveModels(discovered) : staticFallback
+      }
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()
         const liveModels = (
@@ -56995,9 +57003,9 @@ if (isGeminiMcpBridgeProcess) {
     // hierarchical provider→model picker. Async (the Codex live list +
     // Ollama tags can take seconds); fires on establish and pushes through
     // the broadcaster whenever it lands.
-    // Gemini remains retired and static iOS offers remain unchanged. The sole
-    // dynamic addition is S4's already-admitted AntiGravity catalog; it is
-    // absent whenever the snapshot is pending, disconnected, or withdrawn.
+    // Gemini remains retired and static iOS offers remain unchanged. Kimi's
+    // credential-blind config projection and S4's admitted AntiGravity rows
+    // are the dynamic catalogs; neither exposes provider credentials.
     const remoteProviderModelsPublisher = createRemoteProviderModelsPublisher({
       build: async () => {
         // Capture one coherent conditional-provider snapshot per generation:

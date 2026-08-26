@@ -40,7 +40,9 @@ describe('shortModelName', () => {
     expect(shortModelName('kimi', 'K2.7 Coding Thinking', 'kimi-k2.7-code-thinking')).toBe(
       'K2.7 Coding'
     )
-    expect(shortModelName('kimi', 'K3', 'kimi-k3')).toBe('K3')
+    expect(shortModelName('kimi', 'K3 (up to 1M)', 'kimi-k3')).toBe('K3 1M')
+    expect(shortModelName('kimi', 'K3 (plan-capped 256K)', 'kimi-k3')).toBe('K3 256K cap')
+    expect(shortModelName('kimi', 'K3 256K', 'kimi-k3-256k')).toBe('K3 256K')
     expect(shortModelName('kimi', 'Kimi K2.6 Thinking', 'kimi-k2.6-thinking')).toBe('K2.6')
   })
 
@@ -296,6 +298,16 @@ describe('reasoningDisplayLabel', () => {
         kimiThinkingEnabled: true
       })
     ).toBe('Max')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3-256k',
+        modelLabel: 'K3 256K',
+        kimiReasoningEffort: 'high',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('High')
   })
 
   it('Gemini returns empty (no reasoning concept yet)', () => {
@@ -590,17 +602,27 @@ describe('formatComposerModelChip', () => {
     ).toBe('K2.7 Coding Thinking')
   })
 
-  it('Kimi shell + K3 shows its selected always-on effort', () => {
+  it('Kimi shell distinguishes both K3 routes and shows their selected effort', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k3',
-        modelLabel: 'K3',
+        modelLabel: 'K3 (up to 1M)',
         kimiReasoningEffort: 'high',
         kimiThinkingEnabled: true
       })
-    ).toBe('K3 High')
+    ).toBe('K3 1M High')
+    expect(
+      formatComposerModelChip({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3-256k',
+        modelLabel: 'K3 256K',
+        kimiReasoningEffort: 'low',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('K3 256K Low')
   })
 
   it('TaskWraith native shell + codex provider falls back to "GPT-5.5 · High"', () => {

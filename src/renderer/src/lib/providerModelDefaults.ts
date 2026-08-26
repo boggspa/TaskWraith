@@ -11,6 +11,12 @@ import {
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS
 } from '../../../shared/grok45Models'
+import {
+  KIMI_K27_MODEL_ID,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_REASONING_EFFORTS
+} from '../../../shared/kimiModels'
 
 interface CodexModelOption {
   id: string
@@ -29,6 +35,8 @@ interface CodexModelOption {
   /** Ollama `/api/show` capability names retained for model-aware controls. */
   capabilities?: string[]
   additionalSpeedTiers?: string[]
+  /** Provider-discovered effective context window for the current account. */
+  contextWindow?: number
   ultraTaskSupported?: boolean
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when this model is retired by the
    * provider. When set, the model picker renders a small clock + ordinal-
@@ -245,7 +253,7 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
 const CLAUDE_DEFAULT_MODELS = withCuratedUltraTaskSupport(CLAUDE_DEFAULT_MODEL_ROWS)
 const KIMI_DEFAULT_MODEL_ROWS = [
   {
-    id: 'kimi-k2.7-code',
+    id: KIMI_K27_MODEL_ID,
     label: 'K2.7 Coding',
     description: 'Standard and Highspeed tiers with always-on thinking',
     isDefault: true,
@@ -257,15 +265,22 @@ const KIMI_DEFAULT_MODEL_ROWS = [
     // Managed `kimi-code/k3` alias: 256K on Moderato and up to 1M on
     // Allegretto+, with Low/High/Max effort choices. No Highspeed tier — Fast
     // stays a K2.7 Coding capability — and K2.7 Coding remains the default.
-    id: 'kimi-k3',
-    label: 'K3',
+    id: KIMI_K3_MODEL_ID,
+    label: 'K3 (up to 1M)',
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
-    supportedReasoningEfforts: [
-      { reasoningEffort: 'low' },
-      { reasoningEffort: 'high' },
-      { reasoningEffort: 'max' }
-    ],
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    id: KIMI_K3_256K_MODEL_ID,
+    label: 'K3 256K',
+    description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
     defaultReasoningEffort: 'max'
   }
 ] satisfies CodexModelOption[]

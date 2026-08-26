@@ -137,6 +137,8 @@ describe('Kimi reasoning picker selection', () => {
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
+    expect(resolveKimiReasoningPickerSelection('kimi-k3-256k', 'low')).toBe('low')
+    expect(resolveKimiReasoningPickerSelection('k3-256k', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
     expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'ultraTask')).toBe(
       'ultraTask'
@@ -146,6 +148,10 @@ describe('Kimi reasoning picker selection', () => {
   it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
     expect(buildKimiReasoningPickerPatch('kimi-k3', 'high')).toEqual({
       reasoningEffort: 'high',
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k3-256k', 'low')).toEqual({
+      reasoningEffort: 'low',
       thinkingEnabled: true
     })
     expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'on')).toEqual({
@@ -737,17 +743,23 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
   })
 
-  it('lists K3 after K2.7 Coding with Low, High, and Max but no Fast capability', () => {
+  it('lists both K3 routes after K2.7 Coding with Low, High, and Max but no Fast', () => {
     const kimi = getEnsembleModelDefaults('kimi')
-    expect(kimi.modelOptions.map((option) => option.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
-    expect(getEnsembleReasoningOptions('kimi', 'kimi-k3').map((option) => option.value)).toEqual([
-      'low',
-      'high',
-      'max'
+    expect(kimi.modelOptions.map((option) => option.id)).toEqual([
+      'kimi-k2.7-code',
+      'kimi-k3',
+      'kimi-k3-256k'
     ])
+    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
+      expect(getEnsembleReasoningOptions('kimi', modelId).map((option) => option.value)).toEqual([
+        'low',
+        'high',
+        'max'
+      ])
+      expect(kimi.fastModeCapableModelIds.has(modelId)).toBe(false)
+    }
     // K3 has no Highspeed tier — Fast stays a K2.7 Coding exclusive — and the
     // provider default remains K2.7 Coding.
-    expect(kimi.fastModeCapableModelIds.has('kimi-k3')).toBe(false)
     expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
     expect(
       resolveEnsembleParticipantSettings(
@@ -760,6 +772,17 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         })
       )
     ).toMatchObject({ reasoningEffort: 'max', thinkingEnabled: true, fastModeEnabled: false })
+    expect(
+      resolveEnsembleParticipantSettings(
+        participant({
+          provider: 'kimi',
+          model: 'kimi-k3-256k',
+          reasoningEffort: 'high',
+          thinkingEnabled: false,
+          fastModeEnabled: true
+        })
+      )
+    ).toMatchObject({ reasoningEffort: 'high', thinkingEnabled: true, fastModeEnabled: false })
   })
 
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {

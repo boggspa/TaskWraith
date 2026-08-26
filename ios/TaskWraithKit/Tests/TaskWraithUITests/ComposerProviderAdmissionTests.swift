@@ -215,4 +215,16 @@ struct ComposerProviderAdmissionTests {
         #expect(TWTheme.isRetiredProvider("gemini"))
         #expect(!TWTheme.liveSelectableProviderIds.contains("gemini"))
     }
+
+    @Test func kimiCatalogDecodesPlanSpecificContextWindows() throws {
+        let message = try JSONDecoder().decode(
+            ProviderModelsMessage.self,
+            from: Data(
+                #"{"providers":[{"provider":"kimi","models":[{"id":"kimi-k3","label":"K3 1M","contextWindow":1048576},{"id":"kimi-k3-256k","label":"K3 256K","contextWindow":262144}]}]}"#.utf8
+            ))
+        let models = message.providers.first?.models ?? []
+
+        #expect(models.first { $0.id == "kimi-k3" }?.contextWindow == 1_048_576)
+        #expect(models.first { $0.id == "kimi-k3-256k" }?.contextWindow == 262_144)
+    }
 }

@@ -11,6 +11,7 @@ import {
 } from '../../../shared/grok45Models'
 import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailability'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
+import { canonicalKimiTaskWraithModelId } from '../../../shared/kimiModels'
 
 /**
  * 1.0.5-EW50 — Shared model-id → human-readable display name
@@ -99,7 +100,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // Settings → Model usage list). The legacy K2.6 aliases remain
   // readable for historical usage rows; new dispatch defaults to
   // K2.7 Coding, with K3 selectable alongside it. ─────────────
-  'kimi-k3': 'K3',
+  'kimi-k3': 'K3 (up to 1M)',
+  'kimi-k3-256k': 'K3 256K',
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
   'kimi-k2.7-thinking': 'K2.7 Coding Thinking',
@@ -264,6 +266,9 @@ export function canonicalModelIdForProvider(
     if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
     if (provider === 'mistral') return 'devstral-small'
     if (provider === 'muse') return 'muse-spark-1.2'
+  }
+  if (provider === 'kimi') {
+    return canonicalKimiTaskWraithModelId(key) || trimmed
   }
   if (provider === 'mistral') {
     // Vibe speaks aliases on the ACP surface but its own config stores the

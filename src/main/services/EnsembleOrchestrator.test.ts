@@ -17705,17 +17705,19 @@ Next action:
     expect(harness.dispatched[0].serviceTier).toBe('standard')
   })
 
-  it('dispatches K3 effort with thinking on and rejects a stale Fast tier', async () => {
+  it.each(['kimi-k3', 'kimi-k3-256k'])(
+    'dispatches %s effort with thinking on and rejects a stale Fast tier',
+    async (model) => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
-        id: 'kimi-k3',
+        id: 'kimi-reviewer',
         provider: 'kimi',
         enabled: true,
         role: 'Reviewer',
         instructions: 'Review.',
         order: 1,
-        model: 'kimi-k3',
+        model,
         permissionPresetId: 'read_only',
         reasoningEffort: 'high',
         thinkingEnabled: false,
@@ -17750,7 +17752,7 @@ Next action:
             message.metadata?.kind === 'ensembleParticipant'
         )?.metadata
       ).toMatchObject({
-        ensembleModel: 'kimi-k3',
+        ensembleModel: model,
         ensembleReasoningEffort: 'high'
       })
     )
@@ -17762,7 +17764,8 @@ Next action:
           message.metadata?.kind === 'ensembleParticipant'
       )?.metadata?.ensembleThinkingEnabled
     ).toBeUndefined()
-  })
+    }
+  )
 
   // A2 (1.0.3) — `dmTargetParticipantId` scopes the round to a
   // single chip. The orchestrator's machinery still drives the run

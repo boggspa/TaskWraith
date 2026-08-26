@@ -28,9 +28,10 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('claude', 'claude-mythos-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-4-6')).toBe(200_000)
-    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(256_000)
-    expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(256_000)
-    expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(256_000)
+    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(262_144)
+    expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)
+    expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(262_144)
+    expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(262_144)
     expect(resolveContextWindow('grok', 'grok-composer-2.5-fast')).toBe(200_000)
     expect(resolveContextWindow('grok', 'grok-4.5')).toBe(500_000)
     expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)
@@ -83,9 +84,11 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'llama3.2:3b')).toBe(131_072)
   })
 
-  it('prefers live Ollama context_length from /api/tags over static table', () => {
+  it('prefers provider-discovered context lengths over static tables', () => {
     expect(resolveContextWindow('ollama', 'qwen3.5:9b', undefined, 128_000)).toBe(128_000)
     expect(resolveContextWindow('ollama', 'unknown-local', undefined, 65_536)).toBe(65_536)
+    expect(resolveContextWindow('kimi', 'kimi-k3', undefined, 1_048_576)).toBe(1_048_576)
+    expect(resolveContextWindow('kimi', 'kimi-k3', undefined, 262_144)).toBe(262_144)
   })
 
   it('uses provider fallbacks for all ten provider identities when the model is unknown', () => {
@@ -93,7 +96,7 @@ describe('resolveContextWindow', () => {
       gemini: 1_048_576,
       codex: 1_050_000,
       claude: 200_000,
-      kimi: 256_000,
+      kimi: 262_144,
       grok: 500_000,
       cursor: 200_000,
       ollama: 262_144,
