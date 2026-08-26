@@ -377,6 +377,71 @@ describe('runMuseProviderFromIpc', () => {
     )
   })
 
+  it('prepares a route-bound MCP server before launching an advertised Muse turn', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const prepareTaskWraithMcp = vi.fn(async () => ({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        TASKWRAITH_PARENT_PROVIDER: 'muse',
+        TASKWRAITH_RUN_ID: 'run-muse-1'
+      }
+    }))
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        taskWraithMcpAdvertised: true,
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      }),
+      baseDeps({ runMuseProvider, prepareTaskWraithMcp })
+    )
+
+    expect(prepareTaskWraithMcp).toHaveBeenCalledWith({
+      appRunId: 'run-muse-1',
+      appChatId: 'chat-1',
+      workspacePath: '/tmp/muse-ws',
+      approvalMode: 'plan',
+      taskWraithMcpProfileId: 'taskwraith-full-v1'
+    })
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpSettings: {
+          mcp_servers: {
+            taskwraith: expect.objectContaining({
+              transport: 'stdio',
+              mode: 'required',
+              env: expect.objectContaining({ TASKWRAITH_PARENT_PROVIDER: 'muse' })
+            })
+          }
+        }
+      })
+    )
+  })
+
+  it('does not start an advertised Muse turn when its required MCP bridge cannot be prepared', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const settleSetupFailure = vi.fn()
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({ taskWraithMcpAdvertised: true }),
+      baseDeps({
+        runMuseProvider,
+        settleSetupFailure,
+        prepareTaskWraithMcp: async () => {
+          throw new Error('broker unavailable')
+        }
+      })
+    )
+
+    expect(runMuseProvider).not.toHaveBeenCalled()
+    expect(settleSetupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/MCP bridge.*broker unavailable/i) })
+    )
+  })
+
   it('derives Muse native delegation only from the signed UltraTask posture marker', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome())
     const auth = async () => JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } })

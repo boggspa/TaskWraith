@@ -339,6 +339,7 @@ describe('MCP bridge route-from-env authority', () => {
   it('keeps only valid provider stamps and bounded opaque route identifiers', () => {
     expect(normalizeMcpBridgeParentProvider('pi')).toBe('pi')
     expect(normalizeMcpBridgeParentProvider('ollama')).toBe('ollama')
+    expect(normalizeMcpBridgeParentProvider('muse')).toBe('muse')
     expect(
       normalizeMcpBridgeRoute({
         appRunId: 'r'.repeat(513),
@@ -356,5 +357,19 @@ describe('MCP bridge route-from-env authority', () => {
     if (!built.ok) throw new Error('Expected valid endpoint environment.')
     expect(built.env[MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]).toBe('gemini')
     expect(built.env[MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]).toBe(tokenA)
+
+    const muse = buildLiveEnvironment({
+      socketPath: socketA,
+      brokerToken: tokenA,
+      instanceEpoch: instanceEpochA,
+      bridgeLogEpoch: 8,
+      parentProvider: 'muse'
+    })
+    expect(muse.ok).toBe(true)
+    if (!muse.ok) throw new Error('Expected valid Muse endpoint environment.')
+    expect(parseMcpBridgeRouteFromEnv(muse.env)).toMatchObject({
+      ok: true,
+      value: { parentProvider: 'muse' }
+    })
   })
 })

@@ -31,6 +31,7 @@ import {
   projectMuseAuthJson,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
+import type { MuseMcpSettings } from './MuseMcpConfig'
 import { buildMuseSkillPinSettings, type MuseSkillPinSettings } from './MuseSkillPin'
 import {
   createMuseSessionLogTailer,
@@ -86,6 +87,8 @@ export interface MuseRunInput {
    * into the private run home and deleted with that lease at teardown.
    */
   readonly authJsonText?: string | null
+  /** App-owned, route-bound MCP entries for this one isolated Muse run. */
+  readonly mcpSettings?: MuseMcpSettings
   readonly sourceEnvironment?: NodeJS.ProcessEnv
   readonly spawn: MuseRunSpawn
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
@@ -110,6 +113,7 @@ export interface MuseRunInput {
     readonly runId: string
     readonly sourceEnvironment?: NodeJS.ProcessEnv
     readonly skillPinSettings?: MuseSkillPinSettings
+    readonly mcpSettings?: MuseMcpSettings
   }) => MuseIsolatedHomeLease
 }
 
@@ -202,7 +206,8 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
             ultraTaskDelegationAutoAllow: true
           })
         }
-      : {})
+      : {}),
+    ...(input.mcpSettings ? { mcpSettings: input.mcpSettings } : {})
   })
   const skillPinHash = hashSkillPinSettings(lease.settingsPath)
 

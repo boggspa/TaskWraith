@@ -1651,6 +1651,7 @@ import {
   type MuseIpcBridgeDeps
 } from './muse/MuseIpcBridge'
 import { isMuseCredentialPresent } from './muse/MuseProbe'
+import { prepareMuseTaskWraithMcpInvocation } from './muse/MuseTaskWraithMcpBridge'
 import {
   clearMistralQuotaAnchor,
   configureMistralQuotaStore,
@@ -35192,7 +35193,18 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
     museIpcCancels.delete(runId)
   },
   readAuthJsonText: () => readDefaultMuseAuthJsonText(),
-  readMetaApiKeyEnv: () => process.env.META_API_KEY
+  readMetaApiKeyEnv: () => process.env.META_API_KEY,
+  prepareTaskWraithMcp: (input) =>
+    prepareMuseTaskWraithMcpInvocation(input, {
+      runtime: mcpBridgeRuntime,
+      getCommandStatus: taskwraithMcpBridgeCommandStatus,
+      unavailableMessage: taskwraithMcpBridgeUnavailableMessage,
+      staticRegistrationArgs: taskwraithMcpBridgeStaticRegistrationArgs,
+      isolatedInstanceId:
+        instanceLaunchPosture.kind === 'packaged-isolated'
+          ? instanceLaunchPosture.instanceId
+          : undefined
+    })
 }
 
 async function getMuseProviderStatus() {
@@ -35213,16 +35225,21 @@ async function getMuseProviderStatus() {
 }
 
 function museMcpStatusSnapshot() {
+  const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+  const enabled = bridgeCommandStatus.available
   return {
     provider: 'muse' as const,
-    available: false,
-    enabled: false,
-    source: 'none',
-    serverName: null,
+    available: enabled,
+    enabled,
+    source: enabled ? 'bridge' : 'none',
+    serverName: enabled ? GEMINI_MCP_SERVER_NAME : null,
     tools: [] as string[],
     sections: [] as unknown[],
-    message:
-      'Muse v1 is opaque CLI (muse exec --json); TaskWraith does not attach an MCP broker.'
+    message: enabled
+      ? 'TaskWraith writes its route-bound MCP broker into each disposable Muse settings document before the run starts. This status reports attachment capability, not a particular live session.'
+      : `TaskWraith MCP bridge executable is unavailable for Muse: ${
+          bridgeCommandStatus.error || 'unknown error'
+        }`
   }
 }
 

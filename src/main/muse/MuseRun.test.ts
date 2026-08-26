@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
+import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
 import { runMuseProvider, type MuseRunSpawnHandle } from './MuseRun'
 
 const temps: string[] = []
@@ -279,6 +280,61 @@ describe('runMuseProvider', () => {
     expect(observedArgv).toContain('--disable-shell')
     expect(observedArgv).not.toContain('--yolo')
     expect(observedArgv).not.toContain('--disable-sandbox')
+  })
+
+  it('materializes a TaskWraith MCP route only inside the one-run Muse home', async () => {
+    const temporaryRoot = tempDir('muse-run-mcp-')
+    const workspacePath = tempDir('muse-ws-mcp-')
+    let observedSettings: Record<string, unknown> | undefined
+
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'yield when done',
+      runId: 'run-mcp',
+      temporaryRoot,
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+        env: { TASKWRAITH_PARENT_PROVIDER: 'muse', TASKWRAITH_RUN_ID: 'run-mcp' }
+      }),
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-mcp',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedSettings = JSON.parse(
+          readFileSync(join(input.env.XDG_CONFIG_HOME, 'muse', 'settings.json'), 'utf8')
+        )
+        expect(input.env.TASKWRAITH_RUN_ID).toBeUndefined()
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: {
+              kind: 'run_terminal_completed',
+              terminal: 'completed',
+              text: '@Builder done'
+            }
+          })
+        ])
+      }
+    })
+
+    expect(observedSettings).toMatchObject({
+      mcp_servers: {
+        taskwraith: {
+          transport: 'stdio',
+          mode: 'required',
+          enabled: true,
+          env: { TASKWRAITH_PARENT_PROVIDER: 'muse', TASKWRAITH_RUN_ID: 'run-mcp' }
+        }
+      }
+    })
   })
 
   it('cleans the private home when OAuth projection is rejected before spawn', async () => {

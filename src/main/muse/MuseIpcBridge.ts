@@ -9,10 +9,16 @@ import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:c
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { EffectiveRunPermissions } from '../store/types'
+import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
+import {
+  buildMuseTaskWraithMcpSettings,
+  type MuseMcpSettings,
+  type MuseTaskWraithMcpInvocation
+} from './MuseMcpConfig'
 import { parseMuseAuthJsonCredential, type MuseProbeBinary } from './MuseProbe'
+import type { MuseTaskWraithMcpPreparationInput } from './MuseTaskWraithMcpBridge'
 import {
   runMuseProvider,
   type MuseRunOutcome,
@@ -33,6 +39,8 @@ export interface MuseIpcRunPayload {
   model?: string | null
   reasoningEffort?: string | null
   approvalMode?: string | null
+  taskWraithMcpAdvertised?: boolean
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   effectivePermissions?: Pick<EffectiveRunPermissions, 'subThreadDelegationAutoAllowSource'> | null
   providerSessionId?: string | null
   /** Optional BYOK; never placed on argv — piped via `--api-key-stdin`. */
@@ -73,10 +81,16 @@ export interface MuseIpcBridgeDeps {
   readAuthJsonText?: () => Promise<string | null>
   readMetaApiKeyEnv?: () => string | null | undefined
   hasInjectedCredential?: () => boolean | Promise<boolean>
+  /** Build the app-owned, exact-route MCP child invocation for a Muse turn. */
+  prepareTaskWraithMcp?: (
+    input: MuseTaskWraithMcpPreparationInput
+  ) => Promise<MuseTaskWraithMcpInvocation | null>
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
   now?: () => number
 }
+
+export type { MuseTaskWraithMcpPreparationInput as MuseIpcMcpPreparationInput } from './MuseTaskWraithMcpBridge'
 
 const MUSE_LOGIN_HINT =
   'Muse is not signed in. Run `muse login` (Settings → Providers → Muse → Open Terminal), or set META_API_KEY.'
@@ -346,6 +360,36 @@ export async function runMuseProviderFromIpc(
     return
   }
 
+  let mcpSettings: MuseMcpSettings | undefined
+  if (payload.taskWraithMcpAdvertised === true) {
+    try {
+      if (!deps.prepareTaskWraithMcp) {
+        throw new Error('TaskWraith MCP preparation is unavailable for Muse.')
+      }
+      const invocation = await deps.prepareTaskWraithMcp({
+        appRunId: runId,
+        appChatId: route.appChatId,
+        workspacePath,
+        approvalMode: payload.approvalMode,
+        taskWraithMcpProfileId: payload.taskWraithMcpProfileId
+      })
+      if (!invocation) {
+        throw new Error('TaskWraith MCP bridge did not return a route-bound Muse invocation.')
+      }
+      mcpSettings = buildMuseTaskWraithMcpSettings(invocation)
+    } catch (error) {
+      failSetup(
+        deps,
+        event,
+        payload,
+        `Muse requires its TaskWraith MCP bridge for this turn: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      return
+    }
+  }
+
   let cancelled = false
   const cancel = () => {
     cancelled = true
@@ -385,6 +429,7 @@ export async function runMuseProviderFromIpc(
       ultraTaskDelegationAutoAllow,
       apiKey: credential.apiKey,
       authJsonText: credential.authJsonText,
+      ...(mcpSettings ? { mcpSettings } : {}),
       spawn: deps.spawn,
       shouldCancel: () => cancelled,
       onEvent: (museEvent) => {

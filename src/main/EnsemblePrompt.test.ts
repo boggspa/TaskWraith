@@ -361,6 +361,8 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('subagent_wait')
     expect(prompt).toContain('subagent_read_result')
     expect(prompt).not.toContain('delegate_wave (all chats)')
+    expect(prompt).toContain('submit_reminder_decision')
+    expect(prompt).toContain('never a TaskWraith handoff')
   })
 
   it('builds bounded tagged context with roster and role instructions', () => {

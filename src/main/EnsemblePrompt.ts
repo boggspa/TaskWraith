@@ -1743,6 +1743,11 @@ export function buildEnsembleParticipantPromptProjection(
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers the alias is ambiguous and TaskWraith fails it closed. A unique in-round mention promotes that remaining participant; ambiguous aliases are skipped with a warning. Use the participant picker or a unique role/model alias for a new composer send.',
     '- If another participant should handle this turn, write a unique @Role/@Model mention. When `ensemble_yield` is listed, you may instead call it with a short reason and optional target.',
     '- Never search for or invent an Ensemble lifecycle tool. When `ensemble_yield` is listed, call that exact tool with the target and optional reason; when it is not listed, use the unique-mention fallback. If a listed tool fails, report the failure rather than probing another broker or alias.',
+    ...(input.participant.provider === 'muse'
+      ? [
+          '- Muse transport rule: `submit_reminder_decision` belongs to an internal Muse reminder observer; it is never a TaskWraith handoff. Do not call or wait for it. If `ensemble_yield` is listed, use that exact tool; otherwise end your ordinary assistant response with one unique @Role/@Model mention and stop.'
+        ]
+      : []),
     ...(input.participant.provider === 'grok'
       ? [
           `- Grok direct-tool rule: only when the Ensemble lifecycle tool is listed for this run, invoke its exact MCP alias through Grok's native \`use_tool\` wrapper. For a listed yield tool, set \`tool_name\` to \`${grokDirectYieldTool}\` and pass the yield input once. Do not call \`search_tool\`, do not use \`taskwraith-broker__ensemble_yield\`, do not probe alternate aliases, and do not route through a Cursor workspace proxy; those bind the wrong provider context. If the exact listed call fails, report that failure instead of tool-discovery retries; if it is absent, use the unique-mention fallback.`

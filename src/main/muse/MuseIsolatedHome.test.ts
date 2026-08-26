@@ -23,6 +23,7 @@ import {
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
 import { MUSE_LISTABLE_BUNDLED_SKILL_NAMES, museBundledSkillUri } from './MuseSkillPin'
+import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
 
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'taskwraith-muse-isolated-home-test-'))
 const leases: MuseIsolatedHomeLease[] = []
@@ -109,6 +110,34 @@ describe('Muse isolated home', () => {
     ) as typeof MUSE_EMPTY_TRUST_DOCUMENT
     expect(trust).toEqual(MUSE_EMPTY_TRUST_DOCUMENT)
     expect(trust.projects).toEqual({})
+  })
+
+  it('writes app-owned MCP route authority only into the disposable settings document', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'mcp-settings',
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+        env: {
+          TASKWRAITH_PARENT_PROVIDER: 'muse',
+          TASKWRAITH_MCP_BROKER_TOKEN: 'a'.repeat(64)
+        }
+      })
+    })
+    leases.push(lease)
+
+    const settings = JSON.parse(readFileSync(lease.settingsPath, 'utf8')) as {
+      mcp_servers?: Record<string, { command?: string; env?: Record<string, string> }>
+    }
+    expect(settings.mcp_servers?.taskwraith).toMatchObject({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      env: { TASKWRAITH_PARENT_PROVIDER: 'muse' }
+    })
+    expect(lease.env.TASKWRAITH_MCP_BROKER_TOKEN).toBeUndefined()
+
+    expect(lease.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    expect(existsSync(lease.settingsPath)).toBe(false)
   })
 
   it('projects Muse OAuth into a private run-local auth.json and removes it at teardown', () => {

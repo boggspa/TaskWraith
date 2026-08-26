@@ -413,21 +413,21 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'muse') {
-    // Opaque muse exec --json seat. No TaskWraith MCP broker in v1; containment
-    // is argv + isolated HOME/XDG + skill pin (src/main/muse/*). Keep this
-    // branch honest — falling through to the Claude default mis-labels transport.
+    // Opaque muse exec --json seat. Its TaskWraith broker is injected into the
+    // disposable HOME/XDG settings document, while native Muse tools retain
+    // their provider-owned containment.
     return {
       provider,
       label: providerLabel(provider),
       transport: 'muse-exec-json',
       runChannel: 'run-agent',
-      capabilitySource: 'provider',
+      capabilitySource: 'mixed',
       features: {
         persistentSessions: true,
         appManagedApprovals: false,
         workspaceGrants: false,
-        agentBenchMcpBridge: false,
-        providerManagedMcp: false,
+        agentBenchMcpBridge: true,
+        providerManagedMcp: true,
         nativeThreadTools: true,
         hostCommandFallback: false
       },
@@ -438,17 +438,17 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: true,
         sessionResumption: true,
-        perThreadMcp: false,
+        perThreadMcp: true,
         assistantTextStreaming: 'token'
       },
       capabilityCaveats: [
         {
-          id: 'muse-opaque-cli-no-tw-mcp',
+          id: 'muse-opaque-cli-brokered-mcp',
           severity: 'info',
           capability: 'approvalModes',
-          title: 'Muse is an opaque CLI seat',
+          title: 'Muse uses an isolated, brokered MCP bridge',
           message:
-            'Muse runs via `muse exec --json` under an isolated home. Native tool calls are projected into the transcript ActivityStack from durable session.jsonl for display. TaskWraith does not attach an MCP broker in v1 and does not show host per-tool approval cards for Muse-native effects — containment remains argv/sandbox + isolated home.'
+            'Muse runs via `muse exec --json` under an isolated home. TaskWraith writes its route-bound stdio MCP broker into that disposable settings document before launch, so lifecycle and governed TaskWraith tools are available for this run only. Native Muse tools remain provider-owned and are projected from durable session logs; they do not become TaskWraith per-tool approval cards.'
         }
       ]
     }
