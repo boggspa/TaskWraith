@@ -29,6 +29,19 @@ export interface RightDockSurfaceDef {
   hint?: string
 }
 
+export type RightDockCanvasSurface = 'browser' | 'sketch' | 'mesh' | 'simulator'
+
+export const RIGHT_DOCK_CANVAS_SURFACES: ReadonlyArray<{
+  id: RightDockCanvasSurface
+  label: string
+  hint: string
+}> = [
+  { id: 'browser', label: 'Browser', hint: 'Empty browser with its own address bar' },
+  { id: 'sketch', label: 'Sketch Canvas', hint: 'Shapes, freehand marks, arrows & text' },
+  { id: 'mesh', label: 'Mesh Canvas', hint: 'Local 3D scenes and models' },
+  { id: 'simulator', label: 'Simulator Canvas', hint: 'Live iOS Simulator preview' }
+]
+
 /** Lightweight id/label pair for the Inspector's 7 sub-views, flattened into
  * the ⌘K palette so power users can jump straight to Diff / Safety / etc. */
 export interface RightDockInspectorViewDef {
@@ -56,6 +69,8 @@ interface RightDockSurfaceSwitcherProps {
   activeTab: RightDockTab
   onActivate: (id: RightDockTab) => void
   onClose: () => void
+  /** Canvas is one dock tab but four distinct launchable surfaces. */
+  onActivateCanvasSurface?: (surface: RightDockCanvasSurface) => void
   /** Inspector sub-views, flattened into the ⌘K palette (optional). */
   inspectorTabs?: RightDockInspectorViewDef[]
   activeInspectorTab?: string
@@ -67,6 +82,7 @@ export function RightDockSurfaceSwitcher({
   activeTab,
   onActivate,
   onClose,
+  onActivateCanvasSurface,
   inspectorTabs,
   activeInspectorTab,
   onSelectInspectorTab
@@ -114,8 +130,7 @@ export function RightDockSurfaceSwitcher({
       // except our own search box, so ⌘K can still toggle the palette closed.
       const target = event.target as HTMLElement | null
       const editable =
-        !!target &&
-        (target.isContentEditable || /^(input|textarea|select)$/i.test(target.tagName))
+        !!target && (target.isContentEditable || /^(input|textarea|select)$/i.test(target.tagName))
       if (editable && target !== searchRef.current) return
       event.preventDefault()
       if (open && mode === 'command') {
@@ -162,6 +177,11 @@ export function RightDockSurfaceSwitcher({
 
   const pickInspectorView = (id: string): void => {
     onSelectInspectorTab?.(id)
+    setOpen(false)
+  }
+
+  const pickCanvasSurface = (surface: RightDockCanvasSurface): void => {
+    onActivateCanvasSurface?.(surface)
     setOpen(false)
   }
 
@@ -241,8 +261,29 @@ export function RightDockSurfaceSwitcher({
               <div className="right-dock-surface-group" key={group.id}>
                 <div className="right-dock-surface-group-label">{group.label}</div>
                 {items.map((tab) => {
+                  if (tab.id === 'canvas' && onActivateCanvasSurface) {
+                    return RIGHT_DOCK_CANVAS_SURFACES.map((surface) => (
+                      <button
+                        key={`canvas-${surface.id}`}
+                        type="button"
+                        role="menuitem"
+                        className={`right-dock-surface-card${tab.enabled ? '' : ' disabled'}`}
+                        disabled={!tab.enabled}
+                        title={tab.enabled ? undefined : 'Open a chat first'}
+                        onClick={() => pickCanvasSurface(surface.id)}
+                      >
+                        <span className="right-dock-surface-card-icon" aria-hidden>
+                          <CanvasChoiceIcon kind={surface.id} />
+                        </span>
+                        <span className="right-dock-surface-card-main">
+                          <span className="right-dock-surface-card-title">{surface.label}</span>
+                          <span className="right-dock-surface-card-hint">{surface.hint}</span>
+                        </span>
+                      </button>
+                    ))
+                  }
                   const isActive = tab.id === activeTab
-                  const reason = tab.enabled ? tab.hint : DISABLED_REASON[tab.id] ?? tab.hint
+                  const reason = tab.enabled ? tab.hint : (DISABLED_REASON[tab.id] ?? tab.hint)
                   return (
                     <button
                       key={tab.id}
@@ -278,9 +319,19 @@ export function RightDockSurfaceSwitcher({
       )}
 
       {open && mode === 'command' && (
-        <div className="right-dock-surface-menu right-dock-command" role="dialog" aria-label="Jump to a surface">
+        <div
+          className="right-dock-surface-menu right-dock-command"
+          role="dialog"
+          aria-label="Jump to a surface"
+        >
           <div className="right-dock-command-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              aria-hidden
+            >
               <circle cx="11" cy="11" r="7" />
               <path d="M21 21l-4-4" />
             </svg>
@@ -347,5 +398,38 @@ export function RightDockSurfaceSwitcher({
         </div>
       )}
     </div>
+  )
+}
+
+function CanvasChoiceIcon({ kind }: { kind: RightDockCanvasSurface }) {
+  if (kind === 'browser') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M4 12h16M12 4c2.4 2.5 3.6 5.2 3.6 8S14.4 17.5 12 20c-2.4-2.5-3.6-5.2-3.6-8S9.6 6.5 12 4Z" />
+      </svg>
+    )
+  }
+  if (kind === 'sketch') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="m5 18 1-4L16.5 3.5a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L10 18l-4 1Z" />
+        <path d="m14.8 5.2 4 4" />
+      </svg>
+    )
+  }
+  if (kind === 'mesh') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z" />
+        <path d="m4.3 7.7 7.7 4.4 7.7-4.4M12 12.1V21" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="7" y="3" width="10" height="18" rx="2" />
+      <path d="M10 6h4M11 18h2" />
+    </svg>
   )
 }

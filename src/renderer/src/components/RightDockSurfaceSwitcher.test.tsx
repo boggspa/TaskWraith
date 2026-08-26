@@ -1,9 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { RightDockSurfaceSwitcher } from './RightDockSurfaceSwitcher'
+import { RIGHT_DOCK_CANVAS_SURFACES, RightDockSurfaceSwitcher } from './RightDockSurfaceSwitcher'
 
 describe('RightDockSurfaceSwitcher', () => {
+  it('exposes every Canvas type as its own dock destination', () => {
+    expect(RIGHT_DOCK_CANVAS_SURFACES.map((surface) => surface.label)).toEqual([
+      'Browser',
+      'Sketch Canvas',
+      'Mesh Canvas',
+      'Simulator Canvas'
+    ])
+  })
+
   it('recognizes Home as the active first-class surface', () => {
     const html = renderToStaticMarkup(
       <RightDockSurfaceSwitcher

@@ -787,12 +787,14 @@ import {
 } from './lib/appDriveDockState'
 import {
   getPendingMeshCanvasOpenRequest,
+  requestMeshCanvasOpen,
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
 import { isCanvasDockPresentationEvent } from './lib/canvasPresentation'
 import {
   getPendingSimulatorCanvasOpenRequest,
   isSimulatorCanvasPresentationEvent,
+  requestSimulatorCanvasOpen,
   subscribeSimulatorCanvasOpenRequests
 } from './lib/simulatorCanvasLaunch'
 import {
@@ -26242,6 +26244,28 @@ function App(): React.JSX.Element {
     openRightDockPanel(id)
     setRightDockTab(id)
   }
+  const activateCanvasDockSurface = (
+    surface: 'browser' | 'sketch' | 'mesh' | 'simulator'
+  ): void => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    activateRightDockTab('canvas')
+    if (surface === 'mesh') {
+      requestMeshCanvasOpen(chatId)
+      return
+    }
+    if (surface === 'simulator') {
+      requestSimulatorCanvasOpen(chatId)
+      return
+    }
+    const open =
+      surface === 'sketch'
+        ? window.api.canvas?.openSketchEmbedded({ chatId, presentation: 'dock' })
+        : window.api.canvas?.openEmbedded({ chatId, presentation: 'dock' })
+    void open?.catch((error) => {
+      console.warn(`Canvas ${surface} surface could not be opened:`, error)
+    })
+  }
   // `mesh_scene_present` is an explicit request to put a 3D scene in front of
   // the user. Focus the active chat's existing Canvas surface; an event for a
   // different chat never steals the user's current context. CanvasDockPanel
@@ -31120,6 +31144,7 @@ function App(): React.JSX.Element {
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
+    activateCanvasDockSurface,
     activeDiff,
     activeProvider,
     activeRightDockTab,

@@ -124,6 +124,7 @@ import type { MainAppLayoutProps } from './MainAppLayout.types'
 export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const {
   activateRightDockTab,
+  activateCanvasDockSurface,
   activeDiff,
   activeRightDockTab,
   activeSidebarChatId,
@@ -2438,6 +2439,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 tabs={dockTabDefs}
                 activeTab={activeRightDockTab}
                 onActivate={activateRightDockTab}
+                onActivateCanvasSurface={activateCanvasDockSurface}
                 inspectorTabs={INSPECTOR_TAB_META}
                 activeInspectorTab={rightTab}
                 onSelectInspectorTab={(id) => openInspectorTab(id)}

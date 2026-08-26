@@ -90,13 +90,12 @@ export function CanvasComposerButton({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSignal])
 
-  const handleOpen = async (url: string): Promise<void> => {
+  const handleOpen = async (): Promise<void> => {
     setError(null)
     setBusyMode('web')
     try {
       if (!chatId) throw new Error('Canvas requires an active chat.')
       const result = await window.api.canvas?.openEmbedded({
-        url,
         chatId,
         presentation: 'dock'
       })
@@ -316,9 +315,9 @@ export function CanvasComposerButton({
                   Browser
                 </div>
                 <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  Open a website, your dev server, or a running app.
+                  Open an empty browser, then navigate from its address bar.
                 </div>
-                <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
+                <CanvasPaneLauncher onOpen={() => void handleOpen()} />
               </div>
               <div
                 style={{

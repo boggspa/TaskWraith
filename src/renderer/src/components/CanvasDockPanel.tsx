@@ -17,7 +17,6 @@ import { CanvasPane } from './CanvasPane'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
 import { friendlyCanvasError } from './CanvasComposerButton'
-import { isNavigableCanvasUrl } from '../lib/canvasBrowserUrl'
 import {
   isCanvasDockPresentationEvent,
   selectUnownedDockPresentations
@@ -233,6 +232,7 @@ export function canvasSummaryLabel(summary: {
   // A sketch/chart record url is an internal sketch:// or chart:// id — never a useful label.
   if (summary.driver === 'sketch') return 'Sketch canvas'
   if (summary.driver === 'chart') return 'Chart'
+  if (summary.driver === 'web' && (!summary.url || summary.url === 'about:blank')) return 'Browser'
   if (summary.url) {
     try {
       const parsed = new URL(summary.url)
@@ -675,10 +675,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     }
   }
 
-  const openWeb = (url: string): void => {
+  const openWeb = (): void => {
     const api = window.api?.canvas
     if (!api) return
-    void runOpen('web', () => api.openEmbedded({ url, chatId }))
+    void runOpen('web', () => api.openEmbedded({ chatId }))
   }
 
   const openSketch = (): void => {
@@ -776,7 +776,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       const result =
         session.kind === 'sketch'
           ? await api.openSketchWindow({ chatId })
-          : await api.openWindow({ url: summary?.url || 'http://localhost:3000', chatId })
+          : await api.openWindow({
+              ...(summary?.url && summary.url !== 'about:blank' ? { url: summary.url } : {}),
+              chatId
+            })
       if (chatIdRef.current === chatId && result && !result.ok) {
         setError(friendlyCanvasError(result.error))
       }
@@ -1083,8 +1086,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
               <div className="canvas-dock-browser-empty-icon">
                 <GlobeGlyph size={25} />
               </div>
-              <h2 id="canvas-browser-empty-title">Start browsing</h2>
-              <p>Enter a URL to open a page</p>
+              <h2 id="canvas-browser-empty-title">Browser</h2>
+              <p>Open a blank tab, then use its address bar.</p>
               <div className="canvas-dock-browser-launcher">
                 <CanvasPaneLauncher onOpen={openWeb} />
               </div>
@@ -1128,7 +1131,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                 url={activeSummary?.url}
                 overlayGuard
                 chrome={
-                  active.kind === 'web' && isNavigableCanvasUrl(activeSummary?.url) ? (
+                  active.kind === 'web' ? (
                     <CanvasBrowserChrome
                       key={active.canvasId}
                       chatId={chatId}
