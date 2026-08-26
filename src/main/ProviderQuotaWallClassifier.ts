@@ -25,8 +25,8 @@ import type { ProviderId } from './store/types'
  * Returns `{ hit:false }` for Ollama unconditionally: a LOCAL Ollama server has
  * no quota/rate-limit primitive (its `server busy … maximum pending requests`
  * is transient backpressure, not a billing wall). A cloud-proxied Ollama could
- * 429, but TaskWraith's Ollama transport is local-first; failing closed here
- * avoids a class of false positives.
+ * 429, but this classifier covers TaskWraith's local Ollama path; failing
+ * closed here avoids a class of false positives.
  */
 
 export interface QuotaWallVerdict {

@@ -303,7 +303,7 @@ export function useComposerSuggestion(
     ? selection?.source === 'local-preference'
       ? `${suggestion.explanation || 'Based on current TaskWraith state.'} Locally ranked from your accept and dismiss feedback in this thread.`
       : selection?.source === 'foundation-model-proposal'
-        ? `${suggestion.explanation || 'Based on current TaskWraith state.'} An on-device model ranked only host-approved choices.`
+        ? `${suggestion.explanation || 'Based on current TaskWraith state.'} Apple Foundation Models on this Mac ranked only host-approved choices.`
         : suggestion.explanation || null
     : null
 

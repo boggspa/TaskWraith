@@ -375,7 +375,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   persists to UserDefaults; TWTheme tokens became @MainActor computed
   statics; RootView keys on store.revision so a change rebuilds the
   tree. Light themes deferred (the app is a dark-surface design).
-- **Full identicon catalog on-device**: all 54 named characters baked
+- **Full identicon catalog bundled in the app**: all 54 named characters baked
   from design-assets SVGs via qlmanage (WebKit renders the CSS-classed
   SVGs perfectly; Xcode's native SVG importer can't) → 512px PNGs in
   the package Resources (~3MB) loaded via Bundle.module.
@@ -798,7 +798,7 @@ Part 2 (landed once the Diff Studio agent cleared the bridge files):
 
 All nine findings closed. Remaining for TestFlight: archive
 validation + the independent crypto review (dossier ready), visual
-check of the flattened primary icon, on-device APNs field test.
+check of the flattened primary icon, and APNs field testing on physical hardware.
 
 ## v0.35 — Diff Studio
 

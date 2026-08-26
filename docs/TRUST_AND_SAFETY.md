@@ -4,7 +4,7 @@
   <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
 </p>
 
-TaskWraith is a local-first agent workbench, but it is still software that can
+TaskWraith keeps its own work records on your computer, but it can still
 coordinate powerful tools against a developer machine. Treat it like a shell,
 editor, git client, browser automation surface, and remote-control bridge in one
 app: start with low-risk work, inspect what it asks for, and only widen trust
@@ -73,7 +73,7 @@ TaskWraith's authority is centered on the desktop app:
   count: the shared guard `closeoutNarrativeHasAuthoredNumeral`; the main
   process (`src/main/CloseoutSummarizer.ts`, "Foundation Models returned a
   quantitative claim reserved for the app-owned receipt"); the Swift daemon,
-  which instructs the on-device model not to emit numbers *and* backstops that
+  which instructs Apple Foundation Models not to emit numbers *and* backstops that
   instruction in code rather than trusting it; and the renderer, which drops a
   non-conforming summary and falls back to a deterministic line. The reason to
   read this as a trust boundary rather than a formatting rule: a count a model
@@ -207,7 +207,7 @@ credentials may remain in the provider's own config locations.
 
 ## What Can Leave the Machine
 
-Local-first does not mean air-gapped. Data can leave your computer when you choose a
+TaskWraith is not air-gapped. Data can leave your computer when you choose a
 feature that necessarily talks to another system:
 
 - Cloud provider runs send prompts, selected context, tool outputs, and sometimes

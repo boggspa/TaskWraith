@@ -1,7 +1,7 @@
 # Legal and Privacy Boundaries
 
-- TaskWraith is a public-source, local-first desktop application with an
-  optional paired iOS companion and relay transport.
+- TaskWraith is a desktop application with source published under Apache-2.0,
+  plus an optional paired iOS companion and relay transport.
 - TaskWraith is not affiliated with, endorsed by, or sponsored by any supported AI
   provider, CLI vendor, or platform vendor.
 - Provider names are used only to identify compatible integrations and user

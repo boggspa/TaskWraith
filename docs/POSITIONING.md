@@ -2,10 +2,10 @@
 
 ## The defensible claim
 
-TaskWraith is a **credible, differentiated local-first control plane for working
-with multiple coding-agent providers**. It gives provider seats a shared or
-isolated work topology, explicit authority, and inspectable local evidence;
-qualified tool-capable seats also receive workspace-scoped tools and approvals.
+TaskWraith **coordinates coding agents from multiple providers in one desktop
+app**. Provider seats can share a transcript or work in isolated sub-threads,
+with explicit authority and inspectable evidence kept by the app; qualified
+tool-capable seats also receive workspace-scoped tools and approvals.
 
 That is stronger and more useful than “provider switching,” but it is not a
 claim of category leadership, universal native-tool parity, or enterprise

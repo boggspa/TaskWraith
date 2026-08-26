@@ -5824,7 +5824,7 @@ export const TranscriptPanel = memo(
                                   closeoutProvider
                                     ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
                                     : closeoutModel
-                                      ? `Close-out summarized on-device by ${msg.metadata?.closeoutModel}`
+                                      ? `Close-out summarized by ${msg.metadata?.closeoutModel} on this Mac`
                                       : 'TaskWraith close-out'
                                 }
                               >

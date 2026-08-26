@@ -52,7 +52,7 @@
     {
       "id": "encrypted-rich-notification-envelope",
       "status": "verified-in-repo",
-      "claim": "Optional rich notification content is opened on-device with a domain-separated X25519/HKDF/AES-GCM envelope.",
+      "claim": "Optional rich notification content is decrypted by the Notification Service Extension on the phone with a domain-separated X25519/HKDF/AES-GCM envelope.",
       "anchors": [
         {
           "path": "ios/TaskWraithKit/Sources/TaskWraithKit/PushSeal.swift",

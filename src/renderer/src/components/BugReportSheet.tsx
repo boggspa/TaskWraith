@@ -318,8 +318,8 @@ export function BugReportSheet({
   )
 
   // Open the same report as a pre-filled GitHub issue (the public bug channel
-  // now that TaskWraith is open-source). Reuses the captured context; the local
-  // Save report stays as an offline fallback.
+  // now that TaskWraith has a public repository). Reuses the captured context;
+  // the local Save report stays as an offline fallback.
   const handleOpenGitHubIssue = useCallback(() => {
     setTitleTouched(true)
     if (trimmedTitle.length === 0) {

@@ -155,9 +155,10 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}      />
     )
-    // The "It wraps …" sentence is an OFFER surface, so the retired Gemini must
-    // not appear there even though its chat history is preserved elsewhere.
-    expect(html).toContain('local-first desktop workbench')
+    // The "TaskWraith brings together …" sentence is an OFFER surface, so the
+    // retired Gemini must not appear there even though its chat history is
+    // preserved elsewhere.
+    expect(html).toContain('TaskWraith brings together')
     expect(html).toContain('<strong>Codex</strong>')
     expect(html).toContain('<strong>Ollama</strong>')
     expect(html).toContain('<strong>Pi</strong>')
@@ -350,7 +351,7 @@ describe('FirstLaunchSheet', () => {
     expect(card).toContain('Open Settings')
   })
 
-  it('renders Ollama as a local-first provider; no sign-in shown without a login handler', () => {
+  it('renders Ollama as a local provider; no sign-in shown without a login handler', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}

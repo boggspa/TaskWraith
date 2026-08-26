@@ -159,7 +159,7 @@ interface ProviderRowSpec {
   /** The provider has no bounded CLI logout command. Keep the setup action
    * visible without promising a sign-out operation TaskWraith cannot perform. */
   logoutUnsupported?: boolean
-  /** Local-first rows (Ollama) that still expose an OPTIONAL cloud sign-in
+  /** Local Ollama rows that still expose an OPTIONAL cloud sign-in
    * button (e.g. `ollama signin` for ollama.com) without the generic sign-out
    * (which is driven by run status, not cloud auth). */
   cloudSignIn?: boolean
@@ -408,7 +408,7 @@ export function FirstLaunchSheet({
       id: 'ollama',
       label: 'Ollama',
       description:
-        'Local models running through Ollama. Best for on-device Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
+        'Local models running through Ollama. Best for Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
       variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable
@@ -532,7 +532,7 @@ export function FirstLaunchSheet({
 
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
-            TaskWraith is a local-first desktop workbench for AI coding agents. It brings together{' '}
+            TaskWraith brings together{' '}
             <strong>Codex</strong>,{' '}
             <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>,{' '}
             <strong>Cursor</strong>, local <strong>Ollama</strong> models, and BYOK{' '}
@@ -542,8 +542,8 @@ export function FirstLaunchSheet({
                 , plus your conditionally configured <strong>AntiGravity</strong> seat
               </>
             ) : null}{' '}
-            inside one consistent
-            UI so you can run solo chats, side chats, delegated workers, and Ensembles side by side.
+            inside one desktop UI so you can run solo chats, side chats, delegated workers, and
+            Ensembles side by side.
             Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
             Historical Gemini chats and usage stay visible for reporting even though Gemini is not
             offered for new runs.{' '}
@@ -1079,7 +1079,7 @@ function ProviderCard({
           {showSignInAction && onProviderLogin && (
             <button
               type="button"
-              // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
+              // Ollama rows prioritize the local runtime — the cloud sign-in is
               // optional, so it's a ghost button, not the primary "you must sign
               // in" CTA the cloud providers use.
               className={signInClass}

@@ -21,7 +21,7 @@ mac:
   extendInfo:
     NSCameraUsageDescription: TaskWraith Debug requests access to the device's camera.
     NSMicrophoneUsageDescription: TaskWraith Debug requests access to the device's microphone.
-    NSSpeechRecognitionUsageDescription: TaskWraith Debug transcribes audio files you point it at entirely on-device (no audio leaves your Mac).
+    NSSpeechRecognitionUsageDescription: TaskWraith Debug transcribes audio files you point it at with macOS Speech Recognition without sending audio from your Mac.
     NSDocumentsFolderUsageDescription: TaskWraith Debug requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: TaskWraith Debug requests access to the user's Downloads folder.
     NSLocalNetworkUsageDescription: TaskWraith Debug discovers and connects to your paired iPhone or iPad on your local network to stream live run events, approval requests, and tool outputs.

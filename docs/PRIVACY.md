@@ -6,10 +6,10 @@
 
 ## The short version
 
-TaskWraith is local-first. Your chats, workspace history, approvals, settings,
-and run records are stored on your device by default. The prompts, files, and
-tool context needed for a run still go to the AI provider or local runtime you
-choose.
+TaskWraith stores your chats, workspace history, approvals, settings, and run
+records in its app-data directory on your computer by default. The prompts,
+files, and tool context needed for a run still go to the AI provider or local
+runtime you choose.
 
 Electron builds configured with a first-party activity endpoint do not send
 first-party product-observation reports unless you affirmatively choose
@@ -148,7 +148,7 @@ Product-observation information is used only to:
 - identify broken release assets or update feeds;
 - plan distribution capacity; and
 - gauge whether continued maintenance and product work on the free,
-  open-source project are useful.
+  Apache-2.0-licensed project are useful.
 
 It is not sold, rented, used for advertising, combined with data-broker
 profiles, or used to make automated decisions about a person.
@@ -239,7 +239,7 @@ allow it, and uses the coarse state above to provide the requested Lock Screen
 or Dynamic Island card. Turning Live Activities off stops future starts and
 updates without affecting ordinary paired-app use.
 
-TaskWraith's price and open-source licence are context for the maintenance
+TaskWraith's price and Apache-2.0 licence are context for the maintenance
 purpose; they do not remove privacy rights, require you to share data, or
 themselves constitute consent.
 

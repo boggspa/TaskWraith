@@ -323,9 +323,9 @@ interface SettingsPanelProps {
   currencyOverestimatePercent?: number
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
-  /** Settings → General toggle for on-device AI close-out summaries. */
+  /** Settings → General toggle for Apple Foundation Models close-out summaries. */
   closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
-  /** Settings → General toggle for the bounded on-device continuation ranker. */
+  /** Settings → General toggle for the bounded Foundation Models continuation ranker. */
   composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
@@ -459,9 +459,9 @@ interface SettingsPanelProps {
     currencyOverestimatePercent?: number
     /** Settings → General toggle for Task Complete / Final Summary cards. */
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
-    /** Settings → General toggle for on-device AI close-out summaries. */
+    /** Settings → General toggle for Apple Foundation Models close-out summaries. */
     closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
-    /** Settings → General toggle for the bounded on-device continuation ranker. */
+    /** Settings → General toggle for the bounded Foundation Models continuation ranker. */
     composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
@@ -2840,7 +2840,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'licenses',
       'attribution',
       'third party',
-      'open source',
+      'source code',
+      'Apache-2.0',
       'chromium'
     ],
     scope: 'global'
@@ -6546,7 +6547,7 @@ export function SettingsPanel({
                   <span>Prioritize safe composer suggestions with Foundation Models</span>
                 </label>
                 <p className="settings-hint">
-                  Lets on-device Apple Foundation Models rank only host-approved suggestion
+                  Lets Apple Foundation Models on this Mac rank only host-approved suggestion
                   categories and opaque IDs. It never receives prompt text, transcripts, agent
                   output, tool output, telemetry, or suggestion wording. Turning this off keeps
                   deterministic task continuity and local aggregate preference ranking.
@@ -6563,10 +6564,10 @@ export function SettingsPanel({
                   <span>Summarize close-outs with Foundation Models</span>
                 </label>
                 <p className="settings-hint">
-                  When a run or Ensemble round finishes, writes the close-out paragraph with
-                  on-device Apple Foundation Models instead of quoting the final reply. Requires
-                  macOS 26; the deterministic close-out text is used when unavailable. Nothing
-                  leaves this Mac.
+                  When a run or Ensemble round finishes, TaskWraith uses Apple Foundation Models on
+                  this Mac to write the close-out paragraph instead of quoting the final reply.
+                  Requires macOS 26; the deterministic close-out text is used when unavailable.
+                  Nothing leaves this Mac.
                 </p>
               </div>
 
@@ -8222,7 +8223,7 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   {claudeApiKeyStorageUnavailable
                     ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on-device.'}
+                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
                 </p>
 
                 <label className="settings-label">Claude CLI binary</label>
@@ -8334,7 +8335,7 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   {kimiApiKeyStorageUnavailable
                     ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on-device; not supplied to managed ACP.'}
+                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on this Mac; not supplied to managed ACP.'}
                 </p>
 
                 <label className="settings-label">Kimi CLI binary</label>
