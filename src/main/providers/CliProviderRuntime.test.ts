@@ -623,6 +623,63 @@ describe('Pi CLI status', () => {
   })
 })
 
+describe('Mistral Vibe auth status', () => {
+  it("uses Vibe's ACP auth result and scrubs ambient metered-key credentials", async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      if (String(candidate).endsWith('vibe-acp')) {
+        return {
+          isFile: () => true,
+          isSymbolicLink: () => false
+        } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    const probeMistralAuthStatus = vi.fn(
+      async ({
+        binaryPath,
+        env
+      }: Parameters<NonNullable<CliProviderRuntimeDependencies['probeMistralAuthStatus']>>[0]) => {
+        expect(binaryPath).toMatch(/vibe-acp$/)
+        expect(env.MISTRAL_API_KEY).toBeUndefined()
+        expect(env.MISTRAL_TOKEN).toBeUndefined()
+        return {
+          authState: 'authenticated' as const,
+          credentialPresent: true,
+          authSource: 'os_keyring',
+          version: '2.24.3',
+          probeStatus: 'verified' as const
+        }
+      }
+    )
+
+    try {
+      await expect(
+        getCliProviderStatus('mistral', {
+          env: {
+            PATH: '/fake/bin',
+            MISTRAL_API_KEY: 'metered-key-must-not-qualify-the-plan-seat',
+            MISTRAL_TOKEN: 'metered-token-must-not-qualify-the-plan-seat'
+          },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeMistralAuthStatus
+        })
+      ).resolves.toMatchObject({
+        provider: 'mistral',
+        available: true,
+        version: '2.24.3',
+        authState: 'authenticated',
+        credentialPresent: true,
+        authSource: 'os_keyring',
+        probeStatus: 'verified'
+      })
+      expect(probeMistralAuthStatus).toHaveBeenCalledOnce()
+    } finally {
+      stat.mockRestore()
+    }
+  })
+})
+
 describe('Kimi status admission', () => {
   it('fails closed without the reviewed status seam and starts no generic discovery path', async () => {
     const getSettings = vi.fn(() => {

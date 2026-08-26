@@ -42,11 +42,11 @@ describe('summariseMuseCodeStatus', () => {
 })
 
 describe('summariseMistralVibeStatus', () => {
-  it('does not claim a resolved Vibe binary is signed in', () => {
+  it('keeps a binary-only result distinct from verified sign-in', () => {
     expect(summariseMistralVibeStatus({ available: true, authState: 'unknown' })).toEqual({
       variant: 'partial',
-      statusText: 'Vibe CLI ready · setup unverified',
-      hint: expect.stringContaining('vibe --setup')
+      statusText: 'Vibe CLI ready · sign-in status unavailable',
+      hint: expect.stringContaining('credential-opaque auth status')
     })
   })
 
@@ -57,10 +57,38 @@ describe('summariseMistralVibeStatus', () => {
     })
   })
 
-  it('honours an explicit future authentication observation without inventing one', () => {
+  it("renders Vibe's credential-opaque authenticated result as signed in", () => {
+    expect(
+      summariseMistralVibeStatus({
+        available: true,
+        authState: 'authenticated',
+        credentialPresent: true,
+        authSource: 'os_keyring'
+      })
+    ).toEqual({
+      variant: 'signed-in',
+      statusText: 'Mistral Vibe signed in',
+      hint: expect.stringContaining('did not read or store the credential')
+    })
+  })
+
+  it('renders an explicit Vibe signed-out result instead of calling it unverified', () => {
+    expect(
+      summariseMistralVibeStatus({
+        available: true,
+        authState: 'missing',
+        credentialPresent: false
+      })
+    ).toMatchObject({
+      variant: 'not-signed-in',
+      statusText: 'Mistral Vibe not signed in'
+    })
+  })
+
+  it('honours an explicit legacy authentication observation', () => {
     expect(summariseMistralVibeStatus({ available: true, authState: 'oauth' })).toMatchObject({
       variant: 'signed-in',
-      statusText: 'Mistral Vibe configured'
+      statusText: 'Mistral Vibe signed in'
     })
   })
 })
