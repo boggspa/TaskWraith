@@ -780,7 +780,9 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   })
 
   // (d2) TIER HOLD — remote egress asks even at Full Access (owner spec:
-  // remote/SSH + raw network shell commands ASK at both write tiers).
+  // remote/SSH + raw network shell commands ASK at both write tiers; the
+  // 2026-08-26 carve-out exempts only a provably inbound curl/wget fetch,
+  // never an ssh-family command).
   it('(d2) ssh at full_access prompts despite YOLO + allow', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

@@ -15,8 +15,8 @@ topic branches, whatever any earlier handoff said.
 | Plan (`plan`) | Read-only. NO mid-run permission asks — "denied and no elevation offered". The ONLY elevation is the proposed-plan document approval, which flips the chat to Accept Edits and re-dispatches (already exists: ProposedPlanApprovalModal). Keeps the one product-managed markdown plan-artifact write (already exists). Git snapshot/read/list, web search, blackboard, ToDos auto-allowed. No provider-native tools except web search / git / read. |
 | Ask (`read_only`) | Same read auto-allow floor as Plan, plus: ANY tool not auto-allowed MAY be asked via the approval modal (user / Boss / Captain) — **NO auto-deny**. No plan-doc requirement. No provider-native tools except web search / git / read. |
 | Accept Edits (`default`) | Auto-accept all in-workspace file changes (landed 2026-08-04, slice A). Non-destructive shell auto-allowed; DESTRUCTIVE shell asks instead of denying. Provider-native tools available on request — ask ONCE on first call, then auto for Edit/Search/Write/Create. TaskWraith tools all auto-approve. externalPublish (git_push / git_create_pr): **ASK** (owner ruling below). |
-| Full WS Access (`workspace_write`) | Everything auto in-workspace incl. shell; `rm -rf` always githook-blocked+ask; Computer Use/AppDrive, Canvas (all kinds), media tools auto; reads OUTSIDE workspace auto-approved; writes outside workspace ASK; read processes auto, system-process changes ask once; creative apps auto on user request; remote/SSH ASK; remote network ASK; native provider tools auto (Edit/Shell/Bash/Search/Write/Create). externalPublish: **AUTO** (owner ruling below). |
-| Full Access (`full_access`) | Everything auto, no prompts, EXCEPT: remote/SSH ASK; remote network ASK; `rm -rf` OUTSIDE workspace githook-blocked+ask (inside workspace always approve). Native provider tools unrestricted. externalPublish: **AUTO**. |
+| Full WS Access (`workspace_write`) | Everything auto in-workspace incl. shell; `rm -rf` always githook-blocked+ask; Computer Use/AppDrive, Canvas (all kinds), media tools auto; reads OUTSIDE workspace auto-approved; writes outside workspace ASK; read processes auto, system-process changes ask once; creative apps auto on user request; remote/SSH ASK; remote network ASK **except a provably inbound fetch** (owner directive 2026-08-26 — see slice E addendum); native provider tools auto (Edit/Shell/Bash/Search/Write/Create). externalPublish: **AUTO** (owner ruling below). |
+| Full Access (`full_access`) | Everything auto, no prompts, EXCEPT: remote/SSH ASK; remote network ASK **except a provably inbound fetch**; `rm -rf` OUTSIDE workspace githook-blocked+ask (inside workspace always approve). Native provider tools unrestricted. externalPublish: **AUTO**. |
 
 > **Divergence note, 2026-08-16 — the Plan row above no longer matches the
 > code.** The table records the 2026-08-04 directive verbatim and is left
@@ -173,6 +173,27 @@ globs, absolute escapes, or missing workspace). Remote/SSH + raw network shell
 spec — note the deliberate UX cost: `curl` in builds now prompts at the write
 tiers. rm -rf githook interplay resolved at the gate (git has no hook that
 fires on rm; the approval gate is the only sound seam).
+
+**Addendum 2026-08-26 (owner directive) — inbound-fetch carve-out.** That UX
+cost came due: a Full WS Access Kimi run asking to `curl -L -o scratch/... <url>
+&& file ... && wc -c ...` (approval-ledger `1787679516828-iz8c0ys28lr`, posture
+`workspace_write`, policy `allow`) prompted purely on the head token. What the
+egress hold buys is that nothing leaves the machine un-prompted, and a download
+spends none of that: `remoteEgressIsProvablyInboundFetch` therefore clears the
+hold at workspace_write/full_access when the WHOLE command proves inbound.
+Allow-polarity, fails closed. Every segment must be either a curl/wget download
+whose destination is named and provably in-workspace (or stdout) over http(s),
+or a pure read-only inspection command. Rejected: request bodies and uploads
+(`-d`/`-F`/`-T`/`-X`), config files (`-K`), server- or URL-chosen filenames
+(`-O`/`-J`, bare `wget`), non-http schemes, unknown/future options, pipes,
+redirects, expansion, and background `&`.
+
+The per-segment span is load-bearing, not tidiness: every classifier in
+ShellCommandTierPolicy screens a HEAD token only, so clearing `curl` alone
+would have handed `curl url && rm -rf ~` a zero-click path the deletion hold
+never looks at. That is the #54 compound residue turning from accepted into
+exploitable, which is why the proof refuses any chain it cannot fully account
+for. ssh/scp/nc/remote-rsync are untouched and still ask at every tier.
 
 Original notes:
 - Outside-workspace READS auto at workspace_write+ (today external-path grants

@@ -560,6 +560,20 @@ export function isCatastrophicDeletionShellCommand(command: unknown): boolean {
 }
 
 /**
+ * Is one path operand provably inside the workspace? Relative targets without
+ * `..` are inside by construction for any cwd inside the workspace; absolute
+ * targets must sit under the resolved root. Shared by the deletion proof and
+ * the inbound-fetch proof so the two agree on what containment means.
+ */
+function pathProvablyInsideWorkspace(target: string, workspaceRoot: string): boolean {
+  if (target.startsWith('~')) return false
+  if (target.split('/').some((segment) => segment === '..')) return false
+  if (!path.isAbsolute(target)) return true
+  const resolved = path.resolve(target)
+  return resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
+}
+
+/**
  * PROOF that every deletion target stays inside the workspace — used only to
  * let Full Access auto-approve in-workspace `rm -r` (owner spec: "ALWAYS
  * APPROVE IN WORKSPACE"). Because this WIDENS automation it flips back to
@@ -590,13 +604,7 @@ export function deletionTargetsProvablyInsideWorkspace(
   }
   if (targets.length === 0) return false
   const workspaceRoot = path.resolve(workspacePath)
-  return targets.every((target) => {
-    if (target.startsWith('~')) return false
-    if (target.split('/').some((segment) => segment === '..')) return false
-    if (!path.isAbsolute(target)) return true
-    const resolved = path.resolve(target)
-    return resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-  })
+  return targets.every((target) => pathProvablyInsideWorkspace(target, workspaceRoot))
 }
 
 const REMOTE_EGRESS_HEADS: ReadonlySet<string> = new Set([
@@ -639,6 +647,316 @@ export function isRemoteEgressShellCommand(command: unknown): boolean {
     )
 }
 
+/**
+ * INBOUND-FETCH carve-out inside the remote-egress hold (owner directive
+ * 2026-08-26). What the hold actually buys is that nothing leaves this machine
+ * un-prompted; a download that only pulls bytes IN and lands them at a named
+ * path inside the workspace spends none of that value, so the write tiers stop
+ * paying the UX cost that PermissionTierBehaviorAlignment.md recorded when the
+ * hold shipped. Exfiltration, remote shells, and uploads are untouched.
+ *
+ * Because this WIDENS automation it is allow-polarity throughout and fails
+ * closed on anything it cannot positively parse. Critically, the proof spans
+ * the WHOLE command rather than its head: every hold classifier here screens a
+ * head token only, so clearing `curl` on its own would hand
+ * `curl url && rm -rf ~` a zero-click path that the deletion hold never even
+ * looks at. A chain qualifies only when each segment is itself either a proven
+ * download or a pure read-only inspection command.
+ */
+
+/**
+ * Split `&&` / `;` sequences, quote-aware. A pipe is rejected outright —
+ * `curl url | sh` is the canonical download-and-execute and no inbound fetch
+ * needs one — as are redirects, subshells, expansion and background `&`, all
+ * of which hide the real effect from a static read.
+ */
+function fetchChainSegmentsOf(command: string): string[] | null {
+  const segments: string[] = []
+  let quote: 'single' | 'double' | null = null
+  let segmentStart = 0
+
+  const pushSegment = (end: number): boolean => {
+    const segment = command.slice(segmentStart, end).trim()
+    if (!segment) return false
+    segments.push(segment)
+    return true
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+    if (quote === 'single') {
+      if (character === "'") quote = null
+      continue
+    }
+    if (quote === 'double') {
+      if (character === '"') quote = null
+      else if (character === '$' || character === '`' || character === '\\') return null
+      continue
+    }
+    if (character === "'") {
+      quote = 'single'
+      continue
+    }
+    if (character === '"') {
+      quote = 'double'
+      continue
+    }
+    if ('|<>(){}$`\\'.includes(character)) return null
+    if (character === ';') {
+      if (!pushSegment(index)) return null
+      segmentStart = index + 1
+      continue
+    }
+    if (character !== '&') continue
+    // A lone `&` backgrounds the job; only `&&` sequences a chain.
+    if (command[index + 1] !== '&') return null
+    if (!pushSegment(index)) return null
+    index += 1
+    segmentStart = index + 1
+  }
+
+  if (quote !== null) return null
+  if (!pushSegment(command.length)) return null
+  return segments
+}
+
+interface FetchOptionSpec {
+  /** Short flags taking no value; safe anywhere in a bundled cluster. */
+  shortNoValue: string
+  /** Short flags consuming the rest of their cluster, or the next token. */
+  shortWithValue: string
+  longNoValue: ReadonlySet<string>
+  longWithValue: ReadonlySet<string>
+}
+
+/**
+ * getopt-style walk over a fetch command's arguments. ALLOWLIST, exactly as
+ * `gitGrepArgsAreReadOnly` is: an unknown or future option prompts rather than
+ * silently becoming a zero-click capability. Only value-bearing options are
+ * returned — the no-value letters are safe by membership alone.
+ */
+function parseFetchOptions(
+  args: readonly string[],
+  spec: FetchOptionSpec
+): { values: Array<{ name: string; value: string }>; operands: string[] } | null {
+  const values: Array<{ name: string; value: string }> = []
+  const operands: string[] = []
+  let literalOperands = false
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (!literalOperands && token === '--') {
+      literalOperands = true
+      continue
+    }
+    if (literalOperands || !token.startsWith('-') || token === '-') {
+      operands.push(token)
+      continue
+    }
+    if (token.startsWith('--')) {
+      const equals = token.indexOf('=')
+      const name = equals === -1 ? token : token.slice(0, equals)
+      if (spec.longNoValue.has(name)) {
+        if (equals !== -1) return null
+        continue
+      }
+      if (!spec.longWithValue.has(name)) return null
+      if (equals !== -1) {
+        values.push({ name, value: token.slice(equals + 1) })
+        continue
+      }
+      const value = args[index + 1]
+      if (value === undefined) return null
+      index += 1
+      values.push({ name, value })
+      continue
+    }
+    const cluster = token.slice(1)
+    for (let position = 0; position < cluster.length; position += 1) {
+      const letter = cluster[position]
+      if (spec.shortNoValue.includes(letter)) continue
+      if (!spec.shortWithValue.includes(letter)) return null
+      const attached = cluster.slice(position + 1)
+      if (attached) {
+        values.push({ name: `-${letter}`, value: attached })
+      } else {
+        const value = args[index + 1]
+        if (value === undefined) return null
+        index += 1
+        values.push({ name: `-${letter}`, value })
+      }
+      break
+    }
+  }
+
+  return { values, operands }
+}
+
+// Only http/https. `file://`, `scp://`, `dict://` and friends turn the same
+// binary into a local reader or an upload channel.
+const HTTP_FETCH_URL = /^https?:\/\/[^/?#]+(?:[/?#].*)?$/i
+
+const CURL_INBOUND_OPTIONS: FetchOptionSpec = {
+  // s/S silent + show-error, L follow redirects, f fail, i/I response headers
+  // and HEAD, v verbose, g globoff, R remote-time, 4/6 address family.
+  // Deliberately absent: k (insecure), O/J (URL- or server-chosen filename, so
+  // there is no destination to prove), a (append), n (netrc).
+  shortNoValue: 'sSLfiIvgR46',
+  // o output (destination-screened), m max-time, A user-agent, H header,
+  // e referer, b cookie (a read), r range, z time-cond. Deliberately absent:
+  // d/F/T (request bodies and uploads — the exfiltration shapes), X (method),
+  // K (a config file of arbitrary further options), D (header dump to disk),
+  // c (cookie-jar write), u/E (credentials).
+  shortWithValue: 'omAHebrz',
+  longNoValue: new Set([
+    '--silent',
+    '--show-error',
+    '--location',
+    '--fail',
+    '--fail-with-body',
+    '--fail-early',
+    '--include',
+    '--head',
+    '--verbose',
+    '--compressed',
+    '--create-dirs',
+    '--globoff',
+    '--remote-time',
+    '--no-progress-meter',
+    '--no-buffer',
+    '--ipv4',
+    '--ipv6'
+  ]),
+  longWithValue: new Set([
+    '--output',
+    '--url',
+    '--max-time',
+    '--connect-timeout',
+    '--retry',
+    '--retry-delay',
+    '--retry-max-time',
+    '--user-agent',
+    '--header',
+    '--referer',
+    '--cookie',
+    '--range',
+    '--time-cond',
+    '--max-filesize',
+    '--limit-rate'
+  ])
+}
+
+const WGET_INBOUND_OPTIONS: FetchOptionSpec = {
+  // q quiet, c continue, N timestamping, S server-response, 4/6 address
+  // family. Deliberately absent: r/m/p/k (recursive mirroring rewrites whole
+  // trees), b (background).
+  shortNoValue: 'qcNS46',
+  // O output-document (destination-screened), T timeout, t tries, U
+  // user-agent. Deliberately absent: o/a (LOG writes — note wget inverts
+  // curl's o/O), P (directory prefix), i (a file of further URLs), e (executes
+  // wgetrc directives).
+  shortWithValue: 'OTtU',
+  longNoValue: new Set([
+    '--quiet',
+    '--no-verbose',
+    '--continue',
+    '--timestamping',
+    '--server-response',
+    '--inet4-only',
+    '--inet6-only'
+  ]),
+  longWithValue: new Set([
+    '--output-document',
+    '--timeout',
+    '--connect-timeout',
+    '--read-timeout',
+    '--tries',
+    '--user-agent',
+    '--header',
+    '--wait',
+    '--limit-rate'
+  ])
+}
+
+function curlIsInboundFetch(args: readonly string[], workspaceRoot: string): boolean {
+  const parsed = parseFetchOptions(args, CURL_INBOUND_OPTIONS)
+  if (!parsed) return false
+  let urlCount = parsed.operands.length
+  for (const { name, value } of parsed.values) {
+    if (name === '-o' || name === '--output') {
+      // `-` is stdout, which writes nothing.
+      if (value !== '-' && !pathProvablyInsideWorkspace(value, workspaceRoot)) return false
+      continue
+    }
+    if (name === '--url') {
+      if (!HTTP_FETCH_URL.test(value)) return false
+      urlCount += 1
+    }
+  }
+  if (urlCount === 0) return false
+  return parsed.operands.every((operand) => HTTP_FETCH_URL.test(operand))
+}
+
+function wgetIsInboundFetch(args: readonly string[], workspaceRoot: string): boolean {
+  const parsed = parseFetchOptions(args, WGET_INBOUND_OPTIONS)
+  if (!parsed) return false
+  let namedDestination = false
+  for (const { name, value } of parsed.values) {
+    if (name !== '-O' && name !== '--output-document') continue
+    if (value !== '-' && !pathProvablyInsideWorkspace(value, workspaceRoot)) return false
+    namedDestination = true
+  }
+  // Bare wget writes a remote-chosen filename into the cwd, which no static
+  // read can place — an explicit destination is required before it can prove.
+  if (!namedDestination) return false
+  if (parsed.operands.length === 0) return false
+  return parsed.operands.every((operand) => HTTP_FETCH_URL.test(operand))
+}
+
+function segmentIsProvableInboundFetch(segment: string, workspaceRoot: string): boolean {
+  const tokens = inspectionTokensOf(segment)
+  if (!tokens || tokens.length === 0) return false
+  // Word-initial `~` is the one in-charset character the shell still expands.
+  if (tokens.some((token) => token.startsWith('~'))) return false
+  const head = headOf(tokens)
+  if (tokens[0] !== head && !STRIPPABLE_BIN_PREFIX.test(tokens[0] ?? '')) return false
+  if (head.includes('/')) return false
+  if (head === 'curl') return curlIsInboundFetch(tokens.slice(1), workspaceRoot)
+  if (head === 'wget') return wgetIsInboundFetch(tokens.slice(1), workspaceRoot)
+  return false
+}
+
+/**
+ * PROOF that an egress-matching command only fetches bytes inward — used to let
+ * the write tiers auto-approve downloads without reopening the exfiltration,
+ * remote-shell, or download-and-execute shapes the hold exists for. Every
+ * segment must be either a provable curl/wget download to a named in-workspace
+ * destination, or a pure read-only inspection command; anything else (an
+ * interpreter, an installer, `rm`, an unparseable operand) fails the whole
+ * chain closed to the ordinary prompt.
+ */
+export function remoteEgressIsProvablyInboundFetch(
+  command: unknown,
+  workspacePath: string | null | undefined
+): boolean {
+  if (typeof command !== 'string' || !workspacePath) return false
+  const trimmed = command.trim()
+  if (!trimmed || trimmed.length > MAX_COMMAND_LENGTH) return false
+  const segments = fetchChainSegmentsOf(trimmed)
+  if (!segments) return false
+  const workspaceRoot = path.resolve(workspacePath)
+  let sawFetch = false
+  for (const segment of segments) {
+    if (isRemoteEgressShellCommand(segment)) {
+      if (!segmentIsProvableInboundFetch(segment, workspaceRoot)) return false
+      sawFetch = true
+      continue
+    }
+    if (!isInspectionShellCommand(segment)) return false
+  }
+  return sawFetch
+}
+
 const PROCESS_MUTATION_HEADS: ReadonlySet<string> = new Set([
   'kill',
   'pkill',
@@ -667,9 +985,11 @@ export interface ShellCommandTierHoldArgs {
  * sites (beside the plan-instrument and Isolate holds). Ask-hold, not deny —
  * unattended lanes fail safe via the approval timeout. Rules (owner spec):
  *
- *  - Remote/SSH + raw network egress: hold at EVERY tier. (Read tiers never
- *    auto-allow shell anyway; this keeps grants/session-YOLO from silencing
- *    the prompt at the write tiers.)
+ *  - Remote/SSH + raw network egress: hold at EVERY tier, EXCEPT a provably
+ *    inbound fetch at the two write tiers (owner directive 2026-08-26 — see
+ *    `remoteEgressIsProvablyInboundFetch`). Read tiers never auto-allow shell
+ *    anyway; the hold still keeps grants/session-YOLO from silencing the
+ *    prompt for every other egress shape at the write tiers.
  *  - Catastrophic deletion (`rm -r` class): hold everywhere EXCEPT Full
  *    Access with every target provably inside the workspace — "always
  *    approve in workspace" is Full Access's explicit contract.
@@ -681,7 +1001,14 @@ export function shellCommandTierHold(args: ShellCommandTierHoldArgs): boolean {
   if (args.service !== 'shellCommands') return false
   const cmd = shellCommandFromRawCommand(args.shellCommand)
   if (cmd === null) return false
-  if (isRemoteEgressShellCommand(cmd)) return true
+  if (isRemoteEgressShellCommand(cmd)) {
+    // Inbound-fetch carve-out: the write tiers stop asking for a download that
+    // only pulls bytes in and lands them at a named in-workspace path. Every
+    // other egress shape — and any chain the proof cannot fully account for —
+    // still asks, at every tier.
+    if (args.presetId !== 'workspace_write' && args.presetId !== 'full_access') return true
+    return !remoteEgressIsProvablyInboundFetch(cmd, args.workspacePath)
+  }
   if (isCatastrophicDeletionShellCommand(cmd)) {
     if (args.presetId === 'full_access') {
       return !deletionTargetsProvablyInsideWorkspace(cmd, args.workspacePath)
