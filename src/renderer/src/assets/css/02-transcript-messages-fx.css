@@ -2,6 +2,13 @@
 .app-transcript {
   --workspace-terminal-height: 260px;
   --workspace-terminal-bottom-gap: var(--space-md);
+  /* Single source of truth for the workspace terminal's side inset. The panel
+   * and its drag divider are separate absolutely-positioned elements, so two
+   * hand-kept copies of the same value drifted apart the moment either was
+   * tuned — the divider stopped lining up with the pane it resizes. One token
+   * makes that impossible, and the narrow-width step below re-declares it once
+   * instead of restating both rules. */
+  --workspace-terminal-inline-inset: var(--space-lg);
   --composer-bottom-gap: 12px;
   --composer-reserved-height: calc(var(--composer-min-height) + (var(--space-lg) * 4));
   /*
@@ -4518,15 +4525,30 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-bottom: 0;
 }
 
+/* The workspace terminal is a card docked ABOVE the composer, so it has to
+ * read as the same column. It used to span the whole pane at a hard-coded
+ * doubled inset while the composer under it is capped at
+ * --composer-content-max-width and centred: past ~900px the two surfaces
+ * shared no edge at all, which is the "horizontal padding" the terminal was
+ * reported for. Capping to the composer column and centring makes the two
+ * edges the same line at every width; below the cap the token inset takes
+ * over, so the terminal still breathes on a narrow pane.
+ *
+ * Both custom properties carry fallbacks on purpose: the Gemini terminal in
+ * the right dock reuses this class from OUTSIDE .app-transcript, where neither
+ * token resolves. The fallbacks are its current values, so the dock's geometry
+ * is byte-identical and this stays a composer-terminal change. */
 .workspace-terminal-split {
   position: absolute;
-  left: calc(var(--space-lg) * 2);
-  right: calc(var(--space-lg) * 2);
+  left: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  right: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
   bottom: var(--workspace-terminal-bottom-gap);
-  max-width: none;
+  max-width: var(--composer-content-max-width, none);
   height: var(--workspace-terminal-height);
   min-height: 0;
-  margin: 0;
+  /* Auto inline margins are what centre the box once max-width clamps it
+   * narrower than the left/right slot. */
+  margin: 0 auto;
   z-index: 3;
   pointer-events: auto;
   display: flex;
@@ -4576,10 +4598,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   animation: agentBorderChase 30s linear infinite;
 }
 
+/* Geometry mirrors the pane exactly — same token, same cap, same centring —
+ * so the drag target can never overhang the terminal it resizes. */
 .workspace-terminal-resize-divider {
   position: absolute;
-  left: calc(var(--space-lg) * 2);
-  right: calc(var(--space-lg) * 2);
+  left: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  right: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  max-width: var(--composer-content-max-width, none);
+  margin-inline: auto;
   bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) - 2px);
   height: 12px;
   z-index: 6;
@@ -4897,14 +4923,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     padding-inline: var(--space-lg);
   }
 
-  .workspace-terminal-split {
-    left: var(--space-lg);
-    right: var(--space-lg);
-  }
-
-  .workspace-terminal-resize-divider {
-    left: var(--space-lg);
-    right: var(--space-lg);
+  /* One token, so the pane and its divider stay locked together. */
+  .app-transcript {
+    --workspace-terminal-inline-inset: var(--space-md);
   }
 
   .gemini-terminal-line {

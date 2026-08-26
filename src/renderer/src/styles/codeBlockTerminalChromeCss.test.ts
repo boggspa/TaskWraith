@@ -38,8 +38,6 @@ describe('code-block and terminal chrome CSS', () => {
     )
 
     expect(basePane).toContain('position: absolute')
-    expect(basePane).toContain('left: calc(var(--space-lg) * 2)')
-    expect(basePane).toContain('right: calc(var(--space-lg) * 2)')
     expect(basePane).toContain('bottom: var(--workspace-terminal-bottom-gap)')
     expect(basePane).toContain('height: var(--workspace-terminal-height)')
     expect(paneChrome).not.toMatch(/\bposition\s*:/)
@@ -47,5 +45,23 @@ describe('code-block and terminal chrome CSS', () => {
     expect(paneRim).toContain('display: none')
     expect(terminalCss).not.toContain('terminal-pane-rim-chase')
     expect(terminalCss).not.toContain('conic-gradient')
+  })
+
+  it('keeps the workspace terminal and its drag divider on one inset token', () => {
+    const transcriptCss = readCss('02-transcript-messages-fx.css')
+    const basePane = cssBlockStartingAt(transcriptCss, '.workspace-terminal-split {')
+    const divider = cssBlockStartingAt(transcriptCss, '.workspace-terminal-resize-divider {')
+
+    const inset = 'var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2))'
+    for (const block of [basePane, divider]) {
+      expect(block).toContain(`left: ${inset}`)
+      expect(block).toContain(`right: ${inset}`)
+      expect(block).toContain('max-width: var(--composer-content-max-width, none)')
+      expect(block).toMatch(/margin(-inline)?: (0 )?auto;/)
+      expect(block).not.toMatch(/(left|right):\s*calc\(var\(--space-lg\) \* 2\)/)
+    }
+
+    expect(transcriptCss).toContain('--workspace-terminal-inline-inset: var(--space-lg);')
+    expect(transcriptCss).toContain('--workspace-terminal-inline-inset: var(--space-md);')
   })
 })

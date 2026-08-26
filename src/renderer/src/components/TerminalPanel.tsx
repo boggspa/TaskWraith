@@ -56,6 +56,7 @@ export function TerminalPanel({
   onTerminalReady,
   ptySessionId: propPtySessionId
 }: TerminalPanelProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
@@ -141,21 +142,39 @@ export function TerminalPanel({
     }
   }, [sessionId, workspacePath, theme])
 
+  // Escape-to-close is scoped to THIS panel, not the document.
+  //
+  // A document listener meant any Escape anywhere in the app closed the
+  // terminal — dismissing a picker, a popover or a modal took the shell down
+  // with it. Listening on the panel root instead means the key only counts
+  // when it was pressed inside the panel (the close button, the header, or
+  // the terminal itself), which is what "Escape closes the focused terminal"
+  // was always supposed to mean.
+  //
+  // The pane variant additionally leaves Escape to the shell: it is a
+  // long-lived terminal where Escape belongs to whatever is running (vim,
+  // less, fzf), so closing the whole pane on it would be data loss. Panes
+  // have a visible × instead. The inspector's setup terminal keeps its
+  // modal-style Escape-to-dismiss unchanged.
   useEffect(() => {
     if (!onClose) return
+    const root = rootRef.current
+    if (!root) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (isPane && terminalRef.current?.contains(event.target as Node)) return
+      onClose()
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+    root.addEventListener('keydown', onKeyDown)
+    return () => root.removeEventListener('keydown', onKeyDown)
+  }, [onClose, isPane])
 
   const rootClass = [className ?? 'terminal-panel', isPane ? 'terminal-panel--pane' : '']
     .filter(Boolean)
     .join(' ')
 
   return (
-    <div className={rootClass}>
+    <div className={rootClass} ref={rootRef}>
       <div className="terminal-panel-header">
         {isPane ? (
           <span>Terminal · {workspaceBasename(workspacePath)}</span>
