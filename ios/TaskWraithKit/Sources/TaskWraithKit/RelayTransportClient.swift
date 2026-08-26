@@ -164,7 +164,7 @@ public actor RelayTransportClient {
         urlRequest.setValue(TWProtocol.id, forHTTPHeaderField: "x-taskwraith-protocol")
         let task = urlSession.webSocketTask(with: urlRequest)
         task.resume()
-        let requestData = try JSONEncoder().encode(request)
+        let requestData = try TWCoders.encoder.encode(request)
         guard let requestText = String(data: requestData, encoding: .utf8) else {
             task.cancel(with: .goingAway, reason: nil)
             throw TransportError.invalidRelayUrl
@@ -199,7 +199,7 @@ public actor RelayTransportClient {
         }
         guard let data else { throw TransportError.resolveNoSession }
         struct ResolveResponse: Decodable { let ok: Bool; let sessionId: String?; let status: Int? }
-        let decoded = try JSONDecoder().decode(ResolveResponse.self, from: data)
+        let decoded = try TWCoders.decoder.decode(ResolveResponse.self, from: data)
         if let status = decoded.status, status != 200 { throw TransportError.resolveFailed(status) }
         guard decoded.ok, let sessionId = decoded.sessionId else {
             throw TransportError.resolveNoSession
@@ -400,7 +400,7 @@ public actor RelayTransportClient {
                 }
                 if let data {
                     dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
-                    if let frame = try? JSONDecoder().decode(E2eeFrame.self, from: data) {
+                    if let frame = try? TWCoders.decoder.decode(E2eeFrame.self, from: data) {
                         session?.handleFrame(frame)
                         await drainAndTransmit()
                     } else {
@@ -427,7 +427,7 @@ public actor RelayTransportClient {
     private func drainAndTransmit() async {
         guard let session else { return }
         for frame in session.drainOutbox() {
-            if let data = try? JSONEncoder().encode(frame),
+            if let data = try? TWCoders.encoder.encode(frame),
                 let text = String(data: data, encoding: .utf8)
             {
                 dbg("send \(text.prefix(80))")
@@ -478,8 +478,16 @@ public actor RelayTransportClient {
 
     private nonisolated static let debugEnabled =
         ProcessInfo.processInfo.environment["TWK_DEBUG"] == "1"
-    private nonisolated func dbg(_ line: String) {
-        if Self.debugEnabled { FileHandle.standardError.write(Data("[twk] \(line)\n".utf8)) }
+    // @autoclosure here is load-bearing, not style. The debug gate is checked
+    // INSIDE this function, so an eagerly-evaluated `String` parameter made
+    // every caller build its message even in production. receiveLoop's
+    // `dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ...))"` thus
+    // UTF-8-validated and allocated a String copy of the ENTIRE inbound frame —
+    // every frame, every streamed token, on the phone's hottest ingest path —
+    // only to throw it away because TWK_DEBUG was unset. Deferring evaluation
+    // costs nothing when debug is off and prints identically when it is on.
+    private nonisolated func dbg(_ line: @autoclosure () -> String) {
+        if Self.debugEnabled { FileHandle.standardError.write(Data("[twk] \(line())\n".utf8)) }
     }
 
     static func httpBase(_ relayUrl: String) -> String {
