@@ -169,6 +169,7 @@ function validateHostPayload(hostRoot, label) {
     'MuseCronAssert.js',
     'MuseExecJson.js',
     'MuseIsolatedHome.js',
+    'MuseMcpConfig.js',
     'MuseProbe.js',
     'MuseRun.js',
     'MuseSessionLog.js',
