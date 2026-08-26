@@ -67,7 +67,7 @@ const runPort = {
   publishRunEvent: () => undefined
 }
 
-const interactions = { register: () => undefined }
+const interactions = { register: () => new Promise<never>(() => {}) }
 
 describe('HostNodeProviderRegistry', () => {
   it('creates instances and dispatches status/auth/offers by provider', async () => {

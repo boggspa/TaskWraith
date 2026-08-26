@@ -196,10 +196,13 @@ export class HostNodeProductionServer {
       this.disposeResources = resources?.dispose ?? null
       if (!domainOptions) throw new Error('Production Host domain resources are unavailable')
       if (this.stopRequested) return
+      const projectionDirtyRef: { current: (() => void) | null } = { current: null }
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
         ...domainOptions,
         store,
-        events
+        events,
+        interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
+        onProjectionDirty: () => projectionDirtyRef.current?.()
       })
       const capabilities = this.capabilities()
       this.composition = (this.options.createComposition ?? createHostStandaloneComposition)({
@@ -228,6 +231,9 @@ export class HostNodeProductionServer {
         threadHistoryProvider: (request) => this.domain!.threadHistory(request),
         historySinceProvider: (request) => this.domain!.historySince(request)
       })
+      projectionDirtyRef.current = () => {
+        void this.composition!.reconcileProjection().catch(() => undefined)
+      }
       await this.composition.startProjectionReconciliation()
       if (this.stopRequested) return
       this.listener = (this.options.createListener ?? ((input) => new HostLocalServer(input)))({
