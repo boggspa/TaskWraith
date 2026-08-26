@@ -72,11 +72,12 @@ export function resolveMuseExecSessionId(
 export const MUSE_DEFAULT_REASONING_EFFORT: MuseReasoningEffort = 'high'
 
 /**
- * Muse has no per-run MCP configuration surface. UltraTask therefore uses
- * Muse's native child-agent control plane. The ephemeral definition is a
- * deliberately read-only reviewer: Agent Definitions can only narrow the
- * parent's Work-tool grant, and this allowlist contains no file mutation or
- * shell capability.
+ * Muse has no argv MCP configuration surface. The registered desktop path
+ * injects its route-bound TaskWraith MCP server through the one-run isolated
+ * settings document instead. UltraTask still uses Muse's native child-agent
+ * control plane; the ephemeral definition is a deliberately read-only
+ * reviewer. Agent Definitions can only narrow the parent's Work-tool grant,
+ * and this allowlist contains no file mutation or shell capability.
  */
 export const MUSE_ULTRATASK_REVIEWER_AGENT_ID = 'ultratask-reviewer'
 export const MUSE_ULTRATASK_REVIEWER_TOOLS = Object.freeze(['read_file', 'search'] as const)
