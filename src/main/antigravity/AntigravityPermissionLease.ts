@@ -504,10 +504,82 @@ interface AntigravityMcpLeaseReceipt {
   readonly originalContentBase64: string
   readonly originalSha256: string
   readonly installedSha256: string
+  /**
+   * Which TaskWraith process installed this. agy's MCP map is one MACHINE-wide
+   * file while the coordinator's refcount and per-file op chain are per
+   * PROCESS, so a dev build beside a release build (or two isolated profiles)
+   * meet only here. Both fields are OPTIONAL: a receipt written before this
+   * existed names no owner, and such a receipt is by definition from a process
+   * that is no longer running, so it stays recoverable exactly as before.
+   */
+  readonly ownerId?: string
+  readonly ownerPid?: number
+  /** ISO-8601 install stamp; the staleness backstop below reads only this. */
+  readonly installedAt?: string
 }
 
 function mcpReceiptPathFor(configPath: string): string {
   return join(dirname(configPath), '.taskwraith-mcp-lease.json')
+}
+
+/**
+ * Releasing a lease whose receipt is already gone is a normal race, not a
+ * failure: another instance may have recovered it first. Throwing here would
+ * surface as a "permission cleanup not verified" warning on a document that is
+ * in fact already clean.
+ */
+async function unlinkReceiptIfPresent(receiptPath: string): Promise<void> {
+  try {
+    await unlink(receiptPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+  }
+}
+
+/**
+ * One id per TaskWraith process. Deliberately NOT per coordinator: production
+ * builds one coordinator for the app lifetime, and the question this answers is
+ * always "was it a different process?".
+ */
+const MCP_LEASE_OWNER_ID = randomUUID()
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false
+  try {
+    // Signal 0 performs the permission/existence check without delivering.
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means it exists and belongs to another user; only ESRCH is gone.
+    return (error as NodeJS.ErrnoException)?.code === 'EPERM'
+  }
+}
+
+/**
+ * True when the on-disk receipt belongs to a DIFFERENT, still-running
+ * TaskWraith. Recovering such a receipt would restore the user's original
+ * document out from under a live run, stripping its TaskWraith tools while its
+ * own refcount still reports the registration installed.
+ */
+function mcpReceiptHeldByLiveSibling(receipt: AntigravityMcpLeaseReceipt): boolean {
+  if (!receipt.ownerId || receipt.ownerId === MCP_LEASE_OWNER_ID) return false
+  if (typeof receipt.ownerPid !== 'number' || !isProcessAlive(receipt.ownerPid)) return false
+  // Backstop: a pid outlives its process, and a recycled one would otherwise
+  // read as a live owner forever — leaving TaskWraith registered in the user's
+  // GLOBAL agy config permanently, which is the exact leak this lease exists to
+  // avoid. agy print runs are capped at AGY_READ_ONLY_PRINT_TIMEOUT (30m), so
+  // anything this old is not a run still in flight.
+  return !mcpReceiptIsStale(receipt)
+}
+
+/** Generous next to a 30-minute print cap; the pid check is the real signal. */
+const MAX_MCP_LEASE_HOLD_MS = 12 * 60 * 60 * 1000
+
+function mcpReceiptIsStale(receipt: AntigravityMcpLeaseReceipt): boolean {
+  if (typeof receipt.installedAt !== 'string') return false
+  const installedAt = Date.parse(receipt.installedAt)
+  if (!Number.isFinite(installedAt)) return false
+  return Date.now() - installedAt > MAX_MCP_LEASE_HOLD_MS
 }
 
 async function readMcpReceipt(receiptPath: string): Promise<AntigravityMcpLeaseReceipt | null> {
@@ -535,13 +607,22 @@ async function cleanMcpReceipt(
   if (resolve(receipt.configPath) !== resolve(configPath)) {
     throw new Error('AntiGravity MCP receipt belongs to a different config path.')
   }
+  // Re-read rather than trusting the receipt captured at install: between then
+  // and now another TaskWraith may have taken the document over. Its install is
+  // byte-identical to ours (the registration is static), so the installedSha256
+  // comparison below would happily "restore" our original over ITS live lease
+  // and delete its receipt. Ownership is the only thing that separates the two.
+  const onDisk = await readMcpReceipt(receiptPath).catch(() => null)
+  if (onDisk && onDisk.ownerId && onDisk.ownerId !== receipt.ownerId) {
+    return
+  }
   const originalContent = Buffer.from(receipt.originalContentBase64, 'base64').toString('utf8')
   if (sha256(originalContent) !== receipt.originalSha256) {
     throw new Error('AntiGravity MCP receipt original-content hash does not match.')
   }
   const currentContent = await readOptionalRegularFile(configPath)
   if (currentContent === null || sha256(currentContent) === receipt.originalSha256) {
-    await unlink(receiptPath)
+    await unlinkReceiptIfPresent(receiptPath)
     return
   }
   if (sha256(currentContent) === receipt.installedSha256) {
@@ -549,7 +630,7 @@ async function cleanMcpReceipt(
     // to an empty file rather than removing a path agy expects to exist.
     if (receipt.originalExists) await writeAtomic(configPath, originalContent)
     else await writeAtomic(configPath, '')
-    await unlink(receiptPath)
+    await unlinkReceiptIfPresent(receiptPath)
     return
   }
   // The user (or agy's own TUI writer) changed the document mid-run. Withdraw
@@ -560,13 +641,18 @@ async function cleanMcpReceipt(
     const withdrawn = buildAgyMcpConfigDocument({ existing: parsed.document })
     await writeAtomic(configPath, serializeAgyMcpConfigDocument(withdrawn))
   }
-  await unlink(receiptPath)
+  await unlinkReceiptIfPresent(receiptPath)
 }
 
 export async function recoverInterruptedAntigravityMcpLease(configPath: string): Promise<boolean> {
   const receiptPath = mcpReceiptPathFor(configPath)
   const receipt = await readMcpReceipt(receiptPath)
   if (!receipt) return false
+  // A receipt is only "interrupted" if nobody is still holding it. Rolling back
+  // a running sibling is the corruption this whole ownership stamp exists to
+  // prevent, and it is silent: the sibling keeps reporting the registration as
+  // installed while agy can no longer see a single TaskWraith tool.
+  if (mcpReceiptHeldByLiveSibling(receipt)) return false
   await cleanMcpReceipt(configPath, receiptPath, receipt)
   return true
 }
@@ -610,7 +696,10 @@ async function installMcpOverlay(
     originalExists: existingOriginalContent !== null,
     originalContentBase64: Buffer.from(originalContent, 'utf8').toString('base64'),
     originalSha256: sha256(originalContent),
-    installedSha256: sha256(installedContent)
+    installedSha256: sha256(installedContent),
+    ownerId: MCP_LEASE_OWNER_ID,
+    ownerPid: process.pid,
+    installedAt: new Date().toISOString()
   }
   const receiptPath = mcpReceiptPathFor(configPath)
   try {

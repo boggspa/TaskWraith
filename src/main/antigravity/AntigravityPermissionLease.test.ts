@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   AGY_READ_ONLY_SHELL_PROJECTION_RULES,
@@ -665,6 +666,136 @@ describe('AntigravityPermissionLeaseCoordinator MCP overlay', () => {
     })
 
     expect(lease.mcpRegistered).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe('')
+    await lease.release()
+  })
+})
+
+// agy's MCP map is ONE machine-global file, but the coordinator's refcount and
+// its per-file op chain are per-PROCESS. A dev build beside a release build (or
+// two isolated profiles) therefore meet only at the receipt, which is why the
+// receipt has to say who owns it.
+describe('AntigravityPermissionLeaseCoordinator MCP overlay — sibling instances', () => {
+  const registration = {
+    command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+    args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env']
+  }
+
+  async function installedLane(): Promise<{
+    configPath: string
+    receiptPath: string
+    lease: { mcpRegistered: boolean; release: () => Promise<void> }
+    installed: string
+  }> {
+    const directory = await mkdtemp(join(tmpdir(), 'taskwraith-agy-mcp-sibling-'))
+    tempDirectories.push(directory)
+    const settingsPath = join(directory, 'settings.json')
+    await writeFile(settingsPath, `${JSON.stringify({ model: 'x' }, null, 2)}\n`, 'utf8')
+    const configDirectory = join(directory, 'config')
+    await mkdir(configDirectory, { recursive: true })
+    const configPath = join(configDirectory, 'mcp_config.json')
+    await writeFile(configPath, '', 'utf8')
+    const lease = await new AntigravityPermissionLeaseCoordinator().acquire({
+      settingsPath,
+      workspacePath: resolve('/Users/test/Project'),
+      allowShell: false,
+      allowWrite: false,
+      mcpOverlay: { configPath, registration }
+    })
+    expect(lease.mcpRegistered).toBe(true)
+    return {
+      configPath,
+      receiptPath: join(dirname(configPath), '.taskwraith-mcp-lease.json'),
+      lease,
+      installed: await readFile(configPath, 'utf8')
+    }
+  }
+
+  async function reassignReceipt(
+    receiptPath: string,
+    owner: { ownerId?: string; ownerPid?: number; installedAt?: string }
+  ): Promise<void> {
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+    delete receipt.ownerId
+    delete receipt.ownerPid
+    await writeFile(receiptPath, `${JSON.stringify({ ...receipt, ...owner }, null, 2)}\n`, 'utf8')
+  }
+
+  function deadPid(): number {
+    const finished = spawnSync(process.execPath, ['-e', ''])
+    if (typeof finished.pid !== 'number') throw new Error('could not source a reaped pid')
+    return finished.pid
+  }
+
+  it('stamps the owning instance onto the receipt', async () => {
+    const { receiptPath, lease } = await installedLane()
+
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+    expect(typeof receipt.ownerId).toBe('string')
+    expect(receipt.ownerId).not.toBe('')
+    expect(receipt.ownerPid).toBe(process.pid)
+
+    await lease.release()
+  })
+
+  it('does NOT roll back a live sibling instance registration', async () => {
+    const { configPath, receiptPath, installed, lease } = await installedLane()
+    await reassignReceipt(receiptPath, { ownerId: 'sibling-instance', ownerPid: process.pid })
+
+    const recovered = await recoverInterruptedAntigravityMcpLease(configPath)
+
+    expect(recovered).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe(installed)
+    await lease.release()
+  })
+
+  it('leaves the document alone on release once a sibling owns the receipt', async () => {
+    const { configPath, receiptPath, installed, lease } = await installedLane()
+    await reassignReceipt(receiptPath, { ownerId: 'sibling-instance', ownerPid: process.pid })
+
+    await lease.release()
+
+    // The sibling is still running against this registration; restoring our
+    // original here is what silently strips a live run's TaskWraith tools.
+    expect(await readFile(configPath, 'utf8')).toBe(installed)
+    await expect(readFile(receiptPath, 'utf8')).resolves.toContain('sibling-instance')
+  })
+
+  it('recovers a receipt whose owning process is gone', async () => {
+    const { configPath, receiptPath, lease } = await installedLane()
+    await reassignReceipt(receiptPath, { ownerId: 'crashed-instance', ownerPid: deadPid() })
+
+    const recovered = await recoverInterruptedAntigravityMcpLease(configPath)
+
+    expect(recovered).toBe(true)
+    expect(await readFile(configPath, 'utf8')).toBe('')
+    await lease.release()
+  })
+
+  it('recovers a legacy receipt that names no owner at all', async () => {
+    const { configPath, receiptPath, lease } = await installedLane()
+    await reassignReceipt(receiptPath, {})
+
+    const recovered = await recoverInterruptedAntigravityMcpLease(configPath)
+
+    expect(recovered).toBe(true)
+    expect(await readFile(configPath, 'utf8')).toBe('')
+    await lease.release()
+  })
+
+  // A recycled pid would otherwise read as a live owner forever, and the
+  // registration would then never leave the user's global agy config.
+  it('recovers a receipt whose owner looks alive but whose stamp is far too old', async () => {
+    const { configPath, receiptPath, lease } = await installedLane()
+    await reassignReceipt(receiptPath, {
+      ownerId: 'recycled-pid-instance',
+      ownerPid: process.pid,
+      installedAt: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString()
+    })
+
+    const recovered = await recoverInterruptedAntigravityMcpLease(configPath)
+
+    expect(recovered).toBe(true)
     expect(await readFile(configPath, 'utf8')).toBe('')
     await lease.release()
   })

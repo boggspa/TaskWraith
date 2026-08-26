@@ -156,6 +156,49 @@ function selectedAgyModel(value: string | null | undefined): string | null {
 }
 
 /**
+ * The exact host steer wrapping `prepareAntigravityProviderLaunch` puts after
+ * `-p`. Exported so a launch-time correction can rebuild the same prompt shape
+ * without duplicating (or drifting from) the steer order used at prepare time.
+ */
+export function composeAntigravityLaunchPrompt(
+  prompt: string,
+  resumedConversationId: string | null
+): string {
+  return resumedConversationId
+    ? withAntigravityLongTurnProgress(prompt)
+    : withAntigravityColdStartSteer(withAntigravityLongTurnProgress(prompt))
+}
+
+/**
+ * Replace the prompt on an already-prepared plan.
+ *
+ * agy's TaskWraith MCP registration lives in a shared global config that can
+ * fail to install for reasons only known AFTER the launch plan is built (the
+ * permission lease acquires it, and a config it cannot parse belongs to
+ * someone else). The runtime preamble composed upstream flatly states the run
+ * "has access to the TaskWraith MCP server" and tells the model not to retry a
+ * refused native tool, so a run that silently lost its registration must have
+ * that claim withdrawn before the child starts, or the model bounces between a
+ * tool that does not exist and a native tool it was told not to repeat.
+ *
+ * `buildAgyPrintArgs` is the only argv producer and always ends `-p <prompt>`.
+ * Anything else is not a plan this function may rewrite, so it refuses rather
+ * than editing an argv member it cannot identify.
+ */
+export function withAntigravityLaunchPrompt(
+  plan: AntigravityProviderLaunchPlan,
+  prompt: string
+): AntigravityProviderLaunchPlan {
+  if (typeof prompt !== 'string' || !prompt.trim()) {
+    throw new Error('An Antigravity print-mode prompt is required.')
+  }
+  if (plan.args.length < 2 || plan.args[plan.args.length - 2] !== '-p') {
+    throw new Error('An Antigravity launch plan must end with the audited `-p` form.')
+  }
+  return { ...plan, args: [...plan.args.slice(0, -1), prompt] }
+}
+
+/**
  * Prepare one official-CLI launch. The default is closed: there is no binary
  * resolution, environment construction, or child-process opportunity until
  * the persisted Settings consent gate is true.
@@ -189,9 +232,7 @@ export async function prepareAntigravityProviderLaunch(
   // Fresh-project launches pair with the synthetic cold-start init emission:
   // ask the model to narrate its plan before its first tool call. Host-side
   // guidance only; never shown in the user's transcript.
-  const composedPrompt = resumedConversationId
-    ? withAntigravityLongTurnProgress(input.prompt)
-    : withAntigravityColdStartSteer(withAntigravityLongTurnProgress(input.prompt))
+  const composedPrompt = composeAntigravityLaunchPrompt(input.prompt, resumedConversationId)
   const argsInput = {
     prompt: composedPrompt,
     model: selectedAgyModel(input.model),

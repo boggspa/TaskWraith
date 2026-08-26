@@ -17,6 +17,7 @@ import {
   isStaticMcpBridgeRegistrationArgv,
   parseMcpBridgeRouteFromEnv
 } from './mcp/McpBridgeRoute'
+import { serveMcpBridgeWithoutAuthority } from './mcp/McpBridgeNoAuthorityServer'
 
 // Dev (electron-vite, unpackaged) runs under the package.json name "taskwraith",
 // which on macOS's case-INSENSITIVE filesystem resolves to the SAME userData
@@ -206,12 +207,54 @@ function installPackageSmokeFailureHandlers(
   process.once('unhandledRejection', (error) => failPackageSmoke('unhandled rejection', error))
 }
 
+/**
+ * A refused static-bridge launch is almost always a FOREIGN client, not an
+ * attack: TaskWraith's registration is persisted in configs other tools read
+ * (agy's global `mcp_config.json` above all, which the user's own AntiGravity
+ * IDE and any manual `agy` session load), and those clients launch this exact
+ * argv with none of the live endpoint authority.
+ *
+ * The refusal itself is unchanged — no profile is selected, no userData is
+ * touched, and nothing below this point in main ever runs. What changes is how
+ * the refusal reads on the wire: dying mid-handshake surfaces as a hard error
+ * beside a server the user never knowingly installed, and the client retries.
+ * An empty handshake is exactly as closed and reads as what it is.
+ */
+export function shouldServeMcpBridgeHandshakeWithoutAuthority(argv: readonly string[]): boolean {
+  return isStaticMcpBridgeRouteLaunch(argv) || isDevStaticMcpBridgeProcessArgv(argv)
+}
+
+function serveStaticMcpBridgeHandshakeWithoutAuthority(): boolean {
+  if (!shouldServeMcpBridgeHandshakeWithoutAuthority(process.argv)) return false
+  let appVersion: string | undefined
+  try {
+    appVersion = app.getVersion()
+  } catch {
+    appVersion = undefined
+  }
+  serveMcpBridgeWithoutAuthority({
+    stdin: process.stdin,
+    stdout: process.stdout,
+    exit: (code?: number) => app.exit(code ?? 0),
+    ...(appVersion ? { appVersion } : {})
+  })
+  // Module evaluation still fails below, which reaches the entry as an uncaught
+  // module-evaluation error. Swallowing it is what keeps ONLY the stdio
+  // handlers alive: every module that would have booted main is already
+  // abandoned, so there is no other work left for a handler to hide.
+  process.on('uncaughtException', () => undefined)
+  process.on('unhandledRejection', () => undefined)
+  return true
+}
+
 function failClosedStartup(error: unknown): never {
   // Do not include argv or endpoint environment values: a static route helper
   // carries endpoint credentials there. The posture/admission helpers already
   // return generic errors, but startup logs stay generic as a second boundary.
-  console.error('[instance-posture] startup refused.')
-  app.exit(1)
+  if (!serveStaticMcpBridgeHandshakeWithoutAuthority()) {
+    console.error('[instance-posture] startup refused.')
+    app.exit(1)
+  }
   throw error instanceof Error ? error : new Error('TaskWraith startup was refused.')
 }
 

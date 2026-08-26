@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  composeAntigravityLaunchPrompt,
   getAntigravityProviderStatus,
-  prepareAntigravityProviderLaunch
+  prepareAntigravityProviderLaunch,
+  withAntigravityLaunchPrompt
 } from './AntigravityProviderRuntime'
 import { formatAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
 import { withAntigravityColdStartSteer, withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
@@ -594,5 +596,63 @@ describe('prepareAntigravityProviderLaunch', () => {
     )
 
     expect(status).toMatchObject({ available: false, authState: 'consent-required' })
+  })
+})
+
+describe('composeAntigravityLaunchPrompt', () => {
+  it('reproduces exactly the prompt prepare places after -p on a cold launch', async () => {
+    const launch = await prepareAntigravityProviderLaunch(
+      { settings: OPTED_IN, prompt: 'Review the failing test.', approvalMode: 'plan' },
+      { resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'common' }) }
+    )
+
+    expect(launch.args[launch.args.length - 1]).toBe(
+      composeAntigravityLaunchPrompt('Review the failing test.', launch.resumedConversationId)
+    )
+  })
+
+  it('skips the cold-start steer when a conversation is resumed', () => {
+    expect(composeAntigravityLaunchPrompt('Continue.', 'agy-project-x')).toBe(
+      withAntigravityLongTurnProgress('Continue.')
+    )
+  })
+})
+
+describe('withAntigravityLaunchPrompt', () => {
+  const plan = async () =>
+    prepareAntigravityProviderLaunch(
+      { settings: OPTED_IN, prompt: 'Original prompt.', approvalMode: 'plan' },
+      { resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'common' }) }
+    )
+
+  it('replaces only the audited -p value and leaves every other argv member intact', async () => {
+    const original = await plan()
+
+    const rewritten = withAntigravityLaunchPrompt(original, 'Replacement prompt.')
+
+    expect(rewritten.args[rewritten.args.length - 1]).toBe('Replacement prompt.')
+    expect(rewritten.args.slice(0, -1)).toEqual(original.args.slice(0, -1))
+    expect(rewritten.args).not.toBe(original.args)
+    expect(original.args[original.args.length - 1]).toBe(
+      composeAntigravityLaunchPrompt('Original prompt.', null)
+    )
+    expect(rewritten.binary).toBe(original.binary)
+    expect(rewritten.env).toBe(original.env)
+    expect(rewritten.mode).toBe(original.mode)
+    expect(rewritten.resumedConversationId).toBe(original.resumedConversationId)
+  })
+
+  it('refuses a plan whose argv is not the audited trailing -p form', async () => {
+    const original = await plan()
+
+    expect(() =>
+      withAntigravityLaunchPrompt({ ...original, args: ['--sandbox', '--mode', 'plan'] }, 'x')
+    ).toThrow(/audited `-p` form/i)
+  })
+
+  it('refuses an empty replacement prompt rather than launching a promptless child', async () => {
+    const original = await plan()
+
+    expect(() => withAntigravityLaunchPrompt(original, '   ')).toThrow(/prompt is required/i)
   })
 })
