@@ -830,6 +830,16 @@ describe('IpcValidation', () => {
         }
       ])
     ).toThrow(/safe chat id/)
+    expect(() =>
+      validateIpcArgs('patch-chat-composer-selection', [
+        {
+          chatId: 'chat-1',
+          provider: 'claude',
+          patch: { selectedModelType: 'claude-opus-5' }
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('patch-chat-composer-selection', ['chat-1'])).toThrow()
   })
 
   it('accepts ensemble and sub-thread chat IPC payloads', () => {

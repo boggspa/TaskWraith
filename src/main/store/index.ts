@@ -331,6 +331,11 @@ import {
 } from './FanoutCandidatePersistence'
 import { persistWatchedPrPatch } from './WatchedPrPersistence'
 import { persistChatGitWorkflowPatch } from './ChatGitWorkflowPersistence'
+import { ChatComposerSelectionOverlayStore } from './ChatComposerSelectionOverlayPersistence'
+import {
+  applyChatComposerSelectionPatch,
+  type ChatComposerSelectionPatchRequest
+} from '../../shared/chatComposerSelectionPatch'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
@@ -558,6 +563,7 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
   path.join(path.dirname(userDataPath), dirName)
 )
 const chatsDir = path.join(userDataPath, 'chats')
+const chatComposerSelectionOverlayStore = new ChatComposerSelectionOverlayStore(chatsDir)
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatJournalDir = path.join(userDataPath, 'chat-journal')
 const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
@@ -6048,6 +6054,12 @@ export class AppStore {
   /** Serializes only the async git-workflow marker patch for one chat. Same
    * narrow race guard as the watched-PR tails. */
   private static chatGitWorkflowWriteTails = new Map<string, Promise<ChatRecord>>()
+  /** Interactive composer selections use a transcript-free adjacent overlay.
+   * Per-chat tails keep rapid model/reasoning/permission batches ordered. */
+  private static chatComposerSelectionWriteTails = new Map<
+    string,
+    Promise<{ chat: ChatRecord; changed: boolean }>
+  >()
 
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
     const cached = this.chatRecordCache.get(chatId)
@@ -6055,7 +6067,9 @@ export class AppStore {
     // through the coalescer and hasn't been flushed to disk yet. Skip the
     // file-stat check and return the cached record directly.
     if (cached && cached.mtimeMs === -1) {
-      return cached.record
+      const record = chatComposerSelectionOverlayStore.apply(cached.record)
+      cached.record = record
+      return record
     }
     let stat: fs.Stats
     try {
@@ -6065,7 +6079,9 @@ export class AppStore {
       return null
     }
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-      return cached.record
+      const record = chatComposerSelectionOverlayStore.apply(cached.record)
+      cached.record = record
+      return record
     }
     const chat = readJson<ChatRecord | null>(chatPath, null)
     if (!chat) return null
@@ -6096,6 +6112,7 @@ export class AppStore {
         error
       )
     }
+    record = chatComposerSelectionOverlayStore.apply(record)
     this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
     return record
   }
@@ -6495,6 +6512,59 @@ export class AppStore {
         }
       }
     )
+    return operation
+  }
+
+  static persistChatComposerSelection(
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<{ chat: ChatRecord; changed: boolean }> {
+    if (!isSafeChatId(request.chatId)) {
+      return Promise.reject(new Error('A composer selection can only be recorded on a saved chat.'))
+    }
+    const previous =
+      this.chatComposerSelectionWriteTails.get(request.chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(async () => {
+        if (deletedChatIds.has(request.chatId)) {
+          throw new Error('This chat was deleted before its composer selection could be recorded.')
+        }
+        const current = this.getChat(request.chatId)
+        if (!current) throw new Error('Chat not found.')
+        if (this.getSettings().storeLocalChatHistory === false) {
+          const chat = applyChatComposerSelectionPatch(current, request)
+          if (chat !== current) {
+            const cached = this.chatRecordCache.get(request.chatId)
+            if (cached) cached.record = chat
+          }
+          return { chat, changed: chat !== current }
+        }
+        await this.assertHistoryMutationAllowedAsync({
+          operation: 'Composer selection persistence',
+          chatIds: [current.appChatId],
+          workspaceIds: [current.workspaceId]
+        })
+        const result = await chatComposerSelectionOverlayStore.persist(current, request)
+        if (result.changed) {
+          const cached = this.chatRecordCache.get(request.chatId)
+          if (cached) cached.record = result.chat
+          else {
+            this.chatRecordCache.set(request.chatId, {
+              mtimeMs: -1,
+              size: -1,
+              record: result.chat
+            })
+          }
+        }
+        return result
+    })
+    this.chatComposerSelectionWriteTails.set(request.chatId, operation)
+    const clearTail = (): void => {
+      if (this.chatComposerSelectionWriteTails.get(request.chatId) === operation) {
+        this.chatComposerSelectionWriteTails.delete(request.chatId)
+      }
+    }
+    void operation.then(clearTail, clearTail)
     return operation
   }
 
@@ -8297,6 +8367,7 @@ export class AppStore {
         incrementalChatPersistence.clear()
         chatUpdateProjectionTracker.clear()
         removePathStrict(chatsDir, 'chat history directory')
+        chatComposerSelectionOverlayStore.clearCache()
         // T4a: the journal is a second durable copy of chat history. Deleting
         // the legacy files while leaving the journal intact would leave the
         // deleted transcript recoverable on disk (NON-NEGOTIABLE #4).
@@ -8311,7 +8382,9 @@ export class AppStore {
         saveCoalescer.flush(chatId)
         const stored = readJsonStrictIfPresent(chatPath)
         if (stored === null) return
-        const chat = this.normalizeChatRecord(stored as ChatRecord)
+        const chat = chatComposerSelectionOverlayStore.apply(
+          this.normalizeChatRecord(stored as ChatRecord)
+        )
         const {
           taskWraithMcpProfileReceipt: _dropReceipt,
           seatGeneration: _dropSeatGeneration,
@@ -8379,6 +8452,7 @@ export class AppStore {
           // truncated record so no old mutation/checkpoint survives the rerun.
           incrementalChatPersistence.replaceAuthoritative(chatId, chat)
         }
+        chatComposerSelectionOverlayStore.delete(chatId)
         this.chatRecordCache.delete(chatId)
         const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
         if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
@@ -8401,6 +8475,7 @@ export class AppStore {
             label: `chat record ${chatId}`
           }))
         )
+        for (const chatId of intent.chatIds) chatComposerSelectionOverlayStore.delete(chatId)
         for (const chatId of intent.chatIds) this.chatRecordCache.delete(chatId)
       }
       return

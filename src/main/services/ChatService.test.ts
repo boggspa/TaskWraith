@@ -205,6 +205,10 @@ function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore 
       })
     ]),
     saveChat: vi.fn((chat: ChatRecord) => chat),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: makeChat({ appChatId: request.chatId }),
+      changed: true
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn(),
     ...overrides

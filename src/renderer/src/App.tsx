@@ -1011,6 +1011,12 @@ import {
   type PendingProviderChange
 } from '../../main/providerChangeQueue'
 import {
+  applyChatComposerSelectionPatch,
+  chatComposerSelectionPatchTouchesProviderMetadata,
+  sanitizeChatComposerSelectionPatch
+} from '../../shared/chatComposerSelectionPatch'
+import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
+import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
 } from '../../shared/pendingWorkspaceRebind'
@@ -5923,7 +5929,7 @@ function App(): React.JSX.Element {
     (
       chatId: string | null | undefined,
       updater: (chat: ChatRecord) => ChatRecord,
-      options?: { coalesce?: boolean; persistence?: 'transcript-tail' }
+      options?: { coalesce?: boolean; persistence?: 'transcript-tail' | 'none' }
     ): ChatRecord | null => {
       if (!chatId) return null
       if (!options?.coalesce && pendingMainChatUpdatesRef.current.has(chatId)) {
@@ -5992,6 +5998,10 @@ function App(): React.JSX.Element {
         pendingChatFlushRef.current.add(chatId)
         flushCoalescedChatsNow()
       }
+      // Small composer picker edits persist through their own main-authoritative
+      // patch IPC. Returning here keeps the optimistic React/cache update above
+      // while avoiding a structured clone of the entire chat transcript.
+      if (options?.persistence === 'none') return updated
       const persistTranscriptTail =
         options?.persistence === 'transcript-tail' &&
         rendererTranscriptPersistenceRef.current!.queue(base, updated)
@@ -6669,6 +6679,34 @@ function App(): React.JSX.Element {
   const applyChatComposerSelectionRef = useRef(applyChatComposerSelection)
   applyChatComposerSelectionRef.current = applyChatComposerSelection
 
+  const composerSelectionPatchQueueRef = useRef<ChatComposerSelectionPatchQueue | null>(null)
+  if (!composerSelectionPatchQueueRef.current) {
+    composerSelectionPatchQueueRef.current = new ChatComposerSelectionPatchQueue({
+      persist: async (request) => {
+        await rendererTranscriptPersistenceRef.current?.whenIdle(request.chatId)
+        const result = await window.api.patchChatComposerSelection(request)
+        if (!result.ok) throw new Error(`Composer selection patch failed: ${result.reason}`)
+        return result
+      },
+      onError: (chatId, error) => {
+        // Compatibility fallback only: a bridge/version mismatch must not lose
+        // the user's choice. The normal path never clones this full record.
+        const latest = chatByIdRef.current.get(chatId)
+        if (latest && !isChatSummaryRecord(latest)) {
+          void window.api.saveChat(latest).catch(() => {})
+        }
+        console.warn('[composer selection] compact persistence failed', error)
+      }
+    })
+  }
+  useEffect(() => {
+    const queue = composerSelectionPatchQueueRef.current
+    return () => {
+      if (!queue) return
+      void queue.flushAll().finally(() => queue.dispose())
+    }
+  }, [])
+
   const buildEnsembleSeedParticipantFromChat = (chat: ChatRecord): EnsembleParticipant => {
     const provider = getChatProvider(chat)
     const selection = getChatComposerSelection(chat, provider)
@@ -6784,64 +6822,39 @@ function App(): React.JSX.Element {
     })
   }
 
-  const PROVIDER_SCOPED_COMPOSER_METADATA_KEYS = new Set([
-    'selectedModelType',
-    'customModel',
-    'codexReasoningEffort',
-    'codexServiceTier',
-    'claudeReasoningEffort',
-    'claudeFastMode',
-    'kimiFastMode',
-    'kimiReasoningEffort',
-    'kimiThinkingEnabled',
-    'grokReasoningEffort',
-    'museReasoningEffort',
-    'mistralReasoningEffort',
-    'piReasoningEffort',
-    'ollamaReasoningEffort',
-    'cursorReasoningEffort',
-    'cursorFastMode',
-    'antigravityReasoningEffort',
-    'antigravityUltraTaskSelected',
-    'runtimeProfileId',
-    'geminiAuthProfileId'
-  ])
-
   const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
     if (!chatId) return
-    const maybeWorkflowMode = patch.workflowMode
-    const nextWorkflowMode =
-      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal' ? maybeWorkflowMode : undefined
-    const touchesProviderScopedMetadata = Object.keys(patch).some((key) =>
-      PROVIDER_SCOPED_COMPOSER_METADATA_KEYS.has(key)
+    const sanitizedPatch = sanitizeChatComposerSelectionPatch(patch)
+    if (!sanitizedPatch) return
+    const touchesProviderScopedMetadata =
+      chatComposerSelectionPatchTouchesProviderMetadata(sanitizedPatch)
+    const source =
+      chatByIdRef.current.get(chatId) ||
+      (activeRunChatSnapshotRef.current?.appChatId === chatId
+        ? activeRunChatSnapshotRef.current
+        : null)
+    if (!source) return
+    const deferProviderScoped =
+      source.chatKind !== 'ensemble' && touchesProviderScopedMetadata && isChatBusy(chatId)
+    const pendingChange = readPendingProviderChange(source)
+    const provider = pendingChange?.provider || getChatProvider(source)
+    const queuedAt = deferProviderScoped
+      ? pendingChange?.queuedAt || new Date().toISOString()
+      : undefined
+    const request = {
+      chatId,
+      patch: sanitizedPatch,
+      provider,
+      deferProviderScoped,
+      ...(queuedAt ? { queuedAt } : {})
+    }
+    const updated = updateChatById(
+      chatId,
+      (current) => applyChatComposerSelectionPatch(current, request),
+      { persistence: 'none' }
     )
-    updateChatById(chatId, (source) => {
-      if (source.chatKind !== 'ensemble' && touchesProviderScopedMetadata && isChatBusy(chatId)) {
-        const pendingChange = readPendingProviderChange(source)
-        const queuedChat = queueProviderChange(source, {
-          provider: pendingChange?.provider || getChatProvider(source),
-          providerMetadata: {
-            ...(pendingChange?.providerMetadata || {}),
-            ...patch
-          },
-          queuedAt: pendingChange?.queuedAt || new Date().toISOString()
-        })
-        return {
-          ...queuedChat,
-          ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-          updatedAt: Date.now()
-        }
-      }
-      return {
-        ...source,
-        ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          ...patch
-        },
-        updatedAt: Date.now()
-      }
-    })
+    if (updated === source) return
+    composerSelectionPatchQueueRef.current?.enqueue(request)
   }
 
   const rememberCurrentChatComposerSelection = (patch: Record<string, unknown>) => {
@@ -8383,14 +8396,7 @@ function App(): React.JSX.Element {
       return
     }
     setRuntimeProfileForChat(chatId, runtimeProfileId)
-    updateChatById(chatId, (source) => ({
-      ...source,
-      providerMetadata: {
-        ...(source.providerMetadata || {}),
-        runtimeProfileId
-      },
-      updatedAt: Date.now()
-    }))
+    rememberChatComposerSelectionById(chatId, { runtimeProfileId })
   }
 
   const refreshCodexThreads = async () => {

@@ -251,6 +251,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'run-gemini',
   'run-workflow-now',
   'save-chat',
+  'patch-chat-composer-selection',
   'mutate-chat-transcript',
   'save-clipboard-image-attachment',
   'set-chat-git-workflow',

@@ -65,6 +65,10 @@ function harness(options: { withQueue?: boolean } = {}) {
       chats.set(next.appChatId, next)
       return next
     }),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: chats.get(request.chatId) || chat({ appChatId: request.chatId }),
+      changed: false
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn()
   }
@@ -883,6 +887,10 @@ function roomHarness(
       chats.set(next.appChatId, next)
       return next
     }),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: chats.get(request.chatId) || chat({ appChatId: request.chatId }),
+      changed: false
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn()
   }

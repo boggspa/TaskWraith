@@ -29,6 +29,11 @@ import {
   type ChatTranscriptOp
 } from '../../shared/chatUpdateTransport'
 import { ChatTranscriptMutationIndex } from '../store/ChatTranscriptMutationAuthoring'
+import { assertSafeChatId } from '../ChatPath'
+import {
+  parseChatComposerSelectionPatchRequest,
+  type ChatComposerSelectionPatchResult
+} from '../../shared/chatComposerSelectionPatch'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
@@ -42,6 +47,7 @@ export interface ChatHandlerDeps {
     | 'getPinnedMessages'
     | 'getChat'
     | 'saveChat'
+    | 'patchChatComposerSelection'
     | 'deleteChat'
     | 'truncateChatHistory'
     | 'clearChats'
@@ -156,6 +162,7 @@ export interface ChatHandlerDeps {
       | 'create-side-chat'
       | 'set-chat-kind'
       | 'save-chat'
+      | 'patch-chat-composer-selection'
       | 'mutate-chat-transcript'
       | 'delete-chat'
       | 'truncate-chat'
@@ -563,6 +570,46 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         persistenceRevision(saved) > persistenceRevision(previous)
     }
   })
+
+  ipcMain.handle(
+    'patch-chat-composer-selection',
+    async (event, payload: unknown): Promise<ChatComposerSelectionPatchResult> => {
+      const request = parseChatComposerSelectionPatchRequest(payload)
+      if (!request) throw new Error('Invalid chat composer selection patch.')
+      assertSafeChatId(request.chatId)
+      deps.assertSenderChatScope(event, request.chatId, 'patch-chat-composer-selection')
+      const previous = deps.chatService.getChat(request.chatId)
+      if (!previous) {
+        return {
+          ok: false,
+          changed: false,
+          chatId: request.chatId,
+          reason: 'chat-not-found'
+        }
+      }
+      const result = await deps.chatService.patchChatComposerSelection(request)
+      if (!result.changed) {
+        return {
+          ok: true,
+          changed: false,
+          chatId: previous.appChatId,
+          revision: persistenceRevision(previous),
+          updatedAt: previous.updatedAt
+        }
+      }
+      const saved = result.chat
+      observeNoHistoryChat(saved)
+      deps.broadcastChatUpdated(saved)
+      deps.broadcastThreadUpdate(saved.appChatId)
+      return {
+        ok: true,
+        changed: true,
+        chatId: saved.appChatId,
+        revision: persistenceRevision(saved),
+        updatedAt: saved.updatedAt
+      }
+    }
+  )
 
   ipcMain.handle(
     'mutate-chat-transcript',

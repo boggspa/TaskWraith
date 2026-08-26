@@ -79,6 +79,7 @@ describe('RendererIpcPolicy', () => {
     'unarchive-chat',
     'export-archived-chat',
     'save-chat',
+    'patch-chat-composer-selection',
     'mutate-chat-transcript',
     'run-agent',
     'save-clipboard-image-attachment',

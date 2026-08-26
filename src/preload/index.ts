@@ -52,6 +52,10 @@ import type {
   RendererChatTranscriptMutationResult
 } from '../shared/rendererChatTranscriptMutation'
 import type {
+  ChatComposerSelectionPatchRequest,
+  ChatComposerSelectionPatchResult
+} from '../shared/chatComposerSelectionPatch'
+import type {
   GitCommitGroupPullRequestResult,
   GitPullRequestLifecycleAction,
   GitPullRequestLifecycleResult,
@@ -2504,6 +2508,10 @@ const api = {
   humanCollaborationCollaboratorReconnect: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
   saveChat: (chat: ChatRecord) => serializedChatPersistence.save(chat),
+  patchChatComposerSelection: (
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<ChatComposerSelectionPatchResult> =>
+    ipcRenderer.invoke('patch-chat-composer-selection', request),
   mutateChatTranscript: (
     request: RendererChatTranscriptMutationRequest
   ): Promise<RendererChatTranscriptMutationResult> =>

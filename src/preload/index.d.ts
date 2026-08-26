@@ -90,6 +90,10 @@ import type {
   RendererChatTranscriptMutationRequest,
   RendererChatTranscriptMutationResult
 } from '../shared/rendererChatTranscriptMutation'
+import type {
+  ChatComposerSelectionPatchRequest,
+  ChatComposerSelectionPatchResult
+} from '../shared/chatComposerSelectionPatch'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type {
   UsageWebSessionImportOutcome,
@@ -2697,6 +2701,9 @@ declare global {
         displayName: string
       }>
       saveChat: (chat: ChatRecord) => Promise<ChatRecord>
+      patchChatComposerSelection: (
+        request: ChatComposerSelectionPatchRequest
+      ) => Promise<ChatComposerSelectionPatchResult>
       mutateChatTranscript: (
         request: RendererChatTranscriptMutationRequest
       ) => Promise<RendererChatTranscriptMutationResult>

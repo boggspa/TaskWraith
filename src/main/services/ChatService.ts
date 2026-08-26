@@ -80,6 +80,7 @@ import {
   externalPathGrantMetadataLists
 } from '../store/ExternalPathGrants'
 import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
+import type { ChatComposerSelectionPatchRequest } from '../../shared/chatComposerSelectionPatch'
 
 // Known ids for historical decode. New chat lifecycles use the shared live
 // admission predicate through `assertLiveProviderId` below.
@@ -242,6 +243,9 @@ export interface ChatServiceStore {
     chat: ChatRecord,
     options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
   ) => ChatRecord
+  persistChatComposerSelection: (
+    request: ChatComposerSelectionPatchRequest
+  ) => Promise<{ chat: ChatRecord; changed: boolean }>
   deleteChat: (chatId: string) => void
   truncateChatHistory?: (chatId: string) => ChatRecord | null
   clearChats: (workspaceId?: string) => void
@@ -663,6 +667,13 @@ export class ChatService {
     options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
   ): ChatRecord {
     return this.saveChatInternal(chat, false, options)
+  }
+
+  patchChatComposerSelection(
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<{ chat: ChatRecord; changed: boolean }> {
+    const chatId = requireSafeChatId(request.chatId, 'Chat id')
+    return this.deps.appStore.persistChatComposerSelection({ ...request, chatId })
   }
 
   private saveChatInternal(

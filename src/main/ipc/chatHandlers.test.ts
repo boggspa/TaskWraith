@@ -50,6 +50,10 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getPinnedMessages: vi.fn(() => []),
       getChat: vi.fn((chatId: string) => chat(chatId)),
       saveChat: vi.fn((record: ChatRecord) => record),
+      patchChatComposerSelection: vi.fn(async (request) => ({
+        chat: chat(request.chatId),
+        changed: true
+      })),
       deleteChat: vi.fn(),
       truncateChatHistory: vi.fn((chatId: string) => chat(chatId, { messages: [], runs: [] })),
       clearChats: vi.fn(),
@@ -166,12 +170,125 @@ describe('registerChatHandlers', () => {
     registerChatHandlers(createDeps())
 
     expect(handlerFor('save-chat')).toBeTypeOf('function')
+    expect(handlerFor('patch-chat-composer-selection')).toBeTypeOf('function')
     expect(handlerFor('mutate-chat-transcript')).toBeTypeOf('function')
     expect(handlerFor('rebind-chat-workspace')).toBeTypeOf('function')
     expect(handlerFor('delete-chat')).toBeTypeOf('function')
     expect(handlerFor('reap-abandoned-chats')).toBeTypeOf('function')
     expect(handlerFor('truncate-chat')).toBeTypeOf('function')
     expect(handlerFor('clear-chats')).toBeTypeOf('function')
+  })
+
+  it('patches composer metadata without a renderer chat-record payload', async () => {
+    const messages = [
+      {
+        id: 'message-1',
+        role: 'user' as const,
+        content: 'large transcript stays main-owned',
+        timestamp: '2026-08-26T12:00:00.000Z'
+      }
+    ]
+    const canonical = chat('chat-1', {
+      provider: 'claude',
+      messages,
+      persistenceRevision: 4,
+      providerMetadata: { selectedModelType: 'claude-sonnet-5' }
+    })
+    const saved = {
+      ...canonical,
+      providerMetadata: { selectedModelType: 'claude-opus-5' },
+      persistenceRevision: 5,
+      updatedAt: 5
+    }
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChat: vi.fn(() => canonical),
+        patchChatComposerSelection: vi.fn(async () => ({ chat: saved, changed: true }))
+      }
+    })
+    registerChatHandlers(deps)
+
+    const result = await handlerFor('patch-chat-composer-selection')({} as any, {
+      chatId: canonical.appChatId,
+      provider: 'claude',
+      deferProviderScoped: false,
+      patch: { selectedModelType: 'claude-opus-5' }
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      changed: true,
+      chatId: canonical.appChatId,
+      revision: 5,
+      updatedAt: 5
+    })
+    expect(deps.chatService.patchChatComposerSelection).toHaveBeenCalledWith({
+      chatId: canonical.appChatId,
+      provider: 'claude',
+      deferProviderScoped: false,
+      patch: { selectedModelType: 'claude-opus-5' }
+    })
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.assertSenderChatScope).toHaveBeenCalledWith(
+      expect.anything(),
+      canonical.appChatId,
+      'patch-chat-composer-selection'
+    )
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(saved)
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith(canonical.appChatId)
+  })
+
+  it('skips broadcast for an exact composer selection no-op', async () => {
+    const canonical = chat('chat-1', {
+      provider: 'claude',
+      persistenceRevision: 4,
+      providerMetadata: { selectedModelType: 'claude-opus-5' }
+    })
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChat: vi.fn(() => canonical),
+        patchChatComposerSelection: vi.fn(async () => ({ chat: canonical, changed: false }))
+      }
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: canonical.appChatId,
+        provider: 'claude',
+        patch: { selectedModelType: 'claude-opus-5' }
+      }) as Promise<unknown>
+    ).resolves.toEqual({
+      ok: true,
+      changed: false,
+      chatId: canonical.appChatId,
+      revision: 4,
+      updatedAt: canonical.updatedAt
+    })
+    expect(deps.chatService.patchChatComposerSelection).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed or unsafe composer selection patch payloads', async () => {
+    const deps = createDeps()
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: 'chat-1',
+        provider: 'claude',
+        patch: { messages: [] }
+      }) as Promise<unknown>
+    ).rejects.toThrow(/Invalid chat composer selection patch/)
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: '../settings',
+        provider: 'claude',
+        patch: { selectedModelType: 'claude-opus-5' }
+      }) as Promise<unknown>
+    ).rejects.toThrow(/safe chat id/i)
   })
 
   it('registers chat read handlers against the injected chat service', () => {
