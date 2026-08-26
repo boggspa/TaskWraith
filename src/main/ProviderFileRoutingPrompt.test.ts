@@ -29,6 +29,18 @@ describe('buildProviderFileRoutingPrompt', () => {
     expect(prompt).toContain('approved lane scope')
   })
 
+  it('routes a granted Cursor edit through its brokered TaskWraith tools', () => {
+    const prompt = buildProviderFileRoutingPrompt({
+      provider: 'cursor',
+      effectivePermissions: permissions('allow')
+    })
+
+    expect(prompt).toContain('taskwraith__apply_patch')
+    expect(prompt).toContain('taskwraith__write_file')
+    expect(prompt).toContain('Cursor-native apply_patch/edit/write tool')
+    expect(prompt).toContain('TaskWraith locks, audit, and grants')
+  })
+
   it('explains normal approval for a Codex ask posture', () => {
     const prompt = buildProviderFileRoutingPrompt({
       provider: 'codex',
@@ -54,13 +66,25 @@ describe('buildProviderFileRoutingPrompt', () => {
     ).toBe('')
   })
 
-  it('does not change non-Codex provider prompts', () => {
-    expect(
-      buildProviderFileRoutingPrompt({
-        provider: 'grok',
-        effectivePermissions: permissions('allow')
-      })
-    ).toBe('')
+  it('does not add the broker route to providers without Cursor-style dual surfaces', () => {
+    for (const provider of [
+      'claude',
+      'gemini',
+      'kimi',
+      'ollama',
+      'grok',
+      'mistral',
+      'antigravity',
+      'pi',
+      'muse'
+    ] as const) {
+      expect(
+        buildProviderFileRoutingPrompt({
+          provider,
+          effectivePermissions: permissions('allow')
+        })
+      ).toBe('')
+    }
   })
 
   it('strips only the generated leading envelope', () => {

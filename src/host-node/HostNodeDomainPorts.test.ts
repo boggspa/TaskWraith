@@ -11,10 +11,8 @@ import {
   museMeterSnapshotToProviderStats,
   unavailableMuseMeterSnapshot
 } from '../main/muse/MuseUsage'
-import {
-  createHostNodeMuseProviderFactory,
-  type HostNodeProviderInstance
-} from './HostNodeMuseProvider'
+import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
+import type { HostNodeProvider, HostNodeProviderInstance } from './HostNodeProvider'
 import { HostNodeDomainPorts } from './HostNodeDomainPorts'
 
 const paths: string[] = []
@@ -685,5 +683,323 @@ describe('HostNodeDomainPorts', () => {
     })
     expect(firstCancelled).toBe(1)
     expect(secondCancelled).toBe(0)
+  })
+
+  it('proves advertised approvals resume exactly once through the awaitable seam', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    // Set up a live run/thread that owns the pending card.
+    const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
+    paths.push(workspace)
+    const registered = domainOptions.store.registerWorkspace({ path: workspace })
+    const thread = domainOptions.store.createThread({
+      scope: 'workspace',
+      workspaceId: registered.id
+    })
+    domainOptions.store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const begin = domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(begin.kind).toBe('started')
+    // Verify the live run/thread is visible to the ownership check.
+    expect(domain.runPort.getThread(thread.appChatId)).not.toBeNull()
+    expect(domain.runPort.getThread(thread.appChatId)?.providerId).toBe('muse')
+    expect(domain.runPort.hasBegun('run-1', thread.appChatId)).toBe(true)
+    const settlement = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const result = domain.interactions.decide({
+      id: 'ap-1',
+      decision: 'accept',
+      actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+    })
+    expect(result.settled).toMatchObject({ id: 'ap-1', kind: 'approval' })
+    await expect(settlement).resolves.toMatchObject({
+      id: 'ap-1',
+      kind: 'approval',
+      decision: 'accept'
+    })
+    expect(
+      domain.interactions.decide({
+        id: 'ap-1',
+        decision: 'decline',
+        actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+      }).settled
+    ).toBeNull()
+  })
+
+  it('projects pending approvals and questions into snapshotDonor', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: true,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    void domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: 'thread-1',
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    void domain.interactions.register({
+      id: 'q-1',
+      kind: 'question',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: 'thread-1',
+      title: 'Choose option',
+      summary: 'Pick one',
+      options: ['a', 'b'],
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const snapshot = domain.snapshotDonor()
+    expect(snapshot.approvals).toHaveLength(1)
+    expect(snapshot.approvals[0]).toMatchObject({
+      approvalId: 'ap-1',
+      threadId: 'thread-1',
+      status: 'pending'
+    })
+    expect(snapshot.questions).toHaveLength(1)
+    expect(snapshot.questions[0]).toMatchObject({
+      questionId: 'q-1',
+      threadId: 'thread-1',
+      status: 'open'
+    })
+  })
+
+  it('validates a decision command in authority evaluation without settling it', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    // Set up a live run/thread that owns the pending card.
+    const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
+    paths.push(workspace)
+    const registered = domainOptions.store.registerWorkspace({ path: workspace })
+    const thread = domainOptions.store.createThread({
+      scope: 'workspace',
+      workspaceId: registered.id
+    })
+    domainOptions.store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const begin = domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(begin.kind).toBe('started')
+    const settlement = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const command = {
+      type: 'host.command' as const,
+      protocolVersion: 2 as const,
+      commandId: 'cmd-1',
+      idempotencyKey: 'key-cmd-1',
+      actor: { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const },
+      name: 'approval.decide' as const,
+      target: { approvalId: 'ap-1' },
+      arguments: { decision: 'accept' },
+      issuedAt: '2026-08-24T05:00:00.000Z'
+    }
+    const liveThread = domain.runPort.getThread(thread.appChatId)
+    expect(liveThread).not.toBeNull()
+    expect(liveThread?.providerId).toBe('muse')
+    expect(domain.runPort.hasBegun('run-1', thread.appChatId)).toBe(true)
+    const authority = domain.evaluateAuthority(context, command)
+    expect(authority).toEqual({ decision: 'allow' })
+    // Authority evaluation must NOT settle the interaction.
+    expect(domain.interactions.listPending()).toHaveLength(1)
+    // Execution settles exactly once.
+    const result = await domain.executeCommand(context, command, { id: 'tui-1' })
+    expect(result).toMatchObject({ status: 'succeeded' })
+    await expect(settlement).resolves.toMatchObject({ id: 'ap-1', decision: 'accept' })
+    expect(domain.interactions.listPending()).toHaveLength(0)
+  })
+
+  it('cancels matching interactions on run completion while unrelated runs survive', async () => {
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread1 = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const thread2 = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread1.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    store.configureThread({
+      threadId: thread2.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread1.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    domain.runPort.beginRun({
+      runId: 'run-2',
+      threadId: thread2.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    const run1 = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread1.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const run2 = domain.interactions.register({
+      id: 'ap-2',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-2',
+      threadId: thread2.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(domain.interactions.listPending()).toHaveLength(2)
+    // Complete run-1; run-2 must survive.
+    domain.interactions.cancelByRunId('run-1', 'test: run completed')
+    await expect(run1).rejects.toThrow('test: run completed')
+    expect(domain.interactions.listPending()).toHaveLength(1)
+    expect(domain.interactions.listPending()[0].id).toBe('ap-2')
+    // run-2 is still pending and resolvable.
+    domain.interactions.decide({
+      id: 'ap-2',
+      decision: 'accept',
+      actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+    })
+    await expect(run2).resolves.toMatchObject({ id: 'ap-2', decision: 'accept' })
   })
 })

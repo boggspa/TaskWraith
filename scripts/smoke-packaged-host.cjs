@@ -259,6 +259,7 @@ async function runProductionRoundTrip(launcher, target) {
     fs.mkdirSync(workspace)
     const launcherArgs = ['--profile', canonicalProfile]
     const childEnv = {}
+
     if (target.platform !== 'win32') {
       fs.writeFileSync(museBinary, '#!/bin/sh\n')
       fs.chmodSync(museBinary, 0o700)
@@ -294,6 +295,35 @@ async function runProductionRoundTrip(launcher, target) {
     }
     if (response.frame?.ok !== true || response.frame.result?.kind !== 'snapshot.get') {
       fail('production Host did not return an authenticated snapshot')
+    }
+    const snapshotProviders = response.frame.result.frame?.snapshot?.providers
+    if (!Array.isArray(snapshotProviders)) {
+      fail('production Host snapshot must include a providers inventory')
+    }
+
+    const statusResponse = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
+      type: 'request',
+      transportVersion: 1,
+      id: 'provider-status',
+      kind: 'provider.status',
+      params: {}
+    })
+    const statuses = statusResponse.frame?.result?.statuses
+    if (statusResponse.frame?.ok !== true || !Array.isArray(statuses)) {
+      fail('production Host did not return provider statuses')
+    }
+    if (statuses.length !== snapshotProviders.length) {
+      fail(
+        `production Host provider statuses (${statuses.length}) do not match the snapshot inventory (${snapshotProviders.length})`
+      )
+    }
+    for (const status of statuses) {
+      if (
+        typeof status?.providerId !== 'string' ||
+        !['ready', 'auth_required', 'unavailable', 'degraded'].includes(status?.status)
+      ) {
+        fail('production Host provider status row is invalid')
+      }
     }
 
     if (target.platform !== 'win32') {

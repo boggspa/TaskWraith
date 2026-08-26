@@ -870,7 +870,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// relay registration needed for force-quit completion banners.
     private func storePushRegistrationFromAck(_ ack: AckResult, expectedHostId: String?) {
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data),
             let ackData = actionAck.data
         else { return }
         // Key the record by the host captured at send time — never re-derive from
@@ -908,7 +908,7 @@ public final class RemoteSessionModel: ObservableObject {
         guard pendingApnsToken != nil else { return }
         apnsTokenRetryTask?.cancel()
         apnsTokenRetryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await TWRetryDelay.sleep(milliseconds: 5_000)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.sendPendingApnsTokenIfReady() }
         }
@@ -1066,7 +1066,7 @@ public final class RemoteSessionModel: ObservableObject {
         while waitedMs < timeoutMs {
             if case .connected = phase { return true }
             guard !Task.isCancelled else { return false }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            await TWRetryDelay.sleep(milliseconds: 250)
             waitedMs += 250
         }
         return false
@@ -1414,7 +1414,7 @@ public final class RemoteSessionModel: ObservableObject {
         autoReconnectAttempt += 1
         let delaySeconds = min(30.0, 1.5 * pow(2.0, Double(min(attempt, 4))))
         autoReconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            await TWRetryDelay.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.hasStoredPairing else { return }
@@ -1525,7 +1525,7 @@ public final class RemoteSessionModel: ObservableObject {
     public func pair(fromBootstrapJSON json: String) {
         let sanitized = Self.sanitizeBootstrapJSON(json)
         guard let data = sanitized.data(using: .utf8),
-            let bootstrap = try? JSONDecoder().decode(PairingBootstrapPayload.self, from: data)
+            let bootstrap = try? TWCoders.decoder.decode(PairingBootstrapPayload.self, from: data)
         else {
             phase = .error(
                 "That doesn't look like a valid pairing code. Use the Copy setup payload "
@@ -1607,7 +1607,7 @@ public final class RemoteSessionModel: ObservableObject {
                     continue
                 }
                 guard
-                    let bootstrap = try? JSONDecoder().decode(
+                    let bootstrap = try? TWCoders.decoder.decode(
                         PairingBootstrapPayload.self, from: data)
                 else {
                     lastError = "\(label) returned an unreadable pairing response."
@@ -1758,7 +1758,7 @@ public final class RemoteSessionModel: ObservableObject {
                 let budgetMs = RelayCandidates.dialTimeoutMs(for: candidate)
                 var waitedMs = 0
                 poll: while waitedMs < budgetMs {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    await TWRetryDelay.sleep(milliseconds: 250)
                     waitedMs += 250
                     guard self.connectAttempt == attempt else { return }
                     switch self.phase {
@@ -2020,7 +2020,7 @@ public final class RemoteSessionModel: ObservableObject {
                 guard Self.fullProjectionResyncShouldRetry(ack: ack, phase: self.phase) else {
                     return
                 }
-                try? await Task.sleep(nanoseconds: backoffNs)
+                await TWRetryDelay.sleep(nanoseconds: backoffNs)
                 backoffNs *= 2
             }
         }
@@ -2496,7 +2496,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     private static func decodeDemo<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
         guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
+        return try? TWCoders.decoder.decode(type, from: data)
     }
 
     /// Clears cached projection/render state (snapshots, streaming buffers, usage
@@ -2650,7 +2650,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     private static func retitledCard(_ card: RemoteTaskCard, title: String) -> RemoteTaskCard {
         guard
-            let data = try? JSONEncoder().encode(card),
+            let data = try? TWCoders.encoder.encode(card),
             var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return card
@@ -2658,7 +2658,7 @@ public final class RemoteSessionModel: ObservableObject {
         object["title"] = title
         guard
             let nextData = try? JSONSerialization.data(withJSONObject: object),
-            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+            let decoded = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: nextData)
         else {
             return card
         }
@@ -2762,9 +2762,9 @@ public final class RemoteSessionModel: ObservableObject {
         ]
         guard
             let cardData = try? JSONSerialization.data(withJSONObject: cardDict),
-            let card = try? JSONDecoder().decode(RemoteTaskCard.self, from: cardData),
+            let card = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: cardData),
             let snapData = try? JSONSerialization.data(withJSONObject: snapDict),
-            let snap = try? JSONDecoder().decode(RemoteThreadSnapshot.self, from: snapData)
+            let snap = try? TWCoders.decoder.decode(RemoteThreadSnapshot.self, from: snapData)
         else {
             onCreated?(nil)
             return
@@ -2782,7 +2782,7 @@ public final class RemoteSessionModel: ObservableObject {
         var dict: [String: Any] = ["id": id, "role": role, "kind": "message", "preview": preview]
         if let speaker { dict["speaker"] = speaker }
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let row = try? JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+            let row = try? TWCoders.decoder.decode(RemoteThreadSnapshot.Row.self, from: data)
         else { return nil }
         return row
     }
@@ -2992,7 +2992,7 @@ public final class RemoteSessionModel: ObservableObject {
             "etag": "demo-etag-\(content.utf8.count)",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let result = try? JSONDecoder().decode(WorkspaceFileReadResult.self, from: data)
+            let result = try? TWCoders.decoder.decode(WorkspaceFileReadResult.self, from: data)
         else { return nil }
         return result
     }
@@ -3124,7 +3124,7 @@ public final class RemoteSessionModel: ObservableObject {
         if hasStoredPairing {
             phase = .error("Connection lost — reconnecting…")
             Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                await TWRetryDelay.sleep(milliseconds: 1_200)
                 await MainActor.run { self?.reconnectIfStale() }
             }
         } else {
@@ -3183,7 +3183,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private static func iso8601Now() -> String {
-        ISO8601DateFormatter().string(from: Date())
+        TWCoders.iso8601Now()
     }
 
     private func consumeEvents(of client: RelayTransportClient) {
@@ -3367,7 +3367,7 @@ public final class RemoteSessionModel: ObservableObject {
 
         init(
             decode: @escaping @Sendable (Data) throws -> DecodedProjectionSnapshot = { data in
-                try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: data)
+                try TWCoders.decoder.decode(DecodedProjectionSnapshot.self, from: data)
             },
             apply: @escaping (DecodedProjectionSnapshot) -> Void
         ) {
@@ -3493,7 +3493,7 @@ public final class RemoteSessionModel: ObservableObject {
             decode: @escaping @Sendable ([Data]) throws -> [DecodedProjectionMessage] = {
                 frames in
                 frames.compactMap {
-                    try? JSONDecoder().decode(DecodedProjectionMessage.self, from: $0)
+                    try? TWCoders.decoder.decode(DecodedProjectionMessage.self, from: $0)
                 }
             },
             apply: @escaping ([DecodedProjectionMessage]) -> Void
@@ -3617,28 +3617,28 @@ public final class RemoteSessionModel: ObservableObject {
         case "bridge.broadcastRemoteProjectionSnapshot":
             projectionSnapshotCoalescer.enqueue(params)
         case "bridge.broadcastWorkspaceList":
-            guard let message = try? JSONDecoder().decode(WorkspaceListMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(WorkspaceListMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: workspace list")
                 return
             }
             applyWorkspaceList(message)
         case "bridge.broadcastThreadList":
-            guard let message = try? JSONDecoder().decode(ThreadListMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ThreadListMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: thread list")
                 return
             }
             applyThreadList(message)
         case "bridge.broadcastModelUsage":
-            guard let message = try? JSONDecoder().decode(ModelUsageMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ModelUsageMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: model usage")
                 return
             }
             modelUsage = message.usage
         case "bridge.broadcastUsageRollup":
-            guard let message = try? JSONDecoder().decode(UsageRollupMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(UsageRollupMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: usage rollup")
                 return
@@ -3648,7 +3648,7 @@ public final class RemoteSessionModel: ObservableObject {
             externalTokenDaily = message.externalDaily
         case "bridge.broadcastWelcomeDashboard":
             guard
-                let message = try? JSONDecoder().decode(WelcomeDashboardMessage.self, from: params)
+                let message = try? TWCoders.decoder.decode(WelcomeDashboardMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: welcome dashboard")
                 return
@@ -3656,14 +3656,14 @@ public final class RemoteSessionModel: ObservableObject {
             welcomeDashboard = message.dashboard
         case "bridge.broadcastFirstLaunchState":
             guard
-                let message = try? JSONDecoder().decode(FirstLaunchStateMessage.self, from: params)
+                let message = try? TWCoders.decoder.decode(FirstLaunchStateMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: first launch state")
                 return
             }
             firstLaunchState = message.state
         case "bridge.broadcastProviderModels":
-            guard let message = try? JSONDecoder().decode(ProviderModelsMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ProviderModelsMessage.self, from: params)
             else { return }
             providerModels = Dictionary(
                 uniqueKeysWithValues: message.providers.map { ($0.provider, $0.models) })
@@ -3674,7 +3674,7 @@ public final class RemoteSessionModel: ObservableObject {
             // the previously-stored template in place rather than reverting to
             // the default — a malformed broadcast shouldn't silently discard a
             // template the user already configured.
-            guard let message = try? JSONDecoder().decode(BannerTemplateMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(BannerTemplateMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: banner template")
                 return
@@ -3709,7 +3709,7 @@ public final class RemoteSessionModel: ObservableObject {
                 let provider: String?
                 let payload: WirePayload?
             }
-            guard let wire = try? JSONDecoder().decode(Wire.self, from: params),
+            guard let wire = try? TWCoders.decoder.decode(Wire.self, from: params),
                 let threadId = wire.threadId
             else { return }
             // Token-level progressive streaming: agent-output lines carry the
@@ -5511,7 +5511,7 @@ public final class RemoteSessionModel: ObservableObject {
             throw RemoteFileActionError.denied(ack.error ?? "Action denied.")
         }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { throw RemoteFileActionError.malformedAck }
         if actionAck.accepted == false {
             throw RemoteFileActionError.denied(actionAck.message ?? "Denied by Mac policy.")
@@ -6041,7 +6041,7 @@ public final class RemoteSessionModel: ObservableObject {
         if isDemo {
             editDemoSnapshot(thread) { draft in
                 var entries = draft.blackboardEntries ?? []
-                let createdAt = ISO8601DateFormatter().string(from: Date())
+                let createdAt = TWCoders.iso8601Now()
                 let entry = RemoteThreadSnapshot.BlackboardEntry(
                     id: "bb-demo-\(UUID().uuidString)",
                     key: key ?? "user-note-\(Int(Date().timeIntervalSince1970))",
@@ -6177,13 +6177,13 @@ public final class RemoteSessionModel: ObservableObject {
         _ card: RemoteTaskCard, key: String, value: Bool
     ) -> RemoteTaskCard {
         guard
-            let data = try? JSONEncoder().encode(card),
+            let data = try? TWCoders.encoder.encode(card),
             var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return card }
         object[key] = value
         guard
             let nextData = try? JSONSerialization.data(withJSONObject: object),
-            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+            let decoded = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: nextData)
         else { return card }
         return decoded
     }
@@ -7573,7 +7573,7 @@ public final class RemoteSessionModel: ObservableObject {
             navigateOnAck: false,
             onAckResult: { [weak self] accepted, ack in
                 guard accepted, let data = ack?.result,
-                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                    let result = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
                 else {
                     completion(false)
                     return
@@ -7624,7 +7624,7 @@ public final class RemoteSessionModel: ObservableObject {
             navigateOnAck: false,
             onAckResult: { accepted, ack in
                 guard accepted, let data = ack?.result,
-                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                    let result = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
                 else {
                     completion(false)
                     return
@@ -8018,7 +8018,7 @@ public final class RemoteSessionModel: ObservableObject {
     private static func approvalAckOutcome(_ ack: AckResult?) -> ApprovalAckOutcome {
         guard let ack, ack.ok else { return .transportError }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { return .succeeded }
         if actionAck.accepted == false { return .rejected }
         if actionAck.executed == false {
@@ -8036,7 +8036,7 @@ public final class RemoteSessionModel: ObservableObject {
     private static func actionAckSucceeded(_ ack: AckResult) -> Bool {
         guard ack.ok else { return false }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { return true }
         if actionAck.accepted == false { return false }
         if actionAck.executed == false { return false }
@@ -8046,12 +8046,12 @@ public final class RemoteSessionModel: ObservableObject {
     private static func threadId(from ack: AckResult) -> String? {
         guard let data = ack.result else { return nil }
         if let threadId = nestedThreadId(from: data) { return threadId }
-        if let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data) {
+        if let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data) {
             if let threadId = actionAck.data?.threadId { return threadId }
             if let threadId = actionAck.threadId { return threadId }
         }
         struct Loose: Codable { let threadId: String? }
-        if let loose = try? JSONDecoder().decode(Loose.self, from: data) {
+        if let loose = try? TWCoders.decoder.decode(Loose.self, from: data) {
             return loose.threadId
         }
         return nil
@@ -8085,7 +8085,7 @@ public final class RemoteSessionModel: ObservableObject {
             return ack.error ?? "Action denied."
         }
         if let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         {
             if actionAck.accepted == false {
                 return actionAck.message ?? "Denied by Mac policy."

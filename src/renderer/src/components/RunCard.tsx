@@ -4,6 +4,7 @@ import { classifyRunEvent } from '../lib/RunEventClassifier'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { resolveOllamaDisplayBrand, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { DigitOdometer } from './DigitOdometer'
 
 interface RunCardProps {
@@ -33,14 +34,13 @@ export function RunCard({
     approvalCount: 0,
     eventFileCount: null
   })
-  const [, setNowTick] = useState(0)
-
   const isActive =
     !run.endedAt &&
     run.status !== 'failed' &&
     run.status !== 'cancelled' &&
     run.status !== 'success' &&
     run.status !== 'sleeping'
+  const nowTick = useSharedNowTick(isActive)
   const fileCount = useMemo(() => {
     const diffCount = countRunDiffFiles(run)
     if (diffCount !== null) return diffCount
@@ -51,10 +51,16 @@ export function RunCard({
     let cancelled = false
     const refresh = async (): Promise<void> => {
       if (!run.runId || typeof window.api.getRunEventReplay !== 'function') return
+      if (document.hidden) return
       try {
         const replay = (await window.api.getRunEventReplay(run.runId)) as RunEventReplay
         if (cancelled) return
-        setAggregate(buildRunAggregate(replay))
+        const next = buildRunAggregate(replay)
+        setAggregate((current) =>
+          current.approvalCount === next.approvalCount && current.eventFileCount === next.eventFileCount
+            ? current
+            : next
+        )
       } catch {
         if (!cancelled) setAggregate((current) => current)
       }
@@ -65,20 +71,22 @@ export function RunCard({
         cancelled = true
       }
     const intervalId = window.setInterval(() => void refresh(), 2000)
+    const onVisibilityChange = (): void => {
+      if (!document.hidden) void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [isActive, run.runId])
 
-  useEffect(() => {
-    if (!isActive) return
-    const intervalId = window.setInterval(() => setNowTick((tick) => tick + 1), 1000)
-    return () => window.clearInterval(intervalId)
-  }, [isActive])
-
   const status = getRunStatus(run)
-  const duration = formatDuration(run.startedAt, run.endedAt)
+  const duration = useMemo(
+    () => formatDuration(run.startedAt, run.endedAt),
+    [nowTick, run.endedAt, run.startedAt]
+  )
   const inspect = (): void => {
     // K1B+ always provides `onInspect`. Silent no-op fallback protects
     // against any future caller that mounts RunCard without wiring it

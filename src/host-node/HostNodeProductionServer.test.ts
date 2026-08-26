@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { HostNodeProductionServer } from './HostNodeProductionServer'
+import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
 
 function harness(overrides: Record<string, unknown> = {}) {
   const order: string[] = []
   let eventPublish: (() => void) | null = null
   let authenticatedShutdown: (() => Promise<void> | void) | undefined
   let capabilityOffer: readonly string[] = []
+  let projectionDirty: (() => void) | null = null
+  let interactionTimeoutMs: number | undefined
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -43,6 +46,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     threadHistory: vi.fn(),
     historySince: vi.fn(),
     registry: { supportsApprovals: false, supportsQuestions: false },
+    interactions: new HostNodeInteractionRegistry(),
     shutdown: vi.fn(async () => {
       order.push('domain.shutdown')
     })
@@ -73,6 +77,8 @@ function harness(overrides: Record<string, unknown> = {}) {
     createDomain: (input) => {
       order.push('domain')
       eventPublish = () => input.events.publish({} as never, {} as never)
+      projectionDirty = input.onProjectionDirty ?? null
+      interactionTimeoutMs = input.interactionTimeoutMs
       return domain as never
     },
     createComposition: (input) => {
@@ -97,7 +103,9 @@ function harness(overrides: Record<string, unknown> = {}) {
     signalListeners,
     capabilityOffer: () => capabilityOffer,
     authenticatedShutdown: () => authenticatedShutdown,
-    eventPublish: () => eventPublish?.()
+    eventPublish: () => eventPublish?.(),
+    projectionDirty: () => projectionDirty?.(),
+    interactionTimeoutMs: () => interactionTimeoutMs
   }
 }
 
@@ -151,7 +159,7 @@ describe('HostNodeProductionServer', () => {
     await h.server.stop()
 
     const h2 = harness({
-      createDomain: (input) => {
+      createDomain: () => {
         return {
           ...h.domain,
           registry: { supportsApprovals: true, supportsQuestions: true }
@@ -343,5 +351,26 @@ describe('HostNodeProductionServer', () => {
     await expect(h.server.start()).rejects.toThrow('domain resources are unavailable')
     expect(dispose).toHaveBeenCalledOnce()
     expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
+  it('constructs the domain with a finite production interaction timeout', async () => {
+    const h = harness()
+    await h.server.start()
+    // The production server passes a finite timeout to the domain's registry.
+    // The default is 5 minutes (300_000 ms); the registry must not be undefined.
+    expect(h.interactionTimeoutMs()).toBe(300_000)
+    expect(h.server.phase).toBe('running')
+    await h.server.stop()
+  })
+
+  it('wires onProjectionDirty to the real composition reconciler', async () => {
+    const h = harness()
+    await h.server.start()
+    // The server captures onProjectionDirty from the domain input and wires it
+    // to composition.reconcileProjection after the composition exists.
+    h.projectionDirty()
+    await Promise.resolve()
+    expect(h.composition.reconcileProjection).toHaveBeenCalled()
+    await h.server.stop()
   })
 })

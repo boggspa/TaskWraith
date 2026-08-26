@@ -97,6 +97,7 @@ import {
   RunEventInput,
   RunEventKind,
   RunEventRecord,
+  RunEventReplay,
   RunEventArtifactRef,
   ToolActivityDetailRef,
   HydratedToolActivityDetail,
@@ -218,13 +219,16 @@ import {
 } from '../RunQueue'
 import {
   createRunEventRecord,
-  createRunEventReplay,
   filterRunEvents,
   RUN_EVENT_EMPTY_HASH,
   parseRunEventLine,
   safeRunEventFileName,
   serializeRunEventRecord
 } from '../RunEventStore'
+import {
+  getRunEventReplayAsync as getRunEventReplayCachedAsync,
+  getRunEventReplaySync as getRunEventReplayCachedSync
+} from '../RunEventReplayCache'
 import {
   createWorkflowRunEvent,
   filterWorkflowRunEvents,
@@ -12375,7 +12379,15 @@ export class AppStore {
   }
 
   static getRunEventReplay(runId: string) {
-    return createRunEventReplay(runId, readRunEventFile(runEventFilePath(runId)))
+    return getRunEventReplayCachedSync(runId, runEventFilePath(runId), readRunEventFile)
+  }
+
+  /** Async cached twin used by the renderer's `get-run-event-replay` IPC so
+   * N active run cards polling every 2s do not re-read and re-parse unchanged
+   * run-event files on the main event loop. The cache is keyed by mtime+size,
+   * matching the workspace-change cache precedent. */
+  static async getRunEventReplayAsync(runId: string): Promise<RunEventReplay> {
+    return getRunEventReplayCachedAsync(runId, runEventFilePath(runId), readRunEventFileAsync)
   }
 
   /** Cheap forensics-availability check for cross-thread recall: false when a

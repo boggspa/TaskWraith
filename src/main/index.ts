@@ -1788,9 +1788,11 @@ import {
 } from './ProviderAdapters'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import {
+  composeAntigravityLaunchPrompt,
   getAntigravityProviderMcpStatus,
   getAntigravityProviderStatus,
-  prepareAntigravityProviderLaunch
+  prepareAntigravityProviderLaunch,
+  withAntigravityLaunchPrompt
 } from './antigravity/AntigravityProviderRuntime'
 import {
   AntigravityPermissionLeaseAbortedError,
@@ -2094,6 +2096,7 @@ import {
   type CapabilityGatewayToolName
 } from './mcp/McpToolGateway'
 import { validateMcpToolArgumentsBeforeApproval } from './mcp/McpPreApprovalArgumentValidation'
+import { coalesceToolArguments } from './mcp/McpToolArgumentCoalesce'
 import {
   dispatchResolvedGatewayTarget,
   type GatewayTargetDispatchMarker
@@ -34879,6 +34882,53 @@ async function runAntigravityAgyProvider(
     }
   }
 
+  // The upstream runtime preamble states flatly that this run "has access to
+  // the TaskWraith MCP server", tells the model to route work through it, and
+  // tells it NOT to retry a refused native tool but to call the TaskWraith one
+  // instead. agy's registration lives in a shared global config whose install
+  // is best-effort and deliberately silent: it is skipped when this run has no
+  // live bridge authority, and abandoned when the document belongs to someone
+  // else (unparseable, or mid-write by the user's own agy/AntiGravity
+  // session). A child that keeps the claim without the tools bounces between a
+  // tool that does not exist and a native tool it was told not to repeat, so
+  // withdraw the claim here instead.
+  if (!permissionLease?.mcpRegistered) {
+    try {
+      launch = withAntigravityLaunchPrompt(
+        launch,
+        composeAntigravityLaunchPrompt(
+          sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+            advertised: false,
+            coreProfile: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+            // This lane always takes the compact gateway surface (see the
+            // bridge profile above), so the gateway note is the one that would
+            // otherwise be left promising a catalogue agy cannot see.
+            gatewayProfile: true,
+            targetProvider: 'antigravity'
+          }),
+          launch.resumedConversationId
+        )
+      )
+    } catch (error) {
+      // Never fail a run over the correction itself; say plainly that the
+      // tools are missing so a confused transcript has an explanation.
+      sendAgentCompatLine(
+        event.sender,
+        'antigravity',
+        {
+          type: 'provider_warning',
+          provider: 'antigravity',
+          severity: 'warning',
+          title: 'AntiGravity run has no TaskWraith MCP tools',
+          message: `TaskWraith could not register its MCP server for this agy run, and could not withdraw the runtime note that advertises it. The model may attempt TaskWraith tool calls that do not exist. ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        },
+        route
+      )
+    }
+  }
+
   const releasePermissionLease = async (): Promise<void> => {
     releaseHookBridgeRun?.()
     releaseHookBridgeRun = undefined
@@ -37144,7 +37194,13 @@ async function executeGeminiMcpTool(
         ...mcpStructuredJsonResult({
           ok: false,
           tool: toolName,
-          ...(resolution.ok ? {} : { code: resolution.code, issues: resolution.issues }),
+          ...(resolution.ok
+            ? {}
+            : {
+                code: resolution.code,
+                issues: resolution.issues,
+                conflicts: resolution.conflicts
+              }),
           error
         }),
         isError: true
@@ -37230,6 +37286,23 @@ async function executeGeminiMcpTool(
       throw new Error(`Tool ${toolName} was dispatched by more than one canonical owner.`)
     }
     handledDispatchOwner = dispatchContract.dispatchOwner
+  }
+
+  const argumentCoalesce = coalesceToolArguments(toolName, args)
+  if (!argumentCoalesce.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        code: argumentCoalesce.code,
+        error: argumentCoalesce.message,
+        conflicts: argumentCoalesce.conflicts
+      }),
+      isError: true
+    }
+  }
+  if (isRecord(argumentCoalesce.arguments)) {
+    args = argumentCoalesce.arguments
   }
 
   const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
@@ -55185,7 +55258,7 @@ if (isGeminiMcpBridgeProcess) {
       getRunLifecycleCoordinator: () => runLifecycleCoordinatorRef,
       getRunEvents: (filter = {}) => getRunRepository().getRunEventsAsync(filter || {}),
       getToolActivityDetails: (refs) => AppStore.getToolActivityDetails(refs),
-      getRunEventReplay: (runId) => getRunRepository().getRunEventReplay(runId),
+      getRunEventReplay: (runId) => getRunRepository().getRunEventReplayAsync(runId),
       getBridgeDaemon: () => bridgeDaemonRef,
       sanitizeRunAnalystRequest,
       normalizeRunAnalystResult,

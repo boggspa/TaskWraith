@@ -11,6 +11,10 @@ import type {
   HostHealthProjection,
   HostQuestionAnswerDecision
 } from '../shared/hostProtocol'
+import {
+  HOST_APPROVAL_DECIDE_DECISIONS,
+  HOST_QUESTION_ANSWER_DECISIONS
+} from '../shared/hostProtocol'
 import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
@@ -53,6 +57,10 @@ export interface HostNodeDomainPortsOptions {
   readonly now?: () => number
   /** Lease release must not proceed while a provider child may still be alive. */
   readonly shutdownTimeoutMs?: number
+  /** Per-interaction timeout in milliseconds; pending cards reject after this. */
+  readonly interactionTimeoutMs?: number
+  /** Real reconciliation callback; the server plumbs its projector here. */
+  readonly onProjectionDirty?: () => void
 }
 
 type AuthOperation = {
@@ -116,7 +124,10 @@ export class HostNodeDomainPorts {
     this.now = options.now ?? (() => Date.now())
     this.runPort = new HostNodeProfileRunPort({ store: options.store, events: options.events })
     this.interactions = new HostNodeInteractionRegistry({
-      onSettled: () => this.queueReconciliation()
+      timeoutMs: options.interactionTimeoutMs,
+      onRegistered: () => this.notifyProjectionDirty(),
+      onSettled: () => this.notifyProjectionDirty(),
+      onCancelled: () => this.notifyProjectionDirty()
     })
     this.registry = new HostNodeProviderRegistry({
       providers: options.providers,
@@ -135,9 +146,15 @@ export class HostNodeDomainPorts {
           return { threadId: options.store.createThread(input).appChatId }
         },
         configure: (input) => this.configureThread(input),
-        archive: (input) => ({
-          threadId: options.store.archiveThread(input.threadId, input.archived).appChatId
-        })
+        archive: (input) => {
+          this.interactions.cancelByThreadId(
+            input.threadId,
+            'HostNodeInteractionRegistry: thread archived'
+          )
+          return {
+            threadId: options.store.archiveThread(input.threadId, input.archived).appChatId
+          }
+        }
       },
       providerAuth: {
         begin: (input) => this.beginManualAuth(input),
@@ -149,11 +166,35 @@ export class HostNodeDomainPorts {
   }
 
   snapshotDonor() {
-    return projectHostProfileDomainSnapshot({
+    const base = projectHostProfileDomainSnapshot({
       store: this.options.store,
       health: this.options.health(),
       providers: [...this.registry.providerInventory()]
     })
+    const pending = this.interactions.listPending()
+    return {
+      ...base,
+      approvals: pending
+        .filter((entry) => entry.kind === 'approval')
+        .map((entry) => ({
+          approvalId: entry.id,
+          commandId: entry.id,
+          threadId: entry.threadId,
+          status: 'pending' as const,
+          actionKind: 'tool_execution',
+          createdAt: new Date(entry.createdAt).getTime(),
+          summary: entry.summary
+        })),
+      questions: pending
+        .filter((entry) => entry.kind === 'question')
+        .map((entry) => ({
+          questionId: entry.id,
+          threadId: entry.threadId,
+          status: 'open' as const,
+          promptPreview: entry.summary.slice(0, 200),
+          askedAt: new Date(entry.createdAt).getTime()
+        }))
+    }
   }
 
   providerOffers(providerId: string): HostProviderOffersProjection {
@@ -221,10 +262,24 @@ export class HostNodeDomainPorts {
       const id = command.target.approvalId
       if (!isCanonicalId(id)) return { decision: 'deny', reason: 'invalid_command' }
       const decision = command.arguments.decision as HostApprovalDecideDecision
-      const result = this.interactions.decide({ id, decision, actor: actorFromContext(context) })
-      return result.settled
-        ? { decision: 'allow' }
-        : { decision: 'deny', reason: 'standalone_approval_not_found' }
+      if (!HOST_APPROVAL_DECIDE_DECISIONS.includes(decision)) {
+        return { decision: 'deny', reason: 'invalid_command' }
+      }
+      const pending = this.interactions.listPending()
+      const entry = pending.find(
+        (candidate) => candidate.id === id && candidate.kind === 'approval'
+      )
+      if (!entry) return { decision: 'deny', reason: 'standalone_approval_not_found' }
+      // Ownership: the pending card must belong to a live run/thread with a matching provider.
+      const liveThread = this.runPort.getThread(entry.threadId)
+      if (
+        !liveThread ||
+        liveThread.providerId !== entry.providerId ||
+        !this.runPort.hasBegun(entry.runId, entry.threadId)
+      ) {
+        return { decision: 'deny', reason: 'standalone_approval_not_found' }
+      }
+      return { decision: 'allow' }
     }
 
     if (command.name === 'question.answer') {
@@ -234,16 +289,23 @@ export class HostNodeDomainPorts {
       const id = command.target.questionId
       if (!isCanonicalId(id)) return { decision: 'deny', reason: 'invalid_command' }
       const decision = command.arguments.decision as HostQuestionAnswerDecision
-      const answer = command.arguments.answer as string | undefined
-      const result = this.interactions.answer({
-        id,
-        decision,
-        answer,
-        actor: actorFromContext(context)
-      })
-      return result.settled
-        ? { decision: 'allow' }
-        : { decision: 'deny', reason: 'standalone_question_not_found' }
+      if (!HOST_QUESTION_ANSWER_DECISIONS.includes(decision)) {
+        return { decision: 'deny', reason: 'invalid_command' }
+      }
+      const pending = this.interactions.listPending()
+      const entry = pending.find(
+        (candidate) => candidate.id === id && candidate.kind === 'question'
+      )
+      if (!entry) return { decision: 'deny', reason: 'standalone_question_not_found' }
+      const liveThread = this.runPort.getThread(entry.threadId)
+      if (
+        !liveThread ||
+        liveThread.providerId !== entry.providerId ||
+        !this.runPort.hasBegun(entry.runId, entry.threadId)
+      ) {
+        return { decision: 'deny', reason: 'standalone_question_not_found' }
+      }
+      return { decision: 'allow' }
     }
 
     if (command.name !== 'composer.send' && command.name !== 'run.cancel') {
@@ -327,7 +389,12 @@ export class HostNodeDomainPorts {
       .catch(() => {
         this.terminalizeRejectedStart(command.commandId, command.target.threadId)
       })
-      .then(() => undefined)
+      .then(() => {
+        this.interactions.cancelByRunId(
+          command.commandId,
+          'HostNodeInteractionRegistry: provider run completed'
+        )
+      })
     this.runCompletions.set(command.commandId, tracked)
     void tracked.finally(() => this.runCompletions.delete(command.commandId))
     await Promise.resolve()
@@ -471,6 +538,7 @@ export class HostNodeDomainPorts {
         warningSummaries: ['Provider run start could not be durably acknowledged.'],
         errorCode: 'provider_failed'
       })
+      this.interactions.cancelByRunId(runId, 'HostNodeInteractionRegistry: provider run failed')
     } catch {
       // This is best effort only; the tracked provider completion remains in
       // shutdown accounting and a fresh lease performs deterministic recovery.
@@ -581,13 +649,8 @@ export class HostNodeDomainPorts {
     }
   }
 
-  private reconcileQueued = false
-  private queueReconciliation(): void {
-    if (this.reconcileQueued) return
-    this.reconcileQueued = true
-    queueMicrotask(() => {
-      this.reconcileQueued = false
-    })
+  private notifyProjectionDirty(): void {
+    this.options.onProjectionDirty?.()
   }
 }
 

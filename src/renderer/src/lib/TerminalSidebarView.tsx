@@ -33,6 +33,19 @@ export function TerminalSidebarView({ workspaces }: TerminalSidebarViewProps) {
     terminalLaunchBus.emit(workspacePath)
   }
 
+  const handleAttach = (workspacePath: string, sessionId: string) => {
+    terminalLaunchBus.emitAttach(workspacePath, sessionId)
+  }
+
+  const handleKill = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    window.api.terminal.kill(sessionId).then(() => {
+      setRunningSessions((prev) => prev.filter((s) => s.sessionId !== sessionId))
+    }).catch((err) => {
+      console.error('[TerminalSidebarView] terminal.kill failed', err)
+    })
+  }
+
   const pinned = recipes.filter((r) => r.pinned)
   const recents = recipes.filter((r) => !r.pinned).sort((a, b) => b.lastUsedAt - a.lastUsedAt)
 
@@ -61,10 +74,34 @@ export function TerminalSidebarView({ workspaces }: TerminalSidebarViewProps) {
           <div className="sidebar-section-list">
             {runningSessions.map((session) => {
               const ws = workspaces.find((w) => w.path === session.workspacePath)
+              const sessionName = ws?.displayName || session.workspacePath
               return (
-                <div key={session.sessionId} className="sidebar-item" onClick={() => handleLaunch(session.workspacePath)}>
-                  <div className="sidebar-item-title">{ws?.displayName || session.workspacePath}</div>
+                <div
+                  key={session.sessionId}
+                  className="sidebar-item"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open terminal session — ${sessionName}`}
+                  onClick={() => handleAttach(session.workspacePath, session.sessionId)}
+                  onKeyDown={(e) => {
+                    // Row-only: Enter/Space on the nested kill button must not also attach.
+                    if (e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      handleAttach(session.workspacePath, session.sessionId)
+                    }
+                  }}
+                >
+                  <div className="sidebar-item-title">{sessionName}</div>
                   <div className="sidebar-item-subtitle">Running</div>
+                  <button
+                    type="button"
+                    className="sidebar-item-action sidebar-item-action-kill"
+                    onClick={(e) => handleKill(e, session.sessionId)}
+                    title="Kill session"
+                    aria-label={`Kill terminal session — ${sessionName}`}>
+                    &times;
+                  </button>
                 </div>
               )
             })}

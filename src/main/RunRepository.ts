@@ -216,6 +216,11 @@ export class RunRepository {
     return AppStore.getRunEventReplay(runId)
   }
 
+  /** Async cached twin used by the renderer's `get-run-event-replay` IPC. */
+  async getRunEventReplayAsync(runId: string): Promise<RunEventReplay> {
+    return AppStore.getRunEventReplayAsync(runId)
+  }
+
   getRunQueueJobs(filter: RunQueueJobFilter = {}): RunQueueJob[] {
     return AppStore.getRunQueueJobs(filter)
   }

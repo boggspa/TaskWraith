@@ -76,6 +76,54 @@ describe('Multiview pane Composer context parity', () => {
     expect(source.match(/goalButtonRef: paneGoalButtonDiscardRef/g)).toHaveLength(1)
   })
 
+  it('routes the Return-key live steer to the pane chat, never the focused draft', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+    const builderStart = source.indexOf('const buildPaneComposerCtx =')
+    const builderEnd = source.indexOf('const paneComposerCtxByKey =', builderStart)
+    const builder = source.slice(builderStart, builderEnd)
+    const paneSteerStart = source.indexOf('const handleSteerMultiviewPane =')
+    const paneSteerEnd = source.indexOf(
+      'const rememberMultiviewPaneComposerSelection =',
+      paneSteerStart
+    )
+    const paneSteer = source.slice(paneSteerStart, paneSteerEnd)
+    const steerStart = source.indexOf('const handleSteer = async')
+    const steerEnd = source.indexOf('const handleSteerRef =', steerStart)
+    const steer = source.slice(steerStart, steerEnd)
+
+    // The stable base spreads the FOCUSED chat's handleSteer into every pane;
+    // without this override a resting pane's Return-key steer builds its
+    // request from the focused draft — an empty focused draft makes the
+    // keypress a silent no-op, a non-empty one steers the WRONG chat.
+    expect(builder).toContain(
+      'handleSteer: () => handleSteerMultiviewPane(viewerPaneIndex, viewerChatId)'
+    )
+    expect(paneSteerStart).toBeGreaterThan(-1)
+    // The pane steer targets its own chat, draft, and attachments…
+    expect(paneSteer).toContain('handleSteerRef.current(undefined, undefined, {')
+    expect(paneSteer).toContain('chat: paneChat,')
+    expect(paneSteer).toContain('prompt: panePrompt,')
+    expect(paneSteer).toContain(
+      'discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null'
+    )
+    // …never inherits focused Full Access…
+    expect(paneSteer).toContain(
+      'paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId'
+    )
+    // …and relocks its own pane, not the host transcript.
+    expect(paneSteer).toContain('multiview.paneRefs[paneIndex]?.relockToLatest()')
+    // handleSteer forwards the pane target into the request builder…
+    expect(steerEnd).toBeGreaterThan(steerStart)
+    expect(steer).toContain('buildRunRequest(overrideModel, existingPrompt, target)')
+    // …and only a steer of the visible chat may flip the global thinking badge.
+    const ensembleThinkGate = steer.indexOf(
+      'if (targetChatId === (currentChatIdRef.current || currentChat?.appChatId)) {'
+    )
+    const ensembleThink = steer.indexOf('setIsThinking(true)')
+    expect(ensembleThinkGate).toBeGreaterThan(-1)
+    expect(ensembleThink).toBeGreaterThan(ensembleThinkGate)
+  })
+
   it('overrides every mutable Ensemble surface with pane-owned bindings', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const contexts = paneComposerContextKeys(source)
@@ -106,6 +154,7 @@ describe('Multiview pane Composer context parity', () => {
       'handleEditQueuedMessage',
       'handleReviewCurrentDiff',
       'handleSelectParticipant',
+      'handleSteer',
       'handleSteerToQueuedMessage',
       'handleToggleWelcomeEnsemble',
       'isCurrentChatBusyForSteer',

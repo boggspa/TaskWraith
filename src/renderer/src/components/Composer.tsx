@@ -914,6 +914,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const isTerminalOpen = Boolean(
     currentChat?.appChatId && terminalOpenByChatId[currentChat.appChatId]
   )
+  // The terminal's OWN close affordance. Without this the pane could only be
+  // dismissed from the composer icon row or `/terminal` — the panel rendered a
+  // header with no × at all, because TerminalPanel only draws one when it is
+  // given an `onClose`. Bound to this composer's chat id so a multiview pane
+  // closes its own shell and never a sibling's.
+  const workspaceTerminalChatId = currentChat?.appChatId
+  const closeWorkspaceTerminal = useCallback(() => {
+    setTerminalOpenForChat(workspaceTerminalChatId, false)
+  }, [workspaceTerminalChatId, setTerminalOpenForChat])
   // Prefer chat-resolved path so terminal / lock / git actions cannot target a
   // stale app-global primary after a thread switch.
   const composerGitActionBasePath = resolveComposerGitActionBasePath({
@@ -6315,6 +6324,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     variant="pane"
                     ptySessionId={currentChat?.appChatId}
                     onTerminalReady={handleTerminalReady}
+                    onClose={closeWorkspaceTerminal}
                   />
                 </>,
                 transcriptRoot
