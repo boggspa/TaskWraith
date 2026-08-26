@@ -4942,7 +4942,7 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '59f2400be7aa873c14a6d65e2b71cc1b7e5f14668e7ef4a358378900e6428cd0',
+      sourceDigest: '94f6b3a2f545953a72480b32b92fa22bfe2341993365e38200f34d0dbc3cd3b4',
       sourceCount: 2453,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
