@@ -65,12 +65,33 @@ export function TerminalPanel({
 
   const theme = useMemo(() => (isPane ? TUI_TERMINAL_THEME : INSPECTOR_TERMINAL_THEME), [isPane])
 
+  // The PTY this panel owns, derived during render rather than inside the
+  // setup effect.
+  //
+  // It used to be computed from `propPtySessionId` *inside* that effect while
+  // the dependency list named only [sessionId, workspacePath, theme]. So
+  // switching between two chats in the SAME workspace changed the id without
+  // re-running the effect: the panel kept writing to — and reading from — the
+  // previous chat's shell, and the new chat's shell was never started. Naming
+  // the id here is what makes it a real dependency below.
+  const effectivePtySessionId = propPtySessionId || `setup-${sessionId}`
+
+  // `onTerminalReady` is deliberately kept out of the setup effect's deps via
+  // a ref. The composer's callback closes over its pending-command map and
+  // clears that map when it fires, so its identity changes on every flush —
+  // depending on it directly would tear the PTY down and respawn it the moment
+  // the terminal reported ready, in a loop. A ref keeps exhaustive-deps honest
+  // instead of silencing it, and seeding it with the first value means an
+  // early `startPty` resolve cannot miss the callback.
+  const onTerminalReadyRef = useRef(onTerminalReady)
+  useEffect(() => {
+    onTerminalReadyRef.current = onTerminalReady
+  }, [onTerminalReady])
+
   useEffect(() => {
     const host = terminalRef.current
     if (!host) return
     let disposed = false
-    // Use provided sessionId, or generate one
-    const effectivePtySessionId = propPtySessionId || `setup-${sessionId}`
 
     term.current = new Terminal({
       cursorBlink: true,
@@ -101,7 +122,7 @@ export function TerminalPanel({
     window.api.startPty(workspacePath, effectivePtySessionId)
       .then(() => {
         if (disposed) return
-        onTerminalReady?.()
+        onTerminalReadyRef.current?.()
       })
       .catch((error) => {
         if (disposed) return
@@ -140,7 +161,11 @@ export function TerminalPanel({
       hostObserver.disconnect()
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
     }
-  }, [sessionId, workspacePath, theme])
+    // `effectivePtySessionId` replaces the old `sessionId` entry: it already
+    // folds in the generated fallback, and it is the value every start/write/
+    // resize/stop call routes on. The cleanup closes over the OUTGOING id, so
+    // a chat switch stops exactly the shell it started.
+  }, [effectivePtySessionId, workspacePath, theme])
 
   // Escape-to-close is scoped to THIS panel, not the document.
   //
