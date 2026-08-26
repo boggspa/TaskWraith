@@ -242,4 +242,39 @@ describe('SubThreadReturnCard', () => {
 
     expect(onOpenSubThreadInSidePanel).toHaveBeenCalledWith('chat-child-1')
   })
+
+  it('discloses parent-run activities a pre-fix reducer collapsed onto the card', () => {
+    // Records damaged before the soloToolEventReducer card-adoption guard
+    // carry the parent run's burst inside the return card's toolActivities.
+    // Those stay invisible unless the card itself renders them.
+    const html = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={subThreadMessage({
+          toolActivities: [
+            {
+              id: 'seg-38',
+              toolName: 'kimi_thinking',
+              displayName: 'Kimi thinking',
+              status: 'success'
+            } as any,
+            {
+              id: 'commit-1',
+              toolName: 'git_commit',
+              displayName: 'Git commit',
+              status: 'success'
+            } as any
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('subthread-return-recovered-activity')
+    expect(html).toContain('Git commit')
+  })
+
+  it('renders no recovered-activity section on a clean return card', () => {
+    const html = renderToStaticMarkup(<SubThreadReturnCard message={subThreadMessage()} />)
+
+    expect(html).not.toContain('subthread-return-recovered-activity')
+  })
 })

@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { ChatMessage, ChatRecord, ProviderId } from '../../../main/store/types'
+import { ActivityStack } from './ActivityStack'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -81,6 +82,11 @@ export function SubThreadReturnCard({
     ...(agentIdentity ? { ['--agent-rim']: agentIdentity.accent } : {})
   } as CSSProperties
   const body = subThreadReturnBody(message.content)
+  // Return cards are never a tool burst container — but records written
+  // before the soloToolEventReducer card-adoption guard carry the PARENT
+  // run's activities here (the 2026-08-26 frozen-transcript incident).
+  // Rendering them is the only way that history stays visible.
+  const recoveredActivities = message.toolActivities || []
   const renderFullBody = Boolean(resultExpanded) || body.length <= COLLAPSED_RESULT_MARKDOWN_LIMIT
   const previewBody =
     body.length > COLLAPSED_RESULT_PREVIEW_CHARS
@@ -195,6 +201,19 @@ export function SubThreadReturnCard({
           </div>
         </LiveActivityViewport>
       </div>
+      {recoveredActivities.length > 0 && (
+        <div className="subthread-return-recovered-activity">
+          <div className="subthread-return-recovered-note">
+            Parent-run activity recorded onto this card while the run continued.
+          </div>
+          <ActivityStack
+            activities={recoveredActivities}
+            chat={chat}
+            chatId={chat?.appChatId}
+            runId={message.runId}
+          />
+        </div>
+      )}
       {onCopyMessage && (
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, body)}
