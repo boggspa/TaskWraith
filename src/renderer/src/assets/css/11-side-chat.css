@@ -30,9 +30,9 @@
 
 /* Narrow windows: relax the transcript's 680px floor so the panes share
  * the squeeze. (The dock width itself stays user-controlled — the inline
- * --right-dock-width from the resize handle + the 58%-viewport JS clamp
- * govern it; an earlier stylesheet override here silently discarded
- * dragged widths.) */
+ * --right-dock-width from the resize handle + the viewport-proportional JS
+ * clamp (shared/panelWidthLimits) govern it; an earlier stylesheet override
+ * here silently discarded dragged widths.) */
 @media (max-width: 1360px) {
   .chat-split-main {
     min-width: min(430px, 100%);

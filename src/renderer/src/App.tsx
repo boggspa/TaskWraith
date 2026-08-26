@@ -280,12 +280,12 @@ import { formatAssistantMessageLabel } from './lib/assistantMessageLabel'
 import { groupAdjacentToolMessages } from './lib/transcriptToolMessageGrouping'
 import {
   MIN_RIGHT_PANEL_WIDTH,
-  MAX_RIGHT_PANEL_WIDTH,
   MIN_WORKSPACE_SIDEBAR_WIDTH,
   MAX_WORKSPACE_SIDEBAR_WIDTH,
   clampPanelWidth,
   clampWorkspaceSidebarWidth,
-  getStoredWorkspaceSidebarWidth
+  getStoredWorkspaceSidebarWidth,
+  rightPanelViewportMax
 } from './lib/panelWidths'
 import { getProviderLabel, getProviderOfferUnavailableReason } from './lib/providerLabels'
 import {
@@ -20659,10 +20659,7 @@ function App(): React.JSX.Element {
   const startRightPanelResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     const startX = event.clientX
-    const maxWidth = Math.min(
-      MAX_RIGHT_PANEL_WIDTH,
-      Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.58))
-    )
+    const maxWidth = rightPanelViewportMax(window.innerWidth)
     // Start from the *applied* (window-clamped) width, not the raw stored
     // preference — otherwise the first drag jumps to the full stored px on
     // a window that was rendering a narrower, clamped inspector.
@@ -20746,10 +20743,7 @@ function App(): React.JSX.Element {
     }
 
     event.preventDefault()
-    const maxWidth = Math.min(
-      MAX_RIGHT_PANEL_WIDTH,
-      Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.58))
-    )
+    const maxWidth = rightPanelViewportMax(window.innerWidth)
     const currentWidth = Math.min(appearance.inspectorWidth, maxWidth)
     const step = event.shiftKey ? 40 : 16
     let nextWidth = currentWidth
@@ -26546,10 +26540,7 @@ function App(): React.JSX.Element {
   // window-proportional ceiling the drag handlers use, so it opens sensibly
   // for the current window. This is non-destructive: the stored preference
   // is untouched and re-expands up to it when the window grows.
-  const rightPanelWindowMax = Math.min(
-    MAX_RIGHT_PANEL_WIDTH,
-    Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(viewportWidth * 0.58))
-  )
+  const rightPanelWindowMax = rightPanelViewportMax(viewportWidth)
   const effectiveInspectorWidth = Math.min(appearance.inspectorWidth, rightPanelWindowMax)
   const rightDockStyle = dockPresence.mounted
     ? ({ '--right-dock-width': `${effectiveInspectorWidth}px` } as CSSProperties)

@@ -9,7 +9,9 @@ import {
   assertProviderId,
   assertLiveProviderId,
   availableProviderIds,
-  selectableProviderIds
+  selectableProviderIds,
+  MIN_INSPECTOR_WIDTH,
+  MAX_INSPECTOR_WIDTH
 } from './MainSanitizers'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../store/types'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
@@ -863,6 +865,18 @@ describe('MainSanitizers workspace boards', () => {
 describe('MainSanitizers settings patches', () => {
   afterEach(() => {
     resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+  })
+
+  it('preserves a wide dragged inspector width instead of re-clamping it at persistence', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    // A canvas-wide dock (Mesh scenes, desktop-style Browser work) must survive
+    // the settings round-trip: a sanitizer ceiling below the renderer's resize
+    // max silently snapped every wide drag back on the next hydrate.
+    expect(sanitizeSettingsPatch({ inspectorWidth: 2000 }).inspectorWidth).toBe(2000)
+    expect(sanitizeSettingsPatch({ inspectorWidth: 9000 }).inspectorWidth).toBe(
+      MAX_INSPECTOR_WIDTH
+    )
+    expect(sanitizeSettingsPatch({ inspectorWidth: 50 }).inspectorWidth).toBe(MIN_INSPECTOR_WIDTH)
   })
 
   it('preserves active AntiGravity through either admitted settings lane', () => {

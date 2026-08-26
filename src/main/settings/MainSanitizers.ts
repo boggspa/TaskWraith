@@ -2,6 +2,10 @@ import { resolve } from 'node:path'
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
+import {
+  MIN_INSPECTOR_PANEL_WIDTH,
+  MAX_INSPECTOR_PANEL_WIDTH
+} from '../../shared/panelWidthLimits'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
@@ -246,8 +250,12 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'appIconVariant'
 ])
 
-export const MIN_INSPECTOR_WIDTH = 300
-export const MAX_INSPECTOR_WIDTH = 720
+// Single-sourced from shared/panelWidthLimits: a sanitizer-local ceiling
+// below the renderer's resize max (previously 720 here) silently snapped
+// every wide dock drag back on the next settings round-trip, capping canvas
+// surfaces in the dock however far the user dragged.
+export const MIN_INSPECTOR_WIDTH = MIN_INSPECTOR_PANEL_WIDTH
+export const MAX_INSPECTOR_WIDTH = MAX_INSPECTOR_PANEL_WIDTH
 export const MIN_SIDEBAR_WIDTH = 220
 export const MAX_SIDEBAR_WIDTH = 440
 export const DEFAULT_WINDOW_WIDTH = 1400
