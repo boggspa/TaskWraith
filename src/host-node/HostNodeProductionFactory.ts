@@ -6,6 +6,15 @@ import {
 import { hostNodeMuseOffers } from './HostNodeMuseCatalog'
 import { createHostNodeMuseResources } from './HostNodeMuseResources'
 import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
+import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import { createHostNodeClaudeProviderFactory } from './HostNodeClaudeProvider'
+import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
+import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
+import { createHostNodeGrokProvider } from './HostNodeGrokProvider'
+import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
+import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
+import { createHostNodePiProviderFactory } from './HostNodePiProvider'
+import { createHostNodeCursorProviderFactory } from './HostNodeCursorProvider'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
 
 export interface HostNodeProductionFactoryOptions {
@@ -16,7 +25,16 @@ export interface HostNodeProductionFactoryOptions {
   readonly terminalLauncher?: HostNodeMuseTerminalLauncher
 }
 
-/** Assemble the real pure-Node Muse resources only after lifecycle lease acquisition. */
+function providerTerminalLauncher(
+  launcher: HostNodeMuseTerminalLauncher | undefined
+): Pick<HostNodeTerminalLauncher, 'launchForProvider'> | undefined {
+  return launcher &&
+    typeof (launcher as Partial<HostNodeTerminalLauncher>).launchForProvider === 'function'
+    ? (launcher as unknown as Pick<HostNodeTerminalLauncher, 'launchForProvider'>)
+    : undefined
+}
+
+/** Assemble the real pure-Node provider resources only after lifecycle lease acquisition. */
 export function createHostNodeProductionServer(
   options: HostNodeProductionFactoryOptions
 ): HostNodeProductionServer {
@@ -41,6 +59,7 @@ export function createHostNodeProductionServer(
           binary.binaryPath && options.terminalLauncher
             ? new HostNodeMuseAuthHandoff(binary.binaryPath, options.terminalLauncher)
             : undefined
+        const launcher = providerTerminalLauncher(options.terminalLauncher)
         return {
           domainOptions: {
             providers: [
@@ -48,6 +67,26 @@ export function createHostNodeProductionServer(
                 offers: hostNodeMuseOffers(available),
                 resources,
                 ...(handoff ? { manualAuthHandoff: handoff } : {})
+              }),
+              createHostNodeClaudeProviderFactory({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeCodexProvider({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeKimiProvider({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeGrokProvider({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeMistralProvider({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeOllamaProviderFactory(),
+              createHostNodePiProviderFactory(),
+              createHostNodeCursorProviderFactory({
+                ...(launcher ? { terminalLauncher: launcher } : {})
               })
             ],
             health: () => ({
