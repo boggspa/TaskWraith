@@ -95,10 +95,15 @@ describe('resolveChatHydration', () => {
       source.indexOf('const refreshSingleChat ='),
       source.indexOf('const isValidModelForProvider =')
     )
-    const selected = source.slice(
-      source.indexOf('const hydrateSelectedChatAfterPaint ='),
-      source.indexOf('const PROVIDER_SCOPED_COMPOSER_METADATA_KEYS')
-    )
+    // Slice bounds must exist: a removed end marker sends indexOf to -1 and
+    // the slice silently runs to EOF, so the assertions below judge the whole
+    // rest of App.tsx instead of the after-paint helper (this happened when
+    // PROVIDER_SCOPED_COMPOSER_METADATA_KEYS moved out of App.tsx).
+    const selectedStart = source.indexOf('const hydrateSelectedChatAfterPaint =')
+    const selectedEnd = source.indexOf('const rememberChatComposerSelectionById =')
+    expect(selectedStart).toBeGreaterThanOrEqual(0)
+    expect(selectedEnd).toBeGreaterThan(selectedStart)
+    const selected = source.slice(selectedStart, selectedEnd)
 
     expect(refresh).toContain('const localAtRequestStart =')
     expect(refresh).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
