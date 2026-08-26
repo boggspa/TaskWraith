@@ -58,6 +58,48 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.accountId).toBe('accoun...7890')
   })
 
+  it('brands the gpt-reserve additional limit as Luna Reserve', () => {
+    // 2026-08-26: the wham/usage backend grew an `additional_rate_limits`
+    // entry named by the hidden `gpt-reserve` model slug — the allowance the
+    // ChatGPT app surfaces as "Luna Reserve". The raw slug rendered verbatim
+    // in the usage card; brand it like the Spark limit is branded.
+    const snapshot = normalizeCodexUsagePayload({
+      plan_type: 'pro',
+      rate_limit: {
+        secondary_window: {
+          used_percent: 21,
+          limit_window_seconds: 604_800,
+          reset_after_seconds: 498_943,
+          reset_at: 1_893_542_400
+        }
+      },
+      additional_rate_limits: [
+        {
+          limit_name: 'gpt-reserve',
+          rate_limit: {
+            secondary_window: {
+              used_percent: 0,
+              limit_window_seconds: 604_800,
+              reset_after_seconds: 604_800,
+              reset_at: 1_893_628_800
+            }
+          }
+        }
+      ]
+    })
+
+    expect(snapshot.windows?.map((windowEntry) => windowEntry.label)).toEqual([
+      'Weekly',
+      'Luna Reserve Weekly'
+    ])
+    expect(snapshot.windows?.[1]).toMatchObject({
+      id: 'additional-0-weekly',
+      windowKind: 'weekly',
+      usedPercent: 0,
+      remainingPercent: 100
+    })
+  })
+
   it('uses the reported duration when Codex temporarily returns weekly usage as primary', () => {
     const snapshot = normalizeCodexUsagePayload({
       plan_type: 'pro',

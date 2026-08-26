@@ -448,6 +448,27 @@ function isClaudeExtraWindow(text: string): boolean {
 }
 
 /**
+ * Display-only glyph for the branded meters (Codex Spark ⚡ / Luna Reserve 🌙,
+ * Claude Fable 🪶). Provider-gated so e.g. Muse's "Spark 1.2" window never
+ * borrows the Codex bolt, and matched on the same normalised id+label text the
+ * compact-grid predicates use ('gpt reserve' still moons a pre-rename cached
+ * snapshot label). Decoration only: the aggregate's label and the row tooltip
+ * stay clean for QuotaPace, dedupe identities, and the iOS remote payload.
+ */
+function usageWindowGlyph(
+  provider: ModelUsageProviderId,
+  windowEntry: UsageWindowAggregate
+): string | null {
+  const text = normaliseQuotaWindowText(windowEntry)
+  if (provider === 'codex') {
+    if (text.includes('spark')) return '⚡'
+    if (text.includes('luna') || text.includes('gpt reserve')) return '🌙'
+  }
+  if (provider === 'claude' && text.includes('fable')) return '🪶'
+  return null
+}
+
+/**
  * The reason a lane has no quota data, when it HAS one and no windows.
  *
  * Mirrors the expanded card's admission rule (`quotaConfigured === true` plus a
@@ -795,10 +816,16 @@ function UsageWindowRow({
   // each provider's bars read in their own brand colour. The CSS
   // variable name matches the token set defined in theme.css.
   const accent = `var(--provider-${provider}-color)`
+  const glyph = usageWindowGlyph(provider, windowEntry)
   return (
     <div key={`${provider}-${windowEntry.id}`} className="model-usage-window" title={title}>
       <div className="model-usage-window-row">
-        <span className="model-usage-window-label">{windowEntry.label}</span>
+        <span className="model-usage-window-label">
+          {glyph ? (
+            <span className="model-usage-window-glyph" aria-hidden="true">{`${glyph} `}</span>
+          ) : null}
+          {windowEntry.label}
+        </span>
         {windowReset && <span className="model-usage-window-reset">resets {windowReset}</span>}
         <span className="model-usage-window-percent">{windowEntry.valueText || percentText}</span>
       </div>

@@ -120,6 +120,136 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>Pro<')
   })
 
+  it('prefixes Spark, Luna Reserve, and Fable meters with display-only glyphs', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'codex',
+            windows: [
+              {
+                id: 'primary-weekly',
+                label: 'Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '79% remaining',
+                usedPercent: 21
+              },
+              {
+                id: 'additional-0-5h',
+                label: 'Spark 5h',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              },
+              {
+                id: 'additional-0-weekly',
+                label: 'Spark Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '3% remaining',
+                usedPercent: 97
+              },
+              {
+                id: 'additional-1-weekly',
+                label: 'Luna Reserve Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              }
+            ]
+          }),
+          quotaEntry({
+            provider: 'claude',
+            windows: [
+              {
+                id: 'claude-weekly-fable',
+                label: 'Fable',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '42% remaining',
+                usedPercent: 58
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">⚡ </span>Spark 5h'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">⚡ </span>Spark Weekly'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🌙 </span>Luna Reserve Weekly'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🪶 </span>Fable'
+    )
+    // The plain aggregate row stays glyph-free — asserted as the exact
+    // glyph-less label span, not a not.toContain that could pass vacuously.
+    expect(html).toContain('<span class="model-usage-window-label">Weekly</span>')
+    // Tooltips keep the clean label: no emoji leaks into title text.
+    expect(html).toContain('title="Spark 5h: 100% remaining"')
+  })
+
+  it('moons a stale gpt-reserve label from a pre-rename cached snapshot', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'codex',
+            windows: [
+              {
+                id: 'additional-1-weekly',
+                label: 'gpt-reserve Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🌙 </span>gpt-reserve Weekly'
+    )
+  })
+
+  it('gives no Codex bolt to non-Codex spark-named windows', () => {
+    // Muse's model literally ships as "Muse Spark 1.2" — the glyph rule is
+    // provider-gated so that window must render as a plain label.
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'muse',
+            windows: [
+              {
+                id: 'muse-monthly',
+                label: 'Spark 1.2 Monthly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '90% remaining',
+                usedPercent: 10
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('<span class="model-usage-window-label">Spark 1.2 Monthly</span>')
+    expect(html).not.toContain('model-usage-window-glyph')
+  })
+
   it('fills API-credit meters up with credit used rather than down with credit remaining', () => {
     const html = renderToStaticMarkup(
       <ModelUsageCard
