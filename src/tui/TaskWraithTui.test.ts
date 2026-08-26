@@ -42,6 +42,7 @@ import type {
 } from '../shared/hostSetupProtocol'
 import { stripAnsi } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'
+import { TUI_GLYPHS_ASCII } from './theme'
 
 const cleanup: Array<() => Promise<void> | void> = []
 
@@ -982,9 +983,9 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
   }, 12_000)
 
-  it('handles inline model, reasoning, status, and local scrollback commands', async () => {
+  it('uses active ASCII glyphs in inline model, reasoning, and status notices', async () => {
     const { host, userDataPath } = await setupHost()
-    const { tui, input, output } = startTui(userDataPath)
+    const { tui, input, output } = startTui(userDataPath, { glyphs: TUI_GLYPHS_ASCII })
 
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
@@ -994,18 +995,22 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
 
     feed(input, '/reasoning medium\r')
     await waitFor(
-      () => output.lastFrame.includes('Next send uses Opus 5 · medium'),
+      () => output.lastFrame.includes('Next send uses Opus 5 . medium'),
       'inline reasoning staged'
     )
 
     feed(input, '/think\r')
     await waitFor(
-      () => output.lastFrame.includes('Reasoning for Opus 5: medium · offered: medium, high'),
+      () => output.lastFrame.includes('Reasoning for Opus 5: medium . offered: medium, high'),
       'reasoning ladder shown'
     )
 
     feed(input, '/status\r')
-    await waitFor(() => output.lastFrame.includes('Node Host connected'), 'Host status shown')
+    await waitFor(
+      () => output.lastFrame.includes('Node Host connected . profile'),
+      'ASCII Host status shown'
+    )
+    expect(output.lastFrame).not.toContain('·')
 
     feed(input, '/clear\r')
     await waitFor(

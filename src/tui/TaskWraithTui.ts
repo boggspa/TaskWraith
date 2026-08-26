@@ -1510,7 +1510,9 @@ export class TaskWraithTui {
         ...(effort ? { reasoningEffort: effort.id } : {})
       }
       this.setNotice(
-        `Next send uses ${offer.label ?? offer.id}${effort ? ` · ${effort.id}` : ''}`,
+        `Next send uses ${offer.label ?? offer.id}${
+          effort ? ` ${this.glyphs.separator} ${effort.id}` : ''
+        }`,
         'good',
         3_000
       )
@@ -1777,7 +1779,7 @@ export class TaskWraithTui {
           ? this.state.pendingSelection.reasoningEffort
           : (offers.currentReasoningEffort ?? model.defaultReasoningEffort)
       this.setNotice(
-        `Reasoning for ${model.label ?? model.id}: ${current ?? 'not set'} · offered: ${
+        `Reasoning for ${model.label ?? model.id}: ${current ?? 'not set'} ${this.glyphs.separator} offered: ${
           ladder.map((effort) => effort.id).join(', ') || 'none'
         }`,
         'neutral',
@@ -1847,13 +1849,14 @@ export class TaskWraithTui {
     const capabilities = this.client?.welcome?.capabilities.join(', ') || 'none advertised'
     const model = this.state.pendingSelection?.model ?? thread?.provider.model ?? 'none'
     const reasoning = this.state.pendingSelection?.reasoningEffort ?? thread?.reasoning ?? 'default'
-    this.setNotice(
-      `Node Host ${this.state.connection} · profile ${profilePath} · socket ${taskWraithControlSocketPath(
-        profilePath
-      )} · ${thread ? `${thread.provider.displayProvider} / ${model} / ${reasoning}` : 'no thread'} · caps ${capabilities}`,
-      'neutral',
-      6_000
-    )
+    const status = [
+      `Node Host ${this.state.connection}`,
+      `profile ${profilePath}`,
+      `socket ${taskWraithControlSocketPath(profilePath)}`,
+      thread ? `${thread.provider.displayProvider} / ${model} / ${reasoning}` : 'no thread',
+      `caps ${capabilities}`
+    ].join(` ${this.glyphs.separator} `)
+    this.setNotice(status, 'neutral', 6_000)
     this.render()
   }
 
