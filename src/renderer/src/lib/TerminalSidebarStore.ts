@@ -96,12 +96,17 @@ export function useTerminalRecipes() {
 }
 
 // Event bus for Masthead -> MainAppLayout/Workbench to open terminal pane
-type TerminalLaunchEvent = { type: 'launch'; workspacePath: string }
+type TerminalLaunchEvent =
+  | { type: 'launch'; workspacePath: string }
+  | { type: 'attach'; workspacePath: string; sessionId: string }
 const launchListeners = new Set<(event: TerminalLaunchEvent) => void>()
 
 export const terminalLaunchBus = {
   emit(workspacePath: string) {
     launchListeners.forEach((l) => l({ type: 'launch', workspacePath }))
+  },
+  emitAttach(workspacePath: string, sessionId: string) {
+    launchListeners.forEach((l) => l({ type: 'attach', workspacePath, sessionId }))
   },
   subscribe(listener: (event: TerminalLaunchEvent) => void) {
     launchListeners.add(listener)

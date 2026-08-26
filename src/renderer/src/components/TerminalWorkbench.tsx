@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -47,11 +47,28 @@ export function TerminalWorkbench({
   currentWorkspacePath?: string
 }) {
   const [sessions, setSessions] = useState<ActiveSession[]>([])
+  const sessionsRef = useRef<ActiveSession[]>([])
+
+  const updateSessions = useCallback((next: ActiveSession[]) => {
+    sessionsRef.current = next
+    setSessions(next)
+  }, [])
+
+  const removeSession = useCallback((sessionId: string) => {
+    setSessions(prev => {
+      const next = prev.filter(session => session.sessionId !== sessionId)
+      if (next.length !== prev.length) {
+        sessionsRef.current = next
+        return next
+      }
+      return prev
+    })
+  }, [])
 
   useEffect(() => {
     // Sync initial state
     window.api.terminal.list().then(list => {
-      setSessions(list.slice(0, 4))
+      updateSessions(list.slice(0, 4))
     }).catch(() => {})
 
     const unsubscribeLaunch = terminalLaunchBus.subscribe((event) => {
@@ -59,31 +76,54 @@ export function TerminalWorkbench({
         terminalSidebarStore.recordRecipe(event.workspacePath)
         const newSessionId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         window.api.terminal.create(event.workspacePath, newSessionId).then(() => {
-          setSessions(prev => {
-            if (prev.length >= 4) {
-              return [prev[1], prev[2], prev[3], { sessionId: newSessionId, workspacePath: event.workspacePath }]
-            }
-            return [...prev, { sessionId: newSessionId, workspacePath: event.workspacePath }]
-          })
+          const oldestSession = sessionsRef.current.length >= 4 ? sessionsRef.current[0] : undefined
+          const next = oldestSession
+            ? [...sessionsRef.current.slice(1), { sessionId: newSessionId, workspacePath: event.workspacePath }]
+            : [...sessionsRef.current, { sessionId: newSessionId, workspacePath: event.workspacePath }]
+
+          updateSessions(next)
+
+          if (oldestSession) {
+            void window.api.terminal.kill(oldestSession.sessionId).catch((error) => {
+              console.error('[TerminalWorkbench] terminal.kill failed while evicting pane', {
+                sessionId: oldestSession.sessionId,
+                error
+              })
+            })
+          }
         }).catch((err) => {
           console.error('[TerminalWorkbench] terminal.create failed', { workspacePath: event.workspacePath, sessionId: newSessionId, error: err })
+        })
+      } else if (event.type === 'attach') {
+        setSessions(prev => {
+          if (prev.find(s => s.sessionId === event.sessionId)) return prev
+
+          const oldestSession = prev.length >= 4 ? prev[0] : undefined
+          const next = oldestSession
+            ? [...prev.slice(1), { sessionId: event.sessionId, workspacePath: event.workspacePath }]
+            : [...prev, { sessionId: event.sessionId, workspacePath: event.workspacePath }]
+
+          sessionsRef.current = next
+          return next
         })
       }
     })
 
     const unsubscribeExit = window.api.terminal.onExit((sessionId, _code) => {
-      setSessions(prev => prev.filter(s => s.sessionId !== sessionId))
+      removeSession(sessionId)
     })
 
     return () => {
       unsubscribeLaunch()
       unsubscribeExit()
     }
-  }, [])
+  }, [updateSessions, removeSession])
 
   const handleClose = (sessionId: string) => {
-    window.api.terminal.kill(sessionId)
-    setSessions(prev => prev.filter(s => s.sessionId !== sessionId))
+    removeSession(sessionId)
+    void window.api.terminal.kill(sessionId).catch((error) => {
+      console.error('[TerminalWorkbench] terminal.kill failed while closing pane', { sessionId, error })
+    })
   }
 
   return (

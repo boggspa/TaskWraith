@@ -4918,11 +4918,8 @@ export function Sidebar({
                 if (activeSidebarTab === 'terminal') {
                   const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
                   if (wsPath) {
-                    const sessionId = crypto.randomUUID()
-                    window.api.terminal.create(wsPath, sessionId).then(() => {
-                      import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
-                        terminalLaunchBus.emit(wsPath)
-                      })
+                    void import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
+                      terminalLaunchBus.emit(wsPath)
                     })
                   }
                   return
