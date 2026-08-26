@@ -4,6 +4,7 @@ import {
   PI_CARD_UPSTREAMS,
   XIAOMI_TOKEN_PLAN_REGIONS,
   PiProviderKeysCardView,
+  configuredXiaomiTokenPlanRegion,
   type PiProviderKeysCardViewProps
 } from './PiProviderKeysCard'
 
@@ -18,7 +19,7 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
     cerebrasCapDraft: '16384',
     cerebrasCapBusy: false,
     cerebrasCapError: null,
-    xiaomiRegion: 'xiaomi-token-plan-sgp',
+    xiaomiRegion: '',
     onDraftChange: () => {},
     onSave: () => {},
     onClear: () => {},
@@ -49,36 +50,44 @@ describe('PiProviderKeysCardView', () => {
     expect(html).toContain('Ox Alpha only')
   })
 
-  it('renders the Xiaomi Token Plan as one card entry with a region picker beneath the field', () => {
+  it('requires the Xiaomi cluster from the Dedicated Base URL instead of guessing a region', () => {
     const html = render()
     expect(html).toContain('Xiaomi Token Plan')
     expect(html).toContain('aria-label="Xiaomi Token Plan region"')
-    // Every regional upstream is selectable; Singapore is the default because
-    // Xiaomi auto-routes most newly issued keys there.
+    expect(html).toContain('Region: choose from Dedicated Base URL…')
+    expect(html).toContain('Token Plan keys are region-bound')
     for (const region of XIAOMI_TOKEN_PLAN_REGIONS) {
       expect(html, region.id).toContain(`value="${region.id}"`)
+      expect(html, region.baseUrlCluster).toContain(region.baseUrlCluster)
     }
-    const sgp = html.match(/<option value="xiaomi-token-plan-sgp"[^>]*>/)
-    expect(sgp?.[0]).toContain('selected')
+    const placeholder = html.match(/<option value=""[^>]*>/)
+    expect(placeholder?.[0]).toContain('selected')
+    expect(html).toMatch(/aria-label="Xiaomi Token Plan API key"[^>]*\/?>/)
+    expect(configuredXiaomiTokenPlanRegion([])).toBeNull()
+    expect(configuredXiaomiTokenPlanRegion(['deepseek', 'xiaomi-token-plan-ams'])).toBe(
+      'xiaomi-token-plan-ams'
+    )
   })
 
   it('names the stored Xiaomi region and lights one dot while unconfigured stays dark', () => {
     const stored = render({
       status: {
         encryptionAvailable: true,
-        configuredUpstreams: ['xiaomi-token-plan-sgp'],
+        configuredUpstreams: ['xiaomi-token-plan-ams'],
         recordUnreadable: false
-      }
+      },
+      xiaomiRegion: 'xiaomi-token-plan-ams'
     })
-    expect(stored).toContain('Key stored — Singapore (SGP)')
+    expect(stored).toContain('Key stored — Europe (AMS)')
 
     const unconfigured = render({
       status: {
         encryptionAvailable: true,
-        configuredUpstreams: ['xiaomi-token-plan-sgp', 'deepseek'],
+        configuredUpstreams: ['xiaomi-token-plan-ams', 'deepseek'],
         recordUnreadable: false
       },
-      drafts: {}
+      drafts: {},
+      xiaomiRegion: 'xiaomi-token-plan-ams'
     })
     // The generic rows still count per-upstream keys.
     expect(unconfigured).toContain('2 upstream keys configured')

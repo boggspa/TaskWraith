@@ -40,11 +40,27 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
  * region picker files the stored key under ONE of these ids, and saving clears
  * the other two so exactly one regional MiMo catalog surfaces in the pickers.
  */
-export const XIAOMI_TOKEN_PLAN_REGIONS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'xiaomi-token-plan-cn', label: 'China (CN)' },
-  { id: 'xiaomi-token-plan-sgp', label: 'Singapore (SGP)' },
-  { id: 'xiaomi-token-plan-ams', label: 'Amsterdam (AMS)' }
+export const XIAOMI_TOKEN_PLAN_REGIONS: ReadonlyArray<{
+  id: string
+  label: string
+  baseUrlCluster: string
+}> = [
+  { id: 'xiaomi-token-plan-cn', label: 'China (CN)', baseUrlCluster: 'token-plan-cn' },
+  {
+    id: 'xiaomi-token-plan-sgp',
+    label: 'Singapore (SGP)',
+    baseUrlCluster: 'token-plan-sgp'
+  },
+  { id: 'xiaomi-token-plan-ams', label: 'Europe (AMS)', baseUrlCluster: 'token-plan-ams' }
 ]
+
+export function configuredXiaomiTokenPlanRegion(
+  configuredUpstreams: readonly string[]
+): string | null {
+  return (
+    XIAOMI_TOKEN_PLAN_REGIONS.find((region) => configuredUpstreams.includes(region.id))?.id ?? null
+  )
+}
 
 export interface PiKeyCardStatus {
   encryptionAvailable: boolean
@@ -152,6 +168,9 @@ export function PiProviderKeysCardView({
             )
             const activeRegion = configuredRegions[0]
             const busy = busyUpstream === upstream.id
+            const regionSelected = XIAOMI_TOKEN_PLAN_REGIONS.some(
+              (region) => region.id === xiaomiRegion
+            )
             return (
               <div className="settings-pi-upstream-row" key={upstream.id}>
                 <div className="settings-pi-upstream-name">
@@ -169,6 +188,7 @@ export function PiProviderKeysCardView({
                 <div className="settings-pi-upstream-controls">
                   <input
                     type="password"
+                    aria-label="Xiaomi Token Plan API key"
                     autoComplete="off"
                     spellCheck={false}
                     placeholder={activeRegion ? 'Key stored — replace…' : 'API key'}
@@ -178,7 +198,7 @@ export function PiProviderKeysCardView({
                   <PillButton
                     size="compact"
                     variant="primary"
-                    disabled={busy || !drafts[upstream.id]?.trim()}
+                    disabled={busy || !regionSelected || !drafts[upstream.id]?.trim()}
                     onClick={onSaveXiaomi}
                   >
                     Save
@@ -199,14 +219,18 @@ export function PiProviderKeysCardView({
                     disabled={busy}
                     onChange={(event) => onXiaomiRegionChange(event.target.value)}
                   >
+                    <option value="" disabled>
+                      Region: choose from Dedicated Base URL…
+                    </option>
                     {XIAOMI_TOKEN_PLAN_REGIONS.map((region) => (
                       <option key={region.id} value={region.id}>
-                        Region: {region.label}
+                        Region: {region.label} · {region.baseUrlCluster}
                       </option>
                     ))}
                   </select>
                   <span className="settings-pi-upstream-hint">
-                    The region your key was issued for. Saving files the key under this region only.
+                    Match Xiaomi&apos;s Dedicated Base URL: token-plan-cn, token-plan-sgp, or
+                    token-plan-ams. Token Plan keys are region-bound.
                   </span>
                 </div>
               </div>
@@ -327,9 +351,10 @@ export function PiProviderKeysCard({
   )
   const [cerebrasCapBusy, setCerebrasCapBusy] = useState(false)
   const [cerebrasCapError, setCerebrasCapError] = useState<string | null>(null)
-  // Which regional Xiaomi upstream the next Save files the key under.
-  // Singapore is the default because Xiaomi auto-routes most new keys there.
-  const [xiaomiRegion, setXiaomiRegion] = useState<string>('xiaomi-token-plan-sgp')
+  // Which regional Xiaomi upstream the next Save files the key under. There is
+  // deliberately no guessed default: Xiaomi binds each Token Plan key to the
+  // cluster named by its Dedicated Base URL.
+  const [xiaomiRegion, setXiaomiRegion] = useState<string>('')
 
   const refresh = useCallback(async () => {
     const [keyStatus, settings] = await Promise.allSettled([
@@ -338,13 +363,16 @@ export function PiProviderKeysCard({
     ])
     if (keyStatus.status === 'fulfilled') {
       const next = keyStatus.value
+      const configuredUpstreams = Array.isArray(next.configuredUpstreams)
+        ? next.configuredUpstreams
+        : []
       setStatus({
         encryptionAvailable: next.encryptionAvailable === true,
-        configuredUpstreams: Array.isArray(next.configuredUpstreams)
-          ? next.configuredUpstreams
-          : [],
+        configuredUpstreams,
         recordUnreadable: next.recordUnreadable === true
       })
+      const configuredRegion = configuredXiaomiTokenPlanRegion(configuredUpstreams)
+      if (configuredRegion) setXiaomiRegion(configuredRegion)
     } else {
       setStatus(null)
     }
