@@ -7,10 +7,15 @@ import {
   SIMULATOR_MCP_TOOL_NAMES,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
-import { CAPABILITY_GATEWAY_TOOL_NAMES, type CapabilityGatewayToolName } from './McpToolGateway'
+import { TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES } from '../../shared/providerActionTaxonomy'
 
-export { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
-export type { CapabilityGatewayToolName } from './McpToolGateway'
+// This module is reachable from the renderer bundle (App.tsx → PromptComposition),
+// so it must not import McpToolGateway: that drags the main-process runtime into
+// the client rollup, where named Node-builtin imports fail at bind time. The
+// gateway's CAPABILITY_GATEWAY_TOOL_NAMES aliases this same shared taxonomy
+// constant, so both bindings stay reference-identical.
+export const CAPABILITY_GATEWAY_TOOL_NAMES = TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES
+export type CapabilityGatewayToolName = (typeof CAPABILITY_GATEWAY_TOOL_NAMES)[number]
 export type TaskWraithMcpAdvertisedToolName = TaskWraithMcpToolName | CapabilityGatewayToolName
 
 /**
