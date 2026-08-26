@@ -1489,10 +1489,26 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).toContain('MCP')
   })
 
-  it('keeps provider-native child-agent cards free of source chips', () => {
+  it('starts provider-native child-agent cards collapsed with the selected agent seat', () => {
+    const chat = makeChat({
+      provider: 'kimi',
+      requestedModel: 'kimi-k3',
+      providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true },
+      runs: [
+        {
+          runId: 'run-kimi-agent',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true }
+        }
+      ]
+    })
     const html = renderToStaticMarkup(
       <ActivityStack
-        provider="claude"
+        provider="kimi"
+        chat={chat}
+        runId="run-kimi-agent"
         activities={[
           makeWriteActivity({
             id: 'task-1',
@@ -1521,9 +1537,13 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('Invocation prompt')
     expect(html).not.toContain('Provider-native activity')
     expect(html).not.toContain('Invocation result')
-    expect(html).toContain('Provider-native')
-    expect(html).toContain('Prompt')
-    expect(html).toContain('Activity · 1')
+    expect(html).not.toContain('Provider-native')
+    expect(html).not.toContain('child-agent-thread-body')
+    expect(html).toContain('seat-state-chips child-agent-thread-seat')
+    expect(html).toContain('Kimi')
+    expect(html).toContain('K3')
+    expect(html).toContain('Max')
+    expect(html).toContain('--subagent-seat-accent:var(--provider-kimi-color')
   })
 
   it('labels multi-agent spawn blocks as Agents + N agents via CollapsedTranscriptRow', () => {
@@ -1558,11 +1578,24 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).toContain('2 agents')
   })
 
-  it('renders child-agent identities with named identicons', () => {
-    const chat = makeChat()
+  it('keeps the named identicon but does not expose its generated nickname', () => {
+    const chat = makeChat({
+      provider: 'kimi',
+      requestedModel: 'kimi-k3',
+      providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true },
+      runs: [
+        {
+          runId: 'run-identity',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true }
+        }
+      ]
+    })
     const html = renderToStaticMarkup(
       <ActivityStack
-        provider="claude"
+        provider="kimi"
         chat={chat}
         chatId="chat-identity"
         runId="run-identity"
@@ -1583,7 +1616,11 @@ describe('ActivityStack agent invocation presentation', () => {
 
     expect(html).toContain('agent-identity-icon-named')
     expect(html).toContain('data-agent-slug="donny-davis"')
-    expect(html).toContain('Donny-Davis')
+    expect(html).not.toContain('child-agent-thread-name')
+    expect(html).toContain('seat-state-chips child-agent-thread-seat')
+    expect(html).toContain('Kimi')
+    expect(html).toContain('K3')
+    expect(html).toContain('Max')
     const metadata = chat.providerMetadata as
       | {
           agentIdentities?: Record<

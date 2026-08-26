@@ -3747,11 +3747,12 @@
 }
 
 .child-agent-thread {
-  /* Provider accent fallback chain: identity color (inline var) wins, then
-   * the provider brand color from the data-provider rules below, then the
-   * app accent. Keeps the settled one-liner provider-relevant the same way
-   * fan-out lane headers are. */
-  --subagent-accent: var(--agent-identity-color, var(--subagent-provider-color, var(--accent)));
+  /* The selected provider/model seat owns the shell accent. The identicon keeps
+   * its own child color, but a generated nickname must not repaint the card. */
+  --subagent-accent: var(
+    --subagent-seat-accent,
+    var(--subagent-provider-color, var(--accent))
+  );
   margin: 6px 0 4px 24px;
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--subagent-accent) 22%, transparent);
@@ -3771,8 +3772,8 @@
 .child-agent-thread[data-provider='pi'] { --subagent-provider-color: var(--provider-pi-color); }
 .child-agent-thread[data-provider='antigravity'] { --subagent-provider-color: var(--provider-antigravity-color); }
 .child-agent-thread.state-running {
-  border-color: color-mix(in srgb, var(--tool-running) 38%, transparent);
-  background: color-mix(in srgb, var(--tool-running) 5%, transparent);
+  border-color: color-mix(in srgb, var(--subagent-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--subagent-accent) 5%, transparent);
 }
 .child-agent-thread.state-failed {
   border-color: color-mix(in srgb, var(--danger) 38%, transparent);
@@ -3782,10 +3783,6 @@
   border-color: color-mix(in srgb, var(--subagent-accent) 30%, transparent);
   background: color-mix(in srgb, var(--subagent-accent) 5%, transparent);
 }
-.child-agent-thread.state-completed .child-agent-thread-name {
-  color: color-mix(in srgb, var(--subagent-accent) 72%, var(--text-primary) 28%);
-}
-
 /* Sub-agent spawn waves get their own live viewport, a sibling of the
  * thinking/tool viewports rather than content buried inside them. Chrome is
  * intentionally lighter than the tool viewport: the agent cards carry their
@@ -3835,22 +3832,29 @@
   display: block;
 }
 
-.child-agent-thread-name {
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
+.child-agent-thread-seat {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 320px;
+  flex: 0 1 auto;
 }
-.child-agent-thread-role {
-  color: var(--text-tertiary);
-  font-size: calc(var(--font-size-xs) - 1px);
+.child-agent-thread-provider-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--subagent-accent);
+  font-weight: 600;
+  white-space: nowrap;
 }
-.child-agent-thread-role::before {
-  content: '·';
-  margin-right: 6px;
-  opacity: 0.5;
+.child-agent-thread-provider-logo.sidebar-provider-icon,
+.child-agent-thread-provider-logo .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
 }
 .child-agent-thread .agent-invocation-source-chip {
   margin-left: 2px;
