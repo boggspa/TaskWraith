@@ -37,7 +37,8 @@ describe('dispatchResolvedGatewayTarget', () => {
         marker: { viaGateway: true; gatewayToolName: 'capability_invoke' }
       ) => {
         approvalRequest(targetName, receivedCallerContext.approvalMode)
-        expect(receivedArguments).toBe(targetArguments)
+        expect(receivedArguments).toBe(resolution.arguments)
+        expect(receivedArguments).toStrictEqual(targetArguments)
         expect(receivedRoute).toBe(route)
         expect(parentProvider).toBe('codex')
         expect(receivedCallerContext).toBe(callerContext)
