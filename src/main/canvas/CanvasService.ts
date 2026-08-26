@@ -96,6 +96,10 @@ export interface CanvasServiceDeps {
       onNavState?: (state: CanvasNavState) => void
       /** Committed main-frame / in-page navigation (url settled). */
       onNavigationCommitted?: (state: CanvasNavState) => void
+      /** Floating browser rail routes through CanvasService as a human action. */
+      onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+      /** Floating Browser/Sketch control requests a dock presentation. */
+      onDockRequest?: () => void | Promise<void>
     }
   ) => CanvasDriver
   store: CanvasStore
@@ -297,6 +301,7 @@ export class CanvasService implements CanvasController {
   private readonly scopedClearOperations = new Set<Promise<void>>()
   private browserProfileClearAdmissionBlocked = false
   private browserProfileClearInFlight: Promise<CanvasBrowserProfileClearResult> | null = null
+  private readonly dockTransfers = new Set<string>()
 
   constructor(private readonly deps: CanvasServiceDeps) {}
 
@@ -686,10 +691,16 @@ export class CanvasService implements CanvasController {
       recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
       eventHost = undefined
     } else {
-      const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
-      if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
-      recordUrl = redactUrlQuery(verdict.normalizedUrl ?? (input.url || ''))
-      eventHost = verdict.host
+      const rawUrl = (input.url || '').trim()
+      if (!rawUrl) {
+        recordUrl = 'about:blank'
+        eventHost = undefined
+      } else {
+        const verdict = validateCanvasUrl(rawUrl)
+        if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
+        recordUrl = redactUrlQuery(verdict.normalizedUrl ?? rawUrl)
+        eventHost = verdict.host
+      }
     }
 
     const canvasId = this.deps.uuid()
@@ -706,9 +717,6 @@ export class CanvasService implements CanvasController {
       url: recordUrl,
       title: '',
       viewport,
-      // The allowlist is live driver policy, not useful durable history. Never
-      // persist arbitrary caller strings in the session record.
-      originAllowlist: [],
       status: 'opening',
       chatId: ctx.chatId,
       runId: ctx.runId,
@@ -757,8 +765,11 @@ export class CanvasService implements CanvasController {
               }
             }
           : undefined,
+        onDockRequest: () => this.moveFloatingSurfaceToDock(canvasId, generation, ctx),
         ...(driverKind === 'web'
           ? {
+              onHumanNavigate: (input: CanvasNavigateInput) =>
+                this.navigate(canvasId, input, ctx, { chargeInteraction: false }),
               onNavState: (state: CanvasNavState) => {
                 if (
                   generation !== this.generation ||
@@ -1650,6 +1661,50 @@ export class CanvasService implements CanvasController {
     await session.driver.reload()
     this.assertLiveAfterAwait(canvasId, session, ctx, 'reload')
     this.emit(canvasId, 'reload', ctx)
+  }
+
+  /**
+   * Floating-window chrome asks main to re-host the Canvas in the app dock.
+   * Placement is not durable authority: preserve the live URL/document, retire
+   * the old host, and reopen through the same chat-owned service path so the
+   * existing `session.opened` presentation event focuses the renderer dock.
+   */
+  private async moveFloatingSurfaceToDock(
+    canvasId: string,
+    generation: number,
+    ctx: CanvasCallContext
+  ): Promise<void> {
+    if (this.dockTransfers.has(canvasId)) return
+    const session = this.require(canvasId, ctx)
+    if (session.generation !== generation || session.presentation === 'dock') return
+    if (session.record.driver !== 'web' && session.record.driver !== 'sketch') {
+      throw new Error('Only Browser and Sketch canvases can move into the dock.')
+    }
+    this.dockTransfers.add(canvasId)
+    try {
+      const viewport = session.record.viewport
+      let url: string | undefined
+      if (session.record.driver === 'web') {
+        const liveUrl = session.driver.navState?.().url || session.record.url
+        if (liveUrl && liveUrl !== 'about:blank') url = liveUrl
+      } else {
+        const document = await session.driver.sketchDocument()
+        this.persistSketchDocument(this.sketchScope(ctx), document)
+      }
+      await this.close(canvasId, ctx)
+      await this.open(
+        {
+          driver: session.record.driver,
+          viewport,
+          embed: true,
+          presentation: 'dock',
+          ...(url ? { url } : {})
+        },
+        ctx
+      )
+    } finally {
+      this.dockTransfers.delete(canvasId)
+    }
   }
 
   /**

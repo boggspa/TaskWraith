@@ -63,7 +63,7 @@ class FakeDriver implements CanvasDriver {
     this.lastOpenInput = input
     if (input.initialSketchDocument) this.sketchDoc = input.initialSketchDocument
     return {
-      url: input.url || 'http://localhost:3000',
+      url: input.driver === 'sketch' ? 'sketch://fake' : input.url || 'about:blank',
       title: 'Fake',
       viewport: input.viewport || { width: 1280, height: 800 }
     }
@@ -246,6 +246,42 @@ describe('CanvasService', () => {
     expect(service.status(opened.canvasId, {})?.status).toBe('active')
     expect(store.getSession(opened.canvasId)?.status).toBe('active')
     expect(events.map((e) => e.kind)).toContain('session.opened')
+  })
+
+  it('opens an empty browser as about:blank and keeps its dock presentation', async () => {
+    const opened = await service.open(
+      { driver: 'web', embed: true, presentation: 'dock' },
+      { chatId: 'chat-a' }
+    )
+
+    expect(opened.url).toBe('about:blank')
+    expect(fake.lastOpenInput).toMatchObject({ driver: 'web', embed: true, presentation: 'dock' })
+    expect(service.status(opened.canvasId, { chatId: 'chat-a' })).toMatchObject({
+      url: 'about:blank',
+      presentation: 'dock'
+    })
+  })
+
+  it('moves a floating browser into the dock through its main-owned callback', async () => {
+    const opened = await service.open(
+      { driver: 'web', url: 'https://example.com/start' },
+      { chatId: 'chat-a' }
+    )
+    const requestDock = lastDriverOpts?.onDockRequest
+    expect(requestDock).toBeTypeOf('function')
+
+    await requestDock?.()
+
+    const live = service.list({ chatId: 'chat-a' })
+    expect(live).toHaveLength(1)
+    expect(live[0]).toMatchObject({ driver: 'web', presentation: 'dock' })
+    expect(live[0].canvasId).not.toBe(opened.canvasId)
+    expect(fake.lastOpenInput).toMatchObject({
+      driver: 'web',
+      embed: true,
+      presentation: 'dock',
+      url: 'http://localhost:3000/?token=secret'
+    })
   })
 
   it('rejects an unsupported driver', async () => {
@@ -567,7 +603,7 @@ describe('CanvasService', () => {
       /data is being cleared/
     )
     await expect(service.open({ driver: 'sketch' }, {})).resolves.toMatchObject({
-      url: 'http://localhost:3000'
+      url: 'sketch://fake'
     })
 
     clearGate.resolve(undefined)
