@@ -508,4 +508,24 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(unavailable).toContain('`ultra_task` is unavailable')
     expect(unavailable).not.toContain('continuing read-only')
   })
+
+  it('invariant: repairForkedToolCalls behavior pinned', () => {
+    // Progressive disclosure design mandates that tool call repair behavior for Pi
+    // must not drift: it must merge empty tool calls representing arguments for the
+    // immediately preceding named tool call.
+    const home = createCanonicalHome()
+    const repairOnly = preparePiToolCallRepairExtension({ isolatedHomeDir: home })
+    const repairSource = readFileSync(repairOnly.path, 'utf8')
+    const repair = extractRepairForkedToolCalls(repairSource)
+
+    // Test a pinned matrix of repair scenarios
+    const original = [
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+      { type: 'toolCall', id: 'toolcall0', name: '', arguments: { path: 'a.ts' } }
+    ]
+    const repaired = repair(original)
+    expect(repaired).toEqual([
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }
+    ])
+  })
 })
