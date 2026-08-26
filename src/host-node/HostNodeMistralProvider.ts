@@ -49,6 +49,7 @@ import type {
 } from './HostNodeProvider'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
 import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import { resolveMistralCredentialLaunch } from '../main/mistral/MistralCredentialLane'
 
 const PROVIDER_ID = 'mistral'
 const PROVIDER_DISPLAY_NAME = 'Mistral'
@@ -75,10 +76,12 @@ export interface HostNodeMistralProviderOptions {
   readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
   /** Non-secret configured-state probe; explicit resource auth wins when known. */
   readonly isConfigured?: () => boolean | Promise<boolean>
+  /** Dependency-injected launch environment; production inherits process.env. */
+  readonly environment?: NodeJS.ProcessEnv
 }
 
-function hasConfiguredMistralCredential(): boolean {
-  if (['MISTRAL_API_KEY'].some((name) => Boolean(process.env[name]?.trim()))) return true
+function hasConfiguredMistralCredential(environment: NodeJS.ProcessEnv): boolean {
+  if (['MISTRAL_API_KEY'].some((name) => Boolean(environment[name]?.trim()))) return true
   const configuredHome = join(homedir(), '.vibe', 'config.toml')
   return existsSync(configuredHome)
 }
@@ -202,7 +205,8 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
     ])
     const configured =
       resourceAuthState === 'unknown'
-        ? await (this.options.isConfigured?.() ?? hasConfiguredMistralCredential())
+        ? await (this.options.isConfigured?.() ??
+            hasConfiguredMistralCredential(this.options.environment ?? process.env))
         : resourceAuthState === 'authenticated'
     const authState =
       resourceAuthState === 'unknown'
@@ -275,6 +279,24 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       throw new Error(PROVIDER_DISPLAY_NAME + ' run already exists.')
     }
 
+    const credentialLaunch = resolveMistralCredentialLaunch({
+      model: thread.modelId,
+      resolvedEnv: {
+        ...(this.options.environment ?? process.env),
+        FORCE_COLOR: '0',
+        NO_COLOR: '1'
+      },
+      storedApiKeyPresent: false,
+      // On a paired host the configured process environment is the explicit
+      // BYOK source; there is no desktop encrypted-key store to consult.
+      ambientApiKeyAllowed: true
+    })
+    if (credentialLaunch.missingApiKey) {
+      throw new Error(
+        `${PROVIDER_DISPLAY_NAME} model ${thread.modelId} requires MISTRAL_API_KEY; choose Devstral Small / Mistral Medium 3.5 to use Vibe instead.`
+      )
+    }
+
     const startedAt = timestamp()
     if (
       this.runPort.beginRun({
@@ -306,13 +328,13 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       child = this.options.spawn
         ? this.options.spawn(resolved.binaryPath, acpArgs(thread), {
             cwd: thread.workspace.canonicalPath,
-            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+            env: credentialLaunch.childEnv,
             shell: false,
             stdio: 'pipe'
           })
         : nodeSpawn(resolved.binaryPath, acpArgs(thread), {
             cwd: thread.workspace.canonicalPath,
-            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+            env: credentialLaunch.childEnv,
             shell: false,
             stdio: 'pipe'
           })

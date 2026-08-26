@@ -57,8 +57,9 @@ export const MISTRAL_BINARY_NAME = 'vibe-acp'
  *
  * Vibe resolves credentials API-KEY-FIRST: if this is set, the child bills the
  * user's metered API account and the plan subscription is never consulted. No
- * error, no warning — just a different bill. Scrubbing it is what makes this a
- * subscription seat rather than a second BYOK path onto the same key.
+ * error, no warning — just a different bill. Scrubbing it is what makes a
+ * Vibe-capable model use the subscription lane rather than the key-marked BYOK
+ * lane. `MistralCredentialLane` owns that model-to-lane decision.
  */
 export const MISTRAL_API_KEY_ENV = 'MISTRAL_API_KEY'
 

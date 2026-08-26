@@ -55,12 +55,14 @@ function open(
     }
     readonly configuredThread?: HostProviderRunThread
     readonly interactions?: HostNodeInteractionResolver
+    readonly environment?: NodeJS.ProcessEnv
   } = {}
 ) {
   const appends: unknown[] = []
   const finishes: unknown[] = []
   const events: unknown[] = []
   const cancels = new Map<string, () => void>()
+  const spawnEnvs: NodeJS.ProcessEnv[] = []
   const child = new FakeChild()
   const port: HostProviderRunPort = {
     getThread: () => input.configuredThread ?? thread(),
@@ -87,7 +89,11 @@ function open(
     },
     ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
-    spawn: () => child as never
+    environment: input.environment ?? { PATH: '/usr/bin' },
+    spawn: (_command, _args, options) => {
+      spawnEnvs.push(options.env)
+      return child as never
+    }
   })
   const instance = factory.create({
     runPort: port,
@@ -97,7 +103,7 @@ function open(
         register: () => new Promise<never>(() => {})
       } satisfies HostNodeInteractionResolver)
   } satisfies HostNodeProviderCreateInput)
-  return { factory, instance, child, appends, finishes, events, cancels }
+  return { factory, instance, child, appends, finishes, events, cancels, spawnEnvs }
 }
 
 function frames(child: FakeChild): string[] {
@@ -190,6 +196,61 @@ describe('HostNodeMistralProvider', () => {
       instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
     ).rejects.toThrow(/configuration is not selectable/)
   })
+
+  it.each(['devstral-small', 'mistral-medium-3.5'])(
+    'scrubs an ambient API key from the Vibe model %s',
+    async (modelId) => {
+      const { instance, child, spawnEnvs } = open({
+        configuredThread: thread({ modelId }),
+        environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'studio-key' }
+      })
+      const sent = frames(child)
+      const running = instance.run({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        prompt: 'hello',
+        target: {}
+      })
+
+      await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+      expect(spawnEnvs).toHaveLength(1)
+      expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBeUndefined()
+      child.emit('close', 0)
+      await expect(running).resolves.toMatchObject({ status: 'completed' })
+    }
+  )
+
+  it('passes the API key only to a key-marked Mistral model', async () => {
+    const { instance, child, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-2512' }),
+      environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'studio-key' }
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: {}
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBe('studio-key')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('rejects a key-marked model before launch when the host has no API key', async () => {
+    const { instance, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-2512' }),
+      environment: { PATH: '/usr/bin' }
+    })
+
+    await expect(
+      instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
+    ).rejects.toThrow(/requires MISTRAL_API_KEY/)
+    expect(spawnEnvs).toHaveLength(0)
+  })
+
   it('registers an ACP permission and resumes its exact request once after approval', async () => {
     let settle!: (value: {
       id: string

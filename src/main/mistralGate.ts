@@ -29,25 +29,19 @@ export const MISTRAL_ACP_REQUIRED_MESSAGE =
   'Managed Mistral runs require the Vibe ACP transport (`vibe-acp`). There is no headless fallback — the interactive `vibe` TUI cannot service a managed run. Unset TASKWRAITH_MISTRAL_ACP or set it to 1 to run Mistral.'
 
 /**
- * Allow the seat to run on a BYOK `MISTRAL_API_KEY` instead of the plan sign-in.
+ * Allow an ambient `MISTRAL_API_KEY` to satisfy a key-marked Mistral model.
  *
- * OFF by default, and that default is the entire point of the seat.
+ * This flag authorizes a credential SOURCE; it does not choose the billing
+ * lane. The model makes that choice deterministically: Devstral Small and
+ * Mistral Medium 3.5 always use Vibe's subscription credential, while the
+ * picker's key-marked rows use BYOK. A key stored in TaskWraith is already an
+ * explicit source and does not need this flag.
  *
- * Vibe resolves credentials API-KEY-FIRST: if `MISTRAL_API_KEY` is present in
- * the child env it bills the user's metered API account and never consults the
- * subscription. That same variable is what Pi exports for its own `mistral`
- * upstream, so on a machine where Pi is configured — which is the normal case,
- * since Pi is how most users reach Mistral models today — an unscrubbed env
- * would silently move every Mistral seat run onto the user's pay-as-you-go
- * billing line. No error, no warning, a different bill.
- *
- * TaskWraith already offers metered Mistral through Pi. A second BYOK path onto
- * the same key would be a duplicate catalogue entry billing the same account,
- * which is exactly what this seat was built NOT to be. So the seat scrubs the
- * variable unless the user deliberately turns this on, and the launch seal
- * refuses any occurrence claiming `plan-oauth` whose env was not scrubbed.
+ * OFF by default because the same variable is what Pi exports for its Mistral
+ * upstream. Without an explicit opt-in, a key inherited from a parent process
+ * or runtime profile must not silently qualify as the API credential.
  */
-export function mistralByokLaneEnabled(): boolean {
+export function mistralAmbientApiKeyEnabled(): boolean {
   const value = process.env.TASKWRAITH_MISTRAL_BYOK?.trim().toLowerCase()
   return value === '1' || value === 'true' || value === 'yes'
 }

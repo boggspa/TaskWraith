@@ -17,7 +17,7 @@ describe('MistralApiKeyControlsView', () => {
     )
 
     expect(html).toContain('Mistral API key (BYOK)')
-    expect(html).toContain('Stored for metered API runs')
+    expect(html).toContain('Stored for key-marked models')
     expect(html).toContain('Key stored — replace…')
     expect(html).toContain('settings-provider-auth-status-dot-signed-in')
   })
@@ -35,7 +35,7 @@ describe('MistralApiKeyControlsView', () => {
       />
     )
 
-    expect(html).toContain('Optional alternative to Vibe subscription')
+    expect(html).toContain('Required for key-marked models')
     expect(html).toContain('api.mistral.ai key…')
     expect(html).toContain('settings-provider-auth-status-dot-not-available')
   })

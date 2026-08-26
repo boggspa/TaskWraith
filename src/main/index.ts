@@ -1619,30 +1619,30 @@ import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokSt
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
 // Imported as one block on purpose. This seat has NO argv (`vibe-acp` accepts
 // only `[-h] [-v] [--setup]`), so its entire containment, credential and
-// accounting story lives in these four modules rather than in a command line
+// accounting story lives in these modules rather than in a command line
 // a reader can inspect at the spawn site: the session-mode/model selection
-// (MistralCliArgs), the emergency-stop and BYOK gates (mistralGate), the
-// model-aware meter (MistralUsage) and the three-way rate-limit disambiguator
-// (MistralRateLimitPatience).
+// (MistralCliArgs), the model-authoritative credential split
+// (MistralCredentialLane), the emergency-stop and ambient-key gate
+// (mistralGate), the model-aware meter (MistralUsage) and the three-way
+// rate-limit disambiguator (MistralRateLimitPatience).
 import {
   MISTRAL_ACP_REQUIRED_MESSAGE,
   mistralAcpEnabled,
-  mistralByokLaneEnabled,
+  mistralAmbientApiKeyEnabled,
   mistralMcpAdvertiseEnabled
 } from './mistralGate'
 import {
   MISTRAL_API_KEY_ENV,
   MISTRAL_BINARY_NAME,
-  MISTRAL_CREDENTIAL_ENV_VARS,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
   mistralSessionModeFallbacksForSeat,
   mistralSessionModeForSeat,
   mistralWriteCapable,
   normalizeMistralPlanId,
-  normalizeMistralThinkingLevel,
-  scrubMistralCredentialEnv
+  normalizeMistralThinkingLevel
 } from './mistral/MistralCliArgs'
+import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
@@ -23587,19 +23587,18 @@ function claudeTaskWraithMcpConfigPathForRun(runId: string): string {
 //     ~/.vibe/config.toml. Neither failure raises anything — the handshake
 //     succeeds, the session opens, the prompt answers.
 //
-//  2. THE CREDENTIAL IS SCRUBBED, NOT INHERITED. Vibe resolves auth
-//     API-KEY-FIRST, and `MISTRAL_API_KEY` is also Pi's `mistral` upstream key
-//     (PiModelPolicy.PI_UPSTREAM_KEY_ENV.mistral). On a machine where Pi is
-//     configured — the normal case — an inherited env moves every run of this
-//     seat onto the user's metered pay-as-you-go line while the plan
-//     subscription is never consulted. Different credential, different bill, no
-//     error. See scrubMistralCredentialEnv at the spawn closure.
+//  2. THE MODEL CHOOSES THE CREDENTIAL LANE. Vibe resolves auth API-KEY-FIRST,
+//     and `MISTRAL_API_KEY` is also Pi's `mistral` upstream key
+//     (PiModelPolicy.PI_UPSTREAM_KEY_ENV.mistral). The two Vibe-plan models must
+//     therefore scrub it even when TaskWraith has a stored key; the picker's
+//     key-marked API-only models retain an explicitly authorized key. Presence
+//     of a key never chooses the lane. Different credential, different bill, no
+//     error. See resolveMistralCredentialLaunch before run registration.
 //
-//  3. USAGE IS PRICED PER MODEL. The seat's two models are 15x/25x apart, and
-//     the projection feeds MistralQuotaEstimate — the only budget signal that
-//     exists, since Mistral publishes no numeric plan budget and no quota
-//     endpoint. Grok's flat-rate estimateProjectedTokenUsage would be wrong by
-//     more than an order of magnitude here.
+//  3. USAGE IS PRICED PER MODEL. This mixed catalogue spans more than 25x on
+//     output rates, and only its two Vibe-plan rows feed MistralQuotaEstimate.
+//     Grok's flat-rate estimateProjectedTokenUsage would be wrong by more than
+//     an order of magnitude here.
 //
 // Persistent per-seat sessions are deliberately NOT ported from Grok's Spike-7
 // fast path. `mistralSeatSessionsEnabled()` is hard-`false`, and Vibe's
@@ -23917,6 +23916,45 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     })
     return
   }
+
+  // The picker already divides this catalogue into two unkeyed Vibe-plan rows
+  // and key-marked API rows. Resolve the child environment from that same
+  // model predicate BEFORE registering the run, so credential presence can
+  // never silently move a plan model onto BYOK and a keyless API model fails
+  // as setup rather than halfway through an ACP turn.
+  const storedMistralKey = mistralApiKeyStore()?.loadApiKey()
+  const mistralHasStoredKey = storedMistralKey?.status === 'ok' && Boolean(storedMistralKey.value)
+  const mistralBaseEnv = createCliEnv(
+    {
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'mistral',
+      TASKWRAITH_RUN_ID: route.appRunId || '',
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
+      ...(mistralHasStoredKey ? { [MISTRAL_API_KEY_ENV]: storedMistralKey.value } : {})
+    },
+    binaryPath
+  )
+  const mistralCredentialLaunch = resolveMistralCredentialLaunch({
+    model,
+    resolvedEnv: mistralBaseEnv,
+    storedApiKeyPresent: mistralHasStoredKey,
+    ambientApiKeyAllowed: mistralAmbientApiKeyEnabled()
+  })
+  if (mistralCredentialLaunch.missingApiKey) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'mistral',
+      route,
+      message: `The selected Mistral model (${model}) uses the API-key lane, but no authorized Mistral API key is available. Add one in Settings → Providers → Mistral, or choose Devstral Small / Mistral Medium 3.5 to use your Vibe subscription.`,
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  const mistralChildEnv = mistralCredentialLaunch.childEnv
+
   const state: CliProviderStreamState = {
     provider: 'mistral',
     sender: event.sender,
@@ -24157,43 +24195,11 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   ]
 
   // ── Credential lane ──────────────────────────────────────────────────────
-  // Vibe resolves auth API-KEY-FIRST, so an inherited MISTRAL_API_KEY — which
-  // is also Pi's `mistral` upstream key, i.e. present on most machines that
-  // reach Mistral models at all — silently bills the user's metered API account
-  // and never consults the plan subscription. Different credential, different
-  // bill, no error.
-  //
-  // The env is resolved HERE rather than inside the spawn closure so the notice
-  // below is derived from the ACTUAL child environment rather than from
-  // `process.env`, which is only a proxy for it: a runtime profile can
-  // contribute variables this process never had. Same reason the scheduled
-  // launch seal derives `apiKeyEnvScrubbed` from the resolved env instead of
-  // asserting it.
-  const storedMistralKey = mistralApiKeyStore()?.loadApiKey()
-  const mistralHasStoredKey = storedMistralKey?.status === 'ok' && Boolean(storedMistralKey.value)
-  const mistralByokLane = mistralByokLaneEnabled() || mistralHasStoredKey
-  const mistralBaseEnv = createCliEnv(
-    {
-      FORCE_COLOR: '0',
-      NO_COLOR: '1',
-      TASKWRAITH_PARENT_PROVIDER: 'mistral',
-      TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-      ...(mistralHasStoredKey ? { [MISTRAL_API_KEY_ENV]: storedMistralKey.value } : {})
-    },
-    binaryPath
-  )
-  const mistralCredentialEnvPresent = MISTRAL_CREDENTIAL_ENV_VARS.some((key) =>
-    Boolean(mistralBaseEnv[key])
-  )
-  // scrubMistralCredentialEnv returns a NEW object and never mutates its input,
-  // which is what makes it safe to run over a resolved env that other launches
-  // may share.
-  const mistralChildEnv = mistralByokLane
-    ? mistralBaseEnv
-    : scrubMistralCredentialEnv(mistralBaseEnv)
-  if (mistralByokLane) {
+  // The actual child env was resolved before run registration. The notice is
+  // therefore a description of what will launch, not an inference from global
+  // process state. Most importantly, a stored key no longer changes the lane:
+  // the same model predicate that draws the picker's key glyph decides here.
+  if (mistralCredentialLaunch.lane === 'byok-api-key') {
     safelyProjectMistral(() =>
       sendAgentCompatLine(
         event.sender,
@@ -24202,19 +24208,16 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           type: 'provider_warning',
           provider: 'mistral',
           severity: 'warning',
-          title: 'Mistral BYOK lane enabled',
+          title: 'Mistral API model selected',
           message:
-            'A direct Mistral API key is active, so MISTRAL_API_KEY is being passed through to Vibe. Vibe resolves credentials API-key-first, so this run bills your metered Mistral API account — not your Vibe plan subscription.'
+            'This key-marked model runs on your Mistral API key and is billed per token. Devstral Small and Mistral Medium 3.5 use your Vibe subscription instead.'
         },
         state
       )
     )
-  } else if (mistralCredentialEnvPresent) {
-    // The scrub is the default and is what makes this a subscription seat, but
-    // a user who has MISTRAL_API_KEY exported (for Pi, usually) and expects it
-    // to be used deserves to be told it was removed rather than quietly
-    // ignored. Only fires when a key actually existed, so it is not per-turn
-    // noise for everyone else.
+  } else if (mistralCredentialLaunch.credentialEnvPresent) {
+    // Only fires when a key really existed before routing, so it is not
+    // per-turn noise for plan-only users.
     safelyProjectMistral(() =>
       sendAgentCompatLine(
         event.sender,
@@ -24225,7 +24228,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           severity: 'info',
           title: 'Mistral API key not used',
           message:
-            'MISTRAL_API_KEY was removed from this run’s environment so Vibe uses your plan sign-in rather than your metered API account. Add your API key in Settings → Providers → Mistral (or set TASKWRAITH_MISTRAL_BYOK=1) if you want the key used instead.'
+            'This model is available through Vibe, so TaskWraith removed MISTRAL_API_KEY and is using your Vibe subscription. Choose a key-marked Mistral model to use BYOK.'
         },
         state
       )
@@ -24237,10 +24240,10 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       cwd: payload.workspace!,
       shell: false,
       detached: process.platform !== 'win32',
-      // Already scrubbed unless the BYOK lane is explicitly on. Never re-derive
-      // it here: a second createCliEnv call inside the closure would be a fresh
-      // unscrubbed object, and the seat's whole credential story is that the
-      // env the child gets is the env the notice above described.
+      // Already routed from the selected model. Never re-derive it here: a
+      // second createCliEnv call inside the closure would be a fresh unscrubbed
+      // object, and the seat's whole credential story is that the env the child
+      // gets is the env the notice above described.
       env: mistralChildEnv
     })
     // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
@@ -24355,9 +24358,9 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           safelyProject(() => sendAgentCompatError(event.sender, 'mistral', message, state))
         }
         // Vibe reports no token usage over ACP, so the host projects it — with
-        // PER-MODEL rates. The seat's two models are 15x/25x apart and this
-        // number is the only budget signal the user has, so a flat rate would
-        // be wrong by more than an order of magnitude in one direction.
+        // PER-MODEL rates. This mixed catalogue spans more than 25x on output,
+        // so a flat rate would be wrong by more than an order of magnitude in
+        // one direction.
         if (!state.tokenUsage) {
           state.tokenUsage = estimateMistralTokenUsage(
             model,
@@ -24366,12 +24369,12 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
             (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
           )
         }
-        // Feed the heuristic plan meter. Fire-and-forget by design: this is an
-        // O(1) in-memory accumulate plus a debounced async flush, and awaiting a
-        // persistence write on the turn path is the known main-process freeze
-        // class here. A dropped sample costs an advisory estimate a few cents of
-        // accuracy; a blocked turn costs the user their run.
-        if (state.tokenUsage) {
+        // Feed the heuristic Vibe meter only for Vibe-plan models. API-only
+        // rows belong to Mistral's API usage line; adding them here would make
+        // TaskWraith's local Vibe estimate repeat the billing mix-up this launch
+        // split prevents. Fire-and-forget by design: this is an O(1) in-memory
+        // accumulate plus a debounced async flush.
+        if (state.tokenUsage && mistralCredentialLaunch.lane === 'vibe-subscription') {
           void recordMistralTurnCost({
             costUsd: Number(state.tokenUsage.total_cost_usd) || 0,
             totalTokens: Number(state.tokenUsage.total_tokens) || 0
