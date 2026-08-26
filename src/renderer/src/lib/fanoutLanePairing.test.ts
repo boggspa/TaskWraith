@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
-import { classifyFanoutLaneSlots } from './fanoutLanePairing'
+import { classifyCompactFanoutLaneRows, classifyFanoutLaneSlots } from './fanoutLanePairing'
 
 function lane(id: string): ChatMessage {
   return {
@@ -230,5 +230,58 @@ describe('classifyFanoutLaneSlots', () => {
     expect(slots.get('f1#0')).toBe('lead')
     expect(slots.get('f2#1')).toBe('trail')
     expect(slots.get('f3#2')).toBe('solo')
+  })
+})
+
+describe('classifyCompactFanoutLaneRows', () => {
+  it('leaves a round below the threshold at the full band', () => {
+    const compact = classifyCompactFanoutLaneRows([
+      lane('a'),
+      lane('b'),
+      lane('c'),
+      lane('d'),
+      lane('e')
+    ])
+    expect(compact.size).toBe(0)
+  })
+
+  it('compacts every lane of a six-lane run, including the five that predate the sixth', () => {
+    const messages = [other('prompt'), lane('a'), lane('b'), lane('c'), lane('d'), lane('e')]
+    expect(classifyCompactFanoutLaneRows(messages).size).toBe(0)
+
+    const withSixth = [...messages, lane('f')]
+    const compact = classifyCompactFanoutLaneRows(withSixth)
+    expect(compact.size).toBe(6)
+    expect(compact.has('a#1')).toBe(true)
+    expect(compact.has('f#6')).toBe(true)
+  })
+
+  it('counts runs per adjacent block, so a broken run stays at the full band', () => {
+    const compact = classifyCompactFanoutLaneRows([
+      lane('a'),
+      lane('b'),
+      lane('c'),
+      tool('t1'),
+      lane('d'),
+      lane('e'),
+      lane('f')
+    ])
+    expect(compact.size).toBe(0)
+  })
+
+  it('ignores adjacent pairable rows of other kinds when counting the run', () => {
+    const compact = classifyCompactFanoutLaneRows([
+      lane('a'),
+      lane('b'),
+      lane('c'),
+      subThreadReturn('r1'),
+      subThreadReturn('r2'),
+      subThreadReturn('r3')
+    ])
+    expect(compact.size).toBe(0)
+  })
+
+  it('tolerates an empty transcript', () => {
+    expect(classifyCompactFanoutLaneRows([]).size).toBe(0)
   })
 })

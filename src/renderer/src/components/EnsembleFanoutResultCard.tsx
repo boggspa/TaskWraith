@@ -40,6 +40,12 @@ const COLLAPSED_FANOUT_PART_LIMIT = 24
 // to fit. 331 = the original 240 grown ~20% (→288) then a further ~15% so more
 // of a long lane is visible at rest without dominating the transcript.
 const COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 331
+// Half band for lanes in a six-plus round (FANOUT_LANE_COMPACT_THRESHOLD):
+// at full band a big round shows at most two lane rows per screen even
+// paired, so overview beats per-lane depth there. 166 ≈ half of 331 and sits
+// at LiveActivityViewport's default 168 band, a size the edge fades and
+// reveal already serve well. Expanding a lane is unaffected.
+const COMPACT_COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 166
 const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
 const COLLAPSED_FANOUT_MARKDOWN_LIMIT = 6_000
 const COLLAPSED_FANOUT_PREVIEW_CHARS = 2_400
@@ -56,6 +62,15 @@ interface EnsembleFanoutResultCardProps {
    * off at exactly the moment the seat's "working…" row does.
    */
   working?: boolean
+  /**
+   * This lane belongs to a round of six-plus lanes, so its collapsed viewport
+   * takes the half band — more of the round fits on screen at once. Derived
+   * per run by `classifyCompactFanoutLaneRows`; the height must flow through
+   * `collapsedMaxHeight` (which publishes `--live-activity-collapsed-height`)
+   * rather than a stylesheet, or the working-lane reservation drifts from the
+   * cap.
+   */
+  compactLaneBand?: boolean
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
   compactDensity?: boolean
@@ -174,6 +189,7 @@ export function EnsembleFanoutResultCard({
   workspacePath,
   streamRunId,
   working = false,
+  compactLaneBand = false,
   expanded,
   onExpandedChange,
   compactDensity = false,
@@ -434,7 +450,11 @@ export function EnsembleFanoutResultCard({
         <LiveActivityViewport
           className="ensemble-fanout-result-viewport"
           revision={revision}
-          collapsedMaxHeight={COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT}
+          collapsedMaxHeight={
+            compactLaneBand
+              ? COMPACT_COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT
+              : COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT
+          }
           expanded={expanded}
           onExpandedChange={onExpandedChange}
           label={`${role} fan-out result`}

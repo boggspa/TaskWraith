@@ -123,6 +123,52 @@ export function classifyFanoutLaneSlots(
   return slots
 }
 
+/**
+ * Lane count at which a run of fan-out result rows drops to the compact
+ * (half) collapsed band. Below this a round fits on screen at the full band;
+ * at six-plus, full-band lanes mean the reader can see at most two rows of a
+ * round at once even paired, so the whole run trades resting height for
+ * overview. Applies to `fanoutResult` lanes only — sub-thread returns and
+ * Fleet cards keep their own sizing.
+ */
+export const FANOUT_LANE_COMPACT_THRESHOLD = 6
+
+/**
+ * Row keys (`${id}#${index}`) of every fan-out result row that sits in a run
+ * of `FANOUT_LANE_COMPACT_THRESHOLD`-or-more adjacent fan-out result rows.
+ *
+ * Adjacency is the same notion pairing uses: any other row kind ends the run,
+ * so a "run" is exactly the block the reader sees as one round's lanes. The
+ * threshold crossing is deliberately retroactive — when the sixth lane
+ * streams in, the first five join the set too, so the whole block compacts
+ * together rather than mixing bands mid-round. That flip re-renders the
+ * earlier rows once via the `fanoutLaneCompact` render-signature field; the
+ * virtualiser's height estimates are unaffected (they already under-estimate,
+ * which is the safe direction).
+ */
+export function classifyCompactFanoutLaneRows(
+  messages: readonly ChatMessage[]
+): ReadonlySet<string> {
+  const compact = new Set<string>()
+  if (!Array.isArray(messages) || messages.length === 0) return compact
+  let index = 0
+  while (index < messages.length) {
+    if (!isEnsembleFanoutResultMessage(messages[index])) {
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (end < messages.length && isEnsembleFanoutResultMessage(messages[end])) end += 1
+    if (end - index >= FANOUT_LANE_COMPACT_THRESHOLD) {
+      for (let cursor = index; cursor < end; cursor += 1) {
+        compact.add(`${messages[cursor].id}#${cursor}`)
+      }
+    }
+    index = end
+  }
+  return compact
+}
+
 function pairableLaneKind(message: ChatMessage | undefined): PairableLaneKind | null {
   if (!message) return null
   if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'

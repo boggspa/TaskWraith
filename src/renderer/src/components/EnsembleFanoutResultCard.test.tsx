@@ -72,6 +72,26 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('<strong>Scout finding</strong>')
   })
 
+  it('halves the collapsed band for lanes of a six-plus round, and only for them', () => {
+    // The published CSS variable IS the band: the reserve rules and the cap
+    // both read `--live-activity-collapsed-height` from the component, so the
+    // rendered value is what a compact lane actually gets.
+    const full = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
+    )
+    expect(full).toContain('--live-activity-collapsed-height:331px')
+
+    const compact = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage()}
+        compactLaneBand
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(compact).toContain('--live-activity-collapsed-height:166px')
+    expect(compact).not.toContain('--live-activity-collapsed-height:331px')
+  })
+
   it('themes each card with its own participant accent, not the pane accent', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />

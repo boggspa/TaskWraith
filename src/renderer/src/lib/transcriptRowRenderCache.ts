@@ -19,6 +19,11 @@ export interface TranscriptRowRenderSignature {
    * ELEMENT as `data-fanout-slot`, and both the grid placement and the
    * virtualiser's zero-delta measurement read it off the DOM. */
   fanoutLaneSlot?: FanoutLaneSlot
+  /** True when this fan-out lane sits in a run of six-plus adjacent lanes and
+   * so renders the compact (half) collapsed band. In the signature because the
+   * threshold crossing flips EARLIER rows in the run: the sixth lane's arrival
+   * must re-render the cached first five, or they keep the full band. */
+  fanoutLaneCompact?: boolean
   isGlobal?: boolean
   sideChatSeed: boolean
   highlighted: boolean
@@ -341,6 +346,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.liveActivityViewportActive !== next.liveActivityViewportActive) return false
   if (prev.virtualized !== next.virtualized) return false
   if (prev.fanoutLaneSlot !== next.fanoutLaneSlot) return false
+  if (prev.fanoutLaneCompact !== next.fanoutLaneCompact) return false
   if (prev.isGlobal !== next.isGlobal) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false
   if (prev.highlighted !== next.highlighted) return false

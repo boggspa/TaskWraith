@@ -202,7 +202,11 @@ import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { ParallelResultViewportHeader } from './ParallelResultViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
-import { classifyFanoutLaneSlots, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
+import {
+  classifyCompactFanoutLaneRows,
+  classifyFanoutLaneSlots,
+  resolveFanoutLaneLayout
+} from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
 import {
   isEnsembleFanoutLaneWorking,
@@ -3632,6 +3636,12 @@ export const TranscriptPanel = memo(
       () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
       [displayMessages, pairFanoutLanes]
     )
+    // Independent of the pairing setting: a six-plus round is over-tall in the
+    // stacked layout too, so the compact band derives from the run alone.
+    const compactFanoutLaneRows = useMemo(
+      () => classifyCompactFanoutLaneRows(displayMessages),
+      [displayMessages]
+    )
     // The same seat↔lane correspondence as `workingLaneParticipantIds`, read the
     // other way: from a working seat back to the lane card it is filling, so its
     // "working…" row can carry the reader there. Derived from the message list
@@ -4650,6 +4660,7 @@ export const TranscriptPanel = memo(
             // React omits the attribute entirely, so the stacked layout renders
             // byte-identical markup to before this existed.
             const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
+            const fanoutLaneCompact = compactFanoutLaneRows.has(rowKey)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isInterSeatMessage = isEnsembleSideMessage(msg)
             const isYieldMessage = isEnsembleYieldMessage(msg)
@@ -5099,6 +5110,7 @@ export const TranscriptPanel = memo(
               liveActivityViewportActive: liveViewportActive,
               virtualized: virtualizeEnabled,
               ...(fanoutLaneSlot ? { fanoutLaneSlot } : {}),
+              ...(fanoutLaneCompact ? { fanoutLaneCompact } : {}),
               isGlobal,
               sideChatSeed: isSideChatSeedMessage,
               highlighted: isPinnedMessageTarget,
@@ -5480,6 +5492,7 @@ export const TranscriptPanel = memo(
                           : boundaryRun?.runId
                       }
                       working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
+                      compactLaneBand={fanoutLaneCompact}
                       expanded={expandedFanoutResults.has(rowKey)}
                       onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
                       compactDensity={compactDensity}
