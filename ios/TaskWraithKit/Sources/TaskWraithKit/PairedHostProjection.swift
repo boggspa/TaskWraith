@@ -91,7 +91,7 @@ public func encodePairedHostRequest<Parameters: Encodable>(
   kind: PairedHostRequestKind,
   params: Parameters
 ) throws -> Data {
-  try JSONEncoder().encode(PairedHostRequestEnvelope(kind: kind, params: params))
+  try TWCoders.encoder.encode(PairedHostRequestEnvelope(kind: kind, params: params))
 }
 
 public func makePairedHostCommand(
@@ -101,7 +101,7 @@ public func makePairedHostCommand(
   arguments: [String: HostJSONAny],
   commandId: String = UUID().uuidString.lowercased(),
   idempotencyKey: String = UUID().uuidString.lowercased(),
-  issuedAt: String = ISO8601DateFormatter().string(from: Date())
+  issuedAt: String = TWCoders.iso8601Now()
 ) -> HostCommand {
   HostCommand(
     commandId: commandId,
@@ -118,7 +118,7 @@ public func makePairedHostCommand(
 
 private func normalizedSnapshot(_ snapshot: HostSnapshot) -> HostDecodeResult<HostSnapshot> {
   do {
-    return decodeHostSnapshot(from: try JSONEncoder().encode(snapshot))
+    return decodeHostSnapshot(from: try TWCoders.encoder.encode(snapshot))
   } catch {
     return .error("snapshot encode failed: \(error.localizedDescription)")
   }
@@ -135,7 +135,7 @@ public func stalePairedHostSnapshot(_ snapshot: HostSnapshot) -> HostSnapshot? {
 
 private func decodeSnapshotFrame(_ data: Data) -> HostDecodeResult<HostSnapshotFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostSnapshotFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostSnapshotFrame.self, from: data)
     guard frame.type == "host.snapshot" else { return .error("type must be host.snapshot") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -180,7 +180,7 @@ private func validateDeltasPayload(
 
 private func decodeDeltasFrame(_ data: Data) -> HostDecodeResult<HostDeltasFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostDeltasFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostDeltasFrame.self, from: data)
     guard frame.type == "host.deltas" else { return .error("type must be host.deltas") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -205,7 +205,7 @@ private func decodeDeltasFrame(_ data: Data) -> HostDecodeResult<HostDeltasFrame
 
 private func decodeHealthFrame(_ data: Data) -> HostDecodeResult<HostHealthFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostHealthFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostHealthFrame.self, from: data)
     guard frame.type == "host.health" else { return .error("type must be host.health") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -380,7 +380,7 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
   private mutating func receiveState(_ data: Data) -> PairedHostProjectionApplyResult {
     let state: PairedHostProjectionStateMessage
     do {
-      state = try JSONDecoder().decode(PairedHostProjectionStateMessage.self, from: data)
+      state = try TWCoders.decoder.decode(PairedHostProjectionStateMessage.self, from: data)
     } catch {
       return reject("state decode failed: \(error.localizedDescription)")
     }
@@ -444,9 +444,9 @@ public func decodePairedHostSnapshotResponse(
   _ data: Data
 ) -> HostDecodeResult<HostSnapshotFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostSnapshotResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostSnapshotResponse.self, from: data)
     guard response.kind == .snapshotGet else { return .error("unexpected response kind") }
-    return decodeSnapshotFrame(try JSONEncoder().encode(response.frame))
+    return decodeSnapshotFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("snapshot response decode failed: \(error.localizedDescription)")
   }
@@ -456,9 +456,9 @@ public func decodePairedHostDeltasResponse(
   _ data: Data
 ) -> HostDecodeResult<HostDeltasFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostDeltasResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostDeltasResponse.self, from: data)
     guard response.kind == .deltasSince else { return .error("unexpected response kind") }
-    return decodeDeltasFrame(try JSONEncoder().encode(response.frame))
+    return decodeDeltasFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("deltas response decode failed: \(error.localizedDescription)")
   }
@@ -468,9 +468,9 @@ public func decodePairedHostHealthResponse(
   _ data: Data
 ) -> HostDecodeResult<HostHealthFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostHealthResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostHealthResponse.self, from: data)
     guard response.kind == .healthGet else { return .error("unexpected response kind") }
-    return decodeHealthFrame(try JSONEncoder().encode(response.frame))
+    return decodeHealthFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("health response decode failed: \(error.localizedDescription)")
   }
@@ -480,9 +480,9 @@ public func decodePairedHostCommandResponse(
   _ data: Data
 ) -> HostDecodeResult<HostCommandReceipt> {
   do {
-    let response = try JSONDecoder().decode(PairedHostCommandResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostCommandResponse.self, from: data)
     guard response.kind == .commandSubmit else { return .error("unexpected response kind") }
-    return decodeHostCommandReceipt(from: try JSONEncoder().encode(response.receipt))
+    return decodeHostCommandReceipt(from: try TWCoders.encoder.encode(response.receipt))
   } catch {
     return .error("command response decode failed: \(error.localizedDescription)")
   }
@@ -545,7 +545,7 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     guard let data else { return nil }
     guard data.count <= Self.maxEncodedBytes else { return .error("cached snapshot is oversized") }
     do {
-      let envelope = try JSONDecoder().decode(PairedHostSnapshotStoreEnvelope.self, from: data)
+      let envelope = try TWCoders.decoder.decode(PairedHostSnapshotStoreEnvelope.self, from: data)
       guard envelope.schemaVersion == 1 else { return .error("unsupported cache schema") }
       switch normalizedSnapshot(envelope.snapshot) {
       case .ok(let snapshot):
@@ -572,10 +572,10 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     }
     let data: Data
     do {
-      data = try JSONEncoder().encode(
+      data = try TWCoders.encoder.encode(
         PairedHostSnapshotStoreEnvelope(
           schemaVersion: 1,
-          savedAt: ISO8601DateFormatter().string(from: Date()),
+          savedAt: TWCoders.iso8601Now(),
           snapshot: validated))
     } catch {
       throw PairedHostSnapshotStoreError.encodeFailed(error.localizedDescription)
