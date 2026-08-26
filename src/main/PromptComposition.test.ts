@@ -73,7 +73,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       } as never
     })
     const fileEnvelope = buildProviderFileRoutingPrompt({
-      provider: 'codex',
+      provider: 'cursor',
       effectivePermissions: {
         agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
       } as never
@@ -82,11 +82,15 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
     const fileLiteralLaterInUserText =
       '<taskwraith-file-routing-v1>quoted evidence</taskwraith-file-routing-v1>'
-    const prompt = `${shellEnvelope}${fileEnvelope}User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
+    const nativeCursorContinuity =
+      'Native Cursor Write remains available when no TaskWraith broker is attached.'
+    const prompt = `${shellEnvelope}${fileEnvelope}${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
 
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
-    ).toBe(`User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`)
+    ).toBe(
+      `${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
+    )
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: true, coreProfile: false })
     ).toBe(prompt)
