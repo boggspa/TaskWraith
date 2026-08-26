@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
 import { MascotGhost, SidebarRunningGhost } from './AppChromeSymbols'
 import type {
   ChatRecord,
@@ -9,6 +9,7 @@ import type {
 import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLifecycle'
 import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
@@ -81,8 +82,9 @@ export function ActiveRunsSection({
   onAddRunQueueJobToWorkspaceBoard
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
-  const [, setNowTick] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
+  const nowTick = useSharedNowTick()
+  const hasObservedTick = useRef(false)
   const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
   const runningKey = runningChatIds.join('|')
 
@@ -109,12 +111,12 @@ export function ActiveRunsSection({
   }, [refresh, chats, runningKey])
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNowTick((tick) => tick + 1)
-      void refresh()
-    }, 1000)
-    return () => window.clearInterval(intervalId)
-  }, [refresh])
+    if (!hasObservedTick.current) {
+      hasObservedTick.current = true
+      return
+    }
+    void refresh()
+  }, [nowTick, refresh])
 
   useEffect(() => {
     const onFocus = (): void => {
@@ -124,12 +126,16 @@ export function ActiveRunsSection({
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  const visibleJobs = deriveVisibleActiveRunEntries({
-    jobs,
-    chats,
-    surface,
-    workChatIds: workChatIdSet
-  })
+  const visibleJobs = useMemo(
+    () =>
+      deriveVisibleActiveRunEntries({
+        jobs,
+        chats,
+        surface,
+        workChatIds: workChatIdSet
+      }),
+    [chats, jobs, nowTick, surface, workChatIdSet]
+  )
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
   // top slot under Search / above Pinned), collapsible like the other
