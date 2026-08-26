@@ -35142,7 +35142,53 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
     museIpcCancels.delete(runId)
   },
   readAuthJsonText: () => readDefaultMuseAuthJsonText(),
-  readMetaApiKeyEnv: () => process.env.META_API_KEY
+  readMetaApiKeyEnv: () => process.env.META_API_KEY,
+  prepareTaskWraithMcp: async ({
+    appRunId,
+    appChatId,
+    workspacePath,
+    approvalMode,
+    taskWraithMcpProfileId
+  }) => {
+    if (!taskWraithMcpProfileId) {
+      throw new Error('The composed Muse broker request has no TaskWraith MCP profile.')
+    }
+    const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+    if (!bridgeCommandStatus.available) {
+      throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+    }
+    await mcpBridgeRuntime.startGeminiMcpBroker()
+    const safeSubset = approvalMode?.trim() === 'plan'
+    const profile = {
+      safeSubset,
+      planSubset: false,
+      coreSubset: isCoreTaskWraithMcpProfile(taskWraithMcpProfileId),
+      gatewaySubset: isGatewayTaskWraithMcpProfile(taskWraithMcpProfileId),
+      portableEnsembleControl: isPortableEnsembleControlMcpProfile(taskWraithMcpProfileId),
+      meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
+      meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
+      sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(taskWraithMcpProfileId),
+      orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(taskWraithMcpProfileId),
+      auditSubset: false
+    }
+    return {
+      command: bridgeCommandStatus.command,
+      args: taskwraithMcpBridgeStaticRegistrationArgs(),
+      env: {
+        [GEMINI_MCP_BRIDGE_ENV]: '1',
+        ...mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
+          route: { appRunId, appChatId },
+          parentProvider: 'muse',
+          workspacePath,
+          profile,
+          isolatedInstanceId:
+            instanceLaunchPosture.kind === 'packaged-isolated'
+              ? instanceLaunchPosture.instanceId
+              : undefined
+        })
+      }
+    }
+  }
 }
 
 async function getMuseProviderStatus() {
@@ -35163,16 +35209,21 @@ async function getMuseProviderStatus() {
 }
 
 function museMcpStatusSnapshot() {
+  const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+  const enabled = bridgeCommandStatus.available
   return {
     provider: 'muse' as const,
-    available: false,
-    enabled: false,
-    source: 'none',
-    serverName: null,
+    available: enabled,
+    enabled,
+    source: enabled ? 'bridge' : 'none',
+    serverName: enabled ? GEMINI_MCP_SERVER_NAME : null,
     tools: [] as string[],
     sections: [] as unknown[],
-    message:
-      'Muse v1 is opaque CLI (muse exec --json); TaskWraith does not attach an MCP broker.'
+    message: enabled
+      ? 'TaskWraith writes its route-bound MCP broker into each disposable Muse settings document before the run starts. This status reports attachment capability, not a particular live session.'
+      : `TaskWraith MCP bridge executable is unavailable for Muse: ${
+          bridgeCommandStatus.error || 'unknown error'
+        }`
   }
 }
 

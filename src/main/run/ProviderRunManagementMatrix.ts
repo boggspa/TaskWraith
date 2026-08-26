@@ -151,10 +151,12 @@ export const PROVIDER_RUN_MANAGEMENT_DECLARATIONS = {
   muse: {
     // Flipped with W2F live / intent / iOS mirrors (COORDINATION.md).
     offerState: 'live-selectable',
-    // Opaque muse exec --json; no TaskWraith MCP broker in v1 (wave1-F).
-    toolMediationMode: 'provider-native-launch-allowlist',
-    // stdout lifecycle + session.jsonl tooling events once the reducer lands.
-    brokerObservability: 'none',
+    // Muse keeps its native tool surface, while TaskWraith lifecycle and
+    // governed workspace tools arrive through a route-bound MCP child.
+    toolMediationMode: 'hybrid-taskwraith-broker-and-provider-native',
+    // Broker calls are host-audited; native activity remains observable through
+    // Muse's durable session log projection.
+    brokerObservability: 'broker-and-observable-native-events',
     binaryRuntimeProvenance: 'observed-cli-path-and-version'
   }
 } as const satisfies Record<ProviderRunManagementId, ProviderRunManagementDeclaration>

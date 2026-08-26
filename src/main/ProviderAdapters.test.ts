@@ -82,6 +82,16 @@ describe('ProviderAdapters', () => {
         workspaceGrants: true
       }
     })
+    expect(defaultProviderDescriptor('muse')).toMatchObject({
+      transport: 'muse-exec-json',
+      capabilitySource: 'mixed',
+      features: {
+        agentBenchMcpBridge: true,
+        providerManagedMcp: true,
+        nativeThreadTools: true
+      },
+      capabilities: { perThreadMcp: true }
+    })
     // Derived from the registration baseline rather than a frozen literal: the
     // claim is "every registered identity dispatches on run-agent", which is
     // true of the set whatever its size. A hardcoded copy only re-states the

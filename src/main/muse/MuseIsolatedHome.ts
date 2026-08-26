@@ -11,11 +11,8 @@ import {
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseMuseAuthJsonCredential } from './MuseProbe'
-import {
-  serializeMuseSkillPinSettings,
-  type MuseSkillPinSettings,
-  buildMuseSkillPinSettings
-} from './MuseSkillPin'
+import { type MuseSkillPinSettings, buildMuseSkillPinSettings } from './MuseSkillPin'
+import { mergeMuseMcpSettings, serializeMuseSettings, type MuseMcpSettings } from './MuseMcpConfig'
 
 export interface MuseIsolatedHomeAuthority {
   readonly schemaVersion: 1
@@ -73,6 +70,8 @@ export interface CreateMuseIsolatedHomeInput {
   readonly sourceEnvironment?: NodeJS.ProcessEnv
   /** Override the seeded skill-pin settings body (defaults to full off pin). */
   readonly skillPinSettings?: MuseSkillPinSettings
+  /** Optional app-owned MCP entries written only into this disposable home. */
+  readonly mcpSettings?: MuseMcpSettings
   /**
    * When true (default), write empty `trust.json` with `projects: {}`.
    * Never copies the user's real trust file.
@@ -152,10 +151,14 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
 
     const skillPinSettings = input.skillPinSettings ?? buildMuseSkillPinSettings('off')
     const settingsPath = join(museConfigDir, 'settings.json')
-    writeFileSync(settingsPath, serializeMuseSkillPinSettings(skillPinSettings), {
-      encoding: 'utf8',
-      mode: 0o600
-    })
+    writeFileSync(
+      settingsPath,
+      serializeMuseSettings(mergeMuseMcpSettings(skillPinSettings, input.mcpSettings)),
+      {
+        encoding: 'utf8',
+        mode: 0o600
+      }
+    )
 
     const trustPath = join(museConfigDir, 'trust.json')
     const seedEmptyTrust = input.seedEmptyTrust !== false
