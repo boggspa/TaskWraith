@@ -6,7 +6,7 @@ const executorStart = indexSource.indexOf('async function executeGeminiMcpTool('
 const executorEnd = indexSource.indexOf('\nasync function startGeminiMcpBroker()', executorStart)
 const executorSource = indexSource.slice(executorStart, executorEnd)
 const canonicalDispatchStart = executorSource.indexOf(
-  'const argumentPreflight = validateMcpToolArgumentsBeforeApproval('
+  'const argumentCoalesce = coalesceToolArguments('
 )
 const gatewayDispatchSource = executorSource.slice(0, canonicalDispatchStart)
 const canonicalDispatchSource = executorSource.slice(canonicalDispatchStart)
@@ -25,6 +25,8 @@ describe('main capability gateway dispatch contract', () => {
     // admission seam must exist somewhere in the executor, just never ahead of
     // the gateway unwrap.
     expect(executorSource).toContain('workspaceLockMcpAdmissionCoordinator.admit({')
+    expect(gatewayDispatchSource).not.toContain('coalesceToolArguments(')
+    expect((executorSource.match(/coalesceToolArguments\(/g) || []).length).toBe(1)
   })
 
   it('hands the exact target route and caller context to the executable dispatch seam', () => {
@@ -67,6 +69,43 @@ describe('main capability gateway dispatch contract', () => {
     expect(canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')).toBeLessThan(
       canonicalDispatchSource.indexOf('workspaceLockMcpAdmissionCoordinator.admit({')
     )
+    expect(canonicalDispatchSource.indexOf('coalesceToolArguments(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('validateMcpToolArgumentsBeforeApproval(')
+    )
+    expect(canonicalDispatchSource.indexOf('coalesceToolArguments(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('validateMutatingMcpRoute(')
+    )
+    expect(canonicalDispatchSource.indexOf('coalesceToolArguments(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('previewForGeminiMcpTool(')
+    )
+    expect(canonicalDispatchSource.indexOf('coalesceToolArguments(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('workspaceLockMcpAdmissionCoordinator.admit({')
+    )
+  })
+
+  it('returns an ambiguous alias conflict before route, policy, approval, or lock', () => {
+    const rejectStart = canonicalDispatchSource.indexOf('if (!argumentCoalesce.ok)')
+    const argumentPreflight = canonicalDispatchSource.indexOf(
+      'validateMcpToolArgumentsBeforeApproval('
+    )
+    const routeGuard = canonicalDispatchSource.indexOf('validateMutatingMcpRoute(')
+    const approval = canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')
+    const lockAdmit = canonicalDispatchSource.indexOf(
+      'workspaceLockMcpAdmissionCoordinator.admit({'
+    )
+    expect(rejectStart).toBeGreaterThan(-1)
+    expect(argumentPreflight).toBeGreaterThan(rejectStart)
+    expect(routeGuard).toBeGreaterThan(rejectStart)
+    expect(approval).toBeGreaterThan(rejectStart)
+    expect(lockAdmit).toBeGreaterThan(rejectStart)
+    const rejectBlock = canonicalDispatchSource.slice(rejectStart, argumentPreflight)
+    expect(rejectBlock).toContain('argumentCoalesce.code')
+    expect(rejectBlock).toContain('argumentCoalesce.conflicts')
+    expect(rejectBlock).toContain('argumentCoalesce.message')
+    expect(rejectBlock).toContain('mcpStructuredJsonResult({')
+    expect(rejectBlock).not.toMatch(/\barguments\s*:/)
+    expect(executorSource).toContain('normalizeMcpToolArguments(rawArgs)')
+    expect(executorSource).not.toMatch(/\brawArgs\s*=/)
   })
 
   it('resolves every brokered shell cwd through the workspace scope before execution', () => {
@@ -80,7 +119,7 @@ describe('main capability gateway dispatch contract', () => {
     expect(scopeResolution).toBeGreaterThan(-1)
     expect(hostCommand).toBeGreaterThan(-1)
     expect(canonicalDispatchSource.slice(scopeResolution, shellExecution)).toContain(
-      'String(args.cwd || args.working_directory || args.workdir || \'\')'
+      "String(args.cwd || args.working_directory || args.workdir || '')"
     )
     expect(scopeResolution).toBeLessThan(shellExecution)
     expect(shellExecution).toBeLessThan(hostCommand)

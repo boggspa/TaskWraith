@@ -2095,6 +2095,7 @@ import {
   type CapabilityGatewayToolName
 } from './mcp/McpToolGateway'
 import { validateMcpToolArgumentsBeforeApproval } from './mcp/McpPreApprovalArgumentValidation'
+import { coalesceToolArguments } from './mcp/McpToolArgumentCoalesce'
 import {
   dispatchResolvedGatewayTarget,
   type GatewayTargetDispatchMarker
@@ -37176,7 +37177,13 @@ async function executeGeminiMcpTool(
         ...mcpStructuredJsonResult({
           ok: false,
           tool: toolName,
-          ...(resolution.ok ? {} : { code: resolution.code, issues: resolution.issues }),
+          ...(resolution.ok
+            ? {}
+            : {
+                code: resolution.code,
+                issues: resolution.issues,
+                conflicts: resolution.conflicts
+              }),
           error
         }),
         isError: true
@@ -37262,6 +37269,23 @@ async function executeGeminiMcpTool(
       throw new Error(`Tool ${toolName} was dispatched by more than one canonical owner.`)
     }
     handledDispatchOwner = dispatchContract.dispatchOwner
+  }
+
+  const argumentCoalesce = coalesceToolArguments(toolName, args)
+  if (!argumentCoalesce.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        code: argumentCoalesce.code,
+        error: argumentCoalesce.message,
+        conflicts: argumentCoalesce.conflicts
+      }),
+      isError: true
+    }
+  }
+  if (isRecord(argumentCoalesce.arguments)) {
+    args = argumentCoalesce.arguments
   }
 
   const argumentPreflight = validateMcpToolArgumentsBeforeApproval(

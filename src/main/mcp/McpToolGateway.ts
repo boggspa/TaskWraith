@@ -1,5 +1,6 @@
 import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
 import { TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES } from '../../shared/providerActionTaxonomy'
+import { coalesceToolArguments, type ToolArgumentAliasConflict } from './McpToolArgumentCoalesce'
 
 export const CAPABILITY_GATEWAY_TOOL_NAMES = TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES
 export const [CAPABILITY_SEARCH_TOOL_NAME, CAPABILITY_INVOKE_TOOL_NAME] =
@@ -1076,6 +1077,7 @@ export type GatewayInvocationErrorCode =
   | 'invalid_arguments_object'
   | 'invalid_target_schema'
   | 'target_argument_validation_failed'
+  | 'ambiguous_argument_alias'
 
 export type GatewayInvocationResolution =
   | {
@@ -1089,6 +1091,7 @@ export type GatewayInvocationResolution =
       code: GatewayInvocationErrorCode
       message: string
       issues?: GatewayArgumentValidationIssue[]
+      conflicts?: ToolArgumentAliasConflict[]
     }
 
 export interface GatewayInvocationRequest extends GatewayCatalogScope {
@@ -1159,7 +1162,26 @@ export function resolveGatewayInvocation(
     }
   }
 
-  const validation = validateGatewayToolArguments(target.inputSchema, request.arguments)
+  // Coalesce inner target args against THIS run-selected definition before
+  // schema validation. Eligibility, audit-only, recursion, and the reviewer-
+  // verdict exception have already been decided above; aliases must not change
+  // target identity or the wrapper contract.
+  const argumentCoalesce = coalesceToolArguments(name, request.arguments, {
+    inputSchema: target.inputSchema
+  })
+  if (!argumentCoalesce.ok) {
+    return {
+      ok: false,
+      code: argumentCoalesce.code,
+      message: argumentCoalesce.message,
+      conflicts: argumentCoalesce.conflicts
+    }
+  }
+  const coalescedArguments = isRecord(argumentCoalesce.arguments)
+    ? argumentCoalesce.arguments
+    : request.arguments
+
+  const validation = validateGatewayToolArguments(target.inputSchema, coalescedArguments)
   if (!validation.ok) {
     return {
       ok: false,
@@ -1176,6 +1198,6 @@ export function resolveGatewayInvocation(
     ok: true,
     target,
     name,
-    arguments: request.arguments
+    arguments: coalescedArguments
   }
 }

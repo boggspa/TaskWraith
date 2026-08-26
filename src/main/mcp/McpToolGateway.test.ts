@@ -591,6 +591,127 @@ describe('resolveGatewayInvocation', () => {
   })
 })
 
+describe('resolveGatewayInvocation argument coalescing', () => {
+  const catalog = createTaskWraithMcpToolDefinitions()
+  const replace = catalog.find((definition) => definition.name === 'replace')
+  const readFile = catalog.find((definition) => definition.name === 'read_file')
+  if (!replace?.inputSchema || !readFile?.inputSchema) {
+    throw new Error('Expected replace and read_file catalog definitions with input schemas.')
+  }
+  const base = {
+    definitions: [replace, readFile] as GatewayToolDefinition[],
+    eligibleToolNames: ['replace', 'read_file']
+  }
+
+  it('folds provider-native aliases onto canonical replace old_string/new_string before validation', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'replace',
+      arguments: {
+        path: 'a.ts',
+        old_str: 'before',
+        new_str: 'after'
+      }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.name).toBe('replace')
+    expect(result.arguments).toEqual({
+      path: 'a.ts',
+      old_string: 'before',
+      new_string: 'after'
+    })
+    expect(result.arguments).not.toHaveProperty('old_str')
+    expect(result.arguments).not.toHaveProperty('new_str')
+  })
+
+  it('folds filePath onto path for a hidden path tool', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { filePath: 'src/main/index.ts' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.arguments).toEqual({ path: 'src/main/index.ts' })
+  })
+
+  it('accepts equal canonical/alias duplicates and drops the alias', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { path: 'a.ts', filePath: 'a.ts' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.arguments).toEqual({ path: 'a.ts' })
+  })
+
+  it('rejects ambiguous aliases before schema validation with no executable arguments', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'replace',
+      arguments: {
+        path: 'a.ts',
+        filePath: 'b.ts',
+        old_string: 'before',
+        new_string: 'after'
+      }
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe('ambiguous_argument_alias')
+    expect(result).not.toHaveProperty('arguments')
+    expect(result.conflicts).toEqual([
+      {
+        path: 'path',
+        canonicalKey: 'path',
+        suppliedKeys: ['path', 'filePath'],
+        toolName: 'replace'
+      }
+    ])
+  })
+
+  it('keeps eligibility, recursion, and unknown-target ahead of coalescing', () => {
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: CAPABILITY_INVOKE_TOOL_NAME,
+        arguments: { filePath: 'a.ts' }
+      })
+    ).toMatchObject({ ok: false, code: 'gateway_recursion' })
+
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: 'replace',
+        arguments: { path: 'a.ts', filePath: 'b.ts' },
+        eligibleToolNames: ['read_file']
+      })
+    ).toMatchObject({ ok: false, code: 'ineligible_target' })
+
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: 'missing_capability',
+        arguments: { filePath: 'a.ts' }
+      })
+    ).toMatchObject({ ok: false, code: 'unknown_target' })
+  })
+
+  it('does not let argument aliases rewrite the target identity', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { filePath: 'a.ts', name: 'replace' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.name).toBe('read_file')
+    expect(result.arguments).toEqual({ path: 'a.ts', name: 'replace' })
+  })
+})
+
 describe('C2b-ii-d gateway reviewer-verdict eligibility exception', () => {
   // Schema that ACCEPTS the exact reviewer verdict (submit_review_verdict in the action
   // enum + verdict declared) — proves the resolver's eligibility bypass in isolation.
