@@ -21,8 +21,7 @@ import {
   type HostProviderRunUpdate
 } from '../host-runtime/HostProviderRunPort'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
-
-const MUSE_PROVIDER_ID = 'muse'
+import { isLiveSelectableProvider } from '../shared/retiredProviders'
 
 export interface HostNodeRunEventSink {
   publish(target: HostRunEventTarget, event: HostProviderRunEvent): void
@@ -102,9 +101,9 @@ function phaseRank(phase: HostProviderRunUpdate['phase']): number {
 }
 
 /**
- * Maps only a canonical, configured Muse workspace thread onto the provider
- * run port. Global threads, stale paths, archived threads, and incomplete
- * provider metadata fail closed as absent.
+ * Maps a canonical, configured workspace thread for any live-selectable
+ * provider onto the provider run port. Global threads, stale paths, archived
+ * threads, and incomplete provider metadata fail closed as absent.
  */
 export class HostNodeProfileRunPort implements HostProviderRunPort {
   private readonly active = new Map<string, ActiveRun>()
@@ -118,7 +117,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       !thread ||
       thread.archived ||
       thread.scope !== 'workspace' ||
-      thread.provider !== MUSE_PROVIDER_ID ||
+      !isLiveSelectableProvider(thread.provider) ||
       !isCanonicalId(thread.workspaceId) ||
       typeof thread.workspacePath !== 'string'
     ) {
@@ -151,7 +150,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
         canonicalPath: canonicalWorkspacePath,
         canonical: true
       },
-      providerId: MUSE_PROVIDER_ID,
+      providerId: thread.provider,
       modelId,
       ...(isCanonicalId(reasoningId) ? { reasoningId } : {}),
       ...(isCanonicalId(persistedSessionId)
@@ -178,12 +177,15 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
 
   beginRun(input: HostProviderRunBegin) {
     const normalized = normalizeHostProviderRunBegin(input)
-    if (!normalized || normalized.providerId !== MUSE_PROVIDER_ID) {
+    if (!normalized) {
       throw new Error('Host profile run begin is invalid')
     }
     if (this.active.has(normalized.runId)) return { kind: 'duplicate' as const }
     const thread = this.options.store.getThread(normalized.threadId)
     if (!thread) throw new Error('Host profile run thread is unavailable')
+    if (!isLiveSelectableProvider(thread.provider) || normalized.providerId !== thread.provider) {
+      throw new Error('Host profile run provider does not match thread')
+    }
     if ((thread.runs ?? []).some((run) => run.status === 'running')) {
       throw new Error('Host profile thread already has an active run')
     }
@@ -198,7 +200,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       threadId: normalized.threadId,
       runId: normalized.runId,
       status: 'running',
-      provider: MUSE_PROVIDER_ID,
+      provider: thread.provider,
       requestedModel: normalized.modelId,
       phase: 'starting',
       startedAt: normalized.startedAt

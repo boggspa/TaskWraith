@@ -11,6 +11,10 @@ import {
   museMeterSnapshotToProviderStats,
   unavailableMuseMeterSnapshot
 } from '../main/muse/MuseUsage'
+import {
+  createHostNodeMuseProviderFactory,
+  type HostNodeProviderInstance
+} from './HostNodeMuseProvider'
 import { HostNodeDomainPorts } from './HostNodeDomainPorts'
 
 const paths: string[] = []
@@ -77,6 +81,29 @@ function outcome(status: MuseRunOutcome['status']): MuseRunOutcome {
   }
 }
 
+const museOffers = {
+  providerId: 'muse' as const,
+  offerRevision: 'muse-offer-1',
+  models: [
+    {
+      modelId: 'muse-spark-1.2',
+      label: 'Muse Spark',
+      available: true,
+      default: true,
+      reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+    }
+  ],
+  postures: [
+    {
+      postureId: 'workspace_write',
+      label: 'Workspace write',
+      available: true,
+      requiresExplicitConsent: true,
+      ceiling: 'workspace_write' as const
+    }
+  ]
+}
+
 function open(options: { credential?: boolean; manual?: boolean; killReleases?: boolean } = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'host-node-domain-'))
   const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
@@ -98,63 +125,39 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
   })
   const events: unknown[] = []
   const manualBegin = vi.fn()
-  const domainOptions = {
-    store,
-    events: { publish: (_target, event) => events.push(event) },
-    museResources: {
+  const museFactory = createHostNodeMuseProviderFactory({
+    offers: museOffers,
+    resources: {
       resolveBinary: async () => ({ binaryPath: '/usr/local/bin/muse' }),
       getTemporaryRoot: () => '/tmp',
       readAuthJsonText: async () => null,
       readMetaApiKeyEnv: () => (options.credential === false ? null : 'env-muse-secret'),
       spawn: () => spawnHandle(options.killReleases === false ? undefined : releaseRun)
     },
-    museProviderOptions: {
-      now: () => Date.UTC(2026, 7, 24, 5, 0, 0),
-      createSessionId: () => SESSION_ID,
-      runMuseProvider: async (input) => {
-        input.spawn({ binaryPath: '/usr/local/bin/muse', argv: [], cwd: workspace, env: {} })
-        await waitForRun
-        return outcome(input.shouldCancel?.() ? 'cancelled' : 'success')
-      }
-    },
-    museOffers: {
-      providerId: 'muse',
-      offerRevision: 'muse-offer-1',
-      models: [
-        {
-          modelId: 'muse-spark-1.2',
-          label: 'Muse Spark',
-          available: true,
-          reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+    manualAuthHandoff: options.manual
+      ? {
+          begin: manualBegin,
+          cancel: async () => true
         }
-      ],
-      postures: [
-        {
-          postureId: 'workspace_write',
-          label: 'Workspace write',
-          available: true,
-          requiresExplicitConsent: true,
-          ceiling: 'workspace_write'
-        }
-      ]
-    },
+      : undefined,
+    now: () => Date.UTC(2026, 7, 24, 5, 0, 0),
+    createSessionId: () => SESSION_ID,
+    runMuseProvider: async (input) => {
+      input.spawn({ binaryPath: '/usr/local/bin/muse', argv: [], cwd: workspace, env: {} })
+      await waitForRun
+      return outcome(input.shouldCancel?.() ? 'cancelled' : 'success')
+    }
+  })
+  const domainOptions = {
+    store,
+    events: { publish: (_target, event) => events.push(event) },
+    providers: [museFactory],
     health: () => ({
       hostStatus: 'ok',
       connectionPhase: 'live',
       supervised: true,
       freshness: 'live'
-    }),
-    providerInventory: () => [
-      { providerId: 'muse', displayProvider: 'Muse', shortCode: 'MUSE', available: true }
-    ],
-    ...(options.manual
-      ? {
-          manualAuthHandoff: {
-            begin: manualBegin,
-            cancel: async () => true
-          }
-        }
-      : {})
+    })
   } satisfies ConstructorParameters<typeof HostNodeDomainPorts>[0]
   const domain = new HostNodeDomainPorts(domainOptions)
   return {
@@ -213,7 +216,7 @@ describe('HostNodeDomainPorts', () => {
         command('composer.send', 'run-1', { threadId }, { text: 'Run the Muse task' }),
         { id: 'disconnected-client' }
       )
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'muse_run_started' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
     expect(store.getThread(threadId)?.runs).toEqual([
       expect.objectContaining({ runId: 'run-1', status: 'running' })
     ])
@@ -226,7 +229,7 @@ describe('HostNodeDomainPorts', () => {
       domain.executeCommand(context, command('run.cancel', 'cmd-cancel', { threadId }, {}), {
         id: 'disconnected-client'
       })
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'muse_run_cancellation_requested' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
     await vi.waitFor(() =>
       expect(store.getThread(threadId)?.runs).toEqual([
         expect.objectContaining({ runId: 'run-1', status: 'cancelled' })
@@ -244,7 +247,7 @@ describe('HostNodeDomainPorts', () => {
         ),
         { id: 'disconnected-client' }
       )
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'muse_run_started' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
     await vi.waitFor(() =>
       expect(store.getThread(threadId)?.runs).toEqual(
         expect.arrayContaining([expect.objectContaining({ runId: 'run-2', status: 'completed' })])
@@ -388,17 +391,17 @@ describe('HostNodeDomainPorts', () => {
       rejectRun = reject
     })
     const holder: { domain?: HostNodeDomainPorts } = {}
-    const rejectingProvider = {
+    const rejectingProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
       getStatus: async () => ({
-        providerId: 'muse' as const,
-        available: true,
-        setupRequired: false,
-        authState: 'authenticated' as const,
-        binaryAvailable: true,
-        credentialPresent: true,
-        configured: true,
-        checkedAt: '2026-08-24T05:00:00.000Z'
+        providerId: 'muse',
+        status: 'ready',
+        label: 'Muse'
       }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
       run: async (input: { runId: string; threadId: string; prompt: string }) => {
         holder.domain!.runPort.beginRun({
           runId: input.runId,
@@ -416,11 +419,23 @@ describe('HostNodeDomainPorts', () => {
         })
         await rejected
         throw new Error('late provider failure')
-      }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
     }
     const domain = new HostNodeDomainPorts({
       ...domainOptions,
-      museProvider: rejectingProvider as unknown as HostNodeDomainPorts['museProvider']
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => rejectingProvider
+        }
+      ]
     })
     holder.domain = domain
 
@@ -435,7 +450,7 @@ describe('HostNodeDomainPorts', () => {
         ),
         { id: 'target' }
       )
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'muse_run_started' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
     rejectRun?.(new Error('late provider failure'))
     await vi.waitFor(() =>
       expect(store.getThread(thread.appChatId)?.runs).toEqual([
@@ -465,17 +480,17 @@ describe('HostNodeDomainPorts', () => {
     })
     let cancellationCalls = 0
     const holder: { domain?: HostNodeDomainPorts } = {}
-    const unprovableProvider = {
+    const unprovableProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
       getStatus: async () => ({
-        providerId: 'muse' as const,
-        available: true,
-        setupRequired: false,
-        authState: 'authenticated' as const,
-        binaryAvailable: true,
-        credentialPresent: true,
-        configured: true,
-        checkedAt: '2026-08-24T05:00:00.000Z'
+        providerId: 'muse',
+        status: 'ready',
+        label: 'Muse'
       }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
       cancel: () => {
         cancellationCalls += 1
         return true
@@ -489,12 +504,23 @@ describe('HostNodeDomainPorts', () => {
           startedAt: '2026-08-24T05:00:00.000Z'
         })
         await pending
-        return outcome('cancelled')
-      }
+        return { runId: input.runId, status: 'cancelled', sessionId: SESSION_ID, exitCode: null }
+      },
+      shutdown: async () => undefined
     }
     const domain = new HostNodeDomainPorts({
       ...domainOptions,
-      museProvider: unprovableProvider as unknown as HostNodeDomainPorts['museProvider']
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => unprovableProvider
+        }
+      ]
     })
     holder.domain = domain
 
@@ -509,7 +535,7 @@ describe('HostNodeDomainPorts', () => {
         ),
         { id: 'target' }
       )
-    ).resolves.toEqual({ status: 'failed', errorCode: 'muse_run_not_started' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'run_not_started' })
     expect(cancellationCalls).toBe(1)
     let stopped = false
     const shutdown = domain.shutdown().then((result) => {
@@ -568,7 +594,7 @@ describe('HostNodeDomainPorts', () => {
         runId: 'run-crashed-muse',
         status: 'failed',
         errorCode: 'provider_failed',
-        warningSummaries: ['Muse running state recovered after Host restart.']
+        warningSummaries: ['Provider running state recovered after Host restart.']
       })
     ])
     expect(store.getThread(foreignThread.appChatId)?.runs).toEqual([

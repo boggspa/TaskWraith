@@ -42,6 +42,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     providerAuthStatus: vi.fn(),
     threadHistory: vi.fn(),
     historySince: vi.fn(),
+    registry: { supportsApprovals: false, supportsQuestions: false },
     shutdown: vi.fn(async () => {
       order.push('domain.shutdown')
     })
@@ -140,6 +141,26 @@ describe('HostNodeProductionServer', () => {
       'composition.shutdown',
       'lease.release'
     ])
+  })
+
+  it('derives approvals/questions capability from constructed domain flags', async () => {
+    const h = harness()
+    await h.server.start()
+    expect(h.capabilityOffer()).not.toContain('approvals')
+    expect(h.capabilityOffer()).not.toContain('questions')
+    await h.server.stop()
+
+    const h2 = harness({
+      createDomain: (input) => {
+        return {
+          ...h.domain,
+          registry: { supportsApprovals: true, supportsQuestions: true }
+        } as never
+      }
+    })
+    await h2.server.start()
+    expect(h2.capabilityOffer()).toContain('approvals')
+    expect(h2.capabilityOffer()).toContain('questions')
   })
 
   it('fails a second profile owner before identity/store/domain creation', async () => {

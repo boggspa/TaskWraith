@@ -187,6 +187,45 @@ describe('HostNodeProfileRunPort', () => {
     expect(calls).toBe(1)
   })
 
+  it('accepts any live-selectable provider and rejects provider mismatches', () => {
+    const { store, workspace } = openStore()
+    const registered = store.registerWorkspace({ path: workspace })
+    const claudeThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: claudeThread.appChatId,
+      providerId: 'claude',
+      modelId: 'claude-sonnet-4',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(claudeThread.appChatId)).toMatchObject({
+      providerId: 'claude',
+      modelId: 'claude-sonnet-4'
+    })
+    expect(
+      port.beginRun({
+        runId: 'run-claude',
+        threadId: claudeThread.appChatId,
+        providerId: 'claude',
+        modelId: 'claude-sonnet-4',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+    ).toEqual({ kind: 'started' })
+    expect(() =>
+      port.beginRun({
+        runId: 'run-muse-mismatch',
+        threadId: claudeThread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+    ).toThrow('provider does not match')
+  })
+
   it('accepts a valid legacy workspace path alias when the store-owned realPath matches', () => {
     const { profile, workspace, store, threadId } = openStore()
     const workspaceFile = join(profile, HOST_PROFILE_WORKSPACES_FILENAME)

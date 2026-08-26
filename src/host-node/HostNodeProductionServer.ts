@@ -372,6 +372,12 @@ export class HostNodeProductionServer {
       'receipts',
       'health'
     )
+    // Approvals/questions are derived from the constructed domain, never from
+    // catalog presence alone. The interaction registry always exposes decide/answer
+    // handlers; the capability is advertised only when at least one composed
+    // provider supports the corresponding continuation kind.
+    if (this.domain?.registry.supportsApprovals) base.push('approvals')
+    if (this.domain?.registry.supportsQuestions) base.push('questions')
     return base
   }
 }
