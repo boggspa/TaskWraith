@@ -17404,8 +17404,15 @@ function App(): React.JSX.Element {
    * immediately and leaves the active provider turn untouched, then the
    * durable queue resumes the same provider session at its natural boundary.
    */
-  const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
-    const request = buildRunRequest(overrideModel, existingPrompt)
+  const handleSteer = async (
+    overrideModel?: string,
+    existingPrompt?: string,
+    // Multiview resting panes steer their OWN chat by passing the pane
+    // chat/draft/attachments here (buildRunRequest's target shape). Absent for
+    // the focused composer, which steers the visible chat as before.
+    target?: Parameters<typeof buildRunRequest>[2]
+  ) => {
+    const request = buildRunRequest(overrideModel, existingPrompt, target)
     if (!runRequestHasContent(request)) {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
@@ -17479,7 +17486,11 @@ function App(): React.JSX.Element {
         if (!request.existingPrompt) {
           setChatPromptDraft(targetChatId, '')
         }
-        setIsThinking(true)
+        // `isThinking` is the visible main transcript's badge; a pane steer of
+        // a non-visible chat must not flip it (same gate as the queued steer).
+        if (targetChatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+          setIsThinking(true)
+        }
         void refreshSingleChat(targetChatId)
       } finally {
         ensembleSteerInFlightChatIdsRef.current.delete(targetChatId)
@@ -17641,6 +17652,11 @@ function App(): React.JSX.Element {
       soloSteerInFlightChatIdsRef.current.delete(targetChatId)
     }
   }
+  // Latest-impl ref (buildRunRequestRef pattern): handleSteer is a fresh
+  // closure every render, so memoized pane callbacks dispatch through this to
+  // stay identity-stable without stale captures.
+  const handleSteerRef = useRef(handleSteer)
+  handleSteerRef.current = handleSteer
 
   const handleScheduleRun = async () => {
     if (!currentWorkspace || !currentChat || !scheduleRunAt) return
@@ -28548,6 +28564,31 @@ function App(): React.JSX.Element {
     if (!paneChat) return
     void cancelLinkedChatRun(paneChat)
   }, [])
+  const handleSteerMultiviewPane = useCallback(
+    (paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
+      const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+      // Steer is a composer gesture in this pane's transcript; relock the pane,
+      // never the host transcript (handleSteer's own relock is focused-gated).
+      multiview.paneRefs[paneIndex]?.relockToLatest()
+      void handleSteerRef.current(undefined, undefined, {
+        chat: paneChat,
+        prompt: panePrompt,
+        claimProjectReferenceContext: true,
+        // Full Access is a focused-renderer grant, not pane-owned state.
+        // A resting pane must never inherit it from whichever chat is focused.
+        sessionTrust:
+          paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId
+            ? sessionTrust
+            : false,
+        imageAttachments: paneAttachments,
+        discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
+      })
+    },
+    [multiview.focusedPaneIndex, multiview.paneRefs, sessionTrust]
+  )
   const rememberMultiviewPaneComposerSelection = useCallback(
     (chatId: string, patch: Record<string, unknown>) => {
       rememberChatComposerSelectionById(chatId, patch)
@@ -30462,6 +30503,12 @@ function App(): React.JSX.Element {
           paneCtxHelpers.handleDeleteQueuedMessage(entryId, viewerChat),
         handleSteerToQueuedMessage: (entryId: string) =>
           paneCtxHelpers.handleSteerToQueuedMessage(entryId, viewerChat),
+        // Return-key live steer must target THIS pane's chat: the stable base
+        // spreads the FOCUSED handleSteer, which builds its request from the
+        // focused draft — in a resting pane that made Enter a silent no-op
+        // mid-round (or steered the wrong chat when the focused draft was
+        // non-empty).
+        handleSteer: () => handleSteerMultiviewPane(viewerPaneIndex, viewerChatId),
         isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
         isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
         steerIndicatorMessage: paneSteerIndicatorMessage,
@@ -30825,6 +30872,7 @@ function App(): React.JSX.Element {
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
       handleRunMultiviewPane,
+      handleSteerMultiviewPane,
       handleSaveExecutionGraph,
       imageAttachmentsByChatId,
       attachingWindowChatId,
