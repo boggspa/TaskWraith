@@ -13,7 +13,8 @@ import type {
 } from '../shared/hostProtocol'
 import {
   HOST_APPROVAL_DECIDE_DECISIONS,
-  HOST_QUESTION_ANSWER_DECISIONS
+  HOST_QUESTION_ANSWER_DECISIONS,
+  TASKWRAITH_DESKTOP_HOST_ACTOR
 } from '../shared/hostProtocol'
 import type {
   HostHistorySinceRequest,
@@ -36,6 +37,11 @@ import {
 } from '../host-runtime/HostAuthority'
 import { projectHostProfileDomainSnapshot } from '../host-runtime/HostProfileDomainProjection'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import {
+  consumeHostThreadRecordTransfer,
+  HostThreadRecordTransferIntegrityError,
+  HostThreadRecordTransferMissingError
+} from '../host-runtime/HostThreadRecordTransfer'
 import { HostSetupCommandExecutor } from '../host-runtime/HostSetupCommandExecutor'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import {
@@ -49,6 +55,8 @@ import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodePro
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
 
 export interface HostNodeDomainPortsOptions {
+  /** Canonical profile directory used only for owner-bound large-record transfer artifacts. */
+  readonly profilePath?: string
   readonly store: HostProfileDomainStore
   readonly events: HostNodeRunEventSink
   /** Live provider factories; the domain constructs one registry from them. */
@@ -92,6 +100,21 @@ function localContext(context: HostAuthorityCallContext, command: HostCommand): 
     context.actor.clientId === context.client.clientId &&
     context.actor.clientClass === context.client.clientClass &&
     hostAuthorityCommandActorMatchesContext(context, command)
+  )
+}
+
+function exactDesktopPersistContext(
+  context: HostAuthorityCallContext,
+  command: HostCommand
+): boolean {
+  const expected = TASKWRAITH_DESKTOP_HOST_ACTOR
+  return (
+    localContext(context, command) &&
+    context.client.clientClass === expected.clientClass &&
+    context.client.clientId === expected.clientId &&
+    context.actor.clientClass === expected.clientClass &&
+    context.actor.clientId === expected.clientId &&
+    context.actor.actorId === expected.actorId
   )
 }
 
@@ -255,6 +278,16 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return { decision: 'deny', reason: 'invalid_command' }
 
+    if (command.name === 'thread.record.persist') {
+      if (!exactDesktopPersistContext(context, command)) {
+        return { decision: 'deny', reason: 'standalone_desktop_actor_required' }
+      }
+      if (!this.options.profilePath) {
+        return { decision: 'deny', reason: 'standalone_thread_record_persist_unavailable' }
+      }
+      return { decision: 'allow' }
+    }
+
     if (command.name === 'approval.decide') {
       if (!this.registry.supportsApprovals) {
         return { decision: 'deny', reason: 'standalone_command_unsupported' }
@@ -338,6 +371,10 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return failed('command_invalid')
 
+    if (command.name === 'thread.record.persist') {
+      return this.persistTransferredThreadRecord(decoded.value)
+    }
+
     if (command.name === 'run.cancel') {
       const outcome = this.runPort.cancelThread(command.target.threadId)
       return outcome === 'cancelled'
@@ -411,6 +448,50 @@ export class HostNodeDomainPorts {
       return failed('run_not_started')
     }
     return { status: 'succeeded', resultSummary: 'run_started' }
+  }
+
+  private persistTransferredThreadRecord(command: HostCommand): HostCommandExecutionResult {
+    const profilePath = this.options.profilePath
+    if (!profilePath) return failed('thread_record_transfer_unavailable')
+
+    let record: Record<string, unknown>
+    try {
+      record = consumeHostThreadRecordTransfer({
+        profilePath,
+        descriptor: {
+          transferId: command.arguments.transferId as string,
+          sha256: command.arguments.sha256 as string,
+          byteLength: command.arguments.byteLength as number
+        }
+      }).record
+    } catch (error) {
+      if (error instanceof HostThreadRecordTransferMissingError) {
+        return failed('thread_record_transfer_missing')
+      }
+      if (error instanceof HostThreadRecordTransferIntegrityError) {
+        return failed('thread_record_transfer_integrity')
+      }
+      return failed('thread_record_transfer_failed')
+    }
+
+    try {
+      this.options.store.persistThreadRecord({
+        threadId: command.target.threadId,
+        record,
+        expectedRevision: command.arguments.expectedRevision as number
+      })
+      return { status: 'succeeded', resultSummary: 'thread_record_persisted' }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === 'Thread persistence revision mismatch' || message === 'Thread is not found') {
+        return failed('thread_record_revision_conflict')
+      }
+      if (message === 'Thread identity mismatch') {
+        return failed('thread_record_identity_mismatch')
+      }
+      if (message.startsWith('Invalid ')) return failed('thread_record_invalid')
+      return failed('thread_record_persist_failed')
+    }
   }
 
   private configureThread(input: {

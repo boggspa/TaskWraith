@@ -19,7 +19,12 @@
  * untestable domain logic in a composition root, forbidden by the goal.
  */
 
-import type { HostClientClass, HostCommand, HostCommandName } from '../shared/hostProtocol'
+import {
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  type HostClientClass,
+  type HostCommand,
+  type HostCommandName
+} from '../shared/hostProtocol'
 
 import type {
   AppStoreHostAuthorityEvaluation,
@@ -96,12 +101,19 @@ const RESPONSE_COMMANDS: ReadonlySet<HostCommandName> = new Set([
 ])
 
 /**
+ * Whole-record persistence is an app-internal bridge, not a user/agent action.
+ * It is allowed only for the exact authenticated Desktop Host transport actor;
+ * every other otherwise-local client fails closed without an approval escape.
+ */
+const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set(['thread.record.persist'])
+
+/**
  * Domain mutation commands with no pre-existing governing authority in
  * the codebase (R5 C3 + C7). PermissionService governs agentic tool-call
  * permissions; NativeApprovalPolicy governs native OS preflight. Neither
  * governs these Host domain actions. Per R5 C3: over-ask, never under-protect.
  *
- * All four default to deferred with challengeKind 'approval'.
+ * These commands default to deferred with challengeKind 'approval'.
  * question.answer is not in this set — it is a response command (above).
  */
 const MUTATION_COMMANDS_NO_AUTHORITY: ReadonlySet<HostCommandName> = new Set([
@@ -131,9 +143,27 @@ const SETUP_COMMANDS: ReadonlySet<HostCommandName> = new Set([
 const ALL_CLASSIFIED: ReadonlySet<HostCommandName> = new Set([
   ...READ_COMMANDS,
   ...RESPONSE_COMMANDS,
+  ...DESKTOP_INTERNAL_COMMANDS,
   ...MUTATION_COMMANDS_NO_AUTHORITY,
   ...SETUP_COMMANDS
 ])
+
+function isExactDesktopInternalActor(
+  command: HostCommand,
+  context: HostAuthorityCallContext
+): boolean {
+  const expected = TASKWRAITH_DESKTOP_HOST_ACTOR
+  return (
+    context.client.clientClass === expected.clientClass &&
+    context.client.clientId === expected.clientId &&
+    context.actor.clientClass === expected.clientClass &&
+    context.actor.clientId === expected.clientId &&
+    context.actor.actorId === expected.actorId &&
+    command.actor.clientClass === expected.clientClass &&
+    command.actor.clientId === expected.clientId &&
+    command.actor.actorId === expected.actorId
+  )
+}
 
 /* ------------------------------------------------------------------ */
 /*  Factory                                                           */
@@ -168,9 +198,7 @@ export function createHostProductionAuthorityEvaluator(
   ): AppStoreHostAuthorityEvaluation => {
     const name = command.name as string
 
-    // actor identity is load-bearing per R5 C5 even though today's
-    // classification is actor-agnostic.
-    void command.actor
+    // Actor identity is load-bearing per R5 C5; desktop-internal commands below bind it exactly.
 
     // ── classified commands ──────────────────────────────────────
 
@@ -187,6 +215,21 @@ export function createHostProductionAuthorityEvaluator(
         decision: 'allowed',
         reason: 'response-to-existing-deferred-ask',
         policy: 'host-arc-r5-c2-response'
+      }
+    }
+
+    if (DESKTOP_INTERNAL_COMMANDS.has(name as HostCommandName)) {
+      if (!isExactDesktopInternalActor(command, context)) {
+        return {
+          decision: 'denied',
+          reason: 'thread-record-persist-requires-desktop-host-actor',
+          policy: 'host-arc-r5-c5-thread-record-desktop-only'
+        }
+      }
+      return {
+        decision: 'allowed',
+        reason: 'exact-desktop-host-actor',
+        policy: 'host-arc-r5-c5-thread-record-desktop-only'
       }
     }
 
@@ -260,6 +303,11 @@ export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS: readonly HostCommandName
 /** Response commands that are allowed (answering an existing ask). */
 export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES: readonly HostCommandName[] = [
   ...RESPONSE_COMMANDS
+].sort() as HostCommandName[]
+
+/** App-internal commands allowed only for the exact authenticated Desktop Host actor. */
+export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL: readonly HostCommandName[] = [
+  ...DESKTOP_INTERNAL_COMMANDS
 ].sort() as HostCommandName[]
 
 /** Mutation commands that default to deferred (no existing authority). */

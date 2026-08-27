@@ -1,11 +1,19 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  type HostCommand
+} from '../shared/hostProtocol'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import {
+  hostThreadRecordTransferPath,
+  publishHostThreadRecordTransfer
+} from '../host-runtime/HostThreadRecordTransfer'
 import type { MuseRunOutcome, MuseRunSpawnHandle } from '../main/muse/MuseRun'
 import {
   museMeterSnapshotToProviderStats,
@@ -20,6 +28,10 @@ const actor = { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as con
 const context = {
   actor,
   client: { clientId: 'tui-1', clientClass: 'tui' as const, clientVersion: '1.0.0' }
+}
+const desktopContext = {
+  actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+  client: { ...TASKWRAITH_DESKTOP_HOST_ACTOR, clientVersion: '1.0.0' }
 }
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
 
@@ -39,6 +51,18 @@ function command(
     target,
     arguments: arguments_,
     issuedAt: '2026-08-24T05:00:00.000Z'
+  }
+}
+
+function desktopCommand(
+  name: HostCommand['name'],
+  commandId: string,
+  target: Record<string, string>,
+  arguments_: Record<string, unknown>
+): HostCommand {
+  return {
+    ...command(name, commandId, target, arguments_),
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
   }
 }
 
@@ -147,6 +171,7 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
     }
   })
   const domainOptions = {
+    profilePath: profile,
     store,
     events: { publish: (_target, event) => events.push(event) },
     providers: [museFactory],
@@ -210,6 +235,134 @@ describe('HostNodeDomainPorts', () => {
       chatKind: 'single',
       provider: 'muse'
     })
+  })
+
+  it('persists whole thread records only for the exact authenticated Desktop Host actor', async () => {
+    const { domain, domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111112',
+      record: {
+        ...thread,
+        title: 'Host-mediated ensemble record',
+        futureEnsembleField: { round: 'round-1', lanes: ['worker-1'] }
+      }
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist',
+      { threadId: thread.appChatId },
+      { ...descriptor, expectedRevision: thread.persistenceRevision ?? 0 }
+    )
+
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+
+    const { profilePath: _profilePath, ...withoutProfilePath } = domainOptions
+    const unwiredDomain = new HostNodeDomainPorts(withoutProfilePath)
+    expect(unwiredDomain.evaluateAuthority(desktopContext, persist)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_thread_record_persist_unavailable'
+    })
+
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Host-mediated ensemble record',
+      persistenceRevision: 1,
+      futureEnsembleField: { round: 'round-1', lanes: ['worker-1'] }
+    })
+
+    const current = store.getThread(thread.appChatId)!
+    const deniedDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111113',
+      record: { ...current, title: 'TUI must not overwrite this record' }
+    })
+    const tuiPersist = command(
+      'thread.record.persist',
+      'cmd-persist-tui',
+      { threadId: thread.appChatId },
+      { ...deniedDescriptor, expectedRevision: current.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(context, tuiPersist)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+    await expect(domain.executeCommand(context, tuiPersist, { id: 'tui-target' })).resolves.toEqual(
+      { status: 'failed', errorCode: 'authority_denied' }
+    )
+    expect(store.getThread(thread.appChatId)?.title).toBe('Host-mediated ensemble record')
+    expect(
+      existsSync(
+        hostThreadRecordTransferPath(domainOptions.profilePath, deniedDescriptor.transferId)
+      )
+    ).toBe(true)
+  })
+
+  it('maps missing, integrity, and optimistic-revision failures to distinct outcomes', async () => {
+    const { domain, domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const missing = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-missing',
+      { threadId: thread.appChatId },
+      {
+        transferId: '11111111-1111-4111-8111-111111111114',
+        sha256: 'a'.repeat(64),
+        byteLength: 1,
+        expectedRevision: thread.persistenceRevision ?? 0
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, missing, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_transfer_missing' })
+
+    const integrityDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111115',
+      record: { ...thread, title: 'Digest mismatch' }
+    })
+    const integrity = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-integrity',
+      { threadId: thread.appChatId },
+      {
+        ...integrityDescriptor,
+        sha256: 'b'.repeat(64),
+        expectedRevision: thread.persistenceRevision ?? 0
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, integrity, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_transfer_integrity' })
+    expect(
+      existsSync(
+        hostThreadRecordTransferPath(domainOptions.profilePath, integrityDescriptor.transferId)
+      )
+    ).toBe(false)
+
+    const conflictDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111116',
+      record: { ...thread, title: 'Stale update' }
+    })
+    const conflict = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-conflict',
+      { threadId: thread.appChatId },
+      {
+        ...conflictDescriptor,
+        expectedRevision: (thread.persistenceRevision ?? 0) + 1
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, conflict, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_revision_conflict' })
+    expect(store.getThread(thread.appChatId)?.title).not.toBe('Stale update')
   })
 
   it('runs setup to a configured Muse thread, acknowledges composer after durable start, then records cancellation/history', async () => {

@@ -17,7 +17,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type {
+import {
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
   HostActorIdentity,
   HostClientClass,
   HostCommand,
@@ -27,6 +28,7 @@ import type {
 import {
   createHostProductionAuthorityEvaluator,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE,
+  HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES,
@@ -42,9 +44,9 @@ import type { AppStoreHostAuthorityEvaluation } from './AppStoreHostAuthority'
 
 function makeActor(overrides: Partial<HostActorIdentity> = {}): HostActorIdentity {
   return {
-    actorId: 'user-1',
-    clientId: 'desktop-main',
-    clientClass: 'desktop',
+    actorId: TASKWRAITH_DESKTOP_HOST_ACTOR.actorId,
+    clientId: TASKWRAITH_DESKTOP_HOST_ACTOR.clientId,
+    clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
     ...overrides
   }
 }
@@ -158,24 +160,28 @@ describe('HostProductionAuthorityEvaluator import isolation', () => {
 /* ------------------------------------------------------------------ */
 
 describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
-  it('catalogue contains exactly 18 HostCommandNames', () => {
-    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(18)
+  it('catalogue contains exactly 19 HostCommandNames', () => {
+    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(19)
   })
 
   it('every classified command is covered by exactly one set', () => {
     const reads = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS)
     const responses = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES)
     const deferred = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED)
+    const desktopInternal = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL)
     const setup = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP)
 
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
       const inReads = reads.has(name)
       const inResponses = responses.has(name)
       const inDeferred = deferred.has(name)
+      const inDesktopInternal = desktopInternal.has(name)
       const inSetup = setup.has(name)
 
       // Exactly one set
-      const count = [inReads, inResponses, inDeferred, inSetup].filter(Boolean).length
+      const count = [inReads, inResponses, inDeferred, inDesktopInternal, inSetup].filter(
+        Boolean
+      ).length
       expect(count).toBe(1)
     }
   })
@@ -214,6 +220,51 @@ describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
       expect(result.policy).toBe('host-arc-r5-c3-ask')
     }
   )
+
+  it.each([...HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL])(
+    '%s → allowed only for the exact authenticated Desktop Host actor',
+    (name) => {
+      expect(evaluate(name)).toMatchObject({
+        decision: 'allowed',
+        policy: 'host-arc-r5-c5-thread-record-desktop-only'
+      })
+      for (const clientClass of ['tui', 'ios', 'test'] as const) {
+        expect(evaluate(name, { clientClass })).toMatchObject({
+          decision: 'denied',
+          policy: 'host-arc-r5-c5-thread-record-desktop-only'
+        })
+      }
+      expect(
+        evaluate(name, {
+          actorId: 'other-desktop',
+          clientId: 'other-desktop',
+          clientClass: 'desktop'
+        })
+      ).toMatchObject({
+        decision: 'denied',
+        policy: 'host-arc-r5-c5-thread-record-desktop-only'
+      })
+    }
+  )
+
+  it('denies thread.record.persist when the command actor differs from the socket actor', () => {
+    const evaluator = createHostProductionAuthorityEvaluator()
+    const command = makeCommand('thread.record.persist', {
+      actor: makeActor({ actorId: 'spoofed-actor' })
+    })
+    const result = evaluator(command, {
+      actor: makeActor(),
+      client: {
+        clientId: TASKWRAITH_DESKTOP_HOST_ACTOR.clientId,
+        clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
+        clientVersion: '1.0.0'
+      }
+    }) as AppStoreHostAuthorityEvaluation
+    expect(result).toMatchObject({
+      decision: 'denied',
+      policy: 'host-arc-r5-c5-thread-record-desktop-only'
+    })
+  })
 
   it.each([...HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP])(
     '%s → allowed only for exact local desktop/tui/test actors',
@@ -290,11 +341,14 @@ describe('HostProductionAuthorityEvaluator clientClass ordering (C5)', () => {
     }
   )
 
-  it('only setup commands distinguish local from remote client classes', () => {
+  it('only setup and desktop-internal commands distinguish local from remote classes', () => {
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
       const results = allClientClasses.map((cc) => evaluate(name, { clientClass: cc }))
       const decisions = new Set(results.map((r) => r.decision))
-      if (HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP.includes(name)) {
+      if (
+        HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP.includes(name) ||
+        HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL.includes(name)
+      ) {
         expect(decisions).toEqual(new Set(['allowed', 'denied']))
       } else {
         expect(decisions.size).toBe(1)
