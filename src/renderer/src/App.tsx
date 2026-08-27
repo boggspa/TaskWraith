@@ -963,6 +963,7 @@ import {
   ChatSurfaceComposerRuntime,
   ChatSurfaceComposerRuntimeRegistry
 } from './lib/chatSurfaceComposerRuntime'
+import { projectChatSurfacePendingApprovals } from './lib/chatSurfacePendingApprovals'
 import { createPaneTopLeftChromeComposer } from './lib/paneTopLeftChrome'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
 import {
@@ -30940,6 +30941,11 @@ function App(): React.JSX.Element {
         providerLabel: getProviderLabel(viewerProvider),
         turnLabel: paneIsEnsembleChat ? 'ensemble round' : undefined
       })
+      const panePendingApprovals = projectChatSurfacePendingApprovals(
+        viewerChatId,
+        pendingAgentApprovalByChatId,
+        pendingApprovalQueueByChatId
+      )
       const paneComposerCtx: ComposerProps = {
         // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
         // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -30949,6 +30955,7 @@ function App(): React.JSX.Element {
         // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
         // `composerProps ===` check bail and skip re-rendering this pane's Composer.
         ...detachedComposerSurfaceBase,
+        ...panePendingApprovals,
         // A resting pane receives only the Multiview field Composer consumes.
         // Focus/index changes in the host grid must not invalidate its composer.
         multiview: { layout: multiview.layout },
@@ -30956,9 +30963,6 @@ function App(): React.JSX.Element {
         currentProviderCapabilityWarning: null,
         composerAboveBarStackAuraClass: '',
         composerAgentAuraClass: '',
-        pendingApprovalQueueByChatId: pendingApprovalQueueByChatId[viewerChatId]
-          ? { [viewerChatId]: pendingApprovalQueueByChatId[viewerChatId] }
-          : {},
         // Focused-only churny fields NOT in the stable base: panes get stable
         // placeholders (consistent with the focused-only placeholders further
         // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
@@ -31341,9 +31345,8 @@ function App(): React.JSX.Element {
         // plus-menu clicks open each pane's slash menu directly.
         openSlashCommandsRequestId: 0,
         // ── focused-only state that would otherwise LEAK into resting panes.
-        // Pending approvals and plan import remain hidden;
-        // git/worktree + secondary-workspace fields are derived per pane below.
-        pendingAgentApproval: null,
+        // Pending approvals are derived pane-correctly above; plan import remains
+        // hidden, while git/worktree + secondary-workspace fields are per-pane below.
         permissionRequestPaths: [],
         permissionRequestTitle: '',
         permissionRequestSource: undefined,
@@ -31437,6 +31440,7 @@ function App(): React.JSX.Element {
       imageAttachmentsByChatId,
       attachingWindowChatId,
       isMultiviewSplit,
+      pendingAgentApprovalByChatId,
       pendingApprovalQueueByChatId,
       persistExternalPathGrantPromptForChat,
       providerRates,

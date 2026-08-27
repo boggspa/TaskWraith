@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { projectChatSurfacePendingApprovals } from './chatSurfacePendingApprovals'
 
@@ -51,5 +52,18 @@ describe('projectChatSurfacePendingApprovals', () => {
     )
 
     expect(projection.pendingApprovalQueueByChatId['pane-chat']).toBe(queue)
+  })
+
+  it('wires resting Multiview composers to the pane-local projection', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const projectionStart = appSource.indexOf('const panePendingApprovals =')
+    const paneMapStart = appSource.indexOf('const paneComposerCtxByKey', projectionStart)
+    expect(projectionStart).toBeGreaterThan(0)
+    expect(paneMapStart).toBeGreaterThan(projectionStart)
+
+    const paneComposerBuilder = appSource.slice(projectionStart, paneMapStart)
+    expect(paneComposerBuilder).toContain('projectChatSurfacePendingApprovals(')
+    expect(paneComposerBuilder).toContain('...panePendingApprovals')
+    expect(paneComposerBuilder).not.toContain('pendingAgentApproval: null')
   })
 })
