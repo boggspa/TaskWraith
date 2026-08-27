@@ -31,6 +31,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let capabilityOffer: readonly string[] = []
   let projectionDirty: (() => void) | null = null
   let interactionTimeoutMs: number | undefined
+  let domainProfilePath: string | undefined
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -97,6 +98,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     },
     createDomain: (input) => {
       order.push('domain')
+      domainProfilePath = input.profilePath
       eventPublish = () => input.events.publish({} as never, {} as never)
       projectionDirty = input.onProjectionDirty ?? null
       interactionTimeoutMs = input.interactionTimeoutMs
@@ -123,6 +125,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     domain,
     signalListeners,
     capabilityOffer: () => capabilityOffer,
+    domainProfilePath: () => domainProfilePath,
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
     projectionDirty: () => projectionDirty?.(),
@@ -153,6 +156,15 @@ describe('HostNodeProductionServer', () => {
       'lease.release'
     ])
     await expect(h.server.stop()).resolves.toBeUndefined()
+  })
+
+  it('injects the canonical lease path into the domain over caller-supplied options', async () => {
+    const h = harness({
+      domainOptions: { profilePath: '/caller-controlled' } as never
+    })
+    await h.server.start()
+    expect(h.domainProfilePath()).toBe('/profile')
+    await h.server.stop()
   })
 
   it('offers lifecycle only from production and routes authenticated shutdown through full cleanup', async () => {

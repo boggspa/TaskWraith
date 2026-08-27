@@ -570,6 +570,28 @@ describe('Host protocol Wave 2A contract', () => {
     })
     expect(descriptor.byteLength).toBeGreaterThan(256 * 1024)
 
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: 'a'.repeat(128) }
+        })
+      ).ok
+    ).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: 'a'.repeat(129) }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'thread.record.persist transferId is invalid'
+    })
+
     for (const smuggled of [
       { ...descriptor, record: { appChatId: 'thread-1' } },
       { ...descriptor, path: '/tmp/record.json' }

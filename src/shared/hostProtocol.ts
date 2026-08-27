@@ -1212,6 +1212,7 @@ function decodeApprovalDecideArguments(
   return { ok: true, value: out }
 }
 
+const HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS = 128
 const HOST_THREAD_RECORD_TRANSFER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 const HOST_SHA256_HEX_RE = /^[a-f0-9]{64}$/
 
@@ -1232,7 +1233,7 @@ function decodeThreadRecordPersistArguments(
     }
   }
   if (
-    !isNonEmptyString(value.transferId, HOST_PROTOCOL_MAX_ID) ||
+    !isNonEmptyString(value.transferId, HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS) ||
     !HOST_THREAD_RECORD_TRANSFER_ID_RE.test(value.transferId)
   ) {
     return { ok: false, error: 'thread.record.persist transferId is invalid' }

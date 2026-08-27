@@ -218,6 +218,7 @@ export class HostNodeProductionServer {
       const projectionDirtyRef: { current: (() => void) | null } = { current: null }
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
         ...domainOptions,
+        profilePath: this.lease.path,
         store,
         events,
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
