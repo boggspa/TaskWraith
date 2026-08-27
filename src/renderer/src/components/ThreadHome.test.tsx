@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord } from '../../../main/store/types'
-import { THREAD_HOME_SURFACES, ThreadHome, buildThreadHomeThreadOptions } from './ThreadHome'
+import {
+  THREAD_HOME_SURFACES,
+  ThreadHome,
+  buildThreadHomeThreadOptions,
+  settleThreadHomeCanvasOpen,
+  type ThreadHomeCanvasOpenResult
+} from './ThreadHome'
 
 const chat = (id: string, title: string, provider: ChatRecord['provider'] = 'codex'): ChatRecord =>
   ({
@@ -17,18 +23,16 @@ const chat = (id: string, title: string, provider: ChatRecord['provider'] = 'cod
   }) as unknown as ChatRecord
 
 describe('buildThreadHomeThreadOptions', () => {
-  it('orders visible panes before additional running threads and deduplicates them', () => {
+  it('shows only running threads in live order and uses panes only as annotations', () => {
     const options = buildThreadHomeThreadOptions({
       chats: [chat('a', 'Alpha'), chat('b', 'Beta'), chat('c', 'Gamma')],
       paneChatIds: ['b', 'a', null],
-      runningChatIds: ['a', 'c'],
-      authorityChatId: 'b'
+      runningChatIds: ['a', 'c']
     })
 
-    expect(options.map((option) => option.chatId)).toEqual(['b', 'a', 'c'])
-    expect(options[0]).toMatchObject({ title: 'Beta', paneIndex: 0, running: false })
-    expect(options[1]).toMatchObject({ title: 'Alpha', paneIndex: 1, running: true })
-    expect(options[2]).toMatchObject({ title: 'Gamma', running: true })
+    expect(options.map((option) => option.chatId)).toEqual(['a', 'c'])
+    expect(options[0]).toMatchObject({ title: 'Alpha', paneIndex: 1, running: true })
+    expect(options[1]).toMatchObject({ title: 'Gamma', running: true })
   })
 
   it('drops archived and missing records', () => {
@@ -55,11 +59,19 @@ describe('ThreadHome', () => {
             provider: 'codex',
             workspaceLabel: 'repo',
             running: true,
+            stats: {
+              filesChanged: 2,
+              additions: 12,
+              deletions: 3,
+              hasLineStats: true,
+              commits: 1
+            },
             paneIndex: 1
           }
         ]}
         authorityChatId="a"
         mediaCount={4}
+        onNewChat={vi.fn()}
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
         onClosePane={vi.fn()}
@@ -68,8 +80,12 @@ describe('ThreadHome', () => {
     )
 
     expect(html).toContain('aria-label="Thread Home"')
+    expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Alpha'))
     expect(html).toContain('Alpha')
     expect(html).toContain('Pane 2')
+    expect(html).toContain('class="thread-home-run-stats"')
+    expect(html).toContain('2 changed files, 12 additions, 3 deletions, 1 commit')
+    expect(html).toContain('composer-git-commit-trigger-icon')
     expect(html).toContain('aria-label="Close empty pane"')
     expect(THREAD_HOME_SURFACES.map((surface) => surface.id)).toEqual([
       'charts',
@@ -88,9 +104,16 @@ describe('ThreadHome', () => {
 
   it('keeps presets visible but disabled without thread authority', () => {
     const html = renderToStaticMarkup(
-      <ThreadHome variant="main" threads={[]} onSelectThread={vi.fn()} onSelectSurface={vi.fn()} />
+      <ThreadHome
+        variant="main"
+        threads={[]}
+        onNewChat={vi.fn()}
+        onSelectThread={vi.fn()}
+        onSelectSurface={vi.fn()}
+      />
     )
-    expect(html).toContain('No visible or running threads right now.')
+    expect(html).toContain('aria-label="New Chat"')
+    expect(html).toContain('No active threads right now.')
     expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
   })
 
@@ -116,5 +139,37 @@ describe('ThreadHome', () => {
     expect(css).toContain('padding-top: 70px')
     expect(canvasCss).toContain('.canvas-pane-close {')
     expect(canvasCss).not.toContain('.canvas-dock-panel .canvas-pane-close')
+  })
+
+  it('closes a successful embedded Canvas that resolves after its host unmounts', async () => {
+    let resolveRequest: (result: ThreadHomeCanvasOpenResult) => void = () => undefined
+    const request = new Promise<ThreadHomeCanvasOpenResult>((resolve) => {
+      resolveRequest = resolve
+    })
+    let current = true
+    const onAccepted = vi.fn()
+    const onRejected = vi.fn()
+    const onDiscarded = vi.fn()
+    const settling = settleThreadHomeCanvasOpen({
+      request,
+      isCurrent: () => current,
+      fallbackError: 'Could not open Canvas.',
+      onAccepted,
+      onRejected,
+      onDiscarded
+    })
+
+    current = false
+    resolveRequest({
+      ok: true,
+      canvasId: 'late-canvas',
+      url: 'https://example.com',
+      title: 'Late Canvas'
+    })
+    await settling
+
+    expect(onDiscarded).toHaveBeenCalledWith('late-canvas')
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(onRejected).not.toHaveBeenCalled()
   })
 })

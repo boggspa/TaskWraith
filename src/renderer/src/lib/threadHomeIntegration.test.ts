@@ -30,6 +30,8 @@ describe('Thread Home integration', () => {
     expect(layoutSource).toContain('variant="pane"')
     expect(layoutSource).toContain('runningChatIds={runningChatIdsArray}')
     expect(layoutSource).toContain('mediaRefs={currentChatMediaRefs}')
+    expect(layoutSource).toContain('onNewChat={startNewThreadFromHome}')
+    expect(layoutSource).toContain('handleNewDefaultGlobalChat?.()')
   })
 
   it('routes close through the glass pill and retires the old floating pane close button', () => {
@@ -41,6 +43,9 @@ describe('Thread Home integration', () => {
     expect(pill).toContain('mainThreadHomeWorkspaceRef.current?.closeCurrentPane()')
     expect(pill).toContain(': openThreadHome')
     expect(pill).not.toContain('closeThreadDisabled=')
+    expect(pill).toContain(
+      "isMultiviewSplit || threadHomeOpen ? 'Close pane' : 'Close thread view'"
+    )
 
     const mainHomeStart = layoutSource.indexOf('<ThreadHomeWorkspace', pillEnd)
     const mainHomeEnd = layoutSource.indexOf('/>', mainHomeStart)

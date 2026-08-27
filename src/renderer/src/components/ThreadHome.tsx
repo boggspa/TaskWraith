@@ -13,12 +13,20 @@ import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
 import { ChatMediaDockPanel, type ChatMediaRef } from './ChatMediaPanel'
-import { ChatMediaIcon, SidebarRunningGhost, XSymbolIcon } from './AppChromeSymbols'
-import { MeshCanvasPanel } from './MeshCanvasPanel'
+import {
+  ChatMediaIcon,
+  GitCommitSymbolIcon,
+  PlusSymbolIcon,
+  SidebarRunningGhost,
+  XSymbolIcon
+} from './AppChromeSymbols'
+import { DigitOdometer } from './DigitOdometer'
+import { MeshCanvasPanel, type MeshCanvasPanelHandle } from './MeshCanvasPanel'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
 import { getProviderLabel } from '../lib/providerLabels'
+import { threadHomeRunStats, type ThreadHomeRunStats } from '../lib/threadHomeActivityStats'
 
 export type ThreadHomeSurface = 'charts' | 'browser' | 'mesh' | 'sketch' | 'media' | 'simulator'
 
@@ -43,6 +51,7 @@ export interface ThreadHomeThreadOption {
   provider: ProviderId | 'ensemble'
   workspaceLabel: string
   running: boolean
+  stats?: ThreadHomeRunStats
   paneIndex?: number
 }
 
@@ -53,14 +62,13 @@ function workspaceLabelForChat(chat: ChatRecord): string {
 }
 
 /**
- * Project the threads that already have live surface relevance: visible panes,
- * active runs, and the single-pane authority hidden behind Thread Home.
+ * Project only the thread ids already admitted by the sidebar's live-run
+ * authority. Pane/current selection may annotate a live row, but cannot add it.
  */
 export function buildThreadHomeThreadOptions(input: {
   chats: readonly ChatRecord[]
   runningChatIds: readonly string[]
   paneChatIds: readonly (string | null)[]
-  authorityChatId?: string | null
 }): ThreadHomeThreadOption[] {
   const chatsById = new Map(
     input.chats.filter((chat) => !chat.archived).map((chat) => [chat.appChatId, chat])
@@ -71,25 +79,18 @@ export function buildThreadHomeThreadOptions(input: {
     if (chatId && !paneIndexByChatId.has(chatId)) paneIndexByChatId.set(chatId, paneIndex)
   })
 
-  const orderedIds: string[] = []
-  const seen = new Set<string>()
-  const add = (chatId: string | null | undefined): void => {
-    if (!chatId || seen.has(chatId) || !chatsById.has(chatId)) return
-    seen.add(chatId)
-    orderedIds.push(chatId)
-  }
-  for (const chatId of input.paneChatIds) add(chatId)
-  for (const chatId of input.runningChatIds) add(chatId)
-  add(input.authorityChatId)
+  const orderedIds = [...new Set(input.runningChatIds)].filter((chatId) => chatsById.has(chatId))
 
   return orderedIds.map((chatId) => {
     const chat = chatsById.get(chatId)!
+    const stats = threadHomeRunStats(chat)
     return {
       chatId,
       title: chat.title?.trim() || 'Untitled thread',
       provider: chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini',
       workspaceLabel: workspaceLabelForChat(chat),
       running: running.has(chatId),
+      ...(stats ? { stats } : {}),
       ...(paneIndexByChatId.has(chatId) ? { paneIndex: paneIndexByChatId.get(chatId) } : {})
     }
   })
@@ -126,6 +127,7 @@ export interface ThreadHomeProps {
   mediaCount?: number
   busySurface?: ThreadHomeSurface | null
   issue?: string | null
+  onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onSelectSurface: (surface: ThreadHomeSurface) => void
   onClosePane?: () => void
@@ -140,6 +142,7 @@ export function ThreadHome({
   mediaCount = 0,
   busySurface,
   issue,
+  onNewChat,
   onSelectThread,
   onSelectSurface,
   onClosePane,
@@ -166,54 +169,62 @@ export function ThreadHome({
         </div>
       )}
       <div className="thread-home-scroll">
-        <section className="thread-home-section" aria-labelledby={`thread-home-${variant}-threads`}>
-          {threads.length ? (
-            <div className="thread-home-thread-list">
-              {threads.map((thread) => (
-                <button
-                  key={thread.chatId}
-                  type="button"
-                  className={`thread-home-thread-row provider-${thread.provider}`}
-                  onClick={() => onSelectThread(thread.chatId)}
-                  aria-label={`${thread.title}, ${
-                    thread.running
-                      ? 'running'
-                      : thread.paneIndex !== undefined
-                        ? `pane ${thread.paneIndex + 1}`
-                        : 'thread'
-                  }`}
-                >
-                  <span className="thread-home-thread-provider" aria-hidden>
-                    <ProviderBrandLogoIcon provider={thread.provider} />
-                  </span>
-                  <span className="thread-home-thread-copy">
-                    <strong>{thread.title}</strong>
+        <section className="thread-home-section" aria-label="Active threads">
+          <div className="thread-home-thread-list">
+            <button
+              type="button"
+              className="thread-home-thread-row thread-home-new-chat-row"
+              onClick={onNewChat}
+              aria-label="New Chat"
+            >
+              <span className="thread-home-thread-provider" aria-hidden>
+                <PlusSymbolIcon />
+              </span>
+              <span className="thread-home-thread-copy">
+                <strong>New Chat</strong>
+                <small>Start a new thread</small>
+              </span>
+              <span className="thread-home-thread-provider-label">New</span>
+            </button>
+            {threads.map((thread) => (
+              <button
+                key={thread.chatId}
+                type="button"
+                className={`thread-home-thread-row provider-${thread.provider}`}
+                onClick={() => onSelectThread(thread.chatId)}
+                aria-label={threadHomeThreadAriaLabel(thread)}
+              >
+                <span className="thread-home-thread-provider" aria-hidden>
+                  <ProviderBrandLogoIcon provider={thread.provider} />
+                </span>
+                <span className="thread-home-thread-copy">
+                  <strong>{thread.title}</strong>
+                  <span className="thread-home-thread-subline">
                     <small>
                       {thread.workspaceLabel}
                       {thread.paneIndex !== undefined ? ` · Pane ${thread.paneIndex + 1}` : ''}
                     </small>
+                    {thread.stats && <ThreadHomeStats stats={thread.stats} />}
                   </span>
-                  {thread.running ? (
-                    <SidebarRunningGhost />
-                  ) : (
-                    <span className="thread-home-thread-provider-label">
-                      {thread.provider === 'ensemble'
-                        ? 'Ensemble'
-                        : getProviderLabel(thread.provider)}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="thread-home-empty-copy">No visible or running threads right now.</div>
-          )}
+                </span>
+                {thread.running ? (
+                  <SidebarRunningGhost />
+                ) : (
+                  <span className="thread-home-thread-provider-label">
+                    {thread.provider === 'ensemble'
+                      ? 'Ensemble'
+                      : getProviderLabel(thread.provider)}
+                  </span>
+                )}
+              </button>
+            ))}
+            {threads.length === 0 && (
+              <div className="thread-home-empty-copy">No active threads right now.</div>
+            )}
+          </div>
         </section>
 
-        <section
-          className="thread-home-section"
-          aria-labelledby={`thread-home-${variant}-surfaces`}
-        >
+        <section className="thread-home-section" aria-label="Thread tools">
           <div className="thread-home-surface-grid">
             {THREAD_HOME_SURFACES.map((surface) => (
               <button
@@ -248,6 +259,47 @@ export function ThreadHome({
         </section>
       </div>
     </section>
+  )
+}
+
+function threadHomeStatsLabel(stats: ThreadHomeRunStats): string {
+  return [
+    `${stats.filesChanged} changed file${stats.filesChanged === 1 ? '' : 's'}`,
+    ...(stats.hasLineStats ? [`${stats.additions} additions`, `${stats.deletions} deletions`] : []),
+    `${stats.commits} commit${stats.commits === 1 ? '' : 's'}`
+  ].join(', ')
+}
+
+function threadHomeThreadAriaLabel(thread: ThreadHomeThreadOption): string {
+  const state = thread.running
+    ? 'running'
+    : thread.paneIndex !== undefined
+      ? `pane ${thread.paneIndex + 1}`
+      : 'thread'
+  return `${thread.title}, ${state}${thread.stats ? `, ${threadHomeStatsLabel(thread.stats)}` : ''}`
+}
+
+function ThreadHomeStats({ stats }: { stats: ThreadHomeRunStats }) {
+  return (
+    <span className="thread-home-run-stats" aria-label={threadHomeStatsLabel(stats)}>
+      {stats.filesChanged > 0 && <span>{stats.filesChanged}f</span>}
+      {stats.hasLineStats && (
+        <>
+          <span className="workspace-stats-addition">
+            <DigitOdometer value={stats.additions} sign="+" />
+          </span>
+          <span className="workspace-stats-deletion">
+            <DigitOdometer value={stats.deletions} sign="-" />
+          </span>
+        </>
+      )}
+      {stats.commits > 0 && (
+        <span className="thread-home-run-commits">
+          <GitCommitSymbolIcon />
+          <DigitOdometer value={stats.commits} ariaLabel={`${stats.commits} commits`} />
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -339,6 +391,7 @@ export interface ThreadHomeWorkspaceProps {
   paneChatIds: readonly (string | null)[]
   authorityChat: ChatRecord | null
   mediaRefs: ChatMediaRef[]
+  onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onClosePane?: () => void
   onActivate?: () => void
@@ -350,6 +403,49 @@ export interface ThreadHomeWorkspaceHandle {
   closeCurrentPane: () => void
 }
 
+export interface ThreadHomeCanvasOpenSuccess {
+  ok: true
+  canvasId: string
+  url: string
+  title: string
+}
+
+export type ThreadHomeCanvasOpenResult =
+  | ThreadHomeCanvasOpenSuccess
+  | { ok: false; error?: string }
+  | undefined
+
+/** Settle one embedded-canvas request without leaking a late successful view. */
+export async function settleThreadHomeCanvasOpen(input: {
+  request: Promise<ThreadHomeCanvasOpenResult>
+  isCurrent: () => boolean
+  fallbackError: string
+  onAccepted: (result: ThreadHomeCanvasOpenSuccess) => void
+  onRejected: (message: string) => void
+  onDiscarded: (canvasId: string) => void | Promise<unknown>
+}): Promise<void> {
+  try {
+    const result = await input.request
+    if (!result?.ok) {
+      if (input.isCurrent()) input.onRejected(result?.error || input.fallbackError)
+      return
+    }
+    if (!input.isCurrent()) {
+      try {
+        await input.onDiscarded(result.canvasId)
+      } catch {
+        // Best-effort cleanup: the view may already have been closed by main.
+      }
+      return
+    }
+    input.onAccepted(result)
+  } catch (error) {
+    if (input.isCurrent()) {
+      input.onRejected(error instanceof Error ? error.message : input.fallbackError)
+    }
+  }
+}
+
 /** Stateful host for one independent Thread Home instance. */
 function ThreadHomeWorkspaceInner(
   {
@@ -359,12 +455,13 @@ function ThreadHomeWorkspaceInner(
     paneChatIds,
     authorityChat,
     mediaRefs,
+    onNewChat,
     onSelectThread,
     onClosePane,
     onActivate,
     onPreviewImage,
     onDetachToPane
-  },
+  }: ThreadHomeWorkspaceProps,
   ref: ForwardedRef<ThreadHomeWorkspaceHandle>
 ) {
   const [surface, setSurface] = useState<ThreadHomeSurface | null>(null)
@@ -377,14 +474,19 @@ function ThreadHomeWorkspaceInner(
     title: string
   } | null>(null)
   const canvasIdRef = useRef<string | null>(null)
+  const meshCanvasPanelRef = useRef<MeshCanvasPanelHandle>(null)
+  const mountedRef = useRef(false)
+  const canvasOpenGenerationRef = useRef(0)
   canvasIdRef.current = canvas?.canvasId ?? null
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      canvasOpenGenerationRef.current += 1
       const canvasId = canvasIdRef.current
       if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
-    },
-    []
-  )
+    }
+  }, [])
 
   const authorityChatId = authorityChat?.appChatId ?? null
   const threads = useMemo(
@@ -392,27 +494,36 @@ function ThreadHomeWorkspaceInner(
       buildThreadHomeThreadOptions({
         chats,
         runningChatIds,
-        paneChatIds,
-        authorityChatId
+        paneChatIds
       }),
-    [authorityChatId, chats, paneChatIds, runningChatIds]
+    [chats, paneChatIds, runningChatIds]
   )
 
   const closeSurface = useCallback((): void => {
+    canvasOpenGenerationRef.current += 1
     const canvasId = canvasIdRef.current
     canvasIdRef.current = null
     setCanvas(null)
     setSurface(null)
+    setBusySurface(null)
     setIssue(null)
     if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
   }, [])
+
+  const closeCurrentSurface = useCallback((): void => {
+    if (surface === 'mesh' && meshCanvasPanelRef.current) {
+      void meshCanvasPanelRef.current.dismiss()
+      return
+    }
+    closeSurface()
+  }, [closeSurface, surface])
 
   useImperativeHandle(
     ref,
     () => ({
       closeCurrentPane: () => {
         if (surface) {
-          closeSurface()
+          closeCurrentSurface()
           return
         }
         if (authorityChatId) {
@@ -422,39 +533,55 @@ function ThreadHomeWorkspaceInner(
         onClosePane?.()
       }
     }),
-    [authorityChatId, closeSurface, onClosePane, onSelectThread, surface]
+    [authorityChatId, closeCurrentSurface, onClosePane, onSelectThread, surface]
   )
 
   const openSurface = async (next: ThreadHomeSurface): Promise<void> => {
     if (!authorityChatId) return
     setIssue(null)
     if (next !== 'browser' && next !== 'sketch') {
+      canvasOpenGenerationRef.current += 1
       setSurface(next)
       return
     }
+    const generation = canvasOpenGenerationRef.current + 1
+    canvasOpenGenerationRef.current = generation
     setBusySurface(next)
-    try {
-      const api = window.api.canvas
-      const result =
-        next === 'sketch'
-          ? await api?.openSketchEmbedded?.({ chatId: authorityChatId })
-          : await api?.openEmbedded?.({ chatId: authorityChatId })
-      if (!result?.ok) {
-        setIssue(result?.error || `Could not open ${next}.`)
-        return
-      }
-      setCanvas({
-        canvasId: result.canvasId,
-        kind: next,
-        url: result.url,
-        title: result.title
-      })
-      setSurface(next)
-    } catch (error) {
-      setIssue(error instanceof Error ? error.message : `Could not open ${next}.`)
-    } finally {
-      setBusySurface(null)
-    }
+    const api = window.api.canvas
+    const request = Promise.resolve(
+      next === 'sketch'
+        ? api?.openSketchEmbedded?.({ chatId: authorityChatId })
+        : api?.openEmbedded?.({ chatId: authorityChatId })
+    ).then<ThreadHomeCanvasOpenResult>((result) =>
+      result?.ok
+        ? {
+            ok: true,
+            canvasId: result.canvasId,
+            url: result.url,
+            title: result.title
+          }
+        : { ok: false, error: result?.error }
+    )
+    const isCurrent = (): boolean =>
+      mountedRef.current && canvasOpenGenerationRef.current === generation
+    await settleThreadHomeCanvasOpen({
+      request,
+      isCurrent,
+      fallbackError: `Could not open ${next}.`,
+      onAccepted: (result) => {
+        canvasIdRef.current = result.canvasId
+        setCanvas({
+          canvasId: result.canvasId,
+          kind: next,
+          url: result.url,
+          title: result.title
+        })
+        setSurface(next)
+      },
+      onRejected: setIssue,
+      onDiscarded: (canvasId) => window.api.canvas?.close?.(canvasId)
+    })
+    if (isCurrent()) setBusySurface(null)
   }
 
   if (!surface || !authorityChatId || !authorityChat) {
@@ -466,6 +593,7 @@ function ThreadHomeWorkspaceInner(
         mediaCount={mediaRefs.length}
         busySurface={busySurface}
         issue={issue}
+        onNewChat={onNewChat}
         onSelectThread={onSelectThread}
         onSelectSurface={(next) => void openSurface(next)}
         onClosePane={onClosePane}
@@ -482,7 +610,7 @@ function ThreadHomeWorkspaceInner(
       aria-label={surfaceLabel}
     >
       <header className="thread-home-surface-toolbar">
-        <button type="button" onClick={closeSurface} aria-label="Back to Thread Home">
+        <button type="button" onClick={closeCurrentSurface} aria-label="Back to Thread Home">
           ‹
         </button>
         <strong>{surfaceLabel}</strong>
@@ -500,7 +628,11 @@ function ThreadHomeWorkspaceInner(
           />
         )}
         {surface === 'mesh' && (
-          <MeshCanvasPanel chatId={authorityChatId} onDismiss={closeSurface} />
+          <MeshCanvasPanel
+            ref={meshCanvasPanelRef}
+            chatId={authorityChatId}
+            onDismiss={closeSurface}
+          />
         )}
         {surface === 'simulator' && <SimulatorCanvasPanel chatId={authorityChatId} />}
         {(surface === 'browser' || surface === 'sketch') && canvas && (

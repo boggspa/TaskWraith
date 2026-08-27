@@ -637,6 +637,23 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     },
     [chatByIdRef, chats, handleSelectChat]
   )
+  const startNewThreadFromHome = useCallback(() => {
+    const workspaceId = currentChat?.workspaceId || currentWorkspace?.id
+    const workspacePath = currentChat?.workspacePath || currentWorkspace?.path
+    if (currentChat?.scope !== 'global' && workspaceId && workspacePath && handleNewChat) {
+      void handleNewChat(workspaceId, workspacePath)
+      return
+    }
+    void handleNewDefaultGlobalChat?.()
+  }, [
+    currentChat?.scope,
+    currentChat?.workspaceId,
+    currentChat?.workspacePath,
+    currentWorkspace?.id,
+    currentWorkspace?.path,
+    handleNewChat,
+    handleNewDefaultGlobalChat
+  ])
   const refreshProviderAuthStatus = useCallback(
     async (provider: Parameters<typeof refreshProviderMetadata>[0]) => {
       if (provider === 'codex') {
@@ -1896,6 +1913,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     paneChatIds={multiview.paneChatIds}
                     authorityChat={currentChat}
                     mediaRefs={currentChatMediaRefs}
+                    onNewChat={() => {
+                      activateEmptyPane()
+                      startNewThreadFromHome()
+                    }}
                     onActivate={activateEmptyPane}
                     onSelectThread={(chatId) => {
                       activateEmptyPane()
@@ -2149,7 +2170,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                         : openThreadHome
                     : undefined
                 }
-                closeThreadLabel={isMultiviewSplit ? 'Close pane' : 'Close thread view'}
+                closeThreadLabel={
+                  isMultiviewSplit || threadHomeOpen ? 'Close pane' : 'Close thread view'
+                }
               />
             </>
           )}
@@ -2255,6 +2278,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               paneChatIds={[currentChatAppChatId]}
               authorityChat={currentChat}
               mediaRefs={currentChatMediaRefs}
+              onNewChat={startNewThreadFromHome}
               onSelectThread={selectThreadFromHome}
               onPreviewImage={setPreviewChatMediaRef}
               onDetachToPane={openMediaPane}

@@ -92,6 +92,10 @@
   gap: 8px;
 }
 
+.thread-home-thread-list > .thread-home-empty-copy {
+  grid-column: 1 / -1;
+}
+
 .thread-home-thread-row {
   appearance: none;
   min-width: 0;
@@ -196,6 +200,11 @@
   height: 18px;
 }
 
+.thread-home-new-chat-row .thread-home-thread-provider :is(.sf-symbol-icon, svg) {
+  width: 18px;
+  height: 18px;
+}
+
 .thread-home-thread-copy,
 .thread-home-surface-card > span:last-of-type {
   min-width: 0;
@@ -224,6 +233,47 @@
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 500;
+}
+
+.thread-home-thread-subline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.thread-home-thread-subline > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-home-run-stats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.thread-home-run-stats .digit-odometer__visual {
+  display: inline-flex;
+}
+
+.thread-home-run-commits {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+}
+
+.thread-home-run-commits :is(.sf-symbol-icon, svg) {
+  width: 11px;
+  height: 11px;
 }
 
 .thread-home-thread-row .sidebar-running-ghost {
