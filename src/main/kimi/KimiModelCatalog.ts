@@ -6,9 +6,11 @@ import {
   KIMI_K27_MODEL_ID,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_CLI_MODEL,
   KIMI_K3_LONG_CONTEXT_WINDOW,
   KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_CLI_MODEL
 } from '../../shared/kimiModels'
@@ -149,7 +151,7 @@ function k3LongRoutePresentation(alias: ParsedKimiModelAlias): {
 } {
   if ((alias.maxContextSize || 0) >= KIMI_K3_LONG_CONTEXT_WINDOW) {
     return {
-      label: 'K3 1M',
+      label: KIMI_K3_MODEL_LABEL,
       description: 'Long-context K3 route - 1M on this Kimi plan - Low, High, or Max thinking'
     }
   }
@@ -160,7 +162,7 @@ function k3LongRoutePresentation(alias: ParsedKimiModelAlias): {
     }
   }
   return {
-    label: 'K3 (up to 1M)',
+    label: KIMI_K3_MODEL_LABEL,
     description: 'Long-context K3 route - plan-dependent up to 1M - Low, High, or Max thinking'
   }
 }
@@ -204,7 +206,7 @@ export function projectKimiManagedModelRows(
   if (k3Short && k3ShortFallback) {
     projected.set(KIMI_K3_256K_MODEL_ID, {
       ...k3ShortFallback,
-      label: 'K3 256K',
+      label: KIMI_K3_256K_MODEL_LABEL,
       description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
       ...reasoningMetadata(k3Short, k3ShortFallback),
       ...(k3Short.maxContextSize ? { contextWindow: k3Short.maxContextSize } : {})

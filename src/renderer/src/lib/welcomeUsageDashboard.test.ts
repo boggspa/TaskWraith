@@ -499,8 +499,8 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ]
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
     expect(data.modelBreakdown.map((m) => m.label)).toEqual([
-      'K3 (up to 1M)',
-      'K3 256K',
+      'K3 (1M)',
+      'K3 (256K)',
       'K2.7 Coding',
       'Kimi K2.6',
       'Kimi K2.6 Thinking'

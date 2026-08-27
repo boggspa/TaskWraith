@@ -14,7 +14,9 @@ import {
 import {
   KIMI_K27_MODEL_ID,
   KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS
 } from '../../../shared/kimiModels'
 
@@ -266,7 +268,7 @@ const KIMI_DEFAULT_MODEL_ROWS = [
     // Allegretto+, with Low/High/Max effort choices. No Highspeed tier — Fast
     // stays a K2.7 Coding capability — and K2.7 Coding remains the default.
     id: KIMI_K3_MODEL_ID,
-    label: 'K3 (up to 1M)',
+    label: KIMI_K3_MODEL_LABEL,
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
@@ -276,7 +278,7 @@ const KIMI_DEFAULT_MODEL_ROWS = [
   },
   {
     id: KIMI_K3_256K_MODEL_ID,
-    label: 'K3 256K',
+    label: KIMI_K3_256K_MODEL_LABEL,
     description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort

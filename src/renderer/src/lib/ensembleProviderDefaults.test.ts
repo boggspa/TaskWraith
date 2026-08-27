@@ -824,6 +824,11 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'kimi-k3',
       'kimi-k3-256k'
     ])
+    expect(kimi.modelOptions.map((option) => option.label)).toEqual([
+      'K2.7 Coding',
+      'K3 (1M)',
+      'K3 (256K)'
+    ])
     for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
       expect(getEnsembleReasoningOptions('kimi', modelId).map((option) => option.value)).toEqual([
         'low',

@@ -13,7 +13,13 @@
 import { createHash } from 'node:crypto'
 
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
-import { KIMI_K27_MODEL_ID, KIMI_K3_256K_MODEL_ID, KIMI_K3_MODEL_ID } from '../shared/kimiModels'
+import {
+  KIMI_K27_MODEL_ID,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL
+} from '../shared/kimiModels'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderModelOffer,
@@ -153,8 +159,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
           [{ reasoningId: 'on', label: 'On', available: true }],
           true
         ),
-        model(KIMI_K3_MODEL_ID, 'K3 (up to 1M)', KIMI_REASONING),
-        model(KIMI_K3_256K_MODEL_ID, 'K3 256K', KIMI_REASONING)
+        model(KIMI_K3_MODEL_ID, KIMI_K3_MODEL_LABEL, KIMI_REASONING),
+        model(KIMI_K3_256K_MODEL_ID, KIMI_K3_256K_MODEL_LABEL, KIMI_REASONING)
       ],
       authFlows: [{ flowId: 'kimi:login', kind: 'manual', label: 'Sign in', available: true }]
     },

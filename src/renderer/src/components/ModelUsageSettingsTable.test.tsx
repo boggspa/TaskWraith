@@ -413,7 +413,7 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
     const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
     expect(html).toContain('256k–1.0M')
     expect(html).toContain('plan-dependent')
-    expect(html).toContain('K3 256K')
+    expect(html).toContain('K3 (256K)')
   })
 
   it('is currency-free — does not contain ~ cost badge or $ symbol', () => {

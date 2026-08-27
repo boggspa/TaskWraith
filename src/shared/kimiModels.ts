@@ -2,6 +2,9 @@ export const KIMI_K27_MODEL_ID = 'kimi-k2.7-code'
 export const KIMI_K3_MODEL_ID = 'kimi-k3'
 export const KIMI_K3_256K_MODEL_ID = 'kimi-k3-256k'
 
+export const KIMI_K3_MODEL_LABEL = 'K3 (1M)'
+export const KIMI_K3_256K_MODEL_LABEL = 'K3 (256K)'
+
 export const KIMI_STANDARD_API_MODEL = 'kimi-for-coding'
 export const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
 export const KIMI_K3_API_MODEL = 'k3'

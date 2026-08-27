@@ -383,7 +383,7 @@ describe('formatAssistantMessageLabel', () => {
         'kimi',
         { isEnsembleChat: true }
       ).modelBadge
-    ).toBe('K3 256K High')
+    ).toBe('K3 (256K) High')
   })
 
   it('uses pooled-agent nickname and identity when present on ensemble rows', () => {

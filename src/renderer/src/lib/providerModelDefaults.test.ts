@@ -338,8 +338,10 @@ describe('provider model picker sentinels', () => {
       expect(k3?.isDefault).toBeUndefined()
       expect(k3?.additionalSpeedTiers).toBeUndefined()
     }
-    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')?.label).toBe('K3 (up to 1M)')
-    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3-256k')?.label).toBe('K3 256K')
+    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')?.label).toBe('K3 (1M)')
+    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3-256k')?.label).toBe(
+      'K3 (256K)'
+    )
   })
 
   it('does not expose Default or CLI Default as selectable model rows', () => {

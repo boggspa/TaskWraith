@@ -75,14 +75,14 @@ describe('KimiModelCatalog', () => {
     })
     const k3 = rows?.find((row) => row.id === 'kimi-k3')
     expect(k3).toMatchObject({
-      label: 'K3 1M',
+      label: 'K3 (1M)',
       defaultReasoningEffort: 'high',
       contextWindow: 1_048_576
     })
     expect(k3?.additionalSpeedTiers).toBeUndefined()
     const k3Short = rows?.find((row) => row.id === 'kimi-k3-256k')
     expect(k3Short).toMatchObject({
-      label: 'K3 256K',
+      label: 'K3 (256K)',
       defaultReasoningEffort: 'high',
       contextWindow: 262_144
     })
@@ -109,7 +109,7 @@ max_context_size = 262144
 `
     const rows = projectKimiManagedModelRows(config, fallbackRows())
     expect(rows?.find((row) => row.id === 'kimi-k3')?.label).toBe('K3 (plan-capped 256K)')
-    expect(rows?.find((row) => row.id === 'kimi-k3-256k')?.label).toBe('K3 256K')
+    expect(rows?.find((row) => row.id === 'kimi-k3-256k')?.label).toBe('K3 (256K)')
   })
 
   it('omits absent managed routes and falls back when no recognized alias exists', () => {

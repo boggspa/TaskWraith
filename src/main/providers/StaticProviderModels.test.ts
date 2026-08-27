@@ -705,7 +705,7 @@ describe('getStaticProviderModels (kimi)', () => {
 
     expect(k3).toMatchObject({
       id: 'kimi-k3',
-      label: 'K3 (up to 1M)',
+      label: 'K3 (1M)',
       defaultReasoningEffort: 'max',
       supportedReasoningEfforts: [
         { reasoningEffort: 'low' },
@@ -718,7 +718,7 @@ describe('getStaticProviderModels (kimi)', () => {
     expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
     expect(k3Short).toMatchObject({
       id: 'kimi-k3-256k',
-      label: 'K3 256K',
+      label: 'K3 (256K)',
       defaultReasoningEffort: 'max',
       supportedReasoningEfforts: [
         { reasoningEffort: 'low' },

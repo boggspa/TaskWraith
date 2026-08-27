@@ -59,8 +59,8 @@ describe('TaskWraith TUI provider presentation', () => {
   it('uses compact desktop-style labels instead of raw wire ids', () => {
     expect(taskWraithModelLabel('claude', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
-    expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3 (up to 1M)')
-    expect(taskWraithModelLabel('kimi', 'kimi-k3-256k')).toBe('K3 256K')
+    expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3 (1M)')
+    expect(taskWraithModelLabel('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
     expect(taskWraithModelLabel('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')
     expect(taskWraithModelLabel('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
     expect(taskWraithModelLabel('cursor', 'grok-4.6')).toBe('Grok 4.6')

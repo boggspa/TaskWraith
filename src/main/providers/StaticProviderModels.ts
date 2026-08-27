@@ -41,9 +41,11 @@ import {
   KIMI_K3_256K_API_MODEL,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_API_MODEL,
   KIMI_K3_CLI_MODEL,
   KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_API_MODEL,
   KIMI_STANDARD_CLI_MODEL,
@@ -632,7 +634,7 @@ const KIMI_STATIC_MODELS = [
     // on Allegretto+, with model-advertised Low/High/Max effort choices. No
     // Highspeed tier — Fast stays a K2.7 Coding capability.
     id: KIMI_K3_MODEL_ID,
-    label: 'K3 (up to 1M)',
+    label: KIMI_K3_MODEL_LABEL,
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
     ultraTaskSupported: true,
@@ -645,7 +647,7 @@ const KIMI_STATIC_MODELS = [
     // `k3-256k` is a distinct, quota-efficient route for the same K3 model
     // generation. It is regular speed and must never inherit K2.7 Fast.
     id: KIMI_K3_256K_MODEL_ID,
-    label: 'K3 256K',
+    label: KIMI_K3_256K_MODEL_LABEL,
     description:
       "Moonshot's quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking",
     ultraTaskSupported: true,

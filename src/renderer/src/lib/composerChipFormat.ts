@@ -25,7 +25,9 @@ import {
 } from '../../../shared/grok45Models'
 import {
   KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
   isKimiK3Model
 } from '../../../shared/kimiModels'
 import { humaniseModelId } from './modelDisplayName'
@@ -72,7 +74,7 @@ export interface ComposerChipContext {
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
- * Kimi (`kimi-k3`, `kimi-k3-256k`)        → `K3 1M`, `K3 256K`
+ * Kimi (`kimi-k3`, `kimi-k3-256k`)        → `K3 (1M)`, `K3 (256K)`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`grok-4.6`)                      → `Grok 4.6`
  * Grok (`grok-4.6`)                        → `Grok 4.6 Fast` (permanently Fast-mode)
@@ -132,10 +134,10 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Coding. The explicit branch
     // exists because the generic version matcher below would drop " Coding".
     if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Coding'
-    if (id === KIMI_K3_256K_MODEL_ID) return 'K3 256K'
+    if (id === KIMI_K3_256K_MODEL_ID) return KIMI_K3_256K_MODEL_LABEL
     if (id === KIMI_K3_MODEL_ID) {
       if (label.toLowerCase().includes('plan-capped')) return 'K3 256K cap'
-      return label.toLowerCase().includes('1m') ? 'K3 1M' : 'K3'
+      return label.toLowerCase().includes('1m') ? KIMI_K3_MODEL_LABEL : 'K3'
     }
     const match = id.match(/^kimi-(k[\d.]+)/)
     if (match) {

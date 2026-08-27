@@ -92,6 +92,11 @@ describe('HostProviderCatalog', () => {
       'kimi-k3',
       'kimi-k3-256k'
     ])
+    expect(entry!.models.map((model) => model.label)).toEqual([
+      'K2.7 Coding',
+      'K3 (1M)',
+      'K3 (256K)'
+    ])
     for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
       expect(entry!.models.find((model) => model.modelId === modelId)?.reasoning).toEqual([
         { reasoningId: 'low', label: 'Low', available: true },

@@ -58,7 +58,9 @@ import {
 import {
   KIMI_K27_MODEL_ID,
   KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   isKimiK3Model as isSharedKimiK3Model
 } from '../../../shared/kimiModels'
@@ -268,7 +270,7 @@ const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   },
   {
     id: KIMI_K3_MODEL_ID,
-    label: 'K3 (up to 1M)',
+    label: KIMI_K3_MODEL_LABEL,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),
@@ -276,7 +278,7 @@ const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   },
   {
     id: KIMI_K3_256K_MODEL_ID,
-    label: 'K3 256K',
+    label: KIMI_K3_256K_MODEL_LABEL,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),
