@@ -52760,6 +52760,19 @@ if (isGeminiMcpBridgeProcess) {
         rendererResponsivenessTracker.clear(webContentsId)
       })
       window.webContents.on('render-process-gone', (_event, details) => {
+        // A WebContentsView is a separate renderer surface and survives the
+        // parent renderer process that positioned it. React cannot run the
+        // CanvasPane unmount cleanup after a crash, so contain every view owned
+        // by this exact sender before diagnostics or the recovery document can
+        // yield/paint. closeRenderer parks the full cohort synchronously, then
+        // closes the underlying Canvas sessions asynchronously; provider runs
+        // and canvases hosted by other windows remain untouched.
+        void canvasEmbedIpcAuthority.closeRenderer(webContentsId).catch((error) => {
+          console.warn(
+            '[canvas] renderer-loss cleanup failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+        })
         const rendererDiagnostic =
           details.reason !== 'clean-exit'
             ? rendererDiagnosticRecorder.recordWindowLifecycleSample(

@@ -173,6 +173,41 @@ describe('window-all-closed headless continuity', () => {
     expect(handler).not.toContain('approvalService?.cancelAll')
   })
 
+  it('contains only the lost renderer canvas cohort before recovery can paint', () => {
+    const browserWindowLifecycle = sourceBetween(
+      "app.on('browser-window-created', (_, window) => {",
+      '    // Phase E3: Bridge Networking'
+    )
+    const renderGoneHandler = browserWindowLifecycle.indexOf(
+      "window.webContents.on('render-process-gone'"
+    )
+    const closeRenderer = browserWindowLifecycle.indexOf(
+      'canvasEmbedIpcAuthority.closeRenderer(webContentsId)',
+      renderGoneHandler
+    )
+    const terminalDiagnostic = browserWindowLifecycle.indexOf(
+      'rendererDiagnosticRecorder.recordWindowLifecycleSample',
+      renderGoneHandler
+    )
+    const cleanExitReturn = browserWindowLifecycle.indexOf(
+      "if (details.reason === 'clean-exit')",
+      renderGoneHandler
+    )
+    const recoveryShow = browserWindowLifecycle.indexOf(
+      'rendererCrashRecovery.show',
+      renderGoneHandler
+    )
+
+    expect(renderGoneHandler).toBeGreaterThan(0)
+    expect(closeRenderer).toBeGreaterThan(renderGoneHandler)
+    expect(closeRenderer).toBeLessThan(terminalDiagnostic)
+    expect(closeRenderer).toBeLessThan(cleanExitReturn)
+    expect(closeRenderer).toBeLessThan(recoveryShow)
+    expect(browserWindowLifecycle).not.toContain('canvasEmbedIpcAuthority.clear()')
+    expect(browserWindowLifecycle).not.toContain('canvasEmbedController.detachAll()')
+    expect(browserWindowLifecycle).not.toContain('canvasService.closeAll()')
+  })
+
   it('keeps renderer delivery best-effort and makes durable headless sends no-op', () => {
     const headlessSender = sourceBetween(
       'function createHeadlessRunSender(): Electron.WebContents {',
