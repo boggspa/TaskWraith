@@ -2050,6 +2050,243 @@ public final class RemoteSessionModel: ObservableObject {
     /// callers join the in-flight Task. A peer caller that joined a socket
     /// probe which came back alive still upgrades to `checkPeerAlive` (socket
     /// up != Mac awake); a dead socket is enough to skip the 6s peer ping.
+    /// Evidence backing host-liveness (R1). Updated ONLY at the probe choke
+    /// point below, from probes that already run — never from a send timeout,
+    /// and never by initiating a probe of its own. The type and its evidence
+    /// rule live in `HostLivenessPresentation.swift` beside the derivation they
+    /// feed, where they are unit-testable without standing up a session.
+    private var hostLivenessProbeLedger = HostLivenessProbeLedger()
+
+    /// Projected host liveness.
+    ///
+    /// The host-v2 trio (`HostConnectionPhase` / `HostHealthStatus` /
+    /// `HostProjectionFreshness`) is NOT plumbed to this model, so those inputs
+    /// are `nil` and `.live` is UNREACHABLE by construction — a healthy session
+    /// derives `.stale`. Per the recorded honest-subset decision, callers must
+    /// therefore render only `.asleep` and `.unreachable` and must NOT surface a
+    /// live/stale cell, which would tell a healthy user their view is out of
+    /// date. When the trio is plumbed through, pass it here; the derivation
+    /// itself needs no change.
+    public var hostLiveness: HostLiveness? {
+        let now = Date()
+        return HostLiveness.derive(
+            HostLivenessInputs(
+                sessionPhase: phase,
+                transportHealthy: hostLivenessProbeLedger.transportHealthy(at: now),
+                peerAckFailing: hostLivenessProbeLedger.peerAckFailing(at: now)))
+    }
+
+    /// Whether a composer send must be diverted into the offline outbox.
+    ///
+    /// Only the honestly-reachable states divert. `.stale` is the derivation's
+    /// fallback while the trio is unplumbed, so here it means "no evidence
+    /// either way", NOT "the send path is broken" — diverting on it would queue
+    /// sends that would have succeeded, which is its own small dishonesty.
+    public var shouldQueueOutboundSends: Bool {
+        switch hostLiveness {
+        case .asleep, .unreachable: return true
+        case .live, .stale, .none: return false
+        }
+    }
+
+    private var offlineOutboxHostIdentity: String?
+    private var offlineOutboxDrainerStorage: OfflineOutboxDrainer?
+
+    /// The outbox, PARTITIONED BY PAIRED-HOST IDENTITY.
+    ///
+    /// This used to be one global store on the standard defaults suite, which
+    /// was a content-leak risk rather than an untidiness: queued prompts are
+    /// addressed by thread id, thread ids are not unique across Macs, so a
+    /// collision could have delivered one Mac's prompt text into a different
+    /// Mac's thread. Partitioning removes that possibility structurally.
+    ///
+    /// Rebuilt when the pinned identity changes, so a host switch parks the
+    /// previous Mac's prompts in ITS OWN partition rather than carrying them
+    /// over to be refused. **Nothing is deleted on switch** — the old partition
+    /// is still on disk and is re-adopted verbatim if that Mac is paired again.
+    /// Silently dropping prompts the user pressed send on is precisely the loss
+    /// this feature exists to prevent.
+    ///
+    /// Owns the drainer so its single-flight guard is real across calls.
+    private var offlineOutboxDrainer: OfflineOutboxDrainer {
+        // Unpaired gets its own partition rather than sharing a Mac's, so a
+        // prompt typed before pairing can never be delivered against a thread
+        // id that happens to match on the Mac paired afterwards.
+        let identity = pinnedMacIdentityB64 ?? "unpaired"
+        if let existing = offlineOutboxDrainerStorage, offlineOutboxHostIdentity == identity {
+            return existing
+        }
+        let store = OfflineComposerQueueStore(hostIdentity: identity)
+        let drainer = OfflineOutboxDrainer(queue: store.load(), store: store)
+        offlineOutboxDrainerStorage = drainer
+        offlineOutboxHostIdentity = identity
+        return drainer
+    }
+
+    /// Prompts stranded in the pre-partition global outbox. Never adopted (we
+    /// cannot know which Mac they were for) and never deleted. Surfaced so the
+    /// user can be told they exist.
+    public var offlineOutboxLegacyQuarantinedCount: Int {
+        OfflineComposerQueueStore.legacyQuarantinedCount()
+    }
+
+    /// Accept a prompt the user pressed send on while the Mac was not
+    /// answering. The returned outcome is NOT discardable — see the note on
+    /// `OfflineComposerQueue.enqueue`; the caller must render every case.
+    public func enqueueOfflinePrompt(threadId: String, text: String)
+        -> OfflineComposerEnqueueOutcome
+    {
+        offlineOutboxDrainer.enqueue(
+            id: UUID().uuidString, threadId: threadId, text: text, now: Date())
+    }
+
+    /// Surface these rather than letting the user discover the condition when a
+    /// send is refused.
+    public var offlineOutboxIsOverCapacity: Bool { offlineOutboxDrainer.queue.isOverCapacity }
+    public var offlineOutboxOverflowCount: Int { offlineOutboxDrainer.queue.overflowCount }
+    public func offlineOutboxCount(forThread threadId: String) -> Int {
+        offlineOutboxDrainer.queue.count(forThread: threadId)
+    }
+
+    /// Deliver everything the outbox is holding, oldest first.
+    ///
+    /// ## What `.delivered` means here, precisely
+    ///
+    /// It means the prompt was handed to THE SAME send path a live composer send
+    /// uses — not that the agent ran it. That is exactly the promise the outbox
+    /// made ("this sends when your Mac answers"), and no more. If the Mac then
+    /// refuses, the existing action-failure machinery reports it the same way it
+    /// would for a prompt typed while online; the outbox does not claim an
+    /// outcome it cannot observe.
+    ///
+    /// A thread that has vanished from the projection is reported `.rejected`
+    /// rather than delivered — we can know that without asking, and silently
+    /// dropping it would be the loss this whole type prevents.
+    #if DEBUG
+        /// Point the outbox at a scratch defaults suite.
+        ///
+        /// Still needed after per-host partitioning, for a narrower reason:
+        /// unpaired test models all resolve to the same `"unpaired"` partition
+        /// on the standard suite, so without this they would share one outbox.
+        /// The first integration run of this file failed exactly that way,
+        /// with prompts accumulating across tests (7, 8, 6…) — which was a real
+        /// production finding, since it is what led to the partitioning above.
+        func useOfflineOutboxStoreForTesting(_ store: OfflineComposerQueueStore) {
+            offlineOutboxDrainerStorage = OfflineOutboxDrainer(
+                queue: store.load(), store: store)
+            // Pin the identity to whatever is current, so the partitioned
+            // accessor treats the injected store as already-matching and does
+            // not rebuild it out from under the test on first read.
+            offlineOutboxHostIdentity = pinnedMacIdentityB64 ?? "unpaired"
+        }
+
+        /// Test seam replacing the real bridge send, so `flushOfflineOutbox` can
+        /// be driven end to end without a transport.
+        ///
+        /// It exists because of a real defect: the drain's unit tests passed
+        /// against an HONEST stub while the production closure could only ever
+        /// answer `.delivered`. The protocol was tested; the wiring was not.
+        var offlineOutboxSendOverrideForTesting:
+            ((QueuedComposerSend) async -> OfflineOutboxDelivery)?
+    #endif
+
+    public func flushOfflineOutbox() async -> OfflineOutboxDrainReport {
+        await offlineOutboxDrainer.drain { [weak self] entry in
+            guard let self else { return .unreachable }
+            #if DEBUG
+                if let override = self.offlineOutboxSendOverrideForTesting {
+                    return await override(entry)
+                }
+            #endif
+            guard case .connected = self.phase else { return .unreachable }
+            guard let card = self.taskCards.first(where: { $0.id == entry.threadId }) else {
+                return .rejected("that conversation is no longer available")
+            }
+            return await self.deliverQueuedPrompt(entry, card: card)
+        }
+    }
+
+    /// Deliver one queued prompt and WAIT for the Mac's verdict.
+    ///
+    /// The previous version called fire-and-forget `continueTask` and returned
+    /// `.delivered` unconditionally, so the drainer removed the entry BEFORE any
+    /// ack existed. Every later failure — a negative ack, a missing thread, a
+    /// lost transport — landed after the prompt was already deleted, and
+    /// `.rejected`/`.unreachable` were unreachable in production despite being
+    /// covered by tests. Delivery is now judged BY THE ACK, which is the same
+    /// doctrine `steerSoloLive` already documents.
+    ///
+    /// The three pre-checks are load-bearing, not defensive noise: they are
+    /// exactly the `continueTask` early returns that fire NEITHER callback, and
+    /// suspending on a continuation those paths can reach would wedge the drain
+    /// permanently. Keep them in sync if that method grows another early exit.
+    private func deliverQueuedPrompt(_ entry: QueuedComposerSend, card: RemoteTaskCard)
+        async -> OfflineOutboxDelivery
+    {
+        if isDemo { return .rejected("demo mode does not send to a Mac") }
+        guard card.threadId != nil else {
+            return .rejected("that conversation is no longer available")
+        }
+        // Ensemble cards route without a provider — `continueTask` only demands
+        // one on the non-ensemble branch, so demanding it here would refuse
+        // sends the app would otherwise have made.
+        if !card.isEnsemble, card.provider?.isEmpty != false {
+            return .rejected("that conversation has no provider selected")
+        }
+
+        return await withCheckedContinuation { continuation in
+            var settled = false
+            let settle: (OfflineOutboxDelivery) -> Void = { value in
+                guard !settled else { return }
+                settled = true
+                continuation.resume(returning: value)
+            }
+            // ONE callback. The previous version listened to `onActionUnsent`
+            // AND `onActionAck` and tried to compose them; that could not work,
+            // because one route fired neither on success and the other fired
+            // them in an order that hid `.unreachable`. Classification now
+            // happens where the outcome is known, not here.
+            continueTask(
+                card, prompt: entry.text,
+                navigateOnAck: false,
+                onActionDeliveryVerdict: { verdict in settle(verdict) })
+        }
+    }
+
+    /// Drain hook for `applySessionEstablished`. Fire-and-forget, but the report
+    /// is CONSUMED rather than discarded — a drain nobody hears about would be
+    /// the same silent handling this feature exists to remove.
+    private func scheduleOfflineOutboxFlush() {
+        Task { [weak self] in
+            guard let self else { return }
+            let report = await self.flushOfflineOutbox()
+            guard !report.isEmpty else { return }
+            // Every bucket is surfaced, including DEFERRED. Reporting only
+            // delivery and rejection left a mixed drain partly silent — the
+            // user would be told two prompts sent and never learn three more
+            // are still waiting.
+            var parts: [String] = []
+            if !report.delivered.isEmpty { parts.append("sent \(report.delivered.count)") }
+            if let rejection = report.rejected.first {
+                parts.append("\(report.rejected.count) refused (\(rejection.reason))")
+            }
+            if !report.deferred.isEmpty {
+                parts.append("\(report.deferred.count) still waiting")
+            }
+            guard !parts.isEmpty else { return }
+            self.lastActionMessage =
+                "Prompts saved while your Mac wasn't answering — "
+                + parts.joined(separator: ", ") + "."
+        }
+    }
+
+    /// Surface an offline-outbox outcome through the existing action toast.
+    /// A method rather than an exposed stored property, so the composer cannot
+    /// accidentally clobber unrelated action copy.
+    public func reportOfflineOutboxOutcome(_ message: String) {
+        lastActionMessage = message
+    }
+
     private func probeConnectedHealth(peer: Bool) async -> (alive: Bool, peer: Bool) {
         if let existing = socketHealthTask {
             let result = await existing.value
@@ -2101,6 +2338,11 @@ public final class RemoteSessionModel: ObservableObject {
         if socketHealthProbeGeneration == generation {
             socketHealthTask = nil
         }
+        // R1: the ONLY place host-liveness evidence is gathered. Both probe
+        // kinds funnel through here, so recording the outcome costs nothing and
+        // adds no traffic. Wiring this to a send timeout instead would make
+        // `.asleep` a guess again — see the ledger's evidence rule.
+        hostLivenessProbeLedger.record(alive: result.alive, peer: result.peer, at: Date())
         return result
     }
 
@@ -3369,6 +3611,10 @@ public final class RemoteSessionModel: ObservableObject {
         wasEverConnected = true
         persistWasEverConnectedFlag()
         persistCurrentPairing()
+        // Item 1: the outbox promised these would send "when your Mac answers".
+        // This is that moment. Single-flight inside the drainer, so a reconnect
+        // storm cannot double-send.
+        scheduleOfflineOutboxFlush()
         // Cold-launch deep link: a notification tap set a target before the
         // session existed — apply it now that ConnectedShell will render.
         if let pending = pendingDeepLinkThreadId {
@@ -7963,7 +8209,22 @@ public final class RemoteSessionModel: ObservableObject {
         extraWorkspaceIds: [String]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         navigateOnAck: Bool = true,
-        onActionUnsent: (() -> Void)? = nil
+        onActionUnsent: (() -> Void)? = nil,
+        /// ONE typed terminal verdict, fired EXACTLY ONCE on EVERY route —
+        /// including the hostProjection accepted-success path.
+        ///
+        /// This replaces an earlier `onActionAck: ((Bool) -> Void)` that was
+        /// wrong twice over. The hostProjection route fired NOTHING on accepted
+        /// success, so an awaiting caller hung forever; and on the bridge route
+        /// `send` emits its failure callbacks in a fixed order that hides
+        /// `.unreachable` behind `.rejected`. A Bool could not carry the
+        /// distinction and a pair of callbacks could not be ordered safely, so
+        /// there is now exactly one callback carrying a classified outcome.
+        ///
+        /// STILL callback-free — pre-check before suspending on this:
+        /// `isDemo`, a missing `threadId`, and (non-ensemble cards only) a
+        /// missing `provider`. See `deliverQueuedPrompt`.
+        onActionDeliveryVerdict: ((OfflineOutboxDelivery) -> Void)? = nil
     ) {
         if isDemo {
             appendDemoTurn(card: card, prompt: prompt)
@@ -8005,9 +8266,15 @@ public final class RemoteSessionModel: ObservableObject {
                         for: receipt,
                         success: card.isEnsemble ? "Sent to ensemble." : "Sent.")
                     guard PairedHostActionRouting.acceptedForProcessing(receipt) else {
+                        onActionDeliveryVerdict?(.rejected("your Mac did not accept it"))
                         onActionUnsent?()
                         return
                     }
+                    // Accepted for processing IS delivery on this route. Fired
+                    // here, before any further work, because this success path
+                    // previously emitted NO callback at all — an awaiting
+                    // caller suspended on it hung forever on a SUCCESSFUL send.
+                    onActionDeliveryVerdict?(.delivered)
                     if navigateOnAck { self.navigationTarget = thread }
                     if receipt.status == .succeeded {
                         self.hideRunSummaryFingerprintsForNextTurn(
@@ -8019,6 +8286,9 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 } catch {
                     self.lastActionMessage = error.localizedDescription
+                    // We never obtained a verdict from the Mac, so this is
+                    // "could not ask", not "was refused".
+                    onActionDeliveryVerdict?(.unreachable)
                     onActionUnsent?()
                 }
             }
@@ -8033,6 +8303,7 @@ public final class RemoteSessionModel: ObservableObject {
                 successLabel: "Sent to ensemble.",
                 navigateOnAck: navigateOnAck,
                 onUnsent: onActionUnsent,
+                onDeliveryVerdict: onActionDeliveryVerdict,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -8057,6 +8328,7 @@ public final class RemoteSessionModel: ObservableObject {
                 successLabel: "Sent.",
                 navigateOnAck: navigateOnAck,
                 onUnsent: onActionUnsent,
+                onDeliveryVerdict: onActionDeliveryVerdict,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -8190,6 +8462,20 @@ public final class RemoteSessionModel: ObservableObject {
         skipPeerPreflight: Bool = false,
         onThreadCreated: ((String?) -> Void)? = nil,
         onUnsent: (() -> Void)? = nil,
+        /// ONE typed terminal verdict, fired EXACTLY ONCE per send, classified
+        /// here where the outcome is actually known.
+        ///
+        /// The legacy trio below cannot be composed into a verdict by a caller:
+        /// on `hostUnavailable` this method fires `onAck(false)` BEFORE
+        /// `onUnsent`, so a one-shot listener records "declined" and never sees
+        /// "unreachable" — and some routes fire NO callback at all on success.
+        /// Anything that must distinguish refused-by-the-Mac from
+        /// could-not-reach-the-Mac uses this, never the trio.
+        ///
+        /// Declared ahead of the trio deliberately: Swift enforces call-site
+        /// argument order, so this keeps the verdict visible at the top of a
+        /// call rather than buried after a multi-line `onAck` closure.
+        onDeliveryVerdict: ((OfflineOutboxDelivery) -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil,
         onAckResult: ((Bool, AckResult?) -> Void)? = nil
     ) {
@@ -8210,6 +8496,8 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                     onAck?(accepted)
                     onAckResult?(accepted, ack)
+                    onDeliveryVerdict?(
+                        accepted ? .delivered : .rejected("your Mac declined it"))
                     // Connection-aware copy. A request ack can time out even while the
                     // session is fully ESTABLISHED — a momentarily slow Mac, a heavy op
                     // right after connect, or a dropped ack on a live socket. The Mac is
@@ -8235,6 +8523,16 @@ public final class RemoteSessionModel: ObservableObject {
                 await MainActor.run {
                     onAck?(false)
                     onAckResult?(false, nil)
+                    // Classified HERE, where the error is in scope. This is the
+                    // ordering bug's fix: the two lines above and the
+                    // `onUnsent` below fire in a fixed sequence that made
+                    // `.unreachable` unobservable to a one-shot listener.
+                    var verdictIsUnreachable = false
+                    if case TransportError.hostUnavailable = error { verdictIsUnreachable = true }
+                    onDeliveryVerdict?(
+                        verdictIsUnreachable
+                            ? .unreachable
+                            : .rejected(Self.actionFailureMessage(error, phase: self.phase)))
                     // Only restore composer content when peer preflight proves
                     // the app action was never transmitted. An ack timeout is
                     // ambiguous (the run may have started), so never invite a
