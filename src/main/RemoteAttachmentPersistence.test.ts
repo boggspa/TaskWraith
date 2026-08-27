@@ -197,10 +197,10 @@ describe('persistRemoteImageAttachments', () => {
       primitives: [
         {
           type: 'stroke',
-          points: Array.from(
-            { length: MAX_REMOTE_IMAGE_MARKUP_POINTS_PER_STROKE + 1 },
-            () => ({ x: 0.1, y: 0.1 })
-          ),
+          points: Array.from({ length: MAX_REMOTE_IMAGE_MARKUP_POINTS_PER_STROKE + 1 }, () => ({
+            x: 0.1,
+            y: 0.1
+          })),
           color: { r: 1, g: 0, b: 0, a: 1 },
           thickness: 2
         }
