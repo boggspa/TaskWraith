@@ -22,7 +22,8 @@ import {
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
   buildRemoteTaskFeedSnapshot,
-  projectChatKind
+  projectChatKind,
+  projectCreateSubThreadCapability
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
@@ -2045,5 +2046,69 @@ describe('buildRemoteEnsembleState — fan-out policy follows the round only whi
     expect(buildRemoteEnsembleState(policyChat(undefined))?.fanoutPolicy).toBe(
       'locked_writers_with_boss'
     )
+  })
+})
+
+describe('projectCreateSubThreadCapability', () => {
+  const spawnFn = async () => ({ ok: true })
+  const requiredCaps = {
+    monitor: true,
+    approve: true,
+    answer: true,
+    cancel: true,
+    startTurn: true,
+    diffReview: true,
+    steer: true
+  }
+
+  it('is true when a function is injected AND the workspace has startTurn', () => {
+    expect(projectCreateSubThreadCapability(spawnFn, true)).toBe(true)
+    expect(projectCreateSubThreadCapability(() => ({ ok: true }), true)).toBe(true)
+  })
+
+  it('is false when a function is injected but the workspace has no startTurn', () => {
+    expect(projectCreateSubThreadCapability(spawnFn, false)).toBe(false)
+    expect(projectCreateSubThreadCapability(spawnFn)).toBe(false)
+    expect(projectCreateSubThreadCapability(spawnFn, undefined)).toBe(false)
+    // A startTurn function is the dishonest fallback: router existence is not success.
+    expect(projectCreateSubThreadCapability(spawnFn, () => undefined)).toBe(false)
+  })
+
+  it('is false when the callback is absent or not a function', () => {
+    expect(projectCreateSubThreadCapability(undefined, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(null, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(true, true)).toBe(false)
+    expect(projectCreateSubThreadCapability({}, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(undefined)).toBe(false)
+  })
+
+  it('reaches the phone as the card capability bit, omitted when unwired', () => {
+    const wired = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        createSubThread: projectCreateSubThreadCapability(spawnFn, true)
+      }
+    })
+    expect(wired.capabilities?.createSubThread).toBe(true)
+
+    const noStartTurn = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        startTurn: false,
+        createSubThread: projectCreateSubThreadCapability(spawnFn, false)
+      }
+    })
+    expect(noStartTurn.capabilities?.createSubThread).toBe(false)
+
+    const unwired = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        createSubThread: projectCreateSubThreadCapability(undefined, true)
+      }
+    })
+    expect(unwired.capabilities?.createSubThread).toBe(false)
+
+    const absent = buildRemoteTaskCard(chat(), { capabilities: requiredCaps })
+    expect(absent.capabilities?.createSubThread).toBeUndefined()
   })
 })

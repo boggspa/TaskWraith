@@ -415,12 +415,26 @@ export interface RemoteTaskCapabilities {
   pin?: boolean
   yolo?: boolean
   deleteMessage?: boolean
+  /** True only when spawn will succeed: injected `createSubThreadFn` AND workspace `startTurn`. */
+  createSubThread?: boolean
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean
   cancelWakeup?: boolean
   queuePrompt?: boolean
   queueLimit?: number
+}
+
+/**
+ * Phone Spawn is gated on this bit.
+ * A capability bit must answer "will this succeed", not "does a function exist".
+ * The phone cannot detect the difference, so the host must not advertise more than it will honour.
+ */
+export function projectCreateSubThreadCapability(
+  createSubThreadFn: unknown,
+  startTurn: unknown = false
+): boolean {
+  return typeof createSubThreadFn === 'function' && startTurn === true
 }
 
 export interface RemoteTaskFeedSnapshot {
