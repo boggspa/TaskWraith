@@ -47,6 +47,7 @@ import type {
   BridgeEnsembleSettingsUpdateAction,
   BridgeEnsembleQueueItemAction,
   BridgeCreateSideChatAction,
+  BridgeCreateSubThreadAction,
   BridgeSetThreadNotesAction,
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
@@ -243,6 +244,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeCreateSideChat(
     action: BridgeCreateSideChatAction
+  ): Promise<BridgeActionExecutionResult>
+  executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
   ): Promise<BridgeActionExecutionResult>
   executeSetThreadNotes(action: BridgeSetThreadNotesAction): Promise<BridgeActionExecutionResult>
   executeSetThreadTitle(action: BridgeSetThreadTitleAction): Promise<BridgeActionExecutionResult>
@@ -560,6 +564,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeCreateSideChatAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('createSideChat', action.threadId)
+  }
+  async executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('createSubThread', action.threadId)
   }
   async executeSetThreadNotes(
     action: BridgeSetThreadNotesAction
@@ -1076,6 +1085,8 @@ export interface MainProcessActionExecutorDependencies {
   ensembleSettingsUpdateFn?: (action: BridgeEnsembleSettingsUpdateAction) => Promise<unknown>
   ensembleQueueItemFn?: (action: BridgeEnsembleQueueItemAction) => Promise<unknown>
   createSideChatFn?: (action: BridgeCreateSideChatAction) => Promise<unknown>
+  /** The host must validate this provider proposal against live admission. */
+  createSubThreadFn?: (action: BridgeCreateSubThreadAction) => Promise<unknown>
   setThreadNotesFn?: (action: BridgeSetThreadNotesAction) => Promise<unknown>
   setThreadTitleFn?: (action: BridgeSetThreadTitleAction) => Promise<unknown>
   setChatKindFn?: (action: BridgeSetChatKindAction) => Promise<unknown>
@@ -2263,6 +2274,17 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'createSideChat',
       action.threadId,
       this.deps.createSideChatFn,
+      action
+    )
+  }
+
+  async executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.executeEnsembleAction(
+      'createSubThread',
+      action.threadId,
+      this.deps.createSubThreadFn,
       action
     )
   }

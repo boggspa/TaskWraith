@@ -46,6 +46,7 @@ import type {
   BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
+  BridgeCreateSubThreadAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
   BridgeSetChatArchivedAction,
@@ -251,6 +252,14 @@ const sample = {
     canvasId: 'cv1',
     action: 'close'
   } satisfies BridgeCanvasActionAction,
+  createSubThread: {
+    kind: 'createSubThread',
+    workspaceId: 'ws-1',
+    threadId: 'parent-1',
+    provider: 'codex',
+    prompt: 'Review the failing test.',
+    returnResult: true
+  } satisfies BridgeCreateSubThreadAction,
   togglePinChat: {
     kind: 'togglePinChat',
     workspaceId: 'ws-1',
@@ -1225,6 +1234,38 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeEnsembleSettingsUpdate(sample.ensembleSettingsUpdate)
     expect(result.executed).toBe(false)
     expect(result.message).toContain('Thread is not an Ensemble chat')
+  })
+
+  it('spawns a sub-thread through createSubThreadFn', async () => {
+    const createSubThreadFn = vi.fn().mockResolvedValue({ ok: true, threadId: 'child-1' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, createSubThreadFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(createSubThreadFn).toHaveBeenCalledWith(sample.createSubThread)
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        actionKind: 'createSubThread',
+        result: { ok: true, threadId: 'child-1' }
+      }
+    })
+  })
+
+  it('surfaces createSubThreadFn errors', async () => {
+    const createSubThreadFn = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Cannot create sub-thread: parent is itself a sub-thread (max depth 1 in v1)'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, createSubThreadFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('max depth 1')
+  })
+
+  it('reports createSubThread not wired when no createSubThreadFn is supplied', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
   })
 
   it('reports canvasAction not wired when no canvasActionFn is supplied', async () => {

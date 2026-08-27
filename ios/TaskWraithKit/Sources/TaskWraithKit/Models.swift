@@ -3452,6 +3452,27 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Requests a fresh, context-isolated sub-thread below parentThreadId.
+    /// The provider is only a proposal from the phone: the Mac validates live
+    /// admission, credentials and delegation policy before it creates a child.
+    /// Pass 2 owns the sheet and action-ack integration; this builder keeps the
+    /// wire contract explicit and sends no provider-native command itself.
+    public static func createSubThread(
+        workspaceId: String,
+        parentThreadId: String,
+        provider: String,
+        prompt: String,
+        returnResult: Bool = true,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "createSubThread", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": parentThreadId,
+            "provider": provider, "prompt": prompt,
+            "returnResult": returnResult,
+        ])
+    }
+
     /// First-thread workspace consent. The Mac accepts this only from the
     /// authenticated pair and resolves `workspaceId` against its own registry.
     public static func setRemoteWorkspaceAccess(

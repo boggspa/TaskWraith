@@ -47,6 +47,7 @@ import {
   isReservedBranchName,
   isReservedWorktreeName
 } from '../shared/worktreeNamespace'
+import { isEnsembleSeatProvider } from '../shared/retiredProviders'
 
 /** Wire mirror of the store's `AgentApprovalAction` — kept literal (this
  * module deliberately avoids store imports) with a lockstep test in
@@ -83,6 +84,10 @@ export interface BridgeActionMetadata {
 
 const BRIDGE_QUESTION_ANSWER_MAX_CHARS = 8000
 const BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS = 1000
+/** Phone-originated sub-thread prompts remain below the worker-control cap.
+ * The host applies its own admission, permission and delegation budgets before
+ * a child is created. */
+export const BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS = 20_000
 const BRIDGE_QUESTION_RECEIPT_ID_MAX_CHARS = 512
 const BRIDGE_THREAD_ROW_ID_MAX_CHARS = 4096
 /** Matches MAX_THREAD_MESSAGE_CHARS so the phone cannot post a body the desktop
@@ -995,6 +1000,27 @@ export interface BridgeCreateSideChatAction extends BridgeActionMetadata {
   mode?: 'singleProvider' | 'ensembleClone' | 'fanOut'
 }
 
+/**
+ * Spawn one fresh, context-isolated child under an existing parent thread.
+ *
+ * provider is a phone proposal, not authority. The wire decoder admits only
+ * known seat-provider identifiers, and the Mac MUST revalidate the proposal
+ * against current provider admission, credentials, and delegation policy before
+ * it creates a run. This action is intentionally spawn-only: a later recall
+ * surface must use a distinct action rather than letting a phone supply an
+ * arbitrary existing child id.
+ */
+export interface BridgeCreateSubThreadAction extends BridgeActionMetadata {
+  kind: 'createSubThread'
+  workspaceId: string
+  /** Parent thread the new child belongs to. */
+  threadId: string
+  provider: string
+  prompt: string
+  /** Persist the terminal child result back into the parent mailbox. */
+  returnResult?: boolean
+}
+
 export interface BridgeEnsembleQueueItemAction extends BridgeActionMetadata {
   kind: 'ensembleQueueItem'
   workspaceId: string
@@ -1184,6 +1210,7 @@ export type BridgeActionPayload =
   | BridgeEnsembleSettingsUpdateAction
   | BridgeEnsembleQueueItemAction
   | BridgeCreateSideChatAction
+  | BridgeCreateSubThreadAction
   | BridgeSetThreadNotesAction
   | BridgeSetThreadTitleAction
   | BridgeSetChatKindAction
@@ -1340,6 +1367,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1441,6 +1469,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1542,6 +1571,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1812,6 +1842,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isCreateSideChat(parsed)
         ? (parsed as unknown as BridgeCreateSideChatAction)
         : { kind: 'unknown', rawKind: 'createSideChat', raw: parsed }
+    case 'createSubThread':
+      return isCreateSubThread(parsed)
+        ? (parsed as unknown as BridgeCreateSubThreadAction)
+        : { kind: 'unknown', rawKind: 'createSubThread', raw: parsed }
     case 'setThreadNotes':
       return isSetThreadNotes(parsed)
         ? (parsed as unknown as BridgeSetThreadNotesAction)
@@ -2802,6 +2836,18 @@ function isCreateSideChat(v: Record<string, unknown>): boolean {
   )
 }
 
+function isCreateSubThread(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.provider === 'string' &&
+    isEnsembleSeatProvider(v.provider) &&
+    typeof v.prompt === 'string' &&
+    v.prompt.trim().length > 0 &&
+    v.prompt.length <= BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS &&
+    v.subThreadId === undefined &&
+    (v.returnResult === undefined || typeof v.returnResult === 'boolean')
+  )
+}
 function isEnsembleQueueItem(v: Record<string, unknown>): boolean {
   return (
     isWorkspaceThreadAction(v) &&

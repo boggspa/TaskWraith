@@ -9,6 +9,7 @@ import {
   expiresAtFromPayload,
   payloadIsMutating,
   payloadRequiresWorkspaceGating,
+  BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS,
   workspaceIdFromPayload,
   type BridgeActionPayload,
   type BridgeApprovalDecision
@@ -1170,6 +1171,93 @@ describe('decodeBridgeActionPayload', () => {
           })
         ).payload
       ).toMatchObject({ kind: 'unknown', rawKind: 'githubCreatePr' })
+    })
+
+    it('decodes createSubThread and rejects recall, retired, empty, and oversized prompts', () => {
+      const spawn = decodeBridgeActionPayload(
+        encode({
+          kind: 'createSubThread',
+          actionId: 'sub-1',
+          workspaceId: 'ws-1',
+          threadId: 'parent-1',
+          provider: 'codex',
+          prompt: 'Review the failing test.',
+          returnResult: true
+        })
+      ).payload
+      expect(spawn.kind).toBe('createSubThread')
+      expect(spawn).toMatchObject({
+        threadId: 'parent-1',
+        provider: 'codex',
+        prompt: 'Review the failing test.',
+        returnResult: true
+      })
+      expect(payloadIsMutating(spawn)).toBe(true)
+      expect(payloadRequiresWorkspaceGating(spawn)).toBe(true)
+      expect(workspaceIdFromPayload(spawn)).toBe('ws-1')
+
+      // Known seat provider that is not in the static live set is still
+      // admitted on the wire; the host revalidates live admission.
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'antigravity',
+            prompt: 'Investigate the crash.'
+          })
+        ).payload.kind
+      ).toBe('createSubThread')
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'gemini',
+            prompt: 'Should not spawn.'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: '   '
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: 'x'.repeat(BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS + 1)
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: 'Continue the child.',
+            subThreadId: 'child-1'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
     })
 
     it('rejects malformed workspace file writes', () => {
@@ -2828,7 +2916,14 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'ensembleWakeNow', workspaceId: 'w', threadId: 't', wakeupId: 'wakeup' },
       { kind: 'ensembleCancelWakeup', workspaceId: 'w', threadId: 't', wakeupId: 'wakeup' },
       { kind: 'ensembleQueuePrompt', workspaceId: 'w', threadId: 't', text: 'queue' },
-      { kind: 'ensembleSteer', workspaceId: 'w', threadId: 't', text: 'steer' }
+      { kind: 'ensembleSteer', workspaceId: 'w', threadId: 't', text: 'steer' },
+      {
+        kind: 'createSubThread',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'codex',
+        prompt: 'spawn'
+      }
     ]
     for (const v of variants) {
       expect(payloadRequiresWorkspaceGating(v)).toBe(true)
