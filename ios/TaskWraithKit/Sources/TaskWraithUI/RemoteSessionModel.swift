@@ -1353,6 +1353,13 @@ public final class RemoteSessionModel: ObservableObject {
     // new route (the tunnel, a Wi-Fi join) appears.
 
     private var autoReconnectTask: Task<Void, Never>?
+    private var delayedSocketClosedReconnectTask: Task<Void, Never>?
+    private var socketClosedRedialDelayMs: Int {
+        #if DEBUG
+            if let override = socketClosedRedialDelayMsForTesting { return override }
+        #endif
+        return 1_200
+    }
     /// Shared in-flight health probe. `handleRemoteWake`, `verifyConnectedSocket`,
     /// and `requestActionAckWithWake` join this Task instead of stacking a 2.5s
     /// relay ping on top of a 6s encrypted peer ping.
@@ -1378,6 +1385,12 @@ public final class RemoteSessionModel: ObservableObject {
             get { autoReconnectAttempt }
             set { autoReconnectAttempt = newValue }
         }
+
+        /// In-flight flag the disconnect-invalidation regression pins.
+        var reconnectCoordinatorInFlightForTesting: Bool { reconnectCoordinator.inFlight }
+
+        /// Shrink the `handleSocketClosed` 1.2s delayed redial in tests.
+        var socketClosedRedialDelayMsForTesting: Int?
     #endif
 
     private func startPathMonitor() {
@@ -1434,6 +1447,11 @@ public final class RemoteSessionModel: ObservableObject {
     private func cancelSocketHealthCheck() {
         socketHealthTask?.cancel()
         socketHealthTask = nil
+    }
+
+    private func cancelDelayedSocketClosedReconnect() {
+        delayedSocketClosedReconnectTask?.cancel()
+        delayedSocketClosedReconnectTask = nil
     }
 
     private func prepareHostProjectionOffline(hostIdentity: String) {
@@ -2206,7 +2224,13 @@ public final class RemoteSessionModel: ObservableObject {
     public func disconnect() {
         cancelAutoReconnect(resetAttempts: true)
         cancelSocketHealthCheck()
+        cancelDelayedSocketClosedReconnect()
         trustedReconnectAttempt = nil
+        // Invalidate in-flight `reconnectTrusted` walks (they key off this
+        // generation) and drop coordinator bookkeeping so a later genuine wake
+        // is `.start`, not `.supersede` against a ghost flight.
+        connectAttempt += 1
+        reconnectCoordinator.invalidate()
         teardown()
         phase = .idle
         taskCards = []
@@ -3172,12 +3196,26 @@ public final class RemoteSessionModel: ObservableObject {
         // Intentional teardown nils the client BEFORE closing — ignore.
         guard client != nil else { return }
         hostProjection.markTransportClosed()
+        scheduleReconnectAfterUnexpectedClose()
+    }
+
+    /// Delay then `reconnectIfStale()`. Stored so `disconnect()` / demo / host-switch
+    /// can cancel it; the captured `connectAttempt` is a second guard if cancel
+    /// loses a race with the sleep finishing.
+    private func scheduleReconnectAfterUnexpectedClose() {
         guard case .connected = phase else { return }
         if hasStoredPairing {
             phase = .error("Connection lost — reconnecting…")
-            Task { [weak self] in
-                await TWRetryDelay.sleep(milliseconds: 1_200)
-                await MainActor.run { self?.reconnectIfStale() }
+            let attempt = connectAttempt
+            cancelDelayedSocketClosedReconnect()
+            let delayMs = UInt64(socketClosedRedialDelayMs)
+            delayedSocketClosedReconnectTask = Task { [weak self] in
+                await TWRetryDelay.sleep(milliseconds: delayMs)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.connectAttempt == attempt, !self.isDemo else { return }
+                    self.reconnectIfStale()
+                }
             }
         } else {
             phase = .error("Connection lost.")
@@ -7066,6 +7104,29 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// iOS grants ~30s of background execution for a notification action.
+    /// Leave a 2s margin for process overhead around the 28s working budget.
+    nonisolated public static let notificationApprovalBackgroundBudgetMs = 28_000
+    nonisolated public static let notificationApprovalDefaultAckTimeoutMs = 7_000
+    nonisolated public static let notificationApprovalMinAckTimeoutMs = 1_000
+    /// `RelayTransportClient.checkPeerAlive` default wait. Stacking this after
+    /// a 22s wake plus a 7s ack blows the background window.
+    nonisolated public static let notificationApprovalPeerPreflightMs = 6_000
+
+    /// Remaining ack timeout inside the notification-action background budget.
+    /// `nil` means abort — there is not enough time to send a bounded ack.
+    nonisolated public static func remainingNotificationApprovalAckTimeoutMs(
+        elapsedMs: Int,
+        budgetMs: Int = notificationApprovalBackgroundBudgetMs,
+        peerPreflightMs: Int = 0,
+        maxAckMs: Int = notificationApprovalDefaultAckTimeoutMs,
+        minAckMs: Int = notificationApprovalMinAckTimeoutMs
+    ) -> Int? {
+        let remaining = budgetMs - elapsedMs - peerPreflightMs
+        guard remaining >= minAckMs else { return nil }
+        return min(maxAckMs, remaining)
+    }
+
     /// Lock-screen Approve/Deny: resolve an approval from a notification action
     /// in the background with NO MobileApprovalCard present (a cold-launched
     /// process has no hydrated cards). Reconnects the E2EE bridge first and only
@@ -7083,7 +7144,19 @@ public final class RemoteSessionModel: ObservableObject {
         // (acceptForSession/Workspace, cancel) stay in-app where the command
         // text is visible.
         guard decision == "accept" || decision == "decline" else { return false }
-        let connected = await handleRemoteWake(reason: "notification-action", timeoutMs: timeoutMs)
+        let started = Date()
+        // Cap the wake so wake + default ack cannot exceed the background budget
+        // even when the Mac is slow; remaining time after the actual elapsed wake
+        // is computed below.
+        let wakeCap = max(
+            0,
+            Self.notificationApprovalBackgroundBudgetMs
+                - Self.notificationApprovalDefaultAckTimeoutMs)
+        let connected = await handleRemoteWake(
+            reason: "notification-action", timeoutMs: min(timeoutMs, wakeCap))
+        let elapsedMs = max(0, Int((Date().timeIntervalSince(started) * 1000).rounded(.up)))
+        guard let ackTimeout = Self.remainingNotificationApprovalAckTimeoutMs(elapsedMs: elapsedMs)
+        else { return false }
         guard connected, case .connected = phase, client != nil else { return false }
         guard let context = replyContext(workspaceId: workspaceId, threadId: threadId, runId: nil)
         else { return false }
@@ -7107,16 +7180,17 @@ public final class RemoteSessionModel: ObservableObject {
                 return false
             }
         }
-        // Bound the ack request so reconnect (≤timeoutMs) + ack stays within the
-        // OS background-execution budget.
+        // Bound the ack to remaining budget. Skip the 6s peer preflight — the wake
+        // already joined the shared health probe.
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             send(
                 BridgeAction.approvalReply(
                     toolCallId: toolCallId, decision: decision,
                     workspaceId: context.workspaceId, threadId: context.threadId),
-                timeoutMs: 7_000,
+                timeoutMs: ackTimeout,
                 successLabel: label,
                 navigateToThreadId: context.threadId,
+                skipPeerPreflight: true,
                 onAck: { accepted in continuation.resume(returning: accepted) })
         }
     }
@@ -7171,6 +7245,10 @@ public final class RemoteSessionModel: ObservableObject {
         func markJustEstablishedForTesting(at now: Date = Date()) {
             phase = .connected
             reconnectCoordinator.markAttemptFinished(at: now)
+        }
+        /// Fire the delayed-redial path without a live transport client.
+        func simulateUnexpectedSocketCloseForTesting() {
+            scheduleReconnectAfterUnexpectedClose()
         }
         private(set) var socketHealthProbeStartsForTesting = 0
         var healthProbeOverrideForTesting: (@Sendable () async -> Bool)?
@@ -7914,13 +7992,27 @@ public final class RemoteSessionModel: ObservableObject {
     /// not been sent when `hostUnavailable` is thrown, so this one retry cannot
     /// duplicate a mutation.
     private func requestActionAckWithWake(
-        _ params: [String: Any], timeoutMs: Int, announceWake: Bool = true
+        _ params: [String: Any], timeoutMs: Int, announceWake: Bool = true,
+        skipPeerPreflight: Bool = false
     ) async throws -> AckResult {
         // `[String: Any]` is not Sendable. Freeze it to immutable bytes before
         // crossing from MainActor to the transport actor; the same bytes are
         // safe to reuse only because a host-unavailable preflight sends no
         // application action.
         let paramsData = try JSONSerialization.data(withJSONObject: params)
+        if skipPeerPreflight {
+            // Already proved alive on the notification-approval wake path.
+            // Do not spend another 6s peer ping or a 12s recover wait — that is
+            // what blew the ~30s background window.
+            guard case .connected = phase, let activeClient = client else {
+                throw TransportError.hostUnavailable
+            }
+            return try await activeClient.requestSerialized(
+                "bridge.requestActionAck",
+                paramsData: paramsData,
+                timeoutMs: timeoutMs,
+                skipPeerPreflight: true)
+        }
         if case .connected = phase, let activeClient = client {
             // Join any in-flight wake/foreground probe so a 6s encrypted peer
             // ping does not stack on a 2.5s relay ping. A dead shared probe
@@ -8009,6 +8101,7 @@ public final class RemoteSessionModel: ObservableObject {
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
         silent: Bool = false,
+        skipPeerPreflight: Bool = false,
         onThreadCreated: ((String?) -> Void)? = nil,
         onUnsent: (() -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil,
@@ -8018,7 +8111,8 @@ public final class RemoteSessionModel: ObservableObject {
         Task {
             do {
                 let ack = try await self.requestActionAckWithWake(
-                    params, timeoutMs: timeoutMs, announceWake: !silent)
+                    params, timeoutMs: timeoutMs, announceWake: !silent,
+                    skipPeerPreflight: skipPeerPreflight)
                 await MainActor.run {
                     let accepted = Self.actionAckSucceeded(ack)
                     let threadId = accepted ? (Self.threadId(from: ack) ?? navigateToThreadId) : nil

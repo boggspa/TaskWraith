@@ -214,6 +214,22 @@ struct ReconnectCoordinatorTests {
                 == .start)
     }
 
+    @Test("invalidate drops in-flight bookkeeping so a later idle wake starts")
+    func invalidateClearsInFlight() {
+        var coord = ReconnectCoordinator()
+        #expect(coord.evaluate(reason: .apns, phase: .idle, now: t0) == .start)
+        coord.markAttemptStarted(at: t0)
+        coord.invalidate()
+        #expect(!coord.inFlight)
+        #expect(coord.attemptStartedAt == nil)
+        #expect(coord.lastEstablishedAt == nil)
+        #expect(coord.lastAttemptFailedAt == nil)
+        #expect(coord.pendingReasons.isEmpty)
+        #expect(
+            coord.evaluate(reason: .resume, phase: .idle, now: t0.addingTimeInterval(0.1))
+                == .start)
+    }
+
     @Test("thrash matrix: three wakes in 200ms yield one start")
     func thrashMatrixOneAttempt() {
         var coord = ReconnectCoordinator()

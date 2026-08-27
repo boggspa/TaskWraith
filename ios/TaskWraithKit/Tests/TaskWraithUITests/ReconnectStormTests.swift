@@ -463,3 +463,143 @@ struct ReconnectStormPostEstablishTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// Round 5 (2026-08-27): explicit disconnect / demo / host-switch must invalidate
+/// an in-flight trusted walk and the 1.2s `handleSocketClosed` redial, and the
+/// lock-screen approval path must fit the ~30s iOS background window.
+@Suite("Reconnect lifecycle invalidation")
+@MainActor
+struct ReconnectLifecycleInvalidationTests {
+    private static let unroutableRelay = "ws://reconnect-lifecycle.invalid:9"
+
+    @Test("a walk resolving after disconnect does not resurrect the session")
+    func walkAfterDisconnectDoesNotResurrect() async {
+        let model = makePairedModel()
+        model.requestReconnect(.user)
+        #expect(model.trustedReconnectDialsForTesting == 1)
+        #expect(model.reconnectCoordinatorInFlightForTesting)
+
+        model.disconnect()
+        #expect(model.phase == .idle)
+
+        // The ATS-rejected walk finishes in the next turn and used to overwrite
+        // `.idle` with `.error` then arm `scheduleAutoReconnect`.
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(
+            model.phase == .idle,
+            "in-flight walk resurrected phase to \(String(describing: model.phase)) after disconnect")
+        #expect(
+            !model.reconnectCoordinatorInFlightForTesting,
+            "disconnect left the coordinator in-flight so a later wake could supersede")
+        #expect(
+            model.trustedReconnectDialsForTesting == 1,
+            "a late walk or auto-retry started another dial after disconnect")
+        model.forgetAllHosts()
+    }
+
+    @Test("enterDemo during an in-flight walk stays on the demo session")
+    func enterDemoDuringWalkDoesNotResurrect() async {
+        let model = makePairedModel()
+        model.requestReconnect(.user)
+        model.enterDemoMode()
+        #expect(model.isDemo)
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record("demo phase was \(String(describing: model.phase)) instead of .connected")
+        }
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(model.isDemo, "late walk cleared the demo flag")
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record(
+                "late walk resurrected demo phase to \(String(describing: model.phase))")
+        }
+        #expect(model.trustedReconnectDialsForTesting == 1)
+        model.forgetAllHosts()
+    }
+
+    @Test("disconnect during the delayed socket-closed redial does not redial")
+    func disconnectCancelsDelayedSocketClosedRedial() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        model.socketClosedRedialDelayMsForTesting = 40
+        model.simulateUnexpectedSocketCloseForTesting()
+        #expect(model.trustedReconnectDialsForTesting == 0)
+
+        model.disconnect()
+        #expect(model.phase == .idle)
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "the 1.2s delayed redial started a walk after explicit disconnect")
+        #expect(model.phase == .idle)
+        model.forgetAllHosts()
+    }
+
+    @Test("the legacy wake + peer + ack stack exceeds the background budget")
+    func legacyApprovalStackExceedsBackgroundBudget() {
+        let stacked =
+            22_000
+            + RemoteSessionModel.notificationApprovalPeerPreflightMs
+            + RemoteSessionModel.notificationApprovalDefaultAckTimeoutMs
+        #expect(stacked > RemoteSessionModel.notificationApprovalBackgroundBudgetMs)
+    }
+
+    @Test("remaining ack timeout never lets wake + peer + ack exceed the budget")
+    func remainingAckTimeoutFitsBackgroundBudget() {
+        let budget = RemoteSessionModel.notificationApprovalBackgroundBudgetMs
+
+        let afterLongWake = RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(
+            elapsedMs: 22_000)
+        if let afterLongWake {
+            #expect(
+                22_000 + afterLongWake <= budget,
+                "full 7s ack after a 22s wake overflows the \(budget)ms budget")
+        }
+
+        let afterWakeAndPeer = RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(
+            elapsedMs: 22_000,
+            peerPreflightMs: RemoteSessionModel.notificationApprovalPeerPreflightMs)
+        if let afterWakeAndPeer {
+            #expect(
+                22_000 + RemoteSessionModel.notificationApprovalPeerPreflightMs + afterWakeAndPeer
+                    <= budget,
+                "wake + 6s peer + ack overflows the background budget")
+        } else {
+            // aborting is also a valid fit
+        }
+
+        #expect(
+            RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(elapsedMs: 27_500) == nil,
+            "a nearly exhausted budget must abort rather than start a 7s ack")
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectLifecycle.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: LifecycleSeedStore(), pairingStore: store)
+    }
+
+    private struct LifecycleSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}

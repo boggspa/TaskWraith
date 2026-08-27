@@ -214,6 +214,18 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         generation += 1
     }
 
+    /// Explicit disconnect / demo / host-switch: drop in-flight bookkeeping so a
+    /// late walk cannot piggy-back on the old attempt, and so a later genuine
+    /// wake is `.start` rather than `.supersede` against a ghost flight.
+    public mutating func invalidate() {
+        bumpGeneration()
+        inFlight = false
+        attemptStartedAt = nil
+        lastAttemptFailedAt = nil
+        lastEstablishedAt = nil
+        pendingReasons.removeAll()
+    }
+
     private func isConnectingPhase(_ phase: SessionPhase) -> Bool {
         switch phase {
         case .connecting, .awaitingMacConfirm: return true
