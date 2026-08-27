@@ -391,6 +391,20 @@ describe('buildChatViewProps (viewer policy)', () => {
     ])
   })
 
+  it('derives the pane card duration from the run-complete notice', () => {
+    const p = buildChatViewProps(
+      makeInput({
+        runCompleteNotice: {
+          timestamp: '2026-08-27T05:51:12.000Z',
+          startedAt: '2026-08-27T03:52:12.000Z',
+          exitCode: 0,
+          roundId: 'round-1'
+        }
+      })
+    )
+    expect(p.runCompleteDurationText).toBe('Worked for 1 hour 59 minutes')
+  })
+
   it('keeps policy props at stable identities across calls (memo-safe)', () => {
     const a = buildChatViewProps(makeInput())
     const b = buildChatViewProps(makeInput())

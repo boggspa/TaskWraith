@@ -2,6 +2,7 @@ import type { TranscriptPanelProps } from '../components/TranscriptPanel'
 import type { MultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { isGlobalChat } from './chatScope'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
+import { formatWorkDuration } from './runCompleteSummary'
 import {
   mergeCompletionFileChangeSummaries,
   selectCompletionRunIds,
@@ -296,7 +297,12 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
     onEnsemblePollVote: input.onEnsemblePollVote,
     runCompleteNotice: input.runCompleteNotice,
-    runCompleteDurationText: null,
+    // Same derivation as the focused surface (App's runCompleteDurationText):
+    // the pane's Task Complete card header reads "Worked for …" too.
+    runCompleteDurationText: formatWorkDuration(
+      input.runCompleteNotice?.startedAt,
+      input.runCompleteNotice?.timestamp
+    ),
     currentChat: input.chat,
     isGlobal: isGlobalChat(input.chat),
     currentRun: input.currentRun ?? null,
