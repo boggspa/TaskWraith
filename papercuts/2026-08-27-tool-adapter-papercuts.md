@@ -15,7 +15,7 @@ As directed by host steering:
 
 > _"Feel free to each of you to test tooling yourselves (each participant) and note any inconsistencies in a tool-specific papercuts markdown scratchpad that we'll work from in this thread so we can fix all the issues as necessary... the harness should cleanly adapt calls - but that means we need each of you to outlay your native call types so we can cleanly adapt them all too."_
 
-This document consolidates the live probe findings and native call inventories across all **nine active provider platforms** on the panel (Codex, Ollama, Kimi, Claude, Cursor, Grok, Pi, Antigravity, Mistral). It establishes the structural root causes of dialect mismatch, catalogs newly discovered severity-ranked papercuts (S1–S5), confirms cross-provider invariants, provides a per-provider reference appendix, and records the current status of round fixes.
+This document consolidates the live probe findings and native call inventories across all **nine active provider platforms** on the panel (Codex, Ollama, Kimi, Claude, Cursor, Grok, Pi, Antigravity, Mistral). It establishes the structural root causes of dialect mismatch, catalogs newly discovered severity-ranked papercuts (S1–S6), confirms cross-provider invariants, provides a per-provider reference appendix, and records the current status of round fixes.
 
 ---
 
@@ -33,7 +33,7 @@ The friction described as _"agents fighting tool failures"_ is not a uniform iss
 
 ---
 
-## 2. Severity-Ranked Defects & Papercuts (S1–S5)
+## 2. Severity-Ranked Defects & Papercuts (S1–S6)
 
 The following bugs and papercuts were discovered and reproduced during panel probe passes. None of these were documented prior to this round.
 
@@ -80,6 +80,15 @@ The following bugs and papercuts were discovered and reproduced during panel pro
   - `run_task({task: "test", args: [...]})` returns `invalid-call: "run_task cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command"`, despite advertising `test` in its catalog description.
   - `apply_patch` reports invalid hunk line numbers and misattributes header failures when `@@` count markers do not match hunk line tallies.
 - **Required Adaptation:** Extend self-healing repair templates and actionable error messages across `capability_invoke`, `run_task`, and `apply_patch`.
+
+### S6: Resumed Seat Loses Its Mutating Shell Route Without a Repair Path
+
+- **Severity:** S1 (Critical / Commit Gate Unreachable)
+- **Reproducing Seat:** Codex (`@Validator`, resumed turn)
+- **Symptom:** A resumed seat lost `TASKWRAITH_RUN_ID` / `TASKWRAITH_CHAT_ID`. `run_shell_command` rejected `git commit` as an unrouted mutating call and supplied no `permissionRetry`, corrected call, or dedicated-tool hint. The validated slice was staged but uncommittable through the instructed shell route.
+- **Repair Probe:** On a freshly routed turn, the purpose-built `git_commit` tool succeeded in both `private_index` and `pathspec` modes. However, two exact capability searches (`git commit staged exact paths private index` and `git_commit`) failed to return that tool even though it was directly callable.
+- **Impact:** This is worse than a wasted first call: work stops at the commit gate unless a Boss re-routes the seat and already knows the undiscoverable dedicated tool name.
+- **Required Adaptation:** Preserve run/chat audit identity across resumed turns. When shell containment rejects Git mutation, return a `permissionRetry` or a structured `directToolHint` containing the exact `git_commit` call. Exact-name capability search must surface directly callable tools rather than only adjacent matches.
 
 ---
 
@@ -199,6 +208,8 @@ ightarrow$ `use_tool({tool_name: "TaskWraith__*", tool_input})`
 3. `327d3af95` — **Catalog Example Correction:** Fixed poisoned example in `src/main/McpToolCatalog.ts` from `{action: "set_round_plan", goal: "..."}` to `{action: "set_round_plan", planSummary: "..."}`.
 4. `f43632ca9` — **Actionable Repair Hints:** Added `src/main/mcp/McpResultRepairHints.ts` and wrapped 12 `mcpEnsembleJson` dispatch sites in `src/main/index.ts` to attach concrete retry templates to `ok:false` errors.
 5. `80f90c000` — **First-Call Success Corpus:** Added table-driven test fixtures in `src/main/mcp/McpFirstCallSuccessCorpus.ts` and `src/main/mcp/McpFirstCallSuccess.test.ts`.
+6. `be7d0355a` — **Native Directory/Search Aliases:** Restricts directory-native aliases to `list_directory` and makes conflicting `workspace_search` aliases fail closed.
+7. `7528dabb3` — **Native Argument-Loss Hardening:** Prevents unknown path-like `list_directory` arguments from silently listing root and discloses unsupported native shell fields without implementing or elevating their semantics.
 
 ### Verification Status & Known Caveat
 
