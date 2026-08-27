@@ -37218,6 +37218,120 @@ function canvasMcpArgumentsForDurableProjection(
   }
 }
 
+/**
+ * S1 — `list_directory` path resolution.
+ *
+ * `path` (legacy `directory`) is accepted, and a genuinely no-arg call still
+ * lists the workspace root deliberately. What was NOT deliberate: the old
+ * `String(args.path || args.directory || '.')` also swallowed every path
+ * spelling we do not accept, so a Grok/Cursor-native
+ * `list_directory({ target_directory: 'papercuts' })` listed the REPO ROOT and
+ * returned it as a SUCCESS. A silent wrong answer is worse than a refusal: the
+ * caller cannot detect it and will reason on top of it. So only an ABSENT path
+ * may default; an unaccepted path-ish key now fails closed naming what arrived.
+ */
+const LIST_DIRECTORY_PATH_ARGUMENT_KEYS = ['path', 'directory'] as const
+const PATH_ISH_ARGUMENT_KEY_PATTERN = /path|dir|file|folder/i
+const LIST_DIRECTORY_PATH_REPAIR =
+  'Resend as {"path":"<directory>"}, or omit every path argument to list the workspace root deliberately.'
+
+function resolveListDirectoryPathArgument(args: Record<string, unknown>): string {
+  let suppliedButUnusableKey = ''
+  for (const key of LIST_DIRECTORY_PATH_ARGUMENT_KEYS) {
+    if (!(key in args)) continue
+    const value = args[key]
+    if (typeof value === 'string' && value.trim()) return value
+    if (!suppliedButUnusableKey) suppliedButUnusableKey = key
+  }
+  if (suppliedButUnusableKey) {
+    throw new Error(
+      `list_directory: '${suppliedButUnusableKey}' must be a non-empty workspace-relative directory path. ${LIST_DIRECTORY_PATH_REPAIR}`
+    )
+  }
+  const unacceptedPathKeys = Object.keys(args)
+    .filter(
+      (key) =>
+        !(LIST_DIRECTORY_PATH_ARGUMENT_KEYS as readonly string[]).includes(key) &&
+        PATH_ISH_ARGUMENT_KEY_PATTERN.test(key)
+    )
+    .sort()
+  if (unacceptedPathKeys.length) {
+    const received = unacceptedPathKeys.map((key) => `'${key}'`).join(', ')
+    throw new Error(
+      `list_directory received ${received} but accepts 'path' (legacy alias 'directory'). No directory was resolved, and defaulting to the workspace root would have returned confidently wrong data. ${LIST_DIRECTORY_PATH_REPAIR}`
+    )
+  }
+  return '.'
+}
+
+/**
+ * S3 — `run_shell_command` honours exactly `command` and `cwd`.
+ *
+ * Provider dialects carry SEMANTIC extras on their native shell tool: Claude
+ * `Bash` has timeout/run_in_background, Grok `run_terminal_command` has
+ * timeout/background, Codex `exec_command` has yield_time_ms/tty/
+ * sandbox_permissions, Cursor `Shell` has block_until_ms, AntiGravity
+ * `run_command` has WaitMsBeforeAsync/BypassSandbox. Those keys were accepted
+ * and silently ignored, so a seat could believe it had capped a command at 5s
+ * or backgrounded a long task when neither happened.
+ *
+ * We DISCLOSE them. We never implement their semantics and never widen a
+ * permission on their behalf. Only spellings KNOWN to be native-but-unsupported
+ * are reported, so an alias that genuinely WAS honoured (`cmd`, `workdir`) can
+ * never be mislabelled as ignored.
+ */
+const SEMANTIC_UNSUPPORTED_SHELL_ARGUMENT_KEYS: ReadonlySet<string> = new Set([
+  'timeout',
+  'timeout_ms',
+  'timeoutMs',
+  'yield_time_ms',
+  'block_until_ms',
+  'wait_ms_before_async',
+  'waitMsBeforeAsync',
+  'run_in_background',
+  'background',
+  'is_background',
+  'tty',
+  'shell',
+  'session_id',
+  'sessionId',
+  'max_output_tokens',
+  'sandbox_permissions',
+  'required_permissions',
+  'bypass_sandbox',
+  'bypassSandbox',
+  'notify_on_output'
+])
+const COSMETIC_UNSUPPORTED_SHELL_ARGUMENT_KEYS: ReadonlySet<string> = new Set([
+  'description',
+  'explanation',
+  'justification',
+  'prefix_rule'
+])
+
+function collectIgnoredShellArgumentKeys(args: Record<string, unknown>): string[] {
+  return Object.keys(args)
+    .filter(
+      (key) =>
+        SEMANTIC_UNSUPPORTED_SHELL_ARGUMENT_KEYS.has(key) ||
+        COSMETIC_UNSUPPORTED_SHELL_ARGUMENT_KEYS.has(key)
+    )
+    .sort()
+}
+
+function formatIgnoredShellArgumentNotice(ignoredKeys: string[]): string {
+  const lines = [
+    `ignoredKeys: ${ignoredKeys.join(', ')}`,
+    'TaskWraith run_shell_command honours only `command` and `cwd`. The keys above are native shell fields from another provider dialect and had NO effect on this run.'
+  ]
+  if (ignoredKeys.some((key) => SEMANTIC_UNSUPPORTED_SHELL_ARGUMENT_KEYS.has(key))) {
+    lines.push(
+      'This command was NOT time-capped, backgrounded, or re-sandboxed. There is no timeout or sandbox override on this route; a persistent process needs start_background_process.'
+    )
+  }
+  return lines.join('\n')
+}
+
 async function executeGeminiMcpTool(
   toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
   rawArgs: unknown,
@@ -38683,6 +38797,13 @@ async function executeGeminiMcpTool(
         })
       )
       text = formatHostCommandResult(result)
+      // S3 disclosure. Extra native shell fields reached us and did nothing;
+      // say so on the receipt rather than letting the caller assume otherwise.
+      // Disclose only: never implement the semantics, never widen a grant.
+      const ignoredShellArgumentKeys = collectIgnoredShellArgumentKeys(args)
+      if (ignoredShellArgumentKeys.length) {
+        text = `${text}\n\n${formatIgnoredShellArgumentNotice(ignoredShellArgumentKeys)}`
+      }
       const isError = Boolean(
         result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
       )
@@ -40379,7 +40500,7 @@ async function executeGeminiMcpTool(
       const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
-        String(args.path || args.directory || '.'),
+        resolveListDirectoryPathArgument(args),
         'read',
         { allowWorkspaceRoot: true }
       )
