@@ -844,6 +844,34 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
     expect(incomplete).not.toHaveProperty('args')
   })
 
+  it('reports the exact hunk and count mismatch for an overlong patch body', () => {
+    const exact = capability({
+      requestedTarget: 'a.ts',
+      executableTarget: '/physical/repo/a.ts'
+    })
+    const result = prepareVerifiedWorkspaceMutationHandoff({
+      toolName: 'apply_patch',
+      args: {
+        patch: [
+          'diff --git a/a.ts b/a.ts',
+          '--- a/a.ts',
+          '+++ b/a.ts',
+          '@@ -1,2 +1 @@',
+          '-one',
+          '-two',
+          '-three'
+        ].join('\n')
+      },
+      capabilities: [exact]
+    })
+
+    expect(result).toMatchObject({ ok: false, reason: 'unsafe_patch' })
+    if (result.ok) return
+    expect(result.message).toContain('hunk 1')
+    expect(result.message).toContain('declared old=2, new=1')
+    expect(result.message).toContain('consumed old=3, new=0')
+  })
+
   it('refuses precise tools backed only by a workspace-wide capability', () => {
     expect(
       prepareVerifiedWorkspaceMutationHandoff({

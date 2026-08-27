@@ -60,6 +60,7 @@ import {
   resolveGitReportedPaths,
   type GitCommitSliceMode
 } from './GitCommitSlice'
+import { buildApplyPatchFailureHint } from './McpResultRepairHints'
 
 export interface HostCommandResult {
   stdout: string
@@ -994,13 +995,20 @@ export async function executeApplyPatch(
   try {
     const check = await runCommandArgs(deps, ['git', 'apply', '--check', patchPath], cwd, 30_000)
     if (check.exitCode !== 0) {
-      return {
+      const failure = {
         ok: false,
         dryRun,
         paths: patchPaths,
         check,
         message: applyPatchFailureMessage(patch, check)
       }
+      const repair = buildApplyPatchFailureHint({
+        toolName: 'apply_patch',
+        receivedArguments: args,
+        normalizedArguments: args,
+        result: failure
+      })
+      return { ...failure, ...(repair ? { repair } : {}) }
     }
     if (dryRun) {
       return {

@@ -719,6 +719,13 @@ describe('executeApplyPatch envelope failure', () => {
     )
     expect(result.ok).toBe(false)
     expect(result.message).toContain('*** Begin Patch')
+    expect(result).toMatchObject({
+      repair: {
+        retryTemplate: {
+          patch: expect.stringContaining('*** Begin Patch')
+        }
+      }
+    })
     expect(commands).toHaveLength(1)
     expect(commands[0].slice(0, 3)).toEqual(['git', 'apply', '--check'])
   })
