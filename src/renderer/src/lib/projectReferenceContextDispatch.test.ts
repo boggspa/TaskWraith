@@ -62,7 +62,9 @@ describe('project reference context dispatch acceptance', () => {
     const sendableContent = sourceBetween(
       composerSource,
       'const hasSendablePromptContent =',
-      'const [scheduledNowMs'
+      // 3a2694c1e derived scheduledNowMs from the shared tick (useState → useMemo);
+      // the anchor tracks the declaration, not its hook form.
+      'const scheduledNowMs ='
     )
     expect(sendableContent).toContain('hasAttachmentPromptContent(prompt, imageAttachments)')
     expect(sendableContent).toContain('hasProjectReferenceContext')
