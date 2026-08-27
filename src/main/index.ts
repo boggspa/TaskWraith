@@ -1374,6 +1374,7 @@ import type {
   CanvasDriverKind,
   CanvasEvalApprovalReceipt,
   CanvasEventRecord,
+  CanvasNavigateInput,
   CanvasNavState,
   CanvasSketchDocument,
   CanvasWindowOpenTarget
@@ -4657,6 +4658,8 @@ const canvasService = new CanvasService({
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
       onNavState?: (state: CanvasNavState) => void
       onNavigationCommitted?: (state: CanvasNavState) => void
+      onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+      onDockRequest?: () => void | Promise<void>
     }
   ) => {
     if (kind === 'window') {
@@ -4739,6 +4742,7 @@ const canvasService = new CanvasService({
       return new CanvasSketchDriver(sessionId, {
         initialDocument: opts?.initialSketchDocument,
         onDocumentChange: opts?.onSketchDocumentChange,
+        onDockRequest: opts?.onDockRequest,
         ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {})
       })
     }
@@ -4747,7 +4751,9 @@ const canvasService = new CanvasService({
         browserProfile: canvasBrowserProfile,
         ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {}),
         onNavState: opts?.onNavState,
-        onNavigationCommitted: opts?.onNavigationCommitted
+        onNavigationCommitted: opts?.onNavigationCommitted,
+        onHumanNavigate: opts?.onHumanNavigate,
+        onDockRequest: opts?.onDockRequest
       })
     }
     throw new Error(`Canvas driver "${kind}" is not available in this build.`)
@@ -6506,7 +6512,8 @@ installIpcValidation(ipcMain, (channel, event) => {
 
 // Renderer canvas-pane (live-embed) IPC: register only after the global
 // validation/renderer-authority wrapper is installed. The driver additionally
-// enforces its URL/SSRF policy once a validated main-renderer request arrives.
+// enforces its URL scheme and fixed metadata deny rules once a validated
+// main-renderer request arrives.
 const canvasEmbedIpcAuthority = registerCanvasEmbedIpc(ipcMain, {
   controller: canvasService,
   embed: canvasEmbedController,
