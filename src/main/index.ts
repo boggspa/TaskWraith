@@ -2077,6 +2077,9 @@ import {
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from './TaskWraithMcpTools'
+// Permitted downward main -> shared edge. One Ensemble argument convention at
+// this dispatch boundary, identical to the stdio bridge and broker paths.
+import { normalizeEnsembleMcpToolArguments } from '../shared/taskWraithMcpCatalog'
 import { createMcpToolApprovalPreviewer } from './McpToolApprovalPreview'
 import {
   applyLaneTodoWrite,
@@ -37231,6 +37234,11 @@ async function executeGeminiMcpTool(
     }
   }
   let args = normalizeMcpToolArguments(rawArgs)
+  // One envelope + alias convention for every Ensemble dispatch boundary. The
+  // portable `{action, params:{...}}` shape, the flat shape, and snake_case
+  // spellings all converge here BEFORE route hints, the dispatch contract,
+  // preflight, approval, and audit read the arguments.
+  args = normalizeMcpToolArguments(normalizeEnsembleMcpToolArguments(toolName, args))
   const effectiveRoute =
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
@@ -39197,6 +39205,14 @@ async function executeGeminiMcpTool(
             : undefined,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
+        // set_round_plan's PRIMARY field. Its absence from this projection is
+        // why a correct {action:'set_round_plan', planSummary:'...'} call --
+        // flat or enveloped -- still failed with "set_round_plan requires
+        // planSummary": the handler never received the field it names.
+        planSummary: optionalString(args.planSummary),
+        plan: optionalString(args.plan),
+        summary: optionalString(args.summary),
+        steps: optionalString(args.steps),
         objective: optionalString(args.objective),
         acceptanceCriteria: optionalString(args.acceptanceCriteria || args.acceptance_criteria),
         due: optionalString(args.due) as any,

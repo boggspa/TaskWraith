@@ -12,10 +12,16 @@ import {
   isPortableEnsembleControlToolName,
   MESH_SCENE_MCP_TOOL_NAMES,
   MESH_TOPOLOGY_MCP_TOOL_NAMES,
-  normalizePortableEnsembleControlArguments,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
+// Permitted downward main -> shared edge (see the TaskWraithMcpTools re-export
+// shim). The shim has not been widened for this name yet; import the shared
+// convention directly so the broker path cannot drift from the stdio path.
+import {
+  isEnsembleControlToolName,
+  normalizeEnsembleMcpToolArguments
+} from '../../shared/taskWraithMcpCatalog'
 import {
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
@@ -1877,18 +1883,20 @@ export function handleMcpJsonRpcMessage(
       return
     }
     const name = rawDispatchContract.toolName
+    // Argument SHAPING only — deliberately the wide predicate so a gateway
+    // caller reaching the canonical `ensemble_bossman_control` through
+    // capability_invoke gets the same envelope handling as the portable name.
+    // The narrow `isPortableEnsembleControlToolName` below stays narrow because
+    // it FENCES an unadvertised alias off legacy profiles.
     const args =
       name === 'capability_invoke' &&
       isRecord(rawArgs) &&
-      isPortableEnsembleControlToolName(String(rawArgs.name || ''))
+      isEnsembleControlToolName(String(rawArgs.name || ''))
         ? {
             ...rawArgs,
-            arguments: normalizePortableEnsembleControlArguments(
-              String(rawArgs.name),
-              rawArgs.arguments
-            )
+            arguments: normalizeEnsembleMcpToolArguments(String(rawArgs.name), rawArgs.arguments)
           }
-        : normalizePortableEnsembleControlArguments(String(rawName || ''), rawArgs)
+        : normalizeEnsembleMcpToolArguments(String(rawName || ''), rawArgs)
     const portableEnsembleControlRequested =
       isPortableEnsembleControlToolName(String(rawName || '')) ||
       (name === 'capability_invoke' &&
@@ -2732,13 +2740,20 @@ export class McpBridgeRuntime {
     let toolArguments =
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input
 
-    if (rawToolName === 'ensemble_control') {
-      if (isRecord(toolArguments) && isRecord(toolArguments.params)) {
-        toolArguments = toolArguments.params
-      } else if (toolArguments === undefined && brokerRequestRecord.params !== undefined) {
-        toolArguments = brokerRequestRecord.params
-      }
+    // ONE envelope convention, both control names. This used to fire only for
+    // the literal `ensemble_control` string and to REPLACE the arguments with
+    // `params` — so `ensemble_bossman_control` silently dropped every enveloped
+    // field, and a `params` block that did not repeat `action` dropped the
+    // action itself. The shared normalizer merges instead (flat wins, absent
+    // never erases) and covers both spellings.
+    if (
+      toolArguments === undefined &&
+      brokerRequestRecord.params !== undefined &&
+      isEnsembleControlToolName(String(rawToolName || ''))
+    ) {
+      toolArguments = brokerRequestRecord.params
     }
+    toolArguments = normalizeEnsembleMcpToolArguments(String(rawToolName || ''), toolArguments)
 
     const dispatchContract = resolveToolDispatchContractStrict(
       String(rawToolName || ''),

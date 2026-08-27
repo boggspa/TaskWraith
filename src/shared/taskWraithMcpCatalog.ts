@@ -507,22 +507,111 @@ export function isPortableEnsembleControlToolName(toolName: string): boolean {
 }
 
 /**
- * Lets constrained function-call transports use a small, declared envelope
- * while MCP-capable callers may keep sending the action fields flat. The
- * envelope is deliberately unwrapped before the legacy authority executor,
- * schema preflight, approval, and audit paths run.
+ * BOTH spellings of the one Boss/Captain authority primitive: the portable
+ * `ensemble_control` front door and the canonical `ensemble_bossman_control`.
+ *
+ * Deliberately separate from `isPortableEnsembleControlToolName` above, which
+ * stays narrow because profile-fenced transports use it to REJECT an
+ * unadvertised alias (McpBridgeRuntime `-32601`). Widening that predicate would
+ * start refusing legitimate `ensemble_bossman_control` calls on legacy
+ * profiles. This one is argument SHAPING only and never gates admission.
+ */
+export function isEnsembleControlToolName(toolName: string): boolean {
+  const normalized = normalizeTaskWraithToolName(toolName)
+  return normalized === 'ensemble_control' || normalized === 'ensemble_bossman_control'
+}
+
+/**
+ * The Ensemble tools that share one argument convention. Membership is what
+ * makes the envelope + alias rules discoverable in ONE place instead of being
+ * re-derived per dispatch site (the ad-hoc `write_scopes` / `target_stage`
+ * aliases used to exist at exactly one handler and nowhere else).
+ */
+const ENSEMBLE_ARGUMENT_NORMALIZED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'ensemble_control',
+  'ensemble_bossman_control',
+  'ensemble_fanout',
+  'ensemble_fanout_all',
+  'ensemble_await',
+  'ensemble_lane_result',
+  'ensemble_send',
+  'ensemble_yield',
+  'ensemble_poll_response',
+  'ensemble_propose_goal_complete',
+  'ensemble_brief_update',
+  'ensemble_roster_edit'
+])
+
+/** Strict snake_case only: no leading underscore, no pre-existing capitals. */
+const SNAKE_CASE_ARGUMENT_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function camelCaseFromSnakeCase(key: string): string {
+  return key.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase())
+}
+
+/**
+ * ADDITIVE alias fold: a snake_case key gains its camelCase twin when the twin
+ * is absent. The original key is kept, so nothing that already reads the
+ * snake spelling changes behaviour, and only the TOP level is folded so nested
+ * strict-schema objects (`ensemble_roster_edit.preset`) are untouched.
+ */
+function foldSnakeCaseArgumentAliases(record: Record<string, unknown>): Record<string, unknown> {
+  let folded: Record<string, unknown> | null = null
+  for (const [key, value] of Object.entries(record)) {
+    if (!SNAKE_CASE_ARGUMENT_KEY.test(key)) continue
+    const camelKey = camelCaseFromSnakeCase(key)
+    if (camelKey === key || record[camelKey] !== undefined) continue
+    if (!folded) folded = { ...record }
+    folded[camelKey] = value
+  }
+  return folded || record
+}
+
+/**
+ * ONE argument convention for every Ensemble dispatch boundary.
+ *
+ * Constrained function-call transports may use the small declared
+ * `{action, params:{…}}` envelope; MCP-capable callers may keep sending the
+ * action fields flat; either may spell a field in snake_case. All three shapes
+ * converge here BEFORE the authority executor, schema preflight, approval, and
+ * audit paths run, on both control tool names.
+ *
+ * MERGE, never replace: a flat field wins over the same field inside the
+ * envelope, but an absent flat value never erases a real enveloped one. The
+ * broker path used to REPLACE the arguments with `params`, which silently
+ * dropped a top-level `action` when the envelope did not repeat it.
+ */
+export function normalizeEnsembleMcpToolArguments(toolName: string, value: unknown): unknown {
+  if (!ENSEMBLE_ARGUMENT_NORMALIZED_TOOL_NAMES.has(normalizeTaskWraithToolName(toolName))) {
+    return value
+  }
+  if (!isPlainRecord(value)) return value
+  let record: Record<string, unknown> = value
+  if (isEnsembleControlToolName(toolName) && isPlainRecord(record.params)) {
+    const { params, ...flat } = record
+    const merged: Record<string, unknown> = { ...(params as Record<string, unknown>) }
+    for (const [key, flatValue] of Object.entries(flat)) {
+      if (flatValue === undefined) continue
+      merged[key] = flatValue
+    }
+    record = merged
+  }
+  return foldSnakeCaseArgumentAliases(record)
+}
+
+/**
+ * Back-compatible alias for the portable-envelope call sites that predate the
+ * shared convention above. Prefer `normalizeEnsembleMcpToolArguments`.
  */
 export function normalizePortableEnsembleControlArguments(
   toolName: string,
   value: unknown
 ): unknown {
-  if (!isPortableEnsembleControlToolName(toolName)) return value
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const outer = value as Record<string, unknown>
-  const params = outer.params
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return value
-  const { params: _params, ...flat } = outer
-  return { ...(params as Record<string, unknown>), ...flat }
+  return normalizeEnsembleMcpToolArguments(toolName, value)
 }
 
 export function canonicalTaskWraithToolName(toolName: string): string {
