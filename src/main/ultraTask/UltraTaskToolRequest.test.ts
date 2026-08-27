@@ -156,6 +156,7 @@ describe('resolveUltraTaskToolRequest', () => {
     ['claude', 'claude-sonnet-5', 'max'],
     ['kimi', 'kimi-k2.7-code', 'on'],
     ['kimi', 'kimi-k3', 'max'],
+    ['kimi', 'kimi-k3-256k', 'max'],
     ['grok', 'grok-4.5', 'high'],
     ['mistral', 'devstral-small', 'max'],
     ['pi', 'deepseek/deepseek-v4-flash', 'max'],

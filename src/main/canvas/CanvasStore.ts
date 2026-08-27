@@ -445,9 +445,6 @@ function normalizeSessionRecord(value: unknown): CanvasSessionRecord | null {
     url: asString(input.url),
     title: asString(input.title),
     viewport: asViewport(input.viewport),
-    originAllowlist: Array.isArray(input.originAllowlist)
-      ? input.originAllowlist.filter((h): h is string => typeof h === 'string')
-      : [],
     status,
     chatId: typeof input.chatId === 'string' ? input.chatId : undefined,
     runId: typeof input.runId === 'string' ? input.runId : undefined,

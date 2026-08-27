@@ -310,6 +310,8 @@ export function formatMistralProcessError(err: Error): string {
 
 export interface MistralAcpRunOptions {
   prompt: string
+  /** Main-authorized images; the exact ACP runtime negotiates support. */
+  imagePaths?: readonly string[]
   cwd: string
   /** TaskWraith's version string, forwarded to Mistral as `client_version`. */
   appVersion: string
@@ -343,6 +345,8 @@ export interface MistralAcpRunOptions {
    */
   sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   onEvent: (event: NormalizedGrokRunEvent) => void
+  /** Exact notification after every tool in one parallel ACP batch settles. */
+  onToolBatchBoundary?: () => void
   onProcess?: (child: AcpChildProcess) => void
   /**
    * Client-mediated tool approval. Omitted = DENY, enforced by the core. A
@@ -437,6 +441,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
   })
   const handle = runAcpTurn({
     prompt: options.prompt,
+    imagePaths: options.imagePaths,
     cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
@@ -449,6 +454,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     sessionConfigOptions: options.sessionConfigOptions,
     formatSteerPrompt: formatMistralSteerPrompt,
     onEvent: options.onEvent,
+    onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest
       ? (request) => options.onPermissionRequest!(normalizeMistralVibePermissionRequest(request))

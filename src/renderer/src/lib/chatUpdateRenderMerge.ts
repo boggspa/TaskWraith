@@ -4,6 +4,8 @@ import type {
   ChatRecord,
   EnsembleParticipant
 } from '../../../main/store/types'
+import { CHAT_COMPOSER_SELECTION_METADATA_KEYS } from '../../../shared/chatComposerSelectionPatch'
+import { PENDING_PROVIDER_CHANGE_KEY } from '../../../shared/providerChangeQueue'
 import { anchorPendingAgentQuestionMarkers } from './agentQuestionMarkerAnchor'
 import { shouldPreferLiveAssistantContent } from './chatUpdatedAssistantMerge'
 import { preserveOptimisticEnsembleQueue } from './queuedMessageRows'
@@ -205,6 +207,56 @@ function sameRosterSequence(
 }
 
 /**
+ * The user-editable seat configuration — everything the composer pickers and
+ * the roster panel write on a participant. Deliberately excludes main-authored
+ * runtime bookkeeping (linkedProviderSessionId, seatGeneration, prompt
+ * versions, compaction summaries, token totals, ACP posture): those fields are
+ * newest in the DELIVERED record and must never be rolled back to the live
+ * copy when only the configuration is being restored.
+ */
+const ENSEMBLE_SEAT_CONFIGURATION_KEYS = [
+  'provider',
+  'enabled',
+  'role',
+  'instructions',
+  'order',
+  'model',
+  'runtimeProfileId',
+  'geminiAuthProfileId',
+  'ollamaRunProfile',
+  'permissionPresetId',
+  'permissionOverrides',
+  'stageRole',
+  'reasoningEffort',
+  'fastModeEnabled',
+  'thinkingEnabled',
+  'serviceTier',
+  'pooledAgentId',
+  'pooledAgentIdentity'
+] as const satisfies readonly (keyof EnsembleParticipant)[]
+
+function seatConfigurationSignature(participant: EnsembleParticipant): string {
+  return JSON.stringify(
+    ENSEMBLE_SEAT_CONFIGURATION_KEYS.map((key) => participant[key] ?? null)
+  )
+}
+
+/** Delivered seat + the live seat's user-editable configuration. An absent
+ * live field is restored as absent so a deliberate local clear sticks. */
+function overlaySeatConfiguration(
+  delivered: EnsembleParticipant,
+  live: EnsembleParticipant
+): EnsembleParticipant {
+  const next = { ...delivered } as unknown as Record<string, unknown>
+  for (const key of ENSEMBLE_SEAT_CONFIGURATION_KEYS) {
+    const value = live[key]
+    if (value === undefined) delete next[key]
+    else next[key] = value
+  }
+  return next as unknown as EnsembleParticipant
+}
+
+/**
  * 1.0.5-UI2 — The Add Participant popover commits the new seat optimistically
  * (`buildPersistedChat` stamps `ensemble.updatedAt`) and persists
  * asynchronously. A main refresh captured before that save reaches the store
@@ -215,6 +267,15 @@ function sameRosterSequence(
  * apply. Only `participants` (+ its cap floor) are restored — round state and
  * authority bookkeeping in the delivered ensemble stay authoritative so this
  * cannot resurrect a stale round.
+ *
+ * Third report in the class: a seat FIELD edit (the Provider/Model/Reasoning
+ * picker bound to a participant chip, or a seat row in the Add Participant
+ * picker) keeps the id sequence identical, so the membership-only comparison
+ * above let a staler delivery revert the model the user just picked. When the
+ * seats match but their user-editable configuration differs and the live
+ * roster is fresher, restore only that configuration per seat — delivered
+ * main-authored bookkeeping (session linkage, prompt versions, compaction,
+ * token totals) stays, so this cannot break a resumed provider session.
  */
 function preserveNewerLocalEnsembleRoster(
   merged: ChatRecord,
@@ -227,8 +288,29 @@ function preserveNewerLocalEnsembleRoster(
   const deliveredParticipants = deliveredEnsemble.participants
   if (liveParticipants === deliveredParticipants) return merged
   if (!Array.isArray(liveParticipants) || !Array.isArray(deliveredParticipants)) return merged
-  if (sameRosterSequence(liveParticipants, deliveredParticipants)) return merged
+  const sameMembership = sameRosterSequence(liveParticipants, deliveredParticipants)
+  if (
+    sameMembership &&
+    liveParticipants.every(
+      (participant, index) =>
+        seatConfigurationSignature(participant) ===
+        seatConfigurationSignature(deliveredParticipants[index])
+    )
+  ) {
+    return merged
+  }
   if (resolveRosterStamp(liveChat) <= resolveRosterStamp(merged)) return merged
+  if (sameMembership) {
+    return {
+      ...merged,
+      ensemble: {
+        ...deliveredEnsemble,
+        participants: deliveredParticipants.map((participant, index) =>
+          overlaySeatConfiguration(participant, liveParticipants[index])
+        )
+      }
+    }
+  }
   return {
     ...merged,
     ensemble: {
@@ -240,6 +322,68 @@ function preserveNewerLocalEnsembleRoster(
       )
     }
   }
+}
+
+/** Local copy by repo convention (see Sidebar.tsx, LinkedChatsStrip.tsx,
+ * resolveSlashParticipant.ts) — keeps this merge module dependency-light. */
+const SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY = 'sideChatSelectedParticipantId'
+
+/**
+ * The chat-level composer-selection slice: everything the Provider/Model/
+ * Reasoning picker persists through the selection-patch overlay, plus the
+ * queued provider change and the selected-participant pointer, all living in
+ * `providerMetadata`, and the two top-level fields the same interactions move
+ * (`provider` via an idle provider switch, `workflowMode` via the patch).
+ */
+const COMPOSER_SELECTION_CHAT_METADATA_KEYS: readonly string[] = [
+  ...CHAT_COMPOSER_SELECTION_METADATA_KEYS,
+  PENDING_PROVIDER_CHANGE_KEY,
+  SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY
+]
+
+function composerSelectionSignature(chat: ChatRecord): string {
+  const metadata = chat.providerMetadata || {}
+  return JSON.stringify([
+    chat.provider ?? null,
+    chat.workflowMode ?? null,
+    COMPOSER_SELECTION_CHAT_METADATA_KEYS.map((key) => metadata[key] ?? null)
+  ])
+}
+
+/**
+ * Same 1.0.5-UI2 class as the goal and roster helpers, reported a third time
+ * as "the model picker selection bounces back". A picker commit is optimistic
+ * (`applyChatComposerSelectionPatch` stamps `updatedAt`) and persists through
+ * a debounced patch IPC into main's selection OVERLAY, which never broadcasts
+ * — so a delivery built before the patch landed both reverts the selection
+ * and is the last word until some unrelated write happens. When the live
+ * record is provably fresher and the selection slices differ, the live slice
+ * wins wholesale, including deliberate absences (a cleared pending provider
+ * change must not resurrect). Non-selection metadata in the delivery stays
+ * authoritative, and a genuinely newer main-side selection (remote companion,
+ * turn-end apply persisted first) still wins on its stamp.
+ */
+function preserveNewerLocalComposerSelection(
+  merged: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  if (!liveChat) return merged
+  if (composerSelectionSignature(liveChat) === composerSelectionSignature(merged)) return merged
+  if (stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) return merged
+  const next = { ...merged }
+  if (liveChat.provider) next.provider = liveChat.provider
+  else delete next.provider
+  if (liveChat.workflowMode) next.workflowMode = liveChat.workflowMode
+  else delete next.workflowMode
+  const nextMetadata: Record<string, unknown> = { ...(merged.providerMetadata || {}) }
+  const liveMetadata = liveChat.providerMetadata || {}
+  for (const key of COMPOSER_SELECTION_CHAT_METADATA_KEYS) {
+    const value = liveMetadata[key]
+    if (value === undefined) delete nextMetadata[key]
+    else nextMetadata[key] = value
+  }
+  next.providerMetadata = nextMetadata
+  return next
 }
 
 /**
@@ -282,11 +426,13 @@ export function mergeChatUpdatedForRender(
   merged = preserveOptimisticEnsembleQueue(merged, liveChat)
 
   // Same preservation class as closeouts and user messages above, scoped to
-  // the two user-authored fields whose optimistic commit is not otherwise
-  // represented in a delivery: the thread goal and the Ensemble seat roster.
+  // the user-authored fields whose optimistic commit is not otherwise
+  // represented in a delivery: the thread goal, the Ensemble seat roster and
+  // per-seat configuration, and the composer's chat-level selection.
   // See 1.0.5-UI2 on each helper.
   merged = preserveNewerLocalActiveGoal(merged, liveChat)
   merged = preserveNewerLocalEnsembleRoster(merged, liveChat)
+  merged = preserveNewerLocalComposerSelection(merged, liveChat)
   const pendingMarkerIds = options.pendingMarkerIds
   if (pendingMarkerIds && pendingMarkerIds.size > 0) {
     const anchoredMessages = anchorPendingAgentQuestionMarkers(

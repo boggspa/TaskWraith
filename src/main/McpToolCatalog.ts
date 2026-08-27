@@ -4111,8 +4111,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description: 'device driver: target simulator UDID (default: the booted simulator).'
           },
           width: { type: 'number' },
-          height: { type: 'number' },
-          originAllowlist: { type: 'array', items: { type: 'string' } }
+          height: { type: 'number' }
         }
       }
     },
@@ -4840,7 +4839,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_navigate',
       description:
-        "Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically in the active chat's Canvas dock — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing use canvas_click / canvas_fill (Canvas interaction), and scripts use canvas_eval. Accept Edits and higher authorize ordinary navigation; Ask prompts on every call and Plan denies. Private-network hosts stay blocked unless allowlisted at open; link-local/metadata are always blocked.",
+        "Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically in the active chat's Canvas dock — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing use canvas_click / canvas_fill (Canvas interaction), and scripts use canvas_eval. Accept Edits and higher authorize ordinary navigation; Ask prompts on every call and Plan denies. Public, loopback, and private-network hosts are supported; link-local/cloud-metadata targets remain blocked.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

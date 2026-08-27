@@ -24,6 +24,11 @@ import {
   resolveContextWindow,
   formatContextTokens
 } from './contextWindows'
+import {
+  KIMI_256K_CONTEXT_WINDOW,
+  KIMI_K3_LONG_CONTEXT_WINDOW,
+  KIMI_K3_MODEL_ID
+} from '../../../shared/kimiModels'
 
 // Catalog entries that are router/selection ALIASES, not concrete models, so
 // they have no single official context window of their own (their effective
@@ -63,15 +68,21 @@ export function buildModelContextLengthGroups(
           opt.id
         )
         const maxContextWindow =
-          provider === 'kimi' && opt.id === 'kimi-k3' ? 1_048_576 : undefined
+          provider === 'kimi' && opt.id === KIMI_K3_MODEL_ID
+            ? KIMI_K3_LONG_CONTEXT_WINDOW
+            : undefined
+        const formattedContextWindow =
+          provider === 'kimi' && contextWindow === KIMI_256K_CONTEXT_WINDOW
+            ? '256k'
+            : formatContextTokens(contextWindow)
         return {
           modelId: opt.id,
           label: opt.label,
           contextWindow,
           ...(maxContextWindow ? { maxContextWindow } : {}),
           formatted: maxContextWindow
-            ? `${formatContextTokens(contextWindow)}–${formatContextTokens(maxContextWindow)}`
-            : formatContextTokens(contextWindow)
+            ? `${formattedContextWindow}–${formatContextTokens(maxContextWindow)}`
+            : formattedContextWindow
         }
       })
     if (models.length > 0) {

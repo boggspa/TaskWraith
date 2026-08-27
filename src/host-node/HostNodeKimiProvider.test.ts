@@ -62,6 +62,7 @@ function open(
   const events: unknown[] = []
   const cancels = new Map<string, () => void>()
   const child = new FakeChild()
+  const spawn = vi.fn((_command: string, _args: string[], _options: unknown) => child as never)
   const port: HostProviderRunPort = {
     getThread: () => input.configuredThread ?? thread(),
     appendTranscript: (value) => appends.push(value),
@@ -87,7 +88,7 @@ function open(
     },
     ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
-    spawn: () => child as never
+    spawn
   })
   const instance = factory.create({
     runPort: port,
@@ -97,7 +98,7 @@ function open(
         register: () => new Promise<never>(() => {})
       } satisfies HostNodeInteractionResolver)
   } satisfies HostNodeProviderCreateInput)
-  return { factory, instance, child, appends, finishes, events, cancels }
+  return { factory, instance, child, appends, finishes, events, cancels, spawn }
 }
 
 function frames(child: FakeChild): string[] {
@@ -107,6 +108,29 @@ function frames(child: FakeChild): string[] {
 }
 
 describe('HostNodeKimiProvider', () => {
+  it.each([
+    ['kimi-k2.7-code', 'kimi-code/kimi-for-coding'],
+    ['kimi-k3', 'kimi-code/k3'],
+    ['kimi-k3-256k', 'kimi-code/k3-256k']
+  ])('maps the offered %s row to Kimi CLI alias %s', async (modelId, cliAlias) => {
+    const reasoningId = modelId === 'kimi-k2.7-code' ? 'on' : 'high'
+    const { instance, child, spawn } = open({
+      configuredThread: thread({ modelId, reasoningId })
+    })
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    expect(spawn.mock.calls[0]?.[1]).toEqual(['--model', cliAlias, 'acp'])
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
   it('keeps a missing binary visible as unavailable and terminalizes setup failure', async () => {
     const { instance, finishes } = open({ missingBinary: true })
     await expect(instance.getStatus()).resolves.toMatchObject({

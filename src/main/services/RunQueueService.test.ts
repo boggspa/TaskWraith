@@ -119,12 +119,31 @@ function makeRepository(overrides: Partial<RunQueueRepository> = {}): RunQueueRe
         statusReason: input?.statusReason
       })
     ),
+    markPromotedSteerAdmissionPending: vi.fn((input) =>
+      makeJob({
+        runId: input.runId,
+        status: 'steer_promoting',
+        promotionOwnerToken: input.ownerToken,
+        promotionToken: input.ownerToken,
+        steerPreparationKind: 'solo_steer_transcript_barrier',
+        steerDeliveryPhase: 'provider_admission_pending',
+        steerDeliveryActiveRunId: input.activeRunId,
+        steerDeliveryStrategy: input.strategy
+      })
+    ),
     fallbackPromotedSteerJob: vi.fn((input) =>
       makeJob({
         runId: input?.runId,
         provider: 'gemini',
         status: 'queued',
         statusReason: input?.reason
+      })
+    ),
+    releasePromotedSteerAfterDefiniteNonAdmission: vi.fn((input) =>
+      makeJob({
+        runId: input.runId,
+        status: 'queued',
+        statusReason: input.reason
       })
     ),
     transitionRunQueueJob: vi.fn((runIdOrId, status, partial) =>
@@ -762,13 +781,17 @@ describe('RunQueueService', () => {
           imageAttachments: [{ path: '/tmp/Test 1/one.png', name: 'one.png' }]
         }
       },
-      { authorizedFilePaths: ['/tmp/Test 1/one.png'] }
+      {
+        authorizedFilePaths: ['/tmp/Test 1/one.png'],
+        authorizedDirectoryPickerPaths: ['/tmp/Test 1/folder']
+      }
     )
 
     expect(stageAttachments).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: 'chat-1',
-        authorizedFilePaths: ['/tmp/Test 1/one.png']
+        authorizedFilePaths: ['/tmp/Test 1/one.png'],
+        authorizedDirectoryPickerPaths: ['/tmp/Test 1/folder']
       })
     )
     expect(stageAttachments).not.toHaveBeenCalledWith(
@@ -817,6 +840,68 @@ describe('RunQueueService', () => {
               name: 'reference-folder',
               kind: 'directory'
             }
+          ]
+        })
+      })
+    )
+  })
+
+  it('preserves only the main-minted queue receipt returned by directory staging', () => {
+    const queueReceipt = {
+      schemaVersion: 1 as const,
+      canonicalPath: '/outside/reference-folder',
+      runId: 'run-folder-receipt',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      provider: 'codex' as const,
+      signature: 'a'.repeat(64)
+    }
+    const stageAttachments = vi.fn((input) => ({
+      ok: true as const,
+      attachments: input.attachments.map((attachment) => ({
+        ...attachment,
+        kind: 'directory' as const,
+        queueReceipt
+      }))
+    }))
+    const { deps, repository } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+
+    service.requestJob(
+      {
+        runId: 'run-folder-receipt',
+        provider: 'codex',
+        workspacePath: '/repo',
+        chatId: 'chat-1',
+        request: {
+          prompt: 'Inspect this external folder',
+          imageAttachments: [
+            {
+              id: 'folder-1',
+              path: '/outside/reference-folder',
+              name: 'reference-folder',
+              kind: 'directory',
+              queueReceipt: { ...queueReceipt, signature: '0'.repeat(64) }
+            }
+          ]
+        }
+      },
+      {
+        authorizedFilePaths: ['/outside/reference-folder'],
+        authorizedDirectoryPickerPaths: ['/outside/reference-folder']
+      }
+    )
+
+    expect(stageAttachments.mock.calls[0][0].attachments[0]).not.toHaveProperty('queueReceipt')
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          imageAttachments: [
+            expect.objectContaining({
+              kind: 'directory',
+              queueReceipt
+            })
           ]
         })
       })
@@ -1443,6 +1528,110 @@ describe('RunQueueService', () => {
     expect(repository.leasePromotedSteerJob).not.toHaveBeenCalled()
     expect(repository.fallbackPromotedSteerJob).not.toHaveBeenCalled()
     expect(repository.transitionRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('allows only main to fence an exact prepared barrier before provider admission', () => {
+    const barrier = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'prepared',
+      request: {
+        prompt: 'Deliver this once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => barrier) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.markPromotedSteerAdmissionPending({
+        runId: barrier.runId,
+        ownerToken: 'main-owner-1',
+        activeRunId: 'active-run-1',
+        strategy: 'codex-turn-steer'
+      })
+    ).toMatchObject({ steerDeliveryPhase: 'provider_admission_pending' })
+    expect(repository.markPromotedSteerAdmissionPending).toHaveBeenCalledWith({
+      runId: barrier.runId,
+      ownerToken: 'main-owner-1',
+      activeRunId: 'active-run-1',
+      strategy: 'codex-turn-steer'
+    })
+
+    expect(
+      service.markPromotedSteerAdmissionPending({
+        runId: barrier.runId,
+        ownerToken: 'wrong-owner',
+        activeRunId: 'active-run-1',
+        strategy: 'codex-turn-steer'
+      })
+    ).toBeNull()
+    expect(repository.markPromotedSteerAdmissionPending).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps admission-pending steers non-runnable unless main proves non-admission', () => {
+    const pending = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'provider_admission_pending',
+      request: {
+        prompt: 'Deliver once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => pending) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.fallbackPromotedSteerJob({
+        runId: pending.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'renderer fallback',
+        fallbackStatus: 'queued'
+      })
+    ).toBeNull()
+    expect(
+      service.leasePromotedSteerJob({ runId: pending.runId, ownerToken: 'main-owner-1' })
+    ).toBeNull()
+    expect(service.transitionJob(pending.runId, 'queued')).toBeNull()
+    expect(repository.fallbackPromotedSteerJob).not.toHaveBeenCalled()
+
+    expect(
+      service.releasePromotedSteerAfterDefiniteNonAdmission({
+        runId: pending.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'Provider rejected before admission.'
+      })
+    ).toEqual(
+      makeJob({
+        runId: pending.runId,
+        status: 'queued',
+        statusReason: 'Provider rejected before admission.'
+      })
+    )
+    expect(repository.releasePromotedSteerAfterDefiniteNonAdmission).toHaveBeenCalledWith({
+      runId: pending.runId,
+      ownerToken: 'main-owner-1',
+      reason: 'Provider rejected before admission.'
+    })
   })
 
   it('releases a solo-steer transcript barrier only for its exact saved user row', () => {

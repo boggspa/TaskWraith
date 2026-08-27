@@ -14,6 +14,8 @@ import {
   codexInitializeAdvertisesNativeGoalControl,
   codexRuntimeProfileKey,
   CodexAppServerClient,
+  CodexAppServerJsonRpcError,
+  CodexAppServerNotRunningError,
   compareCodexVersions,
   isCodexAppServerThreadId,
   isCodexConfigParseError,
@@ -145,6 +147,61 @@ describe('CodexAppServerClient runtime profile tracking', () => {
     expect(kill).toHaveBeenCalled()
     expect(client.hasStaleMcpConfig()).toBe(false)
     expect((client as any).privateHomeThreadIds.size).toBe(0)
+  })
+})
+
+describe('CodexAppServerClient request errors', () => {
+  it('preserves JSON-RPC code and structured data from the response parser', async () => {
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
+    const write = vi.fn()
+    ;(client as any).proc = {
+      killed: false,
+      stdin: { writable: true, write }
+    }
+
+    const result = client.request('turn/steer', { expectedTurnId: 'turn-1' })
+    const request = JSON.parse(String(write.mock.calls[0]?.[0]))
+    ;(client as any).handleLine(
+      JSON.stringify({
+        id: request.id,
+        error: {
+          code: -32042,
+          message: 'provider failed after dispatch',
+          data: {
+            codexErrorInfo: {
+              kind: 'serverFailure',
+              retryable: false
+            }
+          }
+        }
+      })
+    )
+
+    const error = await result.catch((caught) => caught)
+    expect(error).toBeInstanceOf(CodexAppServerJsonRpcError)
+    expect(error).toMatchObject({
+      name: 'CodexAppServerJsonRpcError',
+      message: 'provider failed after dispatch',
+      code: -32042,
+      data: {
+        codexErrorInfo: {
+          kind: 'serverFailure',
+          retryable: false
+        }
+      }
+    })
+  })
+
+  it('uses a typed rejection when a request is fenced before write', async () => {
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
+
+    const error = await client.request('turn/steer', {}).catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(CodexAppServerNotRunningError)
+    expect(error).toMatchObject({
+      method: 'turn/steer',
+      message: expect.stringContaining('was not sent')
+    })
   })
 })
 

@@ -34,6 +34,33 @@ import {
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
 import { canonicalPiWireModelId } from '../../shared/piBrandTable'
+import {
+  KIMI_HIGHSPEED_API_MODEL,
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K27_MODEL_ID,
+  KIMI_K3_256K_API_MODEL,
+  KIMI_K3_256K_CLI_MODEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_API_MODEL,
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_REASONING_EFFORTS,
+  KIMI_STANDARD_API_MODEL,
+  KIMI_STANDARD_CLI_MODEL,
+  isKimiK3Model,
+  kimiCliModelAlias,
+  kimiExplicitCliModelAlias,
+  type KimiK3ReasoningEffort
+} from '../../shared/kimiModels'
+
+export {
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K3_256K_CLI_MODEL,
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_REASONING_EFFORTS,
+  KIMI_STANDARD_CLI_MODEL,
+  isKimiK3Model
+} from '../../shared/kimiModels'
 
 export {
   activeCodexModelRows,
@@ -589,11 +616,9 @@ const CLAUDE_STATIC_MODELS = [
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
-export const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max'] as const
-
 const KIMI_STATIC_MODELS = [
   {
-    id: 'kimi-k2.7-code',
+    id: KIMI_K27_MODEL_ID,
     label: 'K2.7 Coding',
     description: 'Standard and Highspeed tiers with always-on thinking',
     isDefault: true,
@@ -606,10 +631,23 @@ const KIMI_STATIC_MODELS = [
     // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
     // on Allegretto+, with model-advertised Low/High/Max effort choices. No
     // Highspeed tier — Fast stays a K2.7 Coding capability.
-    id: 'kimi-k3',
-    label: 'K3',
+    id: KIMI_K3_MODEL_ID,
+    label: 'K3 (up to 1M)',
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
+    ultraTaskSupported: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    // `k3-256k` is a distinct, quota-efficient route for the same K3 model
+    // generation. It is regular speed and must never inherit K2.7 Fast.
+    id: KIMI_K3_256K_MODEL_ID,
+    label: 'K3 256K',
+    description:
+      "Moonshot's quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking",
     ultraTaskSupported: true,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
@@ -1050,22 +1088,17 @@ const CURSOR_STATIC_MODELS = [
     ultraTaskSupported: true
   }
 ]
-const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
-const KIMI_STANDARD_API_MODEL = 'kimi-for-coding'
-const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
+const KIMI_DEFAULT_MODEL = KIMI_K27_MODEL_ID
 // Kimi CLI's --model option resolves configured model aliases, not raw API
 // model ids. OAuth-managed Kimi Code models use the stable `kimi-code/` key
-// namespace in ~/.kimi/config.toml; passing only `kimi-for-coding` leaves the
+// namespace in ~/.kimi-code/config.toml; passing only `kimi-for-coding` leaves the
 // CLI without an LLM even though that is the correct third-party API model id.
-export const KIMI_STANDARD_CLI_MODEL = `kimi-code/${KIMI_STANDARD_API_MODEL}`
-export const KIMI_HIGHSPEED_CLI_MODEL = `kimi-code/${KIMI_HIGHSPEED_API_MODEL}`
-const KIMI_K3_API_MODEL = 'k3'
-export const KIMI_K3_CLI_MODEL = `kimi-code/${KIMI_K3_API_MODEL}`
 const KIMI_CLI_MODEL_IDS = new Set([
   ...KIMI_STATIC_MODELS.map((model) => model.id),
   KIMI_STANDARD_CLI_MODEL,
   KIMI_HIGHSPEED_CLI_MODEL,
-  KIMI_K3_CLI_MODEL
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_256K_CLI_MODEL
 ])
 const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['default', KIMI_DEFAULT_MODEL],
@@ -1080,6 +1113,8 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   // TaskWraith id; 'kimi-k3' itself passes through via KIMI_CLI_MODEL_IDS.
   [KIMI_K3_API_MODEL, 'kimi-k3'],
   [KIMI_K3_CLI_MODEL, 'kimi-k3'],
+  [KIMI_K3_256K_API_MODEL, KIMI_K3_256K_MODEL_ID],
+  [KIMI_K3_256K_CLI_MODEL, KIMI_K3_256K_MODEL_ID],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code-thinking', KIMI_DEFAULT_MODEL],
@@ -1100,28 +1135,19 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-k2-turbo', KIMI_DEFAULT_MODEL]
 ])
 
-export function isKimiK3Model(model?: string | null): boolean {
-  const normalized = String(model || '')
-    .trim()
-    .toLowerCase()
-  return (
-    normalized === 'kimi-k3' || normalized === KIMI_K3_API_MODEL || normalized === KIMI_K3_CLI_MODEL
-  )
-}
-
 /** K3 defaults to Max; K2.7 Coding has no configurable effort axis. */
 export function normalizeKimiReasoningEffort(
   model?: string | null,
   effort?: string | null
-): (typeof KIMI_K3_REASONING_EFFORTS)[number] | null {
+): KimiK3ReasoningEffort | null {
   if (!isKimiK3Model(model)) return null
   const normalized = String(effort || '')
     .trim()
     .toLowerCase()
   return KIMI_K3_REASONING_EFFORTS.includes(
-    normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number]
+    normalized as KimiK3ReasoningEffort
   )
-    ? (normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number])
+    ? (normalized as KimiK3ReasoningEffort)
     : 'max'
 }
 
@@ -1316,28 +1342,14 @@ export function appendKimiThinkingArgs(args: string[], kimiThinking?: boolean | 
 }
 
 function kimiCliModelArg(model: string, serviceTier?: string | null): string | null {
-  const normalized = model.trim().toLowerCase()
-  // Resolve K3 before the tier switch: it has no speed tiers, so a stale or
-  // queued Fast flag must never silently reroute a K3 run onto the K2.7
-  // HighSpeed alias.
-  if (
-    normalized === 'kimi-k3' ||
-    normalized === KIMI_K3_API_MODEL ||
-    normalized === KIMI_K3_CLI_MODEL
-  ) {
-    return KIMI_K3_CLI_MODEL
-  }
-  if (serviceTier === 'fast') return KIMI_HIGHSPEED_CLI_MODEL
-  if (serviceTier === 'standard') return KIMI_STANDARD_CLI_MODEL
-  if (!normalized || normalized === 'default' || normalized === KIMI_DEFAULT_MODEL) return null
-  return model
+  return kimiCliModelAlias(model, serviceTier)
 }
 
 /** Exact model value understood by Kimi Code's ACP config picker. Unlike the
  * CLI argv helper, this must be explicit for the default model because a
  * resumed session's persisted model takes precedence over process defaults. */
 export function kimiAcpModelConfigValue(model: string, serviceTier?: string | null): string {
-  return kimiCliModelArg(model, serviceTier) || KIMI_STANDARD_CLI_MODEL
+  return kimiExplicitCliModelAlias(model, serviceTier)
 }
 
 export function appendKimiModelArgs(

@@ -8558,6 +8558,22 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   font-weight: 600;
 }
 
+/* Parent-run activities that a pre-guard reducer collapsed onto the return
+ * card (2026-08-26 frozen-transcript incident). Only damaged records render
+ * this section; the note keeps the attribution honest — these are the
+ * PARENT's tools, not the child's. */
+.subthread-return-recovered-activity {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.subthread-return-recovered-note {
+  font-size: 11px;
+  opacity: 0.62;
+  margin-bottom: 6px;
+}
+
 /* Authority / stage glyph beside a seat's role name. Inherits `color` from the
  * role span, which is the seat's provider accent, so the mark and the name are
  * the same colour without either declaring it twice. */

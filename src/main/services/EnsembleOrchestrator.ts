@@ -23135,7 +23135,7 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}
   }
-  if (participant.provider === 'kimi' && participant.model === 'kimi-k3') {
+  if (participant.provider === 'kimi' && isKimiK3Model(participant.model)) {
     return participant.reasoningEffort
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}

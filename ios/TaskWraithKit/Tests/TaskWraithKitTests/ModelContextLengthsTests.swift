@@ -168,12 +168,12 @@ struct ModelContextLengthsTests {
 
     // MARK: - Kimi group
 
-    @Test("kimi kimi-k2.7-code: 256_000 / 256k")
+    @Test("kimi kimi-k2.7-code: exact 262_144 / displayed 256k")
     func kimiK27Code() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k2.7-code" }
-        #expect(row?.contextWindow == 256_000)
+        #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "256k")
     }
 
@@ -183,17 +183,28 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3" }
         #expect(row != nil)
-        #expect(row?.label == "K3")
-        #expect(row?.contextWindow == 256_000)
+        #expect(row?.label == "K3 (up to 1M)")
+        #expect(row?.contextWindow == 262_144)
         #expect(row?.maxContextWindow == 1_048_576)
         #expect(row?.formatted == "256k–1.0M")
     }
 
-    @Test("kimi group mirrors the current picker rows (K2.7 default first, then K3)")
+    @Test("kimi fixed K3 route: exact 262_144 / displayed 256k")
+    func kimiK3256K() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "kimi" }?
+            .models.first { $0.modelId == "kimi-k3-256k" }
+        #expect(row?.label == "K3 256K")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.maxContextWindow == nil)
+        #expect(row?.formatted == "256k")
+    }
+
+    @Test("kimi group mirrors the current picker rows (K2.7 then both K3 routes)")
     func kimiGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let kimiModels = groups.first { $0.provider == "kimi" }?.models ?? []
-        #expect(kimiModels.map(\.modelId) == ["kimi-k2.7-code", "kimi-k3"])
+        #expect(kimiModels.map(\.modelId) == ["kimi-k2.7-code", "kimi-k3", "kimi-k3-256k"])
     }
 
     // MARK: - Grok group

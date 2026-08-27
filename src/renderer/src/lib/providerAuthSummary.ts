@@ -16,13 +16,9 @@ export interface ProviderAuthSummary {
   hint: string
 }
 
-/**
- * Mistral Vibe's public ACP status probe can establish that `vibe-acp` is
- * installed, but it deliberately does not inspect Vibe's private credential
- * store.  Treating a resolvable binary as "signed in" would recreate the
- * exact guesswork this card is meant to remove.  The setup wizard is the
- * authoritative place to complete a plan or API-key sign-in.
- */
+/** Mistral Vibe reports credential presence through its own `_auth/status`
+ * ACP extension. TaskWraith consumes only that boolean/source metadata; it
+ * never opens, copies, or stores Vibe's keyring item or credential file. */
 export function summariseMistralVibeStatus(status: unknown): ProviderAuthSummary {
   const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
   if (!record) {
@@ -42,19 +38,29 @@ export function summariseMistralVibeStatus(status: unknown): ProviderAuthSummary
   }
 
   const authState = String(record.authState || '').trim().toLowerCase()
-  if (['authenticated', 'api-key', 'oauth'].includes(authState)) {
+  const credentialPresent = record.credentialPresent
+  if (credentialPresent === true || ['authenticated', 'api-key', 'oauth'].includes(authState)) {
     return {
       variant: 'signed-in',
-      statusText: 'Mistral Vibe configured',
-      hint: 'You can launch Mistral Vibe runs from TaskWraith.'
+      statusText: 'Mistral Vibe signed in',
+      hint: "Verified through Mistral Vibe's credential-opaque ACP status. TaskWraith did not read or store the credential."
+    }
+  }
+  if (
+    credentialPresent === false ||
+    ['missing', 'signed-out', 'signed_out', 'unauthenticated'].includes(authState)
+  ) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Mistral Vibe not signed in',
+      hint: 'Open Terminal to run `vibe --setup` and complete Mistral Vibe sign-in.'
     }
   }
 
   return {
     variant: 'partial',
-    statusText: 'Vibe CLI ready · setup unverified',
-    hint:
-      'Open Terminal to run `vibe --setup`. The Mistral Vibe wizard handles your Mistral plan (including Free / Pro where offered) or the Vibe API key you choose; TaskWraith does not read or store those credentials.'
+    statusText: 'Vibe CLI ready · sign-in status unavailable',
+    hint: 'TaskWraith could not get the credential-opaque auth status from Vibe. Upgrade Vibe, or run `vibe --setup` if sign-in is incomplete.'
   }
 }
 

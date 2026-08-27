@@ -277,7 +277,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan', 'default'],
         reasoningEffort: true,
         speedTiers: [],
-        imageAttachments: false,
+        // The neutral ACP client negotiates promptCapabilities.image against
+        // this exact runtime before forwarding any main-authorized image.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,
@@ -358,7 +360,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan'],
         reasoningEffort: false,
         speedTiers: [],
-        imageAttachments: false,
+        // The exact model's /api/show capabilities negotiate vision before
+        // TaskWraith adds an ordered REST messages[].images array.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,
@@ -473,11 +477,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['default', 'plan'],
         reasoningEffort: true,
         speedTiers: [],
-        // Per-model: mistral-medium-3.5 supports vision, devstral-small (the
-        // default) does not. Keep provider-level false until the contract
-        // becomes per-model; flipping true would advertise an affordance the
-        // default model cannot deliver. See StaticProviderModels.ts.
-        imageAttachments: false,
+        // Capability is negotiated from the exact Vibe ACP initialize result;
+        // non-vision models reject visibly before session/prompt.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,

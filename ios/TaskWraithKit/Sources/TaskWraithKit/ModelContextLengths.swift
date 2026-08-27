@@ -86,7 +86,9 @@ public enum ModelContextLengths {
                 (id: "kimi-k2.7-code", label: "K2.7 Coding"),
                 // K3 (2026-07-16) — Moonshot's flagship; 256K on Moderato and
                 // up to 1M on Allegretto+, with no Highspeed tier.
-                (id: "kimi-k3",        label: "K3"),
+                (id: "kimi-k3",        label: "K3 (up to 1M)"),
+                // Same K3 generation through the fixed, quota-efficient route.
+                (id: "kimi-k3-256k",   label: "K3 256K"),
             ]
         case "pi":
             // BYOK seat: the flagship row per allowed upstream. Wire ids stay
@@ -222,14 +224,18 @@ public enum ModelContextLengths {
                     let window = ContextWindows.resolve(provider: provider, model: opt.id)
                     let maxWindow: Int? =
                         provider == "kimi" && opt.id == "kimi-k3" ? 1_048_576 : nil
+                    let formattedWindow =
+                        provider == "kimi" && window == 262_144
+                            ? "256k"
+                            : formatContextTokens(window)
                     return ModelContextLengthRow(
                         modelId: opt.id,
                         label: opt.label,
                         contextWindow: window,
                         maxContextWindow: maxWindow,
                         formatted: maxWindow.map {
-                            "\(formatContextTokens(window))–\(formatContextTokens($0))"
-                        } ?? formatContextTokens(window)
+                            "\(formattedWindow)–\(formatContextTokens($0))"
+                        } ?? formattedWindow
                     )
                 }
             if !rows.isEmpty {

@@ -208,6 +208,20 @@ export class MidRunSteeringRegistry {
     this.prune(chatId)
   }
 
+  /**
+   * Remove entries whose delivery outcome is intentionally terminal but not
+   * provable (for example, an ambiguous native RPC admission). They must not
+   * be replayed from the in-memory registry, and calling this "delivered"
+   * would manufacture evidence we do not have.
+   */
+  settleWithoutDelivery(chatId: string, entryIds: string[]): void {
+    if (entryIds.length === 0) return
+    const ids = new Set(entryIds)
+    const remaining = (this.entriesByChatId.get(chatId) || []).filter((entry) => !ids.has(entry.id))
+    if (remaining.length === 0) this.entriesByChatId.delete(chatId)
+    else this.entriesByChatId.set(chatId, remaining)
+  }
+
   clearForChat(chatId: string): void {
     this.entriesByChatId.delete(chatId)
   }
@@ -550,6 +564,7 @@ export function shouldAppendScheduledSteeringOnBusy(input: {
 export type MidTurnSteeringStrategyKind =
   | 'pi-live-frame'
   | 'acp-interrupt'
+  | 'codex-turn-steer'
   | 'cooperative-cancel-resume'
   | 'broker-injection'
   | 'boundary'
@@ -559,7 +574,9 @@ export interface MidTurnSteeringCapability {
   live: boolean
 }
 
-export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidTurnSteeringCapability {
+export function midTurnSteeringCapabilityForProvider(
+  provider: ProviderId
+): MidTurnSteeringCapability {
   switch (provider) {
     case 'pi':
       return { strategy: 'pi-live-frame', live: true }
@@ -570,7 +587,18 @@ export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidT
       // steer(): session/cancel closes the in-flight prompt and the same
       // session is re-prompted with the steering text (AcpTurnClient).
       return { strategy: 'acp-interrupt', live: true }
+    case 'codex':
+      // Codex app-server 0.149 exposes exact `turn/steer`, including local
+      // image inputs, against the currently-bound thread + turn identity.
+      return { strategy: 'codex-turn-steer', live: true }
+    case 'claude':
     case 'cursor':
+    case 'muse':
+    case 'antigravity':
+      // Claude drains at its SDK PostToolBatch hook; Cursor, Muse, and
+      // AntiGravity can consume through the route-bound MCP result seam.
+      // Providers without a matching boundary during the live turn retain the
+      // durable natural-boundary fallback.
       return { strategy: 'broker-injection', live: true }
     case 'ollama':
       // Same arm/drain transport and delivery-evidence contract as Cursor,
@@ -578,13 +606,6 @@ export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidT
       // drains the armed text at the head of every iteration after the first
       // and injects it as a framed user message in the next model request.
       return { strategy: 'broker-injection', live: true }
-    case 'claude':
-    case 'codex':
-    case 'antigravity':
-    case 'muse':
-      // Boundary-only until a provider adapter can emit concrete delivery
-      // evidence. RunManager interrupt flags alone have no execution consumer.
-      return { strategy: 'cooperative-cancel-resume', live: false }
     default:
       return { strategy: 'boundary', live: false }
   }
@@ -609,14 +630,11 @@ export function planMidTurnSteeringDelivery(input: {
   if (input.runSettled) return { kind: 'boundary' }
 
   const cap = midTurnSteeringCapabilityForProvider(input.provider)
-  if (!cap.live) return { kind: 'boundary' }
-  if (cap.strategy === 'pi-live-frame') {
-    // Pi requires an active stdin transport; others are transport-agnostic.
-    if (!input.hasLiveTransport) return { kind: 'boundary' }
-    return { kind: 'pi-live-frame' }
-  }
-  if (cap.strategy === 'acp-interrupt' && !input.hasLiveTransport) {
-    return { kind: 'boundary' }
-  }
+  // Keep the provider strategy visible even when its native transport is not
+  // live yet. SteeringOrchestrator owns the fallback: it arms the exact active
+  // run for cancellation after its next completed tool and releases the
+  // durable steering row to the ordinary queue. Returning `boundary` here used
+  // to erase that provider context before the fallback could be accelerated.
+  if (cap.strategy === 'boundary') return { kind: 'boundary' }
   return { kind: cap.strategy }
 }

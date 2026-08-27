@@ -139,9 +139,9 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('namespaced workspace tools')
     expect(html).toContain('repository-local hooks, filters')
     expect(html).toContain('K2.7 Coding switches between Standard and Highspeed')
-    expect(html).toContain('K3 has no Fast tier')
+    expect(html).toContain('neither K3 route has a Fast tier')
     expect(html).toContain('K2.7 Coding has a fixed On setting')
-    expect(html).toContain('K3 lets')
+    expect(html).toContain('both K3')
     expect(html).toContain('choose Low, High, or Max effort')
   })
 

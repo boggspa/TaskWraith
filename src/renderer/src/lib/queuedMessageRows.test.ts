@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  ChatMessage,
   ChatRecord,
   EnsembleQueuedPromptState,
   RunQueueJob
 } from '../../../main/store/types'
+import { midRunQueuedMessageId } from '../../../shared/midRunSteeringQueue'
 import type { QueuedRunRequest } from './runRequestTypes'
 import {
   alignEnsembleQueuedPromptEntries,
   appendLocalQueuedRunEntries,
+  discordContextSelectionSummary,
+  filterTranscriptBackedQueuedRunEntries,
   mapQueuedAttachmentsForComposer,
-  preserveOptimisticEnsembleQueue
+  preserveOptimisticEnsembleQueue,
+  queuedRunDisplayPrompt,
+  reserveQueuedRunAtFront
 } from './queuedMessageRows'
 
 const chat = (id: string): ChatRecord =>
@@ -87,6 +93,24 @@ const job = (overrides: Partial<RunQueueJob> = {}): RunQueueJob =>
 const fallbackId = (queued: QueuedRunRequest): string =>
   queued.appRunId || `${queued.provider}-${queued.prompt.slice(0, 16)}`
 
+const queueRow = (id: string, prompt = 'Display prompt') => ({
+  id,
+  provider: 'codex' as const,
+  prompt
+})
+
+const soloSteerMessage = (runId: string): ChatMessage => ({
+  id: midRunQueuedMessageId(runId),
+  role: 'user',
+  content: 'Display prompt',
+  timestamp: '2026-06-22T10:00:01.000Z',
+  metadata: {
+    kind: 'midRunSteering',
+    midRunQueueRunId: runId,
+    midRunQueueSource: 'soloSteer'
+  }
+})
+
 describe('queued message row helpers', () => {
   it('adds a local queued request before the durable queue echo arrives', () => {
     const entries = appendLocalQueuedRunEntries({
@@ -141,6 +165,138 @@ describe('queued message row helpers', () => {
     })
 
     expect(entries[0]?.dmTargetParticipantId).toBe('participant-1')
+  })
+
+  it('hides a queued boundary fallback once its exact solo Steer row is in the transcript', () => {
+    const boundaryFallback = job({
+      status: 'queued',
+      queueMessageId: midRunQueuedMessageId('run-1')
+    })
+
+    expect(
+      filterTranscriptBackedQueuedRunEntries(
+        [queueRow(boundaryFallback.runId)],
+        [soloSteerMessage(boundaryFallback.runId)]
+      )
+    ).toEqual([])
+  })
+
+  it('hides the same transcript-backed row during steer promotion without depending on status', () => {
+    const promoting = job({
+      status: 'steer_promoting',
+      queueMessageId: midRunQueuedMessageId('run-1')
+    })
+
+    expect(
+      filterTranscriptBackedQueuedRunEntries(
+        [queueRow(promoting.runId)],
+        [soloSteerMessage(promoting.runId)]
+      )
+    ).toEqual([])
+  })
+
+  it('preserves ordinary queued rows and requires an exact solo Steer transcript correlation', () => {
+    const ordinary = queueRow('run-1', 'Ordinary queued prompt')
+    const malformed: ChatMessage = {
+      ...soloSteerMessage('run-1'),
+      id: 'unrelated-user-row'
+    }
+
+    const entries = [ordinary]
+    expect(filterTranscriptBackedQueuedRunEntries(entries, [])).toBe(entries)
+    expect(filterTranscriptBackedQueuedRunEntries(entries, [malformed])).toBe(entries)
+    expect(filterTranscriptBackedQueuedRunEntries(entries, [soloSteerMessage('another-run')])).toBe(
+      entries
+    )
+  })
+
+  it('hides the optimistic local mirror before the durable queue echo arrives', () => {
+    const optimistic = appendLocalQueuedRunEntries({
+      entries: [],
+      queuedRuns: [request()],
+      runQueueJobs: [],
+      chatId: 'chat-1',
+      queuedRunFallbackId: fallbackId
+    })
+
+    expect(optimistic).toEqual([
+      {
+        id: 'run-1',
+        provider: 'codex',
+        prompt: 'Display prompt',
+        dmTargetParticipantId: undefined
+      }
+    ])
+    expect(filterTranscriptBackedQueuedRunEntries(optimistic, [soloSteerMessage('run-1')])).toEqual(
+      []
+    )
+  })
+
+  it('keeps a failed transcript-backed handoff visible for recovery actions', () => {
+    const entries = [queueRow('run-1')]
+
+    expect(
+      filterTranscriptBackedQueuedRunEntries(entries, [soloSteerMessage('run-1')], {
+        preserveRunIds: new Set(['run-1'])
+      })
+    ).toBe(entries)
+  })
+
+  it('reserves a Steer at FIFO head and replaces its older local copy', () => {
+    const older = request({ appRunId: 'run-older', prompt: 'Older' })
+    const selected = request({ appRunId: 'run-selected', prompt: 'Selected' })
+    const staleSelected = request({
+      appRunId: 'run-selected',
+      prompt: 'Selected before promotion'
+    })
+
+    const reserved = reserveQueuedRunAtFront([older, staleSelected], selected, fallbackId)
+
+    expect(reserved.map((candidate) => candidate.appRunId)).toEqual(['run-selected', 'run-older'])
+    expect(reserved[0]).toBe(selected)
+  })
+
+  it('keeps rapid promoted steers FIFO ahead of ordinary queued work', () => {
+    const firstSteer = {
+      ...request({ appRunId: 'first-steer', prompt: 'First' }),
+      steerOwnerToken: 'owner-1'
+    } as unknown as QueuedRunRequest
+    const secondSteer = {
+      ...request({ appRunId: 'second-steer', prompt: 'Second' }),
+      steerOwnerToken: 'owner-2'
+    } as unknown as QueuedRunRequest
+    const ordinary = request({ appRunId: 'ordinary', prompt: 'Ordinary' })
+
+    const first = reserveQueuedRunAtFront([ordinary], firstSteer, fallbackId)
+    const second = reserveQueuedRunAtFront(first, secondSteer, fallbackId)
+
+    expect(second.map((entry) => entry.appRunId)).toEqual([
+      'first-steer',
+      'second-steer',
+      'ordinary'
+    ])
+  })
+
+  it('gives Discord-only requests a stable non-empty row and transcript summary', () => {
+    const discordContextSelection = {
+      guildId: 'guild-1',
+      guildName: 'TaskWraith',
+      channelId: 'channel-1',
+      channelName: 'engineering',
+      limit: 25 as const
+    }
+    const discordOnly = request({
+      prompt: '',
+      displayPrompt: '',
+      discordContextSelection
+    })
+
+    expect(discordContextSelectionSummary(discordContextSelection)).toBe(
+      'Discord context from TaskWraith: #engineering (last 25 messages)'
+    )
+    expect(queuedRunDisplayPrompt(discordOnly)).toBe(
+      'Discord context from TaskWraith: #engineering (last 25 messages)'
+    )
   })
 
   it('preserves a longer local ensemble queue over stale hydration for the same running round', () => {

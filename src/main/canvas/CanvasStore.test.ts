@@ -19,7 +19,6 @@ function session(id: string, over: Partial<CanvasSessionRecord> = {}): CanvasSes
     url: 'http://localhost:3000',
     title: 'title',
     viewport: { width: 1280, height: 800 },
-    originAllowlist: [],
     status: 'active',
     createdAt: '2026-06-21T00:00:00.000Z',
     updatedAt: '2026-06-21T00:00:00.000Z',

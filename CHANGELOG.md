@@ -34,6 +34,11 @@ context needed to answer.
 
 ### Provider setup and run control
 
+- **Kimi K3 routes are distinct and plan-aware.** K3 now offers the regular
+  plan-dependent route (up to 1M context) and the quota-efficient fixed-256K
+  route as separate model choices. Both retain Low/High/Max thinking and stay
+  independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
+  the installed Kimi catalog without inspecting provider credentials.
 - **Web Session Quota Tracking.** You can now import Mistral and Ollama web sessions into TaskWraith to accurately track API Usage, Vibe Usage, 5H quotas, and Weekly consumption. Cookies are securely encrypted into the OS keychain and never appear in terminal history.
 - **Ollama Cloud.** TaskWraith discovers the cloud models on your Ollama
   account and runs keyed models directly. The API key is held in the operating

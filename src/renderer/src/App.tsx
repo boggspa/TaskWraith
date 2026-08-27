@@ -144,6 +144,7 @@ import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/com
 import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
+import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -399,11 +400,14 @@ import { buildCodexNativeReviewInvocationParams } from './lib/codexNativeReview'
 import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
+  discordContextSelectionSummary,
   ensembleQueuedPromptsFromRound,
   ensembleRoundQueuePatch,
+  filterTranscriptBackedQueuedRunEntries,
   mapQueuedAttachmentsForComposer,
   preserveOptimisticEnsembleQueue,
-  queuedRunRequestChatId
+  queuedRunRequestChatId,
+  reserveQueuedRunAtFront
 } from './lib/queuedMessageRows'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
@@ -682,7 +686,6 @@ import {
   visibleRunningChatIds
 } from './lib/runningChatVisibility'
 import {
-  DEFAULT_STEER_POLL_INTERVAL_MS,
   IDLE_STEER_STATE,
   getSteerIndicatorMessage,
   isSteerInFlight,
@@ -787,12 +790,14 @@ import {
 } from './lib/appDriveDockState'
 import {
   getPendingMeshCanvasOpenRequest,
+  requestMeshCanvasOpen,
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
 import { isCanvasDockPresentationEvent } from './lib/canvasPresentation'
 import {
   getPendingSimulatorCanvasOpenRequest,
   isSimulatorCanvasPresentationEvent,
+  requestSimulatorCanvasOpen,
   subscribeSimulatorCanvasOpenRequests
 } from './lib/simulatorCanvasLaunch'
 import {
@@ -880,6 +885,7 @@ import {
   type ImageAttachment,
   type ImageAttachmentThumbnail
 } from './lib/imageAttachments'
+import { compactResolvedImageThumbnailMetadata } from './lib/imageThumbnailMetadata'
 import { shouldSurfaceProposedPlanCard } from './lib/ensemblePlanPolicy'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
 import {
@@ -1718,6 +1724,9 @@ function App(): React.JSX.Element {
   }, [refreshCollaborationChatIds])
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
+  const [failedQueuedSteerRunIds, setFailedQueuedSteerRunIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const midRunTranscriptAppendInFlightRef = useRef<Set<string>>(new Set())
   // Mirror of `queuedRuns` for handlers that need synchronous
   // access without re-reading React state (esp. edit/delete/steer
@@ -3843,6 +3852,7 @@ function App(): React.JSX.Element {
   const latestRunRequestRef = useRef<QueuedRunRequest | null>(null)
   const runQueueJobsRef = useRef<RunQueueJob[]>([])
   const rehydratedRunQueueRef = useRef(false)
+  const runQueueRehydrateRetryCountRef = useRef(0)
   const runSchedulerBusyRef = useRef(false)
   const persistentSessionActiveRef = useRef(false)
   const activeScheduledTaskIdRef = useRef<string | null>(null)
@@ -4246,15 +4256,20 @@ function App(): React.JSX.Element {
   const runRequestHasContent = (
     request: Pick<
       QueuedRunRequest,
-      'prompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+      'prompt' | 'imageAttachments' | 'projectReferenceContextSelection' | 'discordContextSelection'
     >
   ) =>
     hasAttachmentPromptContent(request.prompt, request.imageAttachments) ||
-    Boolean(request.projectReferenceContextSelection?.referenceIds.length)
+    Boolean(request.projectReferenceContextSelection?.referenceIds.length) ||
+    Boolean(request.discordContextSelection)
   const runRequestDisplayPrompt = (
     request: Pick<
       QueuedRunRequest,
-      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+      | 'prompt'
+      | 'displayPrompt'
+      | 'imageAttachments'
+      | 'projectReferenceContextSelection'
+      | 'discordContextSelection'
     >,
     finalPrompt: string
   ): string => {
@@ -4263,20 +4278,26 @@ function App(): React.JSX.Element {
     return (
       attachmentSummary(request.imageAttachments) ||
       projectReferenceContextSummary(request.projectReferenceContextSelection) ||
+      discordContextSelectionSummary(request.discordContextSelection) ||
       finalPrompt
     )
   }
   const runRequestPromptPreview = (
     request: Pick<
       QueuedRunRequest,
-      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+      | 'prompt'
+      | 'displayPrompt'
+      | 'imageAttachments'
+      | 'projectReferenceContextSelection'
+      | 'discordContextSelection'
     >
   ): string => {
     const text = (request.displayPrompt || request.prompt || '').trim()
     return (
       text ||
       attachmentSummary(request.imageAttachments) ||
-      projectReferenceContextSummary(request.projectReferenceContextSelection)
+      projectReferenceContextSummary(request.projectReferenceContextSelection) ||
+      discordContextSelectionSummary(request.discordContextSelection)
     )
   }
   const buildSubmittedImageThumbnailMetadata = async (
@@ -4297,13 +4318,7 @@ function App(): React.JSX.Element {
         }
       })
     )
-    if (!thumbnails.every(Boolean)) {
-      return { imagePaths: [], imageThumbnails: [] }
-    }
-    return {
-      imagePaths: images.map((attachment) => attachment.path),
-      imageThumbnails: thumbnails as ImageAttachmentThumbnail[]
-    }
+    return compactResolvedImageThumbnailMetadata(images, thumbnails)
   }
   const sideChat = useMemo(() => {
     if (!sideChatId) return null
@@ -4381,6 +4396,7 @@ function App(): React.JSX.Element {
     if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
+    if (provider === 'kimi') return agentModelsByProvider.kimi || KIMI_DEFAULT_MODELS
     // Pi was missing here and fell through to `[]`, so its picker group was
     // permanently empty ("Loading models…" is this picker's EMPTY state, not a
     // pending one) no matter how many upstream keys were stored. Main already
@@ -4390,7 +4406,7 @@ function App(): React.JSX.Element {
     // therefore state-backed and CANNOT move to the static switch, where `[]`
     // would instead mean "permanently unusable".
     if (provider === 'pi') return agentModelsByProvider.pi || []
-    // Everything else is a fixed catalogue (gemini/kimi/grok/cursor/mistral).
+    // Everything else is a fixed catalogue (gemini/grok/cursor/mistral).
     // Mistral belongs here rather than with Pi above: the Vibe seat's two
     // models are fixed in the CLI's own bundled config and need no key
     // discovery.
@@ -7012,7 +7028,9 @@ function App(): React.JSX.Element {
       const models = await window.api.getAgentModels(provider)
       const normalized =
         provider === 'kimi'
-          ? KIMI_DEFAULT_MODELS
+          ? Array.isArray(models) && models.length > 0
+            ? models.map((model) => ({ ...model, label: model.label || model.id }))
+            : KIMI_DEFAULT_MODELS
           : provider === 'ollama'
             ? mergeOllamaModelCatalog(
                 Array.isArray(models)
@@ -12881,6 +12899,24 @@ function App(): React.JSX.Element {
       addIpcSubscription(
         window.api.onRunQueueChanged((jobs) => {
           setRunQueueJobs(jobs)
+          const terminalRunIds = new Set(
+            jobs
+              .filter((job) => isTerminalRunQueueStatus(job.status))
+              .map((job) => job.runId || job.id)
+          )
+          if (terminalRunIds.size > 0) {
+            setQueuedRuns((previous) =>
+              previous.filter(
+                (request) => !request.appRunId || !terminalRunIds.has(request.appRunId)
+              )
+            )
+            setFailedQueuedSteerRunIds((previous) => {
+              if (![...terminalRunIds].some((runId) => previous.has(runId))) return previous
+              const next = new Set(previous)
+              for (const runId of terminalRunIds) next.delete(runId)
+              return next
+            })
+          }
         })
       )
     }
@@ -13719,12 +13755,27 @@ function App(): React.JSX.Element {
   const rehydrateQueuedRuns = async (workspaceList: WorkspaceRecord[]) => {
     if (rehydratedRunQueueRef.current || typeof window.api.getRunQueueJobs !== 'function') return
     rehydratedRunQueueRef.current = true
-    const [fetchedJobs, recoveryRecords] = await Promise.all([
-      window.api.getRunQueueJobs({ statuses: ['queued', 'steer_promoting'] }),
-      typeof window.api.getRunRecoveryRecords === 'function'
-        ? window.api.getRunRecoveryRecords({ limit: 100 })
-        : Promise.resolve([])
-    ])
+    let retryNeeded = false
+    const scheduleRetry = (): void => {
+      if (runQueueRehydrateRetryCountRef.current >= 3) return
+      runQueueRehydrateRetryCountRef.current += 1
+      rehydratedRunQueueRef.current = false
+      const delayMs = runQueueRehydrateRetryCountRef.current * 500
+      window.setTimeout(() => void rehydrateQueuedRuns(workspaceList), delayMs)
+    }
+    let fetchedJobs: RunQueueJob[]
+    let recoveryRecords: RunRecoveryRecord[]
+    try {
+      ;[fetchedJobs, recoveryRecords] = await Promise.all([
+        window.api.getRunQueueJobs({ statuses: ['queued', 'steer_promoting'] }),
+        typeof window.api.getRunRecoveryRecords === 'function'
+          ? window.api.getRunRecoveryRecords({ limit: 100 })
+          : Promise.resolve([])
+      ])
+    } catch {
+      scheduleRetry()
+      return
+    }
     const jobs = fetchedJobs.filter(
       (job) => job.status === 'queued' || isPreparedSoloSteerQueueJob(job)
     )
@@ -13756,14 +13807,60 @@ function App(): React.JSX.Element {
       const request = queuedRunRequestFromJob(job, workspaceList, recoveredChatList, {
         allowPreparedSoloSteer: true
       })
-      if (!request) continue
+      if (!request) {
+        let chatLookupFailed = false
+        const durableChat = job.chatId
+          ? await window.api.getChat(job.chatId).catch(() => {
+              chatLookupFailed = true
+              return null
+            })
+          : null
+        if (!chatLookupFailed && !durableChat) {
+          const reason =
+            'Prepared steering could not be recovered because its privacy-scoped chat transcript is unavailable after restart.'
+          const failed = await window.api
+            .transitionRunQueueJob(job.runId, 'failed', {
+              statusReason: reason,
+              lastError: reason
+            })
+            .catch(() => null)
+          if (failed) effectiveJobs[index] = failed
+        } else {
+          retryNeeded = true
+        }
+        continue
+      }
       const message = await appendMidRunQueuedRequestToTranscript(
         request,
         'soloSteer',
         job.createdAt,
         { persistImmediately: true }
       )
-      if (!message) continue
+      if (!message) {
+        retryNeeded = true
+        continue
+      }
+      if (job.steerDeliveryPhase !== undefined && job.steerDeliveryPhase !== 'prepared') {
+        const statusReason =
+          'Live steering admission was interrupted while its provider outcome was unknown.'
+        const lastError =
+          'TaskWraith did not replay this steering message because the provider may already have accepted it.'
+        const failed = await window.api
+          .transitionRunQueueJob(job.runId, 'failed', { statusReason, lastError })
+          .catch(() => null)
+        // A null result can mean MAIN still owns a live admission in this same
+        // process. Preserve that projection rather than fabricating a local
+        // failure or deleting its transcript row. On blocked startup there is
+        // no coordinator owner, so the terminal transition above commits.
+        if (failed) {
+          effectiveJobs[index] = failed
+          appendThreadRawLog(job.chatId, {
+            type: 'stderr',
+            content: `${statusReason} ${lastError}`
+          })
+        }
+        continue
+      }
       const ownerToken = job.promotionOwnerToken
       if (!ownerToken) continue
       const released = await invokeFallbackPromotedSteerJob({
@@ -13781,6 +13878,8 @@ function App(): React.JSX.Element {
           promotionToken: undefined,
           steerPreparationKind: undefined
         }
+      } else {
+        retryNeeded = true
       }
     }
     const durableChatList = recoveredChatList.map(
@@ -13796,6 +13895,8 @@ function App(): React.JSX.Element {
         return [...current, ...restoredRuns.filter((request) => !knownRunIds.has(request.appRunId))]
       })
     }
+    if (retryNeeded) scheduleRetry()
+    else runQueueRehydrateRetryCountRef.current = 0
   }
 
   const buildRunRequest = (
@@ -17140,6 +17241,10 @@ function App(): React.JSX.Element {
       imageAttachments: sideRunAttachments,
       approvalMode: sideSelectedApprovalMode,
       workflowMode: sideComposerWorkflowMode,
+      // Linked-chat trust belongs to the linked composer's explicit permission
+      // selection. Never inherit whichever focused main chat happens to have
+      // Full Access at dispatch time.
+      sessionTrust: sideSelectedPermission === 'full_access',
       claimProjectReferenceContext: true
     })
     if (!runRequestHasContent(request)) {
@@ -17577,8 +17682,13 @@ function App(): React.JSX.Element {
         return
       }
       settleProjectReferenceContextForRequest(request, 'accepted')
+      const reservedSteerRequest = attachSteerMetadataToRequest(
+        request,
+        barrier.promotionToken,
+        barrierOwnerToken
+      )
       setQueuedRuns((prev) =>
-        prev.some((candidate) => candidate.appRunId === steerRunId) ? prev : [...prev, request]
+        reserveQueuedRunAtFront(prev, reservedSteerRequest, queuedRunFallbackId)
       )
       let steeringMessage: ChatMessage | null = null
       steeringMessage = await appendMidRunQueuedRequestToTranscript(
@@ -17621,6 +17731,32 @@ function App(): React.JSX.Element {
         released?.ok === true &&
         (released.jobStatus === 'queued' || released.jobStatus === 'steer_promoting')
       if (!deliveryOwned) {
+        let durableLookupCompleted = false
+        let durableHandoff: RunQueueJob | null = null
+        if (typeof window.api.getRunQueueJobs === 'function') {
+          try {
+            const latestJobs = await window.api.getRunQueueJobs({
+              chatId: targetChatId,
+              includeTerminal: true
+            })
+            durableLookupCompleted = true
+            durableHandoff = latestJobs.find((candidate) => candidate.runId === steerRunId) || null
+          } catch {
+            // Lost IPC response is not proof that MAIN failed to admit the
+            // steer. Preserve its transcript and exact local reservation.
+          }
+        }
+        if (durableHandoff || !durableLookupCompleted) {
+          appendThreadRawLog(targetChatId, {
+            type: durableHandoff?.status === 'failed' ? 'stderr' : 'info',
+            content: durableHandoff
+              ? `Steer handoff reply was unavailable; MAIN retained ${durableHandoff.status} state for the exact request, so no duplicate draft was created.`
+              : 'Steer handoff state is unknown; the exact transcript row remains reserved and no duplicate draft was created.'
+          })
+          clearComposerAttachmentsForSubmittedRequest(request)
+          if (!request.existingPrompt) setChatPromptDraft(targetChatId, '')
+          return
+        }
         setQueuedRuns((prev) => prev.filter((candidate) => candidate.appRunId !== steerRunId))
         const reverted = updateChatById(targetChatId, (chat) => ({
           ...chat,
@@ -17663,6 +17799,20 @@ function App(): React.JSX.Element {
   // stay identity-stable without stale captures.
   const handleSteerRef = useRef(handleSteer)
   handleSteerRef.current = handleSteer
+
+  const handleSideSteer = (): void => {
+    if (!sideChat) return
+    void handleSteerRef.current(undefined, undefined, {
+      chat: sideChat,
+      prompt: sidePrompt,
+      imageAttachments:
+        imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS,
+      approvalMode: sideSelectedApprovalMode,
+      workflowMode: sideComposerWorkflowMode,
+      sessionTrust: sideSelectedPermission === 'full_access',
+      claimProjectReferenceContext: true
+    })
+  }
 
   const handleScheduleRun = async () => {
     if (!currentWorkspace || !currentChat || !scheduleRunAt) return
@@ -22916,13 +23066,25 @@ function App(): React.JSX.Element {
       )?.contextLength,
     [installedOllamaModelsForContext]
   )
-  const ollamaLiveContextLength =
-    currentProvider === 'ollama' ? resolveLiveOllamaContextLength(contextModelId) : undefined
+  const resolveLiveKimiContextLength = useCallback(
+    (modelId?: string | null): number | undefined => {
+      const canonical = canonicalKimiTaskWraithModelId(modelId)
+      if (!canonical) return undefined
+      return agentModelsByProvider.kimi?.find((model) => model.id === canonical)?.contextWindow
+    },
+    [agentModelsByProvider.kimi]
+  )
+  const liveProviderContextLength =
+    currentProvider === 'ollama'
+      ? resolveLiveOllamaContextLength(contextModelId)
+      : currentProvider === 'kimi'
+        ? resolveLiveKimiContextLength(contextModelId)
+        : undefined
   const contextWindowSize = resolveContextWindow(
     isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
     contextModelId,
     latestRunLimits.totalTokenLimit,
-    ollamaLiveContextLength
+    liveProviderContextLength
   )
   // Honest current-context proxy for the donut (NOT cumulativeChatTokens, which
   // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
@@ -22970,7 +23132,9 @@ function App(): React.JSX.Element {
           resolveWindowTokens: (participant) =>
             participant.provider === 'ollama'
               ? resolveLiveOllamaContextLength(participant.model)
-              : undefined,
+              : participant.provider === 'kimi'
+                ? resolveLiveKimiContextLength(participant.model)
+                : undefined,
           messages: currentChat?.messages || []
         }
       )
@@ -23980,7 +24144,10 @@ function App(): React.JSX.Element {
       const durableEntries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
         .filter((job) => !job.executionGraph)
         .filter((job) => job.chatId === chatId)
-        .filter((job) => job.status !== 'steer_promoting')
+        .filter(
+          (job) =>
+            job.status !== 'steer_promoting' || failedQueuedSteerRunIds.has(job.runId || job.id)
+        )
         .map((job) => {
           const request = resolveQueuedDesktopRunRequest(job)
           return {
@@ -24030,9 +24197,14 @@ function App(): React.JSX.Element {
           })
         }
       }
-      return entries
+      return filterTranscriptBackedQueuedRunEntries(entries, sourceChat.messages, {
+        // A transcript row proves append, not delivery. If the durable handoff
+        // failed, keep the exact queued row visible so Edit/Delete/Steer remain
+        // available instead of hiding the user's only recovery control.
+        preserveRunIds: failedQueuedSteerRunIds
+      })
     },
-    [queuedRuns, runQueueJobs, workspaces]
+    [failedQueuedSteerRunIds, queuedRuns, runQueueJobs, workspaces]
   )
   const queuedMessagesAboveRowEntries: QueuedMessageRowEntry[] = useMemo(
     () => buildQueuedMessagesAboveRowEntriesForChat(currentChat),
@@ -24319,8 +24491,8 @@ function App(): React.JSX.Element {
     },
     [currentChat, updateEnsembleQueuedPromptsForRound, workspaces]
   )
-  // Steer to a queued item: append it now, then dispatch at this chat's next
-  // natural boundary without cancelling the active provider.
+  // Steer to a queued item: append it now and enter the same provider-qualified
+  // live-or-next-safe-boundary path as a direct composer Steer.
   const handleSteerToQueuedMessage = useCallback(
     async (entryId: string, targetChat?: ChatRecord | null) => {
       const appendFailure = (message: string, context?: string): void => {
@@ -24438,8 +24610,8 @@ function App(): React.JSX.Element {
         runId,
         provider: match.provider,
         chatId: targetChatId,
-        statusReason: 'Promoted from queued-row steer for the next natural boundary.',
-        queueMessageId: entryId,
+        statusReason: 'Promoted from queued-row steer for live or next-safe-boundary delivery.',
+        queueMessageId: midRunQueuedMessageId(runId),
         transitionVersion: job?.transitionVersion
       })
 
@@ -24472,15 +24644,30 @@ function App(): React.JSX.Element {
         promotion.ownerToken
       )
 
+      if (targetChatBusy) {
+        // Promotion is provisional. Retain the exact request locally at FIFO
+        // head until main broadcasts a terminal delivery state; the durable
+        // scheduler consults this mirror when choosing the next queued job.
+        setQueuedRuns((prev) => reserveQueuedRunAtFront(prev, dispatchRequest, queuedRunFallbackId))
+        setFailedQueuedSteerRunIds((previous) => {
+          if (!previous.has(runId)) return previous
+          const next = new Set(previous)
+          next.delete(runId)
+          return next
+        })
+      }
+
       const providerLabel = getProviderLabel(dispatchRequest.provider)
+      let steeringMessage: ChatMessage | null = null
       if (targetChatBusy && targetChatId) {
-        await appendMidRunQueuedRequestToTranscript(
+        steeringMessage = await appendMidRunQueuedRequestToTranscript(
           {
             ...dispatchRequest,
             chatRecord: targetRecord || dispatchRequest.chatRecord
           },
           'soloSteer',
-          new Date().toISOString()
+          new Date().toISOString(),
+          { persistImmediately: true }
         )
       }
 
@@ -24511,15 +24698,12 @@ function App(): React.JSX.Element {
         return false
       }
 
-      // Remove from the local mirror once steering is authorized so the row
-      // cannot double-dispatch while it waits for the natural boundary.
-      setQueuedRuns((prev) =>
-        prev.filter(
-          (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
-        )
-      )
-
       if (!targetChatId || !targetChatBusy) {
+        setQueuedRuns((prev) =>
+          prev.filter(
+            (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
+          )
+        )
         const leased = await leasePromotedForDispatch()
         if (!leased) {
           clearQueuedSteerInFlight()
@@ -24530,29 +24714,111 @@ function App(): React.JSX.Element {
         return
       }
 
-      appendThreadRawLog(targetChatId, {
-        type: 'info',
-        content: `Queued steer appended to the transcript; the active ${providerLabel} turn continues uninterrupted.`
-      })
-
-      while (isChatBusy(targetChatId, { ignoreQueueRunId: runId })) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, DEFAULT_STEER_POLL_INTERVAL_MS)
-        })
+      const activeRunId =
+        resolveActiveRunContextForChat(targetChatId)?.runId ||
+        (activeRunChatIdRef.current === targetChatId
+          ? activeRunIdRef.current || undefined
+          : undefined)
+      const liveOutcome =
+        steeringMessage && activeRunId && promotion.ownerToken
+          ? await attemptLiveSteering(window.api, {
+              chatId: targetChatId,
+              activeRunId,
+              queuedRunId: runId,
+              ownerToken: promotion.ownerToken
+            })
+          : ({ kind: 'unavailable' } as const)
+      const rendererFallback =
+        liveOutcome.kind === 'unavailable' && promotion.ownerToken
+          ? await invokeFallbackPromotedSteerJob({
+              runId,
+              ownerToken: promotion.ownerToken,
+              reason: `Queued-row live steering was unavailable; waiting for the active ${providerLabel} turn to finish.`,
+              fallbackStatus: 'queued'
+            })
+          : null
+      let deliveryOwned =
+        liveOutcome.kind === 'accepted' ||
+        liveOutcome.kind === 'boundary' ||
+        (rendererFallback?.ok === true && rendererFallback.jobStatus === 'queued')
+      let durableHandoff: RunQueueJob | null = null
+      let durableLookupCompleted = false
+      if (!deliveryOwned && typeof window.api.getRunQueueJobs === 'function') {
+        try {
+          const latestJobs = await window.api.getRunQueueJobs({
+            chatId: targetChatId,
+            includeTerminal: true
+          })
+          durableLookupCompleted = true
+          durableHandoff = latestJobs.find((candidate) => candidate.runId === runId) || null
+          // A durable row means MAIN still owns the prompt or has recorded its
+          // terminal outcome. Never create a second composer-send path merely
+          // because the original IPC reply was lost.
+          deliveryOwned = Boolean(durableHandoff)
+        } catch {
+          // Unknown main state is not proof of non-admission. Keep the exact
+          // transcript carrier and priority reservation; do not offer a
+          // one-click duplicate under a new run id.
+        }
       }
-
-      const leased = await leasePromotedForDispatch()
-      if (!leased) {
+      if (!deliveryOwned) {
+        setFailedQueuedSteerRunIds((previous) => {
+          if (previous.has(runId)) return previous
+          const next = new Set(previous)
+          next.add(runId)
+          return next
+        })
+        if (durableLookupCompleted) {
+          setChatPromptDraft(targetChatId, dispatchRequest.displayPrompt || dispatchRequest.prompt)
+          if (dispatchRequest.imageAttachments.length > 0) {
+            setImageAttachmentsByChatId((prev) => ({
+              ...prev,
+              [targetChatId]: mergeImageAttachments(
+                prev[targetChatId] || [],
+                dispatchRequest.imageAttachments
+              )
+            }))
+          }
+        }
+        appendFailure(
+          'Queued-row steer could not cross its durable handoff',
+          durableLookupCompleted
+            ? 'main has no durable row for this request; a draft copy is ready in the composer'
+            : 'main delivery state is unknown; the transcript row is retained and no duplicate draft was created'
+        )
         clearQueuedSteerInFlight()
         return
       }
 
-      // Live target chat may have changed while the active turn finished.
-      const currentTarget = chatByIdRef.current.get(targetChatId) || targetRecord || null
-      const liveRequest = currentTarget
-        ? { ...dispatchRequest, chatRecord: currentTarget }
-        : dispatchRequest
-      void executeRunRef.current(liveRequest)
+      if (
+        durableHandoff?.status === 'failed' ||
+        durableHandoff?.status === 'cancelled' ||
+        (durableHandoff?.status === 'steer_promoting' &&
+          durableHandoff.steerDeliveryPhase !== 'provider_admission_pending')
+      ) {
+        setFailedQueuedSteerRunIds((previous) => {
+          if (previous.has(runId)) return previous
+          const next = new Set(previous)
+          next.add(runId)
+          return next
+        })
+        appendFailure(
+          'Queued-row steer needs attention',
+          durableHandoff.lastError ||
+            durableHandoff.statusReason ||
+            'main retained a terminal steering outcome and did not create a duplicate retry'
+        )
+        clearQueuedSteerInFlight()
+        return
+      }
+
+      appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content:
+          liveOutcome.kind === 'accepted'
+            ? `Queued message accepted for live ${liveOutcome.result.strategy} delivery to ${providerLabel}.`
+            : `Queued steer appended to the transcript and reserved for the next safe ${providerLabel} boundary.`
+      })
       clearQueuedSteerInFlight()
     },
     // Queued steering only needs this callback to refresh when the target chat changes.
@@ -26241,6 +26507,28 @@ function App(): React.JSX.Element {
     closeOtherRightDockPanels(id)
     openRightDockPanel(id)
     setRightDockTab(id)
+  }
+  const activateCanvasDockSurface = (
+    surface: 'browser' | 'sketch' | 'mesh' | 'simulator'
+  ): void => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    activateRightDockTab('canvas')
+    if (surface === 'mesh') {
+      requestMeshCanvasOpen(chatId)
+      return
+    }
+    if (surface === 'simulator') {
+      requestSimulatorCanvasOpen(chatId)
+      return
+    }
+    const open =
+      surface === 'sketch'
+        ? window.api.canvas?.openSketchEmbedded({ chatId, presentation: 'dock' })
+        : window.api.canvas?.openEmbedded({ chatId, presentation: 'dock' })
+    void open?.catch((error) => {
+      console.warn(`Canvas ${surface} surface could not be opened:`, error)
+    })
   }
   // `mesh_scene_present` is an explicit request to put a 3D scene in front of
   // the user. Focus the active chat's existing Canvas surface; an event for a
@@ -31120,6 +31408,7 @@ function App(): React.JSX.Element {
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
+    activateCanvasDockSurface,
     activeDiff,
     activeProvider,
     activeRightDockTab,
@@ -31355,6 +31644,7 @@ function App(): React.JSX.Element {
     handleSideProviderChange,
     handleSideReasoningChange,
     handleSideRun,
+    handleSideSteer,
     handleSideToggleFastMode,
     handleActiveSidebarTabChange: (tab) => {
       setSidebarActiveTab(tab)

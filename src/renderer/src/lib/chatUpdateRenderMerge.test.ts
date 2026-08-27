@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ChatRecord } from '../../../main/store/types'
+import type {
+  ActiveGoal,
+  ChatMessage,
+  ChatRecord,
+  EnsembleParticipant
+} from '../../../main/store/types'
 import { coalescePendingChatUpdateRender, mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
 
 function message(id: string, content: string): ChatMessage {
@@ -100,20 +105,19 @@ describe('mergeChatUpdatedForRender', () => {
   }
 
   function makeEnsemble(
-    participants: Array<Pick<EnsembleParticipant, 'id' | 'role'>>,
+    participants: Array<Pick<EnsembleParticipant, 'id' | 'role'> & Partial<EnsembleParticipant>>,
     ensembleUpdatedAt: string
   ): ChatRecord['ensemble'] {
     return {
       enabled: true,
       maxParticipants: Math.max(6, participants.length),
       participants: participants.map((participant, index) => ({
-        id: participant.id,
         provider: 'codex',
         enabled: true,
-        role: participant.role,
         instructions: '',
         order: index + 1,
-        model: 'gpt-5.4'
+        model: 'gpt-5.4',
+        ...participant
       })) as EnsembleParticipant[],
       updatedAt: ensembleUpdatedAt
     } as ChatRecord['ensemble']
@@ -242,6 +246,218 @@ describe('mergeChatUpdatedForRender', () => {
     const live = { ...chat([message('a', 'frame')]) }
     live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
     live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Worker' }], '2026-09-01T00:00:01.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged).toBe(delivered)
+  })
+
+  // Same 1.0.5-UI2 class, third report: a seat's model/reasoning edit (the
+  // Provider/Model/Reasoning picker bound to a participant chip, or the Add
+  // Participant picker's seat rows) keeps the id sequence identical, so the
+  // membership-only roster preservation let a staler delivery revert the
+  // fields — "the selection bounces back".
+  it('preserves a just-edited seat configuration against a staler delivery with the same seats', () => {
+    const delivered = { ...chat([message('a', 'run frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker', model: 'gpt-5.4', reasoningEffort: 'medium' }],
+      '2026-09-01T00:00:00.500Z'
+    )
+    const live = { ...chat([message('a', 'run frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.ensemble = makeEnsemble(
+      [
+        {
+          id: 'seat-1',
+          role: 'Worker',
+          model: 'gpt-5.6-codex',
+          reasoningEffort: 'xhigh',
+          fastModeEnabled: true
+        }
+      ],
+      '2026-09-01T00:00:02.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.ensemble?.participants[0].model).toBe('gpt-5.6-codex')
+    expect(merged.ensemble?.participants[0].reasoningEffort).toBe('xhigh')
+    expect(merged.ensemble?.participants[0].fastModeEnabled).toBe(true)
+  })
+
+  it('keeps delivered seat bookkeeping while restoring the live seat configuration', () => {
+    const delivered = { ...chat([message('a', 'run frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.ensemble = makeEnsemble(
+      [
+        {
+          id: 'seat-1',
+          role: 'Worker',
+          model: 'gpt-5.4',
+          linkedProviderSessionId: 'session-9',
+          promptShellVersion: 'shell-3'
+        }
+      ],
+      '2026-09-01T00:00:00.500Z'
+    )
+    const live = { ...chat([message('a', 'run frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker', model: 'gpt-5.6-codex' }],
+      '2026-09-01T00:00:02.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.ensemble?.participants[0].model).toBe('gpt-5.6-codex')
+    expect(merged.ensemble?.participants[0].linkedProviderSessionId).toBe('session-9')
+    expect(merged.ensemble?.participants[0].promptShellVersion).toBe('shell-3')
+  })
+
+  it('lets a newer delivered seat configuration replace the stale live copy', () => {
+    const delivered = { ...chat([message('a', 'remote edit')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:04.000Z')
+    delivered.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker', model: 'gpt-5.7' }],
+      '2026-09-01T00:00:04.000Z'
+    )
+    const live = { ...chat([message('a', 'remote edit')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker', model: 'gpt-5.4' }],
+      '2026-09-01T00:00:01.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.ensemble?.participants[0].model).toBe('gpt-5.7')
+  })
+
+  // Same class again for the solo composer: the Provider/Model/Reasoning
+  // picker's chat-level selection (providerMetadata + the queued provider
+  // change + workflowMode) had no preservation at all, and main's overlay
+  // persistence never broadcasts, so a staler delivery reverted the pick and
+  // nothing ever bounced it forward again.
+  it('preserves a just-picked composer model selection against a staler delivery', () => {
+    const delivered = { ...chat([message('a', 'save echo')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.provider = 'kimi' as ChatRecord['provider']
+    delivered.providerMetadata = {
+      selectedModelType: 'kimi-k2.7',
+      kimiReasoningEffort: 'on',
+      agentIdentities: { keep: true }
+    }
+    const live = { ...chat([message('a', 'save echo')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.provider = 'ollama' as ChatRecord['provider']
+    live.providerMetadata = {
+      selectedModelType: 'ornith-1.0:9b',
+      ollamaReasoningEffort: 'on'
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.provider).toBe('ollama')
+    expect(merged.providerMetadata?.selectedModelType).toBe('ornith-1.0:9b')
+    expect(merged.providerMetadata?.ollamaReasoningEffort).toBe('on')
+    // Selection keys the fresher live record dropped are dropped too…
+    expect(merged.providerMetadata?.kimiReasoningEffort).toBeUndefined()
+    // …but non-selection metadata stays delivered-authoritative.
+    expect(merged.providerMetadata?.agentIdentities).toEqual({ keep: true })
+  })
+
+  it('preserves a just-queued pending provider change against a staler delivery', () => {
+    const delivered = { ...chat([message('a', 'run frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.providerMetadata = { selectedModelType: 'kimi-k2.7' }
+    const live = { ...chat([message('a', 'run frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = {
+      selectedModelType: 'kimi-k2.7',
+      pendingProviderChange: {
+        provider: 'ollama',
+        providerMetadata: { selectedModelType: 'ornith-1.0:9b' },
+        queuedAt: '2026-09-01T00:00:02.000Z'
+      }
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.providerMetadata?.pendingProviderChange).toEqual({
+      provider: 'ollama',
+      providerMetadata: { selectedModelType: 'ornith-1.0:9b' },
+      queuedAt: '2026-09-01T00:00:02.000Z'
+    })
+  })
+
+  it('does not resurrect a pending provider change the fresher live record cleared', () => {
+    const delivered = { ...chat([message('a', 'run frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.providerMetadata = {
+      pendingProviderChange: {
+        provider: 'ollama',
+        providerMetadata: { selectedModelType: 'ornith-1.0:9b' },
+        queuedAt: '2026-09-01T00:00:00.000Z'
+      }
+    }
+    const live = { ...chat([message('a', 'run frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = { selectedModelType: 'ornith-1.0:9b' }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.providerMetadata?.pendingProviderChange).toBeUndefined()
+    expect(merged.providerMetadata?.selectedModelType).toBe('ornith-1.0:9b')
+  })
+
+  it('lets a newer delivered composer selection win over the older live copy', () => {
+    const delivered = { ...chat([message('a', 'turn-end apply')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:04.000Z')
+    delivered.provider = 'ollama' as ChatRecord['provider']
+    delivered.providerMetadata = { selectedModelType: 'ornith-1.0:9b' }
+    const live = { ...chat([message('a', 'turn-end apply')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.provider = 'kimi' as ChatRecord['provider']
+    live.providerMetadata = { selectedModelType: 'kimi-k2.7' }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.provider).toBe('ollama')
+    expect(merged.providerMetadata?.selectedModelType).toBe('ornith-1.0:9b')
+  })
+
+  it('leaves the record untouched when the composer selections agree', () => {
+    const delivered = { ...chat([message('a', 'frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    delivered.providerMetadata = { selectedModelType: 'kimi-k2.7' }
+    const live = { ...chat([message('a', 'frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = { selectedModelType: 'kimi-k2.7' }
     const merged = mergeChatUpdatedForRender(delivered, {
       liveChat: live,
       messagesChanged: false,

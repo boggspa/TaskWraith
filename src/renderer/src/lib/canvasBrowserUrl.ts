@@ -1,10 +1,9 @@
 /*
  * canvasBrowserUrl.ts — pure address-bar helpers for the Canvas Browser.
  *
- * The renderer normalizes what a human TYPES into something the main-process
- * canvas policy can evaluate; it never widens what loads (main re-validates
- * every navigation: http/https only, link-local/metadata blocked, private
- * hosts allowlist-gated).
+ * The renderer normalizes what a human types into something the main-process
+ * Canvas Browser can load. Main re-validates every navigation: http/https only,
+ * with a fixed link-local/cloud-metadata deny rule and no origin allowlist.
  */
 
 const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/s
@@ -12,13 +11,22 @@ const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/s
 /** Hosts a developer means as plain-http local endpoints when typed bare. */
 function prefersHttp(host: string): boolean {
   const bare = host.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
+  const ipv4 = bare.split('.').map(Number)
+  const privateIpv4 =
+    ipv4.length === 4 &&
+    ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+    (ipv4[0] === 10 ||
+      (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+      (ipv4[0] === 192 && ipv4[1] === 168) ||
+      (ipv4[0] === 100 && ipv4[1] >= 64 && ipv4[1] <= 127))
   return (
     bare === 'localhost' ||
     bare.endsWith('.localhost') ||
     bare === '::1' ||
     bare === '0.0.0.0' ||
     /^127(\.\d{1,3}){3}$/.test(bare) ||
-    /^(10|192\.168)(\.\d{1,3}){2,3}$/.test(bare)
+    /^f[cd][0-9a-f]{2}:/i.test(bare) ||
+    privateIpv4
   )
 }
 
@@ -38,7 +46,10 @@ export function normalizeBrowserUrlInput(raw: string): string | null {
   if (hasRealScheme) {
     if (!/^https?:\/\//i.test(input)) return null
   } else {
-    const hostPart = input.split(/[/?#]/, 1)[0]?.split(':', 1)[0] ?? ''
+    const authority = input.split(/[/?#]/, 1)[0] ?? ''
+    const hostPart = authority.startsWith('[')
+      ? authority.slice(1, authority.indexOf(']') > 0 ? authority.indexOf(']') : undefined)
+      : (authority.split(':', 1)[0] ?? '')
     candidate = `${prefersHttp(hostPart) ? 'http' : 'https'}://${input}`
   }
   try {

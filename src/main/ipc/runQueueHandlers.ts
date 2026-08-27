@@ -70,6 +70,7 @@ export interface RendererRunQueueMutationContext {
 export interface RunQueueHandlersDeps {
   resolveSenderRunQueueScope: (event: IpcMainInvokeEvent) => RunQueueSenderScope
   resolveSenderAttachmentFilePaths: (event: IpcMainInvokeEvent) => string[]
+  resolveSenderDirectoryPickerPaths: (event: IpcMainInvokeEvent) => string[]
   resolveRunQueueTargetChatId: (target: RunQueueTargetScope) => string | undefined
   /**
    * Main-owned policy hook for renderer-originated queue mutations. Throw to
@@ -85,6 +86,7 @@ export interface RunQueueHandlersDeps {
     job: unknown,
     options?: {
       authorizedFilePaths?: string[]
+      authorizedDirectoryPickerPaths?: string[]
       soloSteerTranscriptBarrier?: { ownerToken: string; queueMessageId: string }
     }
   ) => RunQueueJob
@@ -190,7 +192,8 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     }
     authorizeRendererMutation(deps, event, scope, { operation: 'request', job })
     return deps.requestRunQueueJob(job, {
-      authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event)
+      authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event),
+      authorizedDirectoryPickerPaths: deps.resolveSenderDirectoryPickerPaths(event)
     })
   })
 
@@ -271,6 +274,7 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     if (prepareJob) {
       deps.requestRunQueueJob(prepareJob, {
         authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event),
+        authorizedDirectoryPickerPaths: deps.resolveSenderDirectoryPickerPaths(event),
         soloSteerTranscriptBarrier: {
           ownerToken: ownerToken!,
           queueMessageId: input.queueMessageId || ''

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
 import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
@@ -34,6 +37,7 @@ import {
   ollamaRepeatedToolCallNudge,
   ollamaCompactedRepeatToolCallPreamble,
   type OllamaToolCallSignatureEntry,
+  type OllamaToolExecutionRequest,
   isOllamaNoActiveGoalToolResult,
   ollamaNoActiveGoalToolNudge,
   ollamaGoalLifecycleStopContent,
@@ -60,6 +64,10 @@ import {
   extractOllamaShowContextLength,
   fetchOllamaModelCatalog,
   getOllamaStatusSnapshot,
+  loadOllamaImageAttachmentBase64,
+  readBoundedOllamaImageAttachment,
+  OLLAMA_IMAGE_MAX_ATTACHMENTS,
+  OLLAMA_IMAGE_MAX_BYTES,
   ollamaUsageStats,
   validateOllamaToolArguments,
   type OllamaProviderDeps
@@ -281,6 +289,73 @@ function makeProviderDeps(
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('loadOllamaImageAttachmentBase64', () => {
+  it('enforces the existing attachment count before reading any path', async () => {
+    const readImageAttachment = vi.fn(async () => Buffer.from('image'))
+
+    await expect(
+      loadOllamaImageAttachmentBase64(
+        Array.from(
+          { length: OLLAMA_IMAGE_MAX_ATTACHMENTS + 1 },
+          (_, index) => `/authorized/${index}.png`
+        ),
+        readImageAttachment
+      )
+    ).rejects.toThrow(`${OLLAMA_IMAGE_MAX_ATTACHMENTS}-image limit`)
+    expect(readImageAttachment).not.toHaveBeenCalled()
+  })
+
+  it('rejects an oversized item instead of returning a partial encoded batch', async () => {
+    const readImageAttachment = vi
+      .fn<(imagePath: string) => Promise<Buffer>>()
+      .mockResolvedValueOnce(Buffer.from('first'))
+      .mockResolvedValueOnce(Buffer.alloc(OLLAMA_IMAGE_MAX_BYTES + 1))
+
+    await expect(
+      loadOllamaImageAttachmentBase64(
+        ['/authorized/first.png', '/authorized/oversized.png'],
+        readImageAttachment
+      )
+    ).rejects.toThrow('not dispatched with a partial image set')
+  })
+
+  it('rejects a terminal symlink instead of following it outside attachment authority', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-ollama-image-'))
+    try {
+      const target = join(directory, 'target.png')
+      const link = join(directory, 'link.png')
+      writeFileSync(target, 'secret target')
+      symlinkSync(target, link)
+
+      await expect(readBoundedOllamaImageAttachment(link)).rejects.toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('reads only the opened descriptor when the pathname is replaced after open', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-ollama-image-'))
+    try {
+      const selected = join(directory, 'selected.png')
+      const replacement = join(directory, 'replacement.png')
+      const original = join(directory, 'opened-original.png')
+      writeFileSync(selected, 'authorized bytes')
+      writeFileSync(replacement, 'replacement bytes')
+
+      const bytes = await readBoundedOllamaImageAttachment(selected, {
+        afterOpen: () => {
+          renameSync(selected, original)
+          renameSync(replacement, selected)
+        }
+      })
+
+      expect(bytes.toString()).toBe('authorized bytes')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('ollamaUsageStats', () => {
@@ -515,6 +590,200 @@ describe('runOllamaProvider streaming', () => {
     expect(requestSignals.get('/api/show')).toBe(attachedController?.signal)
     expect(requestSignals.get('/api/chat')).toBe(attachedController?.signal)
     expect(deps.runManager.canAdmitTransport).toHaveBeenCalledWith('run-ollama-1', true)
+  })
+
+  it('sends the full ordered image array when the exact model show advertises vision', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'llava:latest',
+              digest: 'digest-vision',
+              details: { family: 'llava' },
+              capabilities: ['completion']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({
+          details: { family: 'llava' },
+          capabilities: ['completion', 'VISION']
+        })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'I see all three.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 5 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits, lines } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'llava:latest' }
+    })
+    const imageBytes = new Map([
+      ['/authorized/one.png', Buffer.from('first image')],
+      ['/authorized/two.jpg', Buffer.from('second image')],
+      ['/authorized/three.webp', Buffer.from('third image')]
+    ])
+    const readImageAttachment = vi.fn(async (imagePath: string) => {
+      const bytes = imageBytes.get(imagePath)
+      if (!bytes) throw new Error(`unexpected image ${imagePath}`)
+      return bytes
+    })
+    deps.readImageAttachment = readImageAttachment
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'llava:latest',
+        imagePaths: [...imageBytes.keys()]
+      },
+      baseRoute
+    )
+
+    expect(readImageAttachment.mock.calls.map(([imagePath]) => imagePath)).toEqual([
+      '/authorized/one.png',
+      '/authorized/two.jpg',
+      '/authorized/three.webp'
+    ])
+    expect(chatBodies).toHaveLength(1)
+    const userMessages = chatBodies[0].messages.filter(
+      (message: { role?: string }) => message.role === 'user'
+    )
+    expect(userMessages[0].images).toEqual(
+      [...imageBytes.values()].map((bytes) => bytes.toString('base64'))
+    )
+    expect(userMessages.slice(1).every((message: { images?: string[] }) => !message.images)).toBe(
+      true
+    )
+    expect(
+      lines.filter((line) => line.payload.id === 'ollama-image-attachments-no-vision')
+    ).toEqual([])
+    expect(errors).toEqual([])
+    expect(exits.at(-1)?.code).toBe(0)
+  })
+
+  it('warns once and continues text-only when the exact model show lacks vision', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'qwen3:4b-instruct',
+              digest: 'digest-no-vision',
+              details: { family: 'qwen' },
+              capabilities: ['vision']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['completion', 'tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Text-only answer.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 3 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, errors, exits } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'qwen3:4b-instruct' }
+    })
+    const readImageAttachment = vi.fn(async () => Buffer.from('must not be read'))
+    deps.readImageAttachment = readImageAttachment
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'qwen3:4b-instruct',
+        imagePaths: ['/authorized/a.png', '/authorized/b.png']
+      },
+      baseRoute
+    )
+
+    expect(readImageAttachment).not.toHaveBeenCalled()
+    expect(chatBodies).toHaveLength(1)
+    expect(chatBodies[0].messages.every((message: { images?: string[] }) => !message.images)).toBe(
+      true
+    )
+    const warnings = lines.filter(
+      (line) => line.payload.id === 'ollama-image-attachments-no-vision'
+    )
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0].payload.message).toContain(
+      'exact /api/show response did not advertise the vision capability'
+    )
+    expect(warnings[0].payload.message).toContain('2 attached images')
+    expect(warnings[0].payload.message).toContain('Continuing with the text request only')
+    expect(errors).toEqual([])
+    expect(exits.at(-1)?.code).toBe(0)
+  })
+
+  it('fails before chat instead of partially sending a vision model batch when one read fails', async () => {
+    const requestPaths: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      requestPaths.push(path)
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'llava:latest',
+              digest: 'digest-vision-read-failure',
+              details: { family: 'llava' },
+              capabilities: ['vision']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'llava' }, capabilities: ['vision'] })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'llava:latest' }
+    })
+    deps.readImageAttachment = vi.fn(async (imagePath: string) => {
+      if (imagePath.endsWith('two.png')) throw new Error('permission revoked')
+      return Buffer.from('first image')
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'llava:latest',
+        imagePaths: ['/authorized/one.png', '/authorized/two.png']
+      },
+      baseRoute
+    )
+
+    expect(requestPaths).toContain('/api/show')
+    expect(requestPaths).not.toContain('/api/chat')
+    expect(errors).toHaveLength(1)
+    expect(errors[0].error).toContain('permission revoked')
+    expect(errors[0].error).toContain('not dispatched with a partial image set')
+    expect(exits.at(-1)?.code).toBe(1)
   })
 
   it('does not launch model show or chat after the run gains a terminal claim', async () => {
@@ -5046,8 +5315,143 @@ describe('shouldReleaseOllamaContentDelta — streaming cadence gate', () => {
 })
 
 describe('runOllamaProvider mid-turn steering', () => {
-  it('delivers drained steer text as a framed user message in the next model request, never in turn 0', async () => {
+  it('stops before the next model request only after the exact run completes its full tool batch', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const executeTool = vi.fn(async (request: OllamaToolExecutionRequest) => ({
+      ok: true,
+      output: `${request.toolName} complete`
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'ornith:9b',
+              digest: 'digest-batch-boundary',
+              details: { family: 'ornith' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'ornith' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'read_file',
+                    arguments: { path: 'README.md' }
+                  }
+                },
+                {
+                  function: {
+                    name: 'workspace_search',
+                    arguments: { query: 'boundary', path: '.', maxResults: 5 }
+                  }
+                }
+              ]
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const prepared = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      settings: { ollamaDefaultModel: 'ornith:9b' }
+    })
+    const { deps, lines } = prepared
+    const onToolBatchBoundary = vi.fn(async (appRunId: string) => {
+      expect(appRunId).toBe('run-ollama-1')
+      expect(executeTool).toHaveBeenCalledTimes(2)
+      expect(lines.filter((line) => line.payload.type === 'tool_result')).toHaveLength(2)
+      expect(chatBodies).toHaveLength(1)
+      return true
+    })
+    deps.onToolBatchBoundary = onToolBatchBoundary
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'ornith:9b' }, baseRoute)
+
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+    expect(onToolBatchBoundary).toHaveBeenCalledWith('run-ollama-1')
+    expect(executeTool).toHaveBeenCalledTimes(2)
+    expect(chatBodies).toHaveLength(1)
+  })
+
+  it('preserves the next model iteration when the exact boundary callback is not armed', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-unarmed-boundary',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatBodies.length === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'read_file',
+                      arguments: { path: 'README.md' }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Finished normally.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    const onToolBatchBoundary = vi.fn(async () => false)
+    deps.onToolBatchBoundary = onToolBatchBoundary
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+    expect(onToolBatchBoundary).toHaveBeenCalledWith('run-ollama-1')
+    expect(chatBodies).toHaveLength(2)
+    expect(JSON.stringify(chatBodies[1].messages)).toContain('README result')
+  })
+
+  it('commits reserved steer text only after the carrying model request succeeds, never in turn 0', async () => {
     const chatBodies: string[] = []
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
     const executeTool = vi.fn(async () => ({
       ok: true,
       output: 'src/main/EnsemblePrompt.ts:1: steering probe'
@@ -5083,6 +5487,7 @@ describe('runOllamaProvider mid-turn steering', () => {
             JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
           ])
         }
+        expect(commit).not.toHaveBeenCalled()
         return ollamaStreamResponse([
           JSON.stringify({
             message: { role: 'assistant', content: 'Focusing on the tests now.' }
@@ -5092,12 +5497,14 @@ describe('runOllamaProvider mid-turn steering', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const drainPendingSteerText = vi
-      .fn<(appRunId: string) => string | null>()
-      .mockReturnValueOnce('Actually focus on the tests first.')
-      .mockReturnValue(null)
+    const reservePendingSteerText = vi.fn().mockReturnValueOnce({
+      text: 'Actually focus on the tests first.',
+      commit,
+      rollback,
+      ambiguous
+    })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
-    deps.drainPendingSteerText = drainPendingSteerText
+    deps.reservePendingSteerText = reservePendingSteerText
 
     await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
@@ -5105,8 +5512,8 @@ describe('runOllamaProvider mid-turn steering', () => {
     // Turn 0 rides the pre-resolved launch-plan request; a drain there would
     // fire delivery evidence for text the request body cannot carry.
     expect(chatBodies[0]).not.toContain('[TaskWraith Steering]')
-    expect(drainPendingSteerText).toHaveBeenCalledTimes(1)
-    expect(drainPendingSteerText).toHaveBeenCalledWith('run-ollama-1')
+    expect(reservePendingSteerText).toHaveBeenCalledTimes(1)
+    expect(reservePendingSteerText).toHaveBeenCalledWith('run-ollama-1')
     expect(chatBodies[1]).toContain('[TaskWraith Steering]')
     expect(chatBodies[1]).toContain('Actually focus on the tests first.')
     const secondRequest = JSON.parse(chatBodies[1]) as {
@@ -5120,5 +5527,247 @@ describe('runOllamaProvider mid-turn steering', () => {
       String(message.content || '').includes('steering probe')
     )
     expect(secondRequest.messages.indexOf(steerMessage!)).toBeGreaterThan(toolResultIndex)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('marks a reserved steer ambiguous when the carrying HTTP request fails after launch', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        throw new TypeError('connection failed after request launch')
+      }
+      if (path === '/api/generate') {
+        return jsonResponse({})
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn().mockReturnValueOnce({
+      text: 'Use the tests as the source of truth.',
+      commit,
+      rollback,
+      ambiguous
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).toHaveBeenCalledOnce()
+    expect(ambiguous).toHaveBeenCalledWith(expect.stringContaining('admission became uncertain'))
+    expect(chatCalls).toBe(2)
+  })
+
+  it('rolls a reserved steer back when exact run authority is revoked before HTTP launch', async () => {
+    let admitTransport = true
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      canAdmitTransport: () => admitTransport
+    })
+    deps.reservePendingSteerText = vi.fn(() => {
+      admitTransport = false
+      return {
+        text: 'Do not launch the next request yet.',
+        commit,
+        rollback,
+        ambiguous
+      }
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(1)
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('commits a reserved steer on first valid output even when the stream later ends before done', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'I received the steer.' } })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn(() => ({
+      text: 'Carry this only on a complete turn.',
+      commit,
+      rollback,
+      ambiguous
+    }))
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(2)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('rolls a reserved steer back after an explicit HTTP request rejection', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return {
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ error: 'invalid request' })
+        }
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn(() => ({
+      text: 'Retry this only after request repair.',
+      commit,
+      rollback,
+      ambiguous
+    }))
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(2)
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
   })
 })

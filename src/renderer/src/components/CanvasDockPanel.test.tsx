@@ -103,6 +103,7 @@ describe('canvasSummaryLabel', () => {
     expect(canvasSummaryLabel({ url: 'html://abc123' })).toBe('html://abc123')
     expect(canvasSummaryLabel({ driver: 'sketch' })).toBe('Sketch canvas')
     expect(canvasSummaryLabel({ driver: 'chart' })).toBe('Chart')
+    expect(canvasSummaryLabel({ driver: 'web', url: 'about:blank' })).toBe('Browser')
     expect(canvasSummaryLabel({})).toBe('Canvas')
   })
 
@@ -207,9 +208,10 @@ describe('CanvasDockPanel (static render)', () => {
   it('renders a calm browser-first empty state with compact surface controls', () => {
     const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-empty" />)
     expect(html).toContain('New tab')
-    expect(html).toContain('Start browsing')
-    expect(html).toContain('Enter a URL to open a page')
-    expect(html).toContain('aria-label="Browser URL"')
+    expect(html).toContain('Browser')
+    expect(html).toContain('Open a blank tab, then use its address bar.')
+    expect(html).toContain('Open browser')
+    expect(html).not.toContain('aria-label="Browser URL"')
     expect(html).toContain('Sign-ins stay in TaskWraith')
     expect(html).toContain('aria-label="Choose canvas surface"')
     expect(html).toContain('aria-label="Browser profile and privacy"')
@@ -236,7 +238,7 @@ describe('CanvasDockPanel (static render)', () => {
       expect(html).toContain('aria-label="Choose canvas surface"')
       expect(html).toContain('aria-label="Browser profile and privacy"')
       // Sessions exist → the launcher is collapsed behind the + toggle.
-      expect(html).not.toContain('Start browsing')
+      expect(html).not.toContain('Open a blank tab, then use its address bar.')
     } finally {
       canvasDockSessionStore.remove('chat-static', 'c-web')
       canvasDockSessionStore.remove('chat-static', 'c-sketch')
@@ -247,7 +249,7 @@ describe('CanvasDockPanel (static render)', () => {
     canvasDockSessionStore.add('chat-a', { canvasId: 'c1', kind: 'web' })
     try {
       const other = renderToStaticMarkup(<CanvasDockPanel chatId="chat-b" />)
-      expect(other).toContain('Start browsing')
+      expect(other).toContain('Open a blank tab, then use its address bar.')
       expect(other).not.toContain('role="tablist"')
     } finally {
       canvasDockSessionStore.remove('chat-a', 'c1')

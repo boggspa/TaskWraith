@@ -171,6 +171,7 @@ export interface ProviderModelOption {
     disabledReason?: string
   }>
   defaultReasoningEffort?: string | null
+  contextWindow?: number
 }
 
 /** Per-provider model catalogs — drives the remote client's hierarchical

@@ -440,7 +440,7 @@ const formatPeakHour = (hour: number): string => {
  *   - `default` / `unknown` model names are removed across all providers
  *     (model usage needs to be explicit, not a wildcard bucket).
  *   - Kimi: only the canonical `kimi-k2.7-code` (default), its thinking
- *     variants, `kimi-k3`, and legacy K2.6 rows survive; deprecated names
+ *     variants, both `kimi-k3` routes, and legacy K2.6 rows survive; deprecated names
  *     (`kimi-latest`, `kimi-k2`, `kimi-k2.5`, `kimi-k2-thinking` aliases,
  *     etc.) collapse to nothing. Kimi Code now treats K2.7 Coding as the
  *     implicit default model.
@@ -454,6 +454,7 @@ const shouldSurfaceModelInBreakdown = (provider: ProviderId, model: string): boo
   if (provider === 'kimi') {
     const KIMI_KEEP = new Set([
       'kimi-k3',
+      'kimi-k3-256k',
       'kimi-k2.7-code',
       'kimi-k2.7-code-thinking',
       'kimi-k2.7-thinking',

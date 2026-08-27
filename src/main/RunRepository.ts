@@ -14,7 +14,10 @@ import type { RunQueueJobInput } from './RunQueue'
 import type { RunSession } from './RunManager'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import { AppStore } from './store'
-import { SOLO_STEER_TRANSCRIPT_PREPARATION } from '../shared/midRunSteeringQueue'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../shared/midRunSteeringQueue'
 
 type SteerQueueMetadata = {
   promotionOwnerToken?: string
@@ -24,6 +27,10 @@ type SteerQueueMetadata = {
   promotedAt?: string
   queueMessageId?: string
   steerPreparationKind?: RunQueueJob['steerPreparationKind']
+  steerDeliveryPhase?: RunQueueJob['steerDeliveryPhase']
+  steerDeliveryActiveRunId?: string
+  steerDeliveryStrategy?: string
+  steerDeliveryAttemptedAt?: string
 }
 
 type RunQueueJobStatusLike = RunQueueJob['status'] | 'steer_promoting'
@@ -91,6 +98,13 @@ export interface LeasePromotedSteerInput {
   runId: string
   ownerToken: string
   statusReason?: string
+}
+
+export interface MarkPromotedSteerAdmissionPendingInput {
+  runId: string
+  ownerToken: string
+  activeRunId: string
+  strategy: string
 }
 
 export interface FallbackPromotedSteerInput {
@@ -357,12 +371,58 @@ export class RunRepository {
     return updated
   }
 
+  markPromotedSteerAdmissionPending(
+    input: MarkPromotedSteerAdmissionPendingInput
+  ): RunQueueJob | null {
+    if (!input.ownerToken || !input.activeRunId || !input.strategy) return null
+    const candidate = AppStore.getRunQueueJob(input.runId)
+    if (
+      !candidate ||
+      candidate.status !== STEER_PROMOTING_STATUS ||
+      this.getRunQueuePromotionOwnerToken(candidate) !== input.ownerToken ||
+      candidate.promotionToken !== input.ownerToken ||
+      candidate.queueMessageId !== midRunQueuedMessageId(candidate.runId) ||
+      !candidate.request ||
+      !(
+        candidate.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION ||
+        (candidate.steerPreparationKind === undefined && Boolean(candidate.enqueuedAt?.trim()))
+      )
+    ) {
+      return null
+    }
+    if (candidate.steerDeliveryPhase === 'provider_admission_pending') {
+      return candidate.steerDeliveryActiveRunId === input.activeRunId &&
+        candidate.steerDeliveryStrategy === input.strategy
+        ? candidate
+        : null
+    }
+    if (
+      candidate.steerDeliveryPhase !== undefined &&
+      candidate.steerDeliveryPhase !== 'prepared'
+    ) {
+      return null
+    }
+    return this.updateRunQueueJob(input.runId, {
+      steerDeliveryPhase: 'provider_admission_pending',
+      steerDeliveryActiveRunId: input.activeRunId,
+      steerDeliveryStrategy: input.strategy,
+      steerDeliveryAttemptedAt: new Date().toISOString(),
+      statusReason: `Live steering admission is pending through ${input.strategy}.`
+    })
+  }
+
   fallbackPromotedSteerJob(input: FallbackPromotedSteerInput): RunQueueJob | null {
     if (!input.ownerToken) return null
     const reason = optionalString(input.reason)
     const reasonText = reason || 'Steer promotion failed.'
     const candidate = AppStore.getRunQueueJob(input.runId)
     if (!candidate || candidate.status !== STEER_PROMOTING_STATUS) return null
+    if (
+      candidate.steerDeliveryPhase !== undefined &&
+      candidate.steerDeliveryPhase !== 'prepared'
+    ) {
+      return null
+    }
     const ownerToken = this.getRunQueuePromotionOwnerToken(candidate)
     if (!ownerToken || ownerToken !== input.ownerToken) return null
     const targetStatus: RunQueueJobStatus =
@@ -378,6 +438,51 @@ export class RunRepository {
         runId: input.runId,
         from: STEER_PROMOTING_STATUS,
         to: targetStatus,
+        ownerToken: input.ownerToken,
+        transitionVersion: updated.transitionVersion,
+        promotionAttempt: updated.promotionAttempt,
+        queueMessageId: updated.queueMessageId,
+        statusReason: reasonText,
+        chatId: candidate.chatId,
+        provider: candidate.provider,
+        workspacePath: candidate.workspacePath,
+        workspaceId: candidate.workspaceId
+      })
+    }
+    return updated
+  }
+
+  releasePromotedSteerAfterDefiniteNonAdmission(
+    input: FallbackPromotedSteerInput
+  ): RunQueueJob | null {
+    if (!input.ownerToken) return null
+    const reasonText = optionalString(input.reason)
+    if (!reasonText) return null
+    const candidate = AppStore.getRunQueueJob(input.runId)
+    if (
+      !candidate ||
+      candidate.status !== STEER_PROMOTING_STATUS ||
+      candidate.steerDeliveryPhase !== 'provider_admission_pending'
+    ) {
+      return null
+    }
+    const ownerToken = this.getRunQueuePromotionOwnerToken(candidate)
+    if (!ownerToken || ownerToken !== input.ownerToken) return null
+    const updated = this.updateRunQueueJob(input.runId, {
+      status: 'queued',
+      statusReason: reasonText,
+      promotionOwnerToken: undefined,
+      promotionToken: undefined,
+      steerDeliveryPhase: undefined,
+      steerDeliveryActiveRunId: undefined,
+      steerDeliveryStrategy: undefined,
+      steerDeliveryAttemptedAt: undefined
+    })
+    if (updated) {
+      this.appendSteerLifecycleEvent({
+        runId: input.runId,
+        from: STEER_PROMOTING_STATUS,
+        to: 'queued',
         ownerToken: input.ownerToken,
         transitionVersion: updated.transitionVersion,
         promotionAttempt: updated.promotionAttempt,

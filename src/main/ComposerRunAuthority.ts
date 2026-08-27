@@ -1,5 +1,5 @@
 import type { ComposerInput } from './services/ComposerService'
-import type { ChatRecord, ScheduledTask } from './store/types'
+import type { ChatRecord, ProviderId, ScheduledTask } from './store/types'
 import type { WorkspacePopoutAuthority } from './WorkspacePopoutAuthority'
 import { assertScheduledRunAuthority } from './ScheduledRunAuthority'
 
@@ -25,7 +25,14 @@ export interface ComposerRunAuthorityInput {
     appRunId: string
     appChatId: string
     provider?: string
-  }) => { imageAttachments: NonNullable<ComposerInput['imageAttachments']> } | null
+  }) =>
+    | { kind: 'not-applicable' }
+    | { kind: 'invalid' }
+    | {
+        kind: 'resolved'
+        provider: ProviderId
+        imageAttachments: NonNullable<ComposerInput['imageAttachments']>
+      }
   canonicalizePath: (value: string) => string
 }
 
@@ -210,18 +217,22 @@ export function resolveComposerRunAuthority(
     authoritativeInput.workspace = chat.workspacePath
   }
 
-  const queuedAttachments =
+  const queuedAttachmentAuthority =
     appRunId && input.resolveQueuedComposerAttachments
       ? input.resolveQueuedComposerAttachments({
           appRunId,
           appChatId: chat.appChatId,
           ...(input.input.provider ? { provider: input.input.provider } : {})
         })
-      : null
-  if (queuedAttachments) {
-    authoritativeInput.imageAttachments = queuedAttachments.imageAttachments.map((attachment) => ({
-      ...attachment
-    }))
+      : { kind: 'not-applicable' as const }
+  if (queuedAttachmentAuthority.kind === 'invalid') {
+    throw new Error('Queued attachment authority is invalid for this exact compose request.')
+  }
+  if (queuedAttachmentAuthority.kind === 'resolved') {
+    authoritativeInput.provider = queuedAttachmentAuthority.provider
+    authoritativeInput.imageAttachments = queuedAttachmentAuthority.imageAttachments.map(
+      (attachment) => ({ ...attachment })
+    )
     delete authoritativeInput.attachments
     return { input: authoritativeInput, mainOwnedAttachments: true }
   }

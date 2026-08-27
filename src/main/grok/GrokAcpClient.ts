@@ -30,6 +30,8 @@ export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
 export interface GrokAcpRunOptions {
   prompt: string
+  /** Main-authorized images; the exact ACP runtime negotiates support. */
+  imagePaths?: readonly string[]
   cwd: string
   /** Spawns `grok --no-auto-update agent stdio` (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -43,6 +45,8 @@ export interface GrokAcpRunOptions {
   taskWraithShellToolAvailable?: boolean
   /** Normalized run events: content / thinking / init(sessionId) / result / warning. */
   onEvent: (event: NormalizedGrokRunEvent) => void
+  /** Exact notification after every tool in one parallel ACP batch settles. */
+  onToolBatchBoundary?: () => void
   /** Called once with the spawned child (for the cancellation registry). */
   onProcess?: (child: AcpChildProcess) => void
   /**
@@ -190,6 +194,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   })
   const handle = runAcpTurn({
     prompt: options.prompt,
+    imagePaths: options.imagePaths,
     cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
@@ -200,6 +205,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     },
     mcpServers: options.mcpServers,
     onEvent: options.onEvent,
+    onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest,
     deniedToolRecovery: {

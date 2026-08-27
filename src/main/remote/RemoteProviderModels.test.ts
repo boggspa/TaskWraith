@@ -46,7 +46,8 @@ describe('buildRemoteProviderModelsMessage', () => {
             disabledReason: 'Quota'
           }
         ],
-        defaultReasoningEffort: 'high'
+        defaultReasoningEffort: 'high',
+        contextWindow: 1_048_576
       },
       ...Array.from({ length: 45 }, (_, index) => ({ id: `model-${index}` }))
     ]
@@ -68,7 +69,8 @@ describe('buildRemoteProviderModelsMessage', () => {
           disabledReason: 'Quota'
         }
       ],
-      defaultReasoningEffort: 'high'
+      defaultReasoningEffort: 'high',
+      contextWindow: 1_048_576
     })
   })
 

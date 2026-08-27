@@ -261,7 +261,7 @@ export function CanvasBrowserChrome({
           title={nav.url || undefined}
           onFocus={(e) => {
             // Edit the FULL url, pre-selected — one keystroke replaces it.
-            setDraft(nav.url)
+            setDraft(nav.url === 'about:blank' ? '' : nav.url)
             requestAnimationFrame(() => e.target.select())
           }}
           onChange={(e) => setDraft(e.target.value)}

@@ -283,10 +283,26 @@ describe('registerCanvasEmbedIpc', () => {
       {
         driver: 'web',
         url: 'http://localhost:3000',
-        originAllowlist: undefined,
         embed: true,
         presentation: 'dock'
       },
+      { chatId: 'chat-a', workspacePath: '/workspace/a' }
+    ])
+  })
+
+  it('opens an empty embedded browser before any URL is known', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    const result = await ipc.invoke('canvas:open-embedded', {
+      chatId: 'chat-a',
+      presentation: 'dock'
+    })
+
+    expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
+    expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
+      { driver: 'web', url: undefined, embed: true, presentation: 'dock' },
       { chatId: 'chat-a', workspacePath: '/workspace/a' }
     ])
   })

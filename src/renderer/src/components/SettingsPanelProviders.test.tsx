@@ -417,6 +417,35 @@ describe('SettingsPanel provider cards', () => {
     expect(card).not.toContain('Sign out')
   })
 
+  it("renders Vibe's authenticated ACP status as a green signed-in card", () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            mistral: {
+              available: true,
+              authState: 'authenticated',
+              credentialPresent: true,
+              authSource: 'os_keyring',
+              probeStatus: 'verified'
+            }
+          }
+        })}
+      />
+    )
+
+    const mistralStart = html.indexOf('provider-mistral')
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      mistralStart + 'provider-mistral'.length
+    )
+    const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Mistral Vibe signed in')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).toContain('did not read or store the credential')
+    expect(card).not.toContain('sign-in status unavailable')
+  })
+
   it('buries the AntiGravity risk-consent card after Ollama', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

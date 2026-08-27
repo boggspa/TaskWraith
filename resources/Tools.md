@@ -1173,7 +1173,7 @@ Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can ins
 
 - Access: governed by your run permission role
 - Required args: none
-- Optional args: driver, presentation, url, bundleId, appPath, udid, width, height, originAllowlist
+- Optional args: driver, presentation, url, bundleId, appPath, udid, width, height
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open","arguments":{"driver":"text"}}}}`
 
 ## canvas_render_html
@@ -1405,7 +1405,7 @@ Run human-approved agent-supplied JavaScript inside the Canvas preview page and 
 
 ## canvas_navigate
 
-Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically in the active chat's Canvas dock — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing use canvas_click / canvas_fill (Canvas interaction), and scripts use canvas_eval. Accept Edits and higher authorize ordinary navigation; Ask prompts on every call and Plan denies. Private-network hosts stay blocked unless allowlisted at open; link-local/metadata are always blocked.
+Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically in the active chat's Canvas dock — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing use canvas_click / canvas_fill (Canvas interaction), and scripts use canvas_eval. Accept Edits and higher authorize ordinary navigation; Ask prompts on every call and Plan denies. Public, loopback, and private-network hosts are supported; link-local/cloud-metadata targets remain blocked.
 
 - Access: governed by your run permission role
 - Required args: none

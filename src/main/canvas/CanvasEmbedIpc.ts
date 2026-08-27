@@ -1,11 +1,10 @@
 /**
  * IPC for the renderer-opened canvas (HUMAN actions — the user's own preview,
- * un-gated, but the driver still enforces the SSRF policy). Two open modes:
+ * un-gated, with the driver's fixed scheme/metadata deny rules). Two open modes:
  *  - `canvas:open-window` → a standalone floating BrowserWindow (the default, and
- *    what the composer toolbar button uses — movable/closable, no DOM-overlay
- *    positioning to get wrong).
+ *    what the dock's Pop Out action uses).
  *  - `canvas:open-embedded` → a WebContentsView floated over a multiview pane (the
- *    empty-pane launcher), positioned via set-bounds / set-visible.
+ *    composer/dock Browser action), positioned via set-bounds / set-visible.
  * Kept out of the index.ts god-module: index.ts just calls registerCanvasEmbedIpc.
  */
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
@@ -39,7 +38,6 @@ export interface CanvasEmbedIpcAuthority {
 type OpenArgs =
   | {
       url?: string
-      originAllowlist?: string[]
       chatId?: string
       presentation?: 'dock'
     }
@@ -99,7 +97,6 @@ export function registerCanvasEmbedIpc(
         {
           driver: 'web',
           url: args?.url,
-          originAllowlist: Array.isArray(args?.originAllowlist) ? args.originAllowlist : undefined,
           embed,
           ...(embed && args?.presentation === 'dock' ? { presentation: 'dock' as const } : {})
         },

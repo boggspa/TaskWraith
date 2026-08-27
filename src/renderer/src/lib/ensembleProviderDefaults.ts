@@ -55,6 +55,13 @@ import {
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
+import {
+  KIMI_K27_MODEL_ID,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_REASONING_EFFORTS,
+  isKimiK3Model as isSharedKimiK3Model
+} from '../../../shared/kimiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
 
 export interface EnsembleModelDefaults {
@@ -253,26 +260,32 @@ const GEMINI_MODELS = withCuratedUltraTaskSupport(GEMINI_MODEL_ROWS)
 
 const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   {
-    id: 'kimi-k2.7-code',
+    id: KIMI_K27_MODEL_ID,
     label: 'K2.7 Coding',
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
     defaultReasoningEffort: 'on',
     additionalSpeedTiers: ['fast']
   },
   {
-    id: 'kimi-k3',
-    label: 'K3',
-    supportedReasoningEfforts: [
-      { reasoningEffort: 'low' },
-      { reasoningEffort: 'high' },
-      { reasoningEffort: 'max' }
-    ],
+    id: KIMI_K3_MODEL_ID,
+    label: 'K3 (up to 1M)',
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    id: KIMI_K3_256K_MODEL_ID,
+    label: 'K3 256K',
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
     defaultReasoningEffort: 'max'
   }
 ]
 const KIMI_MODELS = withCuratedUltraTaskSupport(KIMI_MODEL_ROWS)
-// Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — K3 has no tier.
-const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
+// Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — neither K3 route has it.
+const KIMI_FAST_CAPABLE = new Set<string>([KIMI_K27_MODEL_ID])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
 // from the Cursor catalog below.
@@ -563,9 +576,7 @@ export function getEnsembleReasoningOptions(
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':
-      return String(modelId || '').toLowerCase() === 'kimi-k3'
-        ? KIMI_K3_REASONING
-        : KIMI_ALWAYS_ON_REASONING
+      return isSharedKimiK3Model(modelId) ? KIMI_K3_REASONING : KIMI_ALWAYS_ON_REASONING
     case 'grok':
       if (!isGrokReasoningModelId(modelId)) return []
       return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
@@ -852,11 +863,7 @@ function normalizeReasoningEffortToken(value?: string | null): string {
 
 /** K3 has a selectable Low/High/Max effort; K2.7 Coding's thinking is fixed On. */
 export function isKimiK3Model(model?: string | null): boolean {
-  return (
-    String(model || '')
-      .trim()
-      .toLowerCase() === 'kimi-k3'
-  )
+  return isSharedKimiK3Model(model)
 }
 
 /**
@@ -1279,7 +1286,7 @@ export function resolveEnsembleParticipantSettings(
             ? modelDefaultReasoning
             : (enabledReasoningOptions[0]?.value ?? '')
   const fastModeEnabled =
-    participant.provider === 'kimi' && model === 'kimi-k3'
+    participant.provider === 'kimi' && isKimiK3Model(model)
       ? false
       : Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
   const thinkingEnabled =

@@ -563,7 +563,17 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Published K3 API pricing. PROJECTED API-equivalent for OAuth/subscription runs; the API page does not publish a separate long-context rate tier.'
+          'Published K3 API pricing for the plan-dependent long-context route. PROJECTED API-equivalent for OAuth/subscription runs.'
+      },
+      {
+        modelId: 'kimi-k3-256k',
+        inputUsdPerMillion: 3.0,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.3,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Same published K3 API pricing for the fixed 256K route. Kimi Code membership documents lower quota consumption than the 1M route; this remains a PROJECTED API-equivalent for subscription runs.'
       },
       {
         modelId: 'kimi-k2.6',

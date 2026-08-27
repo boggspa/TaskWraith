@@ -914,6 +914,7 @@ declare global {
           }>
           defaultReasoningEffort?: string | null
           additionalSpeedTiers?: string[]
+          contextWindow?: number
           ultraTaskSupported?: boolean
         }>
       >
@@ -1508,7 +1509,7 @@ declare global {
         error?: string
       }>
       canvas: {
-        openWindow: (args: { url: string; originAllowlist?: string[]; chatId: string }) => Promise<
+        openWindow: (args: { url?: string; chatId: string }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -1518,12 +1519,7 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openEmbedded: (args: {
-          url: string
-          originAllowlist?: string[]
-          chatId: string
-          presentation?: 'dock'
-        }) => Promise<
+        openEmbedded: (args: { url?: string; chatId: string; presentation?: 'dock' }) => Promise<
           | {
               ok: true
               canvasId: string

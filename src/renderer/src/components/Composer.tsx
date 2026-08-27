@@ -1111,7 +1111,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       )
     : null
   const hasSendablePromptContent =
-    hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext
+    hasAttachmentPromptContent(prompt, imageAttachments) ||
+    hasProjectReferenceContext ||
+    Boolean(currentDiscordContextSelection)
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
 
   /**
@@ -3262,16 +3264,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             // instead of queuing/cancelling — this is the
                             // post-Phase-J3 path that replaces the removed
                             // composer Steer button. Mirrors the original
-                            // button gates: handler present, draft non-empty,
+                            // button gates: handler present, sendable content,
                             // chat busy enough for steer, not already busy
-                            // steering. Detached side chats omit `handleSteer`
-                            // and fall through to `handleRun` below.
+                            // steering. Each linked surface must provide its
+                            // own chat-scoped handler; the detached default
+                            // omits one and falls through to `handleRun`.
                             if (
                               settings?.midRunInputBehavior === 'steer' &&
                               isCurrentChatRunning &&
                               typeof handleSteer === 'function' &&
                               isCurrentChatBusyForSteer &&
-                              prompt.trim() &&
+                              hasSendablePromptContent &&
                               !isSteerBusyForCurrentChat
                             ) {
                               e.preventDefault()
@@ -5109,9 +5112,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 the Enter-handler steer branch above). The
                                 dedicated Steer button was removed so the
                                 destructive Stop control keeps its edge slot; the
-                                queued-row Steer action (boundary-only) is
-                                unaffected. Pinned by composerSteerButton.test.ts.
-                                Detached side chats still omit the handler.
+                                queued-row Steer action joins the same live-or-
+                                next-safe-boundary path. Pinned by
+                                composerSteerButton.test.ts.
+                                Detached surfaces still omit the handler until
+                                their owner overlays a chat-scoped one.
                               */}
                               <button
                                 className="composer-action-btn stop-btn"

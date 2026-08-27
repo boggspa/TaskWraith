@@ -3,7 +3,10 @@ import type { AppSettings } from '../../../../main/store/types'
 import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
-import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
+import type {
+  RightDockCanvasSurface,
+  RightDockSurfaceDef
+} from '../../components/RightDockSurfaceSwitcher'
 import type { ThreadMessageInboxSnapshot } from '../../hooks/useThreadMessageInbox'
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
@@ -166,6 +169,7 @@ type MainAppLayoutSidebarProps = {
 export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   acknowledgedElevationDefaults: any
   activateRightDockTab: any
+  activateCanvasDockSurface: (surface: RightDockCanvasSurface) => void
   toggleRightDockPanel: any
   activeDiff: any
   activeProvider: any
@@ -395,6 +399,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideProviderChange: any
   handleSideReasoningChange: any
   handleSideRun: any
+  handleSideSteer: any
   handleSideToggleFastMode: any
   handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
   handleSteerToQueuedMessage: any

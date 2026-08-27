@@ -85,6 +85,17 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "cursor", model: "cursor-grok-4.5") == 500_000)
     }
 
+    @Test("Kimi uses exact fixed windows and honors the discovered plan limit")
+    func kimiProviderWindows() {
+        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k2.7-code") == 262_144)
+        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3-256k") == 262_144)
+        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3") == 262_144)
+        #expect(
+            ContextWindows.resolve(
+                provider: "kimi", model: "kimi-k3", discoveredContextWindow: 1_048_576)
+                == 1_048_576)
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)

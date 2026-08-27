@@ -32,6 +32,8 @@ describe('CanvasComposerButton (static render)', () => {
     expect(source).toContain('window.api.canvas?.openEmbedded')
     expect(source).toContain('window.api.canvas?.openSketchEmbedded')
     expect(source.match(/presentation: 'dock'/g)).toHaveLength(2)
+    expect(source).toContain('<CanvasPaneLauncher onOpen={() => void handleOpen()} />')
+    expect(source).not.toContain('handleOpen(url)')
     expect(source).not.toContain('openWindow({')
     expect(source).not.toContain('openSketchWindow({')
   })

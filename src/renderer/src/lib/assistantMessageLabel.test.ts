@@ -370,6 +370,22 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
+  it('keeps the fixed-256K K3 route distinct in transcript badges', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'kimi-k3-256k',
+          ensembleReasoningEffort: 'high'
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K3 256K High')
+  })
+
   it('uses pooled-agent nickname and identity when present on ensemble rows', () => {
     expect(
       formatAssistantMessageLabel(

@@ -5976,6 +5976,17 @@ export type RunQueueJobSource =
   | 'system'
 
 /**
+ * Durable solo-steer delivery fence.
+ *
+ * `prepared` means no provider admission has been attempted and startup may
+ * safely restore the transcript barrier. `provider_admission_pending` is
+ * written before the first provider-side effect. A process restart cannot
+ * distinguish accepted from merely attempted admission, so recovery must fail
+ * that row attention-visible rather than replay it.
+ */
+export type SoloSteerDeliveryPhase = 'prepared' | 'provider_admission_pending'
+
+/**
  * Content-addressed attachment persisted beyond the immediate live dispatch.
  * `path` is the canonical path in TaskWraith's main-owned media asset store,
  * never the original user/workspace path. The hash + MIME pair is the durable
@@ -6005,15 +6016,33 @@ export interface LegacyPersistedAttachmentPathRef {
 }
 
 /**
+ * Main-HMAC receipt for an exact user-picked external directory. Unlike an
+ * external-path execution grant, this is queue-local provenance: it authorizes
+ * replay of this one attachment only for the exact original job identity and
+ * remains verifiable after the renderer and process-local grant registry exit.
+ */
+export interface RunQueueDirectoryAttachmentReceipt {
+  schemaVersion: 1
+  canonicalPath: string
+  runId: string
+  chatId: string
+  workspaceId: string | null
+  workspacePath: string | null
+  provider: ProviderId
+  signature: string
+}
+
+/**
  * A folder attachment is intentionally a live reference rather than a byte
- * snapshot. Read authority is re-derived from the owning workspace or the
- * main-signed external path grants stored beside the queue request.
+ * snapshot. Read authority is re-derived from its owning workspace, a current
+ * exact picker/grant, or its exact main-signed queue receipt.
  */
 export interface DirectoryAttachmentRef {
   id?: string
   path: string
   name?: string
   kind: 'directory'
+  queueReceipt?: RunQueueDirectoryAttachmentReceipt
 }
 
 export type PersistedOrLegacyAttachmentRef =
@@ -6230,6 +6259,14 @@ export interface RunQueueJob {
   queueMessageId?: string
   /** Main-minted while a solo steer waits for its durable transcript row. */
   steerPreparationKind?: SoloSteerTranscriptPreparation
+  /** Main-owned crash fence for the provider admission side effect. */
+  steerDeliveryPhase?: SoloSteerDeliveryPhase
+  /** Exact active run targeted by the fenced provider admission attempt. */
+  steerDeliveryActiveRunId?: string
+  /** Transport strategy selected for the fenced admission attempt. */
+  steerDeliveryStrategy?: string
+  /** Timestamp written atomically with the admission fence. */
+  steerDeliveryAttemptedAt?: string
   priority: number
   attempt: number
   promptPreview?: string

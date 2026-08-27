@@ -33,6 +33,8 @@ export interface KimiAcpFs {
 
 export interface KimiAcpRunOptions {
   prompt: string
+  /** Main-authorized images; the ACP runtime must advertise prompt image support. */
+  imagePaths?: readonly string[]
   /** Existing Kimi Code ACP session persisted in this seat's KIMI_CODE_HOME. */
   resumeSessionId?: string | null
   /** Full-context prompt used only when native resume cannot be completed. */
@@ -61,6 +63,8 @@ export interface KimiAcpRunOptions {
    */
   confirmResumedSession?: () => Promise<boolean>
   onEvent: (event: AcpRunEvent) => void
+  /** Exact notification after every tool in one parallel ACP batch settles. */
+  onToolBatchBoundary?: () => void
   onProcess?: (child: AcpChildProcess) => void
   beforeInitialize?: (child: AcpChildProcess) => Promise<void>
   /** Tool-approval mediator for Bash/MCP asks. Default (omitted) DENIES. */
@@ -103,6 +107,7 @@ export function formatKimiProcessError(err: Error): string {
 export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
   return runAcpTurn({
     prompt: options.prompt,
+    imagePaths: options.imagePaths,
     resumeSessionId: options.resumeSessionId,
     resumeFallbackPrompt: options.resumeFallbackPrompt,
     allowResumeFallback: options.allowResumeFallback,
@@ -114,6 +119,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
     mcpServers: options.mcpServers,
     confirmResumedSession: options.confirmResumedSession,
     onEvent: options.onEvent,
+    onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
     beforeInitialize: options.beforeInitialize,
     onPermissionRequest: options.onPermissionRequest,

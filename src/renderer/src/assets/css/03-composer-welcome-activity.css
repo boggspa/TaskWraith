@@ -7084,15 +7084,14 @@ button.composer-run-timecode.is-open {
   box-sizing: border-box;
 }
 
-/* Every Canvas action is a shared rim pill (PillButton), and the three line up
+/* Every Canvas action is a shared rim pill (PillButton), and the four line up
    as one right-hand column. Each section is a two-column grid (text | action),
    so the pill sits on the title/description row instead of claiming its own;
    `justify-self: end` keeps it trailing whichever container it lands in, and the
-   shared min-width makes the three differing labels ("Open Mesh Canvas", "Open
-   web canvas", "Open sketch canvas") resolve to the same box. The web-canvas
-   pill is the odd one out — it lives in a flex row beside its URL field, where
-   it is already trailing — so it takes the width and ignores the justify-self,
-   which is what lines its right edge up with the other two.
+   shared min-width makes the differing labels ("Open Mesh Canvas", "Open
+   Simulator Canvas", "Open browser", "Open sketch canvas") resolve to the same
+   box. The blank-browser action owns no URL field; navigation lives in the
+   browser rail after the surface opens.
 
    `ch`, not px: --font-size-xs is rem-derived and each CSS shard re-scales it,
    so a fixed pixel width would stop clearing the longest label as soon as the
@@ -7108,7 +7107,7 @@ button.composer-run-timecode.is-open {
   /* The web-canvas pill is `compact` so it sits neatly beside its URL field
      everywhere else; in this column that would leave it 2px shorter than its
      neighbours. Re-assert the regular metrics here (higher specificity than
-     --compact) so the three read as one set. */
+     --compact) so the four read as one set. */
   --segmented-action-height: 24px;
   --segmented-action-padding: 0 10px;
 }

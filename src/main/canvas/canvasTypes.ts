@@ -97,12 +97,6 @@ export interface CanvasOpenInput {
   driver?: CanvasDriverKind
   url?: string
   viewport?: CanvasViewport
-  /**
-   * Host allowlist. When non-empty, only loopback hosts plus these hosts (exact
-   * or dotted-suffix match) may load. Link-local / cloud-metadata addresses are
-   * blocked regardless (SSRF guard), so an allowlist can never re-enable them.
-   */
-  originAllowlist?: string[]
   // --- device driver (iOS simulator; P4) ---
   /** Target simulator. Omit → the currently-booted sim. */
   device?: CanvasDeviceTarget
@@ -632,7 +626,6 @@ export interface CanvasSessionRecord {
   url: string
   title: string
   viewport: CanvasViewport
-  originAllowlist: string[]
   status: CanvasSessionStatus
   chatId?: string
   runId?: string
@@ -890,14 +883,6 @@ export function isLoopbackHost(rawHost: string): boolean {
   return classifyCanvasHost(rawHost) === 'loopback'
 }
 
-function hostMatchesAllowlist(rawHost: string, allowlist: string[]): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
-  const allow = allowlist
-    .map((entry) => entry.toLowerCase().trim().replace(/\.$/, ''))
-    .filter(Boolean)
-  return allow.some((entry) => host === entry || host.endsWith(`.${entry}`))
-}
-
 export interface CanvasUrlValidation {
   ok: boolean
   reason?: string
@@ -907,13 +892,12 @@ export interface CanvasUrlValidation {
 }
 
 /**
- * Top-level open gate. Blocks non-http(s) and link-local/metadata always;
- * allows loopback always; allows a private (RFC1918 / ULA / CGNAT) host only if
- * it is in the allowlist; allows public hosts (the user-gated canvas_open modal
- * is the governing control there, and isCanvasRequestBlocked stops the loaded
- * page from then reaching internal ranges). `URL` is a Node/Web global.
+ * Top-level browser gate. Any http(s) host the user enters is valid, including
+ * loopback, LAN, CGNAT, and ULA addresses. Link-local/cloud-metadata targets
+ * remain a fixed deny rule rather than an origin allowlist. `URL` is a Node/Web
+ * global.
  */
-export function validateCanvasUrl(rawUrl: string, allowlist: string[] = []): CanvasUrlValidation {
+export function validateCanvasUrl(rawUrl: string): CanvasUrlValidation {
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -938,39 +922,17 @@ export function validateCanvasUrl(rawUrl: string, allowlist: string[] = []): Can
       hostClass
     }
   }
-  if (hostClass === 'loopback') return { ok: true, host, hostClass, normalizedUrl }
-  if (hostClass === 'private') {
-    return hostMatchesAllowlist(host, allowlist)
-      ? { ok: true, host, hostClass, normalizedUrl }
-      : {
-          ok: false,
-          reason: `Private host "${host}" must be in the canvas origin allowlist.`,
-          host,
-          hostClass
-        }
-  }
-  // public
-  if (allowlist.length > 0 && !hostMatchesAllowlist(host, allowlist)) {
-    return {
-      ok: false,
-      reason: `Host "${host}" is not in the canvas origin allowlist.`,
-      host,
-      hostClass
-    }
-  }
   return { ok: true, host, hostClass, normalizedUrl }
 }
 
 /**
- * Per-request SSRF gate for EVERY request the loaded page makes — wired to
- * session.webRequest.onBeforeRequest, so it covers the main frame, subframes,
- * subresources (img/script/fetch/XHR) and websockets that the navigation
- * events miss. Blocks link-local/metadata always and private ranges unless
- * allowlisted; allows loopback + public (a real page legitimately loads public
- * CDNs and same-origin loopback APIs). This is what actually closes the
- * iframe/fetch-to-metadata hole.
+ * Per-request fixed deny rule for EVERY request the loaded page makes — wired
+ * to session.webRequest.onBeforeRequest, so it covers the main frame,
+ * subframes, subresources and websockets. Ordinary public, loopback and private
+ * network requests are all browser-addressable; link-local/cloud-metadata
+ * targets stay blocked.
  */
-export function isCanvasRequestBlocked(rawUrl: string, allowlist: string[] = []): boolean {
+export function isCanvasRequestBlocked(rawUrl: string): boolean {
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -980,8 +942,7 @@ export function isCanvasRequestBlocked(rawUrl: string, allowlist: string[] = [])
   if (!parsed.hostname) return false
   const hostClass = classifyCanvasHost(parsed.hostname)
   if (hostClass === 'linklocal') return true
-  if (hostClass === 'private') return !hostMatchesAllowlist(parsed.hostname, allowlist)
-  return false // loopback / public / invalid → allow
+  return false // loopback / private / public / invalid → allow
 }
 
 /**

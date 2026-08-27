@@ -26,6 +26,7 @@ import {
   hostProviderCatalogEntry,
   hostProviderOffers
 } from '../host-shared/HostProviderCatalog'
+import { kimiExplicitCliModelAlias } from '../shared/kimiModels'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -98,7 +99,7 @@ function safeOperationId(value: string): boolean {
 }
 
 function acpArgs(thread: HostProviderRunThread): string[] {
-  return ['--model', thread.modelId, 'acp']
+  return ['--model', kimiExplicitCliModelAlias(thread.modelId), 'acp']
 }
 
 function readObject(value: unknown): Record<string, unknown> | null {

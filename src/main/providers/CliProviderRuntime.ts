@@ -8,7 +8,11 @@ import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
-import { MISTRAL_BINARY_NAME } from '../mistral/MistralCliArgs'
+import { MISTRAL_BINARY_NAME, scrubMistralCredentialEnv } from '../mistral/MistralCliArgs'
+import {
+  probeMistralVibeAuthStatus,
+  type MistralVibeAuthProbeResult
+} from '../mistral/MistralAuthStatusProbe'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
@@ -61,6 +65,7 @@ export interface CliProviderRuntimeDependencies {
   getCodexStatusSnapshot?: () => Promise<unknown>
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
   getKimiStatusSnapshot?: () => Promise<Record<string, unknown>>
+  probeMistralAuthStatus?: typeof probeMistralVibeAuthStatus
   resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
 }
 
@@ -718,16 +723,51 @@ export async function getCliProviderStatus(
     provider === 'gemini' && deps?.getGeminiAuthStatusSnapshot
       ? await deps.getGeminiAuthStatusSnapshot().catch(() => null)
       : null
+  let version: string
+  let authState: string
+  let mistralAuthMetadata: {
+    credentialPresent?: boolean | null
+    authSource?: string | null
+    probeStatus?: MistralVibeAuthProbeResult['probeStatus']
+  } = {}
+  if (provider === 'mistral') {
+    const probeEnv = scrubMistralCredentialEnv(
+      createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps)
+    )
+    const authProbe = await (deps?.probeMistralAuthStatus || probeMistralVibeAuthStatus)({
+      binaryPath: resolved.binaryPath,
+      env: probeEnv
+    }).catch(
+      (): MistralVibeAuthProbeResult => ({
+        authState: 'unknown',
+        credentialPresent: null,
+        authSource: null,
+        version: null,
+        probeStatus: 'failed'
+      })
+    )
+    version = authProbe.version || (await readResolvedCliVersion(resolved, deps))
+    authState = authProbe.authState
+    mistralAuthMetadata = {
+      credentialPresent: authProbe.credentialPresent,
+      authSource: authProbe.authSource,
+      probeStatus: authProbe.probeStatus
+    }
+  } else {
+    version = await readResolvedCliVersion(resolved, deps)
+    authState =
+      provider === 'claude'
+        ? await readClaudeAuthState(resolved, deps)
+        : geminiAuth?.authState || 'unknown'
+  }
   return {
     provider,
     label: providerDisplayName(provider),
     available: true,
-    version: await readResolvedCliVersion(resolved, deps),
+    version,
     appServer: 'sdk-or-cli',
-    authState:
-      provider === 'claude'
-        ? await readClaudeAuthState(resolved, deps)
-        : geminiAuth?.authState || 'unknown',
+    authState,
+    ...mistralAuthMetadata,
     setupRequired: false,
     binaryPath: resolved.binaryPath,
     binarySource: resolved.source,

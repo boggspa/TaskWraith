@@ -12,6 +12,7 @@ import {
   kimiAcpThinkingConfigValue,
   getStaticProviderModels,
   KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
   KIMI_STANDARD_CLI_MODEL,
   mergeCodexLiveModelRows,
@@ -621,6 +622,9 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(normalizeCliProviderModel('kimi', 'kimi-k3')).toBe('kimi-k3')
     expect(normalizeCliProviderModel('kimi', 'k3')).toBe('kimi-k3')
     expect(normalizeCliProviderModel('kimi', KIMI_K3_CLI_MODEL)).toBe('kimi-k3')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k3-256k')).toBe('kimi-k3-256k')
+    expect(normalizeCliProviderModel('kimi', 'k3-256k')).toBe('kimi-k3-256k')
+    expect(normalizeCliProviderModel('kimi', KIMI_K3_256K_CLI_MODEL)).toBe('kimi-k3-256k')
   })
 
   it('preserves the managed Kimi CLI Standard and HighSpeed aliases', () => {
@@ -656,20 +660,27 @@ describe('normalizeCliProviderModel (kimi)', () => {
     )
   })
 
-  it('maps K3 to its managed CLI alias and ignores stale speed tiers', () => {
+  it('maps both K3 routes to their managed CLI aliases and ignores stale speed tiers', () => {
     const plainArgs: string[] = []
     const staleFastArgs: string[] = []
     const rawApiArgs: string[] = []
+    const shortArgs: string[] = []
+    const shortStaleFastArgs: string[] = []
 
     appendKimiModelArgs(plainArgs, 'kimi-k3')
     // K3 has no speed tiers — a stale/queued Fast flag must not reroute the
     // run onto the K2.7 HighSpeed alias.
     appendKimiModelArgs(staleFastArgs, 'kimi-k3', 'fast')
     appendKimiModelArgs(rawApiArgs, 'k3')
+    appendKimiModelArgs(shortArgs, 'kimi-k3-256k')
+    appendKimiModelArgs(shortStaleFastArgs, 'k3-256k', 'fast')
 
     expect(plainArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
     expect(staleFastArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
     expect(rawApiArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
+    expect(shortArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
+    expect(shortStaleFastArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
+    expect(kimiAcpModelConfigValue('kimi-k3-256k')).toBe(KIMI_K3_256K_CLI_MODEL)
   })
 })
 
@@ -677,7 +688,7 @@ describe('getStaticProviderModels (kimi)', () => {
   it('advertises K2.7 Coding as Fast-capable without adding a duplicate model row', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
 
-    expect(models).toHaveLength(2)
+    expect(models).toHaveLength(3)
     expect(models[0]).toMatchObject({
       id: 'kimi-k2.7-code',
       label: 'K2.7 Coding',
@@ -687,13 +698,14 @@ describe('getStaticProviderModels (kimi)', () => {
     })
   })
 
-  it('lists K3 with Low, High, and Max thinking but no speed tiers', () => {
+  it('lists both K3 routes with Low, High, and Max thinking but no speed tiers', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
     const k3 = models.find((model) => model.id === 'kimi-k3')
+    const k3Short = models.find((model) => model.id === 'kimi-k3-256k')
 
     expect(k3).toMatchObject({
       id: 'kimi-k3',
-      label: 'K3',
+      label: 'K3 (up to 1M)',
       defaultReasoningEffort: 'max',
       supportedReasoningEfforts: [
         { reasoningEffort: 'low' },
@@ -704,14 +716,28 @@ describe('getStaticProviderModels (kimi)', () => {
     expect(k3?.isDefault).toBeUndefined()
     expect(k3?.additionalSpeedTiers).toBeUndefined()
     expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
+    expect(k3Short).toMatchObject({
+      id: 'kimi-k3-256k',
+      label: 'K3 256K',
+      defaultReasoningEffort: 'max',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ]
+    })
+    expect(k3Short?.additionalSpeedTiers).toBeUndefined()
     expect(models[0]?.isDefault).toBe(true)
   })
 
   it('normalizes K3 effort and keeps K2.7 Coding on its fixed thinking setting', () => {
     expect(normalizeKimiReasoningEffort('kimi-k3', 'low')).toBe('low')
     expect(normalizeKimiReasoningEffort('kimi-k3', 'off')).toBe('max')
+    expect(normalizeKimiReasoningEffort('kimi-k3-256k', 'high')).toBe('high')
+    expect(normalizeKimiReasoningEffort('k3-256k', 'off')).toBe('max')
     expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBeNull()
     expect(kimiAcpThinkingConfigValue('kimi-k3', 'high')).toBe('high')
+    expect(kimiAcpThinkingConfigValue('kimi-k3-256k', 'low')).toBe('low')
     expect(kimiAcpThinkingConfigValue('kimi-k2.7-code', 'off')).toBe('on')
   })
 })
