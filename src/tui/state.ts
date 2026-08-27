@@ -25,6 +25,8 @@ export type TuiConnectionState =
   | 'replay'
 export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
+/** First-run Host setup traps until ready; `/new`/`/provider` can be cancelled. */
+export type TuiColdStartIntent = 'required' | 'new-thread'
 
 export interface TuiNotice {
   text: string
@@ -92,6 +94,8 @@ export interface TaskWraithTuiState {
   pendingHostMutation?: TuiPendingHostMutation
   /** Guided setup state shown before the Host has a configured conversation. */
   coldStart?: ColdStartFlowState
+  /** First-run setup traps until ready; `/new` is Esc-cancellable. */
+  coldStartIntent?: TuiColdStartIntent
   /** Available setup providers; an explicit index is always user-controlled. */
   coldStartProviderChoices?: readonly HostProviderStatusProjection[]
   coldStartProviderIndex?: number
@@ -128,83 +132,6 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
   const grok = resolveTaskWraithProviderPresentation('grok', 'grok-4.6')
   const kimi = resolveTaskWraithProviderPresentation('kimi', 'kimi-k3')
   const startedAt = now - 2_000
-  const ensemble = {
-    preset: 'Build + Review',
-    mode: 'continuous',
-    fanout: 'off',
-    continuationHops: 0,
-    maxContinuationHops: 32,
-    backgroundCount: 1,
-    participants: [
-      {
-        id: 'lead',
-        provider: 'claude',
-        displayProvider: claude.displayProvider,
-        hueKey: claude.hueKey,
-        accent: claude.accent,
-        shortCode: claude.shortCode,
-        role: 'Lead',
-        model: 'Opus 4.8 1M',
-        reasoning: 'Ultracode',
-        order: 1,
-        stage: 'worker' as const,
-        status: 'running',
-        active: true,
-        next: false,
-        enabled: true
-      },
-      {
-        id: 'explorer',
-        provider: 'grok',
-        displayProvider: grok.displayProvider,
-        hueKey: grok.hueKey,
-        accent: grok.accent,
-        shortCode: grok.shortCode,
-        role: 'Explorer',
-        model: grok.modelLabel ?? 'Grok 4.6 Fast',
-        order: 2,
-        stage: 'scout' as const,
-        status: 'completed',
-        active: false,
-        next: false,
-        enabled: true
-      },
-      {
-        id: 'worker',
-        provider: 'codex',
-        displayProvider: codex.displayProvider,
-        hueKey: codex.hueKey,
-        accent: codex.accent,
-        shortCode: codex.shortCode,
-        role: 'Worker',
-        model: 'GPT-5.6',
-        reasoning: 'High',
-        order: 3,
-        stage: 'worker' as const,
-        status: 'pending',
-        active: false,
-        next: true,
-        enabled: true
-      },
-      {
-        id: 'review',
-        provider: 'kimi',
-        displayProvider: kimi.displayProvider,
-        hueKey: kimi.hueKey,
-        accent: kimi.accent,
-        shortCode: kimi.shortCode,
-        role: 'Review',
-        model: 'K3',
-        reasoning: 'Max',
-        order: 4,
-        stage: 'background' as const,
-        status: 'pending',
-        active: false,
-        next: false,
-        enabled: true
-      }
-    ]
-  }
   const thread = {
     id: 'demo-thread',
     workspaceId: 'demo-workspace',
@@ -215,36 +142,28 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     },
     reasoning: 'Ultracode',
     status: 'working' as const,
-    chatKind: 'ensemble' as const,
+    chatKind: 'single' as const,
     archived: false,
     pinned: false,
     updatedAt: now,
-    messageCount: 3,
+    messageCount: 2,
     wallTimeMs: now - startedAt,
     tokenEstimate: 386,
-    costText: '£0.19',
-    ensemble
+    costText: '£0.19'
   }
   const rows = [
     row(
       'demo-user',
       'user',
       'You',
-      'Keep the composer compact and preserve the ensemble distinctions.'
-    ),
-    row(
-      'demo-codex',
-      'assistant',
-      'Codex · Worker',
-      'I mapped the state into a three-row terminal checksum. The full roster remains one keystroke away.',
-      codex
+      'Keep the composer compact and let provider identity carry the chroma.'
     ),
     {
       ...row(
         'demo-claude',
         'assistant',
-        'Claude · Lead',
-        'I’ll keep the transcript plain and let provider identity carry the chroma.',
+        'Claude',
+        'I’ll keep the transcript plain and stage the next model from the tune lens.',
         claude
       ),
       tools: [
@@ -254,7 +173,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
           status: 'success' as const
         },
         {
-          name: 'Build responsive roster projection',
+          name: 'Build the compact tune lens',
           category: 'task' as const,
           status: 'running' as const
         }
@@ -314,8 +233,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
       permission: 'workspace_write',
       wallTimeMs: now - startedAt,
       tokenEstimate: 386,
-      costText: '£0.19',
-      ensemble
+      costText: '£0.19'
     }
   }
   const hostProjection = createEmptyHostSnapshot({
@@ -372,31 +290,10 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
       threadId: thread.id,
       status: 'running',
       startedAt,
-      routing: {
-        mode: ensemble.mode,
-        fanout: ensemble.fanout,
-        activeParticipantId: 'lead',
-        continuationHops: ensemble.continuationHops,
-        maxContinuationHops: ensemble.maxContinuationHops,
-        bossParticipantId: 'lead'
-      },
-      participantIds: ensemble.participants.map((participant) => participant.id),
+      participantIds: [],
       providerRunIds: []
     }
   ]
-  hostProjection.participants = ensemble.participants.map((participant) => ({
-    id: participant.id,
-    threadId: thread.id,
-    providerId: participant.provider,
-    role: participant.role,
-    ...(participant.model ? { modelId: participant.model } : {}),
-    stage: participant.stage,
-    order: participant.order,
-    enabled: participant.enabled,
-    status: participant.status,
-    active: participant.active
-  }))
-  hostProjection.routing = hostProjection.rounds[0]?.routing
   hostProjection.questions = [
     {
       questionId: 'demo-question',

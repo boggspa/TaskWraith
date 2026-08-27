@@ -126,13 +126,42 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Complete Host setup to compose')
   })
 
-  it('uses exactly 80x24 with a transcript canvas and three-row ensemble footer', () => {
+  it('titles a cancellable /new flow as a new solo thread', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStartIntent = 'new-thread'
+    state.coldStart = {
+      kind: 'workspace',
+      workspaceId: 'demo-workspace'
+    }
+    state.coldStartProviderChoices = [
+      { providerId: 'claude', status: 'ready', label: 'Claude' },
+      { providerId: 'kimi', status: 'auth_required', label: 'Kimi' }
+    ]
+    state.coldStartProviderIndex = 0
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('New solo thread')
+    expect(output).toContain('Esc cancels')
+    expect(output).toContain('Claude · ready')
+    expect(output).toContain('Kimi · auth required')
+    expect(output).toContain('Choose a provider')
+  })
+
+  it('uses exactly 80x24 with a transcript canvas and two-row solo footer', () => {
     const lines = renderedLines(80, 24)
     expect(lines).toHaveLength(24)
     expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
-    expect(lines.join('\n')).toContain('Claude · Lead · Opus 4.8 1M · Ultracode')
+    expect(lines.join('\n')).toContain('Claude · Opus 4.8 1M · Ultracode')
     expect(lines.join('\n')).toContain('ᜊ Working…  2s · ≈386 tokens')
-    expect(lines.at(-3)?.trimStart()).toMatch(/^ENS Build \+ Review/)
+    expect(lines.join('\n')).not.toContain('ENS')
+    expect(lines.join('\n')).not.toMatch(/ENSEMBLE/)
     expect(lines.at(-2)).toContain('AGBench W+1')
     expect(lines.at(-1)?.trimStart()).toMatch(/^› ▏ Ask TaskWraith…/)
   })
@@ -141,7 +170,7 @@ describe('TaskWraith TUI renderer', () => {
     const lines = renderedLines(64, 30)
     expect(lines).toHaveLength(30)
     expect(lines.every((line) => visibleWidth(line) === 64)).toBe(true)
-    expect(lines.at(-3)).toContain('ENS')
+    expect(lines.join('\n')).not.toContain('ENS')
     expect(lines.at(-2)).toContain('AGBench')
     expect(lines.at(-1)).toContain('↵ send')
   })
@@ -151,13 +180,13 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Context lens')
     expect(output).toContain('PRIMARY  AGBench  [write]')
     expect(output).toContain('SECONDARY  design-system  [write]')
-    expect(output).toContain('Build + Review · Continuous · fan-out Off · 0/32')
-    expect(output).toContain('Claude · Lead · Opus 4.8 1M')
-    expect(output).toContain('Kimi · Review · K3 · BG')
+    expect(output).toContain('Claude · Opus 4.8 1M')
+    expect(output).not.toContain('fan-out')
+    expect(output).not.toContain('Build + Review')
     expect(output).toContain('Esc close · Ctrl+O toggle')
   })
 
-  it('renders live and historical Host missions with distinct round, routing, and seat state', () => {
+  it('renders live and historical Host missions without ensemble roster chrome', () => {
     const activeLines = renderedLines(80, 24, 'missions')
     expect(activeLines).toHaveLength(24)
     expect(activeLines.every((line) => visibleWidth(line) === 80)).toBe(true)
@@ -166,9 +195,9 @@ describe('TaskWraith TUI renderer', () => {
     expect(active).toContain('LIVE · generation 1 · cursor 7')
     expect(active).toContain('Complete the TaskWraith TUI')
     expect(active).toContain('demo-round · running')
-    expect(active).toContain('continuous · fan-out off · 0/32')
+    expect(active).not.toContain('fan-out')
+    expect(active).not.toContain('CLA · Lead')
     expect(active).toContain('answered · 11111111-1111-4111-8111-111111111111')
-    expect(active).toContain('CLA · Lead · running')
     expect(active).not.toContain('Prove Host protocol foundations')
 
     const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
@@ -187,23 +216,14 @@ describe('TaskWraith TUI renderer', () => {
     expect(historical).not.toContain('Complete the TaskWraith TUI')
   })
 
-  it('renders the seat lens for ensembles and the model lens for solo threads', () => {
-    const seatLens = renderedLines(80, 24, 'tune')
-    expect(seatLens.every((line) => visibleWidth(line) === 80)).toBe(true)
-    const seatOutput = seatLens.join('\n')
-    expect(seatOutput).toContain('Seats (preview)')
-    expect(seatOutput).toContain('Claude · Lead')
-    expect(seatOutput).toContain('↑↓ seat · Enter toggle · applies immediately · Esc close')
-
+  it('renders the model lens for solo threads and Host-projected ensembles', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const solo = createTaskWraithTuiDemoState(now)
     solo.overlay = 'tune'
-    const { ensemble: _ensemble, ...soloThread } = solo.thread!.thread
-    solo.thread = { ...solo.thread!, thread: { ...soloThread, chatKind: 'single' } }
     solo.tuneEffortIndex = 1
     solo.offers = {
-      threadId: soloThread.id,
-      provider: soloThread.provider,
+      threadId: solo.thread!.thread.id,
+      provider: solo.thread!.thread.provider,
       currentModel: 'claude-opus-4-8-1m',
       currentReasoningEffort: 'medium',
       models: [
@@ -238,13 +258,58 @@ describe('TaskWraith TUI renderer', () => {
     expect(modelOutput).toContain('Fable 5 (retires 2027-01-01)')
     expect(modelOutput).toContain('low · [medium] · high')
     expect(modelOutput).toContain('↑↓ model · ←→ reasoning · Enter apply on next send · Esc close')
+
+    const ensemble = createTaskWraithTuiDemoState(now)
+    ensemble.overlay = 'tune'
+    ensemble.thread = {
+      ...ensemble.thread!,
+      thread: {
+        ...ensemble.thread!.thread,
+        chatKind: 'ensemble',
+        ensemble: {
+          preset: 'Build + Review',
+          mode: 'continuous',
+          fanout: 'off',
+          continuationHops: 0,
+          maxContinuationHops: 32,
+          backgroundCount: 0,
+          participants: [
+            {
+              id: 'lead',
+              provider: 'claude',
+              displayProvider: 'Claude',
+              hueKey: 'claude',
+              accent: '#d97757',
+              shortCode: 'CLD',
+              role: 'Lead',
+              order: 1,
+              stage: 'worker',
+              status: 'running',
+              active: true,
+              next: false,
+              enabled: true
+            }
+          ]
+        }
+      }
+    }
+    ensemble.offers = solo.offers
+    const ensembleTune = stripAnsi(
+      renderTaskWraithTui(ensemble, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(ensembleTune).toContain('Model (preview)')
+    expect(ensembleTune).not.toContain('Seats (preview)')
   })
 
   it('shows a staged model selection beside the HUD identity until it is sent', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)
-    const { ensemble: _ensemble, ...soloThread } = state.thread!.thread
-    state.thread = { ...state.thread!, thread: { ...soloThread, chatKind: 'single' } }
     state.notice = undefined
     state.pendingSelection = { model: 'claude-fable-5', label: 'Fable 5', reasoningEffort: 'high' }
     const output = renderTaskWraithTui(state, {
@@ -413,7 +478,7 @@ describe('TaskWraith TUI renderer', () => {
     const state = createTaskWraithTuiDemoState(now)
     if (!state.thread || !state.snapshot) throw new Error('Demo state is incomplete')
     state.thread.rows[0].speaker = 'You\u001b[2J'
-    state.thread.rows[2].tools![0].name = 'Read\u009b2J'
+    state.thread.rows[1].tools![0].name = 'Read\u009b2J'
     state.snapshot.workspaces[0].name = 'AGBench\u001b[?25h'
     state.hostProjection!.missions[0].title = 'Mission\u001b[2J'
     state.notice = { text: 'Saved\u001b[H', tone: 'good' }
@@ -530,10 +595,11 @@ describe('TaskWraith TUI renderer', () => {
       '/think <level>',
       '/reasoning',
       '/new',
+      '/provider',
       '/status',
       '/clear',
       '/threads',
-      '/seats',
+      '/tune',
       '/missions',
       '/cancel',
       '/quit'
@@ -541,8 +607,9 @@ describe('TaskWraith TUI renderer', () => {
       expect(output).toContain(entry)
     }
     // The overlay must stay inside the canvas: a clipped bottom border reads as
-    // a broken frame, and the ensemble footer leaves the least room.
+    // a broken frame, and the two-row footer leaves the least room.
     expect(output).toContain('the TaskWraith Host owns thread state')
+    expect(output).not.toContain('/seats')
     expect(lines.some((line) => line.startsWith('└'))).toBe(true)
     expect(output).not.toContain('Electron')
     expect(output).not.toContain('sidecar')

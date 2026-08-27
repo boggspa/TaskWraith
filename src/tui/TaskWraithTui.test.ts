@@ -123,6 +123,19 @@ interface FakeHostHandlers {
   mutationMode?: MutationMode
 }
 
+const SETUP_HOST_CAPABILITIES: readonly HostCapability[] = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'model-offers',
+  'health',
+  'commands',
+  'receipts',
+  'provider-catalog',
+  'provider-auth',
+  'setup'
+]
+
 class FakeHostV2 {
   readonly userDataPath: string
   readonly discoveryPath: string
@@ -814,8 +827,8 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await waitFor(() => output.lastFrame.includes('Delta mission title'), 'mission delta rendered')
     expect(output.lastFrame).toContain('Missions · Active')
     expect(output.lastFrame).toContain('round-live · running')
-    expect(output.lastFrame).toContain('continuous · fan-out read_only')
-    expect(output.lastFrame).toContain('CLD · Lead · running')
+    expect(output.lastFrame).not.toContain('fan-out')
+    expect(output.lastFrame).not.toContain('CLD · Lead')
     expect(host.snapshotRequests).toBe(snapshotsBeforeDelta)
 
     feed(input, '\u001b[C')
@@ -1041,7 +1054,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
   }, 12_000)
 
-  it('creates and opens a fresh workspace solo thread with /new', async () => {
+  it('falls back to creating a workspace thread with /new when provider setup is unavailable', async () => {
     let snapshot = makeHostSnapshot()
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-thread-host-'))
     const host = new FakeHostV2(userDataPath, {
@@ -1085,6 +1098,131 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
         (command) => command.name === 'thread.select' && command.target.threadId === 'thread-new'
       )
     ).toBe(true)
+  }, 12_000)
+
+  it('guides /new through provider selection before creating a solo thread', async () => {
+    let configured = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-provider-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          threads: configured
+            ? [
+                ...makeHostSnapshot().threads,
+                {
+                  id: 'thread-kimi',
+                  workspaceId: 'ws-1',
+                  title: 'Kimi solo thread',
+                  chatKind: 'single',
+                  archived: false,
+                  pinned: false,
+                  updatedAt: 21,
+                  messageCount: 0,
+                  providerId: 'kimi',
+                  latestPreview: 'Ready for a Kimi prompt',
+                  previewTruncated: false
+                }
+              ]
+            : makeHostSnapshot().threads
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        { providerId: 'claude', status: 'ready', label: 'Claude' },
+        { providerId: 'kimi', status: 'ready', label: 'Kimi' }
+      ],
+      providerOffers: (providerId) => makeSetupOffers(providerId),
+      resultRef: (command) => {
+        if (command.name === 'thread.create') {
+          return { kind: 'thread', threadId: 'thread-kimi' }
+        }
+        if (command.name === 'thread.configure') {
+          configured = true
+          return { kind: 'thread', threadId: 'thread-kimi' }
+        }
+        return undefined
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+    feed(input, '/new\r')
+    await waitFor(() => output.lastFrame.includes('New solo thread'), 'new-thread overlay')
+    expect(output.lastFrame).toContain('Claude · ready')
+    expect(output.lastFrame).toContain('Kimi · ready')
+    feed(input, '\u001b[B')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'provider offers')
+    expect(output.lastFrame).toContain('provider  kimi')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.create'),
+      'thread creation command'
+    )
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Workspace write'), 'configuration choices')
+    feed(input, '\u001b[C')
+    feed(input, ' ')
+    await waitFor(
+      () => output.lastFrame.includes('Workspace write · acknowledged'),
+      'posture acknowledgement'
+    )
+    feed(input, '\r')
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Kimi solo thread') ||
+        output.lastFrame.includes('Ready for a Kimi prompt'),
+      'new thread opened',
+      5_000
+    )
+    expect(output.lastFrame).toContain('Ask TaskWraith')
+
+    const configure = host.commands.find((command) => command.name === 'thread.configure')
+    expect(configure?.arguments).toMatchObject({
+      providerId: 'kimi',
+      modelId: 'model-1',
+      postureId: 'posture-write',
+      offerRevision: 'offer-revision-1',
+      reasoningId: 'reasoning-1',
+      postureConsent: true
+    })
+  }, 15_000)
+
+  it('lets /provider <id> skip the picker and cancel with Esc', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-provider-cmd-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        { providerId: 'claude', status: 'ready', label: 'Claude' },
+        { providerId: 'kimi', status: 'ready', label: 'Kimi' }
+      ],
+      providerOffers: (providerId) => makeSetupOffers(providerId)
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+    feed(input, '/provider kimi\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'kimi offers without picker')
+    expect(output.lastFrame).toContain('New solo thread')
+    expect(output.lastFrame).toContain('provider  kimi')
+    expect(output.lastFrame).not.toContain('Claude · ready')
+    feed(input, '\u001b')
+    await waitFor(() => output.lastFrame.includes('New thread cancelled'), 'esc cancels new thread')
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'previous thread restored')
+    expect(output.lastFrame).toContain('Ask TaskWraith')
+    expect(host.commands.some((command) => command.name === 'thread.create')).toBe(false)
+
+    feed(input, '/seats\r')
+    await waitFor(
+      () => output.lastFrame.includes('The standalone TUI is solo-only'),
+      'seats command rejected'
+    )
   }, 12_000)
 
   it('surfaces deferred Host asks and never treats pending as success until y accepts', async () => {

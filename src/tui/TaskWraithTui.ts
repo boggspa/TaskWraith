@@ -19,6 +19,7 @@ import {
   type HostSnapshot
 } from '../shared/hostProtocol'
 import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
+import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import {
   defaultTaskWraithUserDataPath,
@@ -26,7 +27,6 @@ import {
 } from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
-  TaskWraithControlParticipant,
   TaskWraithControlSnapshot,
   TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
@@ -445,10 +445,12 @@ export class TaskWraithTui {
               ? coldStartWorkspaceRegistered(workspace.id)
               : coldStartIdle()
           }
+          this.state.coldStartIntent = 'required'
           this.state.overlay = 'setup'
           this.setNotice('Host setup required before composing.', 'warning')
         } else if (!this.state.coldStart) {
           this.state.coldStart = { kind: 'legacy', reason: 'setup_unavailable' }
+          this.state.coldStartIntent = 'required'
           this.state.overlay = 'setup'
           this.setNotice('Host setup capability is unavailable · read-only legacy mode.', 'warning')
         }
@@ -848,6 +850,15 @@ export class TaskWraithTui {
       return
     }
     if (key.name === 'escape') {
+      if (this.state.coldStartIntent === 'new-thread' && this.state.overlay === 'setup') {
+        this.cancelNewSoloThread()
+        return
+      }
+      if (this.state.coldStart && this.state.coldStart.kind !== 'ready') {
+        this.state.overlay = 'setup'
+        this.render()
+        return
+      }
       this.state.overlay = 'none'
       this.render()
       return
@@ -1053,39 +1064,14 @@ export class TaskWraithTui {
     if (key.name !== 'return' && key.name !== 'enter') return
     if (cold.kind === 'workspace') {
       if (!this.state.coldStartProviderChoices?.length) {
-        this.state.coldStartProviderChoices = (await this.client.getProviderStatuses()).filter(
-          (candidate) => candidate.status === 'ready' || candidate.status === 'auth_required'
-        )
-        this.state.coldStartProviderIndex = 0
+        await this.loadColdStartProviders()
         this.setNotice('Use ↑/↓ to choose a provider, then Enter.', 'neutral')
         this.render()
         return
       }
       const status = this.state.coldStartProviderChoices[this.state.coldStartProviderIndex ?? 0]
       if (!status) throw new Error('No Host provider is currently available.')
-      const provider = coldStartSelectProvider(cold, status)
-      this.state.coldStartProviderChoices = undefined
-      this.state.coldStartProviderIndex = 0
-      if (status.status === 'auth_required') {
-        if (!this.client.supports('provider-auth'))
-          throw new Error('Provider auth capability is unavailable.')
-        const auth = await this.client.getProviderAuthStatus(status.providerId)
-        this.state.coldStart =
-          auth.state === 'authenticated'
-            ? coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
-            : coldStartAuthFlows(
-                provider,
-                auth,
-                await this.client.getProviderAuthFlows(status.providerId)
-              )
-        this.state.coldStartAuthFlowIndex = 0
-      } else {
-        this.state.coldStart = coldStartOffers(
-          provider,
-          await this.client.getProviderOffers(status.providerId)
-        )
-      }
-      this.resetColdStartConfigureIndices()
+      await this.confirmColdStartProvider(status)
     } else if (cold.kind === 'auth') {
       if (cold.operationId) {
         await this.refreshColdStartAuth(cold.providerId)
@@ -1179,9 +1165,10 @@ export class TaskWraithTui {
         if (cold?.kind === 'auth' && cold.operationId) await this.pollColdStartAuth(cold.providerId)
         if (cold?.kind === 'ready') {
           this.state.overlay = 'none'
+          this.state.coldStartIntent = undefined
           this.state.selectedThreadId = cold.threadId
           await this.refreshHostSnapshot()
-          this.applyLocalThread(cold.threadId)
+          this.applyLocalThread(cold.threadId, { previewNotice: true })
           await this.loadThreadHistory(cold.threadId)
         }
       }
@@ -1341,9 +1328,7 @@ export class TaskWraithTui {
     this.render()
   }
 
-  /** The tune lens: seat enable/disable on ensembles, model/reasoning staging
-   * on solo threads. Both are host-validated; this surface only picks among
-   * what the facade projected. */
+  /** The tune lens stages model/reasoning for the next send. Host-validated. */
   private toggleTuneOverlay(): void {
     if (this.state.overlay === 'tune') {
       this.state.overlay = 'none'
@@ -1358,12 +1343,8 @@ export class TaskWraithTui {
     this.state.overlay = 'tune'
     this.state.overlayIndex = 0
     this.state.tuneEffortIndex = 0
-    if (!this.state.thread.thread.ensemble) void this.loadOffers()
+    void this.loadOffers()
     this.render()
-  }
-
-  private tuneSeats(): TaskWraithControlParticipant[] {
-    return this.state.thread?.thread.ensemble?.participants ?? []
   }
 
   private effortIndexFor(offers: TaskWraithControlThreadOffers, modelIndex: number): number {
@@ -1433,24 +1414,6 @@ export class TaskWraithTui {
   }
 
   private handleTuneKey(key: Keypress): void {
-    if (this.state.thread?.thread.ensemble) {
-      const seats = this.tuneSeats()
-      if (!seats.length) return
-      const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, seats.length - 1))
-      if (key.name === 'up') {
-        this.state.overlayIndex = Math.max(0, safeIndex - 1)
-      } else if (key.name === 'down') {
-        this.state.overlayIndex = Math.min(seats.length - 1, safeIndex + 1)
-      } else if (key.name === 'return' || key.name === 'enter' || key.name === 'space') {
-        const seat = seats[safeIndex]
-        if (seat) void this.toggleSeat(seat)
-        return
-      } else {
-        return
-      }
-      this.render()
-      return
-    }
     const models = this.state.offers?.models ?? []
     if (this.state.offersLoading || !models.length) return
     const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, models.length - 1))
@@ -1518,31 +1481,6 @@ export class TaskWraithTui {
       )
     }
     this.render()
-  }
-
-  private async toggleSeat(seat: TaskWraithControlParticipant): Promise<void> {
-    const threadId = this.state.selectedThreadId
-    if (!threadId || this.mutationInFlight) return
-    const nextEnabled = !seat.enabled
-    if (!this.client) {
-      seat.enabled = nextEnabled
-      this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role} (demo)`, 'good', 2_000)
-      this.render()
-      return
-    }
-    const command = this.buildMutation(
-      'ensemble.seat.toggle',
-      { threadId },
-      { participantId: seat.id, enabled: nextEnabled }
-    )
-    if (!command) return
-    await this.runHostMutation(command, {
-      onSucceeded: async () => {
-        await this.refreshHostSnapshot()
-        seat.enabled = nextEnabled
-        this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role}`, 'good', 2_000)
-      }
-    })
   }
 
   private async submit(): Promise<void> {
@@ -1679,8 +1617,17 @@ export class TaskWraithTui {
       this.showStatus()
       return
     }
-    if (command === '/new') {
-      await this.createSoloThread()
+    if (command === '/new' || command === '/provider') {
+      if (arguments_.length > 1) {
+        this.setNotice(
+          `${command} expects at most one provider id, not "${arguments_.join(' ')}".`,
+          'warning',
+          3_000
+        )
+        this.render()
+        return
+      }
+      await this.startNewSoloThread(arguments_[0])
       return
     }
     if (command === '/model' || command === '/m') {
@@ -1709,8 +1656,17 @@ export class TaskWraithTui {
       await this.stageReasoning(arguments_[0])
       return
     }
-    if (command === '/seats' || command === '/tune') {
+    if (command === '/tune') {
       this.toggleTuneOverlay()
+      return
+    }
+    if (command === '/seats') {
+      this.setNotice(
+        'The standalone TUI is solo-only. Use /new or /provider for a fresh thread.',
+        'warning',
+        3_000
+      )
+      this.render()
       return
     }
     this.setNotice(`Unknown command: ${raw}`, 'warning', 3_000)
@@ -1803,6 +1759,138 @@ export class TaskWraithTui {
     this.state.overlayIndex = selectedIndex
     this.state.tuneEffortIndex = effortIndex
     this.applyTuneSelection(model)
+  }
+
+  private async startNewSoloThread(requestedProviderId?: string): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot create Host threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread creation.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const canGuide = this.client.supports('setup') && this.client.supports('provider-catalog')
+    if (!canGuide) {
+      if (requestedProviderId) {
+        this.setNotice(
+          'Connected Host does not advertise provider setup. Use /new without a provider id.',
+          'warning',
+          4_000
+        )
+        this.render()
+        return
+      }
+      await this.createSoloThread()
+      return
+    }
+    if (this.state.coldStartIntent === 'required' && this.state.coldStart?.kind !== 'ready') {
+      this.state.overlay = 'setup'
+      this.setNotice('Finish Host setup, then /new starts another solo thread.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const workspaceId =
+      this.state.thread?.thread.workspaceId ?? this.state.snapshot?.workspaces[0]?.id
+    this.state.coldStart = workspaceId ? coldStartWorkspaceRegistered(workspaceId) : coldStartIdle()
+    this.state.coldStartIntent = this.state.thread || workspaceId ? 'new-thread' : 'required'
+    this.state.overlay = 'setup'
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    this.state.coldStartAuthFlowIndex = 0
+    this.resetColdStartConfigureIndices()
+    if (this.state.coldStart.kind === 'workspace') {
+      await this.loadColdStartProviders()
+      if (requestedProviderId) {
+        const match = this.matchColdStartProvider(requestedProviderId)
+        if (!match) {
+          this.setNotice(
+            `Unknown provider "${requestedProviderId}". Use ↑/↓ to choose, then Enter.`,
+            'warning',
+            4_000
+          )
+          this.render()
+          return
+        }
+        await this.confirmColdStartProvider(match)
+        this.render()
+        return
+      }
+      this.setNotice('Use ↑/↓ to choose a provider, then Enter. Esc cancels.', 'neutral')
+    }
+    this.render()
+  }
+
+  private cancelNewSoloThread(): void {
+    this.state.coldStart = undefined
+    this.state.coldStartIntent = undefined
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    this.state.coldStartAuthFlowIndex = 0
+    this.resetColdStartConfigureIndices()
+    this.state.overlay = 'none'
+    this.setNotice('New thread cancelled.', 'neutral', 2_000)
+    this.render()
+  }
+
+  private async loadColdStartProviders(): Promise<void> {
+    if (!this.client) return
+    this.state.coldStartProviderChoices = (await this.client.getProviderStatuses()).filter(
+      (candidate) => candidate.status === 'ready' || candidate.status === 'auth_required'
+    )
+    this.state.coldStartProviderIndex = 0
+  }
+
+  private matchColdStartProvider(requested: string) {
+    const needle = requested.trim().toLowerCase()
+    const choices = this.state.coldStartProviderChoices ?? []
+    const exact = choices.filter(
+      (candidate) =>
+        candidate.providerId.toLowerCase() === needle || candidate.label.toLowerCase() === needle
+    )
+    if (exact.length === 1) return exact[0]
+    const prefix = choices.filter(
+      (candidate) =>
+        candidate.providerId.toLowerCase().startsWith(needle) ||
+        candidate.label.toLowerCase().startsWith(needle)
+    )
+    return prefix.length === 1 ? prefix[0] : undefined
+  }
+
+  private async confirmColdStartProvider(status: HostProviderStatusProjection): Promise<void> {
+    const cold = this.state.coldStart
+    if (!cold || !this.client) return
+    const provider = coldStartSelectProvider(cold, status)
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    if (status.status === 'auth_required') {
+      if (!this.client.supports('provider-auth'))
+        throw new Error('Provider auth capability is unavailable.')
+      const auth = await this.client.getProviderAuthStatus(status.providerId)
+      this.state.coldStart =
+        auth.state === 'authenticated'
+          ? coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
+          : coldStartAuthFlows(
+              provider,
+              auth,
+              await this.client.getProviderAuthFlows(status.providerId)
+            )
+      this.state.coldStartAuthFlowIndex = 0
+    } else {
+      this.state.coldStart = coldStartOffers(
+        provider,
+        await this.client.getProviderOffers(status.providerId)
+      )
+    }
+    this.resetColdStartConfigureIndices()
   }
 
   private async createSoloThread(): Promise<void> {
