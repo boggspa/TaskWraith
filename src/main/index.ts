@@ -1373,8 +1373,8 @@ import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { registerCanvasPopoutIpc } from './canvas/CanvasPopoutIpc'
 import {
   CanvasPopoutWindowManager,
-  type CanvasPopoutOpenInput
 } from './canvas/CanvasPopoutWindowManager'
+import { createCanvasPopoutElectronWindowDeps } from './canvas/CanvasPopoutElectronWindow'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type {
   CanvasDriverKind,
@@ -2421,55 +2421,15 @@ const workspacePopoutOwners = new Map<
 >()
 let closeCanvasPopoutRenderer: (senderId: number) => Promise<string[]> = async () => []
 const canvasPopoutWindowManager = new CanvasPopoutWindowManager({
-  createWindow: () => {
-    const win = new BrowserWindow({
-      width: 1080,
-      height: 760,
-      minWidth: 520,
-      minHeight: 420,
-      show: false,
-      autoHideMenuBar: true,
-      title: 'TaskWraith Canvas',
-      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-      backgroundColor: resolvePopoutBackgroundColor(false),
-      ...(process.platform === 'linux' ? { icon } : {}),
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        allowRunningInsecureContent: false,
-        experimentalFeatures: false
-      }
-    })
-    attachSpellcheckContextTracking(win)
-    win.webContents.setWindowOpenHandler((details) => {
-      openSafeShellTargetDetached(details.url)
-      return { action: 'deny' }
-    })
-    return win
-  },
-  loadWindow: async (win, input: CanvasPopoutOpenInput) => {
-    const query: Record<string, string> = {
-      popout: 'canvas',
-      chat: input.chatId,
-      surface: input.surface
-    }
-    if (input.session) {
-      query.canvas = input.session.canvasId
-      query.canvasKind = input.session.kind
-      if (input.session.url) query.url = input.session.url
-      if (input.session.title) query.title = input.session.title
-    }
-    const browserWindow = win as BrowserWindow
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      const target = new URL(process.env['ELECTRON_RENDERER_URL'])
-      for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value)
-      await browserWindow.loadURL(target.toString())
-    } else {
-      await browserWindow.loadFile(join(__dirname, '../renderer/index.html'), { query })
-    }
-  },
+  ...createCanvasPopoutElectronWindowDeps({
+    preloadPath: join(__dirname, '../preload/index.js'),
+    rendererFile: join(__dirname, '../renderer/index.html'),
+    rendererUrl: is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined,
+    backgroundColor: resolvePopoutBackgroundColor(false),
+    linuxIcon: icon,
+    attachWindow: attachSpellcheckContextTracking,
+    openExternal: openSafeShellTargetDetached
+  }),
   onWindowClosed: ({ senderId, reason }) => {
     if (reason === 'closed') return closeCanvasPopoutRenderer(senderId).then(() => undefined)
     return undefined
