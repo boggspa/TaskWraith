@@ -1038,6 +1038,36 @@ public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
     /// Range mode only: the absolute byte offset of THIS slice within the asset
     /// (echoes the requested `offset`, server-clamped).
     public let offset: Int?
+
+    public init(
+        id: String,
+        rowId: String? = nil,
+        threadId: String? = nil,
+        name: String? = nil,
+        source: String? = nil,
+        mimeType: String,
+        dataBase64: String,
+        width: Int? = nil,
+        height: Int? = nil,
+        byteLength: Int? = nil,
+        variant: String? = nil,
+        totalBytes: Int? = nil,
+        offset: Int? = nil
+    ) {
+        self.id = id
+        self.rowId = rowId
+        self.threadId = threadId
+        self.name = name
+        self.source = source
+        self.mimeType = mimeType
+        self.dataBase64 = dataBase64
+        self.width = width
+        self.height = height
+        self.byteLength = byteLength
+        self.variant = variant
+        self.totalBytes = totalBytes
+        self.offset = offset
+    }
 }
 
 /// A discoverable TaskWraith host the phone can offer to pair with — the PUBLIC
