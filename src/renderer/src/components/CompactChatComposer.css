@@ -303,8 +303,9 @@
 :root[data-theme][data-appearance]:has(.chat-compact-companion-window)
   .chat-compact-companion-window
   .app-transcript {
-  background: var(--tw-popover-glass-bg) !important;
-  background-color: var(--tw-popover-glass-bg) !important;
+  --compact-companion-glass-bg: color-mix(in srgb, var(--tw-popover-glass-bg) 84%, transparent);
+  background: var(--compact-companion-glass-bg) !important;
+  background-color: var(--compact-companion-glass-bg) !important;
   background-image: var(--tw-neutral-material-sheen) !important;
   box-shadow: var(--tw-popover-material-shadow) !important;
   backdrop-filter: var(--tw-popover-material-backdrop) !important;

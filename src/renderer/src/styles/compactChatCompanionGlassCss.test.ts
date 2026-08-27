@@ -17,7 +17,8 @@ describe('Compact Companion glass material', () => {
       ':root:has(.chat-compact-companion-window) .chat-compact-companion-window .app-transcript,'
     )
 
-    expect(block).toContain('background: var(--tw-popover-glass-bg) !important')
+    expect(block).toContain('var(--tw-popover-glass-bg) 84%')
+    expect(block).toContain('background: var(--compact-companion-glass-bg) !important')
     expect(block).toContain('box-shadow: var(--tw-popover-material-shadow) !important')
     expect(block).toContain('backdrop-filter: var(--tw-popover-material-backdrop) !important')
   })
