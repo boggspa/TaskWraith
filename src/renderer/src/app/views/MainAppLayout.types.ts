@@ -576,6 +576,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isFanoutCandidatesPanelOpen: any
   isThreadMessagePanelOpen: boolean
   threadMessageInbox: ThreadMessageInboxSnapshot
+  threadHomeOpen: boolean
+  openThreadHome: () => void
   onThreadMessageSent: () => void
   officeOpenRequest: any
   onOpenOfficeDocument: any

@@ -120,6 +120,7 @@ export interface ThreadHomeProps {
   onSelectThread: (chatId: string) => void
   onSelectSurface: (surface: ThreadHomeSurface) => void
   onClosePane?: () => void
+  onActivate?: () => void
 }
 
 /** Thread and utility launcher shared by the single-pane home and empty cells. */
@@ -133,13 +134,15 @@ export function ThreadHome({
   issue,
   onSelectThread,
   onSelectSurface,
-  onClosePane
+  onClosePane,
+  onActivate
 }: ThreadHomeProps) {
   const surfaceDisabled = !authorityChatId || Boolean(busySurface)
   return (
     <section
       className={`thread-home thread-home--${variant}`}
       aria-labelledby={`thread-home-${variant}-title`}
+      onPointerDownCapture={onActivate}
     >
       {onClosePane && (
         <div className="thread-home-pane-actions chat-corner-controls chat-corner-controls-right">
@@ -347,6 +350,7 @@ export interface ThreadHomeWorkspaceProps {
   mediaRefs: ChatMediaRef[]
   onSelectThread: (chatId: string) => void
   onClosePane?: () => void
+  onActivate?: () => void
   onPreviewImage?: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
 }
@@ -361,6 +365,7 @@ export function ThreadHomeWorkspace({
   mediaRefs,
   onSelectThread,
   onClosePane,
+  onActivate,
   onPreviewImage,
   onDetachToPane
 }: ThreadHomeWorkspaceProps) {
@@ -449,6 +454,7 @@ export function ThreadHomeWorkspace({
         onSelectThread={onSelectThread}
         onSelectSurface={(next) => void openSurface(next)}
         onClosePane={onClosePane}
+        onActivate={onActivate}
       />
     )
   }

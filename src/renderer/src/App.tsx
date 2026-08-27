@@ -3305,9 +3305,22 @@ function App(): React.JSX.Element {
   const [chatKindMutationBusy, setChatKindMutationBusy] = useState(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
-  // Multiview: split the central pane into 1-4 panes. Inert until a layout is
+  // Multiview: split the central pane into 1-8 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  const [threadHomeOpen, setThreadHomeOpen] = useState(false)
+  const threadHomeSourceChatIdRef = useRef<string | null>(null)
+  const openThreadHome = useCallback(() => {
+    const chatId = currentChatIdRef.current
+    if (!chatId) return
+    threadHomeSourceChatIdRef.current = chatId
+    setThreadHomeOpen(true)
+  }, [])
+  useEffect(() => {
+    if (!threadHomeOpen) return
+    if (currentChat?.appChatId === threadHomeSourceChatIdRef.current) return
+    setThreadHomeOpen(false)
+  }, [currentChat?.appChatId, threadHomeOpen])
   const previousMultiviewPanesRef = useRef(paneRecordsIncludingParked(multiview))
   useEffect(() => {
     const ownedPanes = paneRecordsIncludingParked(multiview)
@@ -11007,6 +11020,7 @@ function App(): React.JSX.Element {
   }
 
   const handleSelectChat = async (chat: ChatRecord) => {
+    setThreadHomeOpen(false)
     setActiveWorkspaceBoardId(null)
     // Opening the thread is enough attention — drop the global banner for
     // this chat so the in-transcript question card becomes the focus.
@@ -28844,6 +28858,10 @@ function App(): React.JSX.Element {
     },
     [multiview.panes, multiview.setFocusedPane]
   )
+  const handleCloseMultiviewPane = useCallback(
+    (paneIndex: number) => multiview.closePane(paneIndex),
+    [multiview.closePane]
+  )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
       multiview.openInNewPane(chat.appChatId)
@@ -30183,6 +30201,7 @@ function App(): React.JSX.Element {
         currencyOverestimatePercent={overestimatePercent}
         providerRates={providerRates}
         onFocusPane={handleFocusMultiviewPane}
+        onClosePane={handleCloseMultiviewPane}
       />
     )
   }
@@ -32118,6 +32137,8 @@ function App(): React.JSX.Element {
     isFanoutCandidatesPanelOpen,
     isThreadMessagePanelOpen,
     threadMessageInbox,
+    threadHomeOpen,
+    openThreadHome,
     onThreadMessageSent: refreshThreadMessageInbox,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,

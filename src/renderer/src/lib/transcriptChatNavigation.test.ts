@@ -32,7 +32,7 @@ describe('transcript chat navigation integration', () => {
     )
   })
 
-  it('makes empty multiview panes explicit sidebar targets without a browser launcher', () => {
+  it('makes empty multiview panes active Thread Home targets with independent surfaces', () => {
     const source = readFileSync(
       new URL('../app/views/MainAppLayout.tsx', import.meta.url),
       'utf8'
@@ -42,8 +42,10 @@ describe('transcript chat navigation integration', () => {
       source.indexOf('renderCanvasCell={(canvasId, paneIndex)')
     )
     expect(emptyPane).toContain('multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)')
-    expect(emptyPane).toContain("'The next sidebar chat opens here'")
-    expect(emptyPane).not.toContain('CanvasPaneLauncher')
+    expect(emptyPane).toContain('<ThreadHomeWorkspace')
+    expect(emptyPane).toContain('onSelectThread={(chatId) => {')
+    expect(emptyPane).toContain('authorityChat={currentChat}')
+    expect(emptyPane).toContain('onClosePane={() => multiview.closePane(emptyPaneIndex)}')
     expect(emptyPane).not.toContain('openEmbedded')
   })
 

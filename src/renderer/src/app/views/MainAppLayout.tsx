@@ -103,6 +103,7 @@ import {
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
+import { ThreadHomeWorkspace } from '../../components/ThreadHome'
 import { AuditRunCard } from '../../components/AuditRunCard'
 import { AuditRunNotice } from '../../components/AuditRunNotice'
 import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
@@ -501,6 +502,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isFanoutCandidatesPanelOpen,
   isThreadMessagePanelOpen,
   threadMessageInbox,
+  threadHomeOpen,
+  openThreadHome,
   onThreadMessageSent,
   officeOpenRequest,
   onOpenOfficeDocument,
@@ -616,6 +619,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaces
   } = props
   const currentChatAppChatId = currentChat?.appChatId || null
+  const selectThreadFromHome = useCallback(
+    (chatId: string) => {
+      const target =
+        chatByIdRef.current.get(chatId) ||
+        chats.find((candidate) => candidate.appChatId === chatId) ||
+        null
+      if (target) void handleSelectChat(target)
+    },
+    [chatByIdRef, chats, handleSelectChat]
+  )
   const refreshProviderAuthStatus = useCallback(
     async (provider: Parameters<typeof refreshProviderMetadata>[0]) => {
       if (provider === 'codex') {
@@ -1849,37 +1862,31 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }
                 return 'Empty pane'
               }}
-              onClosePane={(paneIndex) => {
-                // Tear down the embedded canvas (if any) before the pane goes away.
-                const canvasId = multiview.panes[paneIndex]?.canvasId
-                if (canvasId) void window.api.canvas.close(canvasId)
-                multiview.closePane(paneIndex)
-              }}
               columnFractions={multiview.tracks.columns}
               rowFractions={multiview.tracks.rows}
               onResizeTrack={multiview.resizeTrack}
               onResetTracks={multiview.resetTrackSizes}
               renderEmptyCell={(emptyPaneIndex) => {
-                const isFocused = multiview.focusedPaneIndex === emptyPaneIndex
+                const activateEmptyPane = () =>
+                  multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)
                 return (
-                  <button
-                    type="button"
-                    className="multiview-empty-pane multiview-empty-pane-select"
-                    data-pane-index={emptyPaneIndex}
-                    aria-pressed={isFocused}
-                    onClick={() =>
-                      multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)
-                    }
-                  >
-                    <span className="multiview-empty-pane-label">
-                      {isFocused ? 'Choose a chat from the sidebar' : 'Select this pane'}
-                    </span>
-                    <span className="multiview-empty-pane-hint">
-                      {isFocused
-                        ? 'The next sidebar chat opens here'
-                        : 'Then choose a chat from the sidebar'}
-                    </span>
-                  </button>
+                  <ThreadHomeWorkspace
+                    key={multiview.panes[emptyPaneIndex]?.id || `empty-${emptyPaneIndex}`}
+                    variant="pane"
+                    chats={chats}
+                    runningChatIds={runningChatIdsArray}
+                    paneChatIds={multiview.paneChatIds}
+                    authorityChat={currentChat}
+                    mediaRefs={currentChatMediaRefs}
+                    onActivate={activateEmptyPane}
+                    onSelectThread={(chatId) => {
+                      activateEmptyPane()
+                      selectThreadFromHome(chatId)
+                    }}
+                    onClosePane={() => multiview.closePane(emptyPaneIndex)}
+                    onPreviewImage={setPreviewChatMediaRef}
+                    onDetachToPane={openMediaPane}
+                  />
                 )
               }}
               renderCanvasCell={(canvasId, paneIndex) => (
@@ -2110,6 +2117,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }}
                 homeOpen={activeRightDockTab === 'home'}
                 onToggleHome={() => toggleRightDockPanel('home')}
+                onCloseThread={
+                  currentChat
+                    ? isMultiviewSplit
+                      ? () => multiview.closePane(multiview.focusedPaneIndex)
+                      : openThreadHome
+                    : undefined
+                }
+                closeThreadLabel={isMultiviewSplit ? 'Close pane' : 'Close thread view'}
+                closeThreadDisabled={threadHomeOpen && !isMultiviewSplit}
               />
             </>
           )}
@@ -2205,7 +2221,22 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
            * transcript virtualization state and remeasure from cold, which
            * was visible as a beachball/lag spike on large histories.
            */}
-          <>
+          {threadHomeOpen && !isMultiviewSplit ? (
+            <ThreadHomeWorkspace
+              key={currentChatAppChatId || 'thread-home'}
+              variant="main"
+              chats={chats}
+              runningChatIds={runningChatIdsArray}
+              paneChatIds={[currentChatAppChatId]}
+              authorityChat={currentChat}
+              mediaRefs={currentChatMediaRefs}
+              onSelectThread={selectThreadFromHome}
+              onPreviewImage={setPreviewChatMediaRef}
+              onDetachToPane={openMediaPane}
+            />
+          ) : (
+            <>
+              <>
               {/*
                 EnsembleParticipantStrip retired in 1.0.3 — its
                 contents (per-participant status pills) merged into
@@ -2372,7 +2403,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               />
             )}
 
-          <Composer {...composerCtx} />
+              <Composer {...composerCtx} />
+            </>
+          )}
             </div>
                 )
               }}

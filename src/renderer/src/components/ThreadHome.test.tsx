@@ -64,6 +64,7 @@ describe('ThreadHome', () => {
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
         onClosePane={vi.fn()}
+        onActivate={vi.fn()}
       />
     )
 

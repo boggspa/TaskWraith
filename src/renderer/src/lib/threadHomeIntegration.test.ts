@@ -1,0 +1,47 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+const layoutSource = readFileSync(
+  new URL('../app/views/MainAppLayout.tsx', import.meta.url),
+  'utf8'
+)
+
+describe('Thread Home integration', () => {
+  it('opens non-destructively and closes whenever a thread is selected', () => {
+    const stateStart = appSource.indexOf('const [threadHomeOpen, setThreadHomeOpen]')
+    const stateEnd = appSource.indexOf('// Error handling', stateStart)
+    const stateWiring = appSource.slice(stateStart, stateEnd)
+    expect(stateWiring).toContain('threadHomeSourceChatIdRef.current = chatId')
+    expect(stateWiring).toContain('setThreadHomeOpen(true)')
+    expect(stateWiring).not.toContain('deleteChat')
+    expect(stateWiring).not.toContain('archived')
+    expect(stateWiring).not.toContain('setCurrentChat(null)')
+
+    const selectStart = appSource.indexOf('const handleSelectChat = async')
+    const selectEnd = appSource.indexOf('const handleSelectChatRef', selectStart)
+    expect(appSource.slice(selectStart, selectEnd)).toContain('setThreadHomeOpen(false)')
+  })
+
+  it('replaces the single transcript/composer with Thread Home and keeps pane homes independent', () => {
+    expect(layoutSource).toContain('threadHomeOpen && !isMultiviewSplit ? (')
+    expect(layoutSource).toContain('<ThreadHomeWorkspace')
+    expect(layoutSource).toContain('variant="main"')
+    expect(layoutSource).toContain('variant="pane"')
+    expect(layoutSource).toContain('runningChatIds={runningChatIdsArray}')
+    expect(layoutSource).toContain('mediaRefs={currentChatMediaRefs}')
+  })
+
+  it('routes close through the glass pill and retires the old floating pane close button', () => {
+    const pillStart = layoutSource.indexOf('<MainPaneActionPill')
+    const pillEnd = layoutSource.indexOf('/>', pillStart)
+    const pill = layoutSource.slice(pillStart, pillEnd)
+    expect(pill).toContain('onCloseThread={')
+    expect(pill).toContain('? () => multiview.closePane(multiview.focusedPaneIndex)')
+    expect(pill).toContain(': openThreadHome')
+
+    const gridStart = layoutSource.indexOf('<MultiviewPaneGrid')
+    const gridTracks = layoutSource.indexOf('columnFractions=', gridStart)
+    expect(layoutSource.slice(gridStart, gridTracks)).not.toContain('onClosePane=')
+  })
+})
