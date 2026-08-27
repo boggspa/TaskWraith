@@ -79,6 +79,7 @@ import type {
   ExternalProviderThreadImportResult
 } from '../shared/externalProviderThreadImport'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
 import type { UsageWebSessionProviderId } from '../shared/usageWebSession'
 import type {
   LiveSteeringCancelRequest,
@@ -1180,7 +1181,12 @@ const api = {
           targetPath?: string
           targetView?: 'editor' | 'diff'
         }
-      | { kind: 'chat'; chatId: string; workspacePath?: string }
+      | {
+          kind: 'chat'
+          chatId: string
+          workspacePath?: string
+          presentation?: ChatPopoutPresentation
+        }
   ) => ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
   dockSideChatPopout: (input: {
     chatId: string
@@ -3200,6 +3206,14 @@ const api = {
     ipcRenderer.on('workspace-popout-open-file', wrapped)
     return () => ipcRenderer.removeListener('workspace-popout-open-file', wrapped)
   },
+  onChatPopoutPresentationChanged: (
+    callback: (payload: { presentation: ChatPopoutPresentation }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { presentation: ChatPopoutPresentation }): void =>
+      callback(payload)
+    ipcRenderer.on('chat-popout-presentation-changed', wrapped)
+    return () => ipcRenderer.removeListener('chat-popout-presentation-changed', wrapped)
+  },
   onSideChatDockRequest: (
     callback: (payload: {
       chatId: string
@@ -3274,6 +3288,7 @@ const api = {
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
     ipcRenderer.removeAllListeners('workspace-popout-open-file')
+    ipcRenderer.removeAllListeners('chat-popout-presentation-changed')
     ipcRenderer.removeAllListeners('side-chat:dock-request')
     ipcRenderer.removeAllListeners('creative-action:request')
   }

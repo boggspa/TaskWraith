@@ -102,6 +102,7 @@ import type {
 } from '../shared/usageWebSession'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
   ExternalProviderThreadImportChatSummary,
@@ -1330,6 +1331,7 @@ declare global {
               kind: 'chat'
               chatId: string
               workspacePath?: string
+              presentation?: ChatPopoutPresentation
             }
       ) => Promise<{ ok: true }>
       dockSideChatPopout: (input: {
@@ -3188,6 +3190,9 @@ declare global {
           path: string
           view?: 'editor' | 'diff'
         }) => void
+      ) => () => void
+      onChatPopoutPresentationChanged: (
+        callback: (payload: { presentation: ChatPopoutPresentation }) => void
       ) => () => void
       onSideChatDockRequest: (
         callback: (payload: {

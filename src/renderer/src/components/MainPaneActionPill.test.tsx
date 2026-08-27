@@ -54,6 +54,7 @@ function renderPill(
       onOpenDiffStudio={noop}
       onOpenFileEditor={noop}
       onOpenChatPopout={noop}
+      onOpenCompactCompanion={noop}
       runTitle="Start local server"
       runMenuOpen={false}
       runHasMenu={false}
@@ -120,7 +121,8 @@ describe('MainPaneActionPill', () => {
     expect(html).toContain('>Diff Studio<')
     expect(html).toContain('>File Editor<')
     expect(html).toContain('>Pop-Out Chat<')
-    expect(html.match(/role="menuitem"/g)).toHaveLength(4)
+    expect(html).toContain('>Compact Companion<')
+    expect(html.match(/role="menuitem"/g)).toHaveLength(5)
   })
 
   it('uses the app-wide glass popover chrome for every top-right picker', () => {

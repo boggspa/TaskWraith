@@ -76,6 +76,7 @@ export interface MainPaneActionPillProps {
   onOpenDiffStudio: () => void
   onOpenFileEditor: () => void
   onOpenChatPopout: () => void
+  onOpenCompactCompanion: () => void
   runTitle: string
   runMenuOpen: boolean
   runHasMenu: boolean
@@ -118,6 +119,7 @@ export function MainPaneActionPill({
   onOpenDiffStudio,
   onOpenFileEditor,
   onOpenChatPopout,
+  onOpenCompactCompanion,
   runTitle,
   runMenuOpen,
   runHasMenu,
@@ -485,6 +487,15 @@ export function MainPaneActionPill({
             >
               <span>Pop-Out Chat</span>
               <small>Open this thread in a separate window</small>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={onOpenCompactCompanion}
+              disabled={!hasCurrentChat}
+            >
+              <span>Compact Companion</span>
+              <small>Open the transcript with a minimal composer</small>
             </button>
           </div>
         )}

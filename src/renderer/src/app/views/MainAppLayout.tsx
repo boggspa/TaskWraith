@@ -110,6 +110,7 @@ import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
 import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
 import { Composer, type ComposerProps } from '../../components/Composer'
+import { CompactChatComposer } from '../../components/CompactChatComposer'
 import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 import { ChannelHostPanel } from '../../components/ChannelHostPanel'
@@ -171,6 +172,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   chatByIdRef,
   chatContextNotice,
   chatContextTurns,
+  chatPopoutPresentation,
   chatPopoutParentChat,
   chatSplitRegionRef,
   chatSplitStyle,
@@ -403,6 +405,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   ollamaBaseUrl,
   ollamaDefaultModel,
   openChatPopoutWindow,
+  openCompactChatCompanion,
   openCurrentSideChatPresentation,
   openFileChangeInWorkbench,
   openLinkedChatAsMain,
@@ -618,6 +621,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaceSidebarWidth,
   workspaces
   } = props
+  const isCompactChatCompanion =
+    isChatPopoutWindow && chatPopoutPresentation === 'compact'
   const currentChatAppChatId = currentChat?.appChatId || null
   const selectThreadFromHome = useCallback(
     (chatId: string) => {
@@ -1437,7 +1442,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
                 onOpenInMultiview={handleOpenInMultiview}
-                onOpenChatPopout={popOutLinkedChat}
+                onOpenChatPopout={(chat, presentation) =>
+                  popOutLinkedChat(chat, undefined, presentation)
+                }
                 onOpenSettings={() => setShowSettings(true)}
                 updateSnapshot={updateStatus.snapshot}
                 onQuickUpdate={handleSidebarQuickUpdate}
@@ -2083,6 +2090,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   setPopoutMenuOpen(false)
                   openChatPopoutWindow()
                 }}
+                onOpenCompactCompanion={() => {
+                  setPopoutMenuOpen(false)
+                  openCompactChatCompanion()
+                }}
                 runTitle={launchPreviewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
                 runMenuOpen={currentPreviewMenuOpen}
                 runHasMenu={currentPreviewTargets.length > 1}
@@ -2403,7 +2414,35 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               />
             )}
 
-              <Composer {...composerCtx} />
+              {isCompactChatCompanion ? (
+                <CompactChatComposer
+                  prompt={composerCtx.prompt}
+                  currentComposerChatId={composerCtx.currentComposerChatId || null}
+                  currentChat={composerCtx.currentChat || null}
+                  currentWorkspace={composerCtx.currentWorkspace || null}
+                  isCurrentGlobalChat={Boolean(composerCtx.isCurrentGlobalChat)}
+                  primaryGitSnapshot={composerCtx.primaryGitSnapshot || null}
+                  composerWorktreeSelection={composerCtx.composerWorktreeSelection || null}
+                  workspaceDiffStats={composerCtx.workspaceDiffStats}
+                  composerAreaRef={composerCtx.composerAreaRef}
+                  composerAriaLabel="Message TaskWraith"
+                  composerPlaceholder="Message TaskWraith…"
+                  imageAttachments={composerCtx.imageAttachments}
+                  pendingAgentApproval={composerCtx.pendingAgentApproval}
+                  setChatPromptDraft={composerCtx.setChatPromptDraft}
+                  handlePickImages={composerCtx.handlePickImages}
+                  handleRun={composerCtx.handleRun}
+                  handleCancel={composerCtx.handleCancel}
+                  handleSteer={composerCtx.handleSteer}
+                  handleAgentApprovalAction={composerCtx.handleAgentApprovalAction}
+                  isCurrentChatRunning={Boolean(composerCtx.isCurrentChatRunning)}
+                  isCurrentChatBusyForSteer={Boolean(composerCtx.isCurrentChatBusyForSteer)}
+                  isSteerBusyForCurrentChat={Boolean(composerCtx.isSteerBusyForCurrentChat)}
+                  midRunInputBehavior={composerCtx.settings?.midRunInputBehavior}
+                />
+              ) : (
+                <Composer {...composerCtx} />
+              )}
             </>
           )}
             </div>

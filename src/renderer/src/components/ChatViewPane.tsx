@@ -370,6 +370,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const firstLaunchAction = actionById.get('help')
   const bugReportAction = actionById.get('bug-report')
   const popoutAction = actionById.get('popout-chat')
+  const compactCompanionAction = actionById.get('compact-companion')
   const workbenchPopoutAction = actionById.get('popout-workbench')
   const diffStudioPopoutAction = actionById.get('popout-diff-studio')
   const fileEditorPopoutAction = actionById.get('popout-file-editor')
@@ -480,6 +481,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onOpenDiffStudio={() => invokePopoutAction(diffStudioPopoutAction)}
           onOpenFileEditor={() => invokePopoutAction(fileEditorPopoutAction)}
           onOpenChatPopout={() => invokePopoutAction(popoutAction)}
+          onOpenCompactCompanion={() => invokePopoutAction(compactCompanionAction)}
           runTitle={runAction?.title || 'Preview unavailable'}
           runMenuOpen={Boolean(runAction?.menuOpen)}
           runHasMenu={Boolean(runAction?.menu)}

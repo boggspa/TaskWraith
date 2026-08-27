@@ -4,6 +4,7 @@ import {
   CHAT_POPOUT_HANDOFF_PREFIX,
   chatPopoutHandoffKey,
   getInitialChatPopoutChatId,
+  getInitialChatPopoutPresentation,
   listChatPopoutHandoffChatIds,
   parseChatPopoutHandoffPayload,
   readChatPopoutHandoff,
@@ -61,9 +62,20 @@ describe('chatPopoutHandoff', () => {
       expect(getInitialChatPopoutChatId('?popout=chat')).toBe('')
     })
 
+    it('reads compact presentation only from chat popout URLs', () => {
+      expect(
+        getInitialChatPopoutPresentation('?popout=chat&chat=chat-1&presentation=compact')
+      ).toBe('compact')
+      expect(getInitialChatPopoutPresentation('?popout=chat&chat=chat-1')).toBe('full')
+      expect(getInitialChatPopoutPresentation('?popout=file-editor&presentation=compact')).toBe(
+        'full'
+      )
+    })
+
     it('falls back to window.location.search and tolerates SSR', () => {
       installWindow('?popout=chat&chat=from-window')
       expect(getInitialChatPopoutChatId()).toBe('from-window')
+      expect(getInitialChatPopoutPresentation()).toBe('full')
 
       vi.unstubAllGlobals()
       expect(getInitialChatPopoutChatId()).toBe('')

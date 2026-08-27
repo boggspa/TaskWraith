@@ -12,7 +12,10 @@ import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SidebarOverflowMenu } from './SidebarOverflowMenu'
-import { createSidebarChatPopoutAction } from '../lib/sidebarChatPopoutAction'
+import {
+  createSidebarChatPopoutActions,
+  type SidebarChatPopoutHandler
+} from '../lib/sidebarChatPopoutAction'
 
 type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
 
@@ -68,7 +71,7 @@ interface ActiveRunsSectionProps {
   surface?: ActiveRunsSurface
   workChatIds?: readonly string[]
   onSelectChat: (chat: ChatRecord) => void
-  onOpenChatPopout?: (chat: ChatRecord) => void
+  onOpenChatPopout?: SidebarChatPopoutHandler
   onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   /** Reserved: a runId-targeted inspector deep-link. Not wired — clicking a
    * row now opens the chat THREAD (transcript), not the Run Inspector. */
@@ -205,7 +208,7 @@ export function ActiveRunsSection({
                 {onOpenChatPopout && (
                   <SidebarOverflowMenu
                     triggerLabel="Thread actions"
-                    items={[createSidebarChatPopoutAction(chat, onOpenChatPopout)]}
+                    items={createSidebarChatPopoutActions(chat, onOpenChatPopout)}
                   />
                 )}
                 {!isTransitionFallback && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (

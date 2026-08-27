@@ -10,6 +10,7 @@ import type {
 import type { ThreadMessageInboxSnapshot } from '../../hooks/useThreadMessageInbox'
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
+import type { ChatPopoutPresentation } from '../../../../shared/chatPopoutPresentation'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -218,6 +219,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   chatByIdRef: any
   chatContextNotice: any
   chatContextTurns: any
+  chatPopoutPresentation: ChatPopoutPresentation
   chatPopoutParentChat: any
   chatSplitRegionRef: any
   chatSplitStyle: any
@@ -463,6 +465,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   ollamaBaseUrl: any
   ollamaDefaultModel: any
   openChatPopoutWindow: any
+  openCompactChatCompanion: any
   openCurrentSideChatPresentation: any
   openFileChangeInWorkbench: any
   openLinkedChatAsMain: any

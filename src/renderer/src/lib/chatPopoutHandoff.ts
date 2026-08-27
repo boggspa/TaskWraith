@@ -4,6 +4,10 @@ import {
   type ChatPopoutRoundExpansionSnapshot,
   type ChatPopoutScrollState
 } from '../../../shared/chatPopoutTransfer'
+import {
+  normalizeChatPopoutPresentation,
+  type ChatPopoutPresentation
+} from '../../../shared/chatPopoutPresentation'
 
 export interface ChatPopoutHandoffState {
   draft?: string
@@ -24,6 +28,20 @@ export function getInitialChatPopoutChatId(search?: string): string {
   if (!query) return ''
   const params = new URLSearchParams(query)
   return params.get('popout') === 'chat' ? params.get('chat') || '' : ''
+}
+
+export function getInitialChatPopoutPresentation(search?: string): ChatPopoutPresentation {
+  const query =
+    typeof search === 'string'
+      ? search
+      : typeof window === 'undefined'
+        ? ''
+        : window.location.search
+  if (!query) return 'full'
+  const params = new URLSearchParams(query)
+  return params.get('popout') === 'chat'
+    ? normalizeChatPopoutPresentation(params.get('presentation'))
+    : 'full'
 }
 
 export function chatPopoutHandoffKey(chatId: string): string {

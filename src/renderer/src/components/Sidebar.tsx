@@ -61,7 +61,10 @@ import { AppShellStatsToolbar } from './AppShellStatsToolbar'
 import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
-import { createSidebarChatPopoutAction } from '../lib/sidebarChatPopoutAction'
+import {
+  createSidebarChatPopoutActions,
+  type SidebarChatPopoutHandler
+} from '../lib/sidebarChatPopoutAction'
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -214,7 +217,7 @@ interface SidebarProps {
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
   /** Open this chat in its own pop-out window (all chat types). */
-  onOpenChatPopout?: (chat: ChatRecord) => void
+  onOpenChatPopout?: SidebarChatPopoutHandler
   onOpenSettings: () => void
   /** Live update snapshot for the one-click pill above the masthead. */
   updateSnapshot?: UpdateStateSnapshot | null
@@ -4555,9 +4558,9 @@ export function Sidebar({
     }
     if (onOpenChatPopout) {
       items.push(
-        createSidebarChatPopoutAction(chat, (targetChat) => {
+        ...createSidebarChatPopoutActions(chat, (targetChat, presentation) => {
           acknowledgeChatTerminalOutcome(targetChat)
-          onOpenChatPopout(targetChat)
+          onOpenChatPopout(targetChat, presentation)
         })
       )
     }

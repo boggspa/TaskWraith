@@ -709,10 +709,12 @@ import {
 import {
   chatPopoutHandoffKey,
   getInitialChatPopoutChatId,
+  getInitialChatPopoutPresentation,
   listChatPopoutHandoffChatIds,
   readChatPopoutHandoff,
   writeChatPopoutHandoff
 } from './lib/chatPopoutHandoff'
+import type { ChatPopoutPresentation } from '../../shared/chatPopoutPresentation'
 import {
   chatPopoutAuthorityDisabledReason,
   shouldPersistApprovalElevationAck
@@ -1539,6 +1541,11 @@ function App(): React.JSX.Element {
   const { copiedId, copy } = useCopyFeedback()
   const chatPopoutChatIdRef = useRef(getInitialChatPopoutChatId())
   const isChatPopoutWindow = Boolean(chatPopoutChatIdRef.current)
+  const [chatPopoutPresentation, setChatPopoutPresentation] = useState(
+    getInitialChatPopoutPresentation
+  )
+  const isCompactChatCompanion =
+    isChatPopoutWindow && chatPopoutPresentation === 'compact'
   const trustedSessionMutationDisabledReason = chatPopoutAuthorityDisabledReason(
     isChatPopoutWindow,
     'trusted-session'
@@ -1549,6 +1556,17 @@ function App(): React.JSX.Element {
   )
   const isDockingChatPopoutRef = useRef(false)
   const skipCloseSideChatPresentationIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      !isChatPopoutWindow ||
+      typeof window.api.onChatPopoutPresentationChanged !== 'function'
+    ) {
+      return undefined
+    }
+    return window.api.onChatPopoutPresentationChanged(({ presentation }) => {
+      setChatPopoutPresentation(presentation)
+    })
+  }, [isChatPopoutWindow])
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [managedPolicyStatus, setManagedPolicyStatus] = useState<Record<string, unknown> | null>(
     null
@@ -11173,6 +11191,7 @@ function App(): React.JSX.Element {
     // (`prompt` is deliberately excluded; including it caused the old flicker
     // feedback loop) — and the ResizeObserver still handles all in-thread resizes.
   }, [
+    chatPopoutPresentation,
     currentChat?.appChatId,
     currentChat?.ensemble?.activeRound?.queuedPrompt,
     currentChat?.ensemble?.activeRound?.queuedPrompts?.length,
@@ -17210,7 +17229,11 @@ function App(): React.JSX.Element {
     )
   }
 
-  const popOutLinkedChat = (chat: ChatRecord, draftOverride?: string) => {
+  const popOutLinkedChat = (
+    chat: ChatRecord,
+    draftOverride?: string,
+    presentation: ChatPopoutPresentation = 'full'
+  ) => {
     const targetChat =
       chat.parentChatRelation === 'sideChat' ? applySideChatLifecycle(chat, 'active') : chat
     if (targetChat !== chat) {
@@ -17237,7 +17260,8 @@ function App(): React.JSX.Element {
     void window.api.openWorkspacePopout({
       kind: 'chat',
       chatId: targetChat.appChatId,
-      workspacePath: targetChat.workspacePath
+      workspacePath: targetChat.workspacePath,
+      presentation
     })
     if (wasInlinePresentation) {
       setSideChatId(null)
@@ -21162,7 +21186,23 @@ function App(): React.JSX.Element {
     void window.api.openWorkspacePopout({
       kind: 'chat',
       chatId: currentChat.appChatId,
-      workspacePath: currentChat.workspacePath
+      workspacePath: currentChat.workspacePath,
+      presentation: 'full'
+    })
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath, prompt])
+
+  const openCompactChatCompanion = useCallback(() => {
+    if (!currentChat?.appChatId) return
+    writeChatPopoutHandoff(currentChat.appChatId, {
+      draft: prompt,
+      scrollState: captureMainTranscriptScrollState(),
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+    })
+    void window.api.openWorkspacePopout({
+      kind: 'chat',
+      chatId: currentChat.appChatId,
+      workspacePath: currentChat.workspacePath,
+      presentation: 'compact'
     })
   }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath, prompt])
 
@@ -29876,7 +29916,11 @@ function App(): React.JSX.Element {
       }
       setRightDockTab(panelId)
     }
-    const openPaneChatPopout = (paneIndex: number, chatId: string): void => {
+    const openPaneChatPopout = (
+      paneIndex: number,
+      chatId: string,
+      presentation: ChatPopoutPresentation = 'full'
+    ): void => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const paneScrollState =
@@ -29891,7 +29935,8 @@ function App(): React.JSX.Element {
       void window.api.openWorkspacePopout({
         kind: 'chat',
         chatId,
-        workspacePath: paneChat.workspacePath
+        workspacePath: paneChat.workspacePath,
+        presentation
       })
     }
     const openPaneWorkspacePopout = (
@@ -29980,6 +30025,14 @@ function App(): React.JSX.Element {
         icon: <ChatPopoutIcon />,
         disabled: !viewerChat,
         onClick: openPaneChatPopout
+      },
+      {
+        id: 'compact-companion',
+        title: 'Open pane chat in Compact Companion',
+        ariaLabel: 'Open pane chat in Compact Companion',
+        icon: <ChatPopoutIcon />,
+        disabled: !viewerChat,
+        onClick: (paneIndex, chatId) => openPaneChatPopout(paneIndex, chatId, 'compact')
       },
       {
         id: 'popout-workbench',
@@ -31801,6 +31854,7 @@ function App(): React.JSX.Element {
     chatByIdRef,
     chatContextNotice,
     chatContextTurns,
+    chatPopoutPresentation,
     chatPopoutParentChat,
     chatSplitRegionRef,
     chatSplitStyle,
@@ -32068,6 +32122,7 @@ function App(): React.JSX.Element {
     ollamaBaseUrl,
     ollamaDefaultModel,
     openChatPopoutWindow,
+    openCompactChatCompanion,
     openCurrentSideChatPresentation,
     openFileChangeInWorkbench,
     openLinkedChatAsMain,
@@ -32326,7 +32381,7 @@ function App(): React.JSX.Element {
         !isBootReady ? 'app-root-booting' : ''
       } ${isBootMaskLeaving ? 'app-root-boot-revealing' : ''} ${
         isChatPopoutWindow ? 'chat-popout-window' : ''
-      }`}
+      } ${isCompactChatCompanion ? 'chat-compact-companion-window' : ''}`}
     >
       <div className="window-drag-strip" aria-hidden />
       {bootMaskVisible && <AppBootMask leaving={isBootMaskLeaving} />}
