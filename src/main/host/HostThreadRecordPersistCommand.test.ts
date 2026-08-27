@@ -2,22 +2,85 @@ import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
 
 import {
   HOST_THREAD_RECORD_TRANSFER_DIRECTORY,
   consumeHostThreadRecordTransfer
 } from '../../host-runtime/HostThreadRecordTransfer'
-import type { HostCommand, HostCommandReceipt, HostReceiptStatus } from '../../shared/hostProtocol'
-import { HOST_PROTOCOL_VERSION, decodeHostCommand } from '../../shared/hostProtocol'
+import type {
+  HostActorIdentity,
+  HostClientClass,
+  HostCommand,
+  HostCommandReceipt,
+  HostReceiptStatus
+} from '../../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  decodeHostCommand
+} from '../../shared/hostProtocol'
 import type { ChatRecord } from '../store/types'
 import {
   HostThreadRecordPersistClient,
   HostThreadRecordPersistError,
   classifyHostPersistRejection,
+  createDesktopHostThreadRecordPersistClient,
   type HostThreadRecordPersistBrokerPort,
   type HostThreadRecordTransferPort
 } from './HostThreadRecordPersistCommand'
+
+/**
+ * Captures exactly what the PRODUCTION factory composes. Hand-writing an actor
+ * here would reproduce the blind spot this suite exists to close: every earlier
+ * test injected its own actor, so the factory's real identity was never once
+ * run through the real authority gate.
+ */
+const hoisted = vi.hoisted(() => ({
+  brokerOptions: [] as Array<{
+    client: { clientId: string; clientClass: string; clientVersion: string }
+    actor: { actorId: string; clientId: string; clientClass: string }
+  }>,
+  submitted: [] as Array<Record<string, unknown>>
+}))
+
+vi.mock('./HostProjectionBroker', () => ({
+  createHostProjectionBroker: (options: {
+    client: { clientId: string; clientClass: string; clientVersion: string }
+    actor: { actorId: string; clientId: string; clientClass: string }
+  }) => {
+    hoisted.brokerOptions.push({ client: options.client, actor: options.actor })
+    return {
+      submitCommand: async (command: Record<string, unknown>) => {
+        hoisted.submitted.push(command)
+        return {
+          ok: true,
+          receipt: {
+            type: 'host.receipt',
+            protocolVersion: command.protocolVersion,
+            commandId: command.commandId,
+            idempotencyKey: command.idempotencyKey,
+            name: command.name,
+            actor: command.actor,
+            authority: 'allow',
+            status: 'succeeded',
+            commandFingerprint: 'f'.repeat(64),
+            generation: 1,
+            cursor: 1,
+            createdAt: '2026-08-27T00:00:00.000Z',
+            updatedAt: '2026-08-27T00:00:00.000Z'
+          }
+        }
+      },
+      lookupReceipt: async () => ({ ok: false, error: 'not used by these tests' }),
+      snapshot: async () => ({ ok: false, error: 'not used by these tests' }),
+      deltasSince: async () => ({ ok: false, error: 'not used by these tests' }),
+      close: () => {}
+    }
+  }
+}))
 
 const PROFILE = '/tmp/tw-persist-profile'
 
@@ -495,5 +558,69 @@ describe('client construction', () => {
     await client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
 
     expect(broker.commands[0].actor.clientClass).toBe('desktop')
+  })
+})
+
+/**
+ * The production factory is what src/main/store/index.ts actually composes.
+ * These tests drive THAT function — not a hand-built client — through the REAL
+ * HostProductionAuthorityEvaluator, because thread.record.persist is restricted
+ * to one exact identity and a mismatch is invisible to any test that supplies
+ * its own actor.
+ */
+describe('production factory identity against the real authority gate', () => {
+  async function persistThroughProductionFactory(): Promise<{
+    command: HostCommand
+    socketClientId: string
+    socketClientClass: HostClientClass
+    socketClientVersion: string
+    brokerActor: HostActorIdentity
+  }> {
+    const profile = createRealProfile()
+    const client = createDesktopHostThreadRecordPersistClient({
+      userDataPath: profile,
+      appVersion: '1.9.6'
+    })
+    await client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+
+    const brokerOptions = hoisted.brokerOptions[hoisted.brokerOptions.length - 1]
+    const command = hoisted.submitted[hoisted.submitted.length - 1] as unknown as HostCommand
+    return {
+      command,
+      socketClientId: brokerOptions.client.clientId,
+      socketClientClass: brokerOptions.client.clientClass as HostClientClass,
+      socketClientVersion: brokerOptions.client.clientVersion,
+      brokerActor: brokerOptions.actor as HostActorIdentity
+    }
+  }
+
+  it('is ALLOWED by the real production authority evaluator', async () => {
+    const composed = await persistThroughProductionFactory()
+    expect(composed.command.name).toBe('thread.record.persist')
+
+    // The real gate, not a double: isExactDesktopInternalActor compares the
+    // authenticated socket client, the call-context actor, AND command.actor.
+    const evaluate = createHostProductionAuthorityEvaluator()
+    const evaluation = await evaluate(composed.command, {
+      actor: composed.brokerActor,
+      client: {
+        clientId: composed.socketClientId,
+        clientClass: composed.socketClientClass,
+        clientVersion: composed.socketClientVersion
+      }
+    })
+
+    expect(evaluation.decision).toBe('allowed')
+  })
+
+  it('composes the canonical desktop identity at all three sites the gate checks', async () => {
+    const composed = await persistThroughProductionFactory()
+
+    // 1. authenticated socket client id
+    expect(composed.socketClientId).toBe(TASKWRAITH_DESKTOP_HOST_ACTOR.clientId)
+    // 2. broker/call-context actor
+    expect(composed.brokerActor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
+    // 3. command actor
+    expect(composed.command.actor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
   })
 })

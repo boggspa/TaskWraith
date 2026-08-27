@@ -39,7 +39,11 @@ import type {
   HostCommand,
   HostCommandReceipt
 } from '../../shared/hostProtocol'
-import { HOST_PROTOCOL_VERSION, TASKWRAITH_DESKTOP_HOST_ACTOR } from '../../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CLIENT_ID
+} from '../../shared/hostProtocol'
 import type { ChatRecord } from '../store/types'
 import type {
   HostProjectionCommandResult,
@@ -47,12 +51,17 @@ import type {
 } from './HostProjectionBroker'
 import { createHostProjectionBroker } from './HostProjectionBroker'
 
-const PERSIST_HOST_CLIENT_ID = 'taskwraith-desktop-thread-record-persist'
-const PERSIST_HOST_ACTOR = {
-  actorId: PERSIST_HOST_CLIENT_ID,
-  clientId: PERSIST_HOST_CLIENT_ID,
-  clientClass: 'desktop'
-} as const satisfies HostActorIdentity
+/**
+ * IDENTITY IS LOAD-BEARING — do not give this client its own client id.
+ *
+ * HostThreadKindCommand uses a per-command client id, and that is fine for
+ * `thread.configure`. It is NOT fine here: `thread.record.persist` overwrites a
+ * whole chat record, so HostProductionAuthorityEvaluator.isExactDesktopInternalActor
+ * admits exactly ONE identity and compares it three times — the authenticated
+ * socket client, the call-context actor, and command.actor. A bespoke id is
+ * denied in production while every unit test that injects its own actor still
+ * passes. That mismatch shipped once; the factory tests below now pin it.
+ */
 /** Mirrors HostThreadKindCommand exactly: a proven submit + receipt-poll capability set. */
 const PERSIST_HOST_CAPABILITIES = [
   'bootstrap',
@@ -477,11 +486,11 @@ export function createDesktopHostThreadRecordPersistClient(input: {
     userDataPath: input.userDataPath,
     appVersion: input.appVersion,
     client: {
-      clientId: PERSIST_HOST_CLIENT_ID,
-      clientClass: 'desktop',
+      clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+      clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
       clientVersion: input.appVersion
     },
-    actor: { ...PERSIST_HOST_ACTOR },
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
     capabilities: PERSIST_HOST_CAPABILITIES
   })
   // bootstrap.ts:146-148 derives both the Host profile path and userDataPath
@@ -489,6 +498,6 @@ export function createDesktopHostThreadRecordPersistClient(input: {
   return new HostThreadRecordPersistClient({
     broker,
     profilePath: input.userDataPath,
-    actor: { ...PERSIST_HOST_ACTOR }
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
   })
 }
