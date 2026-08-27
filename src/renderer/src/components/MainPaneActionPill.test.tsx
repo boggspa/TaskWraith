@@ -14,7 +14,12 @@ import {
 
 const noop = (): void => undefined
 
-function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true): string {
+function renderPill(
+  popoutMenuOpen = false,
+  idScope?: string,
+  workspace = true,
+  includeClose = true
+): string {
   return renderToStaticMarkup(
     <MainPaneActionPill
       idScope={idScope}
@@ -56,12 +61,13 @@ function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true):
       onRun={noop}
       homeOpen={false}
       onToggleHome={noop}
+      onCloseThread={includeClose ? noop : undefined}
     />
   )
 }
 
 describe('MainPaneActionPill', () => {
-  it('renders exactly six primary actions for a workspace pane in the requested order', () => {
+  it('renders exactly seven primary actions for a workspace pane in the requested order', () => {
     const html = renderPill()
     const actionIds = Array.from(
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
@@ -69,13 +75,14 @@ describe('MainPaneActionPill', () => {
     )
 
     expect(actionIds).toEqual([...MAIN_PANE_PRIMARY_ACTION_IDS])
-    expect(html.match(/<button/g)).toHaveLength(6)
+    expect(html.match(/<button/g)).toHaveLength(7)
     expect(html).toContain('aria-label="Choose visual effects"')
     expect(html).toContain('aria-label="Choose product information"')
     expect(html).toContain('aria-label="Open Workspace Stats"')
     expect(html).toContain('aria-label="Open popout tools"')
     expect(html).toContain('aria-label="Run build or preview"')
     expect(html).toContain('aria-label="Toggle sidebar home"')
+    expect(html).toContain('aria-label="Close thread view"')
   })
 
   it('omits Workspace Stats from global or otherwise unbound panes', () => {
@@ -85,8 +92,14 @@ describe('MainPaneActionPill', () => {
       (match) => match[1]
     )
 
-    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home'])
+    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home', 'close'])
     expect(html).not.toContain('aria-label="Open Workspace Stats"')
+  })
+
+  it('omits the close segment when the owning surface has no close action', () => {
+    const html = renderPill(false, undefined, true, false)
+    expect(html).not.toContain('data-main-pane-action="close"')
+    expect(html).not.toContain('aria-label="Close thread view"')
   })
 
   it('defines the exact FX and Info picker contents', () => {
