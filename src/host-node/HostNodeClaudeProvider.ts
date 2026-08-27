@@ -11,9 +11,13 @@
  *
  *   1. Posture mapping is FAIL-CLOSED. An unrecognised approval mode runs
  *      `plan`, never a writing mode.
- *   2. No approvals/questions are advertised. `HostNodeInteractionResolver`
- *      exposes `register` only and offers no awaitable settlement, so a real
- *      one-shot continuation cannot be wired from an adapter today.
+ *   2. No approvals/questions are advertised. The blocker is the CLI transport,
+ *      NOT the Host seam: a headless `-p` stream-json run has no stdin protocol
+ *      and the CLI exposes no `--permission-prompt-tool` (`canUseTool` is
+ *      SDK-only), so this adapter never receives a request to surface or resume.
+ *      `HostNodeInteractionResolver.register` DOES return an awaitable
+ *      `Promise<HostNodeInteractionSettlement>`, and the Codex adapter consumes
+ *      it (d54d757cd); do not cite the resolver as the reason these stay false.
  *
  * Control-character handling is done with numeric code-point checks rather than
  * regex escapes so this source file stays free of literal control bytes.
