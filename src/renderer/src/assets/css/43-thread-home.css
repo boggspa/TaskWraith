@@ -11,16 +11,19 @@
 }
 
 .thread-home-scroll {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   width: 100%;
   height: 100%;
   overflow: auto;
   box-sizing: border-box;
-  padding: clamp(58px, 8vh, 86px) clamp(18px, 4vw, 52px) 38px;
+  padding: clamp(24px, 4vh, 48px) clamp(18px, 4vw, 52px);
   scrollbar-width: thin;
 }
 
 .thread-home--pane .thread-home-scroll {
-  padding: 54px 16px 24px;
+  padding: 24px 16px;
 }
 
 .thread-home-pane-actions {
