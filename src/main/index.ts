@@ -953,6 +953,7 @@ import {
   probeAllProviderRates
 } from './services/ProviderRateService'
 import { MainProcessActionExecutor } from './BridgeActionExecutor'
+import { createRemoteSubThread } from './RemoteSubThreadBridge'
 import { installTaskWraithLocalControl } from './control/TaskWraithLocalControlLifecycle'
 import type {
   BridgeComposerPromptAction,
@@ -46740,6 +46741,17 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) }
           }
         },
+        createSubThreadFn: async (action) =>
+          createRemoteSubThread(action, {
+            getChat: (threadId) => AppStore.getChat(threadId),
+            canonicalWorkspaceId: canonicalRemoteWorkspaceId,
+            globalWorkspaceId: GLOBAL_REMOTE_SCOPE,
+            assertLiveProviderId,
+            createSubThread: (input) => chatService.createSubThread(input),
+            broadcastChatUpdated,
+            broadcastThreadUpdate,
+            pushRemoteThreadSnapshot
+          }),
         ensembleQueueItemFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble?.activeRound) {

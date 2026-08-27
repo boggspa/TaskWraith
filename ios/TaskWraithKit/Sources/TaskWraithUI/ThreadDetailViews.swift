@@ -366,6 +366,7 @@ struct ThreadDetailView: View {
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
     @State private var renameSheetContext: ThreadRenameSheetContext?
+    @State private var subThreadSpawnPresented = false
     @State private var ensembleDisablePickerPresented = false
     @State private var ensembleDisableCard: RemoteTaskCard?
     @State private var ensembleSoloProviderChoices: [String] = []
@@ -3162,6 +3163,20 @@ struct ThreadDetailView: View {
                     }
                 }
             }
+            if let card, !ChatKindBridge.isLinkedChild(card) {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        subThreadSpawnPresented = true
+                    } label: {
+                        ToolbarIconPillLabel(
+                            "Sub-thread", systemImage: "rectangle.stack.badge.plus")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Spawn sub-thread")
+                    .accessibilityHint(
+                        "Creates a context-isolated child task with a provider and brief you choose.")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.inspectorPresented.toggle()
@@ -3187,6 +3202,12 @@ struct ThreadDetailView: View {
                 }
             }
             .twSheetLiquidGlass(detents: [.medium])
+        }
+        .sheet(isPresented: $subThreadSpawnPresented) {
+            if let card {
+                SubThreadSpawnSheet(model: model, card: card)
+                    .twSheetLiquidGlass(detents: [.large])
+            }
         }
         .sheet(isPresented: $gitSurfacePresented) {
             // Roster pattern (a1815e037): the SAME content adapts — a sheet on

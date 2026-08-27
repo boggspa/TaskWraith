@@ -6276,6 +6276,92 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Spawn a durable, context-isolated child and start its first turn through
+    /// the ordinary paired-device composer path. Child creation and turn start
+    /// stay as two explicit receipts: if the second action is definitively
+    /// refused, the prompt is restored into the new child's composer instead
+    /// of disappearing or creating another child on retry.
+    public func createSubThread(
+        _ card: RemoteTaskCard,
+        provider: String,
+        prompt: String,
+        returnResult: Bool = true,
+        model: String? = nil,
+        reasoningEffort: String? = nil,
+        fastModeEnabled: Bool? = nil,
+        kimiThinkingEnabled: Bool? = nil,
+        onCompleted: ((String?, Bool) -> Void)? = nil
+    ) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let parentThreadId = card.threadId else {
+            onCompleted?(nil, false)
+            return
+        }
+        guard !isDemo else {
+            lastActionMessage = "Pair with a Mac to spawn a sub-thread."
+            onCompleted?(nil, false)
+            return
+        }
+        let workspaceId = card.isGlobalScope ? "global" : (card.workspaceId ?? "")
+        guard !workspaceId.isEmpty else {
+            lastActionMessage = "This thread has no remote workspace."
+            onCompleted?(nil, false)
+            return
+        }
+
+        send(
+            BridgeAction.createSubThread(
+                workspaceId: workspaceId,
+                parentThreadId: parentThreadId,
+                provider: provider,
+                prompt: trimmed,
+                returnResult: returnResult),
+            successLabel: "Sub-thread created.",
+            navigateOnAck: false,
+            onThreadCreated: { [weak self] childThreadId in
+                guard let self, let childThreadId, !childThreadId.isEmpty else {
+                    onCompleted?(nil, false)
+                    return
+                }
+                let restorePrompt: () -> Void = { [weak self] in
+                    guard let self else { return }
+                    self.requestComposerAppend(trimmed, threadId: childThreadId)
+                }
+                self.send(
+                    BridgeAction.composerPrompt(
+                        workspaceId: workspaceId,
+                        threadId: childThreadId,
+                        provider: provider,
+                        text: trimmed,
+                        model: model,
+                        reasoningEffort: reasoningEffort,
+                        fastModeEnabled: fastModeEnabled,
+                        kimiThinkingEnabled: kimiThinkingEnabled),
+                    successLabel: "Sub-thread started.",
+                    navigateToThreadId: childThreadId,
+                    navigateOnAck: true,
+                    onUnsent: restorePrompt,
+                    onAckResult: { [weak self] accepted, ack in
+                        if !accepted, ack?.ok == true {
+                            // A Mac-authored refusal is definitive: the run did
+                            // not start, so restoring cannot duplicate it.
+                            restorePrompt()
+                        }
+                        if !accepted {
+                            // The child itself is durable even when starting its
+                            // first turn fails. Open it so the user can see and
+                            // retry from the normal composer.
+                            self?.navigationTarget = childThreadId
+                        }
+                        onCompleted?(childThreadId, accepted)
+                    })
+            },
+            onAckResult: { accepted, _ in
+                if !accepted { onCompleted?(nil, false) }
+            })
+        scheduleThreadRefreshAfterUserAction(parentThreadId)
+    }
+
     /// Steer-now, remove, or blackboard one queued ensemble prompt.
     /// `op: "blackboard"` consumes the queued item into a user-authored
     /// blackboard note on the Mac without interrupting the live round.
@@ -8621,7 +8707,8 @@ public final class RemoteSessionModel: ObservableObject {
                 with: data, options: [.fragmentsAllowed]) as? [String: Any],
             let dataObject = object["data"] as? [String: Any]
         else { return nil }
-        if dataObject["actionKind"] as? String == "createSideChat",
+        if let actionKind = dataObject["actionKind"] as? String,
+            actionKind == "createSideChat" || actionKind == "createSubThread",
             let result = dataObject["result"] as? [String: Any],
             let threadId = result["threadId"] as? String,
             !threadId.isEmpty
