@@ -257,6 +257,12 @@ import {
   assertWorkspacePopoutRequestWithinOwner,
   type WorkspacePopoutAuthority
 } from './WorkspacePopoutAuthority'
+import {
+  chatPopoutWindowPreset,
+  normalizeChatPopoutPresentation,
+  type ChatPopoutPresentation
+} from '../shared/chatPopoutPresentation'
+import { applyChatPopoutWindowPresentation } from './ChatPopoutWindowPresentation'
 import { AttachmentCapabilityRegistry } from './AttachmentCapabilityRegistry'
 import { ClipboardPasteIntentRegistry } from './ClipboardPasteIntentRegistry'
 import { saveClipboardImageFromTrustedPaste } from './ClipboardImagePasteHandler'
@@ -2423,6 +2429,7 @@ const workspacePopoutOwners = new Map<
     workspacePath?: string
     chatId?: string
     externalWriteAllowed?: boolean
+    presentation?: ChatPopoutPresentation
   }
 >()
 let closeCanvasPopoutRenderer: (senderId: number) => Promise<string[]> = async () => []
@@ -42929,6 +42936,7 @@ function parseWorkspacePopoutInput(input: unknown): {
   workspacePath?: string
   chatId?: string
   externalWriteAllowed?: boolean
+  presentation?: ChatPopoutPresentation
   targetPath?: string
   targetView?: WorkspacePopoutTargetView
 } {
@@ -42952,7 +42960,12 @@ function parseWorkspacePopoutInput(input: unknown): {
       throw new Error('Chat does not exist.')
     }
     const workspacePath = chat.workspacePath || undefined
-    return { kind, chatId, workspacePath }
+    return {
+      kind,
+      chatId,
+      workspacePath,
+      presentation: normalizeChatPopoutPresentation(input.presentation)
+    }
   }
   const requestedWorkspacePath = requireNonEmptyString(input.workspacePath, 'Workspace')
   const registeredWorkspace = findRegisteredWorkspace(requestedWorkspacePath)
@@ -43001,6 +43014,7 @@ async function loadWorkspacePopoutWindow(
   kind: WorkspacePopoutKind,
   workspacePath: string | undefined,
   chatId?: string,
+  presentation?: ChatPopoutPresentation,
   externalWriteAllowed?: boolean,
   targetPath?: string,
   targetView?: WorkspacePopoutTargetView
@@ -43010,6 +43024,9 @@ async function loadWorkspacePopoutWindow(
     target.searchParams.set('popout', kind)
     if (workspacePath) target.searchParams.set('workspace', workspacePath)
     if (chatId) target.searchParams.set('chat', chatId)
+    if (kind === 'chat' && presentation) {
+      target.searchParams.set('presentation', presentation)
+    }
     if (chatId) target.searchParams.set('write', externalWriteAllowed ? '1' : '0')
     if (targetPath) target.searchParams.set('file', targetPath)
     if (targetView) target.searchParams.set('view', targetView)
@@ -43019,6 +43036,7 @@ async function loadWorkspacePopoutWindow(
   const query: Record<string, string> = { popout: kind }
   if (workspacePath) query.workspace = workspacePath
   if (chatId) query.chat = chatId
+  if (kind === 'chat' && presentation) query.presentation = presentation
   if (chatId) query.write = externalWriteAllowed ? '1' : '0'
   if (targetPath) query.file = targetPath
   if (targetView) query.view = targetView
@@ -43063,14 +43081,31 @@ async function openWorkspacePopout(
   event: IpcMainInvokeEvent,
   input: unknown
 ): Promise<{ ok: true }> {
-  const { kind, workspacePath, chatId, externalWriteAllowed, targetPath, targetView } =
-    parseWorkspacePopoutInput(input)
+  const {
+    kind,
+    workspacePath,
+    chatId,
+    presentation: requestedPresentation,
+    externalWriteAllowed,
+    targetPath,
+    targetView
+  } = parseWorkspacePopoutInput(input)
+  const presentation = normalizeChatPopoutPresentation(requestedPresentation)
   assertRendererCanOpenWorkspacePopout(event, { kind, workspacePath, chatId })
   const key =
     kind === 'chat' ? `chat:${chatId}` : JSON.stringify([kind, workspacePath || '', chatId || ''])
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
     const existingOwner = workspacePopoutOwners.get(key)
+    if (
+      kind === 'chat' &&
+      existingOwner &&
+      existingOwner.presentation !== presentation
+    ) {
+      applyChatPopoutWindowPresentation(existing, presentation)
+      existingOwner.presentation = presentation
+      safeSendToWebContents(existing, 'chat-popout-presentation-changed', { presentation })
+    }
     if (
       existingOwner &&
       externalWriteAllowed !== undefined &&
@@ -43104,6 +43139,7 @@ async function openWorkspacePopout(
     !settings.reduceTransparency &&
     !forceSolidWorkspaceChrome
   const useGlassWindow = isMac && useMaterialWindow
+  const chatPreset = kind === 'chat' ? chatPopoutWindowPreset(presentation) : null
   const title =
     kind === 'file-editor'
       ? 'TaskWraith File Editor'
@@ -43111,7 +43147,7 @@ async function openWorkspacePopout(
         ? 'TaskWraith Diff Studio'
         : kind === 'workbench'
           ? 'TaskWraith Workbench'
-          : 'TaskWraith Chat'
+          : chatPreset?.title || 'TaskWraith Chat'
   const win = new BrowserWindow({
     width:
       kind === 'workbench'
@@ -43120,10 +43156,10 @@ async function openWorkspacePopout(
           ? 980
           : kind === 'diff-studio'
             ? 1120
-            : 900,
-    height: kind === 'file-editor' ? 720 : 760,
-    minWidth: kind === 'chat' ? 520 : 720,
-    minHeight: 480,
+            : chatPreset?.width || 900,
+    height: kind === 'file-editor' ? 720 : chatPreset?.height || 760,
+    minWidth: kind === 'chat' ? chatPreset?.minWidth || 520 : 720,
+    minHeight: kind === 'chat' ? chatPreset?.minHeight || 480 : 480,
     show: false,
     autoHideMenuBar: true,
     title,
@@ -43148,7 +43184,13 @@ async function openWorkspacePopout(
   })
 
   workspacePopoutWindows.set(key, win)
-  workspacePopoutOwners.set(key, { kind, workspacePath, chatId, externalWriteAllowed })
+  workspacePopoutOwners.set(key, {
+    kind,
+    workspacePath,
+    chatId,
+    externalWriteAllowed,
+    presentation: kind === 'chat' ? presentation : undefined
+  })
   attachSpellcheckContextTracking(win)
   win.webContents.setWindowOpenHandler((details) => {
     openSafeShellTargetDetached(details.url)
@@ -43166,6 +43208,7 @@ async function openWorkspacePopout(
     kind,
     workspacePath,
     chatId,
+    kind === 'chat' ? presentation : undefined,
     externalWriteAllowed,
     targetPath,
     targetView
