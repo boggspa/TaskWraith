@@ -455,6 +455,7 @@ import {
   buildRemoteShellAppearance,
   buildRemoteWorkspaceBoard,
   buildRemoteTaskCard,
+  projectCreateSubThreadCapability,
   type RemoteProjectionEnvelope,
   type RemoteTaskCard,
   type RemoteTaskCapabilities,
@@ -44944,6 +44945,7 @@ if (isGeminiMcpBridgeProcess) {
     const isPairedDeviceProviderDispatchable = (provider: string): boolean =>
       isRemoteProviderDispatchable(provider, isConditionallyDispatchableRemoteProvider)
 
+    let injectedCreateSubThreadFn: unknown
     const createBridgeActionExecutor = (): MainProcessActionExecutor => {
       // Phase C-late: action executor wires policy-cleared actions to real
       // main-process services. Wired today: `cancelRun`, `approvalReply`,
@@ -46757,7 +46759,7 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) }
           }
         },
-        createSubThreadFn: async (action) =>
+        createSubThreadFn: (injectedCreateSubThreadFn = async (action) =>
           createRemoteSubThread(action, {
             getChat: (threadId) => AppStore.getChat(threadId),
             canonicalWorkspaceId: canonicalRemoteWorkspaceId,
@@ -46767,7 +46769,7 @@ if (isGeminiMcpBridgeProcess) {
             broadcastChatUpdated,
             broadcastThreadUpdate,
             pushRemoteThreadSnapshot
-          }),
+          })),
         ensembleQueueItemFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble?.activeRound) {
@@ -47891,6 +47893,53 @@ if (isGeminiMcpBridgeProcess) {
           })
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data) }
+        },
+        requestGithubMergePrApprovalFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) return false
+          return requestAgenticServiceApproval(null, 'gemini', 'shellCommands', path, {
+            method: 'github/merge-pr',
+            title: 'Approve paired-device pull request merge',
+            body: [path, 'Merge the current branch GitHub pull request (from a paired device)'].join('\n'),
+            preview: { kind: 'githubMergePr', workspacePath: path }
+          })
+        },
+        githubMergePrFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          const status = await bridgeGitService.pullRequestStatus(path)
+          if (!status.ok) {
+            const reason =
+              status.error === 'No pull request found for the current branch.'
+                ? 'No open pull request for the current branch.'
+                : status.error
+            return { ok: false, reason }
+          }
+          const current = status.data
+          const pullRequestNumber = current.number
+          if (
+            typeof pullRequestNumber !== 'number' ||
+            !Number.isSafeInteger(pullRequestNumber) ||
+            pullRequestNumber <= 0
+          ) {
+            return { ok: false, reason: 'The current branch pull request has no number.' }
+          }
+          if (current.state && /^(CLOSED|MERGED)$/i.test(current.state)) {
+            return { ok: false, reason: `Pull request #${pullRequestNumber} is ${current.state}.` }
+          }
+          const result = await bridgeGitService.managePullRequest({
+            repoPath: path,
+            pullRequestNumber,
+            lifecycle: {
+              action: 'merge',
+              strategy: 'squash',
+              ...(current.headRefOid ? { expectedHeadSha: current.headRefOid } : {})
+            }
+          })
+          if (!result.ok) return { ok: false, reason: result.error }
+          return { ok: true, pr: compactGitPrForBridge(result.data.pullRequest) }
         },
         gitBranchesFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
@@ -49172,6 +49221,7 @@ if (isGeminiMcpBridgeProcess) {
         pin: false,
         yolo: false,
         deleteMessage: false,
+        createSubThread: false,
         cancelRound: false,
         skipActiveParticipant: false,
         wakeNow: false,
@@ -49209,6 +49259,7 @@ if (isGeminiMcpBridgeProcess) {
         pin: capabilities.has('pin'),
         yolo: capabilities.has('yolo'),
         deleteMessage: capabilities.has('deleteMessage'),
+        createSubThread: projectCreateSubThreadCapability(injectedCreateSubThreadFn, capabilities.has('startTurn')),
         cancelRound: capabilities.has('cancel'),
         skipActiveParticipant: capabilities.has('steer'),
         wakeNow: capabilities.has('steer'),
