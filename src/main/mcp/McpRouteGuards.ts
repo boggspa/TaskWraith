@@ -21,7 +21,14 @@ export interface McpCallerContext {
   fixedToolAllowlist?: readonly string[]
 }
 
-export type McpGuardResult = { ok: true } | { ok: false; error: string }
+export interface McpDirectToolHint {
+  toolNames: readonly ['git_commit', 'write_file', 'apply_patch']
+  message: string
+}
+
+export type McpGuardResult =
+  | { ok: true }
+  | { ok: false; error: string; directToolHint?: McpDirectToolHint }
 
 export function validateMcpCallerToolAllowlist(
   toolName: string,
@@ -109,7 +116,12 @@ export function validateMutatingMcpRoute(
   }
   return {
     ok: false,
-    error: `TaskWraith blocked unrouted mutating MCP tool call "${toolName}". Bridge calls that can mutate workspace or app state must provide TASKWRAITH_RUN_ID or TASKWRAITH_CHAT_ID; the single-active-run fallback is only allowed for read-only tools.`
+    error: `TaskWraith blocked unrouted mutating MCP tool call "${toolName}". Bridge calls that can mutate workspace or app state must provide TASKWRAITH_RUN_ID or TASKWRAITH_CHAT_ID; the single-active-run fallback is only allowed for read-only tools. The call is still blocked. Recovery route: restore a run-bound route, then use the directly advertised git_commit tool for commits or write_file/apply_patch for workspace changes. Their normal route, approval, and workspace checks still apply. This hint grants no permission and does not retry the call.`,
+    directToolHint: {
+      toolNames: ['git_commit', 'write_file', 'apply_patch'],
+      message:
+        'This call remains blocked. Reissue through a directly advertised commit or file tool; its normal route, approval, and workspace checks still apply.'
+    }
   }
 }
 

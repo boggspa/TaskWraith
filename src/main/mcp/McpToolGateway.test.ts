@@ -327,6 +327,34 @@ describe('searchGatewayCapabilities', () => {
     })
     expect(ineligible).toMatchObject({ ok: true, matches: [] })
   })
+
+  it('returns direct tools when exact-matched, adding direct=true annotation without widening eligibility', () => {
+    const directTool = { name: 'run_command', description: 'Run a shell command', inputSchema: { type: 'object' } }
+    const eligibleTool = { name: 'read_file', description: 'Read a file', inputSchema: { type: 'object' } }
+
+    const directResult = searchGatewayCapabilities({
+      query: 'run_command',
+      limit: 5,
+      definitions: [directTool, eligibleTool],
+      eligibleToolNames: ['read_file']
+    })
+
+    expect(directResult.ok).toBe(true)
+    if (!directResult.ok) return
+    expect(directResult.matches.length).toBe(1)
+    expect(directResult.matches[0].name).toBe('run_command')
+    expect(directResult.matches[0].annotations?.direct).toBe(true)
+
+    const partialResult = searchGatewayCapabilities({
+      query: 'run',
+      limit: 5,
+      definitions: [directTool, eligibleTool],
+      eligibleToolNames: ['read_file']
+    })
+    expect(partialResult.ok).toBe(true)
+    if (!partialResult.ok) return
+    expect(partialResult.matches.length).toBe(0)
+  })
 })
 
 describe('selectGatewayHiddenToolNames', () => {

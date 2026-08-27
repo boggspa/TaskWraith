@@ -32,6 +32,19 @@ describe('MCP route guards', () => {
   it('blocks unrouted mutating tools but keeps read tools eligible for fallback', () => {
     expect(validateMutatingMcpRoute('read_file', null)).toEqual({ ok: true })
     expect(validateMutatingMcpRoute('write_file', null)).toMatchObject({ ok: false })
+
+    const blockedWrite = validateMutatingMcpRoute('write_file', null)
+    expect(blockedWrite).toMatchObject({
+      ok: false,
+      directToolHint: {
+        toolNames: ['git_commit', 'write_file', 'apply_patch']
+      }
+    })
+    if (blockedWrite.ok) return
+    expect(blockedWrite).not.toHaveProperty('permissionRetry')
+    expect(blockedWrite.error).toContain('still blocked')
+    expect(blockedWrite.error).toContain('git_commit')
+    expect(blockedWrite.error).toContain('approval, and workspace checks')
     expect(validateMutatingMcpRoute('write_file', { appRunId: 'run-1' })).toEqual({ ok: true })
     expect(validateMutatingMcpRoute('ensemble_fanout', { appChatId: 'chat-1' })).toEqual({
       ok: true

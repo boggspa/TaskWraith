@@ -470,11 +470,37 @@ export function searchGatewayCapabilities(
   const eligibleNames = normalizedEligibleNames(request.eligibleToolNames)
   const auditOnlyNames = normalizedAuditOnlyNames(request.auditOnlyToolNames)
   const ranked = stableDefinitions(request.definitions)
-    .filter((definition) => isDiscoverableTool(definition.name, eligibleNames, auditOnlyNames))
     .map(toSearchCandidate)
     .map((candidate) => {
       const match = scoreCandidate(candidate, queryTokens)
-      return match ? { candidate, ...match } : null
+      if (!match) return null
+
+      if (isDiscoverableTool(candidate.definition.name, eligibleNames, auditOnlyNames)) {
+        return { candidate, ...match }
+      }
+
+      if (
+        match.exactName &&
+        !isCapabilityGatewayToolName(candidate.definition.name) &&
+        !isAuditOnlyTool(candidate.definition.name, auditOnlyNames)
+      ) {
+        return {
+          candidate: {
+            ...candidate,
+            definition: {
+              ...candidate.definition,
+              annotations: {
+                ...(candidate.definition.annotations || {}),
+                direct: true,
+                notice: 'already advertised — call it directly.'
+              }
+            }
+          },
+          ...match
+        }
+      }
+
+      return null
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort(
