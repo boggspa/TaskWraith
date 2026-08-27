@@ -180,20 +180,21 @@
   width: 18px;
   height: 18px;
   fill: none;
-  stroke: currentColor;
+  stroke: currentColor !important;
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
+  opacity: 1;
 }
 
 .compact-chat-send {
   background: var(--text-primary);
-  color: var(--app-bg);
+  color: var(--app-bg) !important;
 }
 
 .compact-chat-send.is-stop {
-  background: color-mix(in srgb, var(--danger) 18%, var(--surface-2));
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 72%, var(--surface-2));
+  color: rgb(255 255 255 / 0.96) !important;
 }
 
 .compact-chat-send:hover:not(:disabled),
@@ -202,7 +203,18 @@
   box-shadow: 0 5px 14px color-mix(in srgb, #000 28%, transparent);
 }
 
-.compact-chat-send:disabled,
+.compact-chat-send:disabled {
+  background: color-mix(in srgb, var(--text-primary) 36%, var(--surface-2));
+  color: var(--text-primary) !important;
+  cursor: default;
+  opacity: 1;
+}
+
+.compact-chat-send.is-stop:disabled {
+  background: color-mix(in srgb, var(--danger) 42%, var(--surface-2));
+  color: rgb(255 255 255 / 0.82) !important;
+}
+
 .compact-chat-attach:disabled {
   cursor: default;
   opacity: 0.38;
@@ -212,7 +224,8 @@
   width: 9px;
   height: 9px;
   border-radius: 2px;
-  background: currentColor;
+  background: currentColor !important;
+  opacity: 1;
 }
 
 .compact-chat-approval {
