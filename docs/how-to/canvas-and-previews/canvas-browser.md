@@ -12,7 +12,9 @@ Browser tabs are task-owned, while cookies, sign-ins, and site storage live in o
 
 Open the right dock and select **Canvas**, or ask the agent to browse. A navigation request opens Canvas automatically in the active task when no browser tab is already open.
 
-The empty Canvas starts with a quiet **New tab** view. Use **+** to switch between Browser, Sketch Canvas, Mesh Canvas, and Simulator Canvas. Use **…** for browser profile and privacy controls.
+The empty Canvas starts with a quiet **New tab** view. Use **+** to switch between Browser, Sketch Canvas, Mesh Canvas, and Simulator Canvas. Use **…** for browser profile and privacy controls. The placement button moves the current surface into its own window without reloading a live Browser or Sketch tab.
+
+The Canvas window uses the same tab strip and surface picker as the dock. Browser tabs keep their address bar, back/forward history, reload/stop control, and live loading state. Choose **Dock** in the window header to move all of that window's live Browser/Sketch tabs back into the owning task. Mesh Canvas, Simulator Canvas, and Media Viewer use the same pop-out/Dock placement pattern.
 
 <!-- screenshot-pending: Canvas Browser in the right dock with the address bar and a loaded page -->
 
@@ -49,6 +51,7 @@ The reset closes browser tabs across all tasks before clearing cookies, sign-ins
 - Downloads and website permission prompts are blocked.
 - Pages that request a new window stay inside the Canvas Browser.
 - Use the address-bar control to go back, forward, reload, stop, or open the current page in your default browser.
+- Closing a Canvas window closes its window-owned live Browser/Sketch tabs. Choosing **Dock** transfers them instead.
 
 ## Tips and related guides
 

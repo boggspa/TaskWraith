@@ -551,9 +551,7 @@ describe('registerCanvasEmbedIpc', () => {
     const hideIndex = deps.calls.findIndex(
       (call) => call[0] === 'setVisible' && call[1][0] === 'c1' && call[1][1] === false
     )
-    const closeIndex = deps.calls.findIndex(
-      (call) => call[0] === 'close' && call[1][0] === 'c1'
-    )
+    const closeIndex = deps.calls.findIndex((call) => call[0] === 'close' && call[1][0] === 'c1')
     expect(hideIndex).toBeGreaterThanOrEqual(0)
     expect(hideIndex).toBeLessThan(closeIndex)
     expect(deps.calls).toContainEqual([

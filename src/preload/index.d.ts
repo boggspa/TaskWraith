@@ -1575,16 +1575,12 @@ declare global {
             title?: string
           }
         }) => Promise<
-          | { ok: true; senderId: number; created: boolean }
-          | { ok: false; error: string }
+          { ok: true; senderId: number; created: boolean } | { ok: false; error: string }
         >
         dockPopout: (args: {
           chatId: string
           surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
-        }) => Promise<
-          | { ok: true; canvasIds: string[] }
-          | { ok: false; error: string }
-        >
+        }) => Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }>
         listForChat: (chatId: string) => Promise<unknown[]>
         /**
          * Structured chart document for a chat-owned chart canvas (TelemetryPane).

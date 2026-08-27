@@ -277,8 +277,22 @@ function PopOutGlyph() {
 function DockGlyph() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="2.75" y="3" width="10.5" height="10" rx="1.25" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M9.25 3v10M6.5 8h4.75M9.5 6.25 11.25 8 9.5 9.75" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <rect
+        x="2.75"
+        y="3"
+        width="10.5"
+        height="10"
+        rx="1.25"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M9.25 3v10M6.5 8h4.75M9.5 6.25 11.25 8 9.5 9.75"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -1032,7 +1046,13 @@ export function CanvasDockPanel({
               aria-expanded={openMenu === 'profile'}
               title="Browser profile and privacy"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
                 <circle cx="3.25" cy="8" r="1" />
                 <circle cx="8" cy="8" r="1" />
                 <circle cx="12.75" cy="8" r="1" />

@@ -115,10 +115,7 @@ export class CanvasEmbedController {
    * `deps.createSurface`. Creates the WebContentsView, attaches it to the parent
    * window, and tracks it for later setBounds/setVisible/detach.
    */
-  surfaceFor(
-    canvasId: string,
-    hostId?: number
-  ): (opts: CanvasSurfaceOptions) => CanvasHostSurface {
+  surfaceFor(canvasId: string, hostId?: number): (opts: CanvasSurfaceOptions) => CanvasHostSurface {
     return (opts) => this.createSurface(canvasId, opts, hostId)
   }
 

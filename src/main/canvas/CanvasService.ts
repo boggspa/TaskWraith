@@ -754,13 +754,8 @@ export class CanvasService implements CanvasController {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
         appChatId:
-          imageAppChatId ??
-          windowAppChatId ??
-          deviceAppChatId ??
-          canonicalAuthority(ctx.chatId),
-        ...(Number.isSafeInteger(ctx.surfaceHostId)
-          ? { surfaceHostId: ctx.surfaceHostId }
-          : {}),
+          imageAppChatId ?? windowAppChatId ?? deviceAppChatId ?? canonicalAuthority(ctx.chatId),
+        ...(Number.isSafeInteger(ctx.surfaceHostId) ? { surfaceHostId: ctx.surfaceHostId } : {}),
         ...(windowAppRunId || deviceAppRunId ? { appRunId: windowAppRunId ?? deviceAppRunId } : {}),
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
         ...(deviceTarget ? { deviceTarget, provider: ctx.provider } : {}),

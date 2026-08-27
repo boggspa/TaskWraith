@@ -1413,17 +1413,13 @@ const api = {
         url?: string
         title?: string
       }
-    }): Promise<
-      | { ok: true; senderId: number; created: boolean }
-      | { ok: false; error: string }
-    > => ipcRenderer.invoke('canvas:open-popout', args),
+    }): Promise<{ ok: true; senderId: number; created: boolean } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('canvas:open-popout', args),
     dockPopout: (args: {
       chatId: string
       surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
-    }): Promise<
-      | { ok: true; canvasIds: string[] }
-      | { ok: false; error: string }
-    > => ipcRenderer.invoke('canvas:dock-popout', args),
+    }): Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('canvas:dock-popout', args),
     // Chat-scoped list/close for the right-dock Canvas panel: covers agent-opened
     // canvases too (redacted summaries, no pixels), unlike `list` which only
     // returns canvases this renderer opened itself.

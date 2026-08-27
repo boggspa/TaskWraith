@@ -110,7 +110,9 @@
   color: inherit;
   cursor: pointer;
   opacity: 0.68;
-  font: 550 10.5px/1 system-ui, sans-serif;
+  font:
+    550 10.5px/1 system-ui,
+    sans-serif;
 }
 
 .canvas-dock-placement:hover {
