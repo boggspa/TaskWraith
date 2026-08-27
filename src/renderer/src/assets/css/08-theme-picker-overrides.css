@@ -10383,7 +10383,13 @@
   transition:
     height 0.16s cubic-bezier(0.22, 1, 0.36, 1),
     opacity 0.24s ease-out;
-  animation: tw-ladder-emerge 0.3s ease-out both;
+  /* No fill: with `both`, the 0% opacity-0 frame applied during the BEFORE
+   * phase, and an unfocused window never produces a frame to start on — the
+   * FX rested invisible until refocus (the fan-out reveal's exact failure
+   * class; see 02-transcript-messages-fx.css). The static opacity above IS
+   * the `to` frame, so the never-started and post-animation states are
+   * already correct without any fill. */
+  animation: tw-ladder-emerge 0.3s ease-out;
 }
 
 /* A gentle provider-hued breathing glow. The wrapper supplies the effort
@@ -12198,9 +12204,16 @@
 
 /* Coalesced replacement rows hop into their new (newest) transcript
  * position — the mock's land-and-settle. Scoped to `.is-fresh` so a
- * settled tombstone never re-animates on scroll-back remounts. */
+ * settled tombstone never re-animates on scroll-back remounts.
+ *
+ * No fill: the 100% frame (opacity 1, translateY(0)) is the row's natural
+ * resting state, so a fill adds nothing — and `both` made the opacity-0
+ * 0% frame the row's resting state in a window that never produced a frame
+ * to start the animation on (unfocused/occluded), hiding fresh rows until
+ * refocus. Same class as the fan-out reveal fix; see
+ * 02-transcript-messages-fx.css. */
 .seat-change-message.is-fresh .seat-change-row {
-  animation: seat-change-hop 460ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: seat-change-hop 460ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 @keyframes seat-change-hop {
