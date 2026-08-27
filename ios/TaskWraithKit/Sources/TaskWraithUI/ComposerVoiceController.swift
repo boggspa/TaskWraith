@@ -24,17 +24,9 @@
 // leaving it on after they finished. The handle protocol exposes
 // `deactivateAudioSession()` so tests prove teardown without a mic.
 //
-// Pass-2 integration surface (deliberately left unwired here):
-//   1. Instantiate with `ComposerVoiceController.onDevice()` on iOS.
-//   2. Add a microphone button next to `photosButton` in ComposerView.swift.
-//   3. On tap, call `controller.start()`. Show state via `controller.state`.
-//   4. On `onTranscriptReady`, append the final String to the composer's
-//      `text` binding. Do this the same way as a committed paste/dictation
-//      (MentionTextView.textViewDidChange already guards markedTextRange so
-//      provisional text is not published mid-dictation).
-//   5. On `controller.partialTranscript`, display a live preview pill if desired;
-//      the composer binding must NOT be mutated until the final transcript fires.
-//   6. On dismiss or send, call `controller.stop()` or `controller.cancel()`.
+// Composer integration lives in ComposerView.swift: a local mic button owns
+// this controller, partials stay in its preview, and only a final transcript is
+// appended to the draft. Dismiss/send cancel capture and tear down the session.
 
 import Foundation
 
@@ -441,7 +433,7 @@ public protocol VoiceControllerSessionHandle: Sendable {
             }
 
             let micGranted = await withCheckedContinuation { continuation in
-                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                AVAudioApplication.requestRecordPermission { granted in
                     continuation.resume(returning: granted)
                 }
             }
@@ -477,8 +469,7 @@ public protocol VoiceControllerSessionHandle: Sendable {
                 request.requiresOnDeviceRecognition = true
                 request.shouldReportPartialResults = true
 
-                let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-                    guard let self else { return }
+                let task = recognizer.recognitionTask(with: request) { result, error in
                     if let error {
                         Task { @MainActor in
                             onError(.recognitionFailure(error.localizedDescription))
