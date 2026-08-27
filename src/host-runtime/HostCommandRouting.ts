@@ -38,6 +38,7 @@ export const HOST_COMMAND_ROUTING_CLASS = {
   'approval.decide': 'governed-mutation',
   'ensemble.seat.toggle': 'governed-mutation',
   'thread.record.persist': 'governed-mutation',
+  'thread.record.delete': 'governed-mutation',
   'channel.member.revoke': 'governed-mutation',
   'channel.close': 'governed-mutation',
   'thread.select': 'governed-mutation',

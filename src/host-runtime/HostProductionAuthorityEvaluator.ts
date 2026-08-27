@@ -101,11 +101,14 @@ const RESPONSE_COMMANDS: ReadonlySet<HostCommandName> = new Set([
 ])
 
 /**
- * Whole-record persistence is an app-internal bridge, not a user/agent action.
+ * Whole-record persistence/deletion are app-internal bridges, not user/agent actions.
  * It is allowed only for the exact authenticated Desktop Host transport actor;
  * every other otherwise-local client fails closed without an approval escape.
  */
-const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set(['thread.record.persist'])
+const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set([
+  'thread.record.persist',
+  'thread.record.delete'
+])
 
 /**
  * Domain mutation commands with no pre-existing governing authority in

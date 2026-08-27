@@ -302,6 +302,39 @@ describe('HostNodeDomainPorts', () => {
     ).toBe(true)
   })
 
+  it('deletes a thread record only for the exact authenticated Desktop Host actor', async () => {
+    const { domain, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Delete through Host' })
+    const remove = desktopCommand(
+      'thread.record.delete',
+      'cmd-delete',
+      { threadId: thread.appChatId },
+      { expectedRevision: thread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, remove)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, remove, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_deleted' })
+    expect(store.getThread(thread.appChatId)).toBeNull()
+
+    const protectedThread = store.createThread({ scope: 'global', title: 'Protected from TUI' })
+    const tuiRemove = command(
+      'thread.record.delete',
+      'cmd-delete-tui',
+      { threadId: protectedThread.appChatId },
+      { expectedRevision: protectedThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(context, tuiRemove)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+    await expect(domain.executeCommand(context, tuiRemove, { id: 'tui-target' })).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'authority_denied'
+    })
+    expect(store.getThread(protectedThread.appChatId)?.title).toBe('Protected from TUI')
+  })
+
   it('maps missing, integrity, and optimistic-revision failures to distinct outcomes', async () => {
     const { domain, domainOptions, store, workspace } = open()
     const registered = store.registerWorkspace({ path: workspace })

@@ -23,6 +23,7 @@ const names: readonly HostCommandName[] = [
   'approval.decide',
   'ensemble.seat.toggle',
   'thread.record.persist',
+  'thread.record.delete',
   'channel.member.revoke',
   'channel.close',
   'thread.select',
@@ -92,6 +93,11 @@ function validShape(name: HostCommandName): {
           byteLength: 512 * 1024,
           expectedRevision: 7
         }
+      }
+    case 'thread.record.delete':
+      return {
+        target: { threadId: 'thread-id' },
+        args: { expectedRevision: 7 }
       }
     case 'channel.member.revoke':
       return { target: { channelId: 'channel-id' }, args: { memberId: 'member-id' } }
@@ -407,6 +413,31 @@ describe('validateHostCommandArguments', () => {
     })
     expect(descriptor.byteLength).toBeGreaterThan(256 * 1024)
 
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-id' },
+          {
+            ...descriptor,
+            transferId: 'a'.repeat(128)
+          }
+        )
+      ).ok
+    ).toBe(true)
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-id' },
+          {
+            ...descriptor,
+            transferId: 'a'.repeat(129)
+          }
+        )
+      )
+    ).toEqual({ ok: false, error: 'thread.record.persist transferId is invalid' })
+
     const invalid: Array<[Record<string, unknown>, string]> = [
       [
         { ...descriptor, record: { appChatId: 'thread-id' } },
@@ -447,6 +478,47 @@ describe('validateHostCommandArguments', () => {
     ).toEqual({
       ok: false,
       error: 'thread.record.persist target must be exactly { threadId }'
+    })
+  })
+
+  it('thread.record.delete requires an exact thread target and expected revision', () => {
+    expect(
+      validateHostCommandArguments(
+        command('thread.record.delete', { threadId: 'thread-id' }, { expectedRevision: 7 })
+      )
+    ).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.delete',
+        target: { threadId: 'thread-id' },
+        arguments: { expectedRevision: 7 }
+      }
+    })
+    expect(
+      validateHostCommandArguments(
+        command('thread.record.delete', { threadId: 'thread-id' }, { expectedRevision: -1 })
+      )
+    ).toEqual({ ok: false, error: 'thread.record.delete expectedRevision is invalid' })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.record.delete',
+          { threadId: 'thread-id' },
+          { expectedRevision: 7, path: '/tmp/chat.json' }
+        )
+      )
+    ).toEqual({ ok: false, error: 'thread.record.delete has unknown argument keys' })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.record.delete',
+          { threadId: 'thread-id', workspaceId: 'workspace-id' },
+          { expectedRevision: 7 }
+        )
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.record.delete target must be exactly { threadId }'
     })
   })
 

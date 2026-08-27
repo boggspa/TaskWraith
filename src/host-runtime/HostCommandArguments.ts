@@ -37,6 +37,7 @@ export const HOST_COMPOSER_SEND_REASONING_EFFORT_MAX_CHARS = 40
 const HOST_QUESTION_ANSWER_DECISION_SET = new Set<string>(HOST_QUESTION_ANSWER_DECISIONS)
 const HOST_APPROVAL_DECIDE_DECISION_SET = new Set<string>(HOST_APPROVAL_DECIDE_DECISIONS)
 
+const HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS = 128
 const HOST_THREAD_RECORD_TRANSFER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 const HOST_SHA256_HEX_RE = /^[a-f0-9]{64}$/
 
@@ -329,7 +330,7 @@ function validateThreadRecordPersist(command: HostCommand): HostDecodeResult<Can
     )
   }
   if (
-    !isNonEmptyString(args.transferId, HOST_PROTOCOL_MAX_ID) ||
+    !isNonEmptyString(args.transferId, HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS) ||
     !HOST_THREAD_RECORD_TRANSFER_ID_RE.test(args.transferId)
   ) {
     return fail('thread.record.persist transferId is invalid')
@@ -357,6 +358,29 @@ function validateThreadRecordPersist(command: HostCommand): HostDecodeResult<Can
         byteLength: args.byteLength,
         expectedRevision: args.expectedRevision
       }
+    }
+  }
+}
+
+function validateThreadRecordDelete(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'threadId', 'thread.record.delete')
+  if (!target.ok) return target
+  const args = command.arguments
+  const keys = Object.keys(args)
+  if (keys.some((key) => key !== 'expectedRevision')) {
+    return fail('thread.record.delete has unknown argument keys')
+  }
+  if (keys.length !== 1) {
+    return fail('thread.record.delete arguments must be exactly { expectedRevision }')
+  }
+  if (!Number.isSafeInteger(args.expectedRevision) || (args.expectedRevision as number) < 0) {
+    return fail('thread.record.delete expectedRevision is invalid')
+  }
+  return {
+    ok: true,
+    value: {
+      target: target.value,
+      arguments: { expectedRevision: args.expectedRevision }
     }
   }
 }
@@ -622,6 +646,7 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'approval.decide': validateApprovalDecide,
   'ensemble.seat.toggle': validateEnsembleSeatToggle,
   'thread.record.persist': validateThreadRecordPersist,
+  'thread.record.delete': validateThreadRecordDelete,
   'channel.member.revoke': validateChannelMemberRevoke,
   'channel.close': validateChannelClose,
   'thread.select': (command) => validateThreadOnlyEmptyArgs(command, 'thread.select'),

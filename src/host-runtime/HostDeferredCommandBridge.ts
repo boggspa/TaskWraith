@@ -65,6 +65,7 @@ const HOST_COMMAND_NAME_SET = new Set<string>([
   'approval.decide',
   'ensemble.seat.toggle',
   'thread.record.persist',
+  'thread.record.delete',
   'channel.member.revoke',
   'channel.close',
   'thread.select',

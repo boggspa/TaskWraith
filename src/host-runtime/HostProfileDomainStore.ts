@@ -954,6 +954,58 @@ export class HostProfileDomainStore {
     return next
   }
 
+  deleteThreadRecord(input: { threadId: string; expectedRevision: number }): boolean {
+    this.assertAuthority()
+    this.requireId(input.threadId)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new Error('Invalid expected revision')
+    }
+    const path = this.chatPath(input.threadId)
+    let fd: number | null = null
+    try {
+      try {
+        fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+      const opened = fstatSync(fd)
+      if (
+        !opened.isFile() ||
+        opened.isSymbolicLink() ||
+        opened.nlink !== 1 ||
+        opened.size < 1 ||
+        opened.size > MAX_CHAT_BYTES ||
+        (process.platform !== 'win32' && (opened.mode & 0o077) !== 0)
+      ) {
+        throw new Error('Unsafe profile file')
+      }
+      const current = decodeThread(JSON.parse(readFileSync(fd, 'utf8')) as unknown)
+      if (current.appChatId !== input.threadId) throw new Error('Chat identity mismatch')
+      if ((current.persistenceRevision ?? 0) !== input.expectedRevision) {
+        throw new Error('Thread persistence revision mismatch')
+      }
+      this.assertIdle(current)
+
+      const currentPath = lstatSync(path)
+      if (
+        !currentPath.isFile() ||
+        currentPath.isSymbolicLink() ||
+        currentPath.nlink !== 1 ||
+        String(currentPath.ino) !== String(opened.ino) ||
+        String(currentPath.dev) !== String(opened.dev) ||
+        currentPath.size !== opened.size
+      ) {
+        throw new Error('Profile file changed before deletion')
+      }
+      unlinkSync(path)
+      fsyncDirectory(this.chatsPath)
+      return true
+    } finally {
+      if (fd !== null) closeSync(fd)
+    }
+  }
+
   persistThreadRecord(input: {
     threadId: string
     record: unknown

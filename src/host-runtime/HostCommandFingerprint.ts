@@ -27,6 +27,7 @@ const TARGET_RULES: Record<HostCommandName, { keys: readonly string[]; kind: str
   'approval.decide': { keys: ['approvalId'], kind: 'approval' },
   'ensemble.seat.toggle': { keys: ['threadId'], kind: 'thread' },
   'thread.record.persist': { keys: ['threadId'], kind: 'thread' },
+  'thread.record.delete': { keys: ['threadId'], kind: 'thread' },
   'channel.member.revoke': { keys: ['channelId'], kind: 'channel' },
   'channel.close': { keys: ['channelId'], kind: 'channel' },
   'thread.select': { keys: ['threadId'], kind: 'thread' },

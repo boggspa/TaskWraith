@@ -662,6 +662,7 @@ export type HostCommandName =
   | 'thread.create'
   | 'thread.configure'
   | 'thread.record.persist'
+  | 'thread.record.delete'
   | 'thread.archive'
   | 'provider.auth.begin'
   | 'provider.auth.cancel'
@@ -946,6 +947,7 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'thread.create',
   'thread.configure',
   'thread.record.persist',
+  'thread.record.delete',
   'thread.archive',
   'provider.auth.begin',
   'provider.auth.cancel',
@@ -1262,6 +1264,25 @@ function decodeThreadRecordPersistArguments(
   }
 }
 
+function decodeThreadRecordDeleteArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const keys = Object.keys(value)
+  if (keys.some((key) => key !== 'expectedRevision')) {
+    return { ok: false, error: 'thread.record.delete has unknown argument keys' }
+  }
+  if (keys.length !== 1) {
+    return {
+      ok: false,
+      error: 'thread.record.delete arguments must be exactly { expectedRevision }'
+    }
+  }
+  if (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0) {
+    return { ok: false, error: 'thread.record.delete expectedRevision is invalid' }
+  }
+  return { ok: true, value: { expectedRevision: value.expectedRevision } }
+}
+
 /**
  * Deterministic capability intersection: host offer ∩ client request.
  * Preserves host offer order, dedupes, and never invents capabilities.
@@ -1542,7 +1563,8 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     (value.name === 'run.cancel' ||
       value.name === 'thread.select' ||
       value.name === 'ensemble.seat.toggle' ||
-      value.name === 'thread.record.persist') &&
+      value.name === 'thread.record.persist' ||
+      value.name === 'thread.record.delete') &&
     !isNonEmptyString(target.value.threadId, HOST_PROTOCOL_MAX_ID)
   ) {
     return { ok: false, error: 'target.threadId is required' }
@@ -1573,6 +1595,11 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     const persistArgs = decodeThreadRecordPersistArguments(args.value)
     if (!persistArgs.ok) return persistArgs
     args = { ok: true, value: { ...persistArgs.value } }
+  }
+  if (value.name === 'thread.record.delete') {
+    const deleteArgs = decodeThreadRecordDeleteArguments(args.value)
+    if (!deleteArgs.ok) return deleteArgs
+    args = { ok: true, value: deleteArgs.value }
   }
   if (
     (value.name === 'channel.member.revoke' || value.name === 'channel.close') &&

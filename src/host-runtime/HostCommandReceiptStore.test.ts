@@ -165,6 +165,21 @@ describe('HostCommandReceiptStore', () => {
     expect(durable?.commandName).toBe('thread.record.persist')
   })
 
+  it('persists thread.record.delete as a durable governed command name', () => {
+    const store = openStore()
+    const begun = store.begin(
+      baseInput({
+        commandId: 'delete-1',
+        idempotencyKey: 'delete-key-1',
+        commandName: 'thread.record.delete',
+        target: { kind: 'thread', id: 'thread-1' }
+      })
+    )
+    expect(begun.kind).toBe('created')
+    if (begun.kind !== 'created') return
+    expect(begun.receipt.commandName).toBe('thread.record.delete')
+  })
+
   it('refreshes position at terminal completion and preserves it through reopen/compaction', () => {
     position = { generation: 3, cursor: 7 }
     const store = openStore()

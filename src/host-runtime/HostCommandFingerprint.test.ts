@@ -13,6 +13,7 @@ const names: readonly HostCommandName[] = [
   'approval.decide',
   'ensemble.seat.toggle',
   'thread.record.persist',
+  'thread.record.delete',
   'channel.member.revoke',
   'channel.close',
   'thread.select',
@@ -64,6 +65,7 @@ function targetFor(name: HostCommandName): Record<string, string> {
     case 'run.cancel':
     case 'ensemble.seat.toggle':
     case 'thread.record.persist':
+    case 'thread.record.delete':
     case 'thread.select':
     case 'thread.configure':
     case 'thread.archive':

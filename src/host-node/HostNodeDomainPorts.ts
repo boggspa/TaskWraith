@@ -103,7 +103,7 @@ function localContext(context: HostAuthorityCallContext, command: HostCommand): 
   )
 }
 
-function exactDesktopPersistContext(
+function exactDesktopRecordMutationContext(
   context: HostAuthorityCallContext,
   command: HostCommand
 ): boolean {
@@ -278,11 +278,11 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return { decision: 'deny', reason: 'invalid_command' }
 
-    if (command.name === 'thread.record.persist') {
-      if (!exactDesktopPersistContext(context, command)) {
+    if (command.name === 'thread.record.persist' || command.name === 'thread.record.delete') {
+      if (!exactDesktopRecordMutationContext(context, command)) {
         return { decision: 'deny', reason: 'standalone_desktop_actor_required' }
       }
-      if (!this.options.profilePath) {
+      if (command.name === 'thread.record.persist' && !this.options.profilePath) {
         return { decision: 'deny', reason: 'standalone_thread_record_persist_unavailable' }
       }
       return { decision: 'allow' }
@@ -371,6 +371,10 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return failed('command_invalid')
 
+    if (command.name === 'thread.record.delete') {
+      return this.deleteThreadRecord(decoded.value)
+    }
+
     if (command.name === 'thread.record.persist') {
       return this.persistTransferredThreadRecord(decoded.value)
     }
@@ -448,6 +452,27 @@ export class HostNodeDomainPorts {
       return failed('run_not_started')
     }
     return { status: 'succeeded', resultSummary: 'run_started' }
+  }
+
+  private deleteThreadRecord(command: HostCommand): HostCommandExecutionResult {
+    try {
+      const deleted = this.options.store.deleteThreadRecord({
+        threadId: command.target.threadId,
+        expectedRevision: command.arguments.expectedRevision as number
+      })
+      return {
+        status: 'succeeded',
+        resultSummary: deleted ? 'thread_record_deleted' : 'thread_record_already_absent'
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === 'Thread persistence revision mismatch') {
+        return failed('thread_record_revision_conflict')
+      }
+      if (message === 'Thread is active') return failed('thread_record_active')
+      if (message.startsWith('Invalid ')) return failed('thread_record_invalid')
+      return failed('thread_record_delete_failed')
+    }
   }
 
   private persistTransferredThreadRecord(command: HostCommand): HostCommandExecutionResult {

@@ -645,6 +645,85 @@ describe('HostProfileDomainStore', () => {
     ).toThrow('revision mismatch')
   })
 
+  it('deletes a thread record at the expected revision and is idempotent once absent', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Delete me' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    expect(store.deleteThreadRecord({ threadId: thread.appChatId, expectedRevision: 0 })).toBe(true)
+    expect(store.getThread(thread.appChatId)).toBeNull()
+    expect(store.listThreads()).toEqual([])
+    expect(() => readFileSync(chatFile, 'utf8')).toThrow()
+    expect(store.deleteThreadRecord({ threadId: thread.appChatId, expectedRevision: 0 })).toBe(
+      false
+    )
+  })
+
+  it('preserves the thread when delete expectedRevision is stale', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Keep me' })
+    expect(() =>
+      store.deleteThreadRecord({ threadId: thread.appChatId, expectedRevision: 1 })
+    ).toThrow('revision mismatch')
+    expect(store.getThread(thread.appChatId)?.title).toBe('Keep me')
+  })
+
+  it('models truncate as a complete optimistic persist rather than a second Host command', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Keep identity' })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      role: 'user',
+      content: 'Remove this history',
+      timestamp: '2026-08-24T00:00:00.000Z'
+    })
+    const current = store.getThread(thread.appChatId)!
+    const truncated = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: { ...current, messages: [], runs: [] },
+      expectedRevision: current.persistenceRevision ?? 0
+    })
+    expect(truncated).toMatchObject({
+      appChatId: thread.appChatId,
+      title: 'Keep identity',
+      messages: [],
+      runs: []
+    })
+  })
+
+  it('models scoped/global clear as repeated deletes over a frozen thread-id set', () => {
+    const { store } = open()
+    const first = store.createThread({ scope: 'global', title: 'First target' })
+    const second = store.createThread({ scope: 'global', title: 'Second target' })
+    const survivor = store.createThread({ scope: 'global', title: 'Survivor' })
+    for (const thread of [first, second]) {
+      expect(
+        store.deleteThreadRecord({
+          threadId: thread.appChatId,
+          expectedRevision: thread.persistenceRevision ?? 0
+        })
+      ).toBe(true)
+    }
+    expect(store.listThreads().map((thread) => thread.appChatId)).toEqual([survivor.appChatId])
+  })
+
+  it('refuses to follow a substituted symlink while deleting a thread record', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const victim = join(profile, 'victim.json')
+    writeFileSync(victim, JSON.stringify({ keep: true }))
+    chmodSync(victim, 0o600)
+    rmSync(chatFile)
+    symlinkSync(victim, chatFile)
+    expect(() =>
+      store.deleteThreadRecord({
+        threadId: thread.appChatId,
+        expectedRevision: thread.persistenceRevision ?? 0
+      })
+    ).toThrow()
+    expect(JSON.parse(readFileSync(victim, 'utf8'))).toEqual({ keep: true })
+  })
+
   it('persists a record larger than 256 KB without inlining it in a control frame', () => {
     const { store } = open()
     const bigContent = 'x'.repeat(300_000)

@@ -651,6 +651,43 @@ describe('Host protocol Wave 2A contract', () => {
     ).toMatchObject({ ok: false, error: 'thread.record.persist expectedRevision is invalid' })
   })
 
+  it('accepts only an exact revision-bound thread.record.delete command', () => {
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: 7 }
+        })
+      )
+    ).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.delete',
+        target: { threadId: 'thread-1' },
+        arguments: { expectedRevision: 7 }
+      }
+    })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: -1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.delete expectedRevision is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: 7, path: '/tmp/chat.json' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.delete has unknown argument keys' })
+  })
+
   it('requires typed question.answer and approval.decide arguments', () => {
     const answered = decodeHostCommand(
       sampleCommand({

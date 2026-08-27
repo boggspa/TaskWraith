@@ -169,6 +169,23 @@ describe('HostDeferredCommandBridge', () => {
     }
   })
 
+  it('persists thread.record.delete in the deferred-command registry', () => {
+    const bridge = open()
+    const created = bridge.register(
+      baseRegister({
+        deferredId: 'def-delete',
+        commandId: 'cmd-delete',
+        idempotencyKey: 'desktop:client-desktop-1:66666666-6666-4666-8666-666666666666',
+        commandFingerprint: fingerprint('thread.record.delete|thread-1'),
+        commandName: 'thread.record.delete',
+        challengeId: 'approval-delete'
+      })
+    )
+    expect(created.kind).toBe('created')
+    if (created.kind !== 'created') return
+    expect(created.record.commandName).toBe('thread.record.delete')
+  })
+
   it('fails closed on actor / challenge / command mismatches at register', () => {
     const bridge = open()
     expect(bridge.register(baseRegister()).kind).toBe('created')
