@@ -6268,11 +6268,41 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Host has injected `createSubThreadFn` and this workspace grants
+    /// `startTurn`. Absent/false stays fail-closed so the phone never offers a
+    /// control that would call a `notWired` executor or send to a workspace the
+    /// router would refuse.
+    public func isCreateSubThreadHostWired(for card: RemoteTaskCard) -> Bool {
+        card.capabilities?.createSubThread == true
+    }
+
+    public func subThreadSpawnReadiness(
+        for card: RemoteTaskCard, provider: String, prompt: String
+    ) -> SubThreadSpawnReadiness {
+        SubThreadSpawnReadiness.evaluate(subThreadSpawnInput(for: card, provider: provider, prompt: prompt))
+    }
+
+    private func subThreadSpawnInput(
+        for card: RemoteTaskCard, provider: String, prompt: String
+    ) -> SubThreadSpawnReadiness.Input {
+        SubThreadSpawnReadiness.Input(
+            isDemo: isDemo,
+            hostCreateSubThreadWired: isCreateSubThreadHostWired(for: card),
+            parentIsSubThread: card.isSubThread,
+            workspaceId: card.workspaceId,
+            parentThreadId: card.threadId,
+            proposedProvider: provider,
+            prompt: prompt
+        )
+    }
+
     /// Spawn a durable, context-isolated child and start its first turn through
     /// the ordinary paired-device composer path. Child creation and turn start
     /// stay as two explicit receipts: if the second action is definitively
     /// refused, the prompt is restored into the new child's composer instead
     /// of disappearing or creating another child on retry.
+    ///
+    /// Does not send unless `SubThreadSpawnReadiness` says the host is wired.
     public func createSubThread(
         _ card: RemoteTaskCard,
         provider: String,
@@ -6284,30 +6314,22 @@ public final class RemoteSessionModel: ObservableObject {
         kimiThinkingEnabled: Bool? = nil,
         onCompleted: ((String?, Bool) -> Void)? = nil
     ) {
+        let spawnInput = subThreadSpawnInput(for: card, provider: provider, prompt: prompt)
+        let readiness = SubThreadSpawnReadiness.evaluate(spawnInput)
+        guard readiness.canCreate,
+            let params = SubThreadSpawnProposal.bridgeParams(
+                spawnInput, returnResult: returnResult)
+        else {
+            lastActionMessage = readiness.reason
+            onCompleted?(nil, false)
+            return
+        }
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let parentThreadId = card.threadId else {
-            onCompleted?(nil, false)
-            return
-        }
-        guard !isDemo else {
-            lastActionMessage = "Pair with a Mac to spawn a sub-thread."
-            onCompleted?(nil, false)
-            return
-        }
-        let workspaceId = card.isGlobalScope ? "global" : (card.workspaceId ?? "")
-        guard !workspaceId.isEmpty else {
-            lastActionMessage = "This thread has no remote workspace."
-            onCompleted?(nil, false)
-            return
-        }
+        let parentThreadId = (card.threadId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceId = (card.workspaceId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         send(
-            BridgeAction.createSubThread(
-                workspaceId: workspaceId,
-                parentThreadId: parentThreadId,
-                provider: provider,
-                prompt: trimmed,
-                returnResult: returnResult),
+            params,
             successLabel: "Sub-thread created.",
             navigateOnAck: false,
             onThreadCreated: { [weak self] childThreadId in

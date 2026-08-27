@@ -3163,7 +3163,7 @@ struct ThreadDetailView: View {
                     }
                 }
             }
-            if let card, !ChatKindBridge.isLinkedChild(card) {
+            if let card, !ChatKindBridge.isLinkedChild(card), card.capabilities?.createSubThread == true {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         subThreadSpawnPresented = true
@@ -3172,9 +3172,9 @@ struct ThreadDetailView: View {
                             "Sub-thread", systemImage: "rectangle.stack.badge.plus")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Spawn sub-thread")
+                    .accessibilityLabel("Delegate to a sub-thread")
                     .accessibilityHint(
-                        "Creates a context-isolated child task with a provider and brief you choose.")
+                        "Opens a sheet to propose a provider and prompt. The Mac has enabled sub-thread spawn.")
                 }
             }
             ToolbarItem(placement: .primaryAction) {

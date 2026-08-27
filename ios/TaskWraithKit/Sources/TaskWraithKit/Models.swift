@@ -911,6 +911,12 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileWrite: Bool?
     public let externalPublish: Bool?
     public let deleteMessage: Bool?
+    /// Host projects true only when it has injected `createSubThreadFn` AND
+    /// this workspace grants `startTurn`. Absent/false means the phone must not
+    /// offer a control that would call a `notWired` executor or send to a
+    /// workspace the router would refuse. This bit includes the workspace
+    /// allowlist grant, not just implementation liveness.
+    public let createSubThread: Bool?
 }
 
 /// One remote-terminal output chunk (raw shell bytes, base64).
@@ -3511,11 +3517,17 @@ public enum BridgeAction {
         ])
     }
 
+    /// Host decoder bound (`BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS`).
+    /// The phone must refuse a longer prompt locally rather than send one the
+    /// Mac will drop as an unknown action.
+    public static let createSubThreadPromptMaxChars = 20_000
+
     /// Requests a fresh, context-isolated sub-thread below parentThreadId.
     /// The provider is only a proposal from the phone: the Mac validates live
     /// admission, credentials and delegation policy before it creates a child.
-    /// Pass 2 owns the sheet and action-ack integration; this builder keeps the
-    /// wire contract explicit and sends no provider-native command itself.
+    /// UI MUST gate on `SubThreadSpawnReadiness` (host-wired) before calling
+    /// this — a control that looks enabled and hits `notWired` is the defect
+    /// this round refused. This builder sends no provider-native command.
     public static func createSubThread(
         workspaceId: String,
         parentThreadId: String,
