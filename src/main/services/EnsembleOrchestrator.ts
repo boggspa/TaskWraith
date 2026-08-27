@@ -1232,6 +1232,7 @@ export interface EnsembleFanoutResult {
   message: string
   laneIds?: string[]
   participantIds?: string[]
+  laneIntents?: Array<{ laneId: string; participantId: string; intent: 'read' | 'write' }>
   error?:
     | 'no_active_run'
     | 'not_ensemble'
@@ -1373,6 +1374,9 @@ export interface EnsembleBossmanControlInput {
   pollId?: string
   budgetId?: string
   planSummary?: string
+  plan?: string
+  summary?: string
+  steps?: string
   goal?: string
   goalStatus?: ActiveGoalStatus
   status?: ActiveGoalStatus
@@ -9983,15 +9987,23 @@ export class EnsembleOrchestrator {
 
     if (action === 'set_round_plan') {
       const planSummary = normalizeBossmanText(
-        input.planSummary || input.objective || input.prompt || input.goal,
+        input.planSummary ||
+          input.plan ||
+          input.summary ||
+          input.steps ||
+          input.objective ||
+          input.prompt ||
+          input.goal,
         1200
       )
-      if (!planSummary)
+      if (!planSummary) {
+        const receivedKeys = Object.keys(input).sort()
         return this.missingBossmanField(
           action,
           runtime.roundId,
-          'set_round_plan requires planSummary.'
+          `set_round_plan requires planSummary. Received keys: ${receivedKeys.join(', ') || '(none)'}. Retry: { action: 'set_round_plan', planSummary: '<plan>' }.`
         )
+      }
       const plan = {
         planSummary,
         // Persistence compatibility for older desktop/iOS readers. New tool
@@ -12981,8 +12993,6 @@ export class EnsembleOrchestrator {
     let writeScopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]> | undefined
     if (mode === 'locked_writers') {
       const resolvedScopes = this.resolveLockedWriterScopes(
-        chat,
-        runtime,
         resolvedTargets.targets,
         input.writeScopes,
         fanoutAuthorityRole === 'second_in_command' ? 'captain' : 'boss'
@@ -13047,6 +13057,23 @@ export class EnsembleOrchestrator {
       const laneIds = acceptedRuns
         .map((acceptedRun) => acceptedRun.laneId)
         .filter((laneId): laneId is string => Boolean(laneId))
+      const laneIntents = acceptedRuns.reduce<
+        Array<{ laneId: string; participantId: string; intent: 'read' | 'write' }>
+      >((intents, acceptedRun) => {
+        if (acceptedRun.laneId) {
+          intents.push({
+            laneId: acceptedRun.laneId,
+            participantId: acceptedRun.participant.id,
+            intent: acceptedRun.laneIntent === 'write' ? 'write' : 'read'
+          })
+        }
+        return intents
+      }, [])
+      const laneIntentReceipt = acceptedRuns
+        .map((acceptedRun) =>
+          `${participantDisplayName(acceptedRun.participant)}: ${acceptedRun.laneIntent === 'write' ? 'write' : 'read'}`
+        )
+        .join(', ')
       if (acceptedTargets.length === 0) {
         const message = `${label} was not dispatched: no target passed preflight and reached provider-adapter invocation. The target remains eligible for serial rotation.`
         if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
@@ -13080,8 +13107,9 @@ export class EnsembleOrchestrator {
         ...(targetStage ? { targetStage } : {}),
         status: 'dispatched',
         laneIds,
+        laneIntents,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
+        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${laneIntentReceipt ? ` Lane intent receipt: ${laneIntentReceipt}.` : ''}${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
@@ -14238,8 +14266,6 @@ export class EnsembleOrchestrator {
   }
 
   private resolveLockedWriterScopes(
-    chat: ChatRecord,
-    runtime: ActiveRoundRuntime,
     targets: EnsembleParticipant[],
     rawScopes: unknown,
     approvedBy: ConcurrentLaneWriteScope['approvedBy']
@@ -14250,29 +14276,49 @@ export class EnsembleOrchestrator {
         message: string
         error: Extract<EnsembleFanoutResult['error'], 'missing_write_scope' | 'invalid_write_scope'>
       } {
-    const writerTargets = targets.filter(
-      (participant) =>
-        !this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
-    )
     const scopesByParticipantId = new Map<string, ConcurrentLaneWriteScope[]>()
-    if (writerTargets.length === 0) return { ok: true, scopesByParticipantId }
     if (rawScopes === undefined || rawScopes === null || rawScopes === '') {
+      return { ok: true, scopesByParticipantId }
+    }
+    if (!isPlainRecord(rawScopes)) {
       return {
         ok: false,
         message:
-          'ensemble_fanout: locked writer lanes require explicit writeScopes for every writer target.',
-        error: 'missing_write_scope'
+          'ensemble_fanout: locked-writers writeScopes must be an object keyed by target alias; omit it to dispatch every target read-only.',
+        error: 'invalid_write_scope'
       }
     }
-    for (const participant of writerTargets) {
-      const rawForParticipant = pickRawWriteScopesForParticipant(rawScopes, participant)
-      if (rawForParticipant === undefined) {
-        return {
-          ok: false,
-          message: `ensemble_fanout: missing writeScopes for ${participant.role || providerLabel(participant.provider)}.`,
-          error: 'missing_write_scope'
-        }
+    const unknownScopeKey = Object.keys(rawScopes).find((key) => {
+      const normalizedKey = stripLeadingAt(key).toLowerCase()
+      return (
+        normalizedKey !== '*' &&
+        normalizedKey !== 'all' &&
+        !targets.some((participant) =>
+          [participant.id, participant.role, participant.provider, providerLabel(participant.provider)].some(
+            (alias) =>
+              typeof alias === 'string' &&
+              stripLeadingAt(alias).toLowerCase() === normalizedKey
+          )
+        )
+      )
+    })
+    if (unknownScopeKey) {
+      const validAliases = targets
+        .map((participant) =>
+          [participant.id, participant.role, participant.provider, providerLabel(participant.provider)]
+            .filter((alias): alias is string => typeof alias === 'string' && Boolean(alias.trim()))
+            .join(', ')
+        )
+        .join('; ')
+      return {
+        ok: false,
+        message: `ensemble_fanout: unknown writeScopes key "${unknownScopeKey}". Valid target aliases: ${validAliases}. Add a matching key to grant a write lane, or omit a target's key to dispatch it read-only.`,
+        error: 'invalid_write_scope'
       }
+    }
+    for (const participant of targets) {
+      const rawForParticipant = pickRawWriteScopesForParticipant(rawScopes, participant)
+      if (rawForParticipant === undefined) continue
       const scopes = normalizeConcurrentWriteScopes(
         rawForParticipant,
         approvedBy,
@@ -19331,17 +19377,10 @@ export class EnsembleOrchestrator {
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
-    // Lane intent follows the SEAT's configured posture and nothing else. A
-    // seat the user granted write access stays a writer even when the round,
-    // the Boss or a Captain asked for a reader-intent wave — no orchestrator
-    // authority demotes a user-set permission tier. This used to read
-    // `mode === 'read_only' && !options.deriveLaneIntentFromPermissions`, and
-    // since `mode` DEFAULTS to 'read_only' while exactly one call site in the
-    // process passed `deriveLaneIntentFromPermissions`, virtually every fan-out
-    // pinned every lane to 'read'. Write-capable seats were then handed the
-    // "inspection, recon, or review only" boundary below and cancelled rather
-    // than edit. A genuine host clamp still lands, because
-    // `forceReadOnlyDispatch` clamps `permissions` itself and is asserted below.
+    // Ordinary fan-out preserves the seat's configured posture. In
+    // locked_writers mode, a matching writeScopes key is the explicit write
+    // grant; targets without one are runtime-clamped to read-only. That
+    // demotion never widens a user-granted permission tier.
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
     // Wave 3 — same seat-compaction barrier as the serial path, for every
     // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
@@ -19363,12 +19402,16 @@ export class EnsembleOrchestrator {
     // seeding any run so a late permission upgrade cannot mint an unscoped
     // writer lane between an earlier preflight and provider dispatch.
     const dispatchPlanChat = this.deps.getChat(runtime.chatId) || chat
+    const forceReadOnlyForParticipant = (participantId: string): boolean =>
+      options.forceReadOnlyDispatch ||
+      (mode === 'locked_writers' && !options.writeScopesByParticipantId?.has(participantId))
     const lanePlans = participants.map((participant) => {
       const currentParticipant =
         dispatchPlanChat.ensemble?.participants?.find(
           (candidate) => candidate.id === participant.id
         ) || participant
-      const permissions = options.forceReadOnlyDispatch
+      const forceReadOnly = forceReadOnlyForParticipant(currentParticipant.id)
+      const permissions = forceReadOnly
         ? this.resolveForcedReadOnlyFanoutPermissions(
             dispatchPlanChat,
             runtime,
@@ -19380,7 +19423,7 @@ export class EnsembleOrchestrator {
             currentParticipant,
             mode
           )
-      if (options.forceReadOnlyDispatch && !permissions.readOnly) {
+      if (forceReadOnly && !permissions.readOnly) {
         throw new Error(
           `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${currentParticipant.id}.`
         )
@@ -19517,6 +19560,7 @@ export class EnsembleOrchestrator {
     )
     const completionPromises = laneRuns.map((run) => {
       const participant = run.participant
+      const forceReadOnly = forceReadOnlyForParticipant(participant.id)
       const dispatchChat = this.deps.getChat(runtime.chatId) || chat
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
@@ -19532,7 +19576,7 @@ export class EnsembleOrchestrator {
         ...runScopedExternalPathGrants,
         ...(runtime.externalPathGrants || [])
       ]
-      const permissions = options.forceReadOnlyDispatch
+      const permissions = forceReadOnly
         ? this.resolveForcedReadOnlyFanoutPermissions(
             dispatchChat,
             runtime,
@@ -19559,7 +19603,7 @@ export class EnsembleOrchestrator {
         : runtime.prompt
       const readerIntentBoundary =
         run.laneIntent === 'read'
-          ? options.forceReadOnlyDispatch
+          ? forceReadOnly
             ? '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. This auxiliary lane is runtime read-clamped.'
             : '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. Your configured permission tier remains active so allowed inspection tools stay non-blocking; that authority does not broaden this reader assignment.'
           : ''

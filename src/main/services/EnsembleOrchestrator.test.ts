@@ -22305,11 +22305,14 @@ Next action:
         {
           targets: ['Worker'],
           prompt: 'Edit in parallel.',
-          mode: 'locked_writers'
+          mode: 'locked_writers',
+          writeScopes: { Typo: ['src/worker/**'] }
         }
       )
       expect(missingScopes.ok).toBe(false)
-      expect(missingScopes.error).toBe('missing_write_scope')
+      expect(missingScopes.error).toBe('invalid_write_scope')
+      expect(missingScopes.message).toContain('Valid target aliases:')
+      expect(missingScopes.message).toContain('Worker')
 
       const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
         targets: ['Worker'],
@@ -26993,5 +26996,169 @@ describe('ensemble_await timeout clamp (owner request 2026-08-05)', () => {
     expect(clampAwaitTimeoutSeconds(6000)).toBe(600)
     expect(clampAwaitTimeoutSeconds(1)).toBe(5)
     expect(clampAwaitTimeoutSeconds(45)).toBe(45)
+  })
+})
+
+describe('locked-writer ergonomics', () => {
+  it('demotes an unscoped locked-writer target to a runtime read-only lane', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'claude',
+        fanoutPolicy: 'locked_writers_with_boss'
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+      const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Inspect only.',
+        mode: 'locked_writers'
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      const workerRun = harness.dispatched[1]
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toEqual([
+        expect.objectContaining({ intent: 'read' })
+      ])
+      expect(workerRun.effectivePermissions?.readOnly).toBe(true)
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/repo/src/worker/output.ts'
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('not a writer lane') })
+      completeDispatchedRun(harness, 1)
+      await expect(fanout).resolves.toMatchObject({
+        ok: true,
+        participantIds: ['codex'],
+        laneIntents: [expect.objectContaining({ participantId: 'codex', intent: 'read' })],
+        message: expect.stringContaining('Worker: read')
+      })
+    } finally {
+      if (previousWrite === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+    }
+  })
+
+  it('accepts natural set_round_plan aliases and repairs a missing plan', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan the work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    const aliases = [
+      ['plan', 'Plan alias accepted.'],
+      ['summary', 'Summary alias accepted.'],
+      ['steps', 'Steps alias accepted.']
+    ] as const
+    for (const [field, planSummary] of aliases) {
+      const result = await harness.orchestrator.bossmanControlForRun(runId, {
+        action: 'set_round_plan',
+        [field]: planSummary
+      })
+      expect(result).toMatchObject({ ok: true })
+      expect(harness.chat.ensemble?.bossmanControlState?.roundPlan?.planSummary).toBe(planSummary)
+    }
+    const missing = await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_round_plan'
+    })
+    expect(missing).toMatchObject({ ok: false, error: 'missing_required_field' })
+    expect(missing.message).toContain('Received keys: action')
+    expect(missing.message).toContain("Retry: { action: 'set_round_plan', planSummary: '<plan>' }")
+  })
+
+  it('uses writeScopes keys as the locked-writer set and demotes unkeyed peers', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'claude',
+        fanoutPolicy: 'locked_writers_with_boss',
+        participants: [
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'codex',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Implement.',
+            order: 2,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'claude-reviewer',
+            provider: 'claude',
+            enabled: true,
+            role: 'Reviewer',
+            instructions: 'Inspect.',
+            order: 3,
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker', 'Reviewer'],
+        prompt: 'Worker edits; reviewer inspects.',
+        mode: 'locked_writers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
+      const fanoutResult = await fanout
+      expect(fanoutResult).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      const workerRun = harness.dispatched.find(
+        (run) => run.ensembleRun?.participantId === 'codex'
+      )!
+      const reviewerRun = harness.dispatched.find(
+        (run) => run.ensembleRun?.participantId === 'claude-reviewer'
+      )!
+      expect(workerRun.effectivePermissions?.readOnly).toBe(false)
+      expect(reviewerRun.effectivePermissions?.readOnly).toBe(true)
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ participantId: 'codex', intent: 'write' }),
+          expect.objectContaining({ participantId: 'claude-reviewer', intent: 'read' })
+        ])
+      )
+      completeDispatchedRun(harness, 1)
+      completeDispatchedRun(harness, 2)
+      await expect(fanout).resolves.toMatchObject({
+        ok: true,
+        laneIntents: expect.arrayContaining([
+          expect.objectContaining({ participantId: 'codex', intent: 'write' }),
+          expect.objectContaining({ participantId: 'claude-reviewer', intent: 'read' })
+        ])
+      })
+    } finally {
+      if (previousWrite === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+    }
   })
 })
