@@ -456,6 +456,7 @@ import {
   buildRemoteWorkspaceBoard,
   buildRemoteTaskCard,
   projectCreateSubThreadCapability,
+  projectGithubMergePrCapability,
   type RemoteProjectionEnvelope,
   type RemoteTaskCard,
   type RemoteTaskCapabilities,
@@ -44946,6 +44947,8 @@ if (isGeminiMcpBridgeProcess) {
       isRemoteProviderDispatchable(provider, isConditionallyDispatchableRemoteProvider)
 
     let injectedCreateSubThreadFn: unknown
+    let injectedGithubMergePrFn: unknown
+    let injectedRequestGithubMergePrApprovalFn: unknown
     const createBridgeActionExecutor = (): MainProcessActionExecutor => {
       // Phase C-late: action executor wires policy-cleared actions to real
       // main-process services. Wired today: `cancelRun`, `approvalReply`,
@@ -47894,7 +47897,7 @@ if (isGeminiMcpBridgeProcess) {
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data) }
         },
-        requestGithubMergePrApprovalFn: async (action) => {
+        requestGithubMergePrApprovalFn: (injectedRequestGithubMergePrApprovalFn = async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
           if (!path) return false
           return requestAgenticServiceApproval(null, 'gemini', 'shellCommands', path, {
@@ -47903,8 +47906,8 @@ if (isGeminiMcpBridgeProcess) {
             body: [path, 'Merge the current branch GitHub pull request (from a paired device)'].join('\n'),
             preview: { kind: 'githubMergePr', workspacePath: path }
           })
-        },
-        githubMergePrFn: async (action) => {
+        }),
+        githubMergePrFn: (injectedGithubMergePrFn = async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
           if (!path) {
             return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
@@ -47940,7 +47943,7 @@ if (isGeminiMcpBridgeProcess) {
           })
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data.pullRequest) }
-        },
+        }),
         gitBranchesFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
           if (!path) {
@@ -49222,6 +49225,7 @@ if (isGeminiMcpBridgeProcess) {
         yolo: false,
         deleteMessage: false,
         createSubThread: false,
+        githubMergePr: false,
         cancelRound: false,
         skipActiveParticipant: false,
         wakeNow: false,
@@ -49260,6 +49264,7 @@ if (isGeminiMcpBridgeProcess) {
         yolo: capabilities.has('yolo'),
         deleteMessage: capabilities.has('deleteMessage'),
         createSubThread: projectCreateSubThreadCapability(injectedCreateSubThreadFn, capabilities.has('startTurn')),
+        githubMergePr: projectGithubMergePrCapability(injectedGithubMergePrFn, injectedRequestGithubMergePrApprovalFn, capabilities.has('externalPublish')),
         cancelRound: capabilities.has('cancel'),
         skipActiveParticipant: capabilities.has('steer'),
         wakeNow: capabilities.has('steer'),
@@ -50320,6 +50325,10 @@ if (isGeminiMcpBridgeProcess) {
         onBroadcasterChange: (broadcaster) => {
           bridgeBroadcaster = broadcaster
           bridgeBroadcasterRef = broadcaster
+          if (broadcaster) {
+            broadcaster.githubMergePrFn = injectedGithubMergePrFn
+            broadcaster.requestGithubMergePrApprovalFn = injectedRequestGithubMergePrApprovalFn
+          }
         },
         // LIVE connected count drives the run-event filter + git feed: a
         // silently-dropped or suspended phone (RC6) flips this to a true count
