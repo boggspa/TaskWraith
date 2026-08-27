@@ -1,0 +1,380 @@
+.thread-home,
+.thread-home-surface {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+}
+
+.thread-home-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: clamp(58px, 8vh, 86px) clamp(18px, 4vw, 52px) 38px;
+  scrollbar-width: thin;
+}
+
+.thread-home--pane .thread-home-scroll {
+  padding: 54px 16px 24px;
+}
+
+.thread-home-pane-actions {
+  top: 8px;
+  right: 8px;
+}
+
+.thread-home-header,
+.thread-home-section {
+  width: min(920px, 100%);
+  margin-inline: auto;
+}
+
+.thread-home-header {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 28px;
+}
+
+.thread-home-eyebrow,
+.thread-home-section-heading h3 {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.thread-home-header h2 {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 34px);
+  font-weight: 620;
+  letter-spacing: -0.035em;
+}
+
+.thread-home-header p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.thread-home-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.thread-home-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.thread-home-section-heading > span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.thread-home-thread-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 8px;
+}
+
+.thread-home-thread-row,
+.thread-home-surface-card {
+  appearance: none;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--surface-border) 76%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 58%, transparent);
+  color: inherit;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.thread-home-thread-row:hover,
+.thread-home-surface-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+  transform: translateY(-1px);
+}
+
+.thread-home-thread-row:focus-visible,
+.thread-home-surface-card:focus-visible,
+.thread-home-surface-toolbar button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: 2px;
+}
+
+.thread-home-thread-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.thread-home-thread-provider,
+.thread-home-surface-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thread-home-thread-provider :is(svg, .provider-brand-logo) {
+  width: 18px;
+  height: 18px;
+}
+
+.thread-home-thread-copy,
+.thread-home-surface-card > span:last-of-type {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.thread-home-thread-copy strong,
+.thread-home-thread-copy small,
+.thread-home-surface-card strong,
+.thread-home-surface-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-home-thread-copy strong,
+.thread-home-surface-card strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.thread-home-thread-copy small,
+.thread-home-surface-card small,
+.thread-home-thread-provider-label {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.thread-home-thread-row .sidebar-running-ghost {
+  width: 18px;
+  height: 18px;
+}
+
+.thread-home-surface-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.thread-home--pane .thread-home-surface-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.thread-home-surface-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 74px;
+  padding: 12px;
+  text-align: left;
+}
+
+.thread-home-surface-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.thread-home-surface-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+}
+
+.thread-home-surface-icon svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.thread-home-surface-card em {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-primary);
+  font-size: 9px;
+  font-style: normal;
+  text-align: center;
+}
+
+.thread-home-empty-copy,
+.thread-home-status,
+.thread-home-issue,
+.thread-home-surface-empty {
+  padding: 16px;
+  border: 1px dashed color-mix(in srgb, var(--surface-border) 72%, transparent);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.thread-home-status,
+.thread-home-issue {
+  margin-top: 2px;
+  padding: 9px 12px;
+}
+
+.thread-home-issue,
+.thread-home-surface-issue {
+  color: var(--status-failed, #e5484d);
+}
+
+.thread-home-surface {
+  display: flex;
+  flex-direction: column;
+}
+
+.thread-home-surface-toolbar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 76%, transparent);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+}
+
+.thread-home-surface-toolbar button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: inherit;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.thread-home-surface-toolbar strong,
+.thread-home-surface-toolbar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-home-surface-toolbar strong {
+  font-size: 11px;
+}
+
+.thread-home-surface-toolbar span {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.thread-home-surface-body,
+.thread-home-charts,
+.thread-home-surface-body
+  > :is(.canvas-pane, .mesh-canvas-panel, .simulator-canvas-panel, .right-dock-media-panel) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.thread-home-surface-body {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+}
+
+.thread-home-charts {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.thread-home-chart-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  overflow-x: auto;
+}
+
+.thread-home-chart-tabs button {
+  padding: 4px 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+}
+
+.thread-home-chart-tabs button[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.thread-home-surface-issue {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 30;
+  max-width: min(420px, calc(100% - 20px));
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 32%);
+  font-size: 10px;
+}
+
+@container (max-width: 560px) {
+  .thread-home-surface-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .thread-home-thread-provider-label,
+  .thread-home-surface-toolbar > span {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .thread-home-surface-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
