@@ -30,10 +30,9 @@ import { CAPABILITY_INVOKE_TOOL_NAME, gatewayToolDefinitions } from './McpToolGa
  *    canonical one for the audit trail, and unknown keys are preserved so the
  *    real schema validator still gets to produce the real error.
  *
- * Deliberately NOT included: `body`/`data` for content, `directory`/`dir` for
- * path, `search_string`/`original_text` for the replace pair. Those are generic
- * enough to belong to some future tool's own vocabulary, and stealing a key is
- * worse than one rejected call. The wrapper contract of `capability_invoke`
+ * Generic directory names remain excluded. The narrow `target_directory`,
+ * `list_dir`, and `directory` aliases below apply to `list_directory` only,
+ * never to find_files or move_path. The wrapper contract of `capability_invoke`
  * (`name` + `arguments`) is likewise NOT widened here; only the nested target
  * arguments are normalized.
  */
@@ -123,7 +122,10 @@ export const TOOL_ARGUMENT_ALIAS_GROUPS: readonly ToolArgumentAliasGroup[] = [
       'Path',
       'filename',
       'fileName',
-      'file'
+      'file',
+      'target_directory',
+      'list_dir',
+      'directory'
     ]
   },
   {
@@ -158,6 +160,17 @@ export const TOOL_ARGUMENT_ALIAS_GROUPS: readonly ToolArgumentAliasGroup[] = [
   { canonicalKey: 'patch', aliases: ['Patch', 'diff', 'unifiedDiff', 'unified_diff'] }
 ]
 
+/** Native directory spellings must never change the meaning of find_files or move_path. */
+const TOOL_ARGUMENT_ALIAS_TOOL_RESTRICTIONS: Readonly<Record<string, readonly string[]>> = {
+  target_directory: ['list_directory'],
+  list_dir: ['list_directory'],
+  directory: ['list_directory']
+}
+
+function aliasAppliesToTool(alias: string, toolName: string): boolean {
+  const allowedToolNames = TOOL_ARGUMENT_ALIAS_TOOL_RESTRICTIONS[alias]
+  return !allowedToolNames || allowedToolNames.includes(stripToolNamespace(toolName))
+}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
@@ -258,7 +271,7 @@ function coalesceRecord(
     if (!declared.has(group.canonicalKey)) continue
     // An alias the tool declares as its own property is that tool's vocabulary.
     const suppliedAliases = group.aliases.filter(
-      (alias) => !declared.has(alias) && hasOwn(args, alias)
+      (alias) => !declared.has(alias) && hasOwn(args, alias) && aliasAppliesToTool(alias, toolName)
     )
     if (suppliedAliases.length === 0) continue
 

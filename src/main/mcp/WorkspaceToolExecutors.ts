@@ -895,7 +895,14 @@ export async function executeWorkspaceSearch(
   context: WorkspaceToolContext,
   cwd: string
 ) {
-  const query = requireNonEmptyString(args.query || args.pattern, 'Search query')
+  const hasQuery = args.query !== undefined
+  const hasPattern = args.pattern !== undefined
+  if (hasQuery && hasPattern && !Object.is(args.query, args.pattern)) {
+    throw new Error(
+      "workspace_search: 'query' was supplied as 'query' and 'pattern' with different values. TaskWraith will not choose between them — resend the call with one spelling."
+    )
+  }
+  const query = requireNonEmptyString(hasQuery ? args.query : args.pattern, 'Search query')
   const target = args.path || args.directory || '.'
   const targetPath = resolveMcpScopedPath(context, String(target), { allowWorkspaceRoot: true })
   const maxResults = clampInteger(args.maxResults ?? args.limit, 100, 1, 500)

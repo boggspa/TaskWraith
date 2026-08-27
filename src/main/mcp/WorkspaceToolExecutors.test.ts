@@ -2985,3 +2985,38 @@ describe('delegate wave visibility', () => {
     expect(read.waveId).toBe(WAVE_ID)
   })
 })
+
+describe('executeWorkspaceSearch argument aliases', () => {
+  it('rejects conflicting query and pattern aliases before executing a search', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const deps = makeDeps(async () => commandResult(''))
+
+    await expect(
+      executeWorkspaceSearch(
+        deps,
+        { query: 'alpha', pattern: 'beta' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+        workspace
+      )
+    ).rejects.toThrow(/query.*pattern/i)
+  })
+
+  it('accepts pattern alone as the workspace search query', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    let commandSeen: string[] = []
+    const deps = makeDeps(async (command) => {
+      commandSeen = command as string[]
+      return commandResult('')
+    })
+
+    const result = await executeWorkspaceSearch(
+      deps,
+      { pattern: 'needle' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      workspace
+    )
+
+    expect(result).toMatchObject({ ok: true, query: 'needle' })
+    expect(commandSeen).toContain('needle')
+  })
+})

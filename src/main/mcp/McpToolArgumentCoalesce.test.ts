@@ -18,7 +18,7 @@ const GROUP_FIXTURES: Record<
 > = {
   command: { tool: 'run_shell_command', base: {}, value: 'npm run test' },
   cwd: { tool: 'run_shell_command', base: { command: 'npm run test' }, value: 'src/main' },
-  path: { tool: 'read_file', base: {}, value: 'src/main/index.ts' },
+  path: { tool: 'list_directory', base: {}, value: 'src/main' },
   content: { tool: 'write_file', base: { path: 'notes.txt' }, value: 'hello world' },
   old_string: { tool: 'replace', base: { path: 'a.ts', new_string: 'after' }, value: 'before' },
   new_string: { tool: 'replace', base: { path: 'a.ts', old_string: 'before' }, value: 'after' },
@@ -66,7 +66,10 @@ describe('TOOL_ARGUMENT_ALIAS_GROUPS', () => {
       'Path',
       'filename',
       'fileName',
-      'file'
+      'file',
+      'target_directory',
+      'list_dir',
+      'directory'
     ])
     expect(groupFor('content').aliases).toEqual([
       'contents',
@@ -199,6 +202,36 @@ describe('coalesceToolArguments — tool awareness', () => {
     expect(read.ok).toBe(true)
     if (!read.ok) return
     expect(read.arguments).toEqual({ path: 'a.ts', file_text: 'nope' })
+  })
+
+  it('coalesces directory-native aliases only for list_directory', () => {
+    for (const alias of ['target_directory', 'list_dir', 'directory']) {
+      const listed = coalesceToolArguments('list_directory', { [alias]: 'papercuts' })
+      expect(listed.ok, alias).toBe(true)
+      if (!listed.ok) continue
+      expect(listed.arguments).toEqual({ path: 'papercuts' })
+    }
+
+    const found = coalesceToolArguments('find_files', {
+      pattern: '*.ts',
+      target_directory: 'papercuts'
+    })
+    expect(found.ok).toBe(true)
+    if (!found.ok) return
+    expect(found.arguments).toEqual({ pattern: '*.ts', target_directory: 'papercuts' })
+
+    const moved = coalesceToolArguments('move_path', {
+      from: 'a.ts',
+      to: 'b.ts',
+      target_directory: 'papercuts'
+    })
+    expect(moved.ok).toBe(true)
+    if (!moved.ok) return
+    expect(moved.arguments).toEqual({
+      from: 'a.ts',
+      to: 'b.ts',
+      target_directory: 'papercuts'
+    })
   })
 
   it('leaves a zero-property tool and an unknown tool untouched', () => {
