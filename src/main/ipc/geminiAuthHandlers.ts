@@ -5,10 +5,7 @@ import type {
   GeminiAuthStatus,
   GeminiOAuthLoginStatus
 } from '../store/types'
-import {
-  rendererSafeGeminiAuthProfile,
-  rendererSafeGeminiAuthStatus
-} from '../RendererProviderProjection'
+import { createGeminiAuthHandlers } from './providerSecretHandlerFactory'
 
 export interface GeminiAuthHandlersDeps {
   getGeminiAuthStatusSnapshot: () => Promise<GeminiAuthStatus>
@@ -28,42 +25,26 @@ export interface GeminiAuthHandlersDeps {
 }
 
 export function registerGeminiAuthHandlers(deps: GeminiAuthHandlersDeps): void {
-  ipcMain.handle('get-gemini-auth-status', async (event) => {
-    const status = await deps.getGeminiAuthStatusSnapshot()
-    return deps.isMainRendererSender(event) ? status : rendererSafeGeminiAuthStatus(status)
+  const handlers = createGeminiAuthHandlers({
+    getGeminiAuthStatusSnapshot: deps.getGeminiAuthStatusSnapshot,
+    getDefaultGeminiAuthProfileId: deps.getDefaultGeminiAuthProfileId,
+    getGeminiAuthProfiles: deps.getGeminiAuthProfiles,
+    summarizeGeminiAuthProfile: deps.summarizeGeminiAuthProfile,
+    saveGeminiAuthProfile: deps.saveGeminiAuthProfile,
+    deleteGeminiAuthProfile: deps.deleteGeminiAuthProfile,
+    setDefaultGeminiAuthProfile: deps.setDefaultGeminiAuthProfile,
+    startGeminiOAuthLogin: deps.startGeminiOAuthLogin,
+    getGeminiOAuthLoginStatus: deps.getGeminiOAuthLoginStatus,
+    cancelGeminiOAuthLogin: deps.cancelGeminiOAuthLogin,
+    isMainRendererSender: deps.isMainRendererSender
   })
 
-  ipcMain.handle('list-gemini-auth-profiles', async (event) => {
-    const defaultProfileId = deps.getDefaultGeminiAuthProfileId()
-    const profiles = deps
-      .getGeminiAuthProfiles()
-      .map((profile) => deps.summarizeGeminiAuthProfile(profile, defaultProfileId))
-    return deps.isMainRendererSender(event)
-      ? profiles
-      : profiles.map(rendererSafeGeminiAuthProfile)
-  })
-
-  ipcMain.handle('save-gemini-auth-profile', async (_, profile: unknown) => {
-    return deps.saveGeminiAuthProfile(profile)
-  })
-
-  ipcMain.handle('delete-gemini-auth-profile', async (_, profileId: unknown) => {
-    return deps.deleteGeminiAuthProfile(profileId)
-  })
-
-  ipcMain.handle('set-default-gemini-auth-profile', async (_, profileId: unknown) => {
-    return deps.setDefaultGeminiAuthProfile(profileId)
-  })
-
-  ipcMain.handle('start-gemini-oauth-login', async (_, input: unknown) => {
-    return deps.startGeminiOAuthLogin(input)
-  })
-
-  ipcMain.handle('get-gemini-oauth-login-status', async (_, profileId: unknown) => {
-    return deps.getGeminiOAuthLoginStatus(profileId)
-  })
-
-  ipcMain.handle('cancel-gemini-oauth-login', async (_, profileId: unknown) => {
-    return deps.cancelGeminiOAuthLogin(profileId)
-  })
+  ipcMain.handle('get-gemini-auth-status', handlers.getStatus)
+  ipcMain.handle('list-gemini-auth-profiles', handlers.listProfiles)
+  ipcMain.handle('save-gemini-auth-profile', handlers.saveProfile)
+  ipcMain.handle('delete-gemini-auth-profile', handlers.deleteProfile)
+  ipcMain.handle('set-default-gemini-auth-profile', handlers.setDefaultProfile)
+  ipcMain.handle('start-gemini-oauth-login', handlers.startOAuthLogin)
+  ipcMain.handle('get-gemini-oauth-login-status', handlers.getOAuthLoginStatus)
+  ipcMain.handle('cancel-gemini-oauth-login', handlers.cancelOAuthLogin)
 }

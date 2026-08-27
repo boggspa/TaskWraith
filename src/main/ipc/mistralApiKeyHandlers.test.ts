@@ -25,7 +25,10 @@ vi.mock('electron', () => ({
 
 function createStore() {
   return {
-    getStatus: vi.fn(() => ({ configured: false, encryptionAvailable: true })),
+    getStatus: vi.fn((): { configured: boolean; encryptionAvailable: boolean; updatedAt?: string } => ({
+      configured: false,
+      encryptionAvailable: true
+    })),
     setApiKey: vi.fn((value: string) => ({
       ok: true,
       status: { configured: true, encryptionAvailable: true },
@@ -113,6 +116,32 @@ describe('mistralApiKeyHandlers', () => {
       ok: false,
       status: { configured: false, encryptionAvailable: false },
       error: 'writeFailed'
+    })
+    expect(handlers.get(MISTRAL_API_KEY_CLEAR_CHANNEL)?.(event)).toEqual({
+      ok: false,
+      status: { configured: false, encryptionAvailable: false },
+      error: 'clearFailed'
+    })
+    expect(store.clear).not.toHaveBeenCalled()
+  })
+
+  it('round-trips no-millisecond updatedAt timestamps', () => {
+    const store = createStore()
+    store.getStatus.mockReturnValue({
+      configured: true,
+      encryptionAvailable: true,
+      updatedAt: '2026-08-18T12:00:00Z'
+    })
+    registerMistralApiKeyHandlers({
+      keyStore: store,
+      isMainRendererSender: () => true
+    })
+
+    const event = { sender: { id: 1 } }
+    expect(handlers.get(MISTRAL_API_KEY_STATUS_CHANNEL)?.(event)).toEqual({
+      configured: true,
+      encryptionAvailable: true,
+      updatedAt: '2026-08-18T12:00:00Z'
     })
   })
 

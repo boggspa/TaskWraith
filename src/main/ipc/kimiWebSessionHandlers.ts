@@ -1,14 +1,13 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type {
-  WebSessionCookieStore,
-  WebSessionMutationResult,
-  WebSessionStatus
-} from '../providers/WebSessionCookieStore'
+import type { WebSessionCookieStore, WebSessionStatus } from '../providers/WebSessionCookieStore'
 import {
   importKimiWebSession,
-  type CapturedWebSession,
-  type WebSessionImportOutcome
+  type CapturedWebSession
 } from '../providers/WebSessionBrowser'
+import {
+  createProviderWebSessionHandlers,
+  webSessionStatusOf
+} from './providerSecretHandlerFactory'
 
 export interface KimiAuthStatus {
   encryptionAvailable: boolean
@@ -39,26 +38,14 @@ export interface KimiWebSessionHandlersDeps {
  * projections only.
  */
 
-function webSessionStatusOf(
-  store: Pick<WebSessionCookieStore, 'getStatus'> | null
-): WebSessionStatus {
-  if (!store) return { configured: false, encryptionAvailable: false }
-  try {
-    return store.getStatus()
-  } catch {
-    return { configured: false, encryptionAvailable: false }
-  }
-}
-
-/** Accepts canonical JSON `{accessToken, refreshToken?}`, or a bare access
- *  token pasted from DevTools localStorage. */
-function normalizeKimiWebSessionInput(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null
-  const value = raw.trim()
-  return value || null
-}
-
 export function registerKimiWebSessionHandlers(deps: KimiWebSessionHandlersDeps): void {
+  const webSessionHandlers = createProviderWebSessionHandlers<unknown>({
+    isMainRendererSender: deps.isMainRendererSender,
+    webSessionStore: deps.webSessionStore,
+    importWebSession: deps.importWebSession ?? importKimiWebSession,
+    onWebSessionImported: deps.onWebSessionImported
+  })
+
   ipcMain.handle('get-kimi-web-session-status', async (): Promise<WebSessionStatus> => {
     const webSession = webSessionStatusOf(deps.webSessionStore?.() ?? null)
     return {
@@ -68,59 +55,7 @@ export function registerKimiWebSessionHandlers(deps: KimiWebSessionHandlersDeps)
     }
   })
 
-  ipcMain.handle('import-kimi-web-session', async (event): Promise<WebSessionImportOutcome> => {
-    if (!deps.isMainRendererSender(event)) return { ok: false, reason: 'unavailable' }
-    const store = deps.webSessionStore?.() ?? null
-    if (!store) return { ok: false, reason: 'unavailable' }
-    const captured = await (deps.importWebSession ?? importKimiWebSession)()
-    if (!captured) return { ok: false, reason: 'cancelled' }
-    const result = store.setCookie(captured.cookieHeader)
-    if (!result.ok) return { ok: false, reason: 'storeFailed', status: result.status }
-    try {
-      deps.onWebSessionImported?.()
-    } catch {
-      // ignore
-    }
-    return { ok: true, status: result.status }
-  })
-
-  ipcMain.handle(
-    'set-kimi-web-session',
-    async (event, rawTokens: unknown): Promise<WebSessionMutationResult> => {
-      const unavailable: WebSessionMutationResult = {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'writeFailed'
-      }
-      if (!deps.isMainRendererSender(event)) return unavailable
-      const store = deps.webSessionStore?.() ?? null
-      if (!store) return unavailable
-      const serialized = normalizeKimiWebSessionInput(rawTokens)
-      if (!serialized) {
-        return { ok: false, status: webSessionStatusOf(store), error: 'invalidCookie' }
-      }
-      // Stored without a validation fetch, matching the Ollama paste path:
-      // an offline moment must not block saving a good session.
-      return store.setCookie(serialized)
-    }
-  )
-
-  ipcMain.handle('clear-kimi-web-session', async (event): Promise<WebSessionMutationResult> => {
-    if (!deps.isMainRendererSender(event)) {
-      return {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'clearFailed'
-      }
-    }
-    const store = deps.webSessionStore?.() ?? null
-    if (!store) {
-      return {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'clearFailed'
-      }
-    }
-    return store.clear()
-  })
+  ipcMain.handle('import-kimi-web-session', webSessionHandlers.importWebSession)
+  ipcMain.handle('set-kimi-web-session', webSessionHandlers.setWebSession)
+  ipcMain.handle('clear-kimi-web-session', webSessionHandlers.clearWebSession)
 }

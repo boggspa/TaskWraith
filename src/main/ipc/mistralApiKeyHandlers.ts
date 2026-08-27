@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
+  MistralApiKeyMutationError,
   MistralApiKeyMutationResult,
   MistralApiKeyStatus,
   MistralApiKeyStore
@@ -7,10 +8,13 @@ import type {
 import type { WebSessionCookieStore } from '../providers/WebSessionCookieStore'
 import {
   importMistralWebSession,
-  type CapturedWebSession,
-  type WebSessionImportOutcome
+  type CapturedWebSession
 } from '../providers/WebSessionBrowser'
 import type { MistralWebSubscriptionResult } from '../mistral/MistralWebSubscriptionClient'
+import {
+  createProviderSecretStoreHandlers,
+  createProviderWebSessionHandlers
+} from './providerSecretHandlerFactory'
 
 export const MISTRAL_API_KEY_STATUS_CHANNEL = 'mistral-api-key:get-status'
 export const MISTRAL_API_KEY_SET_CHANNEL = 'mistral-api-key:set'
@@ -42,54 +46,30 @@ const RECOGNIZED_MUTATION_ERRORS = new Set([
   'clearFailed'
 ])
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function canonicalIsoTimestamp(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 64) return null
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return null
-  const parsed = Date.parse(value)
-  if (Number.isNaN(parsed)) return null
-  return value
-}
-
-function projectStatus(value: unknown): MistralApiKeyStatus {
-  if (!isRecord(value)) return { configured: false, encryptionAvailable: false }
-  const status: MistralApiKeyStatus = {
-    configured: value.configured === true,
-    encryptionAvailable: value.encryptionAvailable === true
-  }
-  const updatedAt = canonicalIsoTimestamp(value.updatedAt)
-  if (updatedAt) status.updatedAt = updatedAt
-  return status
-}
-
-function projectMutation(value: unknown): MistralApiKeyMutationResult {
-  if (!isRecord(value)) {
-    return {
-      ok: false,
-      status: { configured: false, encryptionAvailable: false },
-      error: 'writeFailed'
-    }
-  }
-  const ok = value.ok === true
-  const status = projectStatus(value.status)
-  if (ok) return { ok: true, status }
-  const error =
-    typeof value.error === 'string' && RECOGNIZED_MUTATION_ERRORS.has(value.error)
-      ? (value.error as MistralApiKeyMutationResult['error'])
-      : 'writeFailed'
-  return { ok: false, status, error }
-}
-
 export function registerMistralApiKeyHandlers(deps: MistralApiKeyHandlerDeps): void {
-  ipcMain.handle(MISTRAL_API_KEY_STATUS_CHANNEL, (event): MistralApiKeyStatus => {
-    if (!deps.isMainRendererSender(event)) {
-      return { configured: false, encryptionAvailable: false }
-    }
-    return projectStatus(deps.keyStore.getStatus())
+  const secretHandlers = createProviderSecretStoreHandlers<MistralApiKeyMutationError>({
+    secretStore: deps.keyStore,
+    isMainRendererSender: deps.isMainRendererSender,
+    onMutationSuccess: deps.onKeyMutationSuccess,
+    recognizedErrors: RECOGNIZED_MUTATION_ERRORS,
+    defaultError: 'writeFailed',
+    fallbackError: 'writeFailed',
+    mutationGuard: { setError: 'writeFailed', clearError: 'clearFailed' },
+    statusProjection: { allowNoMillis: true, requireRoundTrip: false }
   })
+
+  const webSessionHandlers = createProviderWebSessionHandlers<MistralWebSubscriptionResult>({
+    isMainRendererSender: deps.isMainRendererSender,
+    webSessionStore: deps.webSessionStore,
+    importWebSession: deps.importWebSession ?? importMistralWebSession,
+    onWebSessionImported: deps.onWebSessionImported,
+    syncClear: true
+  })
+
+  ipcMain.handle(
+    MISTRAL_API_KEY_STATUS_CHANNEL,
+    (event): MistralApiKeyStatus => secretHandlers.getStatus(event)
+  )
 
   ipcMain.handle(
     MISTRAL_API_KEY_SET_CHANNEL,
@@ -104,94 +84,21 @@ export function registerMistralApiKeyHandlers(deps: MistralApiKeyHandlerDeps): v
       if (typeof apiKey !== 'string' || !apiKey.trim()) {
         return {
           ok: false,
-          status: projectStatus(deps.keyStore.getStatus()),
+          status: secretHandlers.getStatus(_event),
           error: 'invalidApiKey'
         }
       }
-      const result = projectMutation(deps.keyStore.setApiKey(apiKey))
-      if (result.ok) {
-        try {
-          deps.onKeyMutationSuccess?.()
-        } catch {
-          // ignore
-        }
-      }
-      return result
+      return secretHandlers.setSecret(_event, apiKey)
     }
   )
 
-  ipcMain.handle(MISTRAL_API_KEY_CLEAR_CHANNEL, (event): MistralApiKeyMutationResult => {
-    if (!deps.isMainRendererSender(event)) {
-      return {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'clearFailed'
-      }
-    }
-    const result = projectMutation(deps.keyStore.clear())
-    if (result.ok) {
-      try {
-        deps.onKeyMutationSuccess?.()
-      } catch {
-        // ignore
-      }
-    }
-    return result
-  })
-
-  // ── Import Web Session ─────────────────────────────────────────────────────
-  // The cookie header stays in the main process end to end: captured by the
-  // embedded window, validated against the live subscription page, persisted
-  // into the safeStorage envelope. The renderer only ever sees the projection.
-
-  ipcMain.handle(
-    MISTRAL_WEB_SESSION_IMPORT_CHANNEL,
-    async (event): Promise<WebSessionImportOutcome> => {
-      if (!deps.isMainRendererSender(event)) return { ok: false, reason: 'unavailable' }
-      const store = deps.webSessionStore?.() ?? null
-      if (!store) return { ok: false, reason: 'unavailable' }
-      const captured = await (deps.importWebSession ?? importMistralWebSession)()
-      if (!captured) return { ok: false, reason: 'cancelled' }
-      const result = store.setCookie(captured.cookieHeader)
-      if (!result.ok) {
-        return { ok: false, reason: 'storeFailed', status: projectStatus(result.status) }
-      }
-      try {
-        deps.onWebSessionImported?.(captured.summary)
-      } catch {
-        // ignore
-      }
-      return { ok: true, status: projectStatus(result.status) }
-    }
+  ipcMain.handle(MISTRAL_API_KEY_CLEAR_CHANNEL, (event): MistralApiKeyMutationResult =>
+    secretHandlers.clearSecret(event)
   )
 
-  ipcMain.handle(MISTRAL_WEB_SESSION_STATUS_CHANNEL, (event): MistralApiKeyStatus => {
-    if (!deps.isMainRendererSender(event)) {
-      return { configured: false, encryptionAvailable: false }
-    }
-    const store = deps.webSessionStore?.() ?? null
-    if (!store) return { configured: false, encryptionAvailable: false }
-    return projectStatus(store.getStatus())
-  })
-
-  ipcMain.handle(MISTRAL_WEB_SESSION_CLEAR_CHANNEL, (event): MistralApiKeyMutationResult => {
-    if (!deps.isMainRendererSender(event)) {
-      return {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'clearFailed'
-      }
-    }
-    const store = deps.webSessionStore?.() ?? null
-    if (!store) {
-      return {
-        ok: false,
-        status: { configured: false, encryptionAvailable: false },
-        error: 'clearFailed'
-      }
-    }
-    return projectMutation(store.clear())
-  })
+  ipcMain.handle(MISTRAL_WEB_SESSION_IMPORT_CHANNEL, webSessionHandlers.importWebSession)
+  ipcMain.handle(MISTRAL_WEB_SESSION_STATUS_CHANNEL, webSessionHandlers.getWebSessionStatus)
+  ipcMain.handle(MISTRAL_WEB_SESSION_CLEAR_CHANNEL, webSessionHandlers.clearWebSession)
 }
 
 export function unregisterMistralApiKeyHandlers(): void {
