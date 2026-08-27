@@ -706,6 +706,11 @@ public final class RemoteSessionModel: ObservableObject {
     /// Deep-link target captured from a notification tap before the session is
     /// established (cold launch); applied to navigationTarget on `.established`.
     private var pendingDeepLinkThreadId: String?
+    /// Set by a content-bearing wake (`notification-tap` / foreground / resume)
+    /// so `.established` from that walk rehydrates instead of waiting for the
+    /// Mac to push an unsolicited snapshot. Cleared when consumed or when the
+    /// already-alive path rehydrates itself.
+    private var pendingWakeRehydrate = false
     /// Slice 5 (RC4): per-thread wake generation. A notification tap / foreground
     /// bumps the target thread's counter; the detail view refetches a cached-but-
     /// stale transcript when the generation advances past what it last applied, so
@@ -1031,6 +1036,12 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func handleRemoteWake(reason: String, timeoutMs: Int = 10_000) async -> Bool {
         guard hasStoredPairing else { return false }
+        if Self.shouldRehydrateAfterWake(reason: reason) {
+            pendingWakeRehydrate = true
+        }
+        #if DEBUG
+            remoteWakeBeganHookForTesting?()
+        #endif
         switch phase {
         case .connected:
             let attempt = connectAttempt
@@ -1043,9 +1054,10 @@ public final class RemoteSessionModel: ObservableObject {
                 // the approval-ack path (tight background budget) and the silent
                 // push (runs outside the background assertion). rehydrate only
                 // enqueues fire-and-forget work, so the ack still returns now.
-                if reason != Self.approvalAckWakeReason, reason != Self.silentPushWakeReason {
+                if Self.shouldRehydrateAfterWake(reason: reason) {
                     rehydrateAfterAliveWake()
                 }
+                pendingWakeRehydrate = false
                 return true
             }
             // Half-open from connected — allowed supersede source (b).
@@ -1333,8 +1345,21 @@ public final class RemoteSessionModel: ObservableObject {
         self.pairedHosts = doc.hosts
         self.selectedHostId = doc.selectedHostId
         self.hasStoredPairing = doc.selectedHostId != nil
+        // A stored pairing means this phone established at least once. Restore
+        // that so a cold launch (notification / widget / APNs) keeps ConnectedShell
+        // instead of flashing PairingView. Also honor an explicit App Group flag
+        // so forgetAllHosts can clear the bit independently of a later re-pair.
+        self.wasEverConnected =
+            self.hasStoredPairing
+            || pushGatewayDefaults.bool(forKey: Self.wasEverConnectedDefaultsKey)
+        if self.wasEverConnected {
+            self.persistWasEverConnectedFlag()
+        }
         if let active = doc.selectedHost {
             self.macDisplayName = Self.sanitizedMacName(active.macDisplayName)
+            if self.identityError == nil {
+                self.prepareHostProjectionOffline(hostIdentity: active.macIdentityPubKey)
+            }
         }
         streamingPublishGate.bind { [weak self] threadId, staging in
             self?.applyStreamingStagingPublish(threadId: threadId, staging: staging)
@@ -2126,6 +2151,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// no reason) and a user tap ("notification-tap") DO rehydrate.
     static let approvalAckWakeReason = "notification-action"
     static let silentPushWakeReason = "remote-notification"
+    /// App Group / suite flag so a cold launch with a stored pairing can keep
+    /// ConnectedShell mounted (`showShellDuringDrop`) instead of flashing PairingView.
+    static let wasEverConnectedDefaultsKey = "tw.wasEverConnected.v1"
+
+    static func shouldRehydrateAfterWake(reason: String) -> Bool {
+        reason != approvalAckWakeReason && reason != silentPushWakeReason
+    }
 
     #if DEBUG
         private(set) var aliveRehydrateInvocationsForTesting = 0
@@ -3098,6 +3130,10 @@ public final class RemoteSessionModel: ObservableObject {
         }
         pairingStore.remove(macIdentityPubKey: id)
         refreshPairedHostsPublished()
+        if !hasStoredPairing {
+            wasEverConnected = false
+            persistWasEverConnectedFlag()
+        }
         registerWithProjectPushGatewaysIfReady()
         guard wasActive else { return }
         pinnedMacIdentityB64 = nil
@@ -3124,6 +3160,8 @@ public final class RemoteSessionModel: ObservableObject {
         let forgottenHostIds = pairedHosts.map(\.macIdentityPubKey)
         deregisterFromProjectPushGateways(pairedHosts)
         pairingStore.clearAll()
+        wasEverConnected = false
+        persistWasEverConnectedFlag()
         refreshPairedHostsPublished()
         registerWithProjectPushGatewaysIfReady()
         pinnedMacIdentityB64 = nil
@@ -3263,6 +3301,10 @@ public final class RemoteSessionModel: ObservableObject {
         refreshPairedHostsPublished()
     }
 
+    private func persistWasEverConnectedFlag() {
+        pushGatewayDefaults.set(wasEverConnected, forKey: Self.wasEverConnectedDefaultsKey)
+    }
+
     /// Mirror the persisted multi-host document into the @Published surface the
     /// view layer renders. Call after every store mutation.
     private func refreshPairedHostsPublished() {
@@ -3274,6 +3316,76 @@ public final class RemoteSessionModel: ObservableObject {
 
     private static func iso8601Now() -> String {
         TWCoders.iso8601Now()
+    }
+
+    /// Shared `.established` body so a test can fire the same mutations without
+    /// a live transport client. `client == nil` skips host-projection activate.
+    private func applySessionEstablished(from client: RelayTransportClient?) {
+        if let client {
+            if let hostIdentity = pinnedMacIdentityB64,
+                let phoneIdentity = pairedHostProjectionIdentity(
+                    identityPublicKeyBase64: client.identityPublicKeyBase64)
+            {
+                hostProjection.activate(
+                    hostIdentity: hostIdentity,
+                    phoneIdentity: phoneIdentity,
+                    transport: client)
+            } else {
+                hostProjection.clear(removePersistedSnapshot: false)
+            }
+        }
+        cancelAutoReconnect(resetAttempts: true)
+        phase = .connected
+        reconnectCoordinator.markAttemptFinished()
+        wasEverConnected = true
+        persistWasEverConnectedFlag()
+        persistCurrentPairing()
+        // Cold-launch deep link: a notification tap set a target before the
+        // session existed — apply it now that ConnectedShell will render.
+        if let pending = pendingDeepLinkThreadId {
+            navigationTarget = pending
+            pendingDeepLinkThreadId = nil
+        }
+        // Wake-path rehydrate: a notification/APNs/foreground walk that just
+        // established should pull the projection instead of waiting for an
+        // unsolicited Mac push. No-op until handleRemoteWake arms the flag.
+        if pendingWakeRehydrate {
+            pendingWakeRehydrate = false
+            rehydrateAfterAliveWake()
+        }
+        // Grace fallback for the hydration gate: a Mac with genuinely nothing
+        // shared must eventually show the true empty state rather than ticking
+        // forever. Idempotent — content arriving first flips the flag and this
+        // no-ops.
+        if !projectionHydrated {
+            let graceAttempt = connectAttempt
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await MainActor.run {
+                    guard let self else { return }
+                    let connected: Bool
+                    if case .connected = self.phase {
+                        connected = true
+                    } else {
+                        connected = false
+                    }
+                    guard
+                        Self.shouldConfirmProjectionEmpty(
+                            timerConnectAttempt: graceAttempt,
+                            currentConnectAttempt: self.connectAttempt,
+                            isConnected: connected)
+                    else { return }
+                    self.projectionHydrated = true
+                    self.projectionGraceExpired = true
+                }
+            }
+        }
+        if let visible = visibleThreadId {
+            requestThreadSnapshot(visible, bypassVisibleStreamSuppression: true)
+        }
+        reassertWatchedThreadToHost()
+        requestPushAuthorizationIfNeeded()
+        sendPendingApnsTokenIfReady()
     }
 
     private func consumeEvents(of client: RelayTransportClient) {
@@ -3307,77 +3419,7 @@ public final class RemoteSessionModel: ObservableObject {
                 case .established:
                     await MainActor.run {
                         guard self.client === client else { return }
-                        if let hostIdentity = self.pinnedMacIdentityB64,
-                            let phoneIdentity = pairedHostProjectionIdentity(
-                                identityPublicKeyBase64: client.identityPublicKeyBase64)
-                        {
-                            self.hostProjection.activate(
-                                hostIdentity: hostIdentity,
-                                phoneIdentity: phoneIdentity,
-                                transport: client)
-                        } else {
-                            self.hostProjection.clear(removePersistedSnapshot: false)
-                        }
-                        self.cancelAutoReconnect(resetAttempts: true)
-                        self.phase = .connected
-                        self.reconnectCoordinator.markAttemptFinished()
-                        self.wasEverConnected = true
-                        self.persistCurrentPairing()
-                        // Cold-launch deep link: a notification tap set a target
-                        // before the session existed — apply it now that
-                        // ConnectedShell will render.
-                        if let pending = self.pendingDeepLinkThreadId {
-                            self.navigationTarget = pending
-                            self.pendingDeepLinkThreadId = nil
-                        }
-                        // Grace fallback for the hydration gate: a Mac with
-                        // genuinely nothing shared must eventually show the
-                        // true empty state (with its setup instructions)
-                        // rather than ticking forever. Idempotent — content
-                        // arriving first flips the flag and this no-ops.
-                        if !self.projectionHydrated {
-                            let graceAttempt = self.connectAttempt
-                            Task { [weak self] in
-                                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                                await MainActor.run {
-                                    guard let self else { return }
-                                    // Only confirm-empty for THIS connection (a
-                                    // superseded reconnect's timer must not latch a
-                                    // false empty for a newer, still-loading one).
-                                    let connected: Bool
-                                    if case .connected = self.phase {
-                                        connected = true
-                                    } else {
-                                        connected = false
-                                    }
-                                    guard
-                                        Self.shouldConfirmProjectionEmpty(
-                                            timerConnectAttempt: graceAttempt,
-                                            currentConnectAttempt: self.connectAttempt,
-                                            isConnected: connected)
-                                    else { return }
-                                    // Keep projectionHydrated=true too: the
-                                    // preset-settling guard reads it as its
-                                    // timeout-release for a genuinely-empty Mac.
-                                    self.projectionHydrated = true
-                                    self.projectionGraceExpired = true
-                                }
-                            }
-                        }
-                        // The establish snapshot covers recent-N threads; the
-                        // one the user is LOOKING AT may be older — refresh it
-                        // explicitly so the transcript catches up after a
-                        // backgrounded run finished.
-                        if let visible = self.visibleThreadId {
-                            self.requestThreadSnapshot(
-                                visible, bypassVisibleStreamSuppression: true)
-                        }
-                        self.reassertWatchedThreadToHost()
-                        // APNs: ask AFTER a successful session (never at cold
-                        // launch), then register; the token callback ships it
-                        // up via handleApnsToken.
-                        self.requestPushAuthorizationIfNeeded()
-                        self.sendPendingApnsTokenIfReady()
+                        self.applySessionEstablished(from: client)
                     }
                 case .message(let method, let params):
                     await self.handle(method: method, params: params)
@@ -7201,11 +7243,18 @@ public final class RemoteSessionModel: ObservableObject {
     public func handleNotificationTap(threadId: String) {
         Task { [weak self] in
             guard let self else { return }
-            _ = await self.handleRemoteWake(reason: "notification-tap", timeoutMs: 22_000)
-            await MainActor.run {
-                self.routeNotificationTarget(threadId)
-            }
+            await self.performNotificationTap(threadId: threadId)
         }
+    }
+
+    func performNotificationTap(threadId: String, timeoutMs: Int = 22_000) async {
+        // Register the deep-link BEFORE the wake walk. `.established` consumes
+        // pendingDeepLinkThreadId; if we wait until after handleRemoteWake the
+        // target is delayed by the whole reconnect budget (up to 22s).
+        await MainActor.run {
+            self.routeNotificationTarget(threadId)
+        }
+        _ = await handleRemoteWake(reason: "notification-tap", timeoutMs: timeoutMs)
     }
 
     /// Slice 5 (RC4): route a tapped notification to its target thread AND force
@@ -7252,6 +7301,14 @@ public final class RemoteSessionModel: ObservableObject {
         }
         private(set) var socketHealthProbeStartsForTesting = 0
         var healthProbeOverrideForTesting: (@Sendable () async -> Bool)?
+        var remoteWakeBeganHookForTesting: (() -> Void)?
+        var pendingDeepLinkThreadIdForTesting: String? { pendingDeepLinkThreadId }
+        func performNotificationTapForTesting(threadId: String, timeoutMs: Int = 0) async {
+            await performNotificationTap(threadId: threadId, timeoutMs: timeoutMs)
+        }
+        func applySessionEstablishedForTesting() {
+            applySessionEstablished(from: nil)
+        }
     #endif
 
     public func answer(_ card: MobileQuestionCard, _ text: String, isCustom: Bool = true) {

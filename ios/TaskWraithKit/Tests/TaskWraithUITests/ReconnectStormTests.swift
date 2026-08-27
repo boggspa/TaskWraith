@@ -603,3 +603,152 @@ struct ReconnectLifecycleInvalidationTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// S3 (2026-08-27): cold-launch cached recovery + notification deep-link ordering.
+/// A stored pairing must keep ConnectedShell mounted on the next launch, a wake
+/// establish must rehydrate, and the tap target must be registered before the
+/// reconnect walk so `.established` can consume it.
+@Suite("Cached recovery + notification entry")
+@MainActor
+struct ReconnectCachedRecoveryTests {
+    private static let unroutableRelay = "ws://reconnect-cached.invalid:9"
+
+    @Test("a stored pairing restores wasEverConnected on cold launch")
+    func storedPairingRestoresWasEverConnected() {
+        let model = makePairedModel()
+        #expect(
+            model.wasEverConnected,
+            "cold launch with a persisted pairing left wasEverConnected=false, so PairingView mounts")
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: model.wasEverConnected,
+                hasStoredPairing: model.hasStoredPairing,
+                phase: .idle),
+            "RootView would flash PairingView on a paired cold launch")
+        model.forgetAllHosts()
+    }
+
+    @Test("forgetting every host clears wasEverConnected for the next launch")
+    func forgetAllHostsClearsWasEverConnectedAcrossLaunches() {
+        let suite = "ReconnectCachedForget.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = seedPairing(defaults: defaults)
+        let model = RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+        model.applySessionEstablishedForTesting()
+        #expect(model.wasEverConnected)
+        model.forgetAllHosts()
+
+        let relaunch = RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+        #expect(!relaunch.hasStoredPairing)
+        #expect(
+            !relaunch.wasEverConnected,
+            "forgetAllHosts left wasEverConnected set so a later unpaired launch would still hold the shell")
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: relaunch.wasEverConnected,
+                hasStoredPairing: relaunch.hasStoredPairing,
+                phase: .idle))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    @Test("notification tap registers the deep-link target before the wake walk")
+    func notificationTapRegistersDeepLinkBeforeWake() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        var pendingAtWakeStart: String?
+        model.remoteWakeBeganHookForTesting = {
+            pendingAtWakeStart = model.pendingDeepLinkThreadIdForTesting
+        }
+
+        await model.performNotificationTapForTesting(threadId: "thread-notif")
+
+        #expect(
+            pendingAtWakeStart == "thread-notif",
+            "handleNotificationTap registered the target after handleRemoteWake, so .established during the walk missed it")
+        model.forgetAllHosts()
+    }
+
+    @Test("an .established from a notification wake rehydrates the projection")
+    func establishedFromWakeRehydrates() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(reason: "notification-tap", timeoutMs: 0)
+        #expect(model.aliveRehydrateInvocationsForTesting == 0)
+
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 1,
+            ".established from a wake did not call rehydrateAfterAliveWake — home list stays stale")
+        model.forgetAllHosts()
+    }
+
+    @Test("silent push and approval wakes do not arm wake rehydrate")
+    func silentAndApprovalWakesDoNotArmRehydrate() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(
+            reason: RemoteSessionModel.silentPushWakeReason, timeoutMs: 0)
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 0,
+            "silent-push establish spent the background budget on a projection resync")
+
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(
+            reason: RemoteSessionModel.approvalAckWakeReason, timeoutMs: 0)
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 0,
+            "approval-ack establish spent the background budget on a projection resync")
+        model.forgetAllHosts()
+    }
+
+    @Test("shell policy holds ConnectedShell on idle/error only after a real pairing")
+    func shellPolicyHoldsOnlyAfterPairing() {
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .idle))
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .connecting))
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: false, hasStoredPairing: true, phase: .idle),
+            "first pairing must still get PairingView")
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: false, phase: .idle))
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .connected))
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectCached.\(UUID().uuidString)")!
+        let store = seedPairing(defaults: defaults)
+        return RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+    }
+
+    private func seedPairing(defaults: UserDefaults) -> UserDefaultsPairedHostStore {
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Cached Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return store
+    }
+
+    private struct CachedSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}

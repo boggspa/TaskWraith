@@ -35,6 +35,23 @@ private struct DemoModeBanner: View {
     }
 }
 
+/// Pure policy for keeping ConnectedShell mounted across transient drops and
+/// cold launches. Extracted so cached-recovery tests can lock the contract
+/// without mounting SwiftUI.
+public enum SessionShellPolicy {
+    public static func showShellDuringDrop(
+        wasEverConnected: Bool,
+        hasStoredPairing: Bool,
+        phase: SessionPhase
+    ) -> Bool {
+        guard wasEverConnected, hasStoredPairing else { return false }
+        switch phase {
+        case .connecting, .error, .idle, .awaitingMacConfirm: return true
+        case .connected: return false
+        }
+    }
+}
+
 public struct RootView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
@@ -64,11 +81,10 @@ public struct RootView: View {
     /// surfaces the code anyway, so nothing is hidden even if the Mac does ask
     /// again.
     private var showShellDuringDrop: Bool {
-        guard model.wasEverConnected, model.hasStoredPairing else { return false }
-        switch model.phase {
-        case .connecting, .error, .idle, .awaitingMacConfirm: return true
-        case .connected: return false
-        }
+        SessionShellPolicy.showShellDuringDrop(
+            wasEverConnected: model.wasEverConnected,
+            hasStoredPairing: model.hasStoredPairing,
+            phase: model.phase)
     }
 
     private var isConnectedForFirstLaunch: Bool {

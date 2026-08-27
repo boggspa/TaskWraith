@@ -531,7 +531,7 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
 
   public init(
     defaults: UserDefaults = .standard,
-    keyPrefix: String = "tw.host-projection.v1."
+    keyPrefix: String = UserDefaultsPairedHostSnapshotStore.defaultKeyPrefix
   ) {
     self.defaults = defaults
     self.keyPrefix = keyPrefix
@@ -600,5 +600,40 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     guard !bounded.isEmpty, bounded.utf8.count <= 4_096 else { return nil }
     let digest = SHA256.hash(data: Data(bounded.utf8))
     return keyPrefix + digest.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+extension UserDefaultsPairedHostSnapshotStore {
+  public static let defaultKeyPrefix = "tw.host-projection.v1."
+
+  /// One-time copy of cached host snapshots from the app-private `.standard`
+  /// domain into the App Group suite WidgetKit / NSE share. Never clobbers a
+  /// key the destination already holds.
+  public static func migrate(
+    from source: UserDefaults,
+    to destination: UserDefaults,
+    keyPrefix: String = defaultKeyPrefix
+  ) {
+    let keys = source.dictionaryRepresentation().keys.filter { $0.hasPrefix(keyPrefix) }
+    for key in keys {
+      guard destination.object(forKey: key) == nil else { continue }
+      if let data = source.data(forKey: key) {
+        destination.set(data, forKey: key)
+      }
+    }
+  }
+}
+
+public enum PairedHostAppGroupBootstrap {
+  public static func migrateAndMakeStores(
+    sharedDefaults: UserDefaults,
+    standardDefaults: UserDefaults = .standard
+  ) -> (pairingStore: UserDefaultsPairedHostStore, snapshotStore: UserDefaultsPairedHostSnapshotStore) {
+    UserDefaultsPairedHostStore.migrate(from: standardDefaults, to: sharedDefaults)
+    UserDefaultsPairedHostSnapshotStore.migrate(from: standardDefaults, to: sharedDefaults)
+    return (
+      UserDefaultsPairedHostStore(defaults: sharedDefaults),
+      UserDefaultsPairedHostSnapshotStore(defaults: sharedDefaults)
+    )
   }
 }
