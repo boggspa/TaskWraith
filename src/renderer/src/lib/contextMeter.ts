@@ -34,6 +34,7 @@ import {
   type ContextUsageSnapshot
 } from '../../../shared/contextUsage'
 import { estimateTokensFromChars, visiblePayloadChars } from '../../../shared/tokenEstimate'
+import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { isReasoningToolName } from './ToolParser'
 
 export interface ContextToolActivityEntry {
@@ -459,6 +460,7 @@ export function buildContextActivitySummary(
 
     for (const activity of message.toolActivities || []) {
       if (!activityBelongsToParticipant(message, activity, participantId)) continue
+      if (isMcpTransportWrapperActivity(activity)) continue
       const reasoning = isReasoningToolName(activity.toolName || '')
       const resultPayload =
         activity.rawResultEvent ??

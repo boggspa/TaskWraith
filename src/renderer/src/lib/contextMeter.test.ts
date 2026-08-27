@@ -842,6 +842,16 @@ describe('buildContextActivitySummary', () => {
             status: 'success',
             outputPreview: 'Need to inspect the call site.',
             metadata: { ensembleParticipantId: 'p1' }
+          },
+          {
+            id: 'mcp-wrapper',
+            toolName: 'callmcptool',
+            displayName: 'Used callmcptool',
+            category: 'unknown',
+            status: 'success',
+            parameters: { server: 'taskwraith' },
+            outputPreview: 'Listed TaskWraith tools.',
+            metadata: { ensembleParticipantId: 'p1' }
           }
         ]
       }
@@ -853,6 +863,7 @@ describe('buildContextActivitySummary', () => {
       toolCallCount: 1,
       toolResultCount: 1,
       readCalls: 1,
+      otherCalls: 0,
       filesRead: 1,
       reasoningSegmentCount: 1,
       tools: [{ name: 'read_file', count: 1 }]

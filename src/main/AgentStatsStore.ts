@@ -26,6 +26,7 @@ import {
   usageCacheReadInputTokens,
   usageInputIncludesCache
 } from '../shared/usageAccounting'
+import { isMcpTransportWrapperActivity } from '../shared/toolInvocationPresentation'
 
 export const AGENT_STATS_SCHEMA_VERSION = 1
 /** Raw per-run records tolerated before a file is compacted into one rollup. */
@@ -266,6 +267,7 @@ export function toolActivityStatsForRun(
   for (const message of messages) {
     if (message.runId !== runId || !Array.isArray(message.toolActivities)) continue
     for (const activity of message.toolActivities) {
+      if (isMcpTransportWrapperActivity(activity)) continue
       toolCalls += 1
       if (activity.category === 'write') writeToolCalls += 1
     }
