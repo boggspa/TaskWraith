@@ -9,6 +9,7 @@ import {
   HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
   HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_RECEIPT_STATUSES,
+  HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   applyHostDeltaCursor,
   assertHostSnapshotFamilies,
   buildHostBootstrapWelcome,
@@ -357,7 +358,10 @@ describe('Host protocol Wave 2A contract', () => {
           resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
         })
       )
-    ).toMatchObject({ ok: true, value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } } })
+    ).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } }
+    })
     expect(
       decodeHostCommandReceipt(
         sampleReceipt({
@@ -369,7 +373,10 @@ describe('Host protocol Wave 2A contract', () => {
           }
         })
       )
-    ).toMatchObject({ ok: true, value: { resultRef: { kind: 'provider-auth', operationId: 'operation-1' } } })
+    ).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'provider-auth', operationId: 'operation-1' } }
+    })
     expect(
       decodeHostCommandReceipt({
         ...sampleReceipt(),
@@ -537,6 +544,89 @@ describe('Host protocol Wave 2A contract', () => {
       generation: 3,
       cursor: 10
     })
+  })
+
+  it('accepts only bounded descriptor-only thread.record.persist commands', () => {
+    const descriptor = {
+      transferId: '11111111-1111-4111-8111-111111111111',
+      sha256: 'a'.repeat(64),
+      byteLength: 512 * 1024,
+      expectedRevision: 7
+    }
+    const decoded = decodeHostCommand(
+      sampleCommand({
+        name: 'thread.record.persist',
+        target: { threadId: 'thread-1' },
+        arguments: descriptor
+      })
+    )
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.persist',
+        target: { threadId: 'thread-1' },
+        arguments: descriptor
+      }
+    })
+    expect(descriptor.byteLength).toBeGreaterThan(256 * 1024)
+
+    for (const smuggled of [
+      { ...descriptor, record: { appChatId: 'thread-1' } },
+      { ...descriptor, path: '/tmp/record.json' }
+    ]) {
+      expect(
+        decodeHostCommand(
+          sampleCommand({
+            name: 'thread.record.persist',
+            target: { threadId: 'thread-1' },
+            arguments: smuggled
+          })
+        )
+      ).toMatchObject({
+        ok: false,
+        error: 'thread.record.persist has unknown argument keys'
+      })
+    }
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: '../escape' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist transferId is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, sha256: 'A'.repeat(64) }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'thread.record.persist sha256 must be lowercase SHA-256 hex'
+    })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, byteLength: HOST_THREAD_RECORD_TRANSFER_MAX_BYTES + 1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist byteLength is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, expectedRevision: -1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist expectedRevision is invalid' })
   })
 
   it('requires typed question.answer and approval.decide arguments', () => {
@@ -973,10 +1063,10 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       })
     ).toMatchObject({ ok: false, error: 'unsupported protocol version' })
 
-    const missingHealth = createEmptyHostSnapshot({ generation: 1, cursor: 0 }) as unknown as Record<
-      string,
-      unknown
-    >
+    const missingHealth = createEmptyHostSnapshot({
+      generation: 1,
+      cursor: 0
+    }) as unknown as Record<string, unknown>
     delete missingHealth.health
     expect(decodeHostSnapshot(missingHealth)).toMatchObject({
       ok: false,

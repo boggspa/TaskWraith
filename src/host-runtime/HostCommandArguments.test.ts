@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   HOST_PROTOCOL_VERSION,
+  HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   type HostCommand,
   type HostCommandName
 } from '../shared/hostProtocol'
@@ -21,6 +22,7 @@ const names: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'thread.record.persist',
   'channel.member.revoke',
   'channel.close',
   'thread.select',
@@ -80,6 +82,16 @@ function validShape(name: HostCommandName): {
       return {
         target: { threadId: 'thread-id' },
         args: { participantId: 'participant-id', enabled: true }
+      }
+    case 'thread.record.persist':
+      return {
+        target: { threadId: 'thread-id' },
+        args: {
+          transferId: '11111111-1111-4111-8111-111111111111',
+          sha256: 'a'.repeat(64),
+          byteLength: 512 * 1024,
+          expectedRevision: 7
+        }
       }
     case 'channel.member.revoke':
       return { target: { channelId: 'channel-id' }, args: { memberId: 'member-id' } }
@@ -244,7 +256,11 @@ describe('validateHostCommandArguments', () => {
   it('accepts only the closed setup command shapes', () => {
     expect(
       validateHostCommandArguments(
-        command('workspace.register', {}, { path: '/workspace', displayName: 'Workspace', pinned: false })
+        command(
+          'workspace.register',
+          {},
+          { path: '/workspace', displayName: 'Workspace', pinned: false }
+        )
       ).ok
     ).toBe(true)
     expect(
@@ -262,7 +278,9 @@ describe('validateHostCommandArguments', () => {
     ).toEqual({ ok: false, error: 'thread.create global must not include workspaceId' })
 
     expect(
-      validateHostCommandArguments(command('thread.configure', { threadId: 'thread-id' }, { title: 'Retitled' }))
+      validateHostCommandArguments(
+        command('thread.configure', { threadId: 'thread-id' }, { title: 'Retitled' })
+      )
     ).toMatchObject({ ok: true, value: { arguments: { title: 'Retitled' } } })
     expect(
       validateHostCommandArguments(
@@ -313,7 +331,11 @@ describe('validateHostCommandArguments', () => {
     })
     expect(
       validateHostCommandArguments(
-        command('provider.auth.cancel', { providerId: 'provider-id', operationId: 'operation-id' }, { flowId: 'x' })
+        command(
+          'provider.auth.cancel',
+          { providerId: 'provider-id', operationId: 'operation-id' },
+          { flowId: 'x' }
+        )
       )
     ).toEqual({ ok: false, error: 'provider.auth.cancel arguments must be empty' })
   })
@@ -363,6 +385,69 @@ describe('validateHostCommandArguments', () => {
         )
       )
     ).toEqual({ ok: false, error: 'ensemble.seat.toggle has unknown argument keys' })
+  })
+
+  it('thread.record.persist accepts only an exact bounded transfer descriptor', () => {
+    const descriptor = {
+      transferId: '11111111-1111-4111-8111-111111111111',
+      sha256: 'a'.repeat(64),
+      byteLength: 512 * 1024,
+      expectedRevision: 7
+    }
+    const ok = validateHostCommandArguments(
+      command('thread.record.persist', { threadId: 'thread-id' }, descriptor)
+    )
+    expect(ok).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.persist',
+        target: { threadId: 'thread-id' },
+        arguments: descriptor
+      }
+    })
+    expect(descriptor.byteLength).toBeGreaterThan(256 * 1024)
+
+    const invalid: Array<[Record<string, unknown>, string]> = [
+      [
+        { ...descriptor, record: { appChatId: 'thread-id' } },
+        'thread.record.persist has unknown argument keys'
+      ],
+      [
+        { ...descriptor, path: '/tmp/record.json' },
+        'thread.record.persist has unknown argument keys'
+      ],
+      [{ ...descriptor, transferId: '../escape' }, 'thread.record.persist transferId is invalid'],
+      [
+        { ...descriptor, sha256: 'A'.repeat(64) },
+        'thread.record.persist sha256 must be lowercase SHA-256 hex'
+      ],
+      [{ ...descriptor, byteLength: 0 }, 'thread.record.persist byteLength is invalid'],
+      [
+        { ...descriptor, byteLength: HOST_THREAD_RECORD_TRANSFER_MAX_BYTES + 1 },
+        'thread.record.persist byteLength is invalid'
+      ],
+      [{ ...descriptor, expectedRevision: -1 }, 'thread.record.persist expectedRevision is invalid']
+    ]
+    for (const [argumentsValue, error] of invalid) {
+      expect(
+        validateHostCommandArguments(
+          command('thread.record.persist', { threadId: 'thread-id' }, argumentsValue)
+        )
+      ).toEqual({ ok: false, error })
+    }
+
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-id', path: '/tmp/record.json' },
+          descriptor
+        )
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.record.persist target must be exactly { threadId }'
+    })
   })
 
   it('question.answer preserves the narrow shared codec', () => {

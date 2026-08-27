@@ -144,6 +144,27 @@ describe('HostCommandReceiptStore', () => {
     expect(completed?.cursor).toBe(7)
   })
 
+  it('persists thread.record.persist as a durable governed command name', () => {
+    const store = openStore()
+    const begun = store.begin(
+      baseInput({
+        commandId: 'persist-1',
+        idempotencyKey: 'persist-key-1',
+        commandName: 'thread.record.persist',
+        target: { kind: 'thread', id: 'thread-1' }
+      })
+    )
+    expect(begun.kind).toBe('created')
+    if (begun.kind !== 'created') return
+    expect(begun.receipt.commandName).toBe('thread.record.persist')
+
+    store.complete({ commandId: 'persist-1', status: 'succeeded' })
+    store.compact()
+    const reopened = openStore()
+    const durable = expectFound(reopened.getByCommandId('persist-1', OWNER_ACTOR), 'succeeded')
+    expect(durable?.commandName).toBe('thread.record.persist')
+  })
+
   it('refreshes position at terminal completion and preserves it through reopen/compaction', () => {
     position = { generation: 3, cursor: 7 }
     const store = openStore()
@@ -185,7 +206,11 @@ describe('HostCommandReceiptStore', () => {
     expect(durable?.resultRef).toEqual({ kind: 'workspace', workspaceId: 'workspace-1' })
 
     reopened.begin(
-      baseInput({ commandId: 'setup-2', idempotencyKey: 'setup-key-2', commandName: 'thread.archive' })
+      baseInput({
+        commandId: 'setup-2',
+        idempotencyKey: 'setup-key-2',
+        commandName: 'thread.archive'
+      })
     )
     const cancelled = reopened.complete({
       commandId: 'setup-2',

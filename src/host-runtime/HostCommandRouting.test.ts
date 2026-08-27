@@ -28,6 +28,7 @@ const PROTOCOL_COMMAND_NAMES: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'thread.record.persist',
   'channel.member.revoke',
   'channel.close',
   'thread.select',
@@ -62,6 +63,7 @@ const EXPECTED_GOVERNED: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'thread.record.persist',
   'channel.member.revoke',
   'channel.close',
   'thread.select'
@@ -122,6 +124,7 @@ describe('HostCommandRouting', () => {
     ['question.answer', 'governed-mutation'],
     ['approval.decide', 'governed-mutation'],
     ['ensemble.seat.toggle', 'governed-mutation'],
+    ['thread.record.persist', 'governed-mutation'],
     ['channel.member.revoke', 'governed-mutation'],
     ['channel.close', 'governed-mutation'],
     ['thread.select', 'governed-mutation'],

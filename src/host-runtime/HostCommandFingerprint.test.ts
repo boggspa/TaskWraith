@@ -12,6 +12,7 @@ const names: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'thread.record.persist',
   'channel.member.revoke',
   'channel.close',
   'thread.select',
@@ -62,6 +63,7 @@ function targetFor(name: HostCommandName): Record<string, string> {
     case 'composer.send':
     case 'run.cancel':
     case 'ensemble.seat.toggle':
+    case 'thread.record.persist':
     case 'thread.select':
     case 'thread.configure':
     case 'thread.archive':
@@ -96,6 +98,43 @@ describe('fingerprintHostCommand', () => {
       expect(result.fingerprint).not.toContain('secret-value')
       expect(JSON.stringify(result)).not.toContain('secret-value')
     }
+  })
+
+  it('binds thread.record.persist fingerprints to the canonical thread and descriptor', () => {
+    const descriptor = {
+      transferId: '11111111-1111-4111-8111-111111111111',
+      sha256: 'a'.repeat(64),
+      byteLength: 512 * 1024,
+      expectedRevision: 7
+    }
+    const first = fingerprintHostCommand(
+      command('thread.record.persist', { threadId: 'thread-id' }, descriptor)
+    )
+    const changedRevision = fingerprintHostCommand(
+      command(
+        'thread.record.persist',
+        { threadId: 'thread-id' },
+        {
+          ...descriptor,
+          expectedRevision: 8
+        }
+      )
+    )
+    const changedTransfer = fingerprintHostCommand(
+      command(
+        'thread.record.persist',
+        { threadId: 'thread-id' },
+        {
+          ...descriptor,
+          transferId: '22222222-2222-4222-8222-222222222222'
+        }
+      )
+    )
+    expect(first.targetKind).toBe('thread')
+    expect(changedRevision.fingerprint).not.toBe(first.fingerprint)
+    expect(changedTransfer.fingerprint).not.toBe(first.fingerprint)
+    expect(JSON.stringify(first)).not.toContain(descriptor.transferId)
+    expect(JSON.stringify(first)).not.toContain(descriptor.sha256)
   })
 
   it('is independent of argument key order and changes for meaningful values', () => {

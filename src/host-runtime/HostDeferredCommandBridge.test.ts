@@ -145,6 +145,30 @@ describe('HostDeferredCommandBridge', () => {
     expect(found.kind).toBe('found')
   })
 
+  it('persists thread.record.persist in the deferred-command registry', () => {
+    const bridge = open()
+    const created = bridge.register(
+      baseRegister({
+        deferredId: 'def-persist',
+        commandId: 'cmd-persist',
+        idempotencyKey: 'desktop:client-desktop-1:55555555-5555-4555-8555-555555555555',
+        commandFingerprint: fingerprint('thread.record.persist|thread-1'),
+        commandName: 'thread.record.persist',
+        challengeId: 'approval-persist'
+      })
+    )
+    expect(created.kind).toBe('created')
+    if (created.kind !== 'created') return
+    expect(created.record.commandName).toBe('thread.record.persist')
+
+    const reopened = open()
+    const durable = reopened.getByChallengeId('approval-persist', OWNER)
+    expect(durable.kind).toBe('found')
+    if (durable.kind === 'found') {
+      expect(durable.record.commandName).toBe('thread.record.persist')
+    }
+  })
+
   it('fails closed on actor / challenge / command mismatches at register', () => {
     const bridge = open()
     expect(bridge.register(baseRegister()).kind).toBe('created')

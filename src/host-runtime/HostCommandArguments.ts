@@ -20,6 +20,7 @@ import {
   HOST_QUESTION_ANSWER_DECISIONS,
   HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_QUESTION_DISMISS_MESSAGE_MAX_CHARS,
+  HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   type HostActorIdentity,
   type HostCommand,
   type HostCommandName,
@@ -35,6 +36,9 @@ export const HOST_COMPOSER_SEND_REASONING_EFFORT_MAX_CHARS = 40
 
 const HOST_QUESTION_ANSWER_DECISION_SET = new Set<string>(HOST_QUESTION_ANSWER_DECISIONS)
 const HOST_APPROVAL_DECIDE_DECISION_SET = new Set<string>(HOST_APPROVAL_DECIDE_DECISIONS)
+
+const HOST_THREAD_RECORD_TRANSFER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
+const HOST_SHA256_HEX_RE = /^[a-f0-9]{64}$/
 
 type CanonicalParts = {
   target: Record<string, string>
@@ -309,6 +313,54 @@ function validateEnsembleSeatToggle(command: HostCommand): HostDecodeResult<Cano
   }
 }
 
+function validateThreadRecordPersist(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'threadId', 'thread.record.persist')
+  if (!target.ok) return target
+  const args = command.arguments
+  const allowed = ['transferId', 'sha256', 'byteLength', 'expectedRevision'] as const
+  for (const key of Object.keys(args)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return fail('thread.record.persist has unknown argument keys')
+    }
+  }
+  if (Object.keys(args).length !== allowed.length) {
+    return fail(
+      'thread.record.persist arguments must be exactly { transferId, sha256, byteLength, expectedRevision }'
+    )
+  }
+  if (
+    !isNonEmptyString(args.transferId, HOST_PROTOCOL_MAX_ID) ||
+    !HOST_THREAD_RECORD_TRANSFER_ID_RE.test(args.transferId)
+  ) {
+    return fail('thread.record.persist transferId is invalid')
+  }
+  if (typeof args.sha256 !== 'string' || !HOST_SHA256_HEX_RE.test(args.sha256)) {
+    return fail('thread.record.persist sha256 must be lowercase SHA-256 hex')
+  }
+  if (
+    !Number.isSafeInteger(args.byteLength) ||
+    (args.byteLength as number) <= 0 ||
+    (args.byteLength as number) > HOST_THREAD_RECORD_TRANSFER_MAX_BYTES
+  ) {
+    return fail('thread.record.persist byteLength is invalid')
+  }
+  if (!Number.isSafeInteger(args.expectedRevision) || (args.expectedRevision as number) < 0) {
+    return fail('thread.record.persist expectedRevision is invalid')
+  }
+  return {
+    ok: true,
+    value: {
+      target: target.value,
+      arguments: {
+        transferId: args.transferId,
+        sha256: args.sha256,
+        byteLength: args.byteLength,
+        expectedRevision: args.expectedRevision
+      }
+    }
+  }
+}
+
 function validateQuestionAnswer(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const target = exactStringTarget(command.target, 'questionId', 'question.answer')
   if (!target.ok) return target
@@ -368,10 +420,7 @@ function exactArgumentKeys(
   return { ok: true, value: args }
 }
 
-function optionalShortString(
-  value: unknown,
-  label: string
-): HostDecodeResult<string | undefined> {
+function optionalShortString(value: unknown, label: string): HostDecodeResult<string | undefined> {
   if (value === undefined) return { ok: true, value: undefined }
   if (!isNonEmptyString(value, HOST_PROTOCOL_MAX_SHORT)) {
     return fail(`${label} must be a bounded string`)
@@ -382,7 +431,11 @@ function optionalShortString(
 function validateWorkspaceRegister(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const target = emptyTarget(command.target, 'workspace.register')
   if (!target.ok) return target
-  const args = exactArgumentKeys(command.arguments, ['path', 'displayName', 'pinned'], 'workspace.register')
+  const args = exactArgumentKeys(
+    command.arguments,
+    ['path', 'displayName', 'pinned'],
+    'workspace.register'
+  )
   if (!args.ok) return args
   if (!isNonEmptyString(args.value.path, HOST_PROTOCOL_MAX_STRING)) {
     return fail('workspace.register path is required and bounded')
@@ -401,7 +454,11 @@ function validateWorkspaceRegister(command: HostCommand): HostDecodeResult<Canon
 function validateThreadCreate(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const target = emptyTarget(command.target, 'thread.create')
   if (!target.ok) return target
-  const args = exactArgumentKeys(command.arguments, ['scope', 'workspaceId', 'title'], 'thread.create')
+  const args = exactArgumentKeys(
+    command.arguments,
+    ['scope', 'workspaceId', 'title'],
+    'thread.create'
+  )
   if (!args.ok) return args
   if (args.value.scope !== 'global' && args.value.scope !== 'workspace') {
     return fail('thread.create scope must be global or workspace')
@@ -481,10 +538,7 @@ function validateThreadConfigure(command: HostCommand): HostDecodeResult<Canonic
       return fail(`thread.configure ${key} must be a bounded string`)
     }
   }
-  if (
-    args.reasoningId !== undefined &&
-    !isNonEmptyString(args.reasoningId, HOST_PROTOCOL_MAX_ID)
-  ) {
+  if (args.reasoningId !== undefined && !isNonEmptyString(args.reasoningId, HOST_PROTOCOL_MAX_ID)) {
     return fail('thread.configure reasoningId must be a bounded string')
   }
   if (args.title !== undefined && !isNonEmptyString(args.title, HOST_PROTOCOL_MAX_SHORT)) {
@@ -531,7 +585,11 @@ function validateProviderAuthBegin(command: HostCommand): HostDecodeResult<Canon
 
 function validateProviderAuthCancel(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const targetKeys = Object.keys(command.target).sort()
-  if (targetKeys.length !== 2 || targetKeys[0] !== 'operationId' || targetKeys[1] !== 'providerId') {
+  if (
+    targetKeys.length !== 2 ||
+    targetKeys[0] !== 'operationId' ||
+    targetKeys[1] !== 'providerId'
+  ) {
     return fail('provider.auth.cancel target must be exactly { providerId, operationId }')
   }
   const providerId = command.target.providerId
@@ -563,6 +621,7 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'question.answer': validateQuestionAnswer,
   'approval.decide': validateApprovalDecide,
   'ensemble.seat.toggle': validateEnsembleSeatToggle,
+  'thread.record.persist': validateThreadRecordPersist,
   'channel.member.revoke': validateChannelMemberRevoke,
   'channel.close': validateChannelClose,
   'thread.select': (command) => validateThreadOnlyEmptyArgs(command, 'thread.select'),

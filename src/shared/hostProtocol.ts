@@ -636,6 +636,16 @@ export const HOST_APPROVAL_DECIDE_DECISIONS: readonly HostApprovalDecideDecision
   'cancel'
 ] as const
 
+/** Maximum durable thread-record artifact size; matches HostProfileDomainStore. */
+export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 64 * 1024 * 1024
+
+export interface HostThreadRecordPersistArguments {
+  transferId: string
+  sha256: string
+  byteLength: number
+  expectedRevision: number
+}
+
 export type HostCommandName =
   | 'snapshot.get'
   | 'deltas.since'
@@ -651,6 +661,7 @@ export type HostCommandName =
   | 'workspace.register'
   | 'thread.create'
   | 'thread.configure'
+  | 'thread.record.persist'
   | 'thread.archive'
   | 'provider.auth.begin'
   | 'provider.auth.cancel'
@@ -764,10 +775,7 @@ export function decodeHostResultRef(value: unknown): HostDecodeResult<HostResult
     return { ok: false, error: 'resultRef is invalid' }
   }
   if (value.kind === 'workspace') {
-    if (
-      Object.keys(value).length !== 2 ||
-      !isSafeHostEntityIdComponent(value.workspaceId)
-    ) {
+    if (Object.keys(value).length !== 2 || !isSafeHostEntityIdComponent(value.workspaceId)) {
       return { ok: false, error: 'resultRef is invalid' }
     }
     return {
@@ -776,10 +784,7 @@ export function decodeHostResultRef(value: unknown): HostDecodeResult<HostResult
     }
   }
   if (value.kind === 'thread') {
-    if (
-      Object.keys(value).length !== 2 ||
-      !isSafeHostEntityIdComponent(value.threadId)
-    ) {
+    if (Object.keys(value).length !== 2 || !isSafeHostEntityIdComponent(value.threadId)) {
       return { ok: false, error: 'resultRef is invalid' }
     }
     return {
@@ -940,6 +945,7 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'workspace.register',
   'thread.create',
   'thread.configure',
+  'thread.record.persist',
   'thread.archive',
   'provider.auth.begin',
   'provider.auth.cancel',
@@ -1204,6 +1210,55 @@ function decodeApprovalDecideArguments(
   const out: Record<string, unknown> = { decision }
   if (value.message !== undefined) out.message = value.message
   return { ok: true, value: out }
+}
+
+const HOST_THREAD_RECORD_TRANSFER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
+const HOST_SHA256_HEX_RE = /^[a-f0-9]{64}$/
+
+function decodeThreadRecordPersistArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<HostThreadRecordPersistArguments> {
+  const allowed = ['transferId', 'sha256', 'byteLength', 'expectedRevision'] as const
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return { ok: false, error: 'thread.record.persist has unknown argument keys' }
+    }
+  }
+  if (Object.keys(value).length !== allowed.length) {
+    return {
+      ok: false,
+      error:
+        'thread.record.persist arguments must be exactly { transferId, sha256, byteLength, expectedRevision }'
+    }
+  }
+  if (
+    !isNonEmptyString(value.transferId, HOST_PROTOCOL_MAX_ID) ||
+    !HOST_THREAD_RECORD_TRANSFER_ID_RE.test(value.transferId)
+  ) {
+    return { ok: false, error: 'thread.record.persist transferId is invalid' }
+  }
+  if (typeof value.sha256 !== 'string' || !HOST_SHA256_HEX_RE.test(value.sha256)) {
+    return { ok: false, error: 'thread.record.persist sha256 must be lowercase SHA-256 hex' }
+  }
+  if (
+    !Number.isSafeInteger(value.byteLength) ||
+    (value.byteLength as number) <= 0 ||
+    (value.byteLength as number) > HOST_THREAD_RECORD_TRANSFER_MAX_BYTES
+  ) {
+    return { ok: false, error: 'thread.record.persist byteLength is invalid' }
+  }
+  if (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0) {
+    return { ok: false, error: 'thread.record.persist expectedRevision is invalid' }
+  }
+  return {
+    ok: true,
+    value: {
+      transferId: value.transferId,
+      sha256: value.sha256,
+      byteLength: value.byteLength as number,
+      expectedRevision: value.expectedRevision as number
+    }
+  }
 }
 
 /**
@@ -1485,7 +1540,8 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
   if (
     (value.name === 'run.cancel' ||
       value.name === 'thread.select' ||
-      value.name === 'ensemble.seat.toggle') &&
+      value.name === 'ensemble.seat.toggle' ||
+      value.name === 'thread.record.persist') &&
     !isNonEmptyString(target.value.threadId, HOST_PROTOCOL_MAX_ID)
   ) {
     return { ok: false, error: 'target.threadId is required' }
@@ -1511,6 +1567,11 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     const approvalArgs = decodeApprovalDecideArguments(args.value)
     if (!approvalArgs.ok) return approvalArgs
     args = { ok: true, value: approvalArgs.value }
+  }
+  if (value.name === 'thread.record.persist') {
+    const persistArgs = decodeThreadRecordPersistArguments(args.value)
+    if (!persistArgs.ok) return persistArgs
+    args = { ok: true, value: { ...persistArgs.value } }
   }
   if (
     (value.name === 'channel.member.revoke' || value.name === 'channel.close') &&
