@@ -107,6 +107,8 @@ public enum MarkupValidationError: Error, Equatable, Sendable {
 public enum MarkupFlattenError: Error, Equatable, Sendable {
     case undecodableImage
     case exceedsMaximum(received: Int, maximum: Int)
+    case rasterExceedsMaximum(
+        width: Int, height: Int, maximumDimension: Int, maximumPixels: Int)
 }
 
 /// A normalized, resolution-independent coordinate in the range 0.0 to 1.0.
@@ -645,6 +647,10 @@ public enum MarkupAttachmentAssembly {
 /// Reuses the 8 MiB assembler cap; exceeding it is a refusal, never silent.
 public enum MarkupFlattener {
     public static let maxEncodedBytes = FullSizeMediaAssembler.maxBytes
+    /// Bounds the decoded bitmap before allocating the RGBA drawing context.
+    /// An 8 MiB compressed image can otherwise expand into hundreds of MiB.
+    public static let maxRasterDimension = 8_192
+    public static let maxRasterPixels = 24_000_000
     /// Thickness is stored in annotating-view points. A 3pt stroke on a ~400pt
     /// preview must stay visible on a 1600px screenshot.
     public static let thicknessReferenceDimension: Double = 400
@@ -656,7 +662,9 @@ public enum MarkupFlattener {
     public static func flatten(
         imageData: Data,
         primitives: [MarkupPrimitive],
-        maxEncodedBytes: Int = maxEncodedBytes
+        maxEncodedBytes: Int = maxEncodedBytes,
+        maxRasterDimension: Int = maxRasterDimension,
+        maxRasterPixels: Int = maxRasterPixels
     ) throws -> Data {
         guard !primitives.isEmpty else { return imageData }
         #if canImport(CoreGraphics) && canImport(ImageIO)
@@ -668,6 +676,18 @@ public enum MarkupFlattener {
             }
             let width = cgImage.width
             let height = cgImage.height
+            guard maxRasterDimension > 0,
+                maxRasterPixels > 0,
+                width <= maxRasterDimension,
+                height <= maxRasterDimension,
+                width <= maxRasterPixels / height
+            else {
+                throw MarkupFlattenError.rasterExceedsMaximum(
+                    width: width,
+                    height: height,
+                    maximumDimension: maxRasterDimension,
+                    maximumPixels: maxRasterPixels)
+            }
             let colorSpace = CGColorSpaceCreateDeviceRGB()
             guard let ctx = CGContext(
                 data: nil,

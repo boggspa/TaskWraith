@@ -774,6 +774,11 @@ struct Composer: View {
                                     }
                                     Button {
                                         attachments.remove(at: index)
+                                        // A prior annotate action may have been retained
+                                        // because all 15 slots were full. Refill the freed
+                                        // slot immediately instead of waiting for a thread
+                                        // switch or another inbox generation.
+                                        absorbPendingMarkup()
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .font(.caption)

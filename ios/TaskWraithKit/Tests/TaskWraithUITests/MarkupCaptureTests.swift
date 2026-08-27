@@ -644,5 +644,49 @@ struct MarkupMetadataBoundTests {
                 Issue.record("wrong error \(error)")
             }
         }
+
+        @Test("flatten bounds decoded raster allocation before drawing")
+        func flattenRefusesOversizedRaster() throws {
+            let original = try solidPNG(width: 32, height: 32, r: 0, g: 1, b: 0)
+            let primitive = MarkupPrimitive.rect(
+                start: NormalizedCoordinate(x: 0, y: 0),
+                end: NormalizedCoordinate(x: 1, y: 1),
+                color: .red,
+                thickness: 8)
+
+            do {
+                _ = try MarkupFlattener.flatten(
+                    imageData: original,
+                    primitives: [primitive],
+                    maxRasterPixels: 1_000)
+                Issue.record("expected rasterExceedsMaximum for pixel count")
+            } catch MarkupFlattenError.rasterExceedsMaximum(
+                let width, let height, let maximumDimension, let maximumPixels)
+            {
+                #expect(width == 32)
+                #expect(height == 32)
+                #expect(maximumDimension == MarkupFlattener.maxRasterDimension)
+                #expect(maximumPixels == 1_000)
+            } catch {
+                Issue.record("wrong error \(error)")
+            }
+
+            do {
+                _ = try MarkupFlattener.flatten(
+                    imageData: original,
+                    primitives: [primitive],
+                    maxRasterDimension: 16)
+                Issue.record("expected rasterExceedsMaximum for dimension")
+            } catch MarkupFlattenError.rasterExceedsMaximum(
+                let width, let height, let maximumDimension, let maximumPixels)
+            {
+                #expect(width == 32)
+                #expect(height == 32)
+                #expect(maximumDimension == 16)
+                #expect(maximumPixels == MarkupFlattener.maxRasterPixels)
+            } catch {
+                Issue.record("wrong error \(error)")
+            }
+        }
     }
 #endif
