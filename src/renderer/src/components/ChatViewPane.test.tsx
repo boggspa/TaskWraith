@@ -497,6 +497,23 @@ describe('ChatViewPane chrome actions', () => {
   })
 })
 
+describe('ChatViewPane pane-local follow recovery', () => {
+  it('renders the jump affordance from this pane scroll hook', () => {
+    const hookStart = paneSource.indexOf('const paneScrollState = useTranscriptScrollState({')
+    const composerStart = paneSource.indexOf('{effectiveComposerProps && (', hookStart)
+    expect(hookStart).toBeGreaterThan(-1)
+    expect(composerStart).toBeGreaterThan(hookStart)
+
+    const paneTranscript = paneSource.slice(hookStart, composerStart)
+    expect(paneTranscript).toContain('<TranscriptJumpToLatestPill')
+    expect(paneTranscript).toContain(
+      'visible={!props.isWelcomeChat && paneScrollState.showJumpToLatestPill}'
+    )
+    expect(paneTranscript).toContain('unreadCount={paneScrollState.unreadFromBottomCount}')
+    expect(paneTranscript).toContain('onJumpToLatest={paneScrollState.handleJumpToLatest}')
+  })
+})
+
 describe('ChatViewPane per-pane agent aura', () => {
   const auraProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
     makeProps({

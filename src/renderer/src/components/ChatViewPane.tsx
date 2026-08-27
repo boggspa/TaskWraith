@@ -10,6 +10,7 @@ import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { MainPaneActionPill } from './MainPaneActionPill'
 import { buildWorkspaceStatsContext } from './workspaceStatsContext'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { TranscriptJumpToLatestPill } from './TranscriptJumpToLatestPill'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
@@ -665,6 +666,12 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           />
         </div>
       )}
+      <TranscriptJumpToLatestPill
+        visible={!props.isWelcomeChat && paneScrollState.showJumpToLatestPill}
+        unreadCount={paneScrollState.unreadFromBottomCount}
+        provider={props.provider}
+        onJumpToLatest={paneScrollState.handleJumpToLatest}
+      />
       {effectiveComposerProps && (
         <Composer
           {...effectiveComposerProps}

@@ -46,7 +46,7 @@ import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader
 import { resolveMuseMonthlySpendCapUsd } from '../../../../shared/museSpendBudget'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { ProjectHomeHeader } from '../../components/ProjectHomeHeader'
-import { DigitOdometer } from '../../components/DigitOdometer'
+import { TranscriptJumpToLatestPill } from '../../components/TranscriptJumpToLatestPill'
 import { Sidebar } from '../../components/Sidebar'
 import { ProviderBrandLogoIcon } from '../../components/icons/ProviderBrandLogo'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
@@ -2128,49 +2128,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             smooth-scroll, autoFollow re-engage, and count clear stay
             in lockstep regardless of entry point.
           */}
-          {showJumpToLatestPill && (
-            <button
-              type="button"
-              className={`transcript-jump-to-latest-pill provider-${currentProvider}`}
-              onClick={handleJumpToLatest}
-              aria-label={
-                unreadFromBottomCount > 0
-                  ? `Jump to latest — ${unreadFromBottomCount} new ${unreadFromBottomCount === 1 ? 'message' : 'messages'}`
-                  : 'Jump to latest — response streaming below'
-              }
-              title={
-                unreadFromBottomCount > 0
-                  ? `Jump to latest (End)\n${unreadFromBottomCount} new ${unreadFromBottomCount === 1 ? 'message' : 'messages'}`
-                  : 'Jump to latest (End)\nResponse streaming below'
-              }
-            >
-              <span aria-hidden="true" className="transcript-jump-to-latest-arrow">
-                ↓
-              </span>
-              <span className="transcript-jump-to-latest-text">
-                {/* Streaming variant: text grows inside ONE bubble, so the
-                    message-count unread number stays 0 — label the affordance
-                    itself rather than showing "0 new messages". */}
-                {unreadFromBottomCount > 0 ? (
-                  <>
-                    <DigitOdometer
-                      value={unreadFromBottomCount}
-                      ariaLabel={`${unreadFromBottomCount} new ${
-                        unreadFromBottomCount === 1 ? 'message' : 'messages'
-                      }`}
-                      className="transcript-jump-to-latest-count"
-                    />
-                    <span aria-hidden>
-                      {' '}
-                      new {unreadFromBottomCount === 1 ? 'message' : 'messages'}
-                    </span>
-                  </>
-                ) : (
-                  'Jump to latest'
-                )}
-              </span>
-            </button>
-          )}
+          <TranscriptJumpToLatestPill
+            visible={showJumpToLatestPill}
+            unreadCount={unreadFromBottomCount}
+            provider={currentProvider}
+            onJumpToLatest={handleJumpToLatest}
+          />
 
           <ChatMediaPreviewOverlay
             mediaRef={previewChatMediaRef}
