@@ -73,6 +73,7 @@ import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProvi
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
+import { isMcpTransportWrapperActivity } from '../shared/toolInvocationPresentation'
 import { isAutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
 import { isBlackboardChangePayload } from '../shared/blackboardChange'
 import {
@@ -1765,7 +1766,7 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   // desktop card renders them inline via ActivityStack); without this widening
   // the phone dropped every fan-out tool call on the floor and showed prose only.
   if (message.role !== 'tool' && !isFanoutResultMessage(message)) return undefined
-  const activities = message.toolActivities || []
+  const activities = presentableToolActivities(message.toolActivities || [])
   if (activities.length === 0) return undefined
   let running = 0
   let success = 0
@@ -1782,6 +1783,19 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   else status = 'success'
   const tools: RemoteToolEntry[] = activities.slice(0, 12).map(toolEntryFromActivity)
   return { activityCount: activities.length, status, tools }
+}
+
+function presentableToolActivities(activities: readonly ToolActivity[]): ToolActivity[] {
+  return activities.filter((activity) => !isMcpTransportWrapperActivity(activity))
+}
+
+function isMcpWrapperOnlyToolMessage(message: ChatMessage): boolean {
+  const activities = message.toolActivities || []
+  return (
+    message.role === 'tool' &&
+    activities.length > 0 &&
+    activities.every(isMcpTransportWrapperActivity)
+  )
 }
 
 function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
@@ -2178,16 +2192,17 @@ function buildFanoutParts(
       coalesced.push(part)
       continue
     }
-    if (part.toolActivities.length === 0) continue
+    const activities = presentableToolActivities(part.toolActivities)
+    if (activities.length === 0) continue
     const previous = coalesced[coalesced.length - 1]
     if (previous?.kind === 'tools') {
       coalesced[coalesced.length - 1] = {
         ...previous,
-        toolActivities: [...previous.toolActivities, ...part.toolActivities]
+        toolActivities: [...previous.toolActivities, ...activities]
       }
       continue
     }
-    coalesced.push(part)
+    coalesced.push({ ...part, toolActivities: activities })
   }
   const totalParts = coalesced.length
   if (totalParts === 0) return undefined
@@ -3994,7 +4009,11 @@ export function projectRemoteThread(
 ): RemoteThreadSnapshot {
   const all = Array.isArray(messages)
     ? messages.filter(
-        (m) => m && typeof m.id === 'string' && !isRetiredExternalChannelInboundMessage(m)
+        (m) =>
+          m &&
+          typeof m.id === 'string' &&
+          !isRetiredExternalChannelInboundMessage(m) &&
+          !isMcpWrapperOnlyToolMessage(m)
       )
     : []
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX

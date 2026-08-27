@@ -669,6 +669,52 @@ describe('RemoteThreadProjection', () => {
       expect(toolRows[1].toolSummary?.activityCount).toBe(1)
     })
 
+    it('omits wrapper-only rows and counts only concrete tools in mixed bursts', () => {
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          {
+            id: 'wrapper-only',
+            role: 'tool',
+            content: '',
+            timestamp: FIXED,
+            toolActivities: [
+              activity({
+                id: 'wrapper-1',
+                toolName: 'callmcptool',
+                displayName: 'Used callmcptool',
+                category: 'unknown'
+              })
+            ]
+          },
+          {
+            id: 'mixed-tools',
+            role: 'tool',
+            content: '',
+            timestamp: FIXED,
+            toolActivities: [
+              activity({
+                id: 'wrapper-2',
+                toolName: 'mcp',
+                displayName: 'MCP',
+                category: 'unknown'
+              }),
+              activity({
+                id: 'read-1',
+                toolName: 'read_file',
+                displayName: 'Read file',
+                category: 'read'
+              })
+            ]
+          }
+        ]
+      )
+
+      expect(snap.rows.map((row) => row.id)).toEqual(['mixed-tools'])
+      expect(snap.rows[0].toolSummary).toMatchObject({ activityCount: 1, status: 'success' })
+      expect(snap.rows[0].toolSummary?.tools?.map((tool) => tool.name)).toEqual(['Read file'])
+    })
+
     it('projects ensemble round identity on rows and run summaries', () => {
       const snap = project(
         { kind: 'latestN', n: 50 },
@@ -2219,6 +2265,12 @@ describe('RemoteThreadProjection', () => {
               id: 'p2',
               messageIds: ['m2'],
               toolActivities: [
+                activity({
+                  id: 'wrapper',
+                  toolName: 'callmcptool',
+                  displayName: 'Used callmcptool',
+                  category: 'unknown'
+                }),
                 activity({ id: 'a1', toolName: 'read', displayName: 'Read', category: 'read' })
               ]
             },
