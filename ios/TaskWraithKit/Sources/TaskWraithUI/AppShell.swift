@@ -35,6 +35,68 @@ private struct DemoModeBanner: View {
     }
 }
 
+/// Connected-session host truth. Live stays quiet; stale/asleep/unreachable
+/// use the reviewed `HostLivenessCopy` instead of collapsing every failure into
+/// a generic offline banner.
+private struct HostLivenessStatusBanner: View {
+    let state: HostLiveness
+    let onRetry: () -> Void
+
+    private var accent: Color {
+        state == .unreachable ? TWTheme.statusFailed : TWTheme.statusAttention
+    }
+
+    private var symbol: String {
+        switch state {
+        case .live: return "checkmark.circle"
+        case .stale: return "clock.arrow.circlepath"
+        case .asleep: return "questionmark.circle"
+        case .unreachable: return "wifi.exclamationmark"
+        }
+    }
+
+    private var offersRetry: Bool {
+        state == .asleep || state == .unreachable
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.copy.headline)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Text(state.copy.detail)
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if offersRetry {
+                Button("Retry", action: onRetry)
+                    .font(.footnote.weight(.bold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accent)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.12)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accent.opacity(0.28), lineWidth: 1))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(state.copy.headline)
+        .accessibilityValue(state.copy.detail)
+    }
+}
+
 /// Pure policy for keeping ConnectedShell mounted across transient drops and
 /// cold launches. Extracted so cached-recovery tests can lock the contract
 /// without mounting SwiftUI.
@@ -54,12 +116,24 @@ public enum SessionShellPolicy {
 
 public struct RootView: View {
     @ObservedObject var model: RemoteSessionModel
+    @ObservedObject private var hostProjection: PairedHostSessionController
     @ObservedObject private var themes = TWThemeStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("tw.firstLaunchSheet.dismissed.v1") private var firstLaunchSheetDismissed = false
     @State private var openingFirstLaunchFromSettings = false
 
-    public init(model: RemoteSessionModel) { self.model = model }
+    public init(model: RemoteSessionModel) {
+        self.model = model
+        self._hostProjection = ObservedObject(wrappedValue: model.hostProjection)
+    }
+
+    private var projectedHostLiveness: HostLiveness? {
+        // Reading the nested observable here makes host health/freshness pushes
+        // invalidate RootView even when no top-level model property changed.
+        _ = hostProjection.phase
+        _ = hostProjection.health
+        return model.hostLiveness
+    }
 
     /// Transient drops after a successful session must NOT eject the user
     /// to the pairing screen — trusted reconnect runs underneath while the
@@ -132,14 +206,21 @@ public struct RootView: View {
             } else {
                 switch model.phase {
                 case .connected:
-                    if model.isDemo {
-                        // Banner ABOVE the shell (not a safeAreaInset, which
-                        // overlaps the nav bar's back/Exit/title row).
-                        VStack(spacing: 0) {
+                    // Keep this hierarchy stable while liveness changes; a
+                    // conditional wrapper would tear down the whole shell when
+                    // a banner appears or disappears.
+                    VStack(spacing: 0) {
+                        if model.isDemo {
+                            // Banner ABOVE the shell (not a safeAreaInset,
+                            // which overlaps the nav bar's back/Exit/title row).
                             DemoModeBanner(model: model)
-                            ConnectedShell(model: model)
+                        } else if let liveness = projectedHostLiveness,
+                            liveness.warrantsBanner
+                        {
+                            HostLivenessStatusBanner(state: liveness) {
+                                model.requestReconnect(.user)
+                            }
                         }
-                    } else {
                         ConnectedShell(model: model)
                     }
                 // `where` binds per-pattern in Swift — both arms need the guard

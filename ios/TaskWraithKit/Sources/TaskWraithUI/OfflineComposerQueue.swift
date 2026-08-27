@@ -341,6 +341,31 @@ public struct UserDefaultsOutboxPersistence: OfflineComposerQueuePersistence {
     public func clearOutbox() { defaults.removeObject(forKey: key) }
 }
 
+/// Reads a superseded host partition when the current key is absent, then
+/// migrates it on the next save. The old bytes are cleared only after the new
+/// key has been written, so changing the key format cannot strand a prompt.
+private struct MigratingOutboxPersistence: OfflineComposerQueuePersistence {
+    let primary: UserDefaultsOutboxPersistence
+    let legacy: UserDefaultsOutboxPersistence
+
+    func readOutbox() -> Data? {
+        primary.readOutbox() ?? legacy.readOutbox()
+    }
+
+    func writeOutbox(_ data: Data) {
+        primary.writeOutbox(data)
+        // Clear only when the legacy bytes are the exact queue just copied.
+        // If both keys somehow hold different data, preserving the older bytes
+        // is safer than guessing that they are duplicates.
+        if legacy.readOutbox() == data { legacy.clearOutbox() }
+    }
+
+    func clearOutbox() {
+        primary.clearOutbox()
+        legacy.clearOutbox()
+    }
+}
+
 /// Durable persistence for the outbox over any `OfflineComposerQueuePersistence`.
 ///
 /// Injectable rather than a static singleton, so tests can hand it a scratch
@@ -448,11 +473,28 @@ public struct OfflineComposerQueueStore: Sendable {
         return String(bytes: bytes, encoding: .utf8)
     }
 
+    /// Partition key emitted by the first host-scoped implementation. Keep it
+    /// as a migration source; changing algorithms without this dual-read would
+    /// make already queued prompts appear to vanish.
+    private static func legacyHashedKey(forHostIdentity identity: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in identity.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        let readable = String(identity.filter { $0.isLetter || $0.isNumber }.prefix(24))
+        return "tw.composer.outbox.v2.\(readable).\(String(hash, radix: 16))"
+    }
+
     /// Build a store scoped to one paired Mac.
     public init(hostIdentity: String, suiteName: String? = nil) {
         self.init(
-            persistence: UserDefaultsOutboxPersistence(
-                suiteName: suiteName, key: Self.key(forHostIdentity: hostIdentity)))
+            persistence: MigratingOutboxPersistence(
+                primary: UserDefaultsOutboxPersistence(
+                    suiteName: suiteName, key: Self.key(forHostIdentity: hostIdentity)),
+                legacy: UserDefaultsOutboxPersistence(
+                    suiteName: suiteName,
+                    key: Self.legacyHashedKey(forHostIdentity: hostIdentity))))
     }
 
     /// How many prompts are stranded in the LEGACY global outbox written by a

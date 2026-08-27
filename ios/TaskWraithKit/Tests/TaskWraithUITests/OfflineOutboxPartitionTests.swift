@@ -179,6 +179,23 @@ struct OfflineOutboxPartitionTests {
         #expect(OfflineComposerQueueStore.legacyQuarantinedPrompts(suiteName: suite).count == 1)
     }
 
+    @Test("The first host-scoped key migrates without losing its queue")
+    func hashedHostPartitionMigratesToTheCollisionFreeKey() {
+        let suite = scratchSuite()
+        defer { clean(suite) }
+        let oldKey = "tw.composer.outbox.v2.stableidentity.1e31ee615006832f"
+        let oldStore = OfflineComposerQueueStore(suiteName: suite, key: oldKey)
+        oldStore.save(queue("survives key migration"))
+
+        let migrated = OfflineComposerQueueStore(
+            hostIdentity: "stable-identity", suiteName: suite)
+        #expect(migrated.load().entries.map(\.text) == ["survives key migration"])
+
+        migrated.save(migrated.load())
+        #expect(oldStore.load().entries.isEmpty)
+        #expect(migrated.load().entries.map(\.text) == ["survives key migration"])
+    }
+
     @Test("An empty legacy outbox reports nothing to quarantine")
     func legacyCountIsZeroWhenAbsent() {
         let suite = scratchSuite()

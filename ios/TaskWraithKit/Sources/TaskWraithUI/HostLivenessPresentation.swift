@@ -184,6 +184,28 @@ extension HostLiveness {
 
         return .live
     }
+
+    /// Adapter from the paired-host replica the model already owns into the
+    /// six-input honesty contract above. A live replica is itself positive
+    /// transport evidence: those health bytes arrived over the authenticated
+    /// host session. Cached/unavailable replicas are not.
+    public static func derive(
+        sessionPhase: SessionPhase,
+        projectionPhase: PairedHostProjectionPhase,
+        healthProjection: HostHealthProjection?,
+        probeLedger: HostLivenessProbeLedger,
+        now: Date = Date()
+    ) -> HostLiveness? {
+        derive(
+            HostLivenessInputs(
+                sessionPhase: sessionPhase,
+                connectionPhase: healthProjection?.connectionPhase,
+                health: healthProjection?.hostStatus,
+                freshness: healthProjection?.freshness,
+                transportHealthy: projectionPhase == .live
+                    || probeLedger.transportHealthy(at: now),
+                peerAckFailing: probeLedger.peerAckFailing(at: now)))
+    }
 }
 
 /// User-facing strings for a liveness state.

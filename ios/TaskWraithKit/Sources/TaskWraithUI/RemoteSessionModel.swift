@@ -2055,33 +2055,25 @@ public final class RemoteSessionModel: ObservableObject {
     /// and never by initiating a probe of its own. The type and its evidence
     /// rule live in `HostLivenessPresentation.swift` beside the derivation they
     /// feed, where they are unit-testable without standing up a session.
-    private var hostLivenessProbeLedger = HostLivenessProbeLedger()
+    @Published private var hostLivenessProbeLedger = HostLivenessProbeLedger()
 
     /// Projected host liveness.
     ///
-    /// The host-v2 trio (`HostConnectionPhase` / `HostHealthStatus` /
-    /// `HostProjectionFreshness`) is NOT plumbed to this model, so those inputs
-    /// are `nil` and `.live` is UNREACHABLE by construction — a healthy session
-    /// derives `.stale`. Per the recorded honest-subset decision, callers must
-    /// therefore render only `.asleep` and `.unreachable` and must NOT surface a
-    /// live/stale cell, which would tell a healthy user their view is out of
-    /// date. When the trio is plumbed through, pass it here; the derivation
-    /// itself needs no change.
+    /// Combines the true socket-vs-peer probe evidence with the live paired-host
+    /// projection already owned by this model. Missing projection fields never
+    /// become happy defaults; they degrade through `HostLiveness.derive`.
     public var hostLiveness: HostLiveness? {
-        let now = Date()
         return HostLiveness.derive(
-            HostLivenessInputs(
-                sessionPhase: phase,
-                transportHealthy: hostLivenessProbeLedger.transportHealthy(at: now),
-                peerAckFailing: hostLivenessProbeLedger.peerAckFailing(at: now)))
+            sessionPhase: phase,
+            projectionPhase: hostProjection.phase,
+            healthProjection: hostProjection.health,
+            probeLedger: hostLivenessProbeLedger)
     }
 
     /// Whether a composer send must be diverted into the offline outbox.
     ///
-    /// Only the honestly-reachable states divert. `.stale` is the derivation's
-    /// fallback while the trio is unplumbed, so here it means "no evidence
-    /// either way", NOT "the send path is broken" — diverting on it would queue
-    /// sends that would have succeeded, which is its own small dishonesty.
+    /// Only the two states whose delivery path cannot presently be trusted
+    /// divert. A stale projection is not itself evidence that sends are broken.
     public var shouldQueueOutboundSends: Bool {
         switch hostLiveness {
         case .asleep, .unreachable: return true
@@ -8593,8 +8585,7 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                     onAck?(accepted)
                     onAckResult?(accepted, ack)
-                    onDeliveryVerdict?(
-                        accepted ? .delivered : .rejected("your Mac declined it"))
+                    onDeliveryVerdict?(Self.actionDeliveryVerdict(ack))
                     // Connection-aware copy. A request ack can time out even while the
                     // session is fully ESTABLISHED — a momentarily slow Mac, a heavy op
                     // right after connect, or a dropped ack on a live socket. The Mac is
@@ -8677,7 +8668,7 @@ public final class RemoteSessionModel: ObservableObject {
         return .succeeded
     }
 
-    private static func actionAckSucceeded(_ ack: AckResult) -> Bool {
+    nonisolated private static func actionAckSucceeded(_ ack: AckResult) -> Bool {
         guard ack.ok else { return false }
         guard let data = ack.result,
             let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
@@ -8685,6 +8676,16 @@ public final class RemoteSessionModel: ObservableObject {
         if actionAck.accepted == false { return false }
         if actionAck.executed == false { return false }
         return true
+    }
+
+    /// One delivery classification for the bridge's outer ack. An outer
+    /// `ok:false` is not a Mac-authored refusal: no action verdict arrived, so
+    /// the outbox must keep the prompt as unreachable rather than label it
+    /// declined.
+    nonisolated static func actionDeliveryVerdict(_ ack: AckResult) -> OfflineOutboxDelivery {
+        if actionAckSucceeded(ack) { return .delivered }
+        if !ack.ok { return .unreachable }
+        return .rejected("your Mac declined it")
     }
 
     private static func threadId(from ack: AckResult) -> String? {
