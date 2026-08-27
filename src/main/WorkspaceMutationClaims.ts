@@ -777,6 +777,16 @@ export async function deriveWorkspaceMutationClaims(
         'run_shell_command has opaque process side effects, so caller-declared paths cannot prove an exact file/hunk mutation scope. Use exact TaskWraith file tools or request one explicitly approved, auditable host execution.'
       )
     }
+    if (action.catalogTool === 'run_task') {
+      const task = firstArgument(args, ['task'])
+      const taskLabel = typeof task === 'string' && task.trim() ? ` "${task.trim()}"` : ''
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        `run_task cannot prove an exact file/hunk mutation scope for task${taskLabel}. ` +
+          'Retry through run_shell_command with the equivalent command (for example npm run <task>): ' +
+          'its boundary can route one explicitly approved, auditable host execution, which run_task cannot.'
+      )
+    }
     throw new WorkspaceMutationClaimDerivationError(
       'invalid-call',
       `${action.catalogTool} cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.`
