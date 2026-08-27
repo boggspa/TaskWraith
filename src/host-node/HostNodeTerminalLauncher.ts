@@ -7,8 +7,10 @@
  * (begin/cancel at 62-80). Desktop reuse is a named follow-up.
  *
  * This module opens a user-visible terminal for a provider's interactive login.
- * It proves only that the child was handed off to the terminal; it never waits
- * for, observes, or claims the user's authentication result.
+ * It waits until that child process closes so callers can probe credentials
+ * afterwards. Spawn, close, and a zero exit code never mean authenticated —
+ * Host adapters must call getAuthStatus / credential probes for that evidence.
+ * Pi is intentionally absent: it is env-key-only and has no terminal login.
  */
 
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
@@ -24,7 +26,28 @@ export interface HostNodeTerminalLauncherOptions {
   ) => ChildProcess
 }
 
-/** Exact login argv suffix per provider. */
+/**
+ * Process-close receipt for a manual login. There is no authenticated field on
+ * purpose: a closed login binary is not credential evidence.
+ */
+export interface HostNodeTerminalLoginHandoff {
+  readonly providerId: string
+  readonly closed: true
+  readonly exitCode: number | null
+}
+
+/**
+ * Provider-facing login port. Tests may resolve void; the real launcher returns
+ * a closed handoff that must never be read as authentication.
+ */
+export interface HostNodeProviderTerminalLauncher {
+  launchForProvider(
+    providerId: string,
+    input: { readonly argv: readonly string[] }
+  ): void | Promise<void | HostNodeTerminalLoginHandoff>
+}
+
+/** Exact login argv suffix per provider with a catalogued manual flow. */
 const LOGIN_ARGV: Readonly<Record<string, readonly string[]>> = {
   codex: ['login'],
   claude: ['auth', 'login'],
@@ -32,7 +55,8 @@ const LOGIN_ARGV: Readonly<Record<string, readonly string[]>> = {
   cursor: ['login'],
   ollama: ['login'],
   mistral: ['login'],
-  muse: ['login']
+  muse: ['login'],
+  grok: ['login']
 }
 
 function canonicalAbsolutePath(value: unknown): value is string {
@@ -65,8 +89,7 @@ function validateLoginArgv(providerId: string, argv: unknown): readonly string[]
 
 /**
  * Open an interactive provider login in the Host process's existing terminal.
- * This proves only that the child was handed off to the terminal; it never
- * waits for, observes, or claims the user's authentication result.
+ * Resolves only after the child closes. That close is not authentication.
  */
 export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
   private readonly pendingBinaries = new Set<string>()
@@ -79,14 +102,14 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
 
   async launch(input: { readonly argv: readonly [string, 'login'] }): Promise<void> {
     // Backward-compatible Muse path: exact [binary, 'login'].
-    return this.launchForProvider('muse', input)
+    await this.launchForProvider('muse', input)
   }
 
   /** Catalogued login launch for any provider with a manual login flow. */
   async launchForProvider(
     providerId: string,
     input: { readonly argv: readonly string[] }
-  ): Promise<void> {
+  ): Promise<HostNodeTerminalLoginHandoff> {
     const argv = validateLoginArgv(providerId, input.argv)
     const binary = argv[0]
     if (this.pendingBinaries.has(binary)) {
@@ -109,22 +132,34 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
       throw new Error(`${providerId} login terminal handoff could not start.`)
     }
 
-    await new Promise<void>((resolveHandoff, rejectHandoff) => {
+    const exitCode = await new Promise<number | null>((resolveHandoff, rejectHandoff) => {
+      let spawned = false
       let settled = false
-      const settle = (callback: () => void): void => {
+      const fail = (message: string): void => {
         if (settled) return
         settled = true
         this.pendingBinaries.delete(binary)
-        callback()
+        rejectHandoff(new Error(message))
       }
-      child.once('spawn', () => settle(resolveHandoff))
-      // Retain this one-shot listener after a successful handoff so an
-      // implementation-level error cannot become an unhandled EventEmitter
-      // error. It no longer changes the already-resolved handoff result.
-      child.once('error', () =>
-        settle(() => rejectHandoff(new Error(`${providerId} login terminal handoff failed.`)))
-      )
+      child.once('spawn', () => {
+        spawned = true
+      })
+      child.once('error', () => {
+        if (!spawned) fail(`${providerId} login terminal handoff failed.`)
+      })
+      child.once('close', (code) => {
+        if (settled) return
+        if (!spawned) {
+          fail(`${providerId} login terminal handoff failed.`)
+          return
+        }
+        settled = true
+        this.pendingBinaries.delete(binary)
+        resolveHandoff(typeof code === 'number' ? code : null)
+      })
     })
+
+    return { providerId, closed: true, exitCode }
   }
 }
 

@@ -29,7 +29,7 @@ import {
   normalizeHostNodeProviderStatus,
   type HostNodeProviderResourcePort
 } from './HostNodeProviderResources'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import {
   HOST_PROVIDER_RUN_MAX_EVENT_TEXT_CHARS,
   HOST_PROVIDER_RUN_MAX_TEXT_CHARS,
@@ -371,7 +371,7 @@ export interface HostNodeClaudeProviderOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly spawn?: HostNodeClaudeSpawn
   readonly now?: () => number
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeClaudeAuthProbe
 }
 
@@ -461,6 +461,7 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
     if (!binary.binaryPath) {
       throw new HostNodeClaudeValidationError('Claude CLI is unavailable.')
     }
+    // Handoff close is not authentication; getAuthStatus still probes `auth status`.
     await launcher.launchForProvider(CLAUDE_PROVIDER_ID, {
       argv: [binary.binaryPath, ...CLAUDE_LOGIN_ARGV_SUFFIX]
     })
@@ -888,7 +889,7 @@ export interface HostNodeClaudeProviderFactoryOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly spawn?: HostNodeClaudeSpawn
   readonly now?: () => number
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeClaudeAuthProbe
 }
 

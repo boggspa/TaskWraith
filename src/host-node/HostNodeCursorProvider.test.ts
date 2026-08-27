@@ -7,7 +7,7 @@ import {
   HostNodeCursorValidationError,
   type HostNodeCursorAuthProbe
 } from './HostNodeCursorProvider'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import type {
@@ -87,7 +87,7 @@ function resourcePort(
 function provider(
   resources: HostNodeProviderResourcePort = resourcePort(),
   extra: {
-    readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+    readonly terminalLauncher?: HostNodeProviderTerminalLauncher
     readonly probeAuth?: HostNodeCursorAuthProbe
   } = {}
 ): HostNodeCursorProvider {
@@ -123,13 +123,16 @@ describe('HostNodeCursorProvider status and auth', () => {
     expect(status.label).toBe('Cursor')
   })
 
-  it('reports auth_required when unauthenticated and ready once signed in', async () => {
+  it('reports auth_required when unauthenticated and degraded once signed in', async () => {
     const unauthenticated = provider(
       resourcePort({ getAuthState: async () => 'unauthenticated' as const })
     )
     expect((await unauthenticated.getStatus()).status).toBe('auth_required')
     expect((await unauthenticated.getAuthStatus()).state).toBe('unauthenticated')
-    expect((await provider().getStatus()).status).toBe('ready')
+    const signedIn = await provider().getStatus()
+    expect(signedIn.status).toBe('degraded')
+    expect(signedIn.detail).toMatch(/containment attestation/i)
+    expect((await provider().getAuthStatus()).state).toBe('authenticated')
   })
 
   it('withholds sign-in flows once authenticated', async () => {
@@ -161,7 +164,7 @@ describe('HostNodeCursorProvider status and auth', () => {
         probeAuth: failing.probeAuth
       }
     )
-    expect((await authenticated.getStatus()).status).toBe('ready')
+    expect((await authenticated.getStatus()).status).toBe('degraded')
     expect((await authenticated.getAuthStatus()).state).toBe('authenticated')
     expect(failing.calls).toEqual([])
 
@@ -180,7 +183,7 @@ describe('HostNodeCursorProvider status and auth', () => {
     const ready = provider(resourcePort({ getAuthState: async () => 'unknown' as const }), {
       probeAuth: readyProbe.probeAuth
     })
-    expect((await ready.getStatus()).status).toBe('ready')
+    expect((await ready.getStatus()).status).toBe('degraded')
     expect((await ready.getAuthStatus()).state).toBe('authenticated')
     expect(readyProbe.calls.length).toBeGreaterThan(0)
     expect(readyProbe.calls).toEqual(
@@ -220,7 +223,7 @@ describe('HostNodeCursorProvider status and auth', () => {
     expect(JSON.stringify(status)).not.toContain('secret-token-xyz')
     expect(JSON.stringify(auth)).not.toContain('cursor-account')
     expect(JSON.stringify(auth)).not.toContain('secret-token-xyz')
-    expect(status.status).toBe('ready')
+    expect(status.status).toBe('degraded')
   })
 
   it('advertises login and launches exact argv only when a launcher is injected', async () => {
@@ -235,6 +238,9 @@ describe('HostNodeCursorProvider status and auth', () => {
     await expect(withLauncher.beginAuth('auth-1')).resolves.toBeUndefined()
     expect(launcher.launchForProvider).toHaveBeenCalledWith('cursor', {
       argv: ['/usr/local/bin/cursor-agent', 'login']
+    })
+    await expect(withLauncher.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
     })
 
     const withoutLauncher = provider(

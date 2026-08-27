@@ -37,7 +37,7 @@ import {
   normalizeHostNodeProviderStatus,
   type HostNodeProviderResourcePort
 } from './HostNodeProviderResources'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import {
   normalizeHostProviderRunThread,
   type HostProviderRunPort,
@@ -139,7 +139,7 @@ export interface HostNodeCursorProviderOptions {
   readonly runPort: HostProviderRunPort
   readonly offers: HostProviderOffersProjection
   readonly resources?: HostNodeProviderResourcePort
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeCursorAuthProbe
 }
 
@@ -191,9 +191,23 @@ export class HostNodeCursorProvider implements HostNodeProviderInstance {
     }
   }
 
-  /** A missing binary is a present `unavailable` row, never an omission. */
+  /**
+   * A missing binary is a present `unavailable` row, never an omission.
+   * Signed-in Cursor is degraded, not ready: run() stays a typed hard-stop until
+   * the Node Host can produce MCP deny-list containment attestation.
+   */
   async getStatus(): Promise<HostProviderStatusProjection> {
-    return normalizeHostNodeProviderStatus(CURSOR_PROVIDER_ID, await this.runtimeStatus())
+    const runtime = await this.runtimeStatus()
+    if (runtime.binaryAvailable && runtime.authState === 'authenticated') {
+      return {
+        providerId: CURSOR_PROVIDER_ID,
+        status: 'degraded',
+        label: 'Cursor',
+        detail:
+          'Cursor sign-in succeeded, but Host Cursor runs stay blocked until MCP deny-list containment attestation exists.'
+      }
+    }
+    return normalizeHostNodeProviderStatus(CURSOR_PROVIDER_ID, runtime)
   }
 
   async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {
@@ -224,6 +238,7 @@ export class HostNodeCursorProvider implements HostNodeProviderInstance {
     if (!binary.binaryPath) {
       throw new HostNodeCursorValidationError('Cursor CLI is unavailable.')
     }
+    // Handoff close is not authentication; getAuthStatus still probes `status`.
     await launcher.launchForProvider(CURSOR_PROVIDER_ID, {
       argv: [binary.binaryPath, ...CURSOR_LOGIN_ARGV_SUFFIX]
     })
@@ -279,7 +294,7 @@ export class HostNodeCursorProvider implements HostNodeProviderInstance {
 export interface HostNodeCursorProviderFactoryOptions {
   readonly offers?: HostProviderOffersProjection
   readonly resources?: HostNodeProviderResourcePort
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeCursorAuthProbe
 }
 

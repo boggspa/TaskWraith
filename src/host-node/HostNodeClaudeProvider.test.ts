@@ -13,7 +13,7 @@ import {
   type HostNodeClaudeSpawnHandle,
   type HostNodeClaudeSpawnInput
 } from './HostNodeClaudeProvider'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import type {
@@ -128,7 +128,7 @@ function providerWith(
   spawn: HostNodeClaudeSpawn,
   resources: HostNodeProviderResourcePort = resourcePort(),
   extra: {
-    readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+    readonly terminalLauncher?: HostNodeProviderTerminalLauncher
     readonly probeAuth?: HostNodeClaudeAuthProbe
   } = {}
 ): HostNodeClaudeProvider {
@@ -308,6 +308,9 @@ describe('HostNodeClaudeProvider status and auth', () => {
     await expect(withLauncher.beginAuth('auth-1')).resolves.toBeUndefined()
     expect(launcher.launchForProvider).toHaveBeenCalledWith('claude', {
       argv: ['/usr/local/bin/claude', 'auth', 'login']
+    })
+    await expect(withLauncher.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
     })
 
     const withoutLauncher = providerWith(

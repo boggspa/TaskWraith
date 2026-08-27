@@ -181,7 +181,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       throw new HostNodeOllamaValidationError('Ollama auth operation id is not canonical.')
     }
     throw new HostNodeOllamaValidationError(
-      'Ollama sign-in runs through the Host terminal launcher.'
+      'Ollama authenticates by daemon reachability, not a terminal login. Start the Ollama service and refresh; process launch is never treated as success.'
     )
   }
 

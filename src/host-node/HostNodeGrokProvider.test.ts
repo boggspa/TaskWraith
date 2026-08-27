@@ -51,7 +51,11 @@ function open(
       launchForProvider: (
         providerId: string,
         input: { readonly argv: readonly string[] }
-      ) => Promise<void>
+      ) => Promise<void | {
+        readonly closed: true
+        readonly providerId: string
+        readonly exitCode: number | null
+      }>
     }
     readonly configuredThread?: HostProviderRunThread
     readonly interactions?: HostNodeInteractionResolver
@@ -269,8 +273,26 @@ describe('HostNodeGrokProvider', () => {
     })
     expect(await unconfigured.instance.getAuthFlows()).toEqual([])
     await expect(unconfigured.instance.beginAuth('auth-1')).rejects.toThrow(
-      /no manual sign-in flow/
+      /interactive terminal login is unavailable/
     )
+
+    const launcher = { launchForProvider: vi.fn(async () => undefined) }
+    const login = open({
+      authState: 'unknown',
+      isConfigured: () => false,
+      terminalLauncher: launcher
+    })
+    expect(await login.instance.getAuthFlows()).toEqual([
+      expect.objectContaining({ flowId: 'grok:login' })
+    ])
+    await expect(login.instance.beginAuth('auth-1')).resolves.toBeUndefined()
+    expect(launcher.launchForProvider).toHaveBeenCalledWith(
+      'grok',
+      expect.objectContaining({ argv: ['/usr/local/bin/grok', 'login'] })
+    )
+    await expect(login.instance.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
+    })
 
     const configured = open({ authState: 'unknown', isConfigured: () => true })
     await expect(configured.instance.getStatus()).resolves.toMatchObject({

@@ -215,7 +215,9 @@ describe('HostNodePiProvider status and auth', () => {
     const withoutKey = providerWith(new FakeRunPort(), scriptedSpawn({}).spawn, {
       baseEnv: { PATH: '/usr/bin' }
     })
-    expect((await withoutKey.getStatus()).status).toBe('auth_required')
+    const withoutStatus = await withoutKey.getStatus()
+    expect(withoutStatus.status).toBe('auth_required')
+    expect(withoutStatus.detail).toMatch(/not a terminal login/i)
     expect((await withoutKey.getAuthStatus()).state).toBe('unauthenticated')
 
     const withKey = providerWith(new FakeRunPort(), scriptedSpawn({}).spawn)
@@ -227,6 +229,7 @@ describe('HostNodePiProvider status and auth', () => {
     const provider = providerWith(new FakeRunPort(), scriptedSpawn({}).spawn)
     expect(await provider.getAuthFlows()).toEqual([])
     await expect(provider.beginAuth('op-1')).rejects.toBeInstanceOf(HostNodePiValidationError)
+    await expect(provider.beginAuth('op-1')).rejects.toThrow(/upstream API key/i)
     expect(await provider.cancelAuth()).toBe(false)
   })
 })

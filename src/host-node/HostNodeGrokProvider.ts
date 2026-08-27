@@ -48,7 +48,7 @@ import type {
   HostNodeProviderRunResult
 } from './HostNodeProvider'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
 const PROVIDER_ID = 'grok'
 const PROVIDER_DISPLAY_NAME = 'Grok'
@@ -72,7 +72,7 @@ interface ActiveRun {
 export interface HostNodeGrokProviderOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly spawn?: AcpSpawn
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   /** Non-secret configured-state probe; explicit resource auth wins when known. */
   readonly isConfigured?: () => boolean | Promise<boolean>
 }
@@ -250,6 +250,7 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
     if (!launcher) {
       throw new Error(PROVIDER_DISPLAY_NAME + ' interactive terminal login is unavailable.')
     }
+    // Close/spawn is a handoff receipt, not authentication. getAuthStatus probes keys.
     await launcher.launchForProvider(PROVIDER_ID, { argv: [binary.binaryPath, 'login'] })
   }
 

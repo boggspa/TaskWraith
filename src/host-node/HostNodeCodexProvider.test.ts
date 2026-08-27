@@ -51,7 +51,11 @@ function open(
       launchForProvider: (
         providerId: string,
         input: { readonly argv: readonly string[] }
-      ) => Promise<void>
+      ) => Promise<void | {
+        readonly closed: true
+        readonly providerId: string
+        readonly exitCode: number | null
+      }>
     }
     readonly configuredThread?: HostProviderRunThread
     readonly interactions?: HostNodeInteractionResolver
@@ -312,6 +316,9 @@ describe('HostNodeCodexProvider', () => {
       'codex',
       expect.objectContaining({ argv: ['/usr/local/bin/codex', 'login'] })
     )
+    await expect(login.instance.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
+    })
 
     const configured = open({ authState: 'unknown', isConfigured: () => true })
     await expect(configured.instance.getStatus()).resolves.toMatchObject({

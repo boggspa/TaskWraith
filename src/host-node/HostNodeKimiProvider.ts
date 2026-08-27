@@ -49,7 +49,7 @@ import type {
   HostNodeProviderRunResult
 } from './HostNodeProvider'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
-import type { HostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
 const PROVIDER_ID = 'kimi'
 const PROVIDER_DISPLAY_NAME = 'Kimi'
@@ -73,7 +73,7 @@ interface ActiveRun {
 export interface HostNodeKimiProviderOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly spawn?: AcpSpawn
-  readonly terminalLauncher?: Pick<HostNodeTerminalLauncher, 'launchForProvider'>
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   /** Non-secret configured-state probe; explicit resource auth wins when known. */
   readonly isConfigured?: () => boolean | Promise<boolean>
 }
@@ -250,6 +250,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
     if (!launcher) {
       throw new Error(PROVIDER_DISPLAY_NAME + ' interactive terminal login is unavailable.')
     }
+    // Handoff close is not authentication; getAuthStatus still probes credentials.
     await launcher.launchForProvider(PROVIDER_ID, { argv: [binary.binaryPath, 'login'] })
   }
 

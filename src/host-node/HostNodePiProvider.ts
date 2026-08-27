@@ -324,7 +324,16 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
 
   /** A missing binary is a present `unavailable` row, never an omission. */
   async getStatus(): Promise<HostProviderStatusProjection> {
-    return normalizeHostNodeProviderStatus(PI_PROVIDER_ID, await this.runtimeStatus())
+    const runtime = await this.runtimeStatus()
+    const projection = normalizeHostNodeProviderStatus(PI_PROVIDER_ID, runtime)
+    if (runtime.binaryAvailable && runtime.authState === 'unauthenticated') {
+      return {
+        ...projection,
+        detail:
+          'Pi authenticates by upstream API key in the Host environment, not a terminal login.'
+      }
+    }
+    return projection
   }
 
   async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {

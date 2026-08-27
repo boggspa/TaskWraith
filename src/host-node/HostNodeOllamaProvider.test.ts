@@ -181,6 +181,10 @@ describe('HostNodeOllamaProvider status and auth', () => {
     )
     expect(await provider().cancelAuth()).toBe(false)
   })
+
+  it('refuses a terminal login because daemon reachability is the auth evidence', async () => {
+    await expect(provider().beginAuth('auth-1')).rejects.toThrow(/daemon reachability/i)
+  })
 })
 
 describe('HostNodeOllamaProvider selection validation', () => {
