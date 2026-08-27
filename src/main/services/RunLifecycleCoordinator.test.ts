@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   RunLifecycleCoordinator,
+  runQueueRequestHasRunnableContent,
   type ClaimNextLifecycleJobInput,
   type RunLifecycleCoordinatorDeps
 } from './RunLifecycleCoordinator'
@@ -62,7 +63,88 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   }
 }
 
+const runnableContentCases: Array<{
+  label: string
+  request: Partial<RunQueueRequestSnapshot>
+}> = [
+  {
+    label: 'image-only',
+    request: {
+      prompt: '',
+      imageAttachments: [{ path: '/repo/reference.png', name: 'reference.png' }]
+    }
+  },
+  {
+    label: 'directory-only',
+    request: {
+      prompt: '',
+      imageAttachments: [
+        { path: '/repo/reference-folder', name: 'reference-folder', kind: 'directory' }
+      ]
+    }
+  },
+  {
+    label: 'project-reference-only',
+    request: {
+      prompt: '',
+      projectReferenceContextSelection: {
+        schemaVersion: 1,
+        projectId: 'project-1',
+        referenceIds: ['reference-1']
+      }
+    }
+  },
+  {
+    label: 'Discord-only',
+    request: {
+      prompt: '',
+      discordContextSelection: {
+        guildId: 'guild-1',
+        channelId: 'channel-1',
+        channelName: 'general',
+        limit: 25
+      }
+    }
+  }
+]
+
 describe('RunLifecycleCoordinator', () => {
+  describe('runQueueRequestHasRunnableContent', () => {
+    it.each(runnableContentCases)('accepts a $label request', ({ request }) => {
+      expect(runQueueRequestHasRunnableContent(makeRequest(request))).toBe(true)
+    })
+
+    it('rejects a truly empty request', () => {
+      expect(
+        runQueueRequestHasRunnableContent(
+          makeRequest({
+            prompt: '   ',
+            imageAttachments: [],
+            discordContextSelection: undefined,
+            projectReferenceContextSelection: undefined
+          })
+        )
+      ).toBe(false)
+    })
+
+    it('does not treat empty attachment or context placeholders as runnable', () => {
+      expect(
+        runQueueRequestHasRunnableContent(
+          makeRequest({
+            prompt: '',
+            imageAttachments: [{ path: '   ' }],
+            discordContextSelection: { channelId: '   ', limit: 25 },
+            projectReferenceContextSelection: {
+              schemaVersion: 1,
+              projectId: 'project-1',
+              referenceIds: ['   ']
+            }
+          })
+        )
+      ).toBe(false)
+    })
+  })
+
   it('claims the next queued job and returns a sanitized legacy dispatch ticket', async () => {
     const job = makeJob({
       dispatchReceipt: makeDispatchReceipt(),
@@ -233,6 +315,61 @@ describe('RunLifecycleCoordinator', () => {
     expect(cancelProviderRun).toHaveBeenCalledWith('codex', 'active-run')
   })
 
+  it.each(runnableContentCases)(
+    'promotes and leases a queued $label request without requiring prompt text',
+    async ({ request }) => {
+      let job = makeJob({ request: makeRequest(request) })
+      const queue: RunLifecycleCoordinatorDeps['queue'] = {
+        getRunQueueJob: () => job,
+        promoteQueuedJobForSteer: (input) => {
+          job = {
+            ...job,
+            status: 'steer_promoting',
+            promotionOwnerToken: input.ownerToken,
+            promotionToken: input.ownerToken
+          }
+          return job
+        },
+        leasePromotedSteerJob: (input) => {
+          if (job.promotionOwnerToken !== input.ownerToken) return null
+          job = {
+            ...job,
+            status: 'starting'
+          }
+          return job
+        }
+      }
+      const cancelProviderRun = vi.fn(() => true)
+      const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
+
+      const promotion = await coordinator.promoteQueuedJobForSteer({
+        runId: 'queued-run',
+        ownerToken: 'owner-1',
+        provider: 'codex',
+        cancelRunId: 'active-run',
+        cancelProvider: 'codex'
+      })
+
+      expect(promotion).toMatchObject({
+        ok: true,
+        kind: 'dispatch-permission',
+        request
+      })
+      expect(cancelProviderRun).toHaveBeenCalledWith('codex', 'active-run')
+
+      const lease = await coordinator.leasePromotedSteerJob({
+        runId: 'queued-run',
+        ownerToken: 'owner-1'
+      })
+
+      expect(lease).toMatchObject({
+        ok: true,
+        kind: 'leased',
+        request
+      })
+    }
+  )
+
   it('marks malformed promoted queue jobs failed instead of requeueing them', async () => {
     let job = makeJob({ request: makeRequest({ prompt: '' }) })
     const fallbackPromotedSteerJob = vi.fn((input) => {
@@ -283,6 +420,41 @@ describe('RunLifecycleCoordinator', () => {
       fallbackStatus: 'failed'
     })
     expect(cancelProviderRun).not.toHaveBeenCalled()
+  })
+
+  it('rejects a truly empty request at the promoted steer lease gate', async () => {
+    let job = makeJob({
+      status: 'steer_promoting',
+      promotionOwnerToken: 'owner-1',
+      request: makeRequest({ prompt: '   ' })
+    })
+    const queue: RunLifecycleCoordinatorDeps['queue'] = {
+      getRunQueueJob: () => job,
+      leasePromotedSteerJob: () => {
+        job = {
+          ...job,
+          status: 'starting'
+        }
+        return job
+      }
+    }
+    const coordinator = new RunLifecycleCoordinator({
+      queue,
+      cancelProviderRun: vi.fn(() => true)
+    })
+
+    const lease = await coordinator.leasePromotedSteerJob({
+      runId: 'queued-run',
+      ownerToken: 'owner-1'
+    })
+
+    expect(lease).toMatchObject({
+      ok: false,
+      kind: 'not-available',
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      reason: 'Steered queued run has no runnable request snapshot.'
+    })
   })
 
   it('does not use generic queue transitions for steer ownership paths', async () => {

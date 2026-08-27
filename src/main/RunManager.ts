@@ -20,13 +20,33 @@ export interface LiveSteerTransport {
   cancel(): void
   /** Optional consume seam for broker transports. Draining is delivery evidence. */
   drain?(): string | null
+  /** Reserve one exact batch; commit only after provider admission is proven. */
+  reserve?(): LiveSteerReservation | null
+}
+
+export interface LiveSteerReservation {
+  text: string
+  commit(): void
+  rollback(): void
+  ambiguous(reason: string): void
 }
 
 export interface LiveSteerDeliveryHooks {
   /** Registry identity of the exact durable transcript entry being delivered. */
   entryId: string
+  /** Stable transcript carrier id for provider-native idempotency keys. */
+  messageId?: string
+  /** Main-resolved, chat-owned image paths; never renderer-nominated here. */
+  imagePaths?: readonly string[]
   /** The provider transport accepted the steering text into its live context. */
   onDelivered: () => void
+  /** The provider explicitly refused the request, so boundary fallback is safe. */
+  onRejected?: (reason: string) => void
+  /**
+   * Admission may have happened but could not be proven. Retrying would risk a
+   * duplicate, so the durable row must fail attention-visible instead.
+   */
+  onAmbiguous?: (reason: string) => void
 }
 
 export interface RunSession<TState = unknown> {
@@ -53,6 +73,13 @@ export interface RunSession<TState = unknown> {
   interruptRequestedAt?: number
   /** Strategy C: kill after next tool_result boundary. */
   killAfterToolResult?: boolean
+  /**
+   * Durable queue rows waiting behind Strategy C. Multiple rapid steers may
+   * target the same active run before its next tool boundary, so retain every
+   * exact queue identity rather than letting the latest request overwrite the
+   * first one.
+   */
+  pendingBoundarySteerRunIds?: string[]
 }
 
 export interface CreateRunSessionInput<TState = unknown> {
@@ -520,6 +547,7 @@ export class RunManager<TState = unknown> {
       session.pendingSteerText = undefined
       session.interruptRequestedAt = undefined
       session.killAfterToolResult = undefined
+      session.pendingBoundarySteerRunIds = undefined
       this.terminalStatusClaims.delete(runId)
       this.clearTerminalJoin(runId)
     }
@@ -590,6 +618,7 @@ export class RunManager<TState = unknown> {
     session.pendingSteerText = undefined
     session.interruptRequestedAt = undefined
     session.killAfterToolResult = undefined
+    session.pendingBoundarySteerRunIds = undefined
     this.finish(runId, 'cancelled')
     return true
   }
@@ -605,22 +634,72 @@ export class RunManager<TState = unknown> {
     return true
   }
 
-  armKillAfterToolResult(runId: string): boolean {
+  armKillAfterToolResult(runId: string, queuedRunId?: string): boolean {
     const session = this.sessionsByRunId.get(runId)
     if (!session || isTerminalRunSessionStatus(session.status)) return false
     session.killAfterToolResult = true
     session.interruptRequestedAt = Date.now()
+    const normalizedQueuedRunId = queuedRunId?.trim()
+    if (normalizedQueuedRunId) {
+      const pending = session.pendingBoundarySteerRunIds || []
+      if (!pending.includes(normalizedQueuedRunId)) {
+        session.pendingBoundarySteerRunIds = [...pending, normalizedQueuedRunId]
+      }
+    }
     session.updatedAt = Date.now()
     this.emit({ type: 'updated', session })
     return true
   }
 
-  getInterruptState(runId: string): { interruptRequestedAt?: number; killAfterToolResult?: boolean } {
+  disarmKillAfterToolResult(runId: string, queuedRunId?: string): boolean {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || !session.killAfterToolResult) return false
+    const normalizedQueuedRunId = queuedRunId?.trim()
+    if (normalizedQueuedRunId) {
+      const remaining = (session.pendingBoundarySteerRunIds || []).filter(
+        (candidate) => candidate !== normalizedQueuedRunId
+      )
+      session.pendingBoundarySteerRunIds = remaining.length > 0 ? remaining : undefined
+      if (remaining.length > 0) {
+        session.updatedAt = Date.now()
+        this.emit({ type: 'updated', session })
+        return true
+      }
+    } else {
+      session.pendingBoundarySteerRunIds = undefined
+    }
+    session.killAfterToolResult = undefined
+    session.interruptRequestedAt = undefined
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
+    return true
+  }
+
+  consumeKillAfterToolResult(runId: string): { armed: boolean; queuedRunIds: string[] } {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session?.killAfterToolResult || isTerminalRunSessionStatus(session.status)) {
+      return { armed: false, queuedRunIds: [] }
+    }
+    const queuedRunIds = [...(session.pendingBoundarySteerRunIds || [])]
+    session.killAfterToolResult = undefined
+    session.pendingBoundarySteerRunIds = undefined
+    session.interruptRequestedAt = undefined
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
+    return { armed: true, queuedRunIds }
+  }
+
+  getInterruptState(runId: string): {
+    interruptRequestedAt?: number
+    killAfterToolResult?: boolean
+    pendingBoundarySteerRunIds?: string[]
+  } {
     const session = this.sessionsByRunId.get(runId)
     if (!session) return {}
     return {
       interruptRequestedAt: session.interruptRequestedAt,
-      killAfterToolResult: session.killAfterToolResult
+      killAfterToolResult: session.killAfterToolResult,
+      pendingBoundarySteerRunIds: session.pendingBoundarySteerRunIds
     }
   }
 
@@ -661,6 +740,7 @@ export class RunManager<TState = unknown> {
     session.pendingSteerText = undefined
     session.interruptRequestedAt = undefined
     session.killAfterToolResult = undefined
+    session.pendingBoundarySteerRunIds = undefined
     session.updatedAt = Date.now()
     this.emit({ type: 'updated', session })
   }

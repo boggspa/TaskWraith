@@ -1,4 +1,13 @@
 import { execFile } from 'child_process'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  type BigIntStats
+} from 'node:fs'
 import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
 import { emitWirePromptCapture } from '../run/WirePromptEvents'
@@ -17,8 +26,10 @@ import {
 import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
+import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
+import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
-import type { RunManager, RunSessionStatus } from '../RunManager'
+import type { LiveSteerReservation, RunManager, RunSessionStatus } from '../RunManager'
 import { formatSteeringInjection } from '../steering/BrokerSteerTransport'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../../shared/tokenEstimate'
 import {
@@ -278,13 +289,24 @@ export interface OllamaProviderDeps {
     memoryKey?: string
   ) => void
   /**
-   * Mid-turn steering (broker-injection): drain steer text the
-   * SteeringOrchestrator armed on this run's session. Draining fires the
-   * delivery-evidence hooks, so callers must only drain when the returned
-   * text is guaranteed a seat in the next model request. Same contract as
-   * the McpBridgeRuntime dep of the same name.
+   * Test seam for the already-main-authorized image paths on this run. The
+   * production default opens each exact path and enforces the shared media
+   * byte ceiling before reading it.
    */
-  drainPendingSteerText?: (appRunId: string) => string | null
+  readImageAttachment?: (imagePath: string) => Promise<Buffer>
+  /**
+   * Mid-turn steering (broker-injection): reserve steer text the
+   * SteeringOrchestrator armed on this run's session. The provider commits
+   * the reservation only after the carrying HTTP turn succeeds.
+   */
+  reservePendingSteerText?: (appRunId: string) => LiveSteerReservation | null
+  /**
+   * Exact provider-owned boundary after a complete tool-request batch has
+   * executed and every result has been appended for the next model request.
+   * Return true to stop this run before that request so a queued structured
+   * steer can resume from the completed boundary.
+   */
+  onToolBatchBoundary?: (appRunId: string) => boolean | Promise<boolean>
 }
 
 interface OllamaTagsResponse {
@@ -345,6 +367,8 @@ interface OllamaChatChunk {
 export interface OllamaChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  /** Ollama REST vision input: raw image bytes encoded as base64. */
+  images?: string[]
   /** Echoed back on an assistant turn that made native tool calls so the model
    * keeps a coherent transcript across the stateless HTTP loop. */
   tool_calls?: OllamaNativeToolCall[]
@@ -472,6 +496,145 @@ export interface OllamaOpeningMessagesInput {
   workspaceIndexBlock: string
   userPrompt: string
   ensembleRun?: boolean
+}
+
+export const OLLAMA_IMAGE_MAX_ATTACHMENTS = MAX_DURABLE_ATTACHMENT_REFS
+export const OLLAMA_IMAGE_MAX_BYTES = TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES
+
+export class OllamaImageAttachmentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OllamaImageAttachmentError'
+  }
+}
+
+/** `/api/show` is the authority for the exact runnable artifact. */
+export function ollamaModelShowSupportsVision(show?: OllamaModelShowInfo | null): boolean {
+  return Boolean(
+    show?.capabilities?.some(
+      (capability) => typeof capability === 'string' && capability.trim().toLowerCase() === 'vision'
+    )
+  )
+}
+
+function sameOllamaImageFileIdentity(
+  left: { dev: bigint; ino: bigint },
+  right: { dev: bigint; ino: bigint }
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+export interface OllamaDescriptorImageReadHooks {
+  /** Test-only synchronization point after descriptor identity validation. */
+  afterOpen?: (fd: number) => void
+}
+
+export async function readBoundedOllamaImageAttachment(
+  imagePath: string,
+  hooks: OllamaDescriptorImageReadHooks = {}
+): Promise<Buffer> {
+  const noFollowFlag =
+    typeof fsConstants.O_NOFOLLOW === 'number' && fsConstants.O_NOFOLLOW > 0
+      ? fsConstants.O_NOFOLLOW
+      : 0
+  let expectedIdentity: BigIntStats | null = null
+  const captureFallbackIdentity = (): void => {
+    expectedIdentity = lstatSync(imagePath, { bigint: true })
+    if (expectedIdentity.isSymbolicLink()) {
+      throw new Error('the selected image cannot be a symlink')
+    }
+  }
+  let fd: number
+  if (noFollowFlag === 0) {
+    captureFallbackIdentity()
+    fd = openSync(imagePath, fsConstants.O_RDONLY)
+  } else {
+    try {
+      fd = openSync(imagePath, fsConstants.O_RDONLY | noFollowFlag)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code !== 'EINVAL' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw error
+      captureFallbackIdentity()
+      fd = openSync(imagePath, fsConstants.O_RDONLY)
+    }
+  }
+  try {
+    const before = fstatSync(fd, { bigint: true })
+    if (!before.isFile()) {
+      throw new Error('the selected path is not a regular file')
+    }
+    if (expectedIdentity && !sameOllamaImageFileIdentity(expectedIdentity, before)) {
+      throw new Error('the selected image changed identity while it was being opened')
+    }
+    if (before.size <= 0n) {
+      throw new Error('the selected image is empty')
+    }
+    if (before.size > BigInt(OLLAMA_IMAGE_MAX_BYTES)) {
+      throw new Error(
+        `the selected image is ${before.size} bytes; the per-image limit is ${OLLAMA_IMAGE_MAX_BYTES} bytes`
+      )
+    }
+    hooks.afterOpen?.(fd)
+    const buffer = readFileSync(fd)
+    const after = fstatSync(fd, { bigint: true })
+    if (
+      !sameOllamaImageFileIdentity(before, after) ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      BigInt(buffer.byteLength) !== before.size
+    ) {
+      throw new Error('the selected image changed while it was being read')
+    }
+    return buffer
+  } finally {
+    try {
+      closeSync(fd)
+    } catch {
+      // Never reopen a pathname merely because descriptor cleanup failed.
+    }
+  }
+}
+
+/**
+ * Load every authorized attachment as one ordered, all-or-nothing batch. A
+ * failing item aborts before `/api/chat`; it is never dropped while its peers
+ * are silently sent.
+ */
+export async function loadOllamaImageAttachmentBase64(
+  imagePaths: readonly string[],
+  readImageAttachment: (imagePath: string) => Promise<Buffer> = readBoundedOllamaImageAttachment
+): Promise<string[]> {
+  if (imagePaths.length > OLLAMA_IMAGE_MAX_ATTACHMENTS) {
+    throw new OllamaImageAttachmentError(
+      `Ollama received ${imagePaths.length} image attachments, above TaskWraith's ${OLLAMA_IMAGE_MAX_ATTACHMENTS}-image limit. The run was not dispatched with a partial image set.`
+    )
+  }
+  const images: string[] = []
+  for (const rawPath of imagePaths) {
+    const imagePath = typeof rawPath === 'string' ? rawPath : ''
+    if (!imagePath.trim()) {
+      throw new OllamaImageAttachmentError(
+        'An Ollama image attachment had no usable path. The run was not dispatched with a partial image set.'
+      )
+    }
+    let buffer: Buffer
+    try {
+      buffer = await readImageAttachment(imagePath)
+    } catch (error) {
+      throw new OllamaImageAttachmentError(
+        `The attached image could not be read for Ollama (${imagePath}): ${
+          error instanceof Error ? error.message : String(error)
+        }. The run was not dispatched with a partial image set.`
+      )
+    }
+    if (buffer.byteLength <= 0 || buffer.byteLength > OLLAMA_IMAGE_MAX_BYTES) {
+      throw new OllamaImageAttachmentError(
+        `The attached image is empty or exceeds TaskWraith's ${OLLAMA_IMAGE_MAX_BYTES}-byte per-image limit (${imagePath}). The run was not dispatched with a partial image set.`
+      )
+    }
+    images.push(buffer.toString('base64'))
+  }
+  return images
 }
 
 /** Opening transcript for a local run. Workspace intent gets the full harness
@@ -737,6 +900,14 @@ class OllamaTransportLaunchDeniedError extends Error {
     this.name = 'AbortError'
   }
 }
+
+class OllamaChatRejectedBeforeAdmissionError extends Error {}
+
+// Only statuses with stable request-refusal semantics are replay-safe. Keep
+// proxy/client-close and uncommon extension codes ambiguous unless qualified.
+const OLLAMA_DEFINITIVE_REQUEST_REJECTION_STATUSES = new Set([
+  400, 401, 403, 404, 405, 409, 413, 415, 422, 429
+])
 
 function assertOllamaTransportLaunchAuthorized(
   signal: AbortSignal,
@@ -3103,8 +3274,13 @@ async function fetchOllamaChatResponseWithRetry(input: {
   request: Record<string, unknown>
   launchAuthorized?: OllamaTransportLaunchAuthority
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
+  onRequestAttempted?: () => void
+  /** First valid model output proves the carrying steer was admitted. */
+  onProviderResponseEvidence?: () => void
+  retryTransportFailures?: boolean
 }): Promise<Response> {
-  const maxAttempts = OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS.length + 1
+  const maxAttempts =
+    input.retryTransportFailures === false ? 1 : OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS.length + 1
   let lastError: unknown
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -3112,6 +3288,7 @@ async function fetchOllamaChatResponseWithRetry(input: {
       // await between them. The AbortSignal owns cancellation after launch;
       // RunManager's terminal claim owns admission before launch.
       assertOllamaTransportLaunchAuthorized(input.signal, input.launchAuthorized)
+      input.onRequestAttempted?.()
       return await fetch(endpoint(input.baseUrl, '/api/chat'), {
         method: 'POST',
         signal: input.signal,
@@ -3537,6 +3714,10 @@ async function runOllamaChatTurn(input: {
   request?: Record<string, unknown>
   launchAuthorized?: OllamaTransportLaunchAuthority
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
+  onRequestAttempted?: () => void
+  /** First valid model output proves the carrying steer was admitted. */
+  onProviderResponseEvidence?: () => void
+  retryTransportFailures?: boolean
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
   onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
   onGeneratedOutputChars?: (chars: number) => void
@@ -3556,6 +3737,8 @@ async function runOllamaChatTurn(input: {
     signal: input.signal,
     launchAuthorized: input.launchAuthorized,
     onRetry: input.onRetry,
+    onRequestAttempted: input.onRequestAttempted,
+    retryTransportFailures: input.retryTransportFailures,
     request: input.request ?? {
       model: input.model,
       stream: true,
@@ -3591,12 +3774,14 @@ async function runOllamaChatTurn(input: {
     } catch {
       // The HTTP status remains actionable when an older daemon sends no JSON.
     }
-    if (input.cloudModel && response.status === 401) {
-      throw new Error(
-        'Ollama Cloud authentication failed. Replace the API key or run `ollama signin` in Settings → Providers, then refresh models.'
-      )
+    const message =
+      input.cloudModel && response.status === 401
+        ? 'Ollama Cloud authentication failed. Replace the API key or run `ollama signin` in Settings → Providers, then refresh models.'
+        : `Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`
+    if (OLLAMA_DEFINITIVE_REQUEST_REJECTION_STATUSES.has(response.status)) {
+      throw new OllamaChatRejectedBeforeAdmissionError(message)
     }
-    throw new Error(`Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`)
+    throw new Error(message)
   }
   if (!response.body) {
     throw new Error('Ollama chat returned no response body.')
@@ -3622,6 +3807,7 @@ async function runOllamaChatTurn(input: {
     const generatedOutputChars =
       contentDelta.length + thinkingDelta.length + visiblePayloadChars(chunk.message?.tool_calls)
     if (generatedOutputChars > 0) {
+      input.onProviderResponseEvidence?.()
       input.onGeneratedOutputChars?.(generatedOutputChars)
     }
     content += contentDelta
@@ -3700,6 +3886,9 @@ async function runOllamaChatTurn(input: {
   const trailing = buffer.trim()
   if (trailing) {
     handleLine(trailing)
+  }
+  if (!lastDone) {
+    throw new Error('Ollama chat stream ended before its terminal done chunk.')
   }
   return {
     content,
@@ -3833,6 +4022,24 @@ export async function runOllamaProvider(
     directCloudRun = directCloudApi
     launchedModel = cloudModel ? null : model
     const modelInfo = launchPlan.modelManifest.merged
+    const requestedImagePaths = payload.imagePaths || []
+    const exactModelSupportsVision = ollamaModelShowSupportsVision(launchPlan.modelManifest.show)
+    let imageAttachmentWarning: string | null = null
+    let imageAttachmentBase64: string[] = []
+    if (requestedImagePaths.length > 0) {
+      if (exactModelSupportsVision) {
+        imageAttachmentBase64 = await loadOllamaImageAttachmentBase64(
+          requestedImagePaths,
+          deps.readImageAttachment
+        )
+      } else {
+        const noun = requestedImagePaths.length === 1 ? 'image' : 'images'
+        imageAttachmentWarning =
+          `${modelLabel}'s exact /api/show response did not advertise the vision capability, ` +
+          `so the ${requestedImagePaths.length} attached ${noun} will not be sent to Ollama. ` +
+          'Continuing with the text request only.'
+      }
+    }
     // Tool-result truncation scales to the daemon-measured window (bounded by
     // the profile cap); an unmeasured window keeps the conservative floor.
     const toolResultLimits = resolveOllamaToolResultLimits({
@@ -3860,6 +4067,22 @@ export async function runOllamaProvider(
     const memoryKey = launchPlan.memoryKey ?? undefined
     let sessionMemory = JSON.parse(JSON.stringify(launchPlan.sessionMemory)) as OllamaSessionMemory
     const messages = JSON.parse(JSON.stringify(launchPlan.openingMessages)) as OllamaChatMessage[]
+    if (imageAttachmentBase64.length > 0) {
+      const initialUserMessage = messages.find((message) => message.role === 'user')
+      if (!initialUserMessage) {
+        throw new OllamaImageAttachmentError(
+          'Ollama could not bind the image attachment batch to the initial user message. The run was not dispatched with the images silently omitted.'
+        )
+      }
+      initialUserMessage.images = imageAttachmentBase64
+    }
+    const firstRequest: Record<string, unknown> = {
+      ...launchPlan.firstRequest,
+      // Share the exact turn-0 array rather than duplicating a potentially
+      // large base64 image batch. The request is serialized before this array can be
+      // extended by a later tool turn.
+      messages
+    }
     // Turn-0 wire capture: the host-constructed system/user/kickoff messages
     // as the first /api/chat request will carry them. Later requests in the
     // tool loop append tool results to this same array; the turn-0 shape is
@@ -3882,7 +4105,9 @@ export async function runOllamaProvider(
               ? ['local tool system prompt + capability gateway + workspace index block']
               : isKickoff
                 ? ['harness kickoff construction']
-                : []
+                : message.images?.length
+                  ? ['base64 image array appended after exact /api/show vision negotiation']
+                  : []
         })
       }
     }
@@ -3935,6 +4160,20 @@ export async function runOllamaProvider(
       },
       route
     )
+    if (imageAttachmentWarning) {
+      deps.sendAgentCompatLine(
+        event.sender,
+        'ollama',
+        {
+          type: 'provider_warning',
+          id: 'ollama-image-attachments-no-vision',
+          severity: 'warning',
+          title: 'Ollama model does not advertise vision',
+          message: imageAttachmentWarning
+        },
+        route
+      )
+    }
 
     let harnessState: OllamaHarnessRunState = createOllamaHarnessRunState()
     let lastDone: OllamaChatChunk | null = null
@@ -4003,7 +4242,7 @@ export async function runOllamaProvider(
       }
       const jsonToolFallback =
         turnIndex === 0
-          ? Object.prototype.hasOwnProperty.call(launchPlan.firstRequest, 'format')
+          ? Object.prototype.hasOwnProperty.call(firstRequest, 'format')
           : forceJsonToolFallback ||
             runProfile.protocolMode === 'json_fallback' ||
             (nativeToolDefs.length === 0 &&
@@ -4053,66 +4292,98 @@ export async function runOllamaProvider(
         )
       }
       // Mid-turn steering (broker-injection): text the SteeringOrchestrator
-      // armed on this run's session is drained here — the last seam before
+      // armed on this run's session is reserved here — the last seam before
       // the request body is composed — and delivered as a framed user
       // message the model reads this very call. Turn 0 is skipped because
-      // its request is the pre-resolved `launchPlan.firstRequest`, whose
-      // message list was snapshotted at compose time; draining there would
-      // fire delivery evidence for text the outgoing body cannot carry.
-      // Text never drained here stays owned by the durable boundary queue.
+      // its request is the pre-resolved `firstRequest`, whose message list was
+      // snapshotted at compose time; reserving there would
+      // claim text the outgoing body cannot carry. Text never reserved here
+      // stays owned by the durable boundary queue.
+      let steerReservation: LiveSteerReservation | null = null
       if (turnIndex > 0 && route.appRunId) {
-        const pendingSteerText = deps.drainPendingSteerText?.(route.appRunId)
+        steerReservation = deps.reservePendingSteerText?.(route.appRunId) || null
+        const pendingSteerText = steerReservation?.text
         if (pendingSteerText) {
           messages.push({ role: 'user', content: formatSteeringInjection(pendingSteerText) })
         }
       }
-      const turn = await runOllamaChatTurn({
-        baseUrl: transportBaseUrl,
-        model: wireModel,
-        cloudModel,
-        ...(directCloudApi ? { apiKey: cloudApiKey } : {}),
-        messages,
-        signal: controller.signal,
-        tools: jsonToolFallback ? [] : nativeToolDefs,
-        jsonToolFallback,
-        ...(modelTemperature != null ? { temperature: modelTemperature } : {}),
-        ...(thinkingLevel !== null ? { think: thinkingLevel } : {}),
-        numCtx: resolveOllamaNumCtx({
+      let turn: OllamaChatTurnResult
+      let steerRequestAttempted = false
+      const commitSteerOnResponseEvidence = (): void => {
+        if (!steerReservation) return
+        steerReservation.commit()
+        steerReservation = null
+      }
+      try {
+        turn = await runOllamaChatTurn({
+          baseUrl: transportBaseUrl,
+          model: wireModel,
+          cloudModel,
+          ...(directCloudApi ? { apiKey: cloudApiKey } : {}),
           messages,
+          signal: controller.signal,
           tools: jsonToolFallback ? [] : nativeToolDefs,
-          modelInfo,
-          contextCapTokens: runProfile.contextCapTokens,
-          reserveTokens: runProfile.numPredictFinal
-        }),
-        ...(numPredict ? { numPredict } : {}),
-        ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {}),
-        toolProtocolEnabled,
-        availableToolNames,
-        formatToolNames,
-        request: turnIndex === 0 ? launchPlan.firstRequest : undefined,
-        launchAuthorized,
-        onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
-          deps.sendAgentCompatLine(
-            event.sender,
-            'ollama',
-            {
-              type: 'provider_warning',
-              id: 'ollama-chat-transport-retry',
-              severity: 'warning',
-              title: 'Retrying Ollama connection',
-              message: `Ollama dropped the ${directCloudApi ? 'Cloud' : 'local'} chat request (${error}). Retrying ${attempt + 1}/${maxAttempts} in ${delayMs}ms.`
-            },
-            route
+          jsonToolFallback,
+          ...(modelTemperature != null ? { temperature: modelTemperature } : {}),
+          ...(thinkingLevel !== null ? { think: thinkingLevel } : {}),
+          numCtx: resolveOllamaNumCtx({
+            messages,
+            tools: jsonToolFallback ? [] : nativeToolDefs,
+            modelInfo,
+            contextCapTokens: runProfile.contextCapTokens,
+            reserveTokens: runProfile.numPredictFinal
+          }),
+          ...(numPredict ? { numPredict } : {}),
+          ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {}),
+          toolProtocolEnabled,
+          availableToolNames,
+          formatToolNames,
+          request: turnIndex === 0 ? firstRequest : undefined,
+          launchAuthorized,
+          onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
+            deps.sendAgentCompatLine(
+              event.sender,
+              'ollama',
+              {
+                type: 'provider_warning',
+                id: 'ollama-chat-transport-retry',
+                severity: 'warning',
+                title: 'Retrying Ollama connection',
+                message: `Ollama dropped the ${directCloudApi ? 'Cloud' : 'local'} chat request (${error}). Retrying ${attempt + 1}/${maxAttempts} in ${delayMs}ms.`
+              },
+              route
+            )
+          },
+          onRequestAttempted: () => {
+            steerRequestAttempted = true
+          },
+          onProviderResponseEvidence: commitSteerOnResponseEvidence,
+          // A dropped response cannot tell us whether Ollama admitted the
+          // request. Replaying a turn that carries a steer could inject the
+          // same instruction twice, so leave that receipt ambiguous instead
+          // of using the ordinary transport retry loop.
+          retryTransportFailures: !steerReservation,
+          onContentDelta: ({ delta }) => {
+            emitOllamaContent(delta)
+          },
+          onThinkingUpdate: ({ thinking }) => {
+            emitOllamaThinkingUpdate(thinking)
+          },
+          onGeneratedOutputChars: reportGeneratedOutputChars
+        })
+        commitSteerOnResponseEvidence()
+      } catch (error) {
+        if (!steerRequestAttempted || error instanceof OllamaChatRejectedBeforeAdmissionError) {
+          steerReservation?.rollback()
+        } else {
+          steerReservation?.ambiguous(
+            `Ollama steering request failed after admission became uncertain: ${
+              error instanceof Error ? error.message : String(error)
+            }`
           )
-        },
-        onContentDelta: ({ delta }) => {
-          emitOllamaContent(delta)
-        },
-        onThinkingUpdate: ({ thinking }) => {
-          emitOllamaThinkingUpdate(thinking)
-        },
-        onGeneratedOutputChars: reportGeneratedOutputChars
-      })
+        }
+        throw error
+      }
       // A response body can resolve re-entrantly with Stop/history-clear
       // projection. Re-check the exact run before interpreting that resolved
       // turn or dispatching any tool it requested.
@@ -4595,6 +4866,9 @@ export async function runOllamaProvider(
         consecutiveNonProductiveTurns += 1
       }
       if (goalLifecycleStopContent) {
+        break
+      }
+      if (route.appRunId && (await deps.onToolBatchBoundary?.(route.appRunId))) {
         break
       }
     }

@@ -276,6 +276,13 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.perThreadMcp).toBe(true)
   })
 
+  it('advertises image input for every runtime-negotiated adapter', () => {
+    for (const provider of ['kimi', 'grok', 'mistral'] as const) {
+      expect(defaultProviderDescriptor(provider).capabilities.imageAttachments).toBe(true)
+    }
+    expect(defaultProviderDescriptor('ollama').capabilities.imageAttachments).toBe(true)
+  })
+
   it('live TaskWraith-gated providers advertise workspace grants', () => {
     // Cursor included: its B-mode TaskWraith MCP broker routes tool calls
     // through the central approval gate, where workspace grants apply.

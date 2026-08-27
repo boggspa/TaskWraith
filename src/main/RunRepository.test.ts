@@ -860,6 +860,137 @@ describe('RunRepository', () => {
     }
   })
 
+  it('persists an exact solo-steer admission fence before provider delivery', () => {
+    const emitRunQueueChanged = vi.fn()
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged,
+      emitRunEventsChanged: vi.fn()
+    })
+    let job: RunQueueJob = {
+      id: 'solo-steer-1',
+      runId: 'solo-steer-1',
+      provider: 'codex',
+      workspacePath: '/repo',
+      source: 'manual',
+      status: 'steer_promoting',
+      priority: 0,
+      attempt: 1,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      promotionOwnerToken: 'owner-token',
+      promotionToken: 'owner-token',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      request: {
+        prompt: 'Deliver this once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    }
+    const get = vi.spyOn(AppStore, 'getRunQueueJob').mockImplementation(() => job)
+    const update = vi
+      .spyOn(AppStore, 'updateRunQueueJob')
+      .mockImplementation((_runId, partial: Partial<RunQueueJob>) => {
+        job = { ...job, ...partial }
+        return job
+      })
+
+    try {
+      const fenced = repository.markPromotedSteerAdmissionPending({
+        runId: 'solo-steer-1',
+        ownerToken: 'owner-token',
+        activeRunId: 'active-run-1',
+        strategy: 'codex-turn-steer'
+      })
+
+      expect(fenced).toMatchObject({
+        steerDeliveryPhase: 'provider_admission_pending',
+        steerDeliveryActiveRunId: 'active-run-1',
+        steerDeliveryStrategy: 'codex-turn-steer'
+      })
+      expect(fenced?.steerDeliveryAttemptedAt).toBeTruthy()
+      expect(update).toHaveBeenCalledTimes(1)
+
+      expect(
+        repository.markPromotedSteerAdmissionPending({
+          runId: 'solo-steer-1',
+          ownerToken: 'owner-token',
+          activeRunId: 'active-run-1',
+          strategy: 'codex-turn-steer'
+        })
+      ).toBe(fenced)
+      expect(update).toHaveBeenCalledTimes(1)
+      expect(
+        repository.markPromotedSteerAdmissionPending({
+          runId: 'solo-steer-1',
+          ownerToken: 'owner-token',
+          activeRunId: 'different-run',
+          strategy: 'codex-turn-steer'
+        })
+      ).toBeNull()
+    } finally {
+      get.mockRestore()
+      update.mockRestore()
+    }
+  })
+
+  it('fences an ordinary queued-row promotion as well as a prepared barrier', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const promoted: RunQueueJob = {
+      id: 'queued-steer-1',
+      runId: 'queued-steer-1',
+      provider: 'claude',
+      chatId: 'chat-1',
+      source: 'manual',
+      status: 'steer_promoting',
+      priority: 0,
+      attempt: 1,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      enqueuedAt: '2026-05-08T00:00:00.000Z',
+      promotedAt: '2026-05-08T00:00:01.000Z',
+      promotionOwnerToken: 'owner-token',
+      promotionToken: 'owner-token',
+      promotionAttempt: 1,
+      transitionVersion: 1,
+      queueMessageId: 'midrun-queued-user-queued-steer-1',
+      request: {
+        prompt: 'Prioritized queued follow-up.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    }
+    const get = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(promoted)
+    const update = vi
+      .spyOn(AppStore, 'updateRunQueueJob')
+      .mockImplementation((_runId, partial: Partial<RunQueueJob>) => ({ ...promoted, ...partial }))
+    try {
+      expect(
+        repository.markPromotedSteerAdmissionPending({
+          runId: promoted.runId,
+          ownerToken: 'owner-token',
+          activeRunId: 'active-run',
+          strategy: 'broker-injection'
+        })
+      ).toMatchObject({ steerDeliveryPhase: 'provider_admission_pending' })
+      expect(update).toHaveBeenCalledTimes(1)
+    } finally {
+      get.mockRestore()
+      update.mockRestore()
+    }
+  })
+
   it('falls back a promoted job to queued or terminal based on reason with statusReason', () => {
     const emitRunQueueChanged = vi.fn()
     const repository = new RunRepository({
@@ -910,6 +1041,59 @@ describe('RunRepository', () => {
       ).toBe('failed')
       expect(update).toHaveBeenCalledTimes(3)
       expect(emitRunQueueChanged).toHaveBeenCalledTimes(3)
+    } finally {
+      get.mockRestore()
+      update.mockRestore()
+    }
+  })
+
+  it('requires the dedicated repository path to clear an admission fence', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const pending = {
+      id: 'run-1',
+      runId: 'run-1',
+      provider: 'codex',
+      chatId: 'chat-1',
+      source: 'manual',
+      status: 'steer_promoting',
+      priority: 0,
+      attempt: 1,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      promotionOwnerToken: 'owner-token',
+      promotionToken: 'owner-token',
+      steerDeliveryPhase: 'provider_admission_pending'
+    } as RunQueueJob
+    const get = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(pending)
+    const update = vi
+      .spyOn(AppStore, 'updateRunQueueJob')
+      .mockImplementation((_runId, partial: Partial<RunQueueJob>) => ({ ...pending, ...partial }))
+    try {
+      expect(
+        repository.fallbackPromotedSteerJob({
+          runId: pending.runId,
+          ownerToken: 'owner-token',
+          reason: 'generic fallback',
+          fallbackStatus: 'queued'
+        })
+      ).toBeNull()
+      expect(update).not.toHaveBeenCalled()
+
+      expect(
+        repository.releasePromotedSteerAfterDefiniteNonAdmission({
+          runId: pending.runId,
+          ownerToken: 'owner-token',
+          reason: 'Provider rejected before admission.'
+        })
+      ).toMatchObject({
+        status: 'queued',
+        steerDeliveryPhase: undefined
+      })
+      expect(update).toHaveBeenCalledTimes(1)
     } finally {
       get.mockRestore()
       update.mockRestore()

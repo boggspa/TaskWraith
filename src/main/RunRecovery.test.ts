@@ -262,6 +262,88 @@ describe('RunRecovery', () => {
     expect(recovered.records).toEqual([])
   })
 
+  it('fails an admission-pending solo steer after restart without queue replay', () => {
+    const pending = job({
+      id: 'run-steer-pending',
+      runId: 'run-steer-pending',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'owner-1',
+      promotionToken: 'owner-1',
+      queueMessageId: 'midrun-queued-user-run-steer-pending',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'provider_admission_pending',
+      steerDeliveryActiveRunId: 'active-run-1',
+      steerDeliveryStrategy: 'codex-turn-steer',
+      request: {
+        prompt: 'Deliver exactly once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([pending], recoveredAt, () => undefined)
+
+    expect(recovered.jobs[0]).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'ambiguous_live_steer_admission_on_startup'
+    })
+    expect(recovered.jobs[0].steerDeliveryPhase).toBe('provider_admission_pending')
+    expect(recovered.records).toHaveLength(1)
+    expect(recovered.records[0]).toMatchObject({
+      action: 'marked_failed',
+      previousStatus: 'steer_promoting',
+      recoveredStatus: 'failed'
+    })
+  })
+
+  it('fails an ordinary promoted queued row when provider admission may have begun', () => {
+    const pending = job({
+      id: 'queued-steer-pending',
+      runId: 'queued-steer-pending',
+      status: 'steer_promoting',
+      enqueuedAt: '2026-05-07T11:59:00.000Z',
+      promotionOwnerToken: 'owner-1',
+      promotionToken: 'owner-1',
+      queueMessageId: 'midrun-queued-user-queued-steer-pending',
+      steerDeliveryPhase: 'provider_admission_pending',
+      request: {
+        prompt: 'Existing queued follow-up.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([pending], recoveredAt, () => undefined)
+
+    expect(recovered.jobs[0]).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'ambiguous_live_steer_admission_on_startup',
+      steerDeliveryPhase: 'provider_admission_pending'
+    })
+  })
+
+  it('fails closed for a malformed persisted admission phase', () => {
+    const malformed = job({
+      id: 'malformed-steer-phase',
+      runId: 'malformed-steer-phase',
+      status: 'steer_promoting',
+      steerDeliveryPhase: 'unknown-phase' as RunQueueJob['steerDeliveryPhase']
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([malformed], recoveredAt, () => undefined)
+
+    expect(recovered.jobs[0]).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'ambiguous_live_steer_admission_on_startup'
+    })
+  })
+
   it('requeues a forged or incomplete solo-steer preparation marker', () => {
     const malformed = job({
       id: 'run-steer-forged',

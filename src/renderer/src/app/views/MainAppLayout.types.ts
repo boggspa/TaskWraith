@@ -399,6 +399,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideProviderChange: any
   handleSideReasoningChange: any
   handleSideRun: any
+  handleSideSteer: any
   handleSideToggleFastMode: any
   handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
   handleSteerToQueuedMessage: any

@@ -117,6 +117,17 @@ describe('MidRunSteeringRegistry', () => {
     expect(registry.entryForScheduledTask('chat-1', 'task-1')).toBeNull()
   })
 
+  it('settles an ambiguous entry without manufacturing delivery evidence', () => {
+    const registry = new MidRunSteeringRegistry()
+    const ambiguous = register(registry, { messageId: 'msg-ambiguous' })
+    const pending = register(registry, { messageId: 'msg-pending' })
+
+    registry.settleWithoutDelivery('chat-1', [ambiguous.id])
+
+    expect(registry.pendingForChat('chat-1')).toEqual([pending])
+    expect(ambiguous.deliveredAtIso).toBeUndefined()
+  })
+
   it('entryForScheduledTask finds only live entries for the task', () => {
     const registry = new MidRunSteeringRegistry()
     register(registry, { source: 'scheduledTask', scheduledTaskId: 'task-1', messageId: 'msg-a' })

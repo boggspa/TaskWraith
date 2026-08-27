@@ -79,6 +79,7 @@ const createDeps = () => {
   const deps: RunQueueHandlersDeps = {
     resolveSenderRunQueueScope: vi.fn(() => ({ kind: 'main' as const })),
     resolveSenderAttachmentFilePaths: vi.fn(() => []),
+    resolveSenderDirectoryPickerPaths: vi.fn(() => []),
     resolveRunQueueTargetChatId: vi.fn(() => 'chat-1'),
     getRunQueueJobs: vi.fn(() => [defaultJob]),
     getRunRecoveryRecords: vi.fn(() => [recoveryRecord]),
@@ -161,7 +162,7 @@ describe('registerRunQueueHandlers', () => {
         runId: 'run-1',
         chatId: 'chat-1'
       },
-      { authorizedFilePaths: [] }
+      { authorizedFilePaths: [], authorizedDirectoryPickerPaths: [] }
     )
 
     handlerFor('transition-run-queue-job')(event, 'run-1', 'queued', {})
@@ -269,6 +270,11 @@ describe('registerRunQueueHandlers', () => {
         ? ['/tmp/Test 1/one.png']
         : ['/tmp/Test 3/three.png']
     )
+    deps.resolveSenderDirectoryPickerPaths = vi.fn((event) =>
+      (event as { sender: { id: number } }).sender.id === 101
+        ? ['/tmp/Test 1/folder']
+        : ['/tmp/Test 3/folder']
+    )
     registerRunQueueHandlers(deps)
 
     handlerFor('request-run-queue-job')(
@@ -278,7 +284,10 @@ describe('registerRunQueueHandlers', () => {
 
     expect(deps.requestRunQueueJob).toHaveBeenCalledWith(
       { runId: 'run-1', chatId: 'chat-1' },
-      { authorizedFilePaths: ['/tmp/Test 1/one.png'] }
+      {
+        authorizedFilePaths: ['/tmp/Test 1/one.png'],
+        authorizedDirectoryPickerPaths: ['/tmp/Test 1/folder']
+      }
     )
     expect(deps.requestRunQueueJob).not.toHaveBeenCalledWith(
       expect.anything(),
@@ -325,7 +334,7 @@ describe('registerRunQueueHandlers', () => {
     })
     expect(deps.requestRunQueueJob).toHaveBeenCalledWith(
       { runId: 'run-1' },
-      { authorizedFilePaths: [] }
+      { authorizedFilePaths: [], authorizedDirectoryPickerPaths: [] }
     )
   })
 
@@ -649,6 +658,7 @@ describe('registerRunQueueHandlers', () => {
     expect(result).toMatchObject({ ok: true, jobStatus: 'steer_promoting' })
     expect(deps.requestRunQueueJob).toHaveBeenCalledWith(prepareJob, {
       authorizedFilePaths: [],
+      authorizedDirectoryPickerPaths: [],
       soloSteerTranscriptBarrier: {
         ownerToken: 'fallback-token',
         queueMessageId: 'midrun-queued-user-run-new'

@@ -1,5 +1,16 @@
+import { mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
-import { runAcpTurn, type AcpChildProcess, type AcpTurnOptions } from './AcpTurnClient'
+import {
+  ACP_PROMPT_IMAGE_MAX_BYTES,
+  ACP_PROMPT_IMAGE_MAX_COUNT,
+  loadMainAuthorizedAcpImageContents,
+  readMainAuthorizedAcpImageFile,
+  runAcpTurn,
+  type AcpChildProcess,
+  type AcpTurnOptions
+} from './AcpTurnClient'
 import type { AcpPermissionRequest, AcpRunEvent } from './AcpProtocol'
 
 class FakeAcpChild implements AcpChildProcess {
@@ -83,6 +94,46 @@ const baseOptions = (
   return { events, handle }
 }
 
+describe('ACP descriptor-owned image reads', () => {
+  it('rejects a terminal image symlink instead of following it', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-acp-image-'))
+    try {
+      const target = join(directory, 'target.png')
+      const link = join(directory, 'linked.png')
+      writeFileSync(target, Buffer.from('target-image'))
+      symlinkSync(target, link)
+
+      expect(() => loadMainAuthorizedAcpImageContents([link])).toThrow(
+        /symlink|symbolic link|ELOOP|too many levels/i
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('never reads replacement-path bytes when the pathname swaps after open', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-acp-image-'))
+    try {
+      const imagePath = join(directory, 'image.png')
+      const replacementPath = join(directory, 'replacement.png')
+      const original = Buffer.from('descriptor-owned-original')
+      const replacement = Buffer.from('replacement-must-not-ship')
+      writeFileSync(imagePath, original)
+      writeFileSync(replacementPath, replacement)
+
+      const bytes = readMainAuthorizedAcpImageFile(imagePath, {
+        afterOpen: () => renameSync(replacementPath, imagePath)
+      })
+
+      expect(readFileSync(imagePath)).toEqual(replacement)
+      expect(bytes).toEqual(original)
+      expect(bytes).not.toEqual(replacement)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('runAcpTurn — neutral core', () => {
   it('keeps closed pending through real child close and async terminal cleanup', async () => {
     const child = new FakeAcpChild()
@@ -128,6 +179,94 @@ describe('runAcpTurn — neutral core', () => {
       method: 'initialize',
       params: { clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } } }
     })
+  })
+
+  it('encodes the full authorized image array when the runtime advertises prompt images', () => {
+    const child = new FakeAcpChild()
+    const first = Buffer.from('first-image')
+    const second = Buffer.from('second-image')
+    const readImageFile = vi.fn((imagePath: string) =>
+      imagePath.endsWith('.png') ? first : second
+    )
+    baseOptions(child, {
+      prompt: 'compare these',
+      imagePaths: ['/authorized/first.png', '/authorized/second.JPEG'],
+      readImageFile
+    })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        agentCapabilities: { promptCapabilities: { image: true } }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'image-session' } })
+
+    const prompt = child.sent().find((message) => message.method === 'session/prompt')
+    expect(prompt).toMatchObject({
+      params: {
+        sessionId: 'image-session',
+        prompt: [
+          { type: 'text', text: 'compare these' },
+          { type: 'image', mimeType: 'image/png', data: first.toString('base64') },
+          { type: 'image', mimeType: 'image/jpeg', data: second.toString('base64') }
+        ]
+      }
+    })
+    expect(readImageFile.mock.calls.map(([imagePath]) => imagePath)).toEqual([
+      '/authorized/first.png',
+      '/authorized/second.JPEG'
+    ])
+  })
+
+  it('fails explicitly before session creation when the runtime does not advertise images', () => {
+    const child = new FakeAcpChild()
+    const readImageFile = vi.fn(() => Buffer.from('must-not-read'))
+    const { events } = baseOptions(child, {
+      imagePaths: ['/authorized/image.png'],
+      readImageFile
+    })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { promptCapabilities: { image: false } } }
+    })
+
+    expect(readImageFile).not.toHaveBeenCalled()
+    expect(child.sent()).toHaveLength(1)
+    expect(child.sent().some((message) => message.method === 'session/new')).toBe(false)
+    expect(child.killed).toBe(true)
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: expect.stringMatching(/promptCapabilities\.image=true.*silently omitted/i)
+    })
+  })
+
+  it('rejects an oversized initial image set before reading any file', () => {
+    const child = new FakeAcpChild()
+    const readImageFile = vi.fn(() => Buffer.from('image'))
+    const { events } = baseOptions(child, {
+      imagePaths: Array.from(
+        { length: ACP_PROMPT_IMAGE_MAX_COUNT + 1 },
+        (_, index) => `/authorized/${index}.png`
+      ),
+      readImageFile
+    })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { promptCapabilities: { image: true } } }
+    })
+
+    expect(readImageFile).not.toHaveBeenCalled()
+    expect(child.sent()).toHaveLength(1)
+    expect(child.killed).toBe(true)
+    expect(events.some((event) => /at most 15 image attachments/i.test(event.text || ''))).toBe(
+      true
+    )
   })
 
   it('waits for async spawn authority before sending initialize', async () => {
@@ -1002,6 +1141,119 @@ describe('runAcpTurn — neutral core', () => {
     expect(child.killed).toBe(true)
   })
 
+  it('notifies after the terminal result drains a parallel tool batch', () => {
+    const child = new FakeAcpChild()
+    const order: string[] = []
+    const onToolBatchBoundary = vi.fn(() => order.push('boundary'))
+    baseOptions(child, {
+      onEvent: (event) => {
+        if (event.type === 'tool_result') order.push(`result:${event.toolId}`)
+      },
+      onToolBatchBoundary
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    const toolUpdate = (toolCallId: string, sessionUpdate: string, status?: string) => ({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate,
+          toolCallId,
+          title: 'read_file',
+          ...(status ? { status } : {})
+        }
+      }
+    })
+
+    child.emit(toolUpdate('tool-a', 'tool_call'))
+    child.emit(toolUpdate('tool-b', 'tool_call'))
+    child.emit(toolUpdate('tool-a', 'tool_call_update', 'completed'))
+    expect(order).toEqual(['result:tool-a'])
+    expect(onToolBatchBoundary).not.toHaveBeenCalled()
+
+    child.emit(toolUpdate('tool-b', 'tool_call_update', 'failed'))
+    expect(order).toEqual(['result:tool-a', 'result:tool-b', 'boundary'])
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+
+    // A duplicate terminal update does not create a second nonempty→empty
+    // transition, even though its transcript event is still forwarded.
+    child.emit(toolUpdate('tool-b', 'tool_call', 'completed'))
+    expect(order).toEqual(['result:tool-a', 'result:tool-b', 'boundary', 'result:tool-b'])
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not guess a batch boundary when any outstanding tool lacks an id', () => {
+    const child = new FakeAcpChild()
+    const onToolBatchBoundary = vi.fn()
+    baseOptions(child, { onToolBatchBoundary })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: { sessionUpdate: 'tool_call', title: 'anonymous tool' }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'known-tool',
+          title: 'known tool'
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'known-tool',
+          status: 'completed'
+        }
+      }
+    })
+
+    expect(onToolBatchBoundary).not.toHaveBeenCalled()
+  })
+
+  it('contains a throwing tool-batch notification without changing the ACP turn', () => {
+    const child = new FakeAcpChild()
+    const onToolBatchBoundary = vi.fn(() => {
+      throw new Error('coordinator unavailable')
+    })
+    const { events, handle } = baseOptions(child, { onToolBatchBoundary })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-1',
+          title: 'read_file',
+          status: 'completed'
+        }
+      }
+    })
+
+    expect(events.map((event) => event.type)).toContain('tool_result')
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+    expect(child.killed).toBe(false)
+    handle.cancel()
+  })
+
   it('terminates via the endProcess hook (stdin EOF) instead of SIGINT', async () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {
@@ -1313,6 +1565,17 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1, agentCapabilities: {} } })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
   }
+  const driveToImageCapablePrompt = (child: FakeAcpChild): void => {
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: { promptCapabilities: { image: true } }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+  }
   const promptsSent = (child: FakeAcpChild): Record<string, unknown>[] =>
     child.sent().filter((message) => message.method === 'session/prompt')
 
@@ -1321,6 +1584,209 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     const { handle } = baseOptions(child)
     expect(handle.steer('redirect')).toBe(false)
     expect(child.sent().some((message) => message.method === 'session/cancel')).toBe(false)
+    handle.cancel()
+  })
+
+  it('waits for the complete parallel tool batch before cancelling for a text steer', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    const toolUpdate = (toolCallId: string, sessionUpdate: string, status?: string) => ({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate,
+          toolCallId,
+          title: 'read_file',
+          ...(status ? { status } : {})
+        }
+      }
+    })
+    child.emit(toolUpdate('tool-a', 'tool_call'))
+    child.emit(toolUpdate('tool-b', 'tool_call'))
+
+    expect(handle.steer('change direction after these reads')).toBe(true)
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+
+    child.emit(toolUpdate('tool-a', 'tool_call_update', 'completed'))
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+
+    child.emit(toolUpdate('tool-b', 'tool_call_update', 'completed'))
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(1)
+    expect(promptsSent(child)).toHaveLength(1)
+
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    expect(promptsSent(child)).toHaveLength(2)
+    handle.cancel()
+  })
+
+  it('settles a tool-deferred steer as definite non-admission when cancelSteer removes it', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-a',
+          title: 'read_file'
+        }
+      }
+    })
+    const onDelivered = vi.fn()
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    expect(handle.steer('deferred redirect', { onDelivered, onRejected, onAmbiguous })).toBe(true)
+    handle.cancelSteer()
+
+    expect(onDelivered).not.toHaveBeenCalled()
+    expect(onAmbiguous).not.toHaveBeenCalled()
+    expect(onRejected).toHaveBeenCalledWith(
+      'ACP steering was cancelled before its follow-up prompt was sent.'
+    )
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    expect(promptsSent(child)).toHaveLength(1)
+  })
+
+  it('settles a tool-deferred steer as definite non-admission when the run is cancelled', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-a',
+          title: 'read_file'
+        }
+      }
+    })
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    expect(
+      handle.steer('deferred redirect', {
+        onDelivered: vi.fn(),
+        onRejected,
+        onAmbiguous
+      })
+    ).toBe(true)
+    handle.cancel()
+
+    expect(onRejected).toHaveBeenCalledWith(
+      'ACP steering was not sent because the provider run was cancelled.'
+    )
+    expect(onAmbiguous).not.toHaveBeenCalled()
+  })
+
+  it('uses the natural prompt boundary when an anonymous tool makes the batch unknowable', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: { sessionUpdate: 'tool_call', title: 'anonymous tool' }
+      }
+    })
+
+    expect(handle.steer('continue at the safe boundary')).toBe(true)
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    expect(promptsSent(child)).toHaveLength(2)
+    expect(promptsSent(child)[1]).toMatchObject({
+      params: { prompt: [{ type: 'text', text: 'continue at the safe boundary' }] }
+    })
+    handle.cancel()
+  })
+
+  it('sends mixed text and every verified image in a live steer follow-up', () => {
+    const child = new FakeAcpChild()
+    const first = Buffer.from('steer-image-one')
+    const second = Buffer.from('steer-image-two')
+    const readImageFile = vi.fn((imagePath: string) =>
+      imagePath.endsWith('.png') ? first : second
+    )
+    const { handle } = baseOptions(child, { readImageFile })
+    driveToImageCapablePrompt(child)
+    const onDelivered = vi.fn()
+
+    expect(
+      handle.steer('compare the attached screenshots', {
+        imagePaths: ['/authorized/one.png', '/authorized/two.webp'],
+        onDelivered
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+
+    const followUp = promptsSent(child)[1]
+    expect(followUp).toMatchObject({
+      params: {
+        prompt: [
+          { type: 'text', text: 'compare the attached screenshots' },
+          { type: 'image', mimeType: 'image/png', data: first.toString('base64') },
+          { type: 'image', mimeType: 'image/webp', data: second.toString('base64') }
+        ]
+      }
+    })
+    expect(onDelivered).not.toHaveBeenCalled()
+    child.emit({ jsonrpc: '2.0', id: followUp.id as number, result: { stopReason: 'end_turn' } })
+    expect(onDelivered).toHaveBeenCalledOnce()
+    expect(readImageFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects live images explicitly when the negotiated runtime capability is false', () => {
+    const child = new FakeAcpChild()
+    const readImageFile = vi.fn(() => Buffer.from('must-not-read'))
+    const { handle } = baseOptions(child, { readImageFile })
+    driveToInFlightPrompt(child)
+    const onRejected = vi.fn()
+
+    expect(
+      handle.steer('inspect this', {
+        imagePaths: ['/authorized/image.png'],
+        onDelivered: vi.fn(),
+        onRejected
+      })
+    ).toBe(true)
+
+    expect(onRejected).toHaveBeenCalledWith(expect.stringMatching(/promptCapabilities\.image=true/))
+    expect(readImageFile).not.toHaveBeenCalled()
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+    handle.cancel()
+  })
+
+  it('rejects an oversized live image before interrupting the prompt', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, {
+      readImageFile: () => Buffer.alloc(ACP_PROMPT_IMAGE_MAX_BYTES + 1)
+    })
+    driveToImageCapablePrompt(child)
+    const onRejected = vi.fn()
+
+    expect(
+      handle.steer('inspect this', {
+        imagePaths: ['/authorized/image.png'],
+        onDelivered: vi.fn(),
+        onRejected
+      })
+    ).toBe(true)
+
+    expect(onRejected).toHaveBeenCalledWith(expect.stringMatching(/exceeds.*byte limit/i))
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
     handle.cancel()
   })
 
@@ -1356,7 +1822,7 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
         prompt: [{ type: 'text', text: 'please also update the tests' }]
       }
     })
-    expect(onDelivered).toHaveBeenCalledTimes(1)
+    expect(onDelivered).not.toHaveBeenCalled()
     // The turn is still alive: no completion, no kill, no close.
     expect(closes).toEqual([])
     expect(child.killed).toBe(false)
@@ -1364,6 +1830,7 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     // The follow-up prompt completes the turn normally.
     const followUpId = prompts[1].id as number
     child.emit({ jsonrpc: '2.0', id: followUpId, result: { stopReason: 'end_turn' } })
+    expect(onDelivered).toHaveBeenCalledTimes(1)
     await handle.closed
     expect(closes).toEqual([{ code: 0, turnComplete: true }])
   })
@@ -1483,6 +1950,267 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     await handle.closed
   })
 
+  it('reports a rejected steer follow-up without claiming delivery', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    const onDelivered = vi.fn()
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    expect(handle.steer('redirect', { onDelivered, onRejected, onAmbiguous })).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const followUpId = promptsSent(child)[1]?.id as number
+    child.emit({
+      jsonrpc: '2.0',
+      id: followUpId,
+      error: {
+        code: -32602,
+        message: 'invalid steer prompt',
+        data: { http_status: 500 }
+      }
+    })
+
+    expect(onDelivered).not.toHaveBeenCalled()
+    expect(onRejected).toHaveBeenCalledWith('invalid steer prompt')
+    expect(onAmbiguous).not.toHaveBeenCalled()
+    expect(promptsSent(child)).toHaveLength(2)
+  })
+
+  it('reports an uncertain steer follow-up failure as ambiguous', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, { transientPromptRetryLimit: 0 })
+    driveToInFlightPrompt(child)
+    const onDelivered = vi.fn()
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    expect(handle.steer('redirect', { onDelivered, onRejected, onAmbiguous })).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const followUpId = promptsSent(child)[1]?.id as number
+    child.emit({
+      jsonrpc: '2.0',
+      id: followUpId,
+      error: { code: -32000, message: 'provider connection lost' }
+    })
+
+    expect(onDelivered).not.toHaveBeenCalled()
+    expect(onRejected).not.toHaveBeenCalled()
+    expect(onAmbiguous).toHaveBeenCalledWith('provider connection lost')
+  })
+
+  it('keeps output-proven delivery final while a newer steer is tool-deferred', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, { transientPromptRetryLimit: 0 })
+    driveToInFlightPrompt(child)
+    const firstDelivered = vi.fn()
+    const firstRejected = vi.fn()
+
+    expect(
+      handle.steer('first direction', {
+        onDelivered: firstDelivered,
+        onRejected: firstRejected
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-a',
+          title: 'read_file'
+        }
+      }
+    })
+    expect(firstDelivered).toHaveBeenCalledOnce()
+
+    expect(handle.steer('newer direction')).toBe(true)
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(1)
+    child.emit({
+      jsonrpc: '2.0',
+      id: firstFollowUpId,
+      error: { code: -32602, message: 'invalid first follow-up' }
+    })
+
+    expect(firstDelivered).toHaveBeenCalledOnce()
+    expect(firstRejected).not.toHaveBeenCalled()
+    expect(promptsSent(child)).toHaveLength(3)
+    expect(promptsSent(child)[2]).toMatchObject({
+      params: { prompt: [{ type: 'text', text: 'newer direction' }] }
+    })
+    handle.cancel()
+  })
+
+  it('keeps steer ownership during a transient follow-up retry', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, {
+      transientPromptRetryLimit: 1,
+      transientPromptRetryDelayMs: 0
+    })
+    driveToInFlightPrompt(child)
+    const onDelivered = vi.fn()
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    handle.steer('redirect', { onDelivered, onRejected, onAmbiguous })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    child.emit({
+      jsonrpc: '2.0',
+      id: firstFollowUpId,
+      error: { code: -32603, message: 'Internal error', data: { http_status: 500 } }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(promptsSent(child)).toHaveLength(3)
+    expect(onDelivered).not.toHaveBeenCalled()
+    expect(onRejected).not.toHaveBeenCalled()
+    expect(onAmbiguous).not.toHaveBeenCalled()
+
+    const retriedId = promptsSent(child)[2]?.id as number
+    child.emit({ jsonrpc: '2.0', id: retriedId, result: { stopReason: 'end_turn' } })
+    expect(onDelivered).toHaveBeenCalledOnce()
+  })
+
+  it('retries a live steer with the same encoded image array without rereading files', async () => {
+    const child = new FakeAcpChild()
+    const image = Buffer.from('stable-retry-image')
+    const readImageFile = vi.fn(() => image)
+    const { handle } = baseOptions(child, {
+      readImageFile,
+      transientPromptRetryLimit: 1,
+      transientPromptRetryDelayMs: 0
+    })
+    driveToImageCapablePrompt(child)
+    const onDelivered = vi.fn()
+    const onRejected = vi.fn()
+    const onAmbiguous = vi.fn()
+
+    expect(
+      handle.steer('retry with this image', {
+        imagePaths: ['/authorized/retry.png'],
+        onDelivered,
+        onRejected,
+        onAmbiguous
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    child.emit({
+      jsonrpc: '2.0',
+      id: firstFollowUpId,
+      error: { code: -32603, message: 'Internal error', data: { http_status: 500 } }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(3)
+    expect((prompts[1].params as { prompt: unknown[] }).prompt).toEqual(
+      (prompts[2].params as { prompt: unknown[] }).prompt
+    )
+    expect(prompts[2]).toMatchObject({
+      params: {
+        prompt: [
+          { type: 'text', text: 'retry with this image' },
+          { type: 'image', mimeType: 'image/png', data: image.toString('base64') }
+        ]
+      }
+    })
+    expect(readImageFile).toHaveBeenCalledOnce()
+    expect(onDelivered).not.toHaveBeenCalled()
+    expect(onRejected).not.toHaveBeenCalled()
+    expect(onAmbiguous).not.toHaveBeenCalled()
+
+    child.emit({ jsonrpc: '2.0', id: prompts[2].id as number, result: { stopReason: 'end_turn' } })
+    expect(onDelivered).toHaveBeenCalledOnce()
+  })
+
+  it('uses a matching cancel acknowledgement as delivery evidence for a superseded steer', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    const firstDelivered = vi.fn()
+    const secondDelivered = vi.fn()
+
+    expect(handle.steer('first direction', { onDelivered: firstDelivered })).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    expect(handle.steer('second direction', { onDelivered: secondDelivered })).toBe(true)
+    expect(firstDelivered).not.toHaveBeenCalled()
+    expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(2)
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: firstFollowUpId,
+      error: { code: -32800, message: 'request cancelled' }
+    })
+
+    expect(firstDelivered).toHaveBeenCalledOnce()
+    expect(secondDelivered).not.toHaveBeenCalled()
+    expect(promptsSent(child)).toHaveLength(3)
+    handle.cancel()
+  })
+
+  it('does not let a settled steer callback cancel the newer pending steer', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, { transientPromptRetryLimit: 0 })
+    driveToInFlightPrompt(child)
+    const firstRejected = vi.fn(() => handle.cancelSteer())
+
+    expect(
+      handle.steer('first direction', {
+        onDelivered: vi.fn(),
+        onRejected: firstRejected
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    expect(handle.steer('newer direction')).toBe(true)
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: firstFollowUpId,
+      error: { code: -32602, message: 'first prompt rejected' }
+    })
+
+    expect(firstRejected).toHaveBeenCalledOnce()
+    expect(promptsSent(child)).toHaveLength(3)
+    expect(promptsSent(child)[2]).toMatchObject({
+      params: { prompt: [{ type: 'text', text: 'newer direction' }] }
+    })
+    handle.cancel()
+  })
+
+  it('cancels a newer pending steer without erasing the admitted steer receipt', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    const firstDelivered = vi.fn()
+    const firstAmbiguous = vi.fn()
+
+    expect(
+      handle.steer('first direction', {
+        onDelivered: firstDelivered,
+        onAmbiguous: firstAmbiguous
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const firstFollowUpId = promptsSent(child)[1]?.id as number
+    expect(handle.steer('discard this newer direction')).toBe(true)
+
+    handle.cancelSteer()
+    expect(firstAmbiguous).not.toHaveBeenCalled()
+    child.emit({ jsonrpc: '2.0', id: firstFollowUpId, result: { stopReason: 'end_turn' } })
+
+    expect(firstDelivered).toHaveBeenCalledOnce()
+    expect(firstAmbiguous).not.toHaveBeenCalled()
+    expect(promptsSent(child)).toHaveLength(2)
+  })
+
   it('batches rapid steers into one follow-up and confirms every delivery', () => {
     const child = new FakeAcpChild()
     const { handle } = baseOptions(child)
@@ -1505,6 +2233,19 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     expect(followUpText).toContain('first')
     expect(followUpText).toContain('second')
     expect(followUpText.indexOf('first')).toBeLessThan(followUpText.indexOf('second'))
+    expect(firstDelivered).not.toHaveBeenCalled()
+    expect(secondDelivered).not.toHaveBeenCalled()
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'following the steer' }
+        }
+      }
+    })
     expect(firstDelivered).toHaveBeenCalledTimes(1)
     expect(secondDelivered).toHaveBeenCalledTimes(1)
     handle.cancel()

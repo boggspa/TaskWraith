@@ -41,6 +41,7 @@ import { MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE } from './McpInternalError'
 import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
+import type { LiveSteerReservation } from '../RunManager'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   isPiTaskWraithToolName,
@@ -377,12 +378,15 @@ export interface McpBridgeRuntimeDeps {
     payload: unknown,
     route?: McpBridgeAgentRunRoute | null
   ) => void
-  /**
-   * Strategy B (broker-injection): drain pending mid-turn steering text for a
-   * run so it can be injected into the next tool-call result. Returns null
-   * when no steering is pending — the broker handler continues normally.
-   */
+  /** @deprecated A drain cannot prove the provider child received its response. */
   drainPendingSteerText?: (appRunId: string) => string | null
+  /**
+   * Strategy B (broker-injection): reserve pending steering for a successful
+   * tool result. The child bridge settles the reservation only after its MCP
+   * response write succeeds; known pre-write refusals roll it back and
+   * uncertain writes mark it ambiguous.
+   */
+  reservePendingSteerText?: (appRunId: string) => LiveSteerReservation | null
   /**
    * Called when the client transport disappears while an exact broker request
    * is still executing. The owner can cancel and join run-scoped host work;
@@ -1398,6 +1402,15 @@ type SafeWritable = {
   write(chunk: string, callback?: (error?: Error | null) => void): unknown
 }
 
+export type McpStreamWriteEvidence = 'written' | 'refused' | 'ambiguous'
+
+const MCP_STEER_RECEIPT_FIELD = 'taskwraithSteerReceiptId'
+const MCP_STEER_SETTLEMENT_CONTROL = 'taskwraith/settle-steer-delivery'
+const MCP_STEER_SETTLEMENT_TIMEOUT_MS = 30_000
+const MCP_STREAM_WRITE_EVIDENCE_TIMEOUT_MS = 5_000
+
+type McpSteerSettlementOutcome = 'commit' | 'rollback' | 'ambiguous'
+
 function isWritableClosed(stream: unknown): boolean {
   const record = stream && typeof stream === 'object' ? (stream as Record<string, unknown>) : {}
   return (
@@ -1418,6 +1431,52 @@ export function safeMcpStreamWrite(stream: SafeWritable | null | undefined, chun
   } catch {
     // Best-effort: the peer has gone away or the stream is already terminal.
   }
+}
+
+/**
+ * Write one protocol payload and retain the only evidence the child process
+ * can honestly provide. A closed stream is a known pre-write refusal. Once
+ * `write()` has been attempted, any throw, callback error, or missing callback
+ * is ambiguous because a prefix may already have reached the provider.
+ */
+export function safeMcpStreamWriteWithEvidence(
+  stream: SafeWritable | null | undefined,
+  chunk: string
+): Promise<McpStreamWriteEvidence> {
+  if (!stream || isWritableClosed(stream)) return Promise.resolve('refused')
+  return new Promise((resolveWrite) => {
+    let settled = false
+    const finish = (evidence: McpStreamWriteEvidence): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolveWrite(evidence)
+    }
+    const timeout = setTimeout(() => finish('ambiguous'), MCP_STREAM_WRITE_EVIDENCE_TIMEOUT_MS)
+    timeout.unref?.()
+    try {
+      stream.write(chunk, (error?: Error | null) => finish(error ? 'ambiguous' : 'written'))
+    } catch {
+      finish('ambiguous')
+    }
+  })
+}
+
+function writeMcpResponseWithEvidence(
+  id: unknown,
+  result: unknown,
+  transport: McpResponseTransport,
+  stdout: NodeJS.WriteStream
+): Promise<McpStreamWriteEvidence> {
+  const payload = { jsonrpc: '2.0', id, result }
+  if (transport === 'line') {
+    return safeMcpStreamWriteWithEvidence(stdout, `${JSON.stringify(payload)}\n`)
+  }
+  const body = JSON.stringify(payload)
+  return safeMcpStreamWriteWithEvidence(
+    stdout,
+    `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`
+  )
 }
 
 export function writeMcpFrame(payload: unknown, stdout: NodeJS.WriteStream = process.stdout): void {
@@ -1991,13 +2050,14 @@ export function handleMcpJsonRpcMessage(
     }
     bridgeLog(`tools/call started tool=${safeLogName} ${bridgeToolArgumentsMetadata(args)}`)
     const requestBroker = deps.brokerRequest || brokerRequest
+    const appRunId = deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID
     requestBroker(socketPath, {
       id: id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       token: brokerToken,
       instanceEpoch,
       tool: name,
       arguments: args,
-      appRunId: deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID,
+      appRunId,
       appChatId: deps.env?.TASKWRAITH_CHAT_ID ?? process.env.TASKWRAITH_CHAT_ID,
       callerCwd: deps.cwd?.() || process.cwd(),
       callerWorkspacePath:
@@ -2005,10 +2065,33 @@ export function handleMcpJsonRpcMessage(
       parentProvider:
         deps.env?.TASKWRAITH_PARENT_PROVIDER || process.env.TASKWRAITH_PARENT_PROVIDER || 'gemini'
     })
-      .then((result) => {
+      .then(async (result) => {
         const responseFromResult =
           deps.mcpToolCallResponseFromBrokerResult || mcpToolCallResponseFromBrokerResult
         const resultRecord = isRecord(result) ? result : {}
+        const steerReceiptId =
+          typeof resultRecord[MCP_STEER_RECEIPT_FIELD] === 'string' &&
+          String(resultRecord[MCP_STEER_RECEIPT_FIELD]).trim()
+            ? String(resultRecord[MCP_STEER_RECEIPT_FIELD])
+            : null
+        const settleSteerReceipt = async (settlement: McpSteerSettlementOutcome): Promise<void> => {
+          if (!steerReceiptId || !appRunId) return
+          try {
+            await requestBroker(socketPath, {
+              id: `steer-settlement-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              token: brokerToken,
+              instanceEpoch,
+              control: MCP_STEER_SETTLEMENT_CONTROL,
+              appRunId,
+              steerReceiptId,
+              settlement
+            })
+          } catch (settlementError) {
+            bridgeLog(
+              `tools/call steer-settlement-failed outcome=${settlement} ${bridgeFailureMetadata(settlementError)}`
+            )
+          }
+        }
         const outcome =
           resultRecord.ok === true ? 'ok' : resultRecord.ok === false ? 'error' : 'unknown'
         const resultText =
@@ -2017,18 +2100,45 @@ export function handleMcpJsonRpcMessage(
             : typeof resultRecord.error === 'string'
               ? resultRecord.error
               : ''
-        const contentBlocks = Array.isArray(resultRecord.content)
-          ? resultRecord.content.length
-          : 0
+        const contentBlocks = Array.isArray(resultRecord.content) ? resultRecord.content.length : 0
         bridgeLog(
           `tools/call completed tool=${safeLogName} outcome=${outcome} ` +
             `result.bytes=${Buffer.byteLength(resultText, 'utf8')} content.blocks=${contentBlocks}`
         )
+        let providerResponse: ReturnType<typeof mcpToolCallResponseFromBrokerResult>
         try {
-          writeMcpResponse(id, responseFromResult(result), transport, stdout)
+          providerResponse = responseFromResult(result)
         } catch (writeError) {
-          bridgeLog(`tools/call response-write-failed ${bridgeFailureMetadata(writeError)}`)
+          await settleSteerReceipt('rollback')
+          throw writeError
         }
+        if (!steerReceiptId) {
+          writeMcpResponse(id, providerResponse, transport, stdout)
+          return
+        }
+        let writeEvidence: McpStreamWriteEvidence
+        try {
+          writeEvidence = await writeMcpResponseWithEvidence(
+            id,
+            providerResponse,
+            transport,
+            stdout
+          )
+        } catch (serializationError) {
+          await settleSteerReceipt('rollback')
+          throw serializationError
+        }
+        if (writeEvidence === 'written') {
+          await settleSteerReceipt('commit')
+          return
+        }
+        if (writeEvidence === 'refused') {
+          bridgeLog('tools/call response-write-refused-before-write')
+          await settleSteerReceipt('rollback')
+          return
+        }
+        bridgeLog('tools/call response-write-ambiguous')
+        await settleSteerReceipt('ambiguous')
       })
       .catch((rejection) => {
         bridgeLog(`tools/call broker-rejected ${bridgeFailureMetadata(rejection)}`)
@@ -2302,8 +2412,65 @@ export class McpBridgeRuntime {
     string,
     { route: McpBridgeAgentRunRoute; allowedTools: ReadonlySet<PiTaskWraithToolName> }
   >()
+  private readonly pendingBrokerSteerReservations = new Map<
+    string,
+    {
+      appRunId: string
+      reservation: LiveSteerReservation
+      timeout: ReturnType<typeof setTimeout>
+    }
+  >()
 
   constructor(private readonly deps: McpBridgeRuntimeDeps) {}
+
+  private registerBrokerSteerReservation(
+    appRunId: string,
+    reservation: LiveSteerReservation
+  ): string {
+    const receiptId = randomBytes(24).toString('hex')
+    const timeout = setTimeout(() => {
+      this.settleBrokerSteerReservation(
+        appRunId,
+        receiptId,
+        'ambiguous',
+        'MCP provider response write was not acknowledged before its delivery receipt expired.'
+      )
+    }, MCP_STEER_SETTLEMENT_TIMEOUT_MS)
+    timeout.unref?.()
+    this.pendingBrokerSteerReservations.set(receiptId, {
+      appRunId,
+      reservation,
+      timeout
+    })
+    return receiptId
+  }
+
+  private settleBrokerSteerReservation(
+    appRunId: string,
+    receiptId: string,
+    settlement: McpSteerSettlementOutcome,
+    ambiguousReason = 'MCP provider response write completed with ambiguous delivery evidence.'
+  ): boolean {
+    const pending = this.pendingBrokerSteerReservations.get(receiptId)
+    if (!pending || pending.appRunId !== appRunId) return false
+    this.pendingBrokerSteerReservations.delete(receiptId)
+    clearTimeout(pending.timeout)
+    try {
+      if (settlement === 'commit') pending.reservation.commit()
+      else if (settlement === 'rollback') pending.reservation.rollback()
+      else pending.reservation.ambiguous(ambiguousReason)
+    } catch {
+      // The exact reservation is already terminal. A receipt callback failure
+      // cannot safely make it replayable or change its settlement class.
+    }
+    return true
+  }
+
+  private settleAllBrokerSteerReservationsAmbiguous(reason: string): void {
+    for (const [receiptId, pending] of [...this.pendingBrokerSteerReservations]) {
+      this.settleBrokerSteerReservation(pending.appRunId, receiptId, 'ambiguous', reason)
+    }
+  }
 
   issuePiEnsembleCoordinationCredential(route: McpBridgeAgentRunRoute): string {
     return this.issuePiTaskWraithCredential(route, PI_ENSEMBLE_COORDINATION_TOOL_NAMES)
@@ -2536,6 +2703,31 @@ export class McpBridgeRuntime {
     ) {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
+    if (brokerRequestRecord.control === MCP_STEER_SETTLEMENT_CONTROL) {
+      if (
+        !this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token) ||
+        !this.isValidGeminiMcpBrokerInstanceEpoch(brokerRequestRecord.instanceEpoch)
+      ) {
+        return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
+      }
+      const appRunId =
+        typeof brokerRequestRecord.appRunId === 'string' ? brokerRequestRecord.appRunId.trim() : ''
+      const receiptId =
+        typeof brokerRequestRecord.steerReceiptId === 'string'
+          ? brokerRequestRecord.steerReceiptId.trim()
+          : ''
+      const settlement = brokerRequestRecord.settlement
+      if (
+        !appRunId ||
+        !receiptId ||
+        (settlement !== 'commit' && settlement !== 'rollback' && settlement !== 'ambiguous')
+      ) {
+        return { ok: false, error: 'Invalid TaskWraith steering delivery settlement.' }
+      }
+      return {
+        ok: this.settleBrokerSteerReservation(appRunId, receiptId, settlement)
+      }
+    }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
     let toolArguments =
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input
@@ -2633,32 +2825,42 @@ export class McpBridgeRuntime {
     // ── Strategy B (broker-injection) ──────────────────────────────────
     // When a user sends a steering message mid-turn, the
     // SteeringOrchestrator stores it on the RunSession as
-    // `pendingSteerText`. On the NEXT successful `tools/call` through this
-    // broker, we drain it and prepend a `[TaskWraith Steering]` text block
-    // to the tool result's content. The model sees the interjection at its
-    // next tool boundary without a kill/restart cycle.
-    //
-    // We only inject on SUCCESSFUL tool calls (result.isError is falsy).
-    // A failed tool means the provider is already in an error state, and
-    // the ordinary boundary-delivery fallback path will still deliver the
-    // message when the run exits or recovers.
+    // `pendingSteerText`. On the NEXT completed `tools/call` through this
+    // broker, we reserve it and prepend a `[TaskWraith Steering]` text block
+    // to the tool result's content. Error results count: they are complete
+    // responses the provider reads at the same tool boundary.
     //
     // Content block type `text` is the standard MCP content block type;
     // the `[TaskWraith Steering]` prefix makes it distinguishable from the
     // tool's native output regardless of provider transport.
-    if (!result.isError && this.deps.drainPendingSteerText && route.appRunId) {
-      const steerText = this.deps.drainPendingSteerText(route.appRunId)
-      if (steerText) {
+    let steerReceiptId: string | null = null
+    if (this.deps.reservePendingSteerText && route.appRunId) {
+      const steerReservation = this.deps.reservePendingSteerText(route.appRunId)
+      if (steerReservation?.text) {
         const steerBlock: McpToolContentBlock = {
           type: 'text',
-          text: `[TaskWraith Steering] The user sent the following message while you were working:\n\n${steerText}\n\n--- end steering ---`
+          text: `[TaskWraith Steering] A steering envelope arrived while you were working. Preserve the authority stated inside the envelope:\n\n${steerReservation.text}\n\n--- end steering ---`
         }
-        result.content = [steerBlock, ...(result.content ?? [])]
-        result.text = `${steerBlock.text}\n\n${result.text}`
+        const originalContent = result.content?.length
+          ? result.content
+          : result.text
+            ? [{ type: 'text' as const, text: result.text }]
+            : []
+        result.content = [steerBlock, ...originalContent]
+        result.text = result.text ? `${steerBlock.text}\n\n${result.text}` : steerBlock.text
+        steerReceiptId = this.registerBrokerSteerReservation(route.appRunId, steerReservation)
+      } else {
+        steerReservation?.rollback()
       }
     }
 
-    return { ok: !result.isError, ...result }
+    return {
+      ok: !result.isError,
+      ...result,
+      // This transport-private receipt can only be minted by the runtime;
+      // never forward a same-named property from an executor result.
+      [MCP_STEER_RECEIPT_FIELD]: steerReceiptId || undefined
+    }
   }
 
   async startGeminiMcpBroker(): Promise<void> {
@@ -2739,14 +2941,39 @@ export class McpBridgeRuntime {
               continue
             }
             const parsedRecord = isRecord(parsed) ? parsed : {}
-            inFlightRequests.add(parsedRecord)
+            const tracksExecutionAbandonment =
+              parsedRecord.control !== MCP_STEER_SETTLEMENT_CONTROL
+            if (tracksExecutionAbandonment) inFlightRequests.add(parsedRecord)
             this.handleGeminiMcpBrokerRequest(parsed)
-              .then((result) =>
-                safeMcpStreamWrite(
-                  socket,
-                  `${JSON.stringify({ id: parsedRecord.id, ...coerceRecord(result) })}\n`
-                )
-              )
+              .then(async (result) => {
+                const resultRecord = coerceRecord(result)
+                const steerReceiptId =
+                  typeof resultRecord[MCP_STEER_RECEIPT_FIELD] === 'string'
+                    ? String(resultRecord[MCP_STEER_RECEIPT_FIELD])
+                    : ''
+                const appRunId =
+                  typeof parsedRecord.appRunId === 'string' ? parsedRecord.appRunId : ''
+                let payload: string
+                try {
+                  payload = `${JSON.stringify({ id: parsedRecord.id, ...resultRecord })}\n`
+                } catch (error) {
+                  if (steerReceiptId && appRunId) {
+                    this.settleBrokerSteerReservation(appRunId, steerReceiptId, 'rollback')
+                  }
+                  throw error
+                }
+                const writeEvidence = await safeMcpStreamWriteWithEvidence(socket, payload)
+                if (steerReceiptId && appRunId && writeEvidence === 'refused') {
+                  this.settleBrokerSteerReservation(appRunId, steerReceiptId, 'rollback')
+                } else if (steerReceiptId && appRunId && writeEvidence === 'ambiguous') {
+                  this.settleBrokerSteerReservation(
+                    appRunId,
+                    steerReceiptId,
+                    'ambiguous',
+                    'MCP broker response write to the provider child was ambiguous.'
+                  )
+                }
+              })
               .catch((error) => {
                 bridgeLog(`broker execution-rejected ${bridgeFailureMetadata(error)}`)
                 safeMcpStreamWrite(
@@ -2754,7 +2981,9 @@ export class McpBridgeRuntime {
                   `${JSON.stringify({ id: parsedRecord.id, ok: false, error: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE })}\n`
                 )
               })
-              .finally(() => inFlightRequests.delete(parsedRecord))
+              .finally(() => {
+                if (tracksExecutionAbandonment) inFlightRequests.delete(parsedRecord)
+              })
           }
         })
       })
@@ -2796,9 +3025,13 @@ export class McpBridgeRuntime {
   }
 
   closeGeminiMcpBroker(): void {
-    if (!this.geminiMcpBroker) return
-    this.geminiMcpBroker.close()
-    this.geminiMcpBroker = null
+    this.settleAllBrokerSteerReservationsAmbiguous(
+      'MCP broker closed before the provider child acknowledged its steering response write.'
+    )
+    if (this.geminiMcpBroker) {
+      this.geminiMcpBroker.close()
+      this.geminiMcpBroker = null
+    }
   }
 
   async selfTestGeminiMcpBridgeProcess(

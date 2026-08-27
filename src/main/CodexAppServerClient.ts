@@ -202,6 +202,41 @@ export function compareCodexVersions(
 
 type JsonRpcId = number | string
 
+/**
+ * A response-level JSON-RPC error returned by the Codex app-server.
+ *
+ * Keep the protocol code and data structured. Flattening this response into a
+ * plain Error message loses the only reliable distinction between a request
+ * Codex definitely rejected before admission (invalid method/params) and an
+ * internal/server failure that may have happened after the operation landed.
+ */
+export class CodexAppServerJsonRpcError extends Error {
+  readonly code: number
+  readonly data: unknown
+
+  constructor(error: { code: number; message?: unknown; data?: unknown }) {
+    const detail =
+      typeof error.message === 'string' && error.message.trim()
+        ? error.message.trim()
+        : `Codex app-server JSON-RPC error ${error.code}.`
+    super(detail)
+    this.name = 'CodexAppServerJsonRpcError'
+    this.code = error.code
+    this.data = error.data
+  }
+}
+
+/** A request fenced before any bytes were written to the app-server. */
+export class CodexAppServerNotRunningError extends Error {
+  readonly method: string
+
+  constructor(method: string) {
+    super(`Codex app-server is not running; ${method} was not sent.`)
+    this.name = 'CodexAppServerNotRunningError'
+    this.method = method
+  }
+}
+
 interface PendingRequest {
   resolve: (value: any) => void
   reject: (error: Error) => void
@@ -807,7 +842,7 @@ export class CodexAppServerClient {
 
   async request<T = any>(method: string, params: any = {}, timeoutMs = 30_000): Promise<T> {
     if (!this.proc || this.proc.killed || !this.proc.stdin.writable) {
-      throw new Error('Codex app-server is not running.')
+      throw new CodexAppServerNotRunningError(method)
     }
     const requestThreadId =
       params && typeof params.threadId === 'string' && isCodexAppServerThreadId(params.threadId)
@@ -820,6 +855,13 @@ export class CodexAppServerClient {
           `Codex thread ${requestThreadId} is not available in TaskWraith's private Codex home (${continuity}).`
         )
       }
+    }
+
+    // Thread continuity can await disk migration. Re-check immediately before
+    // allocating a pending request so a daemon that stopped during that await
+    // is reported as definitely not sent, rather than timing out ambiguously.
+    if (!this.proc || this.proc.killed || !this.proc.stdin.writable) {
+      throw new CodexAppServerNotRunningError(method)
     }
 
     const id = this.nextId++
@@ -1177,7 +1219,18 @@ export class CodexAppServerClient {
       clearTimeout(pending.timeout)
       this.pending.delete(id)
       if (parsed.error) {
-        pending.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)))
+        const error = parsed.error
+        if (isRecord(error) && typeof error.code === 'number' && Number.isFinite(error.code)) {
+          pending.reject(
+            new CodexAppServerJsonRpcError({
+              code: error.code,
+              message: error.message,
+              data: error.data
+            })
+          )
+        } else {
+          pending.reject(new Error(JSON.stringify(error)))
+        }
       } else {
         pending.resolve(parsed.result)
       }
