@@ -3,7 +3,11 @@ import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  MAX_REMOTE_IMAGE_MARKUP_JSON_BYTES,
+  MAX_REMOTE_IMAGE_MARKUP_POINTS_PER_STROKE,
+  dispatchFieldsFromPersistedRemoteImages,
   persistRemoteImageAttachments,
+  parseRemoteImageMarkup,
   purgeLegacyRemoteAttachmentTempRoot
 } from './RemoteAttachmentPersistence'
 
@@ -15,6 +19,22 @@ afterEach(() => {
 
 function pngBase64(bytes: number[] = [0x89, 0x50, 0x4e, 0x47]): string {
   return Buffer.from(bytes).toString('base64')
+}
+
+function validMarkup(attachmentId = 'att-1') {
+  return {
+    schemaVersion: 1,
+    attachmentId,
+    primitives: [
+      {
+        type: 'arrow' as const,
+        start: { x: 0.12, y: 0.34 },
+        end: { x: 0.56, y: 0.78 },
+        color: { r: 1, g: 0, b: 0, a: 1 },
+        thickness: 2
+      }
+    ]
+  }
 }
 
 describe('persistRemoteImageAttachments', () => {
@@ -54,6 +74,137 @@ describe('persistRemoteImageAttachments', () => {
         buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47])
       }
     ])
+  })
+
+  it('carries id and validated markup through to the persisted dispatch fields', () => {
+    const writeOwnedMany = vi.fn(() => ({
+      ok: true as const,
+      assets: [
+        {
+          ok: true as const,
+          persistenceVersion: 1 as const,
+          sha256: 'digest',
+          path: '/owned/transcript-media/digest.png',
+          mimeType: 'image/png',
+          byteLength: 4
+        }
+      ]
+    }))
+    const markup = validMarkup('shot-9')
+
+    const result = persistRemoteImageAttachments({
+      appChatId: 'chat-a',
+      attachments: [
+        {
+          dataBase64: pngBase64(),
+          mimeType: 'image/png',
+          id: 'shot-9',
+          markup
+        }
+      ],
+      store: { writeOwnedMany }
+    })
+
+    expect(result[0]?.id).toBe('shot-9')
+    expect(result[0]?.markup).toEqual(markup)
+    expect(result[0]?.markupPromptText).toContain('shot-9')
+    expect(result[0]?.markupPromptText).toContain('(0.1200, 0.3400)')
+    expect(result[0]?.markupPromptText).toContain('(0.5600, 0.7800)')
+    expect(dispatchFieldsFromPersistedRemoteImages(result)).toEqual({
+      imagePaths: ['/owned/transcript-media/digest.png'],
+      markupPromptText: result[0]?.markupPromptText
+    })
+  })
+
+  it('rejects malformed or oversized markup before writing bytes', () => {
+    const writeOwnedMany = vi.fn()
+    const oversized = {
+      schemaVersion: 1,
+      attachmentId: 'shot-9',
+      primitives: Array.from({ length: 32 }, () => ({
+        type: 'stroke' as const,
+        points: Array.from({ length: 80 }, (_, i) => ({
+          x: (i % 10) / 10,
+          y: (i % 10) / 10
+        })),
+        color: { r: 1, g: 0, b: 0, a: 1 },
+        thickness: 2
+      }))
+    }
+    expect(Buffer.byteLength(JSON.stringify(oversized), 'utf8')).toBeGreaterThan(
+      MAX_REMOTE_IMAGE_MARKUP_JSON_BYTES
+    )
+
+    for (const markup of [
+      { schemaVersion: 2, attachmentId: 'shot-9', primitives: [] },
+      { schemaVersion: 1, attachmentId: '', primitives: [] },
+      { schemaVersion: 1, attachmentId: 'other', primitives: [] },
+      {
+        schemaVersion: 1,
+        attachmentId: 'shot-9',
+        primitives: [
+          {
+            type: 'arrow',
+            start: { x: 1.5, y: 0 },
+            end: { x: 0, y: 0 },
+            color: { r: 1, g: 0, b: 0, a: 1 },
+            thickness: 2
+          }
+        ]
+      },
+      oversized
+    ]) {
+      expect(() =>
+        persistRemoteImageAttachments({
+          appChatId: 'chat-a',
+          attachments: [
+            {
+              dataBase64: pngBase64(),
+              mimeType: 'image/png',
+              id: 'shot-9',
+              markup
+            }
+          ],
+          store: { writeOwnedMany }
+        })
+      ).toThrow(/metadata is invalid/)
+    }
+    expect(writeOwnedMany).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stroke above the point cap even when JSON is small', () => {
+    const writeOwnedMany = vi.fn()
+    const markup = {
+      schemaVersion: 1,
+      attachmentId: 'shot-9',
+      primitives: [
+        {
+          type: 'stroke',
+          points: Array.from(
+            { length: MAX_REMOTE_IMAGE_MARKUP_POINTS_PER_STROKE + 1 },
+            () => ({ x: 0.1, y: 0.1 })
+          ),
+          color: { r: 1, g: 0, b: 0, a: 1 },
+          thickness: 2
+        }
+      ]
+    }
+    expect(parseRemoteImageMarkup(markup).ok).toBe(false)
+    expect(() =>
+      persistRemoteImageAttachments({
+        appChatId: 'chat-a',
+        attachments: [
+          {
+            dataBase64: pngBase64(),
+            mimeType: 'image/png',
+            id: 'shot-9',
+            markup
+          }
+        ],
+        store: { writeOwnedMany }
+      })
+    ).toThrow(/points/)
+    expect(writeOwnedMany).not.toHaveBeenCalled()
   })
 
   it('fails without exposing a path when the atomic ownership batch is blocked', () => {

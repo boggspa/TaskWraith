@@ -44,6 +44,10 @@
 import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import {
+  parseRemoteImageAttachmentMeta,
+  type RemoteImageMarkup
+} from './RemoteAttachmentPersistence'
+import {
   isReservedBranchName,
   isReservedWorktreeName
 } from '../shared/worktreeNamespace'
@@ -302,6 +306,12 @@ export interface BridgeImageAttachment {
   name?: string
   mimeType: string
   dataBase64: string
+  /** Phone attachment identity. Required when `markup` is present. */
+  id?: string
+  /** Validated MarkupPayload mirror. Rejected unless schemaVersion is 1,
+   * attachmentId is non-empty and matches `id`, coordinates are finite 0..1,
+   * and the encoded JSON stays within 16 KiB. */
+  markup?: RemoteImageMarkup
 }
 
 /** On-demand bounded transcript window for one thread. The phone sends
@@ -2087,6 +2097,8 @@ function isImageAttachments(value: unknown): boolean {
     if (typeof entry.dataBase64 !== 'string' || entry.dataBase64.length === 0) return false
     if (entry.dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return false
     if (entry.name !== undefined && typeof entry.name !== 'string') return false
+    const meta = parseRemoteImageAttachmentMeta(entry)
+    if (!meta.ok) return false
     combined += entry.dataBase64.length
   }
   return combined <= MAX_IMAGE_ATTACHMENT_COMBINED_BASE64

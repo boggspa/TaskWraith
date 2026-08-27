@@ -1496,6 +1496,89 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
     })
 
+    it('decodes a composerPrompt image attachment with id and valid markup', () => {
+      const markup = {
+        schemaVersion: 1,
+        attachmentId: 'shot-9',
+        primitives: [
+          {
+            type: 'rect',
+            start: { x: 0.1, y: 0.2 },
+            end: { x: 0.4, y: 0.5 },
+            color: { r: 0, g: 1, b: 0, a: 1 },
+            thickness: 1.5
+          }
+        ]
+      }
+      const imageAttachments = [{ ...imageAttachment(1), id: 'shot-9', markup }]
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'fix the boxed region',
+          provider: 'codex',
+          imageAttachments
+        })
+      )
+
+      expect(payload.kind).toBe('composerPrompt')
+      if (payload.kind === 'composerPrompt') {
+        expect(payload.imageAttachments).toEqual(imageAttachments)
+      }
+    })
+
+    it('rejects composerPrompt image markup that violates the host contract', () => {
+      const base = {
+        kind: 'composerPrompt',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'annotate',
+        provider: 'codex'
+      }
+      const cases = [
+        { ...imageAttachment(1), markup: { schemaVersion: 1, attachmentId: 'shot-9', primitives: [] } },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 2, attachmentId: 'shot-9', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 1, attachmentId: '', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 1, attachmentId: 'other', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: {
+            schemaVersion: 1,
+            attachmentId: 'shot-9',
+            primitives: [
+              {
+                type: 'arrow',
+                start: { x: -0.1, y: 0.2 },
+                end: { x: 0.4, y: 0.5 },
+                color: { r: 1, g: 0, b: 0, a: 1 },
+                thickness: 2
+              }
+            ]
+          }
+        }
+      ]
+      for (const image of cases) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({ ...base, imageAttachments: [image] })
+        )
+        expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
+      }
+    })
+
     it('decodes composer queue actions', () => {
       const prompt = decodeBridgeActionPayload(
         encode({

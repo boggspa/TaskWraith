@@ -15,7 +15,7 @@ import TaskWraithKit
     import PhotosUI
     import UIKit
 
-    private let twMaxComposerImageAttachments = 15
+    private let twMaxComposerImageAttachments = ComposerMarkupWiring.maxComposerImageAttachments
 #endif
 
 struct Composer: View {
@@ -139,7 +139,8 @@ struct Composer: View {
     @State private var selectedKimiThinking: Bool = true
     #if canImport(UIKit)
         @State private var pickedItems: [PhotosPickerItem] = []
-        @State private var attachments: [(name: String, image: UIImage)] = []
+        @State private var attachments: [ComposerQueuedImage] = []
+        @ObservedObject private var markupInbox = ComposerMarkupInbox.shared
         #if os(iOS)
             /// Composer-local dictation. Lives next to `photosButton`; the
             /// live session is iOS-only (`onDevice()`), matching the Speech
@@ -403,10 +404,18 @@ struct Composer: View {
                 voiceController.cancel()
                 bindVoiceTranscript()
             #endif
+            #if canImport(UIKit)
+                absorbPendingMarkup()
+            #endif
         }
         #if os(iOS)
             .onAppear { bindVoiceTranscript() }
             .onDisappear { voiceController.cancel() }
+        #endif
+        #if canImport(UIKit)
+            .onChange(of: markupInbox.generation) { _, _ in
+                absorbPendingMarkup()
+            }
         #endif
         .onChange(of: isExpanded, initial: true) { _, expanded in
             onExpandedChange?(expanded)
@@ -756,6 +765,13 @@ struct Composer: View {
                                         .scaledToFill()
                                         .frame(width: 52, height: 52)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    if attachment.markup != nil {
+                                        Image(systemName: "pencil.circle.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(.white, TWTheme.chroma1)
+                                            .offset(x: -16, y: 16)
+                                            .accessibilityLabel("Annotated")
+                                    }
                                     Button {
                                         attachments.remove(at: index)
                                     } label: {
@@ -1298,7 +1314,7 @@ struct Composer: View {
                             let data = try? await item.loadTransferable(type: Data.self),
                             let image = UIImage(data: data)
                         else { continue }
-                        attachments.append((name: "photo.jpg", image: image))
+                        attachments.append(ComposerQueuedImage(name: "photo.jpg", image: image))
                     }
                     pickedItems = []
                 }
@@ -1372,6 +1388,20 @@ struct Composer: View {
         return flat.count <= 40 ? flat : String(flat.prefix(40)) + "…"
     }
 
+    #if canImport(UIKit)
+        private func absorbPendingMarkup() {
+            let result = ComposerMarkupWiring.absorb(
+                from: markupInbox,
+                threadId: card.id,
+                currentlyAttached: attachments.count)
+            attachments.append(
+                contentsOf: ComposerMarkupWiring.queuedImages(from: result.taken))
+            if let message = result.refusalMessage {
+                model.reportOfflineOutboxOutcome(message)
+            }
+        }
+    #endif
+
     private func sendCurrent() {
         #if os(iOS)
             // Drop in-flight dictation so a late final cannot append after send.
@@ -1419,7 +1449,7 @@ struct Composer: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if canImport(UIKit)
             let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                twEncodeImageAttachment($0.image, name: $0.name)
+                ComposerMarkupWiring.encode($0)
             }
             let hasAttachments = !encoded.isEmpty
         #else
@@ -1524,7 +1554,7 @@ struct Composer: View {
         }
         #if canImport(UIKit)
             let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                twEncodeImageAttachment($0.image, name: $0.name)
+                ComposerMarkupWiring.encode($0)
             }
         #else
             let encoded: [[String: Any]] = []
@@ -1574,7 +1604,7 @@ struct Composer: View {
         } else {
             #if canImport(UIKit)
                 let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                    twEncodeImageAttachment($0.image, name: $0.name)
+                    ComposerMarkupWiring.encode($0)
                 }
             #else
                 let encoded: [[String: Any]] = []

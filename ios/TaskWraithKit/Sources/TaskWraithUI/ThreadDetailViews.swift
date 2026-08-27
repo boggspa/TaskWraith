@@ -5502,7 +5502,8 @@ struct ThreadRowView: View, Equatable {
             }
             .padding(.top, 2)
             .sheet(item: $preview) { preview in
-                TranscriptMediaPreviewSheet(preview: preview, model: model)
+                TranscriptMediaPreviewSheet(
+                    preview: preview, model: model, threadId: threadId)
             }
         }
 
@@ -5789,7 +5790,9 @@ struct ThreadRowView: View, Equatable {
     private struct TranscriptMediaPreviewSheet: View {
         let preview: TranscriptMediaPreview
         let model: RemoteSessionModel
+        let threadId: String
         @Environment(\.dismiss) private var dismiss
+        @State private var markupSource: MarkupCaptureSource?
 
         var body: some View {
             NavigationStack {
@@ -5805,9 +5808,26 @@ struct ThreadRowView: View, Equatable {
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        if let source = markupCaptureSource() {
+                            Button("Annotate") { markupSource = source }
+                        }
+                    }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
                     }
+                }
+                .sheet(item: $markupSource) { source in
+                    MarkupCaptureView(
+                        image: source.image,
+                        imageData: source.imageData,
+                        suggestedName: source.name,
+                        threadId: source.threadId,
+                        onAttached: {
+                            markupSource = nil
+                            dismiss()
+                        },
+                        onCancel: { markupSource = nil })
                 }
             }
         }
@@ -5844,6 +5864,33 @@ struct ThreadRowView: View, Equatable {
             guard let data = Data(base64Encoded: base64) else { return nil }
             return UIImage(data: data)
         }
+
+        /// Reuse the already-assembled full-size bytes. Never re-fetch.
+        private func markupCaptureSource() -> MarkupCaptureSource? {
+            guard case .image(let result) = preview.payload else { return nil }
+            let fromResult = result.threadId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let fromStrip = threadId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedThread = fromResult.isEmpty ? fromStrip : fromResult
+            guard !resolvedThread.isEmpty else { return nil }
+            guard let data = Data(base64Encoded: result.dataBase64), !data.isEmpty else {
+                return nil
+            }
+            guard let image = UIImage(data: data) else { return nil }
+            let name = result.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MarkupCaptureSource(
+                image: image,
+                imageData: data,
+                name: (name?.isEmpty == false ? name! : "screenshot.jpg"),
+                threadId: resolvedThread)
+        }
+    }
+
+    private struct MarkupCaptureSource: Identifiable {
+        let id = UUID()
+        let image: UIImage
+        let imageData: Data
+        let name: String
+        let threadId: String
     }
 
     /// Streams a transcript audio/video asset through the bridge resource loader
