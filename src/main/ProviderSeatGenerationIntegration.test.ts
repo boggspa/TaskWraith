@@ -28,6 +28,31 @@ describe('provider seat generation main-process integration', () => {
     expect(runtimeProfile).toContain('storeProviderSessionId: null')
   })
 
+  it('selects and propagates the lean solo catalogue at every provider boundary', () => {
+    const runtimeProfile = sourceBetween(
+      'function applyRuntimeProfileToPayload(',
+      'async function getCliProviderStatus('
+    )
+    expect(runtimeProfile.match(/soloThread: !applied\.ensembleRun/g)).toHaveLength(2)
+
+    const delegatedCompose = sourceBetween(
+      'async function composeDelegatedProviderPrompts(',
+      'function seedAgentDrivenSubThreadTranscript('
+    )
+    expect(delegatedCompose).toContain('soloThread: true')
+
+    const bridgeWrapper = sourceBetween(
+      'interface TaskWraithMcpBridgeArgOptions',
+      'function taskwraithMcpBridgeStaticRegistrationArgs'
+    )
+    expect(bridgeWrapper).toContain('soloSubset?: boolean')
+    expect(bridgeWrapper).toContain('options.soloSubset === true')
+
+    expect(
+      indexSource.match(/soloSubset: isSoloTaskWraithMcpProfile\(/g)?.length || 0
+    ).toBeGreaterThanOrEqual(6)
+  })
+
   it('rebases a pre-dispatch Claude payload onto the current store session', () => {
     const runtimeProfile = sourceBetween(
       'function applyRuntimeProfileToPayload(',

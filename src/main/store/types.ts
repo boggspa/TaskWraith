@@ -934,6 +934,9 @@ export type TaskWraithMcpProfileId =
   // catalogue without mutating a receipted v16 session.
   | 'taskwraith-gateway-v17'
   | 'taskwraith-gateway-v17-mesh'
+  // Solo-v1 retains the v17 capability universe while moving specialist
+  // coordination and Canvas tools behind capability discovery.
+  | 'taskwraith-gateway-solo-v1'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

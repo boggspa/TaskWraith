@@ -32,6 +32,7 @@ import {
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from './mcp/McpSessionProfileFence'
 import {
@@ -39,6 +40,7 @@ import {
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG
 } from './mcp/McpBridgeRuntime'
 import { hasUltraTaskDelegationAutoAllow } from './UltraTaskDelegationConsent'
@@ -199,6 +201,7 @@ function claudeTaskWraithBridgeArgsForProfile(
     (arg) =>
       arg !== TASKWRAITH_MCP_CORE_SUBSET_ARG &&
       arg !== TASKWRAITH_MCP_GATEWAY_SUBSET_ARG &&
+      arg !== GEMINI_MCP_SOLO_SUBSET_ARG &&
       arg !== GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG &&
       arg !== GEMINI_MCP_MESH_DIRECT_ARG &&
       arg !== GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG &&
@@ -207,6 +210,7 @@ function claudeTaskWraithBridgeArgsForProfile(
   )
   if (isCoreTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_CORE_SUBSET_ARG)
   if (isGatewayTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+  if (isSoloTaskWraithMcpProfile(profileId)) args.push(GEMINI_MCP_SOLO_SUBSET_ARG)
   if (isPortableEnsembleControlMcpProfile(profileId)) {
     args.push(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
   }

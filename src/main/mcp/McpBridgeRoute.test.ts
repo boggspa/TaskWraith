@@ -54,6 +54,7 @@ function buildLiveEnvironment(input: {
     profile: {
       safeSubset: true,
       gatewaySubset: true,
+      soloSubset: true,
       meshTopologyDirect: true,
       sketchDirect: true,
       orchestrationDirect: true
@@ -101,7 +102,11 @@ describe('MCP bridge route-from-env authority', () => {
       instanceEpoch: instanceEpochB,
       bridgeLogEpoch: 11
     })
-    expect(parsedA.value.profile).toMatchObject({ safeSubset: true, gatewaySubset: true })
+    expect(parsedA.value.profile).toMatchObject({
+      safeSubset: true,
+      gatewaySubset: true,
+      soloSubset: true
+    })
     expect(parsedA.value.profile.planSubset).toBe(false)
     expect(parsedA.value.profile.meshTopologyDirect).toBe(true)
     expect(parsedA.value.profile.sketchDirect).toBe(true)
@@ -109,6 +114,7 @@ describe('MCP bridge route-from-env authority', () => {
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },
       parentProvider: 'cursor',
@@ -237,6 +243,8 @@ describe('MCP bridge route-from-env authority', () => {
     delete missingProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]
     const missingSketchProfile = { ...built.env }
     delete missingSketchProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]
+    const missingSoloProfile = { ...built.env }
+    delete missingSoloProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]
     const missingTopologyProfile = { ...built.env }
     delete missingTopologyProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]
     const missingOrchestrationProfile = { ...built.env }
@@ -251,6 +259,10 @@ describe('MCP bridge route-from-env authority', () => {
       reason: 'invalid-profile-environment'
     })
     expect(parseMcpBridgeRouteFromEnv(missingSketchProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
+    expect(parseMcpBridgeRouteFromEnv(missingSoloProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })

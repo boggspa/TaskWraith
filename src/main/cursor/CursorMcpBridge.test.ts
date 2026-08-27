@@ -16,6 +16,7 @@ import {
   CURSOR_READONLY_MCP_ALLOW_RULES,
   CURSOR_SCOPED_MCP_SERVER_NAME,
   CURSOR_WEB_FETCH_MCP_SERVER_SOURCE,
+  buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   buildCursorBrokerMcpServerEntry,
   buildCursorMcpServerEntry,
   buildCursorReadOnlyMcpServerEntry,
@@ -147,6 +148,40 @@ describe('canonical global broker allow rules', () => {
       `Mcp(${CURSOR_MCP_SERVER_NAME}:delegate_to_subthread)`
     )
   })
+
+  it.each([false, true])(
+    'builds profile-aware solo rules for planSeat=%s without pre-approving delegation',
+    (planSeat) => {
+      const rules = buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+        profileId: 'taskwraith-gateway-solo-v1',
+        planSeat
+      })
+
+      for (const tool of [
+        'ensemble_await',
+        'ensemble_lane_result',
+        'image_view',
+        'capability_search',
+        'capability_invoke'
+      ]) {
+        expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
+        expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+      }
+      for (const tool of [
+        'write_file',
+        'apply_patch',
+        'run_shell_command',
+        'delegate_wave',
+        'ultra_task',
+        'delegate_to_subthread'
+      ]) {
+        expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
+        expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+      }
+      expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+      expect(Object.isFrozen(rules)).toBe(true)
+    }
+  )
 })
 
 describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () => {

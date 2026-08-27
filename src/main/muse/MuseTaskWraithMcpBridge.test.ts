@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { GEMINI_MCP_BRIDGE_ENV } from '../geminiMcpConstants'
 import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
-import { TASKWRAITH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
+import {
+  TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+} from '../mcp/McpSessionProfileFence'
 import {
   buildMuseTaskWraithMcpProfile,
   prepareMuseTaskWraithMcpInvocation,
@@ -41,6 +44,24 @@ describe('Muse TaskWraith MCP bridge preparation', () => {
     ).toMatchObject({ safeSubset: true, gatewaySubset: true, planSubset: false })
   })
 
+  it('selects the exact lean solo subset without losing orchestration primitives', () => {
+    expect(
+      taskWraithMcpAdvertisedToolNamesForProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)
+    ).toEqual(expect.arrayContaining(['ensemble_await', 'ensemble_lane_result', 'delegate_wave']))
+    expect(
+      buildMuseTaskWraithMcpProfile({
+        approvalMode: 'default',
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+      })
+    ).toMatchObject({
+      safeSubset: false,
+      gatewaySubset: true,
+      soloSubset: true,
+      portableEnsembleControl: true,
+      orchestrationDirect: true
+    })
+  })
+
   it('starts the broker and returns static argv with route authority only in child env', async () => {
     const deps = bridgeDeps({ isolatedInstanceId: 'a'.repeat(32) })
 
@@ -75,6 +96,30 @@ describe('Muse TaskWraith MCP bridge preparation', () => {
       })
     })
     expect(invocation.args.join(' ')).not.toMatch(/token|socket|epoch|profile/i)
+  })
+
+  it('passes the solo selector through the complete bridge profile', async () => {
+    const deps = bridgeDeps()
+
+    await prepareMuseTaskWraithMcpInvocation(
+      {
+        appRunId: 'run-muse-solo',
+        appChatId: 'chat-muse-solo',
+        workspacePath: '/workspace',
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+      },
+      deps
+    )
+
+    expect(deps.runtime.buildProviderRunMcpBridgeEnv).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          gatewaySubset: true,
+          soloSubset: true,
+          orchestrationDirect: true
+        })
+      })
+    )
   })
 
   it('fails closed before broker startup when the profile or executable is unavailable', async () => {

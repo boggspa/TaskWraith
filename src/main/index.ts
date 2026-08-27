@@ -1561,6 +1561,7 @@ import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
@@ -3447,6 +3448,7 @@ interface TaskWraithMcpBridgeArgOptions {
   sketchDirect?: boolean
   orchestrationDirect?: boolean
   auditSubset?: boolean
+  soloSubset?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -3464,7 +3466,8 @@ function taskwraithMcpBridgeArgs(
     options.meshTopologyDirect === true,
     options.sketchDirect === true,
     options.orchestrationDirect === true,
-    options.auditSubset === true
+    options.auditSubset === true,
+    options.soloSubset === true
   )
 }
 
@@ -11360,7 +11363,8 @@ async function composeDelegatedProviderPrompts(args: {
     storeProviderSessionId: args.subThread.linkedProviderSessionId,
     receipt: args.subThread.taskWraithMcpProfileReceipt,
     coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
-    grokMcpAdvertised: args.provider === 'grok' ? taskWraithMcpAdvertised : undefined
+    grokMcpAdvertised: args.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
+    soloThread: true
   })
   const isGlobalRun = (args.subThread.scope ?? 'workspace') === 'global'
   const skillHookContext = await resolveRunSkillHookContext({
@@ -17844,6 +17848,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       storeState.mainOwnedContextIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
+    soloThread: !applied.ensembleRun,
     meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
@@ -17860,6 +17865,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised:
       applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
+    soloThread: !applied.ensembleRun,
     meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
@@ -22188,6 +22194,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           planSubset: cursorBrokerPolicy.planSubset,
           coreSubset: cursorBrokerPolicy.coreSubset,
           gatewaySubset: cursorBrokerPolicy.gatewaySubset,
+          soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
           ),
@@ -23357,7 +23364,10 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       grokMcpServers = [
         {
@@ -24297,7 +24307,10 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       mistralMcpServers = [
         {
@@ -26031,6 +26044,7 @@ function resolveCodexClientStartupConfiguration(
           bridgeBinaryPath: bridgeCommandStatus.command,
           bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
             gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
+            soloSubset: isSoloTaskWraithMcpProfile(mcpProfileId),
             portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
             meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
             meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(mcpProfileId),
@@ -33949,6 +33963,7 @@ async function runGeminiProvider(
         safeSubset: geminiReadOnlyAdvertise,
         coreSubset: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         gatewaySubset: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
@@ -34768,6 +34783,7 @@ async function runAntigravityAgyProvider(
           // turn, so this lane always takes the compact gateway surface;
           // hidden tools stay reachable via capability_search/capability_invoke.
           gatewaySubset: true,
+          soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
           ),
@@ -48577,7 +48593,8 @@ if (isGeminiMcpBridgeProcess) {
             storeProviderSessionId: linkedSessionForProvider,
             receipt: chat.taskWraithMcpProfileReceipt,
             coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
-            grokMcpAdvertised: provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
+            grokMcpAdvertised: provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined,
+            soloThread: chat.chatKind !== 'ensemble'
           })
           const bridgeSkillHookContext = await resolveRunSkillHookContext({
             workspacePath: workspaceRecord?.path || chat.workspacePath,

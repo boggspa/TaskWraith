@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
 } from '../mcp/McpSessionProfileFence'
 import {
@@ -324,18 +325,23 @@ describe('ComposerService', () => {
     ).rejects.toThrow('Channel agent composer authority is invalid.')
   })
 
-  it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', async () => {
+  it('defaults fresh single-provider Claude sessions to the lean gateway profile', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
       const payload = await compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
-      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
       else process.env.TASKWRAITH_CORE_MCP_PROFILE = previous
     }
+  })
+
+  it('keeps fresh Ensemble turns on the full current gateway generation', async () => {
+    const payload = await compose({ provider: 'codex', chatKind: 'ensemble' }, {})
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
   })
 
   it('projects live chat-scoped Browser Canvas presence into the outgoing prompt', async () => {
@@ -454,7 +460,7 @@ describe('ComposerService', () => {
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
-      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
       expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
@@ -689,7 +695,7 @@ describe('ComposerService', () => {
       )
 
       expect(payload.providerSessionId).toBeNull()
-      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('mcp__TaskWraith__delegate_wave')
     }
   )
@@ -848,7 +854,7 @@ describe('ComposerService', () => {
     })
     // Composer resolves the persisted-session receipt before permissions; the
     // normalized main launch reselects v15-mesh from this signed posture.
-    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
   })
 
   it('builds Kimi prompts with conversation context even when resuming a provider session', async () => {

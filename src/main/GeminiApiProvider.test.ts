@@ -8,6 +8,10 @@ import {
   type GeminiApiProviderDeps
 } from './GeminiApiProvider'
 import { gatewayToolDefinitions } from './mcp/McpToolGateway'
+import {
+  GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS
+} from './mcp/McpToolProfiles'
 import { AppStore } from './store'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import type {
@@ -819,6 +823,25 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     expect(
       filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v9').map((tool) => tool.name)
     ).toEqual(['read_file', 'capability_search', 'capability_invoke'])
+  })
+
+  it('filters native declarations to the exact lean solo profile', () => {
+    const tools = [
+      ...GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES
+    ].map(makeMcpTool)
+    const names = filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-solo-v1').map(
+      (tool) => tool.name
+    )
+
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toHaveLength(31)
+    expect(names).toEqual(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS)
+    expect(names).toEqual(
+      expect.arrayContaining(['ensemble_await', 'ensemble_lane_result', 'delegate_wave'])
+    )
+    for (const name of GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES) {
+      expect(names).not.toContain(name)
+    }
   })
 
   it('passes function declarations on every generateContentStream call', async () => {

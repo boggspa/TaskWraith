@@ -104,6 +104,10 @@ import {
   GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
@@ -176,7 +180,11 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
       GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
-      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -369,6 +377,14 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshGatewayChars = serializedChars(
       GATEWAY_V17_MCP_DIRECT_TOOLS,
+      gatewayToolDefinitions(),
+      (selected) =>
+        compactGatewayV17ToolDefinitionsForTransport(
+          compactGatewayV13ToolDefinitionsForTransport(selected)
+        )
+    )
+    const soloGatewayChars = serializedChars(
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       (selected) =>
         compactGatewayV17ToolDefinitionsForTransport(
@@ -594,6 +610,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
+    // Measured at 18,048 on birth: keep a meaningful ceiling while allowing
+    // direct-tool schema guidance to evolve without a ceremonial byte re-pin.
+    expect(soloGatewayChars).toBeLessThan(20_000)
+    expect(soloGatewayChars).toBeLessThan(freshGatewayChars)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
     // list may SHRINK, never grow — same ratchet the control-byte and
@@ -602,7 +622,7 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // and take the win. Trimming `ensemble_yield` / `blackboard_post` prose back
     // under budget remains the owning features' call, not this test's.
     expect(
-      Object.entries({ gatewayChars, freshGatewayChars, freshMeshGatewayChars })
+      Object.entries({ gatewayChars, freshGatewayChars, freshMeshGatewayChars, soloGatewayChars })
         .filter(([, chars]) => chars >= 40_000)
         .map(([name]) => name)
     ).toEqual(['gatewayChars'])
@@ -970,6 +990,112 @@ describe('catalogue reachability', () => {
     ])
     expect(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES)
     expect(GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES)
+  })
+
+  it('pins the lean solo direct birth catalogue to the retained v17 order', () => {
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toEqual([
+      'read_file',
+      'list_directory',
+      'find_files',
+      'workspace_search',
+      'workspace_symbols',
+      'write_file',
+      'replace',
+      'apply_patch',
+      'create_directory',
+      'move_path',
+      'delete_path',
+      'run_shell_command',
+      'run_task',
+      'git_status',
+      'git_diff',
+      'git_stage',
+      'git_commit',
+      'ask_user_question',
+      'todo_write',
+      'goal_read',
+      'update_goal',
+      'goal_complete',
+      'goal_blocked',
+      'delegate_to_subthread',
+      'ensemble_await',
+      'ensemble_lane_result',
+      'delegate_wave',
+      'ultra_task',
+      'image_view'
+    ])
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toHaveLength(29)
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toHaveLength(31)
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-solo-v1')).toBe(
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-solo-v1')).toBe(
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS
+    )
+  })
+
+  it('keeps solo specialist demotions discoverable without narrowing v17 eligibility', () => {
+    expect(GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES).toEqual([
+      'ensemble_yield',
+      'ensemble_send',
+      'ensemble_fanout',
+      'ensemble_poll_response',
+      'ensemble_propose_goal_complete',
+      'ensemble_roster_edit',
+      'ensemble_brief_update',
+      'list_ensemble_participants',
+      'schedule_wakeup',
+      'cancel_wakeup',
+      'blackboard_post',
+      'blackboard_read',
+      'blackboard_delete',
+      'ensemble_control',
+      'canvas_sketch_open',
+      'canvas_sketch_get',
+      'canvas_sketch_update',
+      'scout_brief'
+    ])
+    expect(
+      GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
+        (tool) => !GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS.includes(tool)
+      )
+    ).toEqual(GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES)
+
+    const discoverable = taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-solo-v1')
+    const callable = new Set(
+      filterTaskWraithMcpToolDefinitionsForProfile(
+        'taskwraith-gateway-solo-v1',
+        createTaskWraithMcpToolDefinitions()
+      ).map((definition) => definition.name)
+    )
+    expect(discoverable).toBe(GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES)
+    for (const tool of GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES) {
+      expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(discoverable).toContain(tool)
+      expect(callable).toContain(tool)
+    }
+
+    const canonicalUniverse = [
+      ...new Set([...GATEWAY_V17_MCP_DIRECT_TOOLS, ...GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES])
+    ].sort()
+    const soloUniverse = [
+      ...new Set([...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, ...GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES])
+    ].sort()
+    expect(soloUniverse).toEqual(canonicalUniverse)
+
+    for (const profile of [
+      GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES
+    ]) {
+      expect(Object.isFrozen(profile)).toBe(true)
+      expect(new Set(profile).size).toBe(profile.length)
+    }
   })
 
   it('grows the newest gateway generation rather than mutating a frozen one', () => {

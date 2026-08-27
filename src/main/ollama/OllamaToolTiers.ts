@@ -88,6 +88,44 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
 export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V17_MCP_DIRECT_TOOLS
 
 /**
+ * Resolve the immutable direct catalogue before Ollama's signed permission
+ * overlays are applied. Mesh variants keep using the corresponding non-Mesh
+ * grammar because the local parser reaches Mesh through capability discovery.
+ * A missing profile deliberately retains the historical v17 alias.
+ */
+export function ollamaDirectToolNamesForProfile(
+  profileId?: TaskWraithMcpProfileId | null
+): readonly OllamaToolName[] {
+  const localProfileId =
+    profileId === 'taskwraith-gateway-v7-mesh'
+      ? 'taskwraith-gateway-v7'
+      : profileId === 'taskwraith-gateway-v8-mesh'
+        ? 'taskwraith-gateway-v8'
+        : profileId === 'taskwraith-gateway-v9-mesh'
+          ? 'taskwraith-gateway-v9'
+          : profileId === 'taskwraith-gateway-v10-mesh'
+            ? 'taskwraith-gateway-v10'
+            : profileId === 'taskwraith-gateway-v11-mesh'
+              ? 'taskwraith-gateway-v11'
+              : profileId === 'taskwraith-gateway-v12-mesh'
+                ? 'taskwraith-gateway-v12'
+                : profileId === 'taskwraith-gateway-v13-mesh'
+                  ? 'taskwraith-gateway-v13'
+                  : profileId === 'taskwraith-gateway-v14-mesh'
+                    ? 'taskwraith-gateway-v14'
+                    : profileId === 'taskwraith-gateway-v15-mesh'
+                      ? 'taskwraith-gateway-v15'
+                      : profileId === 'taskwraith-gateway-v16-mesh'
+                        ? 'taskwraith-gateway-v16'
+                        : profileId === 'taskwraith-gateway-v17-mesh'
+                          ? 'taskwraith-gateway-v17'
+                          : profileId
+  return localProfileId
+    ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
+    : OLLAMA_ADVERTISED_TOOL_NAMES
+}
+
+/**
  * Delegation/sub-thread tools conditionally unlocked by the main-issued,
  * HMAC-signed UltraTask run posture. This is the complete local lifecycle:
  * spawn, wait/read, cancel, and advisory wave ownership. `ultra_task` belongs
@@ -150,36 +188,7 @@ export function ollamaAdvertisedToolNames(
     ultraTaskDelegationAutoAllow?: boolean
   } = {}
 ): OllamaToolName[] {
-  // Ollama's local parser has one compact callable-name grammar. Keep Mesh on
-  // capability discovery as before, while retaining the corresponding profile
-  // generation for every other direct tool (including Sketch on v8-mesh).
-  const localProfileId =
-    options.taskWraithMcpProfileId === 'taskwraith-gateway-v7-mesh'
-      ? 'taskwraith-gateway-v7'
-      : options.taskWraithMcpProfileId === 'taskwraith-gateway-v8-mesh'
-        ? 'taskwraith-gateway-v8'
-        : options.taskWraithMcpProfileId === 'taskwraith-gateway-v9-mesh'
-          ? 'taskwraith-gateway-v9'
-          : options.taskWraithMcpProfileId === 'taskwraith-gateway-v10-mesh'
-            ? 'taskwraith-gateway-v10'
-            : options.taskWraithMcpProfileId === 'taskwraith-gateway-v11-mesh'
-              ? 'taskwraith-gateway-v11'
-              : options.taskWraithMcpProfileId === 'taskwraith-gateway-v12-mesh'
-                ? 'taskwraith-gateway-v12'
-                : options.taskWraithMcpProfileId === 'taskwraith-gateway-v13-mesh'
-                  ? 'taskwraith-gateway-v13'
-                  : options.taskWraithMcpProfileId === 'taskwraith-gateway-v14-mesh'
-                    ? 'taskwraith-gateway-v14'
-                    : options.taskWraithMcpProfileId === 'taskwraith-gateway-v15-mesh'
-                      ? 'taskwraith-gateway-v15'
-                      : options.taskWraithMcpProfileId === 'taskwraith-gateway-v16-mesh'
-                        ? 'taskwraith-gateway-v16'
-                        : options.taskWraithMcpProfileId === 'taskwraith-gateway-v17-mesh'
-                          ? 'taskwraith-gateway-v17'
-                          : options.taskWraithMcpProfileId
-  const directNames = localProfileId
-    ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
-    : OLLAMA_ADVERTISED_TOOL_NAMES
+  const directNames = ollamaDirectToolNamesForProfile(options.taskWraithMcpProfileId)
   // Start from the ordinary posture surface. The signed UltraTask lifecycle
   // overlay is added only AFTER generic read-only/Plan intersection below;
   // otherwise those generic sets would strip lifecycle readers that this exact

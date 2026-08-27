@@ -37,6 +37,7 @@ import {
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
   GATEWAY_V8_ADDED_TOOL_NAMES,
   GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
@@ -135,6 +136,10 @@ export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // gateway tools. Hidden first-party tools remain reachable only through the
 // gateway and retain their underlying host-side approval and routing policy.
 export const GEMINI_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
+// Solo direct-discovery profile flag. This only narrows the direct gateway
+// catalogue; demoted tools remain discoverable and callable through the
+// capability gateway under their existing policy and approval boundaries.
+export const GEMINI_MCP_SOLO_SUBSET_ARG = '--solo-subset'
 // Portable Bossman-control profile flag. The compact `ensemble_control` tool
 // is deliberately gated independently from the generic gateway flag so a
 // receipted v1–v5 session cannot gain a new visible tool mid-session.
@@ -186,6 +191,7 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_GATEWAY_SUBSET_ARG)) env.TASKWRAITH_MCP_GATEWAY_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_SOLO_SUBSET_ARG)) env.TASKWRAITH_MCP_SOLO_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)) {
     env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
   }
@@ -1210,6 +1216,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
@@ -1775,9 +1782,14 @@ export function handleMcpJsonRpcMessage(
     // Progressive-disclosure profile. The direct catalogue stays fixed while
     // hidden first-party tools are discovered/invoked through the two virtual
     // gateway tools appended below.
-    const gatewaySubsetOnly =
-      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
-        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const gatewaySubsetSelected =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ?? process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const soloSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_SOLO_SUBSET ?? process.env.TASKWRAITH_MCP_SOLO_SUBSET) === '1'
+    // Solo is a gateway subtype. Treat its immutable selector as sufficient to
+    // activate the gateway boundary so a malformed solo-only launch narrows
+    // safely instead of falling through to the full direct catalogue.
+    const gatewaySubsetOnly = gatewaySubsetSelected || soloSubsetOnly
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
@@ -1814,14 +1826,16 @@ export function handleMcpJsonRpcMessage(
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
               (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
               (!gatewaySubsetOnly ||
-                isGatewayMcpAdvertisedForSeat(
-                  tool.name,
-                  portableEnsembleControl,
-                  meshDirect,
-                  meshTopologyDirect,
-                  sketchDirect,
-                  orchestrationDirect
-                ))
+                (soloSubsetOnly
+                  ? (GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS as readonly string[]).includes(tool.name)
+                  : isGatewayMcpAdvertisedForSeat(
+                      tool.name,
+                      portableEnsembleControl,
+                      meshDirect,
+                      meshTopologyDirect,
+                      sketchDirect,
+                      orchestrationDirect
+                    )))
           )
         : allTools
     const meshCompacted =
@@ -1832,7 +1846,7 @@ export function handleMcpJsonRpcMessage(
     // orchestration tools so tools/list stays under the 40k ceiling. Pre-v13
     // gateway seats must keep canonical prose — compaction is receipt-gated.
     const transportDirectTools =
-      gatewaySubsetOnly && orchestrationDirect
+      gatewaySubsetOnly && (orchestrationDirect || soloSubsetOnly)
         ? compactGatewayV13ToolDefinitionsForTransport(meshCompacted)
         : meshCompacted
     const profileCompactedTools =
@@ -1902,9 +1916,11 @@ export function handleMcpJsonRpcMessage(
       (name === 'capability_invoke' &&
         isRecord(rawArgs) &&
         isPortableEnsembleControlToolName(String(rawArgs.name || '')))
-    const gatewaySubsetOnly =
-      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
-        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const gatewaySubsetSelected =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ?? process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const soloSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_SOLO_SUBSET ?? process.env.TASKWRAITH_MCP_SOLO_SUBSET) === '1'
+    const gatewaySubsetOnly = gatewaySubsetSelected || soloSubsetOnly
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
@@ -2016,21 +2032,25 @@ export function handleMcpJsonRpcMessage(
     if (
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
-      !isGatewayMcpAdvertisedForSeat(
-        advertisedToolName,
-        portableEnsembleControl,
-        meshDirect,
-        meshTopologyDirect,
-        sketchDirect,
-        orchestrationDirect
-      ) &&
+      !(soloSubsetOnly
+        ? (GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS as readonly string[]).includes(advertisedToolName)
+        : isGatewayMcpAdvertisedForSeat(
+            advertisedToolName,
+            portableEnsembleControl,
+            meshDirect,
+            meshTopologyDirect,
+            sketchDirect,
+            orchestrationDirect
+          )) &&
       !auditToolRequested
     ) {
-      bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
+      bridgeLog(
+        `tools/call rejected scope=${soloSubsetOnly ? 'gateway-solo' : 'gateway'} tool=${safeLogName}`
+      )
       writeMcpError(
         id,
         -32601,
-        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not directly available in the TaskWraith gateway MCP profile. Use capability_search and capability_invoke.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not directly available in the TaskWraith${soloSubsetOnly ? ' solo' : ''} gateway MCP profile. Use capability_search and capability_invoke.`,
         transport,
         stdout
       )
@@ -2185,6 +2205,7 @@ function profileEnvironmentForBridgeRoute(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: profile.planSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: profile.coreSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: profile.gatewaySubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: profile.soloSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: profile.portableEnsembleControl
       ? '1'
       : '0',
@@ -2612,7 +2633,8 @@ export class McpBridgeRuntime {
     meshTopologyDirect = false,
     sketchDirect = false,
     orchestrationDirect = false,
-    auditSubset = false
+    auditSubset = false,
+    soloSubset = false
   ): string[] {
     const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
     const logEpochPath = bridgeSubprocessLogEpochPathForSocket(normalizedSocketPath)
@@ -2668,6 +2690,9 @@ export class McpBridgeRuntime {
       ...(sketchDirect ? [GEMINI_MCP_SKETCH_DIRECT_ARG] : []),
       ...(orchestrationDirect ? [GEMINI_MCP_ORCHESTRATION_DIRECT_ARG] : []),
       ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),
+      // Appended after every legacy positional profile control. This remains
+      // independently receipted so old callers keep their exact interpretation.
+      ...(soloSubset ? [GEMINI_MCP_SOLO_SUBSET_ARG] : []),
       ...bootstrapArgs
     ]
   }

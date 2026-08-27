@@ -9,7 +9,9 @@ import {
   bridgeSubprocessLogPathForSocket,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
   GEMINI_MCP_BRIDGE_ARG,
+  GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_SAFE_SUBSET_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   McpBridgeRuntime,
   startGeminiMcpBridgeProcess
 } from './McpBridgeRuntime'
@@ -115,7 +117,7 @@ describe('MCP bridge packaged instance isolation', () => {
         parentProvider: 'cursor',
         route: { appRunId: 'run-a', appChatId: 'chat-a' },
         workspacePath: '/workspace/a',
-        profile: { gatewaySubset: true },
+        profile: { gatewaySubset: true, soloSubset: true },
         isolatedInstanceId
       })
       const environmentB = runtimeB.buildProviderRunMcpBridgeEnv({
@@ -134,9 +136,11 @@ describe('MCP bridge packaged instance isolation', () => {
       expect(environmentB[MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]).toBe(tokenB)
       expect(environmentA[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]).toBe(epochA)
       expect(environmentB[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]).toBe(epochB)
+      expect(environmentA[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
+      expect(environmentB[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('0')
       expect(parseMcpBridgeRouteFromEnv(environmentA)).toMatchObject({
         ok: true,
-        value: { endpoint: { isolatedInstanceId } }
+        value: { endpoint: { isolatedInstanceId }, profile: { soloSubset: true } }
       })
       expect(parseMcpBridgeRouteFromEnv(environmentB)).toMatchObject({ ok: true })
       expect(
@@ -276,6 +280,20 @@ describe('MCP bridge packaged instance isolation', () => {
     expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]).toBe('1')
     expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]).toBe('1')
     expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]).toBe('0')
+    expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('0')
+
+    applyMcpBridgeProfileArgvToEnv(
+      [
+        'taskwraith',
+        GEMINI_MCP_BRIDGE_ARG,
+        GEMINI_MCP_GATEWAY_SUBSET_ARG,
+        GEMINI_MCP_SOLO_SUBSET_ARG
+      ],
+      env
+    )
+    expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]).toBe('1')
+    expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
+    expect(env[MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]).toBe('0')
 
     const staticEnv = { ...env }
     applyMcpBridgeProfileArgvToEnv(
@@ -444,7 +462,7 @@ describe('MCP bridge packaged instance isolation', () => {
       const env = staticRouteEnvironment({
         socketPath: isolated.socketPath,
         isolatedInstanceId,
-        profile: { gatewaySubset: true }
+        profile: { gatewaySubset: true, soloSubset: true }
       })
       const stdin = new PassThrough()
       const stdout = new PassThrough()

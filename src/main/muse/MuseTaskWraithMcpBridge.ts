@@ -11,6 +11,7 @@ import {
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
 import type { TaskWraithMcpProfileId } from '../store/types'
@@ -61,6 +62,7 @@ export function buildMuseTaskWraithMcpProfile(input: {
     planSubset: false,
     coreSubset: isCoreTaskWraithMcpProfile(profileId),
     gatewaySubset: isGatewayTaskWraithMcpProfile(profileId),
+    soloSubset: isSoloTaskWraithMcpProfile(profileId),
     portableEnsembleControl: isPortableEnsembleControlMcpProfile(profileId),
     meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(profileId),
     meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(profileId),

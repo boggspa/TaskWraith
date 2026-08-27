@@ -25,12 +25,17 @@ import {
   isReadOnlyAdvertisedTool
 } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
-import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
+import {
+  GATEWAY_MCP_ADVERTISE_TOOLS,
+  taskWraithMcpAdvertisedToolNamesForProfile
+} from '../mcp/McpToolProfiles'
 import {
   MCP_BRIDGE_ENDPOINT_ENV_KEYS,
   MCP_BRIDGE_PROFILE_ENV_KEYS,
   MCP_BRIDGE_ROUTE_ENV_KEYS
 } from '../mcp/McpBridgeRoute'
+import { ULTRATASK_DELEGATION_TOOL_NAMES } from '../UltraTaskDelegationConsent'
+import type { TaskWraithMcpProfileId } from '../store/types'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -129,6 +134,33 @@ export const CURSOR_BROKER_PLAN_MCP_ALLOW_RULES: readonly string[] = [
     (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`
   )
 ]
+
+const CURSOR_SIGNED_DELEGATION_DIRECT_TOOL_NAME_SET: ReadonlySet<string> = new Set(
+  ULTRATASK_DELEGATION_TOOL_NAMES
+)
+
+/**
+ * Build exact canonical-broker rules from the immutable profile a native
+ * Cursor session observed at birth. Capability discovery remains visible in
+ * both scoped modes; ordinary direct tools must also be eligible for the
+ * current read-only/plan bridge. Delegation routes stay behind the separately
+ * verified UltraTask overlay applied by CursorPathBLaunchPlan.
+ */
+export function buildCursorCanonicalBrokerMcpAllowRulesForProfile(input: {
+  readonly profileId: TaskWraithMcpProfileId
+  readonly planSeat: boolean
+}): readonly string[] {
+  const isEligible = input.planSeat ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
+  const toolNames = taskWraithMcpAdvertisedToolNamesForProfile(input.profileId).filter(
+    (toolName) =>
+      isCapabilityGatewayToolName(toolName) ||
+      (isEligible(toolName) && !CURSOR_SIGNED_DELEGATION_DIRECT_TOOL_NAME_SET.has(toolName))
+  )
+  return Object.freeze([
+    ...toolNames.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+    ...toolNames.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ])
+}
 
 /** Allow rules for the READ-ONLY gateway broker. The bridge combines
  *  `--gateway-subset` with `--safe-subset`, so direct tools are the intersection

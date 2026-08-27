@@ -44,6 +44,7 @@ export const MCP_BRIDGE_PROFILE_ENV_KEYS = {
   planSubset: 'TASKWRAITH_MCP_PLAN_SUBSET',
   coreSubset: 'TASKWRAITH_MCP_CORE_SUBSET',
   gatewaySubset: 'TASKWRAITH_MCP_GATEWAY_SUBSET',
+  soloSubset: 'TASKWRAITH_MCP_SOLO_SUBSET',
   portableEnsembleControl: 'TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL',
   meshDirect: 'TASKWRAITH_MCP_MESH_DIRECT',
   meshTopologyDirect: 'TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT',
@@ -76,6 +77,7 @@ export interface McpBridgeProfileEnvironment {
   planSubset: boolean
   coreSubset: boolean
   gatewaySubset: boolean
+  soloSubset: boolean
   portableEnsembleControl: boolean
   meshDirect: boolean
   meshTopologyDirect: boolean
@@ -338,6 +340,7 @@ function emptyProfileEnvironment(): McpBridgeProfileEnvironment {
     planSubset: false,
     coreSubset: false,
     gatewaySubset: false,
+    soloSubset: false,
     portableEnsembleControl: false,
     meshDirect: false,
     meshTopologyDirect: false,
@@ -503,6 +506,7 @@ export function buildMcpBridgeRouteEnv(
       [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: profile.planSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: profile.coreSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: profile.gatewaySubset ? '1' : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: profile.soloSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: profile.portableEnsembleControl
         ? '1'
         : '0',

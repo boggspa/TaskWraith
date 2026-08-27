@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_V17_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import {
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_V17_MCP_DIRECT_TOOLS
+} from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES,
@@ -10,6 +13,7 @@ import {
   normalizeOllamaToolControlTier,
   ollamaAdvertisedToolNames,
   ollamaCallableToolNames,
+  ollamaDirectToolNamesForProfile,
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
@@ -32,6 +36,30 @@ describe('Ollama tool surface governance', () => {
     expect(isOllamaAdvertisedTool('simulator_status')).toBe(false)
     expect(isOllamaAdvertisedTool('project_reference_list')).toBe(false)
     expect(isOllamaAdvertisedTool('canvas_render_chart')).toBe(false)
+  })
+
+  it('resolves the exact 29-name solo catalogue before signed permission overlays', () => {
+    const direct = ollamaDirectToolNamesForProfile('taskwraith-gateway-solo-v1')
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toHaveLength(29)
+    expect(direct).toBe(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS)
+    expect(direct).toEqual(
+      expect.arrayContaining(['ensemble_await', 'ensemble_lane_result', 'delegate_wave'])
+    )
+
+    const advertised = ollamaAdvertisedToolNames({
+      taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1'
+    })
+    expect(advertised).toHaveLength(26)
+    expect(advertised).toContain('ensemble_await')
+    expect(advertised).toContain('ensemble_lane_result')
+    expect(advertised).not.toContain('delegate_to_subthread')
+    expect(advertised).not.toContain('delegate_wave')
+    expect(advertised).not.toContain('ultra_task')
+  })
+
+  it('keeps the no-profile Ollama fallback frozen to gateway-v17', () => {
+    expect(ollamaDirectToolNamesForProfile()).toBe(OLLAMA_ADVERTISED_TOOL_NAMES)
+    expect(ollamaDirectToolNamesForProfile()).toBe(GATEWAY_V17_MCP_DIRECT_TOOLS)
   })
 
   it('keeps delegation tools out of the ordinary Ollama advertise/callable surface', () => {

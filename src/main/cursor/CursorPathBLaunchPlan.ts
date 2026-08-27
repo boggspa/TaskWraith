@@ -12,6 +12,7 @@ import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import { isCursorGrokModelId, resolveCursorGrokCliModelId } from '../../shared/grok45Models'
 import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import {
+  buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   CURSOR_BROKER_MCP_ALLOW_RULES,
   CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
   CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
@@ -114,25 +115,31 @@ export function resolveCursorPathBBrokerPolicy(input: {
     })
   }
   if (input.planSeat) {
+    const profileRules = input.taskWraithMcpProfileId
+      ? buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+          profileId: input.taskWraithMcpProfileId,
+          planSeat: true
+        })
+      : CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
     return Object.freeze({
       bridgeMode: 'plan-subset',
       allowRules: Object.freeze(
-        cursorUltraTaskDelegationAllowRules(
-          CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
-          input.effectivePermissions
-        )
+        cursorUltraTaskDelegationAllowRules(profileRules, input.effectivePermissions)
       ),
       denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
       ...common
     })
   }
+  const profileRules = input.taskWraithMcpProfileId
+    ? buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+        profileId: input.taskWraithMcpProfileId,
+        planSeat: false
+      })
+    : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES
   return Object.freeze({
     bridgeMode: 'safe-subset',
     allowRules: Object.freeze(
-      cursorUltraTaskDelegationAllowRules(
-        CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
-        input.effectivePermissions
-      )
+      cursorUltraTaskDelegationAllowRules(profileRules, input.effectivePermissions)
     ),
     denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
     ...common

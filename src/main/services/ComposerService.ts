@@ -669,7 +669,8 @@ export class ComposerService {
               storeProviderSessionId: mcpProfileOwner.linkedProviderSessionId,
               receipt: mcpProfileOwner.taskWraithMcpProfileReceipt,
               coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
-              profileReceiptCanPersist: !crossProviderReroute
+              profileReceiptCanPersist: !crossProviderReroute,
+              soloThread: allowProviderNativeGoal
             }).profileId
           : null
       if (
@@ -719,7 +720,8 @@ export class ComposerService {
         : mcpProfileOwner.taskWraithMcpProfileReceipt,
       coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
       profileReceiptCanPersist: provider !== 'claude' || !crossProviderReroute,
-      grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined
+      grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined,
+      soloThread: allowProviderNativeGoal
     })
     const kimiNativeSessionResume = Boolean(
       provider === 'kimi' &&

@@ -31,10 +31,14 @@ import {
   TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V17_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
+  TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
+  isPortableEnsembleControlMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
   isGatewayV2TaskWraithMcpProfile,
@@ -78,6 +82,25 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileReceiptCanPersist: false
       }).profileId
     ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
+  })
+
+  it('selects the lean immutable profile only for fresh single-provider threads', () => {
+    for (const provider of ['claude', 'codex', 'kimi', 'cursor', 'ollama'] as const) {
+      expect(
+        resolveTaskWraithMcpProfile({
+          provider,
+          providerSessionId: null,
+          soloThread: true,
+          meshCanvasParticipantCanRequest: true
+        })
+      ).toEqual({
+        profileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
+        source: 'fresh_solo_gateway_default'
+      })
+    }
+    expect(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID).toBe(
+      TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+    )
   })
 
   it('grandfathers an unreceipted or mismatched Claude resume to full', () => {
@@ -196,7 +219,8 @@ describe('resolveTaskWraithMcpProfile', () => {
       TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V17_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
       // Load-bearing: this predicate drives the gateway-subset launch arg and
@@ -216,6 +240,8 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID)).toBe(false)
+    expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)).toBe(true)
+    expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V17_MCP_PROFILE_ID)).toBe(false)
   })
 
   it('selects the mesh-direct catalogue for a fresh participant that may request access', () => {
@@ -291,6 +317,9 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V17_MCP_PROFILE_ID)).toBe(
       false
     )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)).toBe(
+      false
+    )
     expect(
       isMeshTopologyDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID)
     ).toBe(false)
@@ -363,6 +392,9 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(
       isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID)
     ).toBe(true)
+    expect(
+      isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)
+    ).toBe(false)
   })
 
   it('promotes gateway-v13 orchestration DIRECT tools on v13+ births (including v14)', () => {
@@ -391,6 +423,14 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)).toBe(true)
     expect(isGatewayV13DirectTaskWraithMcpProfile(null)).toBe(false)
     expect(isGatewayV13DirectTaskWraithMcpProfile(undefined)).toBe(false)
+    // Solo keeps the generic await/lane/wave lifecycle through its exact direct
+    // array; the bridge's separate solo selector still hides lane-only scout_brief.
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)).toBe(
+      true
+    )
+    expect(isPortableEnsembleControlMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)).toBe(
+      true
+    )
   })
 
   it('never lets participant eligibility override a persisted session receipt', () => {
@@ -404,6 +444,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         provider: 'claude',
         providerSessionId: 'existing-session',
         receipt,
+        soloThread: true,
         meshCanvasParticipantCanRequest: true
       })
     ).toEqual({ profileId: TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID, source: 'pinned_receipt' })

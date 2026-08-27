@@ -567,6 +567,8 @@ function buildTaskWraithRuntimePreamble(args: {
   const taskTool = taskWraithToolNameForProvider(args.provider, 'run_task')
   const questionTool = taskWraithToolNameForProvider(args.provider, 'ask_user_question')
   const shellTool = taskWraithToolNameForProvider(args.provider, 'run_shell_command')
+  const capabilitySearchTool = taskWraithToolNameForProvider(args.provider, 'capability_search')
+  const capabilityInvokeTool = taskWraithToolNameForProvider(args.provider, 'capability_invoke')
   const followupProvider = exampleDelegationProvider(args.provider)
   const wavePeerProvider = followupProvider === 'claude' ? 'codex' : 'claude'
   const exampleTools = args.advertiseDelegateWave
@@ -612,7 +614,9 @@ function buildTaskWraithRuntimePreamble(args: {
     }
     lines.push(
       `Recall example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Continue from the previous result and report current status.', subThreadId: '<id-from-prior-result>', returnResult: true }). To block until the recalled sub-thread completes, immediately call ${awaitTool}({ subThreadIds: ['<id-from-prior-result>'] }).`,
-      'If recall is rejected or status is unclear, inspect lifecycle with list_subthreads or read_subthread_result before retrying.'
+      args.gatewayMcpProfile
+        ? `If recall is rejected or status is unclear, call ${capabilitySearchTool}({ query: 'subthread lifecycle status result', limit: 4 }), then use ${capabilityInvokeTool} for list_subthreads or read_subthread_result before retrying.`
+        : 'If recall is rejected or status is unclear, inspect lifecycle with list_subthreads or read_subthread_result before retrying.'
     )
   }
 

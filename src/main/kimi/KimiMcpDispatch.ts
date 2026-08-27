@@ -10,6 +10,7 @@ import {
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
 import {
@@ -53,14 +54,13 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
   const portableEnsembleControl = isPortableEnsembleControlMcpProfile(
     options.taskWraithMcpProfileId
   )
+  const soloSubset = isSoloTaskWraithMcpProfile(options.taskWraithMcpProfileId)
   const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
   const meshTopologyDirect = isMeshTopologyDirectTaskWraithMcpProfile(
     options.taskWraithMcpProfileId
   )
   const sketchDirect = isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-  const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(
-    options.taskWraithMcpProfileId
-  )
+  const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
 
   return {
     // This legacy opt-in is not consumed by the bridge, but must not leak as a
@@ -70,6 +70,7 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
     [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: '1',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: soloSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: portableEnsembleControl ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: meshDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: meshTopologyDirect ? '1' : '0',

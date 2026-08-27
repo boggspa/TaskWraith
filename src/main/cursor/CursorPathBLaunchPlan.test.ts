@@ -122,6 +122,36 @@ describe('CursorPathBLaunchPlan', () => {
     expect(readOnlyPlan.allowRules.some((rule) => rule.includes('delegate_wave'))).toBe(false)
   })
 
+  it.each([false, true])(
+    'uses the solo birth profile for scoped broker rules with planSeat=%s',
+    (planSeat) => {
+      const policy = resolveCursorPathBBrokerPolicy({
+        writeCapable: false,
+        planSeat,
+        taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1'
+      })
+
+      for (const toolName of [
+        'ensemble_await',
+        'ensemble_lane_result',
+        'image_view',
+        'capability_search',
+        'capability_invoke'
+      ]) {
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
+      }
+      for (const toolName of [
+        'write_file',
+        'delegate_wave',
+        'ultra_task',
+        'delegate_to_subthread'
+      ]) {
+        expect(policy.allowRules).not.toContain(`Mcp(taskwraith-broker:${toolName})`)
+      }
+      expect(policy.denyRules).toEqual(['Shell(**)', 'Write(**)'])
+    }
+  )
+
   it('adds exact delegation allow rules only for signed UltraTask Ask/Plan runs', () => {
     const effectivePermissions = {
       subThreadDelegationAutoAllowSource: 'ultratask'
@@ -130,7 +160,7 @@ describe('CursorPathBLaunchPlan', () => {
       const policy = resolveCursorPathBBrokerPolicy({
         writeCapable: false,
         planSeat,
-        taskWraithMcpProfileId: 'taskwraith-gateway-v17',
+        taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1',
         effectivePermissions
       })
       expect(policy.bridgeMode).toBe(planSeat ? 'plan-subset' : 'safe-subset')
@@ -145,9 +175,11 @@ describe('CursorPathBLaunchPlan', () => {
     const ordinary = resolveCursorPathBBrokerPolicy({
       writeCapable: false,
       planSeat: true,
-      taskWraithMcpProfileId: 'taskwraith-gateway-v17'
+      taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1'
     })
-    expect(ordinary.allowRules.some((rule) => rule.includes('delegate_wave'))).toBe(false)
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(ordinary.allowRules.some((rule) => rule.includes(toolName))).toBe(false)
+    }
   })
 
   it('selects a visible native-only degradation before argv construction', () => {
