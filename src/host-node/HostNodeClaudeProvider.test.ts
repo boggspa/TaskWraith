@@ -621,9 +621,10 @@ describe('HostNodeClaudeProvider factory', () => {
     expect(factory.providerId).toBe('claude')
     expect(factory.offers.providerId).toBe('claude')
     expect(factory.offers.models.length).toBeGreaterThan(0)
-    // HostNodeInteractionResolver has no awaitable settlement, so a real
-    // one-shot resume cannot exist yet. Advertising either flag here would make
-    // the domain's derived capabilities dishonest.
+    // The blocker is the CLI transport, not the resolver: `register` is
+    // awaitable (see the C1 note below) and Codex consumes it. Headless `-p`
+    // simply never produces an approval request to resume. Advertising either
+    // flag here would make the domain's derived capabilities dishonest.
     expect(factory.supportsApprovals).toBe(false)
     // Headless `-p` stream-json has no stdin protocol and no
     // `--permission-prompt-tool` (`canUseTool` is SDK-only). There is no
