@@ -1033,22 +1033,20 @@ public final class RemoteSessionModel: ObservableObject {
         guard hasStoredPairing else { return false }
         switch phase {
         case .connected:
-            if let client {
-                let attempt = connectAttempt
-                let alive = await client.checkSocketAlive()
-                guard connectAttempt == attempt else {
-                    return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
+            let attempt = connectAttempt
+            let probe = await probeConnectedHealth(peer: false)
+            guard connectAttempt == attempt else {
+                return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
+            }
+            if probe.alive {
+                // Rehydrate content on a genuinely-alive wake (RC1), EXCEPT on
+                // the approval-ack path (tight background budget) and the silent
+                // push (runs outside the background assertion). rehydrate only
+                // enqueues fire-and-forget work, so the ack still returns now.
+                if reason != Self.approvalAckWakeReason, reason != Self.silentPushWakeReason {
+                    rehydrateAfterAliveWake()
                 }
-                if alive {
-                    // Rehydrate content on a genuinely-alive wake (RC1), EXCEPT on
-                    // the approval-ack path (tight background budget) and the silent
-                    // push (runs outside the background assertion). rehydrate only
-                    // enqueues fire-and-forget work, so the ack still returns now.
-                    if reason != Self.approvalAckWakeReason, reason != Self.silentPushWakeReason {
-                        rehydrateAfterAliveWake()
-                    }
-                    return true
-                }
+                return true
             }
             // Half-open from connected — allowed supersede source (b).
             requestReconnect(.health, socketAlive: false)
@@ -1355,7 +1353,11 @@ public final class RemoteSessionModel: ObservableObject {
     // new route (the tunnel, a Wi-Fi join) appears.
 
     private var autoReconnectTask: Task<Void, Never>?
-    private var socketHealthTask: Task<Void, Never>?
+    /// Shared in-flight health probe. `handleRemoteWake`, `verifyConnectedSocket`,
+    /// and `requestActionAckWithWake` join this Task instead of stacking a 2.5s
+    /// relay ping on top of a 6s encrypted peer ping.
+    private var socketHealthTask: Task<(alive: Bool, peer: Bool), Never>?
+    private var socketHealthProbeGeneration = 0
     private var autoReconnectAttempt = 0
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature = ""
@@ -1954,30 +1956,80 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func verifyConnectedSocket() {
-        guard socketHealthTask == nil else { return }
-        guard let client else {
-            requestReconnect(.health, socketAlive: false)
-            return
-        }
         let attempt = connectAttempt
-        socketHealthTask = Task { [weak self] in
-            let alive = await client.checkSocketAlive()
-            await MainActor.run {
-                guard let self else { return }
-                self.socketHealthTask = nil
-                guard self.connectAttempt == attempt else { return }
-                guard case .connected = self.phase else { return }
-                // Socket is alive but the app was suspended and may have missed
-                // pushes — rehydrate content instead of bare-returning (RC1). No
-                // teardown on the alive path (keeps RC5 masked).
-                guard !alive else {
-                    self.rehydrateAfterAliveWake()
-                    return
-                }
-                // Half-open from connected — allowed supersede source (b).
-                self.requestReconnect(.health, socketAlive: false)
+        Task { [weak self] in
+            guard let self else { return }
+            let probe = await self.probeConnectedHealth(peer: false)
+            guard self.connectAttempt == attempt else { return }
+            guard case .connected = self.phase else { return }
+            // Socket is alive but the app was suspended and may have missed
+            // pushes — rehydrate content instead of bare-returning (RC1). No
+            // teardown on the alive path (keeps RC5 masked).
+            guard !probe.alive else {
+                self.rehydrateAfterAliveWake()
+                return
             }
+            // Half-open from connected — allowed supersede source (b).
+            self.requestReconnect(.health, socketAlive: false)
         }
+    }
+
+    /// Single-flight health probe. Concurrent wake / foreground / action
+    /// callers join the in-flight Task. A peer caller that joined a socket
+    /// probe which came back alive still upgrades to `checkPeerAlive` (socket
+    /// up != Mac awake); a dead socket is enough to skip the 6s peer ping.
+    private func probeConnectedHealth(peer: Bool) async -> (alive: Bool, peer: Bool) {
+        if let existing = socketHealthTask {
+            let result = await existing.value
+            if peer && !result.peer && result.alive {
+                return await startConnectedHealthProbe(peer: true)
+            }
+            return result
+        }
+        return await startConnectedHealthProbe(peer: peer)
+    }
+
+    private func startConnectedHealthProbe(peer: Bool) async -> (alive: Bool, peer: Bool) {
+        #if DEBUG
+            if let override = healthProbeOverrideForTesting {
+                return await runConnectedHealthProbe(peer: peer) {
+                    await override()
+                }
+            }
+        #endif
+        guard let client else { return (false, peer) }
+        let captured = client
+        return await runConnectedHealthProbe(peer: peer) {
+            if peer {
+                return await captured.checkPeerAlive()
+            }
+            return await captured.checkSocketAlive()
+        }
+    }
+
+    private func runConnectedHealthProbe(
+        peer: Bool,
+        body: @escaping @Sendable () async -> Bool
+    ) async -> (alive: Bool, peer: Bool) {
+        if let existing = socketHealthTask {
+            return await existing.value
+        }
+        socketHealthProbeGeneration += 1
+        let generation = socketHealthProbeGeneration
+        #if DEBUG
+            socketHealthProbeStartsForTesting += 1
+        #endif
+        let task = Task<(alive: Bool, peer: Bool), Never> {
+            if Task.isCancelled { return (false, peer) }
+            let alive = await body()
+            return (alive, peer)
+        }
+        socketHealthTask = task
+        let result = await task.value
+        if socketHealthProbeGeneration == generation {
+            socketHealthTask = nil
+        }
+        return result
     }
 
     /// Single-flight latch for `requestFullProjection`. Reset via `defer` when the
@@ -7114,6 +7166,14 @@ public final class RemoteSessionModel: ObservableObject {
         func setPhaseForTesting(_ newPhase: SessionPhase) {
             phase = newPhase
         }
+        /// Stamp a just-established `.connected` session so storm tests can
+        /// fire the notification-tap + scenePhase.active race against it.
+        func markJustEstablishedForTesting(at now: Date = Date()) {
+            phase = .connected
+            reconnectCoordinator.markAttemptFinished(at: now)
+        }
+        private(set) var socketHealthProbeStartsForTesting = 0
+        var healthProbeOverrideForTesting: (@Sendable () async -> Bool)?
     #endif
 
     public func answer(_ card: MobileQuestionCard, _ text: String, isCustom: Bool = true) {
@@ -7862,14 +7922,23 @@ public final class RemoteSessionModel: ObservableObject {
         // application action.
         let paramsData = try JSONSerialization.data(withJSONObject: params)
         if case .connected = phase, let activeClient = client {
-            do {
-                return try await activeClient.requestSerialized(
-                    "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
-            } catch TransportError.hostUnavailable {
-                // Fall through to a fresh trusted reconnect. No app action was
-                // transmitted; RelayTransportClient fails before enqueueing it.
-            } catch {
-                throw error
+            // Join any in-flight wake/foreground probe so a 6s encrypted peer
+            // ping does not stack on a 2.5s relay ping. A dead shared probe
+            // skips checkPeerAlive entirely and recovers.
+            let probe = await probeConnectedHealth(peer: true)
+            if probe.alive {
+                do {
+                    return try await activeClient.requestSerialized(
+                        "bridge.requestActionAck",
+                        paramsData: paramsData,
+                        timeoutMs: timeoutMs,
+                        skipPeerPreflight: probe.peer)
+                } catch TransportError.hostUnavailable {
+                    // Fall through to a fresh trusted reconnect. No app action was
+                    // transmitted; RelayTransportClient fails before enqueueing it.
+                } catch {
+                    throw error
+                }
             }
         }
 

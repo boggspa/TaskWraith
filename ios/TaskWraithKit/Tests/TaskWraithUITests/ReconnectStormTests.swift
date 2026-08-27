@@ -364,3 +364,102 @@ struct ReconnectStormApnsWakeTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// Round 4 (2026-08-27): notification-tap / silent APNs / widget cold-start
+/// plus the scenePhase `.active` foreground probe can land `.health` with
+/// `socketAlive: false` on a session that established milliseconds ago.
+/// The coordinator's half-open path used to supersede that session; the
+/// post-establish grace + shared health probe close the remaining storm.
+@Suite("Reconnect storm — post-establish grace")
+@MainActor
+struct ReconnectStormPostEstablishTests {
+    private static let unroutableRelay = "ws://reconnect-storm-grace.invalid:9"
+
+    @Test("notification-tap + scenePhase.active does not redial a just-established session")
+    func notificationTapAndForegroundDoNotRedialFreshSession() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        #expect(model.trustedReconnectDialsForTesting == 0)
+
+        // Exact race: AppDelegate/notification tap calls handleRemoteWake
+        // while RootView.onChange(scenePhase -> .active) calls reconnectIfStale
+        // → requestReconnect(.foreground) → verifyConnectedSocket. With no live
+        // client both land as `.health` + socketAlive:false from `.connected`.
+        async let wake: Bool = model.handleRemoteWake(
+            reason: "notification-tap", timeoutMs: 0)
+        model.reconnectIfStale()
+        _ = await wake
+
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "a racy health-false against a just-established session started a new dial")
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record("phase became \(String(describing: model.phase)) instead of staying connected")
+        }
+        model.forgetAllHosts()
+    }
+
+    @Test("an explicit health-false after grace still redials")
+    func healthFalseAfterGraceStillRedials() {
+        let model = makePairedModel()
+        let establishedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        model.markJustEstablishedForTesting(at: establishedAt)
+        // Drive the coordinator clock past the grace via a direct evaluate-equivalent
+        // wake: requestReconnect uses Date(), so stamp establish in the past.
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 0.1)))
+        model.requestReconnect(.health, socketAlive: false)
+        #expect(
+            model.trustedReconnectDialsForTesting == 1,
+            "a genuine half-open past the grace window must still start a dial")
+        model.forgetAllHosts()
+    }
+
+    @Test("overlapping wake and foreground probes share one health flight")
+    func overlappingWakeAndForegroundShareOneHealthFlight() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        model.healthProbeOverrideForTesting = {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            return true
+        }
+
+        async let wake: Bool = model.handleRemoteWake(
+            reason: "notification-tap", timeoutMs: 500)
+        // Yield so the wake starts the hanging probe, then the scenePhase
+        // `.active` path must JOIN it rather than start a second ping.
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        model.reconnectIfStale()
+        _ = await wake
+
+        #expect(
+            model.socketHealthProbeStartsForTesting == 1,
+            "handleRemoteWake and verifyConnectedSocket stacked independent probes")
+        #expect(model.trustedReconnectDialsForTesting == 0)
+        model.forgetAllHosts()
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectStormGrace.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: GraceSeedStore(), pairingStore: store)
+    }
+
+    private struct GraceSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}

@@ -47,6 +47,11 @@ public struct ReconnectCoordinator: Sendable, Equatable {
     /// opens with `cancelAutoReconnect`, so every push cancelled the pending
     /// retry and dialled immediately in its place.
     public static let defaultRedialCooldown: TimeInterval = 1.5
+    /// Covers a racy WebSocket ping (default 2.5s timeout) that lands false
+    /// against a socket that just became `.established`. Notification-tap +
+    /// scenePhase `.active` both probe in that window; treating a false ping
+    /// as half-open tore the fresh session down and restarted the storm.
+    public static let defaultPostEstablishGrace: TimeInterval = 3.0
 
     public var generation: Int
     public var inFlight: Bool
@@ -57,6 +62,10 @@ public struct ReconnectCoordinator: Sendable, Equatable {
     /// must never leave a cooldown behind for the next genuine wake.
     public var lastAttemptFailedAt: Date?
     public var redialCooldown: TimeInterval
+    /// When the last attempt reached `.connected`. nil after a failure or
+    /// before the first success. Drives `defaultPostEstablishGrace`.
+    public var lastEstablishedAt: Date?
+    public var postEstablishGrace: TimeInterval
 
     public init(
         generation: Int = 0,
@@ -65,7 +74,9 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         pendingReasons: Set<ReconnectWakeReason> = [],
         connectTimeout: TimeInterval = 15,
         lastAttemptFailedAt: Date? = nil,
-        redialCooldown: TimeInterval = ReconnectCoordinator.defaultRedialCooldown
+        redialCooldown: TimeInterval = ReconnectCoordinator.defaultRedialCooldown,
+        lastEstablishedAt: Date? = nil,
+        postEstablishGrace: TimeInterval = ReconnectCoordinator.defaultPostEstablishGrace
     ) {
         self.generation = generation
         self.inFlight = inFlight
@@ -74,6 +85,8 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         self.connectTimeout = connectTimeout
         self.lastAttemptFailedAt = lastAttemptFailedAt
         self.redialCooldown = redialCooldown
+        self.lastEstablishedAt = lastEstablishedAt
+        self.postEstablishGrace = postEstablishGrace
     }
 
     /// Evaluate a wake against the current session phase and flight state.
@@ -124,6 +137,14 @@ public struct ReconnectCoordinator: Sendable, Equatable {
             switch reason {
             case .health:
                 if socketAlive == false {
+                    // A WebSocket ping that fires in the same beat as
+                    // `.established` (notification-tap + scenePhase `.active`)
+                    // routinely returns false on a brand-new socket. Treating
+                    // that as half-open superseded the session we just built.
+                    if isInPostEstablishGrace(now: now) {
+                        pendingReasons.insert(reason)
+                        return .ignore
+                    }
                     return beginOrSupersede(reason: .health, now: now)
                 }
                 return .ignore
@@ -169,10 +190,11 @@ public struct ReconnectCoordinator: Sendable, Equatable {
     /// Caller invokes when the attempt reaches `.connected`. Clears any cooldown:
     /// we are connected, so the next genuine wake must not be held behind a floor
     /// left over from an earlier failure.
-    public mutating func markAttemptFinished() {
+    public mutating func markAttemptFinished(at now: Date = Date()) {
         inFlight = false
         attemptStartedAt = nil
         lastAttemptFailedAt = nil
+        lastEstablishedAt = now
         pendingReasons.removeAll()
     }
 
@@ -184,6 +206,7 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         inFlight = false
         attemptStartedAt = nil
         lastAttemptFailedAt = now
+        lastEstablishedAt = nil
         pendingReasons.removeAll()
     }
 
@@ -205,6 +228,13 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         let elapsed = now.timeIntervalSince(failed)
         guard elapsed >= 0 else { return false }
         return elapsed < redialCooldown
+    }
+
+    private func isInPostEstablishGrace(now: Date) -> Bool {
+        guard postEstablishGrace > 0, let established = lastEstablishedAt else { return false }
+        let elapsed = now.timeIntervalSince(established)
+        guard elapsed >= 0 else { return false }
+        return elapsed < postEstablishGrace
     }
 
     private func shouldTreatAsTimedOut(now: Date) -> Bool {

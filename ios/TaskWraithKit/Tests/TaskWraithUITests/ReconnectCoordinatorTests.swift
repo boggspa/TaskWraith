@@ -167,6 +167,53 @@ struct ReconnectCoordinatorTests {
         #expect(coord.pendingReasons.isEmpty)
     }
 
+    /// Notification-tap + scenePhase.active lands as `.health` with
+    /// `socketAlive: false` against a session that just became `.connected`.
+    /// Pre-fix that always `.start`s / `.supersede`s, tearing the fresh
+    /// socket down. Post-establish grace must ignore inside the window and
+    /// still honour a genuine half-open once the window elapses.
+    @Test("a just-established session survives a racy health failure")
+    func postEstablishGraceIgnoresRacyHealthFalse() {
+        var coord = ReconnectCoordinator()
+        #expect(coord.evaluate(reason: .apns, phase: .idle, now: t0) == .start)
+        coord.markAttemptStarted(at: t0)
+        coord.markAttemptFinished(at: t0)
+
+        #expect(
+            coord.evaluate(
+                reason: .health, phase: .connected, now: t0, socketAlive: false)
+                == .ignore,
+            "health false inside the grace must not tear down a fresh session")
+        #expect(
+            coord.evaluate(
+                reason: .health,
+                phase: .connected,
+                now: t0.addingTimeInterval(2.9),
+                socketAlive: false) == .ignore)
+
+        #expect(
+            coord.evaluate(
+                reason: .foreground, phase: .connected, now: t0) == .probeHealth,
+            "foreground during grace still probes; the false result is what grace swallows")
+
+        // Past the window a dead socket is a real half-open and must start.
+        #expect(
+            coord.evaluate(
+                reason: .health,
+                phase: .connected,
+                now: t0.addingTimeInterval(ReconnectCoordinator.defaultPostEstablishGrace),
+                socketAlive: false) == .start)
+    }
+
+    @Test("health false from connected with no establish stamp still starts")
+    func healthFalseWithoutEstablishStampStillStarts() {
+        var coord = ReconnectCoordinator()
+        #expect(
+            coord.evaluate(
+                reason: .health, phase: .connected, now: t0, socketAlive: false)
+                == .start)
+    }
+
     @Test("thrash matrix: three wakes in 200ms yield one start")
     func thrashMatrixOneAttempt() {
         var coord = ReconnectCoordinator()

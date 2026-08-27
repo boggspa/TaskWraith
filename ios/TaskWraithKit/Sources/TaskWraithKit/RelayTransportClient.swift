@@ -341,13 +341,20 @@ public actor RelayTransportClient {
     }
 
     /// Send an action and await its correlated `bridge.ack`.
-    public func request(_ method: String, params: [String: Any], timeoutMs: Int = 8000) async throws
-        -> AckResult
-    {
+    public func request(
+        _ method: String, params: [String: Any], timeoutMs: Int = 8000,
+        skipPeerPreflight: Bool = false
+    ) async throws -> AckResult {
         // A relay ping can succeed while the Mac is asleep. Never enqueue a
         // user action into that zombie-looking session: prove the encrypted
         // peer first so callers can reconnect/wake or show a safe notice.
-        guard await checkPeerAlive() else { throw TransportError.hostUnavailable }
+        // Callers that just completed a shared peer probe pass skipPeerPreflight
+        // so we do not spend a second 6s ping on the same proof.
+        if skipPeerPreflight {
+            guard established, wsTask != nil else { throw TransportError.hostUnavailable }
+        } else {
+            guard await checkPeerAlive() else { throw TransportError.hostUnavailable }
+        }
         requestCounter += 1
         let requestId = "ios-req-\(requestCounter)"
         var withId = params
@@ -366,10 +373,18 @@ public actor RelayTransportClient {
     public func requestSerialized(
         _ method: String, paramsData: Data, timeoutMs: Int = 8000
     ) async throws -> AckResult {
+        try await requestSerialized(
+            method, paramsData: paramsData, timeoutMs: timeoutMs, skipPeerPreflight: false)
+    }
+
+    public func requestSerialized(
+        _ method: String, paramsData: Data, timeoutMs: Int, skipPeerPreflight: Bool
+    ) async throws -> AckResult {
         let object =
             (try JSONSerialization.jsonObject(with: paramsData, options: [.fragmentsAllowed])
                 as? [String: Any]) ?? [:]
-        return try await request(method, params: object, timeoutMs: timeoutMs)
+        return try await request(
+            method, params: object, timeoutMs: timeoutMs, skipPeerPreflight: skipPeerPreflight)
     }
 
     private func fireAckTimeout(_ requestId: String) {
