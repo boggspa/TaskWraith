@@ -21,7 +21,7 @@ import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { collectTranscriptExportRounds } from '../../../shared/transcriptExportScope'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ChatPopoutIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, WorkspaceStatsSymbolIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -419,6 +419,10 @@ export interface ComposerProps {
   markPersistentSessionRestartNeeded: any
   multiview: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
+  /** Opens the focused chat in the Compact Companion presentation. */
+  onOpenCompactChat?: () => void
+  /** Opens the existing Workspace Stats picker for this composer. */
+  onOpenWorkspaceStats?: () => void
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
@@ -691,7 +695,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentProvider,
     configuredProviderSnapshot,
     currentProviderCapabilityWarning,
-    currentProviderLabel,
     currentProviderModelOptions,
     currentWorkspace,
     currentWorkspacePath,
@@ -753,7 +756,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleRemoveImageAttachment,
     handleReorderExternalPathGrants,
     handleReorderQueuedMessages,
-    handleReviewCurrentDiff,
     handleRun,
     handleRunInBackground,
     handleRunImportedPlan,
@@ -779,7 +781,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isCurrentEnsembleRoundRunning,
     isCurrentGlobalChat,
     isEnsembleModeEnabled,
-    isPreparingDiffReview,
     isSteerBusyForCurrentChat,
     isWelcomeChat,
     showWelcomeNotifications = true,
@@ -796,6 +797,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     markPersistentSessionRestartNeeded,
     multiview,
     onOllamaModelSelected,
+    onOpenCompactChat,
+    onOpenWorkspaceStats,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
@@ -3617,8 +3620,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const workspaceActionDisabled = !currentWorkspace || !currentChat
                           const plusSections: ComposerPlusPickerSection[] = [
                             {
-                              id: 'add',
-                              title: 'Add',
+                              id: 'actions',
                               items: [
                                 {
                                   id: 'attachment',
@@ -3667,29 +3669,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     Boolean(discordContextUnavailableReason) ||
                                     typeof openDiscordContextPicker !== 'function',
                                   onSelect: openDiscordContextPicker
-                                }
-                              ]
-                            },
-                            {
-                              id: 'workspace',
-                              title: 'Workspace',
-                              items: isCurrentGlobalChat
-                                ? []
-                                : [
+                                },
+                                ...(!isCurrentGlobalChat
+                                  ? [
                                     {
-                                      id: 'safety',
-                                      label: 'Status',
-                                      description: `${currentProviderLabel} safety and setup`,
-                                      icon: <TrustSymbolIcon />,
-                                      disabled:
-                                        workspaceActionDisabled ||
-                                        typeof openInspectorTab !== 'function',
-                                      onSelect: () => openInspectorTab('safety')
+                                      id: 'workspace-stats',
+                                      label: 'Stats',
+                                      description: 'View workspace activity and active work',
+                                      icon: <WorkspaceStatsSymbolIcon />,
+                                      disabled: typeof onOpenWorkspaceStats !== 'function',
+                                      onSelect: () => onOpenWorkspaceStats?.()
                                     },
                                     {
                                       id: 'diff',
                                       label: 'Diff Studio',
-                                      description: `${currentProviderLabel} workspace changes`,
+                                      description: 'Review current workspace changes',
                                       icon: <FileMenuSelectionIcon />,
                                       disabled:
                                         workspaceActionDisabled ||
@@ -3697,47 +3691,27 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       onSelect: () => openInspectorTab('diff')
                                     },
                                     {
-                                      id: 'capabilities',
-                                      label: 'Models',
-                                      description: `${currentProviderLabel} capability state`,
-                                      icon: <ModelSymbolIcon />,
+                                      id: 'compact-chat',
+                                      label: 'Open Compact Chat',
+                                      description: 'Open this chat in a compact window',
+                                      icon: <ChatPopoutIcon />,
                                       disabled:
-                                        workspaceActionDisabled ||
-                                        typeof openInspectorTab !== 'function',
-                                      onSelect: () => openInspectorTab('capabilities')
-                                    }
-                                  ]
-                            },
-                            {
-                              id: 'commands',
-                              title: 'Commands',
-                              items: isCurrentGlobalChat
-                                ? []
-                                : [
+                                        !currentChat || typeof onOpenCompactChat !== 'function',
+                                      onSelect: () => onOpenCompactChat?.()
+                                    },
                                     {
                                       id: 'palette',
                                       label: 'Slash commands',
-                                      description: `${currentProviderLabel} slash command menu`,
+                                      description: 'Browse available slash commands',
                                       icon: <CommandSymbolIcon />,
                                       active: slashMenuOpen,
                                       disabled:
                                         workspaceActionDisabled || composerSlashCommands.length === 0,
                                       onSelect: () => openSlashCommandsMenu()
-                                    },
-                                    {
-                                      id: 'review',
-                                      label: isPreparingDiffReview
-                                        ? 'Preparing review'
-                                        : 'Review diff',
-                                      description: 'Read-only plan-mode review',
-                                      icon: <ReviewSymbolIcon />,
-                                      disabled:
-                                        workspaceActionDisabled ||
-                                        isPreparingDiffReview ||
-                                        typeof handleReviewCurrentDiff !== 'function',
-                                      onSelect: () => void handleReviewCurrentDiff()
                                     }
                                   ]
+                                  : [])
+                              ]
                             }
                           ]
                           return (

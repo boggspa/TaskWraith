@@ -35,6 +35,8 @@ vi.mock('./Composer', () => ({
     workspaceDiffStats?: { filesChanged: number; additions: number; deletions: number }
     primaryPr?: { number?: number }
     primaryCi?: { status?: string }
+    onOpenCompactChat?: () => void
+    onOpenWorkspaceStats?: () => void
   }) => (
     <div
       data-testid="pane-composer-stub"
@@ -44,6 +46,8 @@ vi.mock('./Composer', () => ({
       data-git-changed={String(props.workspaceDiffStats?.filesChanged ?? 0)}
       data-pr-number={String(props.primaryPr?.number ?? '')}
       data-ci-status={props.primaryCi?.status || ''}
+      data-has-compact-chat-opener={String(Boolean(props.onOpenCompactChat))}
+      data-has-workspace-stats-opener={String(Boolean(props.onOpenWorkspaceStats))}
     >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
 }))
@@ -419,6 +423,58 @@ describe('ChatViewPane shared composer', () => {
       />
     )
     expect(html).not.toContain('data-testid="pane-composer-stub"')
+  })
+
+  it('gives each workspace pane local Stats and Compact Chat openers', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'chat-1',
+            workspacePath: '/repo'
+          } as unknown as ChatViewPaneProps['chat'],
+          currentWorkspacePath: '/repo',
+          composerProps: stubComposerProps(),
+          topRightChromeActions: [
+            {
+              id: 'compact-companion',
+              title: 'Open Compact Companion',
+              icon: <span>compact</span>,
+              onClick: vi.fn()
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('data-has-workspace-stats-opener="true"')
+    expect(html).toContain('data-has-compact-chat-opener="true"')
+    expect(paneSource).toContain(
+      'const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)'
+    )
+    expect(paneSource).toContain('actionPillRef={paneActionPillRef}')
+    expect(paneSource).toContain(
+      'canOpenPaneWorkspaceStats ? requestPaneWorkspaceStats : undefined'
+    )
+  })
+
+  it('does not expose a Stats opener when this pane does not own a Stats pill', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'chat-1',
+            workspacePath: '/repo'
+          } as unknown as ChatViewPaneProps['chat'],
+          currentWorkspacePath: '/repo',
+          composerProps: stubComposerProps(),
+          topRightChrome: <div>Custom pane chrome</div>
+        })}
+      />
+    )
+
+    expect(html).toContain('data-has-workspace-stats-opener="false"')
+    expect(html).toContain('data-has-compact-chat-opener="false"')
   })
 })
 

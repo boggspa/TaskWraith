@@ -54,7 +54,10 @@ import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
 import { ProjectThreadGraphView } from '../../components/ProjectThreadGraphView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
-import { MainPaneActionPill } from '../../components/MainPaneActionPill'
+import {
+  MainPaneActionPill,
+  type MainPaneActionPillHandle
+} from '../../components/MainPaneActionPill'
 import { SideChatAuthorityReturnButton } from '../../components/SideChatAuthorityReturnButton'
 import { buildWorkspaceStatsContext } from '../../components/workspaceStatsContext'
 import { RightDockHome } from '../../components/RightDockHome'
@@ -1285,6 +1288,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     label: mainPaneWorkspaceLabel,
     isGlobalChat: isCurrentGlobalChat
   })
+  const mainPaneActionPillRef = useRef<MainPaneActionPillHandle>(null)
+  const requestMainPaneWorkspaceStats = useCallback(
+    () => mainPaneActionPillRef.current?.openWorkspaceStats(),
+    []
+  )
+  const canOpenMainPaneWorkspaceStats =
+    !isChatPopoutWindow && Boolean(mainPaneWorkspaceStats)
   const mainPaneProvider = isCurrentEnsembleChat
     ? 'ensemble'
     : currentChat?.provider || currentProvider
@@ -2036,6 +2046,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           {!isChatPopoutWindow && (
             <>
               <MainPaneActionPill
+                ref={mainPaneActionPillRef}
                 fxEnabled={isFxEnabled}
                 skyEnabled={focusedPaneSkyEnabled}
                 ghostEnabled={focusedPaneGhostEnabled}
@@ -2441,7 +2452,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   midRunInputBehavior={composerCtx.settings?.midRunInputBehavior}
                 />
               ) : (
-                <Composer {...composerCtx} />
+                <Composer
+                  {...composerCtx}
+                  onOpenWorkspaceStats={
+                    canOpenMainPaneWorkspaceStats ? requestMainPaneWorkspaceStats : undefined
+                  }
+                />
               )}
             </>
           )}

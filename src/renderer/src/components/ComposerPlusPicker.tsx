@@ -14,7 +14,7 @@ export interface ComposerPlusPickerItem {
 
 export interface ComposerPlusPickerSection {
   id: string
-  title: string
+  title?: string
   items: ComposerPlusPickerItem[]
 }
 
@@ -122,7 +122,9 @@ export function ComposerPlusPicker({
           >
             {visibleSections.map((section) => (
               <div key={section.id} className="composer-plus-picker-section">
-                <div className="composer-combined-picker-column-header">{section.title}</div>
+                {section.title && (
+                  <div className="composer-combined-picker-column-header">{section.title}</div>
+                )}
                 {section.items.map((item) => (
                   <button
                     key={item.id}

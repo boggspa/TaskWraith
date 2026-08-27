@@ -1,5 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
 import { Composer, type ComposerProps } from './Composer'
@@ -7,8 +7,8 @@ import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildCh
 import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
-import { MainPaneActionPill } from './MainPaneActionPill'
-import { buildWorkspaceStatsContext } from './workspaceStatsContext'
+import { MainPaneActionPill, type MainPaneActionPillHandle } from './MainPaneActionPill'
+import { buildWorkspaceStatsContext, type WorkspaceStatsContext } from './workspaceStatsContext'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { TranscriptJumpToLatestPill } from './TranscriptJumpToLatestPill'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
@@ -323,7 +323,12 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
   )
 }
 
-function ChatViewPaneChrome(props: ChatViewPaneProps) {
+interface ChatViewPaneChromeProps extends ChatViewPaneProps {
+  actionPillRef: RefObject<MainPaneActionPillHandle | null>
+  workspaceStats?: WorkspaceStatsContext
+}
+
+function ChatViewPaneChrome(props: ChatViewPaneChromeProps) {
   const [panePopoutMenuOpen, setPanePopoutMenuOpen] = useState(false)
   const panePopoutMenuRef = useRef<HTMLDivElement>(null)
   if (props.topLeftChrome || props.topRightChrome) {
@@ -337,14 +342,6 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const chatId = props.chat?.appChatId ?? ''
   const title = props.chat?.title || props.welcomeWorkspaceName || 'New Chat'
   const workspaceLabel = props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName
-  const workspaceStats = buildWorkspaceStatsContext({
-    chatId,
-    baseWorkspacePath: props.currentWorkspacePath || props.chat?.workspacePath,
-    worktreeSelection: props.composerProps?.composerWorktreeSelection,
-    snapshot: props.composerProps?.primaryGitSnapshot,
-    label: workspaceLabel,
-    isGlobalChat: props.welcomeIsGlobalChat
-  })
   const defaultLeftAction: ChatViewPaneChromeAction = {
     id: 'pane-chat',
     title: 'Focus pane',
@@ -453,6 +450,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
       </div>
       {props.topRightChromeActions && props.topRightChromeActions.length > 0 && (
         <MainPaneActionPill
+          ref={props.actionPillRef}
           idScope={`multiview-pane-${props.paneIndex}`}
           className="multiview-pane-corner-controls"
           fxEnabled={Boolean(
@@ -469,7 +467,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onToggleChangelog={() => invokeAction(changelogAction)}
           onToggleFirstLaunch={() => invokeAction(firstLaunchAction)}
           onToggleBugReport={() => invokeAction(bugReportAction)}
-          workspaceStats={workspaceStats}
+          workspaceStats={props.workspaceStats}
           popoutMenuOpen={panePopoutMenuOpen}
           setPopoutMenuOpen={setPanePopoutMenuOpen}
           popoutMenuRef={panePopoutMenuRef}
@@ -505,6 +503,11 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
 function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
+  const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)
+  const requestPaneWorkspaceStats = useCallback(
+    () => paneActionPillRef.current?.openWorkspaceStats(),
+    []
+  )
   const chatId = props.chat?.appChatId ?? ''
   const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)
   const panePrCi = useWorkspacePrCi(props.gitPrCiStore, props.gitSnapshotPath)
@@ -536,6 +539,31 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     props.gitSnapshotPath,
     props.gitSnapshotStore
   ])
+  const workspaceStats = buildWorkspaceStatsContext({
+    chatId,
+    baseWorkspacePath: props.currentWorkspacePath || props.chat?.workspacePath,
+    worktreeSelection: effectiveComposerProps?.composerWorktreeSelection,
+    snapshot: effectiveComposerProps?.primaryGitSnapshot,
+    label: props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName,
+    isGlobalChat: props.welcomeIsGlobalChat
+  })
+  const ownsDefaultActionPill = Boolean(
+    !props.topLeftChrome && !props.topRightChrome && props.topRightChromeActions?.length
+  )
+  const canOpenPaneWorkspaceStats = ownsDefaultActionPill && Boolean(workspaceStats)
+  const compactCompanionAction = props.topRightChromeActions?.find(
+    (action) => action.id === 'compact-companion'
+  )
+  const canOpenPaneCompactChat = Boolean(
+    chatId && compactCompanionAction?.onClick && !compactCompanionAction.disabled
+  )
+  const requestPaneCompactChat = useCallback(() => {
+    const action = props.topRightChromeActions?.find(
+      (candidate) => candidate.id === 'compact-companion'
+    )
+    if (!chatId || !action?.onClick || action.disabled) return
+    action.onClick(props.paneIndex, chatId)
+  }, [chatId, props.paneIndex, props.topRightChromeActions])
   const hasComposerProps = Boolean(effectiveComposerProps)
   const paneScrollState = useTranscriptScrollState({
     chatId: chatId || null,
@@ -623,7 +651,12 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         />
       )}
       {props.showSky && <SkyWeatherVisual weather={props.weather ?? null} />}
-      <ChatViewPaneChrome {...props} composerProps={effectiveComposerProps} />
+      <ChatViewPaneChrome
+        {...props}
+        actionPillRef={paneActionPillRef}
+        composerProps={effectiveComposerProps}
+        workspaceStats={workspaceStats}
+      />
       {props.isWelcomeChat &&
         props.showWelcomeUsageDashboard &&
         props.welcomeUsageDashboardData && (
@@ -687,6 +720,10 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         <Composer
           {...effectiveComposerProps}
           composerAreaRef={paneComposerAreaRef}
+          onOpenCompactChat={canOpenPaneCompactChat ? requestPaneCompactChat : undefined}
+          onOpenWorkspaceStats={
+            canOpenPaneWorkspaceStats ? requestPaneWorkspaceStats : undefined
+          }
           showWelcomeNotifications={false}
         />
       )}

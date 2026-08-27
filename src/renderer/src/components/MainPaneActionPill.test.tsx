@@ -149,6 +149,20 @@ describe('MainPaneActionPill', () => {
     expect(css).not.toContain('.chat-corner-controls > .workspace-stats-popover-host')
   })
 
+  it('exposes a pane-local handle that opens only this Workspace Stats picker', () => {
+    const component = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/MainPaneActionPill.tsx'),
+      'utf8'
+    )
+
+    expect(component).toContain('export interface MainPaneActionPillHandle')
+    expect(component).toContain('useImperativeHandle(')
+    expect(component).toContain('openWorkspaceStats: () => {')
+    expect(component).toContain('if (!workspaceStats) return')
+    expect(component).toContain("setMenu('workspace-stats')")
+    expect(component).toContain('setPopoutMenuOpen(false)')
+  })
+
   it('scopes trigger and menu ids when several pane pills are mounted', () => {
     const html = renderPill(false, 'multiview-pane-2')
 
