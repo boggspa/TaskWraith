@@ -89,8 +89,7 @@
   gap: 8px;
 }
 
-.thread-home-thread-row,
-.thread-home-surface-card {
+.thread-home-thread-row {
   appearance: none;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--surface-border) 76%, transparent);
@@ -107,10 +106,23 @@
     transform 120ms ease;
 }
 
-.thread-home-thread-row:hover,
-.thread-home-surface-card:hover:not(:disabled) {
+.thread-home-surface-card {
+  appearance: none;
+  min-width: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.thread-home-thread-row:hover {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-border));
   background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+  transform: translateY(-1px);
+}
+
+.thread-home-surface-card:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
@@ -190,7 +202,7 @@
 .thread-home-surface-card {
   position: relative;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-height: 74px;
@@ -204,16 +216,15 @@
 }
 
 .thread-home-surface-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .thread-home-surface-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 34px;
+  height: 34px;
   stroke: currentColor;
   stroke-width: 1.35;
   stroke-linecap: round;
