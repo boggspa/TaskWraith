@@ -934,10 +934,9 @@ export interface MainProcessActionExecutorDependencies {
     pr?: Record<string, unknown>
     reason?: string
   }>
-  /** Optional. Absent on purpose while src/main/index.ts is claimed;
-   * executeGithubMergePr returns notWired until this is supplied.
-   * Supplying this WITHOUT `requestGithubMergePrApprovalFn` still
-   * refuses — a merge callback is not consent. */
+  /** Optional. Live `src/main/index.ts` injects this. Missing still
+   * returns notWired. Supplying this WITHOUT `requestGithubMergePrApprovalFn`
+   * still refuses — a merge callback is not consent. */
   githubMergePrFn?: (action: BridgeGithubMergePrAction) => Promise<{
     ok: boolean
     pr?: Record<string, unknown>
@@ -947,9 +946,9 @@ export interface MainProcessActionExecutorDependencies {
    * `requestAgenticServiceApproval` call. Must NOT wrap
    * `beginExternalPublishReceipt` (that ledger auto-allows
    * `origin: 'ios-bridge'`). A phone-stamped
-   * `elevationAcknowledged: true` is not this callback. Absent on
-   * purpose while src/main/index.ts is claimed; executeGithubMergePr
-   * will not invoke githubMergePrFn without it. */
+   * `elevationAcknowledged: true` is not this callback. Live
+   * `src/main/index.ts` injects this; executeGithubMergePr will not
+   * invoke githubMergePrFn without it. */
   requestGithubMergePrApprovalFn?: (
     action: BridgeGithubMergePrAction
   ) => Promise<boolean>

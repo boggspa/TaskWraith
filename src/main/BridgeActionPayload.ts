@@ -620,11 +620,12 @@ export interface BridgeGithubCreatePrAction extends BridgeActionMetadata {
  * that names a PR number, URL, or path is REFUSED, not sanitised — the
  * phone is not entitled to pick a merge target.
  *
- * Host `githubMergePrFn` and `requestGithubMergePrApprovalFn` are both
- * optional and currently unwired (`src/main/index.ts` is claimed).
- * Until both are supplied, the executor returns `notWired` (merge fn
- * absent) or refuses (approval fn absent). Do not ship an iOS merge
- * button that calls this action while those callbacks are absent. */
+ * Host `githubMergePrFn` and `requestGithubMergePrApprovalFn` remain
+ * optional on the executor type. Live `src/main/index.ts` injects both.
+ * The executor still fail-closes if either is missing: `notWired`
+ * (merge fn absent) or a refusal (approval fn absent). Phone merge
+ * must stay hidden unless the projected `githubMergePr` capability is
+ * true — derived from both callbacks AND workspace `externalPublish`. */
 export interface BridgeGithubMergePrAction extends BridgeActionMetadata {
   kind: 'githubMergePr'
   workspaceId: string
