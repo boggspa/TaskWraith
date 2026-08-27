@@ -133,6 +133,9 @@ struct TWRunActivityPlannerTests {
         #expect(plan.state.seats.allSatisfy { $0.phase == .complete })
         #expect(plan.state.seatsFinished == 8)
         #expect(plan.state.progress == 1.0)
+        #expect(plan.state.activeSeats == 0)
+        #expect(plan.state.respondedSeats == 8)
+        #expect(plan.state.blockedSeats == 0)
     }
 
     /// One seat of every kind the runtime can emit, so the count cannot be right
@@ -159,6 +162,11 @@ struct TWRunActivityPlannerTests {
             ])
         #expect(plan.state.seatsFinished == 5)
         #expect(plan.state.progress == 5.0 / 7.0)
+        // running/idle → active; answered/yielded/sleeping → responded;
+        // unreachable → blocked; skipped is cancelled and excluded.
+        #expect(plan.state.activeSeats == 2)
+        #expect(plan.state.respondedSeats == 3)
+        #expect(plan.state.blockedSeats == 1)
     }
 
     /// A new ensemble keeps whichever provider was active when it was created —
@@ -253,6 +261,10 @@ struct TWRunActivityPlannerTests {
         #expect(plan.state.behind == 2)
         #expect(plan.state.hasGitSnapshot)
         #expect(plan.state.seats.map(\.provider) == ["grok", "codex"])
+        // Workspace seats use card phases: running→active, awaitingQuestion→none.
+        #expect(plan.state.activeSeats == 1)
+        #expect(plan.state.respondedSeats == 0)
+        #expect(plan.state.blockedSeats == 0)
     }
 
     @Test("workspace aggregation fails closed without monitor capability")

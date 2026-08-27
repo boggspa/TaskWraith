@@ -109,8 +109,8 @@ public enum TWRunActivityPlanner {
     /// A seat that has not started yet maps to `.running`, not to a dedicated
     /// pending case. TWRunPhase is a WIRE enum the widget switches on, so a new
     /// case costs a decode fallback on every older build; that is not worth
-    /// buying for a 7-point dot, and `SeatDots` already dims non-terminal seats.
-    /// What the bar counts — finished vs total — is correct either way.
+    /// buying for a 7-point dot. Numeric summaries (`activeSeats` /
+    /// `respondedSeats` / `blockedSeats`) are derived from these mapped phases.
     public static func seatPhase(forParticipantStatus status: String?) -> TWRunPhase {
         switch status {
         case "answered", "yielded", "sleeping": return .complete

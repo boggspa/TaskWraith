@@ -81,6 +81,7 @@ struct TWRunActivityTests {
             Set(object.keys) == [
                 "phase", "startedAtUnix", "filesChanged", "additions", "deletions", "seats",
                 "activeRuns", "ahead", "behind", "hasGitSnapshot",
+                "activeSeats", "respondedSeats", "blockedSeats",
             ])
         // Must serialise as a NUMBER of unix seconds. A `Date` here would encode
         // via whatever strategy the decoder uses; ActivityKit's default reads a
@@ -99,6 +100,136 @@ struct TWRunActivityTests {
         #expect(decoded.ahead == 0)
         #expect(decoded.behind == 0)
         #expect(!decoded.hasGitSnapshot)
+        // Missing counters with no seats derive to 0, not a decode failure.
+        #expect(decoded.activeSeats == 0)
+        #expect(decoded.respondedSeats == 0)
+        #expect(decoded.blockedSeats == 0)
+    }
+
+    @Test("missing counters are derived from decoded seats so an old Mac payload still works")
+    func missingCountersDeriveFromSeats() throws {
+        let legacy = Data(
+            #"{"phase":"running","startedAtUnix":1700000000,"filesChanged":0,"additions":0,"deletions":0,"seats":[{"provider":"claude","phase":"complete"},{"provider":"codex","phase":"running"},{"provider":"kimi","phase":"failed"},{"provider":"pi","phase":"cancelled"}]}"#.utf8)
+        let decoded = try JSONDecoder().decode(TWRunActivityState.self, from: legacy)
+        #expect(decoded.activeSeats == 1)
+        #expect(decoded.respondedSeats == 1)
+        #expect(decoded.blockedSeats == 1)
+    }
+
+    @Test("explicit counters are used even when they disagree with seats, and negatives clamp")
+    func explicitCountersWinAndClamp() throws {
+        let payload = Data(
+            #"{"phase":"running","startedAtUnix":1700000000,"filesChanged":0,"additions":0,"deletions":0,"seats":[{"provider":"claude","phase":"running"}],"activeSeats":-2,"respondedSeats":4,"blockedSeats":1}"#.utf8)
+        let decoded = try JSONDecoder().decode(TWRunActivityState.self, from: payload)
+        #expect(decoded.activeSeats == 0)
+        #expect(decoded.respondedSeats == 4)
+        #expect(decoded.blockedSeats == 1)
+
+        let constructed = makeContentState(
+            phase: .running, startedAt: start,
+            seats: [TWSeatState(provider: "claude", phase: .running)],
+            activeSeats: -3, respondedSeats: 9, blockedSeats: 2)
+        #expect(constructed.activeSeats == 0)
+        #expect(constructed.respondedSeats == 9)
+        #expect(constructed.blockedSeats == 2)
+    }
+
+    @Test("makeContentState derives seat buckets from mapped phases, excluding cancelled")
+    func derivedSeatBucketsFollowMappedPhases() {
+        let state = makeContentState(
+            phase: .running, startedAt: start,
+            seats: [
+                TWSeatState(provider: "claude", phase: .complete),
+                TWSeatState(provider: "codex", phase: .running),
+                TWSeatState(provider: "kimi", phase: .failed),
+                TWSeatState(provider: "pi", phase: .cancelled),
+                TWSeatState(provider: "grok", phase: .awaitingApproval),
+                TWSeatState(provider: "cursor", phase: .awaitingQuestion),
+            ])
+        #expect(state.activeSeats == 1)
+        #expect(state.respondedSeats == 1)
+        #expect(state.blockedSeats == 1)
+    }
+
+    @Test("overflow seats still count even though the rendered array is capped")
+    func overflowSeatsAreCounted() {
+        let many = (0..<10).map { index in
+            TWSeatState(provider: "p\(index)", phase: index == 0 ? .complete : .running)
+        }
+        let state = makeContentState(phase: .running, startedAt: start, seats: many)
+        #expect(state.seats.count == TWRunActivityLimits.maxSeats)
+        #expect(state.activeSeats == 9)
+        #expect(state.respondedSeats == 1)
+        #expect(state.blockedSeats == 0)
+    }
+
+    @Test("ensemble status wording follows stale, needs-you, working, handing off, preparing")
+    func ensembleStatusWording() {
+        let working = makeContentState(
+            phase: .running, startedAt: start,
+            seats: [
+                TWSeatState(provider: "claude", phase: .running),
+                TWSeatState(provider: "codex", phase: .running),
+                TWSeatState(provider: "kimi", phase: .complete),
+            ])
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: working.phase, isStale: true,
+                activeSeats: working.activeSeats, respondedSeats: working.respondedSeats)
+                == "Out of contact")
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: .awaitingApproval, isStale: false,
+                activeSeats: 3, respondedSeats: 1) == "Needs approval")
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: .awaitingQuestion, isStale: false,
+                activeSeats: 3, respondedSeats: 1) == "Needs you")
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: working.phase, isStale: false,
+                activeSeats: working.activeSeats, respondedSeats: working.respondedSeats)
+                == "2 working")
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: .running, isStale: false, activeSeats: 0, respondedSeats: 4)
+                == "Handing off")
+        #expect(
+            TWRunActivityPresentation.ensembleStatusLabel(
+                phase: .running, isStale: false, activeSeats: 0, respondedSeats: 0)
+                == "Preparing")
+    }
+
+    @Test("ensemble detail replaces the naked fraction with responded/waiting/issues")
+    func ensembleDetailWording() {
+        #expect(
+            TWRunActivityPresentation.ensembleDetailLabel(
+                respondedSeats: 4, waitingSeats: 3, blockedSeats: 0)
+                == "4 responded · 3 waiting")
+        #expect(
+            TWRunActivityPresentation.ensembleDetailLabel(
+                respondedSeats: 4, waitingSeats: 3, blockedSeats: 1)
+                == "4 responded · 3 waiting · 1 issue")
+        #expect(
+            TWRunActivityPresentation.ensembleDetailLabel(
+                respondedSeats: 2, waitingSeats: 1, blockedSeats: 2)
+                == "2 responded · 1 waiting · 2 issues")
+    }
+
+    @Test("compact island shows attention for stale, needs-you, or blocked, otherwise the active count")
+    func ensembleCompactIslandSignal() {
+        #expect(
+            TWRunActivityPresentation.ensembleCompactShowsAttention(
+                isStale: true, needsUser: false, blockedSeats: 0))
+        #expect(
+            TWRunActivityPresentation.ensembleCompactShowsAttention(
+                isStale: false, needsUser: true, blockedSeats: 0))
+        #expect(
+            TWRunActivityPresentation.ensembleCompactShowsAttention(
+                isStale: false, needsUser: false, blockedSeats: 1))
+        #expect(
+            !TWRunActivityPresentation.ensembleCompactShowsAttention(
+                isStale: false, needsUser: false, blockedSeats: 0))
     }
 
     @Test("workspace counters are clamped and remain anonymous")

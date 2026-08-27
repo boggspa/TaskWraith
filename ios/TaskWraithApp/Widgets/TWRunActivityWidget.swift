@@ -16,9 +16,9 @@
 // every layout below stops the clock and says it has lost contact. Without that
 // a locked phone shows a run "still going" hours after it finished.
 //
-// NO INVENTED PROGRESS: `state.progress` is nil for solo runs because an agent
-// run has no denominator. Only ensembles (seats finished / total) get a bar.
-// Everything else gets an indeterminate pulse, which is honest.
+// NO NAKED FRACTION: ensemble cards show a provider stack plus
+// responded/waiting/issue counts, not `finished/total` or a progress bar.
+// Solo runs still have no denominator. Workspace cards keep the provider stack.
 //
 // COLOUR COMES FROM THE WIRE, never from a table in here. `config.palette` is
 // resolved app-side by TWRunActivityController (see TWActivityPalette). Links
@@ -168,22 +168,6 @@ private struct DiffCounts: View {
     }
 }
 
-private struct SeatDots: View {
-    let seats: [TWSeatState]
-    let palette: TWActivityPalette
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(seats.enumerated()), id: \.offset) { _, seat in
-                Circle()
-                    .fill(phaseTint(seat.phase, palette: palette))
-                    .frame(width: 7, height: 7)
-                    .opacity(seat.phase.isTerminal ? 1 : 0.45)
-            }
-        }
-    }
-}
-
 /// The real TaskWraith monoline mark, rendered as a template so ActivityKit's
 /// light/dark/vibrancy treatments remain legible. Intentionally no container:
 /// boxing this fine linework makes it disappear at lock-screen scale.
@@ -315,6 +299,11 @@ private struct LockScreenView: View {
     private var statusLabel: some View {
         if isStale {
             Text("Out of contact")
+        } else if config.archetype == .ensemble {
+            Text(
+                TWRunActivityPresentation.ensembleStatusLabel(
+                    phase: state.phase, isStale: false,
+                    activeSeats: state.activeSeats, respondedSeats: state.respondedSeats))
         } else if isWorkspace, state.phase.needsUser {
             Text("Needs you")
         } else if isWorkspace {
@@ -340,19 +329,16 @@ private struct LockScreenView: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(phaseTint(state.phase, palette: palette))
         case .ensemble:
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    SeatDots(seats: state.seats, palette: palette)
-                    Text("\(state.seatsFinished)/\(state.seats.count)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                if let progress = state.progress {
-                    ProgressView(value: progress)
-                        .tint(Color(rgb: palette.accent))
-                        .frame(maxWidth: 160)
-                }
+            HStack(spacing: 8) {
+                ProviderStack(seats: state.seats, palette: palette)
+                Text(
+                    TWRunActivityPresentation.ensembleDetailLabel(
+                        respondedSeats: state.respondedSeats,
+                        waitingSeats: state.activeSeats,
+                        blockedSeats: state.blockedSeats))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
         case .workspace:
             VStack(alignment: .leading, spacing: 4) {
@@ -398,6 +384,18 @@ struct TWRunActivityWidget: Widget {
                         }
                         .font(.caption)
                         .foregroundStyle(tint)
+                    } else if config.archetype == .ensemble {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(config.provider.capitalized)
+                            Text(
+                                TWRunActivityPresentation.ensembleStatusLabel(
+                                    phase: state.phase, isStale: isStale,
+                                    activeSeats: state.activeSeats,
+                                    respondedSeats: state.respondedSeats))
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(tint)
                     } else {
                         Label(config.provider.capitalized, systemImage: state.phase.glyph)
                             .font(.caption)
@@ -426,8 +424,12 @@ struct TWRunActivityWidget: Widget {
                                 .foregroundStyle(tint)
                         case .ensemble:
                             HStack(spacing: 8) {
-                                SeatDots(seats: state.seats, palette: palette)
-                                Text("\(state.seatsFinished)/\(state.seats.count)")
+                                ProviderStack(seats: state.seats, palette: palette)
+                                Text(
+                                    TWRunActivityPresentation.ensembleDetailLabel(
+                                        respondedSeats: state.respondedSeats,
+                                        waitingSeats: state.activeSeats,
+                                        blockedSeats: state.blockedSeats))
                                     .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                             }
                         case .workspace:
@@ -473,9 +475,17 @@ struct TWRunActivityWidget: Widget {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
-                } else if config.archetype == .ensemble, !state.seats.isEmpty, !isStale {
-                    Text("\(state.seatsFinished)/\(state.seats.count)")
-                        .font(.caption2).monospacedDigit()
+                } else if config.archetype == .ensemble {
+                    if TWRunActivityPresentation.ensembleCompactShowsAttention(
+                        isStale: isStale, needsUser: state.phase.needsUser,
+                        blockedSeats: state.blockedSeats)
+                    {
+                        Text("!").font(.caption2.weight(.semibold)).foregroundStyle(tint)
+                    } else {
+                        OdometerMetric(value: state.activeSeats)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ElapsedText(startedAt: state.startedAt, phase: state.phase, isStale: isStale)
                         .font(.caption2)
