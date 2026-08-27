@@ -4212,13 +4212,31 @@ export function Sidebar({
         }
       }
     }
-    void refreshRemoteDevices()
-    const interval = window.setInterval(() => {
+
+    let interval: number | undefined
+    const start = () => {
+      if (interval !== undefined) return
+      interval = window.setInterval(() => { void refreshRemoteDevices() }, 5000)
+    }
+    const stop = () => {
+      if (interval !== undefined) {
+        window.clearInterval(interval)
+        interval = undefined
+      }
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) stop()
+      else { void refreshRemoteDevices(); start() }
+    }
+    if (!document.hidden) {
       void refreshRemoteDevices()
-    }, 5000)
+      start()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       cancelled = true
-      window.clearInterval(interval)
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 

@@ -35,15 +35,31 @@ export function PairedDevicesPanel(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void refresh()
-    }, 0)
-    const interval = window.setInterval(() => {
-      void refresh()
-    }, 5000)
+    let interval: number | undefined
+    let timer: number | undefined
+    const start = () => {
+      if (interval !== undefined) return
+      interval = window.setInterval(() => void refresh(), 5000)
+    }
+    const stop = () => {
+      if (interval !== undefined) {
+        window.clearInterval(interval)
+        interval = undefined
+      }
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) stop()
+      else { void refresh(); start() }
+    }
+    if (!document.hidden) {
+      timer = window.setTimeout(() => void refresh(), 0)
+      start()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      window.clearTimeout(timer)
-      window.clearInterval(interval)
+      if (timer !== undefined) window.clearTimeout(timer)
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [refresh])
 

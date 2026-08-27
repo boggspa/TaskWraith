@@ -95,8 +95,27 @@ export function FanoutCandidatesPanel(props: {
   const hasRunningLanes = candidates.some((candidate) => candidate.status === 'active')
   useEffect(() => {
     if (!hasRunningLanes) return
-    const timer = window.setInterval(() => void refresh(), RUNNING_POLL_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    let timer: number | undefined
+    const start = () => {
+      if (timer !== undefined) return
+      timer = window.setInterval(() => void refresh(), RUNNING_POLL_INTERVAL_MS)
+    }
+    const stop = () => {
+      if (timer !== undefined) {
+        window.clearInterval(timer)
+        timer = undefined
+      }
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) stop()
+      else { void refresh(); start() }
+    }
+    if (!document.hidden) start()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [hasRunningLanes, refresh])
 
   const openReview = useCallback(

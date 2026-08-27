@@ -5,6 +5,14 @@ import { humaniseModelId } from '../lib/modelDisplayName'
 import { resolveOllamaDisplayBrand, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
+import {
+  canPushRunEvents,
+  isDocumentHidden,
+  requestRunReplay,
+  subscribeToRunEvents,
+  subscribeToRunReplay,
+  subscribeToVisibility
+} from '../lib/runReplayCoordinator'
 import { DigitOdometer } from './DigitOdometer'
 
 interface RunCardProps {
@@ -48,37 +56,62 @@ export function RunCard({
   }, [aggregate.eventFileCount, run])
 
   useEffect(() => {
+    const runId = run.runId
+    if (!runId) return
     let cancelled = false
-    const refresh = async (): Promise<void> => {
-      if (!run.runId || typeof window.api.getRunEventReplay !== 'function') return
-      if (document.hidden) return
-      try {
-        const replay = (await window.api.getRunEventReplay(run.runId)) as RunEventReplay
-        if (cancelled) return
-        const next = buildRunAggregate(replay)
-        setAggregate((current) =>
-          current.approvalCount === next.approvalCount && current.eventFileCount === next.eventFileCount
-            ? current
-            : next
-        )
-      } catch {
-        if (!cancelled) setAggregate((current) => current)
-      }
+
+    const apply = (replay: RunEventReplay): void => {
+      if (cancelled) return
+      const next = buildRunAggregate(replay)
+      setAggregate((current) =>
+        current.approvalCount === next.approvalCount &&
+        current.eventFileCount === next.eventFileCount
+          ? current
+          : next
+      )
     }
-    void refresh()
-    if (!isActive)
+
+    // Subscribe BEFORE the first request. An event landing while that fetch is
+    // in flight is folded into one trailing refetch instead of being lost, and
+    // that gap is what the deleted 2s reconciliation poll used to paper over.
+    const unsubscribeReplay = subscribeToRunReplay(runId, apply)
+
+    if (!isActive) {
+      if (!isDocumentHidden()) requestRunReplay(runId, { immediate: true })
       return () => {
         cancelled = true
+        unsubscribeReplay()
       }
-    const intervalId = window.setInterval(() => void refresh(), 2000)
-    const onVisibilityChange = (): void => {
-      if (!document.hidden) void refresh()
     }
-    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    let unsubscribeRunEvents: () => void
+    if (canPushRunEvents()) {
+      // payload.runId is the verified contract of `run-events-changed`; the
+      // emitter always sends an object literal, so there is no "payload was
+      // falsy, refresh every card" fallback branch to trip over.
+      unsubscribeRunEvents = subscribeToRunEvents((payload) => {
+        if (payload.runId !== runId) return
+        if (isDocumentHidden()) return
+        requestRunReplay(runId)
+      })
+    } else {
+      const intervalId = window.setInterval(() => {
+        if (!isDocumentHidden()) requestRunReplay(runId)
+      }, 2000)
+      unsubscribeRunEvents = () => window.clearInterval(intervalId)
+    }
+
+    const unsubscribeVisibility = subscribeToVisibility(() => {
+      if (!isDocumentHidden()) requestRunReplay(runId, { immediate: true })
+    })
+
+    if (!isDocumentHidden()) requestRunReplay(runId, { immediate: true })
+
     return () => {
       cancelled = true
-      window.clearInterval(intervalId)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
+      unsubscribeRunEvents()
+      unsubscribeVisibility()
+      unsubscribeReplay()
     }
   }, [isActive, run.runId])
 

@@ -135,20 +135,23 @@ export function TerminalPanel({
         window.api.ptyResize(term.current.cols, term.current.rows, effectivePtySessionId)
       }
     }
-    window.addEventListener('resize', handleResize)
 
-    // The workspace pane is drag-resizable (`--workspace-terminal-height`),
-    // which fires no window resize — without this the grid keeps the row count
-    // it was opened at, so the shell wraps and scrolls against a stale height.
-    // rAF-coalesced because a drag emits observations at pointer rate.
     let pendingFrame: number | null = null
-    const hostObserver = new ResizeObserver(() => {
+    const coalescedResize = () => {
       if (pendingFrame !== null) return
       pendingFrame = requestAnimationFrame(() => {
         pendingFrame = null
         if (!disposed) handleResize()
       })
-    })
+    }
+
+    window.addEventListener('resize', coalescedResize)
+
+    // The workspace pane is drag-resizable (`--workspace-terminal-height`),
+    // which fires no window resize — without this the grid keeps the row count
+    // it was opened at, so the shell wraps and scrolls against a stale height.
+    // rAF-coalesced because a drag emits observations at pointer rate.
+    const hostObserver = new ResizeObserver(coalescedResize)
     hostObserver.observe(host)
 
     return () => {
@@ -157,7 +160,7 @@ export function TerminalPanel({
       unsubscribePtyData()
       unsubscribePtyExit()
       term.current?.dispose()
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', coalescedResize)
       hostObserver.disconnect()
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
     }

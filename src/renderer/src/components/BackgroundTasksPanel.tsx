@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
+import { useMemo } from 'react'
 import type { ChatRecord, ChildAgentThread, ProviderId } from '../../../main/store/types'
 import { deriveChildAgentThreads } from '../lib/ChildAgentThreads'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
@@ -21,22 +22,20 @@ interface BackgroundTasksPanelProps {
  * the transcript itself and via @-mention chips.
  */
 export function BackgroundTasksPanel({ chat, provider }: BackgroundTasksPanelProps) {
-  const [now, setNow] = useState(0)
   const liveThreads = useMemo<ChildAgentThread[]>(() => {
     if (!chat || !provider) return []
     const all = deriveChildAgentThreads(provider, chat.appChatId, chat.messages || [], chat)
     return all.filter((thread) => thread.state === 'running' || thread.state === 'queued')
   }, [chat, provider])
 
-  useEffect(() => {
-    const updateNow = (): void => setNow(Date.now())
-    const timeoutId = window.setTimeout(updateNow, 0)
-    const intervalId = window.setInterval(updateNow, 1000)
-    return () => {
-      window.clearTimeout(timeoutId)
-      window.clearInterval(intervalId)
-    }
-  }, [])
+  // Subscribe to the shared 1s tick only while a live duration needs advancing.
+  // An idle panel previously held the renderer-wide interval open for rows that
+  // do not exist, and `nowTick ? Date.now() : Date.now()` made that look
+  // deliberate while both branches were identical.
+  const nowTick = useSharedNowTick(liveThreads.length > 0)
+  // Derived in the SAME render as the tick that caused it: one tick, one render,
+  // with no effect->setState echo.
+  const now = useMemo(() => Date.now(), [nowTick])
 
   const scrollToAgent = (agentId: string) => {
     if (typeof document === 'undefined') return
