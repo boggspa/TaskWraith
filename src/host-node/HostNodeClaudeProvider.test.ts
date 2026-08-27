@@ -625,6 +625,9 @@ describe('HostNodeClaudeProvider factory', () => {
     // one-shot resume cannot exist yet. Advertising either flag here would make
     // the domain's derived capabilities dishonest.
     expect(factory.supportsApprovals).toBe(false)
+    // Headless `-p` stream-json has no stdin protocol and no
+    // `--permission-prompt-tool` (`canUseTool` is SDK-only). There is no
+    // question event source; do not flip supportsQuestions without one.
     expect(factory.supportsQuestions).toBe(false)
   })
 

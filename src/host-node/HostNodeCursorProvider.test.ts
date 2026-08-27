@@ -313,6 +313,9 @@ describe('HostNodeCursorProvider factory', () => {
     expect(factory.offers.providerId).toBe('cursor')
     expect(factory.offers.models.length).toBeGreaterThan(0)
     expect(factory.supportsApprovals).toBe(false)
+    // run() throws HostNodeCursorRunNotImplementedError: the Node Host has no
+    // MCP deny-list containment attestation, so there is no run path and no
+    // question event source. Do not flip supportsQuestions.
     expect(factory.supportsQuestions).toBe(false)
   })
 

@@ -492,6 +492,8 @@ describe('HostNodePiProvider factory', () => {
     expect(factory.offers.providerId).toBe('pi')
     // Pi ships no permission system, so there is nothing to resume.
     expect(factory.supportsApprovals).toBe(false)
+    // PiRpc has no elicitation event type. There is no question event source;
+    // do not flip supportsQuestions without one.
     expect(factory.supportsQuestions).toBe(false)
   })
 

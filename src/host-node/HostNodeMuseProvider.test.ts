@@ -19,12 +19,14 @@ import type {
   HostProviderRunUpdate
 } from '../host-runtime/HostProviderRunPort'
 import {
+  createHostNodeMuseProviderFactory,
   HostNodeMuseProvider,
   HostNodeMuseProviderDuplicateRunError,
   HostNodeMuseProviderPersistenceError,
   HostNodeMuseProviderValidationError,
   type HostNodeMuseProviderOptions
 } from './HostNodeMuseProvider'
+import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 
 const NOW = Date.UTC(2026, 7, 24, 5, 0, 0)
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
@@ -431,5 +433,29 @@ describe('HostNodeMuseProvider', () => {
     )
     expect(source).not.toMatch(/from\s+['"]electron['"]/)
     expect(source).not.toMatch(/webcontents|ipcmain|ipcrenderer/i)
+  })
+})
+
+describe('HostNodeMuseProvider factory', () => {
+  it('exposes catalog offers and advertises no unresumable interactions', () => {
+    const factory = createHostNodeMuseProviderFactory({
+      offers: hostProviderOffers('muse', true)!,
+      resources: {
+        resolveBinary: async () => ({ binaryPath: '/usr/local/bin/muse', source: 'path' }),
+        getTemporaryRoot: () => '/tmp/muse-root',
+        readAuthJsonText: async () => AUTH_JSON,
+        readMetaApiKeyEnv: () => ENV_SECRET,
+        spawn: () => spawnHandle()
+      }
+    })
+    expect(factory.providerId).toBe('muse')
+    expect(factory.offers.providerId).toBe('muse')
+    expect(factory.offers.models.length).toBeGreaterThan(0)
+    expect(factory.supportsApprovals).toBe(false)
+    // Muse exec is one-shot (`MuseRunInput`; stdin is a single optional string)
+    // and headless argv includes `--disable-approval` plus
+    // `--user-input-auto-resolve`. There is no question event source; do not
+    // flip supportsQuestions without a mid-run elicitation channel.
+    expect(factory.supportsQuestions).toBe(false)
   })
 })

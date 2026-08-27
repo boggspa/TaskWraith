@@ -353,6 +353,9 @@ describe('HostNodeOllamaProvider factory', () => {
     expect(factory.offers.providerId).toBe('ollama')
     expect(factory.offers.models.length).toBeGreaterThan(0)
     expect(factory.supportsApprovals).toBe(false)
+    // Pure HTTP chat loop (`runOllamaChatLoop`); no interactive/elicitation
+    // channel. There is no question event source; do not flip
+    // supportsQuestions without one.
     expect(factory.supportsQuestions).toBe(false)
   })
 
