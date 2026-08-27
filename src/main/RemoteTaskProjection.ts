@@ -417,6 +417,8 @@ export interface RemoteTaskCapabilities {
   deleteMessage?: boolean
   /** True only when spawn will succeed: injected `createSubThreadFn` AND workspace `startTurn`. */
   createSubThread?: boolean
+  /** True when the merge route is structurally wired and this workspace grants `externalPublish`. Host approval policy, PR state, and mergeability can still refuse. */
+  githubMergePr?: boolean
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean
@@ -435,6 +437,26 @@ export function projectCreateSubThreadCapability(
   startTurn: unknown = false
 ): boolean {
   return typeof createSubThreadFn === 'function' && startTurn === true
+}
+
+/**
+ * Phone merge is gated on this bit.
+ * True means the route is structurally wired (both merge callbacks are functions)
+ * AND the workspace is authorized (`externalPublish`). It does not mean merge will
+ * succeed: host approval policy, PR state, and mergeability can still refuse.
+ * Projecting on one callback, or skipping the router grant, advertises a control
+ * the host will still refuse.
+ */
+export function projectGithubMergePrCapability(
+  githubMergePrFn: unknown,
+  requestGithubMergePrApprovalFn: unknown,
+  externalPublish: unknown = false
+): boolean {
+  return (
+    typeof githubMergePrFn === 'function' &&
+    typeof requestGithubMergePrApprovalFn === 'function' &&
+    externalPublish === true
+  )
 }
 
 export interface RemoteTaskFeedSnapshot {

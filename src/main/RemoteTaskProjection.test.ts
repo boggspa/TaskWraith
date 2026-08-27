@@ -23,7 +23,8 @@ import {
   buildRemoteTaskCard,
   buildRemoteTaskFeedSnapshot,
   projectChatKind,
-  projectCreateSubThreadCapability
+  projectCreateSubThreadCapability,
+  projectGithubMergePrCapability
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
@@ -2110,5 +2111,30 @@ describe('projectCreateSubThreadCapability', () => {
 
     const absent = buildRemoteTaskCard(chat(), { capabilities: requiredCaps })
     expect(absent.capabilities?.createSubThread).toBeUndefined()
+  })
+})
+
+describe('projectGithubMergePrCapability', () => {
+  const mergeFn = async () => ({ ok: true })
+  const approvalFn = async () => true
+  it('is true only when both callbacks are functions and externalPublish is literal true', () => {
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, true)).toBe(true)
+    expect(projectGithubMergePrCapability(mergeFn, undefined, true)).toBe(false)
+    expect(projectGithubMergePrCapability(undefined, approvalFn, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, false)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, {}, true)).toBe(false)
+    expect(projectGithubMergePrCapability(true, approvalFn, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, true, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, () => undefined)).toBe(false)
+  })
+  it('reaches the phone as the card capability bit', () => {
+    const caps = {
+      monitor: true, approve: true, answer: true, cancel: true,
+      startTurn: true, diffReview: true, steer: true
+    }
+    expect(buildRemoteTaskCard(chat(), { capabilities: { ...caps, githubMergePr: projectGithubMergePrCapability(mergeFn, approvalFn, true) } }).capabilities?.githubMergePr).toBe(true)
+    expect(buildRemoteTaskCard(chat(), { capabilities: { ...caps, githubMergePr: projectGithubMergePrCapability(mergeFn, undefined, true) } }).capabilities?.githubMergePr).toBe(false)
+    expect(buildRemoteTaskCard(chat(), { capabilities: caps }).capabilities?.githubMergePr).toBeUndefined()
   })
 })
