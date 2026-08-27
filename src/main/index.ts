@@ -31358,7 +31358,7 @@ async function settleCodexNativeApprovalRequest(
       kind: method
     })
     const approvalPayload = {
-      provider: 'codex',
+      provider: 'codex' as const,
       appRunId: state.appRunId,
       appChatId: state.appChatId,
       id: approvalId,
@@ -31553,7 +31553,7 @@ function maybeRequestCodexHostRerun(
     ? `${hostRerunEnsembleApproval.bodyPrefix}\n\n${hostRerunBaseBody}`
     : hostRerunBaseBody
   const approvalPayload = {
-    provider: 'codex',
+    provider: 'codex' as const,
     appRunId: state.appRunId,
     appChatId: state.appChatId,
     id: approvalId,
