@@ -15,7 +15,7 @@ As directed by host steering:
 
 > _"Feel free to each of you to test tooling yourselves (each participant) and note any inconsistencies in a tool-specific papercuts markdown scratchpad that we'll work from in this thread so we can fix all the issues as necessary... the harness should cleanly adapt calls - but that means we need each of you to outlay your native call types so we can cleanly adapt them all too."_
 
-This document consolidates the live probe findings and native call inventories across all **nine active provider platforms** on the panel (Codex, Ollama, Kimi, Claude, Cursor, Grok, Pi, Antigravity, Mistral). It establishes the structural root causes of dialect mismatch, catalogs newly discovered severity-ranked papercuts (S1–S6), confirms cross-provider invariants, provides a per-provider reference appendix, and records the current status of round fixes.
+This document consolidates the live probe findings and native call inventories across all **nine active provider platforms** on the panel (Codex, Ollama, Kimi, Claude, Cursor, Grok, Pi, Antigravity, Mistral). It establishes the structural root causes of dialect mismatch, catalogs newly discovered severity-ranked papercuts (S1–S7), confirms cross-provider invariants, provides a per-provider reference appendix, and records the current status of round fixes.
 
 ---
 
@@ -33,7 +33,7 @@ The friction described as _"agents fighting tool failures"_ is not a uniform iss
 
 ---
 
-## 2. Severity-Ranked Defects & Papercuts (S1–S6)
+## 2. Severity-Ranked Defects & Papercuts (S1–S7)
 
 The following bugs and papercuts were discovered and reproduced during panel probe passes. None of these were documented prior to this round.
 
@@ -86,9 +86,17 @@ The following bugs and papercuts were discovered and reproduced during panel pro
 - **Severity:** S1 (Critical / Commit Gate Unreachable)
 - **Reproducing Seat:** Codex (`@Validator`, resumed turn)
 - **Symptom:** A resumed seat lost `TASKWRAITH_RUN_ID` / `TASKWRAITH_CHAT_ID`. `run_shell_command` rejected `git commit` as an unrouted mutating call and supplied no `permissionRetry`, corrected call, or dedicated-tool hint. The validated slice was staged but uncommittable through the instructed shell route.
-- **Repair Probe:** On a freshly routed turn, the purpose-built `git_commit` tool succeeded in both `private_index` and `pathspec` modes. However, two exact capability searches (`git commit staged exact paths private index` and `git_commit`) failed to return that tool even though it was directly callable.
+- **Repair Probe:** On a freshly routed turn, the purpose-built `git_commit` tool succeeded in both `private_index` and `pathspec` modes. However, two exact `capability_search` queries (`git commit staged exact paths private index` and `git_commit`) failed to return that tool even though it was directly callable.
 - **Impact:** This is worse than a wasted first call: work stops at the commit gate unless a Boss re-routes the seat and already knows the undiscoverable dedicated tool name.
-- **Required Adaptation:** Preserve run/chat audit identity across resumed turns. When shell containment rejects Git mutation, return a `permissionRetry` or a structured `directToolHint` containing the exact `git_commit` call. Exact-name capability search must surface directly callable tools rather than only adjacent matches.
+- **Required Adaptation:** Preserve run/chat audit identity across resumed turns. When shell containment rejects Git mutation, return a `permissionRetry` or a structured `directToolHint` containing the exact `git_commit` call. Exact-name `capability_search` must surface directly callable tools rather than only adjacent matches.
+
+### S7: `git_commit` Silently Accepts a Partial Requested Path Set
+
+- **Severity:** S2 (High / Incomplete Commit Reported as Success)
+- **Reproducing Seat:** Codex (`@Validator`, private-index commit gate)
+- **Symptom:** `git_commit` received two requested paths, but the supplied ordinary `git diff` patch omitted the untracked new file. The tool returned `ok: true` and committed only one path instead of failing on the partial path set. Its result exposed the smaller committed-path list, but supplied no `rejectedPaths`, missing-path verdict, or repair.
+- **Recovery:** Validator detected the result-path mismatch and created an explicit new-file patch with `git diff --no-index /dev/null`, then landed the omitted file in companion commit `408faf77a`.
+- **Required Adaptation:** In `private_index` mode, compare requested paths with patch-touched paths and fail closed on any missing or extra entry. Return structured `missingPaths` / `rejectedPaths` plus a corrected new-file patch hint; never silently shrink an atomic slice.
 
 ---
 
@@ -106,12 +114,12 @@ Probing across 3+ independent seats per feature established the following system
 3. **Monolith Size Ceiling on `replace`:**
    - `replace` strictly rejects files $\ge 1,500,000$ bytes (e.g. `src/main/index.ts`). Modifications to monoliths must use `apply_patch` or private git indices.
 4. **Normalized Catalog Alias Mappings:**
-   - When a tool schema recognizes the canonical field and only one spelling is supplied, the shared alias layer reliably handles: - `cmd` $
-ightarrow$ `command` - `workdir` $
-ightarrow$ `cwd` - `file_path` / `target_file` $
-ightarrow$ `path` - `pattern` $
-ightarrow$ `query` - `glob` (string) $
-ightarrow$ `globs` (string array, verified via control tests)
+   - When a tool schema recognizes the canonical field and only one spelling is supplied, the shared alias layer reliably handles:
+     - `cmd` → `command`
+     - `workdir` → `cwd`
+     - `file_path` / `target_file` → `path`
+     - `pattern` → `query`
+     - `glob` (string) → `globs` (string array, verified via control tests)
    - These aliases apply only where the receiving tool schema recognizes the canonical field. Conflicting spellings must fail closed; S2 documents the `workspace_search` exception found this round. Alias handling is not permission to translate unrelated native operations such as Grok `search_replace` into `apply_patch`.
 5. **Antigravity Dialect Invariant:**
    - Antigravity cannot emit raw TaskWraith MCP JSON directly. It communicates exclusively via `call_mcp_tool({ServerName: "TaskWraith", ToolName: string, Arguments: object})` with PascalCase argument keys.
@@ -210,9 +218,12 @@ ightarrow$ `use_tool({tool_name: "TaskWraith__*", tool_input})`
 5. `80f90c000` — **First-Call Success Corpus:** Added table-driven test fixtures in `src/main/mcp/McpFirstCallSuccessCorpus.ts` and `src/main/mcp/McpFirstCallSuccess.test.ts`.
 6. `be7d0355a` — **Native Directory/Search Aliases:** Restricts directory-native aliases to `list_directory` and makes conflicting `workspace_search` aliases fail closed.
 7. `7528dabb3` — **Native Argument-Loss Hardening:** Prevents unknown path-like `list_directory` arguments from silently listing root and discloses unsupported native shell fields without implementing or elevating their semantics.
+8. `20cb0c47f` — **Resumed-Seat Dead-End Record:** Adds the S6 commit-route and capability-discovery findings to this artifact.
+9. `6119c1304` — **Dispatch Contract Guards:** Pins repair-wrapper coverage plus the S1/S3 fail-closed and disclosure contracts.
+10. `408faf77a` — **First-Call Dispatch Projection:** Pins normalized `planSummary` and its aliases through the main dispatch projection.
 
 ### Verification Status & Known Caveat
 
-- **Unit Verification:** Full test suites are **GREEN** (45 tests across 6 affected suites; typecheck clean across node/web/TUI/host).
+- **Unit Verification:** Production-slice full typecheck is **GREEN** across node/web/TUI/host. The final test gate also passed node typecheck and **137 tests across 7 affected suites**.
 - **Live Binary Verification:** **NOT YET VERIFIED on a rebuilt binary.** The runtime binary (`out/main/index.js`) predates all round commits. Live end-to-end acceptance requires a fresh build before the root goal can be completed.
 - **Repair Map Coverage:** All 11 `ensemble_*` tools plus `scout_brief` are wrapped (**12/12 coverage** for tools in the repair map). Future ensemble tools should be protected with guard tests to prevent bare `mcpJson` usage; `blackboard_*` (20 sites) remains uncovered by retry templates.
