@@ -473,6 +473,26 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(dispatchRow.metadata?.ensembleFanoutCategory).toBe('user')
     expect(dispatchRow.metadata?.ensembleFanoutLabel).toBe('User Fan-Out')
     expect(dispatchRow.metadata?.ensembleFanoutWaveId).toBe(dispatchRow.id)
+    expect(dispatchRow.metadata?.ensembleFanoutDispatch).toEqual({
+      label: 'User Fan-Out',
+      category: 'user',
+      participants: [
+        {
+          participantId: 'claude',
+          provider: 'claude',
+          role: 'Reviewer',
+          model: 'claude-model',
+          intent: 'write'
+        },
+        {
+          participantId: 'grok-bg',
+          provider: 'grok',
+          role: 'Background',
+          model: 'grok-model',
+          intent: 'write'
+        }
+      ]
+    })
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([])
     expect(
       harness.chat.ensemble?.activeRound?.participants.some(

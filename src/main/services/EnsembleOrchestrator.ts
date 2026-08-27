@@ -136,6 +136,7 @@ import {
 import type { SeatParticipantAddedPayload, SeatRosterSeat } from '../../shared/seatChange'
 import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
 import { appendAutoApprovalsChangeTranscriptEvent } from './EnsembleAutoApprovalsTranscript'
+import { buildEnsembleFanoutDispatchPayload } from './EnsembleFanoutDispatchTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import { sideMessageLaneMetadataForAudience } from '../../shared/ensembleSideMessage'
 import {
@@ -19489,7 +19490,17 @@ export class EnsembleOrchestrator {
         : options.forceReadOnlyDispatch
           ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
           : `${label} · ${lanePlans.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
-      { fanoutCategory, fanoutLabel: label }
+      {
+        fanoutCategory,
+        fanoutLabel: label,
+        metadata: {
+          ensembleFanoutDispatch: buildEnsembleFanoutDispatchPayload({
+            label,
+            category: fanoutCategory,
+            lanes: lanePlans
+          })
+        }
+      }
     )
 
     // Seed each lane's run synchronously. UUIDs don't collide.

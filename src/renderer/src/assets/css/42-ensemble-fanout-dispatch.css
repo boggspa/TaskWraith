@@ -1,0 +1,62 @@
+/* Immediate fan-out dispatch receipt. The collapsed line deliberately reuses
+ * the durable fan-out viewport classes so a live wave and its later folded
+ * disclosure have the same glyph, scale, and provider-brand language. */
+.ensemble-fanout-dispatch-origin {
+  color: var(--text-primary);
+  font-size: 0.8em;
+  font-weight: 650;
+}
+
+.ensemble-fanout-dispatch-details {
+  display: grid;
+  gap: 6px;
+  padding: 4px 0 5px 31px;
+}
+
+.ensemble-fanout-dispatch-summary {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ensemble-fanout-dispatch-participant {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.ensemble-fanout-dispatch-model {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ensemble-fanout-dispatch-intent {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.ensemble-fanout-dispatch-intent.is-write {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
+}
+
+@media (max-width: 620px) {
+  .ensemble-fanout-dispatch-details {
+    padding-left: 27px;
+  }
+
+  .ensemble-fanout-dispatch-participant {
+    flex-wrap: wrap;
+  }
+
+  .ensemble-fanout-dispatch-intent {
+    margin-left: 0;
+  }
+}

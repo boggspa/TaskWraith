@@ -228,6 +228,7 @@ import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
 import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
 import { isBlackboardChangePayload } from '../../../shared/blackboardChange'
+import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -266,6 +267,7 @@ import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
 import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
 import { BlackboardChangeRow } from './BlackboardChangeRow'
+import { EnsembleFanoutDispatchRow } from './EnsembleFanoutDispatchRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
@@ -1035,6 +1037,9 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Run-authored Blackboard mutations are tool-call-style events, not
     // anonymous system notices. Malformed legacy records keep the fallback.
     !isBlackboardChangePayload(msg.metadata?.blackboardChange) &&
+    // A fan-out dispatch is a tool-style orchestration receipt with attributed
+    // seats, not anonymous System chrome.
+    !isEnsembleFanoutDispatchPayload(msg.metadata?.ensembleFanoutDispatch) &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -4785,6 +4790,9 @@ export const TranscriptPanel = memo(
             const isBlackboardChange = isBlackboardChangePayload(
               msg.metadata?.blackboardChange
             )
+            const isFanoutDispatch = isEnsembleFanoutDispatchPayload(
+              msg.metadata?.ensembleFanoutDispatch
+            )
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
@@ -5733,6 +5741,8 @@ export const TranscriptPanel = memo(
                   <AutoApprovalsChangeRow key={msg.id} message={msg} />
                 ) : isBlackboardChange ? (
                   <BlackboardChangeRow key={msg.id} message={msg} />
+                ) : isFanoutDispatch ? (
+                  <EnsembleFanoutDispatchRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
                   <CollapsedTranscriptRow
                     key={msg.id}
