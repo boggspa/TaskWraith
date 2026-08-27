@@ -15766,6 +15766,11 @@ async function dispatchDueEnsembleScheduledTaskHeadless(
         owner,
         `Scheduled ensemble dispatch: round did not start (${started.status}).`
       )
+    } else {
+      // Durability barrier: the round-started record must be persisted through
+      // the Host before participants dispatch; a failure lands in the catch
+      // below and fails the occurrence loudly.
+      await AppStore.awaitChatRecordPersisted(task.chatId)
     }
   } catch (error) {
     failScheduledOccurrence(
@@ -47205,6 +47210,11 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {})
           })
+          if (result?.status === 'started') {
+            // Durability barrier: persist the round-started record through the
+            // Host before participants dispatch; a failure rejects this IPC.
+            await AppStore.awaitChatRecordPersisted(action.threadId)
+          }
           const ok = result?.status === 'started' || result?.status === 'steered'
           if (ok) {
             broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
@@ -55319,6 +55329,7 @@ if (isGeminiMcpBridgeProcess) {
 
     registerChatHandlers({
       chatService,
+      awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
       beginChatHistoryMutation,
       finishChatHistoryMutation,
       revokeApprovalsForChat,
@@ -58436,6 +58447,7 @@ if (isGeminiMcpBridgeProcess) {
     ensembleOrchestratorRef = new EnsembleOrchestrator({
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
+      persistChatBarrier: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
       getSettings: () => AppStore.getSettings(),
       getChildChats: (chatId) => AppStore.getChildChats(chatId),
       getSubThreadMailbox: (chatId) => AppStore.getSubThreadMailbox(chatId),
@@ -59253,6 +59265,11 @@ if (isGeminiMcpBridgeProcess) {
             ? { projectReferenceContextSelection }
             : {})
         })
+        if (ensembleStartResult?.status === 'started') {
+          // Durability barrier: the round-started record must be persisted
+          // through the Host before this handler reports success.
+          await AppStore.awaitChatRecordPersisted(chatId)
+        }
         return ensembleStartResult
       }
     )

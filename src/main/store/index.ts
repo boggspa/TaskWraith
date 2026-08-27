@@ -66,6 +66,10 @@ import {
 } from './LegacyStoreWriteAdmission'
 import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
+import {
+  createDesktopHostThreadRecordPersistClient,
+  type HostThreadRecordPersistPort
+} from '../host/HostThreadRecordPersistCommand'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
 export type {
@@ -443,6 +447,45 @@ const usagePath = path.join(userDataPath, 'usage.json')
 const usageJournalPath = path.join(userDataPath, 'usage-journal.jsonl')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
 const legacyStoreCanWrite = (): boolean => legacyStoreWriterGate.allowsCurrentWrite()
+
+/**
+ * Desktop -> Host `thread.record.persist` client. Since the Host cutover the
+ * legacy writer gate is Host-owned, so `AppStore.saveChat` can no longer write
+ * `chats/<id>.json` itself; it enqueues the record here instead and trust
+ * boundaries await `AppStore.awaitChatRecordPersisted`. Constructed lazily so a
+ * test can inject a fake port before the first save.
+ */
+let hostThreadRecordPersistPort: HostThreadRecordPersistPort | null = null
+const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
+  if (!hostThreadRecordPersistPort) {
+    hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
+      userDataPath,
+      appVersion: storeRuntime.appVersion || 'unknown'
+    })
+  }
+  return hostThreadRecordPersistPort
+}
+
+/**
+ * One in-flight drain per chat, shared by every awaiter (the orchestrator's
+ * pre-dispatch gate and the IPC call-site barrier must observe the SAME
+ * outcome; two independent drains would race to consume the lane's first
+ * error). The memo entry is dropped as soon as the drain settles.
+ */
+const chatRecordPersistBarriers = new Map<string, Promise<void>>()
+const barrierChatRecordPersist = (chatId: string): Promise<void> => {
+  const existing = chatRecordPersistBarriers.get(chatId)
+  if (existing) return existing
+  const barrier = hostThreadRecordPersist()
+    .drain(chatId)
+    .finally(() => {
+      if (chatRecordPersistBarriers.get(chatId) === barrier) {
+        chatRecordPersistBarriers.delete(chatId)
+      }
+    })
+  chatRecordPersistBarriers.set(chatId, barrier)
+  return barrier
+}
 
 const usageJournalStore = new UsageJournalStore({
   checkpointPath: usagePath,
@@ -7213,10 +7256,110 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
-    return runLegacyStoreWriteAdmission(
-      { operation: 'save-chat', pathFamily: 'chats' },
-      (writerAdmission) => this.saveChatAdmitted(chat, options, writerAdmission)
-    )
+    // When the legacy writer gate is open (or a drain is retaining this exact
+    // writer), persist through the proven admitted path unchanged. Since the
+    // Host cutover the gate is Host-owned and admission throws
+    // LegacyStoreWriterGateClosedError — route the save through the Host
+    // instead (thread.record.persist). Both branches stay synchronous for the
+    // 86 existing call sites.
+    if (legacyStoreCanWrite()) {
+      return runLegacyStoreWriteAdmission(
+        { operation: 'save-chat', pathFamily: 'chats' },
+        (writerAdmission) => this.saveChatAdmitted(chat, options, writerAdmission)
+      )
+    }
+    return this.saveChatThroughHost(chat)
+  }
+
+  /**
+   * Host-owned-gate persistence path. Updates the in-memory projection
+   * synchronously (cache, input-object revision stamp, broadcast envelope) and
+   * enqueues the complete record for the Host's `thread.record.persist`
+   * command. The enqueue never throws; durability is raised at explicit
+   * barriers (`awaitChatRecordPersisted`) so a genuine persistence failure
+   * still surfaces loudly at round start instead of silently at 85 call sites.
+   *
+   * Revision contract: the Host owns the counter (persistThreadRecord writes 0
+   * on create and previous+1 on update), so the enqueued record is stamped
+   * with exactly the value the Host will write, and expectedRevision is the
+   * revision the caller last observed. The desktop and Host counters stay in
+   * lockstep because every write to this record now flows through this queue.
+   */
+  private static saveChatThroughHost(chat: ChatRecord): ChatRecord {
+    this.assertHistoryMutationAllowed({
+      operation: 'Chat persistence',
+      chatIds: [chat.appChatId, chat.parentChatId],
+      workspaceIds: [chat.workspaceId],
+      runIds: (chat.runs || []).map((run) => run.runId)
+    })
+    const settings = this.getSettings()
+    if (!settings.storeLocalChatHistory) return chat
+    if ((chat as Partial<ChatListItem>).summaryOnly === true) {
+      throw new Error('Cannot save a summary-only chat record; hydrate the chat first.')
+    }
+    const chatPath = chatPathForId(chatsDir, chat.appChatId)
+    const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
+    // Same main-owned-field protection as the admitted path: renderer-owned
+    // records can lag main's async patchers, and a lean chat-list ensemble row
+    // must never erase the stored roster.
+    const {
+      threadWorktreeBinding: _rendererThreadWorktreeBinding,
+      watchedPr: _rendererWatchedPr,
+      gitWorkflow: _rendererGitWorkflow,
+      fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
+      ...rendererOwnedChat
+    } = chat
+    const chatWithMainOwnedFields: ChatRecord = {
+      ...rendererOwnedChat,
+      ...(previousChatForFeedback?.threadWorktreeBinding
+        ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
+        : {}),
+      ...(previousChatForFeedback?.watchedPr
+        ? { watchedPr: { ...previousChatForFeedback.watchedPr } }
+        : {}),
+      ...(previousChatForFeedback?.gitWorkflow
+        ? { gitWorkflow: { ...previousChatForFeedback.gitWorkflow } }
+        : {}),
+      ...(previousChatForFeedback?.fanoutWorktreeCandidates?.length
+        ? {
+            fanoutWorktreeCandidates: previousChatForFeedback.fanoutWorktreeCandidates.map(
+              (candidate) => ({ ...candidate })
+            )
+          }
+        : {}),
+      ...(this.isChatListEnsembleProjection(chat.ensemble)
+        ? previousChatForFeedback?.ensemble
+          ? { ensemble: previousChatForFeedback.ensemble }
+          : { ensemble: this.withoutChatListEnsembleProjectionFlag(chat.ensemble!) }
+        : {})
+    }
+    const normalizedChat = this.normalizeChatRecord(chatWithMainOwnedFields)
+    normalizedChat.updatedAt = Date.now()
+    const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
+    normalizedChat.persistenceRevision =
+      previousChatForFeedback === null ? 0 : expectedRevision + 1
+    if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
+      return previousChatForFeedback || normalizedChat
+    }
+    // In-memory projection: this process reads the new record immediately.
+    this.chatRecordCache.set(normalizedChat.appChatId, {
+      mtimeMs: -1,
+      size: -1,
+      record: normalizedChat
+    })
+    const chatUpdateProjection: ChatUpdateProjectionObservation = {
+      state: chatUpdateProjectionTracker.seed(normalizedChat),
+      delta: null
+    }
+    attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
+    attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
+    chat.persistenceRevision = normalizedChat.persistenceRevision
+    hostThreadRecordPersist().enqueue({
+      chatId: normalizedChat.appChatId,
+      record: normalizedChat,
+      expectedRevision
+    })
+    return normalizedChat
   }
 
   private static saveChatAdmitted(
@@ -7580,6 +7723,24 @@ export class AppStore {
   static flushChatSave(chatId: string): boolean {
     if (!legacyStoreCanWrite()) return false
     return saveCoalescer.flush(chatId)
+  }
+
+  /**
+   * Durability barrier for the Host-routed persistence path: resolves once the
+   * chat's queued `thread.record.persist` work has landed, and RETHROWS the
+   * first typed failure (HostThreadRecordPersistError). Awaited before
+   * ensemble participant dispatch and on ensemble-chat creation so a genuine
+   * persistence failure surfaces at the exact site where the user meets it.
+   * Concurrent awaiters share one in-flight drain and all observe its outcome.
+   */
+  static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    return barrierChatRecordPersist(chatId)
+  }
+
+  /** Test seam: swap the Host persist port and drop any memoized barriers. */
+  static setHostThreadRecordPersistPortForTests(port: HostThreadRecordPersistPort | null): void {
+    hostThreadRecordPersistPort = port
+    chatRecordPersistBarriers.clear()
   }
 
   /**

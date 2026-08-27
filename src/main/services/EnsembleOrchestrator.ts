@@ -789,6 +789,15 @@ export interface EnsembleOrchestratorDeps {
    */
   recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
   persistSessionCheckpoint?: (chat: ChatRecord, reason: SessionCheckpointReason) => void
+  /**
+   * Host-routed chat-persistence durability barrier (AppStore.saveChat's
+   * Host-owned-gate branch enqueues; this drains). runRound awaits it before
+   * the first participant dispatch so a persistence failure fails the round
+   * loudly instead of dispatching on unpersisted state. Optional so the
+   * unit-test harness can omit it (no barrier then — the legacy gate path
+   * persists synchronously and needs none).
+   */
+  persistChatBarrier?: (chatId: string) => Promise<void>
   completeSessionCheckpoint?: (
     chatId: string,
     roundId: string,
@@ -16500,6 +16509,14 @@ export class EnsembleOrchestrator {
       promptOverride?: string
     } = {}
   ): Promise<void> {
+    if (this.deps.persistChatBarrier) {
+      // Durability barrier: the round-started save (and every queued save
+      // before it) must have landed in the Host profile before the first
+      // participant dispatch. A rejection here rejects runRound; the startRound
+      // kickoff's catch fails the round loudly rather than dispatching on
+      // unpersisted state.
+      await this.deps.persistChatBarrier(runtime.chatId)
+    }
     if (runtime.startAfterCancellation) {
       await runtime.startAfterCancellation.catch(() => undefined)
       if (

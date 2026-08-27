@@ -78,6 +78,13 @@ export interface ChatHandlerDeps {
   >
   /** Host-owned chat-kind mutation; tests inject it, production uses a narrow main-only Host session. */
   setChatKindMutation?: (input: SetChatKindInput) => Promise<ChatRecord>
+  /**
+   * Host-routed chat-persistence durability barrier (AppStore.saveChat's
+   * Host-owned-gate branch enqueues; this drains). Awaited after ensemble-chat
+   * creation so a persistence failure rejects the IPC instead of returning an
+   * unpersisted chat. Optional so unit-test harnesses can omit it.
+   */
+  awaitChatRecordPersisted?: (chatId: string) => Promise<void>
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
   /** Revoke/claim provider approval authority synchronously before graph awaits. */
@@ -394,6 +401,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
       const configuredProviders = await deps.detectConfiguredProviders(deps.getSettings())
       const chat = deps.chatService.createEnsembleChat(args, configuredProviders)
+      // Durability barrier: the new ensemble record must be persisted through
+      // the Host before the renderer receives it; a failure rejects this IPC.
+      if (chat) await deps.awaitChatRecordPersisted?.(chat.appChatId)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
