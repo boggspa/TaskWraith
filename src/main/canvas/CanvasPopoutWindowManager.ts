@@ -48,6 +48,7 @@ export interface CanvasPopoutWindowManagerDeps {
 
 interface CanvasPopoutRecord {
   readonly chatId: string
+  readonly senderId: number
   readonly window: CanvasPopoutWindowHandle
   closingReason: 'closed' | 'docked'
 }
@@ -87,7 +88,7 @@ export class CanvasPopoutWindowManager {
   ): Promise<CanvasPopoutOpenResult> {
     const existing = this.byChatId.get(input.chatId)
     if (existing && !existing.window.isDestroyed() && !existing.window.webContents.isDestroyed()) {
-      const senderId = existing.window.webContents.id
+      const senderId = existing.senderId
       await beforePresent?.(senderId)
       if (existing.window.isMinimized()) existing.window.restore()
       existing.window.focus()
@@ -99,11 +100,12 @@ export class CanvasPopoutWindowManager {
     const window = this.deps.createWindow()
     const record: CanvasPopoutRecord = {
       chatId: input.chatId,
+      senderId: window.webContents.id,
       window,
       closingReason: 'closed'
     }
     this.byChatId.set(input.chatId, record)
-    this.bySenderId.set(window.webContents.id, record)
+    this.bySenderId.set(record.senderId, record)
     window.on('ready-to-show', () => {
       if (!window.isDestroyed()) window.show()
     })
@@ -112,16 +114,16 @@ export class CanvasPopoutWindowManager {
       void Promise.resolve(
         this.deps.onWindowClosed?.({
           chatId: record.chatId,
-          senderId: window.webContents.id,
+          senderId: record.senderId,
           reason: record.closingReason
         })
       ).catch(() => undefined)
     })
 
     try {
-      await beforePresent?.(window.webContents.id)
+      await beforePresent?.(record.senderId)
       await this.deps.loadWindow(window, input)
-      return { senderId: window.webContents.id, created: true }
+      return { senderId: record.senderId, created: true }
     } catch (error) {
       this.forget(record)
       if (!window.isDestroyed()) window.close()
@@ -157,8 +159,8 @@ export class CanvasPopoutWindowManager {
 
   private forget(record: CanvasPopoutRecord): void {
     if (this.byChatId.get(record.chatId) === record) this.byChatId.delete(record.chatId)
-    if (this.bySenderId.get(record.window.webContents.id) === record) {
-      this.bySenderId.delete(record.window.webContents.id)
+    if (this.bySenderId.get(record.senderId) === record) {
+      this.bySenderId.delete(record.senderId)
     }
   }
 }

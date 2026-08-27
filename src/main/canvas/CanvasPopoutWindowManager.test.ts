@@ -12,14 +12,19 @@ class FakeWindow implements CanvasPopoutWindowHandle {
   focused = false
   readonly sent: Array<[string, unknown]> = []
   private readonly listeners = new Map<string, Array<() => void>>()
-  readonly webContents: CanvasPopoutWindowHandle['webContents']
+  private readonly contents: CanvasPopoutWindowHandle['webContents']
 
   constructor(id: number) {
-    this.webContents = {
+    this.contents = {
       id,
       isDestroyed: () => this.destroyed,
       send: (channel, payload) => this.sent.push([channel, payload])
     }
+  }
+
+  get webContents(): CanvasPopoutWindowHandle['webContents'] {
+    if (this.destroyed) throw new Error('WebContents was destroyed')
+    return this.contents
   }
 
   isDestroyed(): boolean {
