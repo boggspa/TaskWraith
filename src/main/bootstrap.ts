@@ -10,12 +10,14 @@ import type { Event } from 'electron'
 import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
 import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
 import { bootstrapMainProcess, type SecondInstanceEventArguments } from './MainProcessBootstrap'
+import { isDesktopExternalHostEnabled } from './host/DesktopExternalHostPolicy'
 import {
   createHostExternalPreparation,
   type HostExternalPreparation
 } from './host/HostExternalPreparation'
 import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
+import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 
@@ -114,6 +116,11 @@ function createExternalHostPreparation(profilePath: string): HostExternalPrepara
   })
 }
 
+function boundedBootstrapError(error: unknown): string {
+  const value = error instanceof Error ? error.message : String(error)
+  return (value.replace(/\s+/g, ' ').trim() || 'unknown failure').slice(0, 300)
+}
+
 let externalHostPreparation: HostExternalPreparation | null = null
 void bootstrapMainProcess({
   isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
@@ -133,9 +140,27 @@ void bootstrapMainProcess({
     if (migration.state === 'failed' || migration.state === 'invalid_profile') {
       throw new Error('Legacy userData migration did not complete safely.')
     }
-    if (process.env.TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1') return
+    if (!isDesktopExternalHostEnabled()) {
+      await drainLegacyStoreForInProcessHost({ profilePath })
+      return
+    }
     externalHostPreparation = createExternalHostPreparation(profilePath)
-    await externalHostPreparation.prepare()
+    try {
+      await externalHostPreparation.prepare()
+    } catch (error) {
+      console.error(
+        `[main-bootstrap] external Host unavailable; using in-process Host: ${boundedBootstrapError(error)}`
+      )
+      try {
+        await externalHostPreparation.cleanup()
+      } catch (cleanupError) {
+        console.error(
+          `[main-bootstrap] external Host cleanup failed: ${boundedBootstrapError(cleanupError)}`
+        )
+      }
+      externalHostPreparation = null
+      await drainLegacyStoreForInProcessHost({ profilePath })
+    }
   },
   cleanupPreparedMainProcess: async () => {
     await externalHostPreparation?.cleanup()

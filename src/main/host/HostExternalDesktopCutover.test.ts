@@ -2,16 +2,27 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+import { isDesktopExternalHostEnabled } from './DesktopExternalHostPolicy'
+
 const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 const bootstrap = readFileSync(join(process.cwd(), 'src/main/bootstrap.ts'), 'utf8')
 
 describe('Desktop external Host cutover', () => {
+  it('defaults Desktop onto the external Host with an explicit 0 opt-out', () => {
+    expect(isDesktopExternalHostEnabled({})).toBe(true)
+    expect(isDesktopExternalHostEnabled({ TASKWRAITH_DESKTOP_EXTERNAL_HOST: '0' })).toBe(false)
+    expect(bootstrap).toContain('if (!isDesktopExternalHostEnabled())')
+  })
+
   it('consumes bootstrap preparation before constructing the Desktop broker', () => {
     const consume = source.indexOf('consumePreparedExternalHost(externalHostProfilePath)')
     const broker = source.indexOf('const desktopHostBroker = createHostProjectionBroker({')
     expect(consume).toBeGreaterThanOrEqual(0)
     expect(consume).toBeLessThan(broker)
-    expect(bootstrap).toContain("process.env.TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1'")
+    expect(bootstrap).toContain('isDesktopExternalHostEnabled')
+    expect(bootstrap).toContain('drainLegacyStoreForInProcessHost')
+    expect(bootstrap).not.toContain("TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1'")
+    expect(bootstrap).toContain('using in-process Host')
     expect(bootstrap.indexOf('prepareMainProcess:')).toBeLessThan(
       bootstrap.indexOf("loadMainProcess: () => import('./index')")
     )

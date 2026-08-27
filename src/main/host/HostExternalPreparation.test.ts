@@ -188,4 +188,14 @@ describe('HostExternalPreparation', () => {
       /electron|AppStore|\.\.\/\.\.\/tui|from ['"]\.\.\/index|import\s*\(/i
     )
   })
+
+  it('persists the default writer gate so the Host can see ownership', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/main/host/HostExternalPreparation.ts'),
+      'utf8'
+    )
+    expect(source).toContain(
+      'persistLegacyStoreWriterGate(options.profilePath, legacyStoreWriterGate)'
+    )
+  })
 })

@@ -12,6 +12,7 @@ import {
   type PreparedExternalHost
 } from './HostExternalRuntimeState'
 import type { HostExternalEnsureResult, HostExternalSupervisor } from './HostExternalSupervisor'
+import { persistLegacyStoreWriterGate } from './LegacyStoreWriterGatePersistence'
 
 export type HostExternalPreparationPhase =
   | 'idle'
@@ -66,7 +67,8 @@ export function createHostExternalPreparation(
   ) {
     throw new Error('External Host preparation requires migration and supervisor factories.')
   }
-  const writerGate: HostExternalPreparationWriterGate = options.writerGate ?? legacyStoreWriterGate
+  const writerGate: HostExternalPreparationWriterGate =
+    options.writerGate ?? persistLegacyStoreWriterGate(options.profilePath, legacyStoreWriterGate)
   const createCutoverId = options.createCutoverId ?? randomUUID
   const publishPrepared = options.publishPrepared ?? publishPreparedExternalHost
   const clearPrepared = options.clearPrepared ?? clearPreparedExternalHost
