@@ -193,14 +193,108 @@ function interactionDecision(decision: string): 'accept' | 'decline' {
     : 'decline'
 }
 
-function codexApprovalResponse(
-  method: string,
-  decision: 'accept' | 'decline'
-): Record<string, unknown> {
-  if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-    return { action: decision, content: null, _meta: null }
+function isCodexQuestionMethod(method: string): boolean {
+  return (
+    method === 'mcpServer/elicitation/request' ||
+    method === 'mcp/elicitation/request' ||
+    method === 'tool/requestUserInput'
+  )
+}
+
+function boundedText(value: unknown, max: number): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  return trimmed.length <= max ? trimmed : trimmed.slice(0, max)
+}
+
+function firstQuestion(params: Record<string, unknown> | null): Record<string, unknown> | null {
+  return Array.isArray(params?.questions) ? readObject(params.questions[0]) : null
+}
+
+function questionOptions(params: Record<string, unknown> | null): readonly string[] | undefined {
+  const collected: string[] = []
+  const seen = new Set<string>()
+  const push = (raw: unknown): void => {
+    if (collected.length >= 16) return
+    const rec = readObject(raw)
+    const label = boundedText(
+      typeof raw === 'string' ? raw : (rec?.label ?? rec?.id ?? rec?.value),
+      512
+    )
+    if (!label || seen.has(label) || /[\u0000-\u001f\u007f]/.test(label)) return
+    seen.add(label)
+    collected.push(label)
   }
+  if (Array.isArray(params?.options)) {
+    for (const option of params.options) push(option)
+  }
+  const question = firstQuestion(params)
+  if (Array.isArray(question?.options)) {
+    for (const option of question.options) push(option)
+  }
+  const schema = readObject(params?.requestedSchema) ?? readObject(params?.schema)
+  const properties = readObject(schema?.properties)
+  if (properties) {
+    for (const prop of Object.values(properties)) {
+      const rec = readObject(prop)
+      if (Array.isArray(rec?.enum)) {
+        for (const option of rec.enum) push(option)
+      }
+    }
+  }
+  return collected.length > 0 ? collected : undefined
+}
+
+function questionPresentation(
+  method: string,
+  params: Record<string, unknown> | null
+): { title: string; summary: string; options?: readonly string[] } {
+  const question = firstQuestion(params)
+  const title =
+    boundedText(params?.title, 200) ||
+    boundedText(params?.message, 200) ||
+    boundedText(question?.question, 200) ||
+    boundedText(params?.header, 200) ||
+    boundedText(question?.header, 200) ||
+    boundedText(question?.title, 200) ||
+    boundedText(params?.name, 200) ||
+    (method === 'tool/requestUserInput' ? 'Codex question' : 'Codex elicitation')
+  const summary =
+    boundedText(params?.message, 1000) ||
+    boundedText(question?.question, 1000) ||
+    boundedText(params?.prompt, 1000) ||
+    boundedText(question?.context, 1000) ||
+    (method === 'tool/requestUserInput'
+      ? 'Codex requested user input: ' + title + '.'
+      : 'Codex requested elicitation for ' + title + '.')
+  const options = questionOptions(params)
+  return options ? { title, summary, options } : { title, summary }
+}
+
+function codexApprovalResponse(decision: 'accept' | 'decline'): Record<string, unknown> {
   return { decision }
+}
+
+function codexQuestionResult(
+  method: string,
+  settlement: { readonly decision: string; readonly answer?: string } | null
+): { result: Record<string, unknown> } | { error: { code: number; message: string } } {
+  const answered = settlement?.decision === 'answer'
+  const answer = typeof settlement?.answer === 'string' ? settlement.answer : ''
+  if (method === 'tool/requestUserInput') {
+    if (!answered) {
+      return { error: { code: -32000, message: 'User dismissed Codex input request.' } }
+    }
+    return { result: { answers: { default: answer } } }
+  }
+  return {
+    result: {
+      action: answered ? 'accept' : 'decline',
+      content: answered ? answer : null,
+      _meta: null
+    }
+  }
 }
 
 class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
@@ -429,11 +523,56 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
           at: timestamp()
         })
       }
+      const handleQuestionRequest = (
+        rpcId: string | number,
+        method: string,
+        params: Record<string, unknown> | null
+      ): void => {
+        const presentation = questionPresentation(method, params)
+        const interactionId =
+          PROVIDER_ID + ':' + request.runId + ':question:' + ++interactionSequence
+        const deliver = (
+          settlement: { readonly decision: string; readonly answer?: string } | null
+        ): void => {
+          if (settled || deliveredApprovalIds.has(interactionId)) return
+          deliveredApprovalIds.add(interactionId)
+          try {
+            const payload = codexQuestionResult(method, settlement)
+            child.stdin.write(
+              JSON.stringify(
+                'error' in payload
+                  ? { id: rpcId, error: payload.error }
+                  : { id: rpcId, result: payload.result }
+              ) + '\n'
+            )
+          } catch {
+            failure = failure || 'Codex question response could not be delivered.'
+          }
+        }
+        void this.interactions
+          .register({
+            id: interactionId,
+            kind: 'question',
+            providerId: PROVIDER_ID,
+            runId: request.runId,
+            threadId: thread.threadId,
+            title: presentation.title,
+            summary: presentation.summary,
+            ...(presentation.options ? { options: presentation.options } : {}),
+            createdAt: timestamp()
+          })
+          .then((settlement) => deliver(settlement))
+          .catch(() => deliver(null))
+      }
       const handleApprovalRequest = (frame: Record<string, unknown>): void => {
         const rpcId = frame.id
         const method = typeof frame.method === 'string' ? frame.method : ''
         if (!method || (typeof rpcId !== 'string' && typeof rpcId !== 'number')) return
         const params = readObject(frame.params)
+        if (isCodexQuestionMethod(method)) {
+          handleQuestionRequest(rpcId, method, params)
+          return
+        }
         const rawTitle =
           (typeof params?.toolName === 'string' && params.toolName) ||
           (typeof params?.tool_name === 'string' && params.tool_name) ||
@@ -447,7 +586,7 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
           deliveredApprovalIds.add(interactionId)
           try {
             child.stdin.write(
-              JSON.stringify({ id: rpcId, result: codexApprovalResponse(method, decision) }) + '\n'
+              JSON.stringify({ id: rpcId, result: codexApprovalResponse(decision) }) + '\n'
             )
           } catch {
             failure = failure || 'Codex approval response could not be delivered.'
@@ -716,7 +855,7 @@ export function createHostNodeCodexProvider(
     shortCode: entry.shortCode,
     offers,
     supportsApprovals: true,
-    supportsQuestions: false,
+    supportsQuestions: true,
     create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
       return new HostNodeCodexProviderInstance(input.runPort, input.interactions, offers, options)
     }

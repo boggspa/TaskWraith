@@ -166,7 +166,7 @@ describe('HostNodeCodexProvider', () => {
   it('drives the Node-only app-server handshake and settles on its terminal turn notification', async () => {
     const { factory, instance, child, appends, finishes, events } = open()
     const sent = frames(child)
-    expect(factory).toMatchObject({ supportsApprovals: true, supportsQuestions: false })
+    expect(factory).toMatchObject({ supportsApprovals: true, supportsQuestions: true })
     const running = instance.run({
       runId: 'run-1',
       threadId: 'thread-1',
@@ -290,6 +290,247 @@ describe('HostNodeCodexProvider', () => {
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'failed' })
   })
+
+  it('registers a Codex elicitation as a question and delivers the answer on stdin', async () => {
+    let settle!: (value: {
+      id: string
+      kind: 'question'
+      decision: 'answer'
+      answer: string
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }) => void
+    const settlement = new Promise<{
+      id: string
+      kind: 'question'
+      decision: 'answer'
+      answer: string
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }>((resolve) => {
+      settle = resolve
+    })
+    const interactions = {
+      register: vi.fn(() => settlement)
+    } satisfies HostNodeInteractionResolver
+    const { factory, instance, child } = open({ interactions })
+    expect(factory).toMatchObject({ supportsQuestions: true })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 'elicit-1',
+        method: 'mcpServer/elicitation/request',
+        params: {
+          message: 'Which branch?',
+          requestedSchema: {
+            type: 'object',
+            properties: { default: { type: 'string', enum: ['main', 'dev'] } }
+          }
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(interactions.register).toHaveBeenCalledOnce())
+    expect(interactions.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'question',
+        providerId: 'codex',
+        runId: 'run-1',
+        threadId: 'thread-1',
+        title: 'Which branch?',
+        summary: 'Which branch?',
+        options: ['main', 'dev']
+      })
+    )
+
+    settle({
+      id: 'codex:run-1:question:1',
+      kind: 'question',
+      decision: 'answer',
+      answer: 'main',
+      actor: { clientId: 'client', clientClass: 'tui', actorId: 'client' }
+    })
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"elicit-1"'))).toHaveLength(1)
+    )
+    expect(sent.join('')).toContain('"action":"accept"')
+    expect(sent.join('')).toContain('"content":"main"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+  })
+
+  it('delivers requestUserInput answers as {answers:{default}} on the same rpcId', async () => {
+    let settle!: (value: {
+      id: string
+      kind: 'question'
+      decision: 'answer' | 'dismiss'
+      answer?: string
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }) => void
+    const settlement = new Promise<{
+      id: string
+      kind: 'question'
+      decision: 'answer' | 'dismiss'
+      answer?: string
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }>((resolve) => {
+      settle = resolve
+    })
+    const interactions = {
+      register: vi.fn(() => settlement)
+    } satisfies HostNodeInteractionResolver
+    const { instance, child } = open({ interactions })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 'input-1',
+        method: 'tool/requestUserInput',
+        params: {
+          questions: [{ id: 'default', question: 'Commit message?', options: ['ship', 'wait'] }]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(interactions.register).toHaveBeenCalledOnce())
+    expect(interactions.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'question',
+        title: 'Commit message?',
+        summary: 'Commit message?',
+        options: ['ship', 'wait']
+      })
+    )
+
+    settle({
+      id: 'codex:run-1:question:1',
+      kind: 'question',
+      decision: 'answer',
+      answer: 'ship',
+      actor: { clientId: 'client', clientClass: 'tui', actorId: 'client' }
+    })
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"input-1"'))).toHaveLength(1)
+    )
+    expect(sent.join('')).toContain('"answers"')
+    expect(sent.join('')).toContain('"default":"ship"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+  })
+
+  it('declines a dismissed elicitation on the same rpcId stdin channel', async () => {
+    let settle!: (value: {
+      id: string
+      kind: 'question'
+      decision: 'dismiss'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }) => void
+    const settlement = new Promise<{
+      id: string
+      kind: 'question'
+      decision: 'dismiss'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }>((resolve) => {
+      settle = resolve
+    })
+    const interactions = {
+      register: vi.fn(() => settlement)
+    } satisfies HostNodeInteractionResolver
+    const { instance, child } = open({ interactions })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 'elicit-2',
+        method: 'mcp/elicitation/request',
+        params: { message: 'Continue?' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(interactions.register).toHaveBeenCalledOnce())
+    expect(interactions.register).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'question', title: 'Continue?' })
+    )
+
+    settle({
+      id: 'codex:run-1:question:1',
+      kind: 'question',
+      decision: 'dismiss',
+      actor: { clientId: 'client', clientClass: 'tui', actorId: 'client' }
+    })
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"elicit-2"'))).toHaveLength(1)
+    )
+    expect(sent.join('')).toContain('"action":"decline"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+  })
+
+  it('rejects a dismissed requestUserInput on the same rpcId stdin channel', async () => {
+    let settle!: (value: {
+      id: string
+      kind: 'question'
+      decision: 'dismiss'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }) => void
+    const settlement = new Promise<{
+      id: string
+      kind: 'question'
+      decision: 'dismiss'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }>((resolve) => {
+      settle = resolve
+    })
+    const interactions = {
+      register: vi.fn(() => settlement)
+    } satisfies HostNodeInteractionResolver
+    const { instance, child } = open({ interactions })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 'input-2',
+        method: 'tool/requestUserInput',
+        params: { questions: [{ id: 'default', question: 'Name?' }] }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(interactions.register).toHaveBeenCalledOnce())
+
+    settle({
+      id: 'codex:run-1:question:1',
+      kind: 'question',
+      decision: 'dismiss',
+      actor: { clientId: 'client', clientClass: 'tui', actorId: 'client' }
+    })
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"input-2"'))).toHaveLength(1)
+    )
+    expect(sent.join('')).toContain('"error"')
+    expect(sent.join('')).toContain('User dismissed Codex input request.')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+  })
+
   it('resolves unknown resource auth into configured or auth-required status', async () => {
     const unconfigured = open({ authState: 'unknown', isConfigured: () => false })
     await expect(unconfigured.instance.getStatus()).resolves.toMatchObject({
