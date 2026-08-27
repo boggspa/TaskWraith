@@ -84,6 +84,25 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 
 ## TestFlight / App Store archive path
 
+### P0 distribution gate — release-candidate cryptographic review
+
+| DRI         | Target     | Status                                                                        |
+| ----------- | ---------- | ----------------------------------------------------------------------------- |
+| Chris Izatt | 2026-09-03 | **BLOCKING** — no new external TestFlight or App Store candidate until closed |
+
+The DRI owns scheduling, evidence collection, finding closure, and the final
+go/no-go record; the reviewer must be independent of the implementation being
+reviewed. The review is against the exact release-candidate commit and exported
+artifact. The v0.38 adversarial review remains useful historical evidence, but
+it is not blanket approval for later APNs, Live Activity, voice-input, offline
+outbox, media-annotation, or git-action deltas.
+
+Closing the gate requires one checked-in release record naming the reviewed
+commit and artifact, reviewer, review date, findings, disposition of every
+CRITICAL/HIGH finding, accepted residual risk, and confirmation that
+`AppStorePrivacyNotes.md` plus export-compliance answers still describe the
+artifact that will ship. Feature completion never overrides this gate.
+
 The generated Xcode project has a shared `TaskWraith` scheme and a Release
 archive configuration. Use the scripts so versioning, entitlements, and export
 options stay reproducible:

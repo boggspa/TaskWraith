@@ -1168,6 +1168,13 @@ every time.
 
 ## Current follow-ups
 
+**P0 distribution gate (established 2026-08-27):** Chris Izatt owns the
+release-candidate cryptographic review, targeted for 2026-09-03. No new external
+TestFlight or App Store candidate ships before the exact commit and exported
+artifact pass an implementation-independent review and the findings have a
+recorded disposition. This gate outranks every feature follow-up below; the
+operational closure evidence is defined in `TaskWraithApp/README.md`.
+
 1. Define the confirmation and elevation contract for `workflowDelete` before
    adding any destructive workflow control on iOS.
 2. Keep the first-launch, settings, usage, and provider-readiness surfaces in
