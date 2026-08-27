@@ -59,9 +59,13 @@ describe('project reference context dispatch acceptance', () => {
 
   it('enables the Composer for an explicit reference-only solo or ensemble send', () => {
     expect(composerSource).toContain('hasProjectReferenceContext = false')
-    expect(composerSource).toContain(
-      'hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext'
+    const sendableContent = sourceBetween(
+      composerSource,
+      'const hasSendablePromptContent =',
+      'const [scheduledNowMs'
     )
+    expect(sendableContent).toContain('hasAttachmentPromptContent(prompt, imageAttachments)')
+    expect(sendableContent).toContain('hasProjectReferenceContext')
     expect(appSource).toContain('currentProjectReferenceContextSelection?.referenceIds.length')
     expect(appSource).not.toContain(
       'currentProjectReferenceContextSelection?.referenceIds.length && !isCurrentEnsembleChat'

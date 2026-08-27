@@ -342,6 +342,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSideChatChange,
   handleSideProviderChange,
   handleSideRun,
+  handleSideSteer,
   handleSidebarPrimarySurfaceSelect,
   handleSidebarQuickUpdate,
   handleStartProjectHome,
@@ -1111,6 +1112,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         screenWatchUnavailableReason:
           'Open this linked chat as the main thread to attach an app window.',
         handleRun: handleSideRun,
+        handleSteer: handleSideSteer,
         handleCancel: handleSideCancel,
         handleAgentApprovalAction: handleSideAgentApprovalAction,
         handleProviderChange: handleSideProviderChange,

@@ -214,6 +214,7 @@ import {
   codexNativeAutoApprovalFromPosture,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
+import { createCodexLiveSteerTransport } from './codex/CodexLiveSteerTransport'
 import { isCodexUserInputRequestMethod } from './codex/CodexUserInput'
 import { collectCodexUserInput } from './codex/CodexUserInputBridge'
 import { buildCodexAppServerThreadLaunchPlan } from './codex/CodexAppServerThreadLaunchPlan'
@@ -399,10 +400,7 @@ import {
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
-import {
-  SOLO_STEER_TRANSCRIPT_PREPARATION,
-  midRunQueuedMessageId
-} from '../shared/midRunSteeringQueue'
+import { midRunQueuedMessageId } from '../shared/midRunSteeringQueue'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../shared/tokenEstimate'
 import { AGENT_QUESTION_TIMEOUT_MS } from '../shared/interactionTimeouts'
@@ -731,8 +729,13 @@ import {
 } from './run/MidRunSteering'
 import { createMidRunSteeringDispatchReceipt } from './run/MidRunSteeringDispatchReceipt'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
+import { ToolBoundarySteerCoordinator } from './steering/ToolBoundarySteer'
+import { createClaudePostToolBatchSteerHook } from './steering/ClaudePostToolBatchSteer'
+import { classifyPreparedSoloSteerPayload } from './steering/SteeringPayloadPolicy'
+import { resolveSoloSteerInjectionAuthority } from './steering/SoloSteerInjectionAuthority'
+import { rendererMutationTargetsMainOwnedSteer } from './steering/RendererSteerMutationAuthority'
 import { steerEnsembleSideMessageToActiveRuns } from './steering/EnsembleSideMessageSteering'
-import { drainPendingSteerTextFromSession } from './steering/BrokerSteerTransport'
+import { reservePendingSteerTextFromSession } from './steering/BrokerSteerTransport'
 import { midTurnSteerEnabled } from './steering/SteeringFeatureGate'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
@@ -883,8 +886,14 @@ import {
 } from './ipc/executionGraphHandlers'
 import {
   createMainOwnedRunQueueAttachmentStager,
-  resolveMainOwnedQueuedComposerAttachments
+  resolveMainOwnedQueuedComposerAttachmentAuthority,
+  resolveMainOwnedQueuedRunAttachmentPayloadAuthority,
+  resolveMainOwnedQueuedSteerImagePaths
 } from './RunQueueAttachmentAuthority'
+import {
+  signRunQueueDirectoryAttachmentReceipt,
+  verifyRunQueueDirectoryAttachmentReceipt
+} from './RunQueueDirectoryAttachmentReceipt'
 import {
   authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
@@ -3355,8 +3364,8 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   appendLimitedOutput,
   executeGeminiMcpTool,
   resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
-  drainPendingSteerText: (appRunId: string) =>
-    drainPendingSteerTextFromSession(runManager.get(appRunId)),
+  reservePendingSteerText: (appRunId: string) =>
+    reservePendingSteerTextFromSession(runManager.get(appRunId)),
   onBrokerRequestAbandoned: cancelAbandonedBrokerHostCommands,
   installGeminiToolContextForRun,
   sendAgentCompatLine
@@ -8880,6 +8889,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 runManager.onChange((event) => {
   liveSteeringCoordinator.handleRunSessionChange(event)
   if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
+    toolBoundarySteerCoordinator.forget(event.session.runId)
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
     workspaceLockTerminalReconcilerRef.terminal(event.session.runId)
@@ -16020,22 +16030,73 @@ const liveSteeringCoordinator = new LiveSteeringCoordinator({
     midTurnSteeringEnabled: midTurnSteerEnabled(),
     piLiveSteerEnabled: piLiveSteerEnabled()
   },
-  completeQueuedRun: (runId, reason) =>
-    Boolean(
-      runQueueServiceRef?.transitionJob(runId, 'completed', {
+  markAdmissionPending: ({ runId, ownerToken, activeRunId, strategy }) => {
+    const fenced = runQueueServiceRef?.markPromotedSteerAdmissionPending({
+        runId,
+        ownerToken,
+        activeRunId,
+        strategy
+      })
+    return fenced?.status === 'steer_promoting' && fenced.steerDeliveryPhase === 'provider_admission_pending'
+  },
+  releaseDefinitelyRejectedQueuedRun: ({ runId, ownerToken, reason }) => {
+    const released = runQueueServiceRef?.releasePromotedSteerAfterDefiniteNonAdmission({
+        runId,
+        ownerToken,
+        reason
+      })
+    return released?.status === 'queued'
+  },
+  completeQueuedRun: (runId, reason) => {
+    const completed = runQueueServiceRef?.transitionJob(runId, 'completed', {
         statusReason: reason
       })
-    ),
-  fallbackQueuedRun: ({ runId, ownerToken, reason }) =>
-    Boolean(
-      runQueueServiceRef?.fallbackPromotedSteerJob({
+    return completed?.status === 'completed'
+  },
+  failQueuedRun: (runId, reason) => {
+    const failed = runQueueServiceRef?.transitionJob(runId, 'failed', {
+        statusReason: reason,
+        lastError: reason
+      })
+    return failed?.status === 'failed'
+  },
+  fallbackQueuedRun: ({ runId, ownerToken, reason }) => {
+    const fallback = runQueueServiceRef?.fallbackPromotedSteerJob({
         runId,
         ownerToken,
         reason,
         fallbackStatus: 'queued'
       })
-    )
+    return fallback?.status === 'queued'
+  }
 })
+const toolBoundarySteerCoordinator = new ToolBoundarySteerCoordinator(runManager)
+
+async function interruptQueuedSteerAtToolBoundary(
+  provider: ProviderId,
+  runId: string
+): Promise<boolean> {
+  const outcome = await toolBoundarySteerCoordinator.observeBoundary({
+    runId,
+    shouldInterrupt: (queuedRunIds) => {
+      const activeChatId = runManager.get(runId)?.appChatId
+      return queuedRunIds.some((queuedRunId) => {
+        const queued = AppStore.getRunQueueJob(queuedRunId)
+        return queued?.status === 'queued' && queued.chatId === activeChatId
+      })
+    },
+    interruptExactRun: (exactRunId) => cancelProviderRun(provider, exactRunId)
+  })
+  return outcome.kind === 'interrupted'
+}
+
+function scheduleQueuedSteerToolBoundary(provider: ProviderId, runId: string): void {
+  void interruptQueuedSteerAtToolBoundary(provider, runId).then((interrupted) => {
+    if (!interrupted && runManager.getInterruptState(runId).killAfterToolResult) {
+      console.warn(`[steering] ${provider} tool-boundary interrupt remained armed for ${runId}`)
+    }
+  })
+}
 
 /** Append a steering user message to the chat and make it visible on every
  * surface immediately (renderer via chat-updated, paired devices via the
@@ -21159,6 +21220,22 @@ async function tryRunClaudeSdk(
           // the trailing cumulative `assistant` envelope to empty so we
           // don't double-emit the final response.
           includePartialMessages: true,
+          hooks: {
+            PostToolBatch: [
+              {
+                hooks: [
+                  createClaudePostToolBatchSteerHook({
+                    runId: route.appRunId!,
+                    runManager,
+                    onArmedBoundary: ({ runId }) =>
+                      interruptQueuedSteerAtToolBoundary('claude', runId),
+                    onBoundaryError: (error) =>
+                      console.warn('[steering] Claude PostToolBatch boundary failed', error)
+                  })
+                ]
+              }
+            ]
+          },
           ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
           ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
           ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
@@ -23452,7 +23529,8 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
     grokSeatSessionsEnabled() &&
     grokSeatParticipantId &&
     grokReadOnlySeat &&
-    grokMcpServers.length === 0
+    grokMcpServers.length === 0 &&
+    !(payload.imagePaths?.length)
   ) {
     try {
       const seatKey = `${route.appChatId || 'chat'}:${grokSeatParticipantId}`
@@ -23505,6 +23583,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       // ride each turn's prompt; there's no prior turn for Grok to remember it
       // from, hence no redundant re-injection to avoid.
       prompt: grokProviderPrompt,
+      imagePaths: payload.imagePaths,
       cwd: payload.workspace!,
       mcpServers: grokMcpServers,
       taskWraithShellToolAvailable:
@@ -23518,6 +23597,8 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       },
       onPermissionRequest: grokPermissionHandler,
       onEvent: (evt) => applyGrokRunEvent(state, evt),
+      onToolBatchBoundary: () =>
+        scheduleQueuedSteerToolBoundary('grok', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
       onClose: finishGrokAcpTurn
     })
@@ -24460,6 +24541,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   try {
     mistralAcpHandle = runMistralAcpTurn({
       prompt: mistralProviderPrompt,
+      imagePaths: payload.imagePaths,
       cwd: payload.workspace!,
       // Throws on a blank version rather than letting an empty client_version
       // reach Mistral; pre-checked above, and this catch is the backstop.
@@ -24475,6 +24557,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       },
       onPermissionRequest: mistralPermissionHandler,
       onEvent: (evt) => applyMistralRunEvent(state, evt),
+      onToolBatchBoundary: () =>
+        scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),
       onClose: finishMistralAcpTurn
     })
@@ -25082,6 +25166,7 @@ async function runKimiAcpProvider(
           providerTransportLaunchAttempted = true
           return runKimiAcpTurn({
             prompt: production.session.prompt,
+            imagePaths: payload.imagePaths,
             resumeSessionId: production.session.resumeSessionId,
             cwdLifetime: preserveKimiSessionState ? 'session' : 'run',
             resumeFallbackPrompt: payload.resumeFallbackPrompt,
@@ -25174,6 +25259,8 @@ async function runKimiAcpProvider(
             },
             onPermissionRequest: kimiPermissionHandler,
             onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+            onToolBatchBoundary: () =>
+              scheduleQueuedSteerToolBoundary('kimi', route.appRunId!),
             onRawFrame: (direction, message) => {
               const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
               if (flag === '1' || flag === 'true' || flag === 'yes') {
@@ -25713,6 +25800,29 @@ function codexClientForRunState(
   const runId = state?.appRunId?.trim()
   if (!runId) return null
   return codexRunClientBindings.get(runId)?.client ?? null
+}
+
+function maybeRegisterCodexLiveSteerTransport(state: CodexRunState): boolean {
+  const runId = state.appRunId?.trim()
+  const threadId = state.threadId?.trim()
+  const turnId = state.turnId?.trim()
+  if (!runId || !threadId || !turnId || state.admissionKind !== 'turn') return false
+  const session = runManager.get(runId)
+  if (
+    session?.provider === 'codex' &&
+    session.providerRunId === turnId &&
+    session.liveSteerTransport
+  ) {
+    return true
+  }
+  const client = codexClientForRunState(state)
+  if (!client) return false
+  const registered = runManager.registerLiveSteerTransport(
+    runId,
+    createCodexLiveSteerTransport({ client, threadId, turnId })
+  )
+  if (registered) liveSteeringCoordinator.retryPendingForActiveRun(runId)
+  return registered
 }
 
 function onlyBoundCodexRunClient(): CodexAppServerClient | null {
@@ -27354,11 +27464,16 @@ const codexThreadAdmissionRegistry = new CodexThreadAdmissionRegistry()
 function bindCodexRunExactOperationId(state: CodexRunState, rawOperationId: unknown): boolean {
   const operationId = codexString(rawOperationId)
   if (!operationId) return false
-  if (state.turnId) return state.turnId === operationId
+  if (state.turnId) {
+    const matches = state.turnId === operationId
+    if (matches) maybeRegisterCodexLiveSteerTransport(state)
+    return matches
+  }
   const reservation = state.admissionReservation
   if (!reservation?.bindExactOperationId(operationId)) return false
   state.turnId = operationId
   if (state.appRunId) runManager.registerProviderRun(state.appRunId, operationId)
+  maybeRegisterCodexLiveSteerTransport(state)
   return true
 }
 
@@ -32993,6 +33108,7 @@ const ollamaMainRuntime = createOllamaMainRuntime({
       if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
     }
   },
+  onToolBatchBoundary: (runId) => interruptQueuedSteerAtToolBoundary('ollama', runId),
   runManager,
   emitProviderCapabilityWarnings,
   runProvider: runOllamaProvider
@@ -33278,6 +33394,15 @@ async function cancelProviderRun(
       queuedJob.status === 'steer_promoting')
   ) {
     if (queuedJob.provider !== provider) return false
+    if (
+      queuedJob.status === 'steer_promoting' &&
+      liveSteeringCoordinator.hasPendingQueuedRun(queuedJob.runId)
+    ) {
+      // MAIN owns a provider-admission transaction for this row. Generic queue
+      // cancellation cannot terminalize it underneath an irrevocable native
+      // request; steering:cancel performs the provider-aware reconciliation.
+      return false
+    }
     approvalService?.cancelForRun(queuedJob.runId, 'run-cancel-requested')
     cancelPendingAgentQuestionsForRun(queuedJob.runId, 'run-cancel-requested')
     getRunRepository().markCancelled({
@@ -43411,7 +43536,9 @@ if (isGeminiMcpBridgeProcess) {
       validateChatWorkspaceIdentity,
       stageAttachments: createMainOwnedRunQueueAttachmentStager({
         getAssetStore: getTranscriptMediaAssetStore,
-        getAuthorizedFilePaths: () => attachmentCapabilityRegistry.getMainAuthorizedPaths()
+        getAuthorizedFilePaths: () => attachmentCapabilityRegistry.getMainAuthorizedPaths(),
+        signDirectoryReceipt: (binding) =>
+          signRunQueueDirectoryAttachmentReceipt(externalGrantSigningSecret, binding)
       }),
       canLeaseJob: (job) => {
         if (!job.chatId) return true
@@ -54115,14 +54242,47 @@ if (isGeminiMcpBridgeProcess) {
             const graphInput = graphOwnedComposerInput(appRunId)
             return graphInput ? { input: graphInput, mainOwnedAttachments: true } : null
           },
-          resolveQueuedComposerAttachments: ({ appRunId, appChatId, provider }) =>
-            resolveMainOwnedQueuedComposerAttachments({
+          resolveQueuedComposerAttachments: ({ appRunId, appChatId, provider }) => {
+            const job = AppStore.getRunQueueJob(appRunId)
+            const durableChat = AppStore.getChat(appChatId)
+            const targetProvider = provider ? assertProviderId(provider) : job?.provider
+            const verifiedExternalPathGrants =
+              job && targetProvider
+                ? (job.request?.externalPathGrants || []).filter((grant) =>
+                    isMainIssuedExternalPathGrant(grant, {
+                      provider: targetProvider,
+                      appChatId,
+                      appRunId,
+                      workspacePath: job.workspacePath
+                    })
+                  )
+                : []
+            return resolveMainOwnedQueuedComposerAttachmentAuthority({
               store: getTranscriptMediaAssetStore(),
-              job: AppStore.getRunQueueJob(appRunId),
+              job,
               appRunId,
               appChatId,
-              provider
-            }),
+              provider,
+              providerAuthority: {
+                durableChat: durableChat?.provider
+                  ? { appChatId: durableChat.appChatId, provider: durableChat.provider }
+                  : null
+              },
+              directoryAuthority: {
+                authorizedDirectoryPickerPaths:
+                  attachmentCapabilityRegistry.getAuthorizedPathsForRenderer(event.sender.id, {
+                    includeMainAuthority: false
+                  }),
+                verifiedExternalPathGrants,
+                verifyQueueReceipt: (receipt, expected) =>
+                  verifyRunQueueDirectoryAttachmentReceipt(
+                    externalGrantSigningSecret,
+                    receipt,
+                    expected
+                  )
+              }
+            })
+          },
           canonicalizePath: canonicalPath
         })
       },
@@ -55164,8 +55324,12 @@ if (isGeminiMcpBridgeProcess) {
       typeof value === 'string' && executionGraphOwnsOrAnchorsRunId(value.trim())
     const authorizeRendererRunQueueMutation = (mutation: RendererRunQueueMutation): void => {
       if (
-        mutation.operation === 'fallback-promoted-steer' &&
-        liveSteeringCoordinator.hasPendingQueuedRun(mutation.input.runId)
+        rendererMutationTargetsMainOwnedSteer(mutation, {
+          resolveCanonicalQueuedRunId: (candidateId) =>
+            AppStore.getRunQueueJob(candidateId)?.runId || null,
+          hasPendingQueuedRun: (runId) => liveSteeringCoordinator.hasPendingQueuedRun(runId),
+          hasPendingActiveRun: (runId) => liveSteeringCoordinator.hasPending(runId)
+        })
       ) {
         throw new Error(
           'Main owns this live steering attempt until provider delivery or boundary fallback.'
@@ -55244,6 +55408,10 @@ if (isGeminiMcpBridgeProcess) {
       resolveSenderAttachmentFilePaths: (event) =>
         attachmentCapabilityRegistry.getAuthorizedPathsForRenderer(event.sender.id, {
           includeMainAuthority: isMainRendererSender(event)
+        }),
+      resolveSenderDirectoryPickerPaths: (event) =>
+        attachmentCapabilityRegistry.getAuthorizedPathsForRenderer(event.sender.id, {
+          includeMainAuthority: false
         }),
       resolveRunQueueTargetChatId: ({ kind, targetId }) => {
         if (kind === 'run-or-job') {
@@ -58355,6 +58523,37 @@ if (isGeminiMcpBridgeProcess) {
       const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
       assertRendererChatScope(event, chatId)
       const authorityBoundPayload = deriveRendererRunPayload(event, payload)
+      const durableChat = AppStore.getChat(chatId)
+      const reroutePostureVerified = verifyRunPosture(
+        authorityBoundPayload.approvalMode,
+        authorityBoundPayload.effectivePermissions,
+        authorityBoundPayload.effectivePermissionsSignature,
+        runPostureContextFromPayload(authorityBoundPayload)
+      )
+      const queuedAttachmentAuthority = resolveMainOwnedQueuedRunAttachmentPayloadAuthority({
+        store: getTranscriptMediaAssetStore(),
+        job: candidate,
+        payload: authorityBoundPayload,
+        providerAuthority: {
+          durableChat: durableChat?.provider
+            ? { appChatId: durableChat.appChatId, provider: durableChat.provider }
+            : null,
+          ...(reroutePostureVerified && authorityBoundPayload.providerReroute
+            ? {
+                rerouteProof: {
+                  providerReroute: authorityBoundPayload.providerReroute,
+                  postureVerified: true as const
+                }
+              }
+            : {})
+        }
+      })
+      if (queuedAttachmentAuthority.kind === 'invalid') {
+        throw new Error('Queued attachment ownership could not be verified for this exact run.')
+      }
+      if (queuedAttachmentAuthority.kind === 'resolved') {
+        return dispatchAgentRun(queuedAttachmentAuthority.payload, event)
+      }
       return dispatchWithAuthorizedAttachmentPaths(
         authorityBoundPayload,
         (paths) => resolveRendererAttachmentPaths(event, paths),
@@ -58554,75 +58753,115 @@ if (isGeminiMcpBridgeProcess) {
         assertRendererChatScope(event, chatId)
         const chat = AppStore.getChat(chatId)
         if (!chat) throw new Error('Steering target chat not found.')
-        const session = runManager.get(activeRunId)
-        if (
-          !session ||
-          session.appChatId !== chatId ||
-          !isActiveRunSessionStatus(session.status)
-        ) {
-          runQueueServiceRef?.fallbackPromotedSteerJob({
-            runId: queuedRunId,
-            ownerToken,
-            reason: 'No matching active run; queued for natural-boundary delivery.',
-            fallbackStatus: 'queued'
-          })
-          return {
-            status: 'boundary',
-            strategy: 'boundary',
-            entryId: '',
-            reason: 'No matching active run; use the queued boundary path.'
-          }
-        }
         const queuedJob = AppStore.getRunQueueJob(queuedRunId)
-        const expectedMessageId = midRunQueuedMessageId(queuedRunId)
-        const prepared = Boolean(
-          queuedJob &&
-            queuedJob.chatId === chatId &&
-            queuedJob.provider === session.provider &&
-            queuedJob.status === 'steer_promoting' &&
-            queuedJob.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
-            queuedJob.queueMessageId === expectedMessageId &&
-            queuedJob.promotionOwnerToken === ownerToken &&
-            queuedJob.promotionToken === ownerToken
-        )
-        if (!prepared) {
-          throw new Error('Steering request does not own a valid solo-steer transcript barrier.')
+        const authority = resolveSoloSteerInjectionAuthority({
+          queuedRunId,
+          chatId,
+          provider: queuedJob?.provider || 'gemini',
+          ownerToken,
+          job: queuedJob,
+          messages: chat.messages || []
+        })
+        if (authority.kind !== 'verified') {
+          throw new Error(
+            `Steering request does not own a valid solo-steer transcript barrier (${authority.reason}).`
+          )
         }
-        const message = (chat.messages || []).find(
-          (candidate) => candidate.id === expectedMessageId && candidate.role === 'user'
-        )
-        const text = message?.content?.trim() || ''
-        if (!text) throw new Error('Steering transcript row is missing or empty.')
-        const request = queuedJob?.request
-        const hasShapeChangingContent = Boolean(
-          request?.imageAttachments?.length ||
-            request?.discordContextSelection ||
-            request?.projectReferenceContextSelection?.referenceIds?.length ||
-            request?.dmTargetParticipantId ||
-            request?.exactPickerParticipantId
-        )
+        const pendingResult = liveSteeringCoordinator.reconcilePendingQueuedRun(queuedRunId)
+        if (pendingResult) return pendingResult
+        if (
+          queuedJob?.steerDeliveryPhase !== undefined &&
+          queuedJob.steerDeliveryPhase !== 'prepared'
+        ) {
+          const reason =
+            'Live steering admission is unresolved and cannot be replayed without risking duplicate provider input.'
+          runQueueServiceRef?.transitionJob(queuedRunId, 'failed', {
+            statusReason: reason,
+            lastError: reason
+          })
+          throw new Error(reason)
+        }
+
+        const { messageId, request, text } = authority
+        const verifiedSteerImages = request?.imageAttachments?.length
+          ? resolveMainOwnedQueuedSteerImagePaths({
+              store: getTranscriptMediaAssetStore(),
+              job: queuedJob,
+              appChatId: chatId
+            })
+          : { ok: true as const, imagePaths: [] }
+        const payloadDecision = classifyPreparedSoloSteerPayload({
+          provider: authority.job.provider,
+          request,
+          ...(verifiedSteerImages.ok
+            ? { verifiedImagePaths: verifiedSteerImages.imagePaths }
+            : {})
+        })
         const nowIso = new Date().toISOString()
         const entry = midRunSteeringRegistry.register({
           chatId,
-          messageId: expectedMessageId,
+          messageId,
           text,
           source: 'liveSteer',
           authorKind: 'host',
           createdAtIso: nowIso
         })
-        if (hasShapeChangingContent) {
-          runQueueServiceRef?.fallbackPromotedSteerJob({
+        const session = runManager.get(activeRunId)
+        if (
+          !session &&
+          authority.job.provider === 'codex'
+        ) {
+          return liveSteeringCoordinator.start({
+            chatId,
+            activeRunId,
+            queuedRunId,
+            ownerToken,
+            provider: 'codex',
+            entry,
+            imagePaths: payloadDecision.liveImagePaths,
+            forceBoundaryAfterToolResult: payloadDecision.delivery === 'durable-boundary',
+            boundaryReason: payloadDecision.reason
+          })
+        }
+        if (
+          !session ||
+          session.appChatId !== chatId ||
+          session.provider !== authority.job.provider ||
+          !isActiveRunSessionStatus(session.status)
+        ) {
+          const fallback = runQueueServiceRef?.fallbackPromotedSteerJob({
             runId: queuedRunId,
             ownerToken,
-            reason: 'Attachments or directed context require natural-boundary delivery.',
+            reason: 'No matching active run; queued for natural-boundary delivery.',
             fallbackStatus: 'queued'
           })
+          if (!fallback || fallback.status !== 'queued') {
+            throw new Error('Steering fallback could not commit the exact queued boundary.')
+          }
+          midRunSteeringRegistry.settleWithoutDelivery(chatId, [entry.id])
           return {
             status: 'boundary',
             strategy: 'boundary',
-            entryId: entry.id,
-            reason: 'This steering request requires the queued boundary path.'
+            entryId: authority.messageId,
+            reason: 'No matching active run; use the queued boundary path.'
           }
+        }
+        if (payloadDecision.delivery === 'durable-boundary') {
+          // Every structured steer enters the same per-active-run boundary
+          // barrier, even when this runtime has no exact tool-batch callback.
+          // Qualified providers consume it at the next completed batch; the
+          // rest retain it until terminal. Either way, later text cannot jump
+          // ahead through a live transport.
+          return liveSteeringCoordinator.start({
+            chatId,
+            activeRunId,
+            queuedRunId,
+            ownerToken,
+            provider: session.provider,
+            entry,
+            forceBoundaryAfterToolResult: true,
+            boundaryReason: payloadDecision.reason
+          })
         }
         return liveSteeringCoordinator.start({
           chatId,
@@ -58630,7 +58869,8 @@ if (isGeminiMcpBridgeProcess) {
           queuedRunId,
           ownerToken,
           provider: session.provider,
-          entry
+          entry,
+          imagePaths: payloadDecision.liveImagePaths
         })
       }
     )

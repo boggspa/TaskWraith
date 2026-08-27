@@ -121,9 +121,8 @@ describe('scheduled seal producer production readiness', () => {
     expect(planSource).toContain('getSessionMemory(input.chatId, memoryKey')
     expect(planSource).toContain('const temperature = ollamaModelFamilyTemperature(model) ?? 0.2')
     expect(planSource).toContain('const firstRequest: Record<string, unknown> = {')
-    expect(runtimeSource).toContain(
-      'request: turnIndex === 0 ? launchPlan.firstRequest : undefined'
-    )
+    expect(runtimeSource).toContain('...launchPlan.firstRequest')
+    expect(runtimeSource).toContain('request: turnIndex === 0 ? firstRequest : undefined')
     expect(OLLAMA_SCHEDULED_SEAL_READINESS.blockers).toEqual(
       expect.arrayContaining([
         'scheduled-dispatch-does-not-carry-final-launch-plan',

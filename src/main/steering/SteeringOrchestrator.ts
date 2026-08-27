@@ -48,6 +48,15 @@ export interface RouteSteerDeliveryInput {
   provider: ProviderId
   /** If true, the assistant is currently inside a tool call (for strategy C). */
   midTool?: boolean
+  /** Exact durable queue row that will resume after a tool-boundary interrupt. */
+  boundaryQueueRunId?: string
+  /**
+   * Structured payloads cannot ride the text-only live transports. Preserve
+   * their durable request and accelerate that queue row at the next completed
+   * tool instead.
+   */
+  forceBoundaryAfterToolResult?: boolean
+  boundaryReason?: string
   /** Called only when the transport has concrete provider delivery evidence. */
   deliveryHooks?: LiveSteerDeliveryHooks
 }
@@ -87,6 +96,36 @@ export function routeSteerDelivery(
       reason:
         'No matching active provider session for this chat; falling back to boundary delivery.'
     }
+  }
+  if (!runManager.canAdmitTransport(runId, true)) {
+    return {
+      status: 'boundary',
+      strategy: 'boundary',
+      entryId: entry.id,
+      reason: 'The active run already has a terminal claim; live steering was not admitted.'
+    }
+  }
+
+  if (input.forceBoundaryAfterToolResult) {
+    if (
+      !deps.midTurnSteeringEnabled ||
+      (entry.authorKind !== 'host' && entry.authorKind !== 'ensembleParticipant')
+    ) {
+      return {
+        status: 'boundary',
+        strategy: 'boundary',
+        entryId: entry.id,
+        reason: input.boundaryReason || 'Structured steering requires natural-boundary delivery.'
+      }
+    }
+    return armNextToolBoundary(
+      runManager,
+      runId,
+      input.boundaryQueueRunId,
+      entry.id,
+      input.boundaryReason ||
+        'Structured steering content will resume at the next completed tool boundary.'
+    )
   }
 
   const strategy = planMidTurnSteeringDelivery({
@@ -135,6 +174,32 @@ export function routeSteerDelivery(
       }
     }
 
+    case 'codex-turn-steer': {
+      const transport = session.liveSteerTransport
+      if (!transport) {
+        return {
+          status: 'boundary',
+          strategy: 'codex-turn-steer',
+          entryId: entry.id,
+          reason: 'Codex has no exact live turn transport yet.'
+        }
+      }
+      const sent = sendThroughTransport(transport, entry.text, input.deliveryHooks)
+      if (!sent) {
+        return {
+          status: 'boundary',
+          strategy: 'codex-turn-steer',
+          entryId: entry.id,
+          reason: 'Codex refused the live turn steer request.'
+        }
+      }
+      return {
+        status: 'injected',
+        strategy: 'codex-turn-steer',
+        entryId: entry.id
+      }
+    }
+
     case 'acp-interrupt': {
       // Transport-first: ACP providers register a `steer()`-backed live
       // transport at turn launch (AcpTurnClient). When it is present, the
@@ -147,12 +212,13 @@ export function routeSteerDelivery(
       if (transport) {
         const sent = sendThroughTransport(transport, entry.text, input.deliveryHooks)
         if (!sent) {
-          return {
-            status: 'boundary',
-            strategy: 'acp-interrupt',
-            entryId: entry.id,
-            reason: 'ACP live transport refused the steer (no in-flight prompt).'
-          }
+          return armNextToolBoundary(
+            runManager,
+            runId,
+            input.boundaryQueueRunId,
+            entry.id,
+            'ACP live transport refused the steer; queued for the next completed tool boundary.'
+          )
         }
         return {
           status: 'injected',
@@ -160,26 +226,22 @@ export function routeSteerDelivery(
           entryId: entry.id
         }
       }
-      return {
-        status: 'boundary',
-        strategy: 'acp-interrupt',
-        entryId: entry.id,
-        reason: 'ACP session has no live steer transport yet.'
-      }
+      return armNextToolBoundary(
+        runManager,
+        runId,
+        input.boundaryQueueRunId,
+        entry.id,
+        'ACP session has no live steer transport yet; queued for the next completed tool boundary.'
+      )
     }
 
     case 'cooperative-cancel-resume': {
-      // No production provider adapter consumes the historical interrupt
-      // flags. Claiming "interrupting" here stranded the durable queue row in
-      // steer_promoting. Until a provider registers an evidence-producing
-      // transport, preserve the current run and release the message at its
-      // natural boundary.
       return {
         status: 'boundary',
         strategy: 'cooperative-cancel-resume',
         entryId: entry.id,
         reason: midTool
-          ? 'Provider is inside a tool call and has no safe live steer transport.'
+          ? 'Provider is inside a tool call without a qualified batch-boundary consumer.'
           : 'Provider has no evidence-producing live steer transport.'
       }
     }
@@ -230,6 +292,22 @@ export function routeSteerDelivery(
   }
 }
 
+function armNextToolBoundary(
+  runManager: RunManager,
+  activeRunId: string,
+  queuedRunId: string | undefined,
+  entryId: string,
+  reason: string
+): SteeringAttemptResult {
+  const armed = runManager.armKillAfterToolResult(activeRunId, queuedRunId)
+  return {
+    status: 'boundary',
+    strategy: 'cooperative-cancel-resume',
+    entryId,
+    reason: armed ? reason : 'The active run no longer accepts a steering boundary.'
+  }
+}
+
 export function cancelPendingSteer(
   deps: SteeringOrchestratorDeps,
   runId: string
@@ -244,6 +322,7 @@ export function cancelPendingSteer(
     session.liveSteerTransport.cancel()
   }
   if (session) session.pendingSteerText = undefined
+  if (state.killAfterToolResult) deps.runManager.disarmKillAfterToolResult(runId)
   // Note: we deliberately do NOT cancel the running turn here. Cancelling a
   // steer request means "stop trying to inject mid-turn"; the ordinary turn
   // continues and the appended transcript row will be delivered at the next

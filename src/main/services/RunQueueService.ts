@@ -116,6 +116,25 @@ function isPreparedSoloSteerTranscriptBarrier(job: RunQueueJob | null): job is R
   )
 }
 
+function isSoloSteerPromotionAdmissionCandidate(job: RunQueueJob | null): job is RunQueueJob {
+  return Boolean(
+    job &&
+    job.status === 'steer_promoting' &&
+    job.promotionOwnerToken &&
+    job.promotionToken === job.promotionOwnerToken &&
+    job.request &&
+    job.queueMessageId === midRunQueuedMessageId(job.runId) &&
+    (job.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION ||
+      (job.steerPreparationKind === undefined && job.enqueuedAt?.trim()))
+  )
+}
+
+function hasSoloSteerAdmissionFence(job: RunQueueJob | null): boolean {
+  return Boolean(
+    job && job.steerDeliveryPhase !== undefined && job.steerDeliveryPhase !== 'prepared'
+  )
+}
+
 function hasExactSoloSteerTranscriptRow(chat: ChatRecord | null, job: RunQueueJob): boolean {
   if (!chat || !job.chatId || chat.appChatId !== job.chatId || !job.queueMessageId) return false
   return chat.messages.some(
@@ -157,11 +176,22 @@ export interface RunQueueRepository {
     ownerToken: string
     statusReason?: string
   }) => RunQueueJob | null
+  markPromotedSteerAdmissionPending: (input: {
+    runId: string
+    ownerToken: string
+    activeRunId: string
+    strategy: string
+  }) => RunQueueJob | null
   fallbackPromotedSteerJob: (input: {
     runId: string
     ownerToken: string
     reason: string
     fallbackStatus?: RunQueueJobStatus
+  }) => RunQueueJob | null
+  releasePromotedSteerAfterDefiniteNonAdmission: (input: {
+    runId: string
+    ownerToken: string
+    reason: string
   }) => RunQueueJob | null
   transitionRunQueueJob: (
     runIdOrId: string,
@@ -203,11 +233,14 @@ export interface RunQueueAttachmentStageInput {
   externalPathGrants: ExternalPathGrant[]
   /** Canonical attachment paths authorized for the requesting renderer. */
   authorizedFilePaths?: string[]
+  /** Sender-local picker paths only; never process-wide main authority. */
+  authorizedDirectoryPickerPaths?: string[]
   attachments: RunQueueImageAttachmentSnapshot[]
 }
 
 export interface RunQueuePrepareOptions {
   readonly authorizedFilePaths?: string[]
+  readonly authorizedDirectoryPickerPaths?: string[]
   /** Main-only graph correlation; never read from renderer input. */
   readonly executionGraph?: ExecutionGraphQueueBinding
   /** Main-only first-write seal for a solo steer awaiting its transcript row. */
@@ -319,7 +352,8 @@ export class RunQueueService {
       transitionVersion: 1,
       promotedAt,
       queueMessageId,
-      steerPreparationKind: SOLO_STEER_TRANSCRIPT_PREPARATION
+      steerPreparationKind: SOLO_STEER_TRANSCRIPT_PREPARATION,
+      steerDeliveryPhase: 'prepared'
     })
   }
 
@@ -332,7 +366,12 @@ export class RunQueueService {
     input: unknown,
     options: RunQueuePrepareOptions = {}
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
-    return this.normalizeJobRequest(input, options.authorizedFilePaths, options.executionGraph)
+    return this.normalizeJobRequest(
+      input,
+      options.authorizedFilePaths,
+      options.authorizedDirectoryPickerPaths,
+      options.executionGraph
+    )
   }
 
   leaseJob(
@@ -430,6 +469,7 @@ export class RunQueueService {
     const candidate = this.deps.appStore.getRunQueueJob(runId)
     const safeCandidate = candidate ? this.quarantineUnsafePersistedAttachments(candidate) : null
     if (!safeCandidate || safeCandidate.status !== 'steer_promoting') return null
+    if (hasSoloSteerAdmissionFence(safeCandidate)) return null
     // This main-minted barrier is released only after main can observe its
     // deterministic user row in the durable chat. A generic steer lease must
     // never turn it into runnable work, even when the renderer knows the token.
@@ -439,6 +479,30 @@ export class RunQueueService {
       runId,
       ownerToken,
       statusReason: optionalString(input?.statusReason)
+    })
+  }
+
+  markPromotedSteerAdmissionPending(input: {
+    runId?: string
+    ownerToken?: string
+    activeRunId?: string
+    strategy?: string
+  }): RunQueueJob | null {
+    const runId = optionalString(input?.runId)
+    const ownerToken = optionalString(input?.ownerToken)
+    const activeRunId = optionalString(input?.activeRunId)
+    const strategy = optionalString(input?.strategy)
+    if (!runId || !ownerToken || !activeRunId || !strategy) return null
+    const candidate = this.deps.appStore.getRunQueueJob(runId)
+    if (!isSoloSteerPromotionAdmissionCandidate(candidate)) return null
+    if (candidate.promotionOwnerToken !== ownerToken || candidate.promotionToken !== ownerToken) {
+      return null
+    }
+    return this.deps.getRunRepository().markPromotedSteerAdmissionPending({
+      runId,
+      ownerToken,
+      activeRunId,
+      strategy
     })
   }
 
@@ -456,6 +520,10 @@ export class RunQueueService {
       : undefined
     if (!runId || !ownerToken || !reason) return null
     const candidate = this.deps.appStore.getRunQueueJob(runId)
+    // Renderer-reachable fallback never clears a write-ahead admission fence.
+    // Only the dedicated main-only resolution below can requeue after the
+    // provider proves rejection or the transport proves no write occurred.
+    if (hasSoloSteerAdmissionFence(candidate)) return null
     if (isPreparedSoloSteerTranscriptBarrier(candidate)) {
       // Queueing is the dedicated release operation for a transcript barrier.
       // Main verifies the exact deterministic row from the saved chat first;
@@ -485,6 +553,40 @@ export class RunQueueService {
     return released
   }
 
+  /**
+   * Main-only settlement for a fenced steer whose transport proved definite
+   * non-admission. This method is deliberately absent from RunLifecycle IPC.
+   */
+  releasePromotedSteerAfterDefiniteNonAdmission(input: {
+    runId: string
+    ownerToken: string
+    reason: string
+  }): RunQueueJob | null {
+    const runId = optionalString(input?.runId)
+    const ownerToken = optionalString(input?.ownerToken)
+    const reason = optionalString(input?.reason)
+    if (!runId || !ownerToken || !reason) return null
+    const candidate = this.deps.appStore.getRunQueueJob(runId)
+    if (
+      !candidate ||
+      candidate.status !== 'steer_promoting' ||
+      candidate.steerDeliveryPhase !== 'provider_admission_pending' ||
+      candidate.promotionOwnerToken !== ownerToken ||
+      candidate.promotionToken !== ownerToken
+    ) {
+      return null
+    }
+    const released = this.deps.getRunRepository().releasePromotedSteerAfterDefiniteNonAdmission({
+      runId,
+      ownerToken,
+      reason
+    })
+    if (released) {
+      this.observedEphemeralSoloSteerRows.delete(this.soloSteerTranscriptReceiptKey(candidate))
+    }
+    return released
+  }
+
   transitionJob(
     runIdOrId: string,
     status: RunQueueJobStatus,
@@ -493,6 +595,9 @@ export class RunQueueService {
     const nextStatus = sanitizeRunQueueStatus(status)
     if (nextStatus === 'steer_promoting') return null
     const candidate = this.deps.appStore.getRunQueueJob(runIdOrId)
+    if (hasSoloSteerAdmissionFence(candidate) && !isTerminalRunQueueStatus(nextStatus)) {
+      return null
+    }
     if (
       isPreparedSoloSteerTranscriptBarrier(candidate) &&
       nextStatus !== 'cancelled' &&
@@ -522,6 +627,7 @@ export class RunQueueService {
   private normalizeJobRequest(
     value: unknown,
     authorizedFilePaths?: string[],
+    authorizedDirectoryPickerPaths?: string[],
     executionGraph?: ExecutionGraphQueueBinding
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
     const record = requireRecord(value, 'Run queue request')
@@ -581,7 +687,8 @@ export class RunQueueService {
       chatId,
       workspaceId,
       workspacePath,
-      ...(authorizedFilePaths ? { authorizedFilePaths } : {})
+      ...(authorizedFilePaths ? { authorizedFilePaths } : {}),
+      ...(authorizedDirectoryPickerPaths ? { authorizedDirectoryPickerPaths } : {})
     })
     const request = requestResult?.request
     const permissionPosture = sanitizePermissionPostureSnapshot(record.permissionPosture)
@@ -839,7 +946,8 @@ function copyRunQueueAttachmentRef(
       kind: 'directory',
       id: optionalString(value.id),
       path: value.path,
-      name: optionalString(value.name)
+      name: optionalString(value.name),
+      ...(value.queueReceipt ? { queueReceipt: { ...value.queueReceipt } } : {})
     }
   }
   if (isPersistedAttachmentRef(value)) return copyPersistedAttachmentRef(value)

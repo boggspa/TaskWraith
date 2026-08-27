@@ -213,6 +213,8 @@ describe('resolveComposerRunAuthority', () => {
   it('replaces renderer attachment paths with exact main-owned queued snapshots', () => {
     const durable = chat()
     const resolveQueuedComposerAttachments = vi.fn(() => ({
+      kind: 'resolved' as const,
+      provider: 'pi' as const,
       imageAttachments: [
         {
           id: 'queued-image',
@@ -239,11 +241,41 @@ describe('resolveComposerRunAuthority', () => {
       provider: 'pi'
     })
     expect(result.mainOwnedAttachments).toBe(true)
+    expect(result.input.provider).toBe('pi')
     expect(result.input.imageAttachments).toEqual([
       { id: 'queued-image', path: '/main-cas/queued.png', name: 'queued.png' }
     ])
     expect(result.input.attachments).toBeUndefined()
     expect(result.input.userInput).toBe('Renderer prompt.')
+  })
+
+  it('fails closed when an exact queued attachment set loses main ownership', () => {
+    expect(() =>
+      resolveComposerRunAuthority({
+        input: input({ imageAttachments: [{ path: '/renderer/fallback.png' }] }),
+        chat: chat(),
+        isMainRenderer: true,
+        resolveQueuedComposerAttachments: () => ({ kind: 'invalid' }),
+        canonicalizePath
+      })
+    ).toThrow('Queued attachment authority is invalid')
+  })
+
+  it('binds a provider-omitting queued compose to the provider proven by main', () => {
+    const result = resolveComposerRunAuthority({
+      input: input({ provider: undefined }),
+      chat: chat(),
+      isMainRenderer: true,
+      resolveQueuedComposerAttachments: () => ({
+        kind: 'resolved',
+        provider: 'pi',
+        imageAttachments: []
+      }),
+      canonicalizePath
+    })
+
+    expect(result.mainOwnedAttachments).toBe(true)
+    expect(result.input.provider).toBe('pi')
   })
 
   it('rejects graph authority that does not match the exact run and durable target', () => {

@@ -74,6 +74,25 @@ describe('routeSteerDelivery', () => {
     expect(result.status).toBe('boundary')
   })
 
+  it('never sends into a running session that already has a terminal claim', () => {
+    const { runManager, deps, entry } = makeFixture()
+    startRun(runManager, 'kimi')
+    const transport = steerTransport()
+    runManager.registerLiveSteerTransport('run-1', transport)
+    expect(runManager.claimTerminalStatus('run-1', 'cancelled')).toBeTruthy()
+
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'kimi'
+    })
+
+    expect(result.status).toBe('boundary')
+    expect(result.reason).toContain('terminal claim')
+    expect(transport.sendSteer).not.toHaveBeenCalled()
+  })
+
   it('never live-delivers external-authored text', () => {
     const { runManager, registry, deps } = makeFixture()
     startRun(runManager, 'kimi')
@@ -150,7 +169,7 @@ describe('routeSteerDelivery', () => {
     expect(transport.sendSteer).toHaveBeenCalledWith('steer this')
   })
 
-  it('acp-interrupt: a refusing transport falls back to boundary', () => {
+  it('acp-interrupt: a refusing transport accelerates the durable boundary fallback', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'mistral')
     runManager.registerLiveSteerTransport('run-1', steerTransport({ sendSteer: () => false }))
@@ -158,51 +177,126 @@ describe('routeSteerDelivery', () => {
       chatId: 'chat-1',
       runId: 'run-1',
       entry,
-      provider: 'mistral'
+      provider: 'mistral',
+      boundaryQueueRunId: 'queued-1'
     })
     expect(result.status).toBe('boundary')
+    expect(runManager.getInterruptState('run-1')).toMatchObject({
+      killAfterToolResult: true,
+      pendingBoundarySteerRunIds: ['queued-1']
+    })
   })
 
-  it('acp-interrupt: without a transport falls back instead of arming an unconsumed flag', () => {
+  it('acp-interrupt: without a transport arms the consumed next-tool boundary', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'grok')
     const result = routeSteerDelivery(deps, {
       chatId: 'chat-1',
       runId: 'run-1',
       entry,
-      provider: 'grok'
+      provider: 'grok',
+      boundaryQueueRunId: 'queued-1'
     })
     expect(result.status).toBe('boundary')
-    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeUndefined()
+    expect(runManager.getInterruptState('run-1')).toMatchObject({
+      killAfterToolResult: true,
+      pendingBoundarySteerRunIds: ['queued-1']
+    })
   })
 
-  it('cooperative-cancel-resume: mid-tool stays on the durable boundary path', () => {
+  it('claude arms broker text for its exact PostToolBatch hook', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'claude')
     const result = routeSteerDelivery(deps, {
       chatId: 'chat-1',
       runId: 'run-1',
       entry,
-      provider: 'claude',
-      midTool: true
+      provider: 'claude'
     })
-    expect(result.status).toBe('boundary')
-    expect(runManager.getInterruptState('run-1').killAfterToolResult).toBeUndefined()
+    expect(result.status).toBe('broker-pending')
+    expect(runManager.get('run-1')?.pendingSteerText).toContain('steer this')
     expect(runManager.get('run-1')?.status).toBe('running')
   })
 
-  it('cooperative-cancel-resume: outside a tool does not claim a nonexistent interrupt consumer', () => {
+  it('codex keeps the durable boundary fallback until an exact live transport is bound', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'codex')
     const result = routeSteerDelivery(deps, {
       chatId: 'chat-1',
       runId: 'run-1',
       entry,
-      provider: 'codex',
-      midTool: false
+      provider: 'codex'
     })
     expect(result.status).toBe('boundary')
-    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeUndefined()
+    expect(result.strategy).toBe('codex-turn-steer')
+    expect(runManager.getInterruptState('run-1').killAfterToolResult).toBeUndefined()
+  })
+
+  it('codex sends verified image hooks through its exact live turn transport', () => {
+    const { runManager, deps, entry } = makeFixture()
+    startRun(runManager, 'codex')
+    const transport = steerTransport()
+    runManager.registerLiveSteerTransport('run-1', transport)
+    const deliveryHooks = {
+      entryId: entry.id,
+      messageId: entry.messageId,
+      imagePaths: ['/main-owned/screenshot.png'],
+      onDelivered: vi.fn()
+    }
+
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'codex',
+      deliveryHooks
+    })
+
+    expect(result).toMatchObject({ status: 'injected', strategy: 'codex-turn-steer' })
+    expect(transport.sendSteer).toHaveBeenCalledWith(entry.text, deliveryHooks)
+  })
+
+  it('forces attachment-bearing steers onto the next tool boundary for a live provider', () => {
+    const { runManager, deps, entry } = makeFixture()
+    startRun(runManager, 'kimi')
+    const transport = steerTransport()
+    runManager.registerLiveSteerTransport('run-1', transport)
+
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'kimi',
+      boundaryQueueRunId: 'queued-images',
+      forceBoundaryAfterToolResult: true,
+      boundaryReason: 'Images require durable delivery.'
+    })
+
+    expect(result).toMatchObject({
+      status: 'boundary',
+      reason: 'Images require durable delivery.'
+    })
+    expect(transport.sendSteer).not.toHaveBeenCalled()
+    expect(runManager.getInterruptState('run-1')).toMatchObject({
+      killAfterToolResult: true,
+      pendingBoundarySteerRunIds: ['queued-images']
+    })
+  })
+
+  it('keeps structured steering on the natural boundary when the emergency gate is off', () => {
+    const { runManager, deps, entry } = makeFixture({ midTurnSteeringEnabled: false })
+    startRun(runManager, 'kimi')
+
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'kimi',
+      boundaryQueueRunId: 'queued-images',
+      forceBoundaryAfterToolResult: true
+    })
+
+    expect(result.status).toBe('boundary')
     expect(runManager.getInterruptState('run-1').killAfterToolResult).toBeUndefined()
   })
 

@@ -353,6 +353,44 @@ describe('RunQueue', () => {
     expect(recovered[1]).toBe(barrier)
   })
 
+  it('fails a fenced solo steer on restart instead of replaying uncertain provider admission', () => {
+    const pending = createRunQueueJob({
+      id: 'pending-steer',
+      runId: 'pending-steer',
+      provider: 'codex',
+      workspacePath: '/workspace',
+      source: 'manual',
+      status: 'steer_promoting',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'provider_admission_pending',
+      steerDeliveryActiveRunId: 'active-run',
+      steerDeliveryStrategy: 'codex-turn-steer',
+      promotionOwnerToken: 'main-owner',
+      promotionToken: 'main-owner',
+      queueMessageId: 'midrun-queued-user-pending-steer',
+      request: {
+        prompt: 'Do this exactly once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    const [recovered] = recoverInterruptedRunQueueJobs(
+      [pending],
+      '2026-05-06T00:03:00.000Z'
+    )
+
+    expect(recovered).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'ambiguous_live_steer_admission_on_startup'
+    })
+    expect(recovered.steerDeliveryPhase).toBe('provider_admission_pending')
+    expect(recovered.queueMessageId).toBeUndefined()
+  })
+
   it('filters and sorts jobs by active work before queued and terminal history', () => {
     const jobs = [
       createRunQueueJob({

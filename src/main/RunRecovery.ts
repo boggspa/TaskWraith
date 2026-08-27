@@ -156,6 +156,37 @@ function isExpiredSteerPromotingRun(job: RunQueueJob, recoveredAt: string): bool
   return job.status === 'steer_promoting' && !isPreparedSoloSteerTranscriptBarrier(job)
 }
 
+function isAmbiguousSoloSteerAdmission(job: RunQueueJob): boolean {
+  return (
+    job.status === 'steer_promoting' &&
+    job.steerDeliveryPhase !== undefined &&
+    job.steerDeliveryPhase !== 'prepared'
+  )
+}
+
+function recoverAmbiguousSoloSteerAdmission(
+  job: RunQueueJob,
+  recoveredAt: string
+): RunQueueJob {
+  const { resumeAvailable, resumeHint } = resumeHintForJob(job)
+  return updateRunQueueJobRecord(
+    job,
+    {
+      status: 'failed',
+      statusReason:
+        'Live steering admission was interrupted while its provider outcome was unknown.',
+      lastError:
+        'TaskWraith did not replay this steering message because the provider may already have accepted it.',
+      recoveryReason: 'ambiguous_live_steer_admission_on_startup',
+      interruptedAt: recoveredAt,
+      recoveredAt,
+      resumeAvailable,
+      resumeHint
+    },
+    recoveredAt
+  )
+}
+
 function recoverStaleSteerPromotingJob(
   job: RunQueueJob,
   recoveredAt: string,
@@ -264,6 +295,20 @@ export function recoverRunQueueJobsAfterStartup(
 ): RunRecoveryResult {
   const records: RunRecoveryRecord[] = []
   const recoveredJobs = jobs.map((job) => {
+    if (isAmbiguousSoloSteerAdmission(job)) {
+      const recovered = recoverAmbiguousSoloSteerAdmission(job, recoveredAt)
+      records.push(
+        recoveryRecordForJob(
+          job,
+          recovered,
+          undefined,
+          recoveredAt,
+          'Live steering admission could not be proven after app restart.',
+          'marked_failed'
+        )
+      )
+      return recovered
+    }
     // A prepared solo-steer barrier is a durable handoff transaction, not a
     // provider process. It deliberately survives restart so the renderer can
     // prove whether the transcript row landed and either release it to queued
