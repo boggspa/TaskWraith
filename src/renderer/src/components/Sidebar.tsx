@@ -4938,7 +4938,7 @@ export function Sidebar({
               aria-haspopup={activeSidebarTab === 'terminal' ? undefined : 'menu'}
             >
               <PlusSymbolIcon />
-              <span>{activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'New'}</span>
+              <span>New</span>
             </button>
             {newMenuOpen && (
               <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
