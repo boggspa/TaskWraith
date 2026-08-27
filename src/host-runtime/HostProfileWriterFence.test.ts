@@ -78,6 +78,26 @@ describe('HostProfileWriterFence', () => {
     lease.release()
   })
 
+  it('treats a live in-process lease plus fence as self when this process owns both', () => {
+    const profilePath = profile()
+    const lease = HostProfileAuthorityLease.acquire({ profilePath })
+    writeHostProfileWriterFence(profilePath, {
+      state: 'host-owned',
+      ownership: {
+        hostId: IN_PROCESS_DESKTOP_HOST_ID,
+        generation: 0,
+        cutoverId: 'legacy-in-process',
+        pid: process.pid
+      }
+    })
+    expect(inspectProfileWriterPeers(profilePath)).toMatchObject({
+      status: 'self-in-process',
+      pid: lease.owner.pid
+    })
+    expect(() => assertHostMayOpenProfileWriters(profilePath)).toThrow(ProfileWriterLivePeerError)
+    lease.release()
+  })
+
   it('fails closed for a live in-process Desktop owner that is not this process', () => {
     const profilePath = profile()
     writeHostProfileWriterFence(profilePath, {

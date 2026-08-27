@@ -285,9 +285,13 @@ export function inspectProfileWriterPeers(
   }
 
   if (lease.kind === 'live') {
+    const ownership = fence.kind === 'ok' ? fence.snapshot.ownership : undefined
+    if (ownership?.hostId === IN_PROCESS_DESKTOP_HOST_ID) {
+      return classifyInProcessPid(ownership, lease.owner.pid, 'live', currentPid)
+    }
     return {
       status: 'live-host',
-      ...(fence.kind === 'ok' ? { ownership: fence.snapshot.ownership } : {}),
+      ...(ownership ? { ownership } : {}),
       pid: lease.owner.pid
     }
   }

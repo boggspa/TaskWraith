@@ -19,6 +19,7 @@ import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
 import { ProfileWriterLivePeerError } from './host/DesktopWriterArbitration'
 import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
+import type { HostProfileAuthorityLease } from './host-runtime/HostProfileAuthorityLease'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 
@@ -76,8 +77,9 @@ function developmentRepoRoot(): string {
 
 function developmentNodeExecutable(repoRoot: string): string {
   for (const value of [process.env.npm_node_execpath, process.env.NODE]) {
-    if (typeof value === 'string' && value.trim() === value && isAbsolute(value))
+    if (typeof value === 'string' && value.trim() === value && isAbsolute(value)) {
       return resolve(value)
+    }
   }
   return resolve(
     repoRoot,
@@ -123,6 +125,17 @@ function boundedBootstrapError(error: unknown): string {
 }
 
 let externalHostPreparation: HostExternalPreparation | null = null
+let inProcessHostLease: HostProfileAuthorityLease | null = null
+
+function releaseInProcessHostLease(): void {
+  inProcessHostLease?.release()
+  inProcessHostLease = null
+}
+
+app.on('will-quit', () => {
+  releaseInProcessHostLease()
+})
+
 void bootstrapMainProcess({
   isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
   requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
@@ -142,7 +155,7 @@ void bootstrapMainProcess({
       throw new Error('Legacy userData migration did not complete safely.')
     }
     if (!isDesktopExternalHostEnabled()) {
-      await drainLegacyStoreForInProcessHost({ profilePath })
+      inProcessHostLease = await drainLegacyStoreForInProcessHost({ profilePath })
       return
     }
     externalHostPreparation = createExternalHostPreparation(profilePath)
@@ -161,7 +174,7 @@ void bootstrapMainProcess({
       }
       externalHostPreparation = null
       try {
-        await drainLegacyStoreForInProcessHost({ profilePath })
+        inProcessHostLease = await drainLegacyStoreForInProcessHost({ profilePath })
       } catch (fallbackError) {
         if (
           fallbackError instanceof ProfileWriterLivePeerError ||
@@ -175,6 +188,7 @@ void bootstrapMainProcess({
   },
   cleanupPreparedMainProcess: async () => {
     await externalHostPreparation?.cleanup()
+    releaseInProcessHostLease()
   },
   loadMainProcess: () => import('./index'),
   subscribeSecondInstance,

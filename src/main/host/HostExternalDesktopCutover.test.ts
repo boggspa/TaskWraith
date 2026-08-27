@@ -6,6 +6,10 @@ import { isDesktopExternalHostEnabled } from './DesktopExternalHostPolicy'
 
 const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 const bootstrap = readFileSync(join(process.cwd(), 'src/main/bootstrap.ts'), 'utf8')
+const inProcessWriter = readFileSync(
+  join(process.cwd(), 'src/main/host/LegacyInProcessHostWriter.ts'),
+  'utf8'
+)
 
 describe('Desktop external Host cutover', () => {
   it('defaults Desktop onto the external Host with an explicit 0 opt-out', () => {
@@ -52,5 +56,20 @@ describe('Desktop external Host cutover', () => {
     expect(source).toContain("preparedExternalHost.result.kind !== 'launched'")
     expect(source).toContain("run.providerOutcome === 'running'")
     expect(source).toContain('return (await hostLifecycle.stop()).ok')
+  })
+
+  it('acquires the shared authority lease for in-process Desktop and releases it on shutdown', () => {
+    expect(inProcessWriter).toContain('HostProfileAuthorityLease.acquire')
+    expect(inProcessWriter).toContain('lease.assertHeld()')
+    expect(inProcessWriter).toContain('lease.release()')
+    expect(bootstrap).toContain('inProcessHostLease = await drainLegacyStoreForInProcessHost')
+    expect(bootstrap).toContain("app.on('will-quit'")
+    expect(bootstrap).toContain('releaseInProcessHostLease')
+    expect(bootstrap).toContain('cleanupPreparedMainProcess: async () => {')
+    const cleanup = bootstrap.slice(bootstrap.indexOf('cleanupPreparedMainProcess:'))
+    expect(cleanup).toContain('releaseInProcessHostLease()')
+    expect(cleanup.indexOf('externalHostPreparation?.cleanup()')).toBeLessThan(
+      cleanup.indexOf('releaseInProcessHostLease()')
+    )
   })
 })
