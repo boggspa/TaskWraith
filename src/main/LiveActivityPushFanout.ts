@@ -56,6 +56,31 @@ export function livePhaseForCardStatus(status: string | undefined): LiveActivity
   }
 }
 
+/**
+ * Maps ensemble participant lifecycle statuses to existing Live Activity wire phases.
+ * Unknown statuses deliberately stay running: the seat remains visible while a
+ * newer runtime status is waiting for a compatible mobile projection.
+ */
+export function participantSeatPhase(status: string | undefined): LiveActivityPhase {
+  switch (status) {
+    case 'answered':
+    case 'yielded':
+    case 'sleeping':
+    case 'completed':
+    case 'done':
+      return 'complete'
+    case 'unreachable':
+    case 'failed':
+    case 'error':
+      return 'failed'
+    case 'skipped':
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return 'running'
+  }
+}
+
 /** Stable value key for "have we already pushed exactly this?". */
 export function contentFingerprint(state: LiveActivityContentState): string {
   return [
@@ -385,7 +410,7 @@ export class LiveActivityPushFanout {
     const sender = this.senderFn()
     if (!sender) return
     const appearance = this.appearanceFn()
-    const provider = card.provider || (card.isEnsemble ? 'ensemble' : 'codex')
+    const provider = card.isEnsemble ? 'ensemble' : card.provider || 'codex'
     const now = this.now()
     // The ref is generated HERE and is opaque — never the threadId, which would
     // hand APNs (and later the relay) a stable key linking a card to a chat.

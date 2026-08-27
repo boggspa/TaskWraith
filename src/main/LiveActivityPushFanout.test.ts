@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   contentFingerprint,
   livePhaseForCardStatus,
+  participantSeatPhase,
   LiveActivityPushFanout
 } from './LiveActivityPushFanout'
 import { LiveActivityTokenStore } from './LiveActivityTokenStore'
@@ -49,6 +50,22 @@ describe('live activity phase mapping', () => {
     expect(livePhaseForCardStatus('idle')).toBeNull()
     expect(livePhaseForCardStatus('reticulating')).toBeNull()
     expect(livePhaseForCardStatus(undefined)).toBeNull()
+  })
+
+  it('maps ensemble participant statuses into existing wire phases', () => {
+    expect(participantSeatPhase('answered')).toBe('complete')
+    expect(participantSeatPhase('yielded')).toBe('complete')
+    expect(participantSeatPhase('sleeping')).toBe('complete')
+    expect(participantSeatPhase('unreachable')).toBe('failed')
+    expect(participantSeatPhase('skipped')).toBe('cancelled')
+    expect(participantSeatPhase('cancelled')).toBe('cancelled')
+    expect(participantSeatPhase('failed')).toBe('failed')
+    expect(participantSeatPhase('error')).toBe('failed')
+    expect(participantSeatPhase('running')).toBe('running')
+    expect(participantSeatPhase('idle')).toBe('running')
+    expect(participantSeatPhase('reticulating')).toBe('running')
+    expect(participantSeatPhase('success')).toBe('running')
+    expect(participantSeatPhase('awaitingApproval')).toBe('running')
   })
 })
 
@@ -329,7 +346,7 @@ describe('push-to-start', () => {
     h.fanout.onTaskCard({
       id: 'chat-1',
       status: 'running',
-      provider: 'codex',
+      provider: 'pi',
       isEnsemble: true,
       seats: [{ provider: 'codex', phase: 'running' }]
     })
@@ -339,7 +356,7 @@ describe('push-to-start', () => {
       string,
       { archetype: string }
     >
-    expect(payload.attributes.archetype).toBe('ensemble')
+    expect(payload.attributes).toMatchObject({ archetype: 'ensemble', provider: 'ensemble' })
   })
 
   it('cancels a pending start when the run finishes first', () => {

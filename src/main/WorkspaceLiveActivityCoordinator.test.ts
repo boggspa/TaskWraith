@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RemoteTaskCard } from './RemoteTaskProjection'
+import type { RemoteEnsembleParticipantState, RemoteTaskCard } from './RemoteTaskProjection'
 import type { LiveActivityPushFanout } from './LiveActivityPushFanout'
 import {
   projectWorkspaceLiveActivities,
@@ -17,6 +17,7 @@ function card(
     updatedAt?: string
     additions?: number
     deletions?: number
+    ensembleParticipants?: Array<Pick<RemoteEnsembleParticipantState, 'provider' | 'status'>>
   } = {}
 ): RemoteTaskCard {
   return {
@@ -24,6 +25,7 @@ function card(
     threadId: id,
     title: `private-${id}`,
     status,
+    chatKind: options.ensembleParticipants ? 'ensemble' : undefined,
     workspaceId: options.workspaceId ?? 'workspace-secret',
     provider: options.provider ?? 'codex',
     preview: `private-preview-${id}`,
@@ -33,6 +35,21 @@ function card(
     runStartedAt: options.startedAt,
     updatedAt: options.updatedAt,
     capabilities: { monitor: options.monitor ?? true } as RemoteTaskCard['capabilities'],
+    ensembleState: options.ensembleParticipants
+      ? {
+          threadId: id,
+          status: 'running',
+          queuedPromptCount: 0,
+          participantCount: options.ensembleParticipants.length,
+          participants: options.ensembleParticipants.map((participant, index) => ({
+            participantId: `seat-${index}`,
+            provider: participant.provider,
+            role: 'worker',
+            order: index,
+            status: participant.status
+          }))
+        }
+      : undefined,
     diffSummary: {
       filesChanged: 99,
       additions: options.additions ?? 900,
@@ -104,8 +121,23 @@ describe('workspace Live Activity projection', () => {
       hasGitSnapshot: true
     })
     expect(two[0].summary.seats.map((seat) => seat.provider)).toEqual(['grok', 'codex'])
+    expect(two[0].summary.seats.map((seat) => seat.phase)).toEqual(['awaitingQuestion', 'running'])
     // Per-run diffs were 900 each; the summary uses Git once, never 1,800.
     expect(two[0].summary.additions).not.toBe(1_800)
+  })
+
+  it('uses the ensemble display provider in workspace summaries', () => {
+    const projected = projectWorkspaceLiveActivities(
+      [
+        card('a', 'running', { provider: 'pi', ensembleParticipants: [] }),
+        card('b', 'running', { provider: 'pi', ensembleParticipants: [] })
+      ],
+      new Map(),
+      100
+    )[0]
+
+    const providers = projected.summary.seats.map((seat) => seat.provider)
+    expect(providers).toEqual(['ensemble', 'ensemble'])
   })
 
   it('fails closed when any active member lacks monitor capability', () => {
@@ -135,6 +167,73 @@ describe('workspace Live Activity projection', () => {
 })
 
 describe('workspace Live Activity reconciliation', () => {
+  it('projects answered ensemble seats as complete and names the ensemble', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+    const answered: Array<Pick<RemoteEnsembleParticipantState, 'provider' | 'status'>> = Array.from(
+      { length: 8 },
+      () => ({ provider: 'pi', status: 'answered' })
+    )
+
+    coordinator.reconcile([
+      card('ensemble', 'running', { provider: 'pi', ensembleParticipants: answered })
+    ])
+
+    expect(fanout.onTaskCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'ensemble',
+        provider: 'ensemble',
+        isEnsemble: true,
+        seats: answered.map(() => ({ provider: 'pi', phase: 'complete' }))
+      })
+    )
+  })
+
+  it('preserves the canonical terminal and active ensemble seat phases', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+    const participants: Array<Pick<RemoteEnsembleParticipantState, 'provider' | 'status'>> = [
+      { provider: 'codex', status: 'answered' },
+      { provider: 'codex', status: 'answered' },
+      { provider: 'grok', status: 'answered' },
+      { provider: 'grok', status: 'answered' },
+      { provider: 'pi', status: 'answered' },
+      { provider: 'pi', status: 'failed' },
+      { provider: 'kimi', status: 'sleeping' },
+      { provider: 'mistral', status: 'running' }
+    ]
+
+    coordinator.reconcile([
+      card('ensemble', 'running', { provider: 'pi', ensembleParticipants: participants })
+    ])
+
+    expect(fanout.onTaskCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        seats: [
+          { provider: 'codex', phase: 'complete' },
+          { provider: 'codex', phase: 'complete' },
+          { provider: 'grok', phase: 'complete' },
+          { provider: 'grok', phase: 'complete' },
+          { provider: 'pi', phase: 'complete' },
+          { provider: 'pi', phase: 'failed' },
+          { provider: 'kimi', phase: 'complete' },
+          { provider: 'mistral', phase: 'running' }
+        ]
+      })
+    )
+  })
+
+  it('keeps a non-ensemble provider as its display provider', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+
+    coordinator.reconcile([card('single', 'running', { provider: 'grok' })])
+
+    expect(fanout.onTaskCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'single', provider: 'grok', isEnsemble: false })
+    )
+  })
+
   it('replaces member cards with one summary and restores a single run later', () => {
     const fanout = fanoutSpy()
     const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
