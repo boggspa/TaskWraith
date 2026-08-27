@@ -780,6 +780,8 @@ export class BridgeActionRouter {
         return this.executor.executeGithubPrReadiness(payload)
       case 'githubCreatePr':
         return this.executor.executeGithubCreatePr(payload)
+      case 'githubMergePr':
+        return this.executor.executeGithubMergePr(payload)
       case 'cancelRun':
         return this.executor.executeCancelRun(payload)
       case 'workflowSetEnabled':
@@ -1479,6 +1481,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
       return 'fileWrite'
     case 'gitPush':
     case 'githubCreatePr':
+    case 'githubMergePr':
       return 'externalPublish'
     case 'cancelRun':
     case 'ensembleCancelRound':

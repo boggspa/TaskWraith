@@ -261,6 +261,10 @@ function makeStubExecutor(
       executed: true,
       message: 'githubCreatePr done'
     }),
+    executeGithubMergePr: make('executeGithubMergePr', {
+      executed: true,
+      message: 'githubMergePr done'
+    }),
     executeCancelRun: make('executeCancelRun', { executed: true, message: 'cancelRun done' }),
     executeWorkflowSetEnabled: make('executeWorkflowSetEnabled', {
       executed: true,
@@ -3035,7 +3039,12 @@ describe('BridgeActionRouter', () => {
         { kind: 'gitPush', setUpstream: true, method: 'executeGitPush' },
         { kind: 'githubPrStatus', method: 'executeGithubPrStatus' },
         { kind: 'githubPrReadiness', method: 'executeGithubPrReadiness' },
-        { kind: 'githubCreatePr', title: 'Phone PR', method: 'executeGithubCreatePr' }
+        { kind: 'githubCreatePr', title: 'Phone PR', method: 'executeGithubCreatePr' },
+        {
+          kind: 'githubMergePr',
+          elevationAcknowledged: true,
+          method: 'executeGithubMergePr'
+        }
       ]
 
       for (const action of actions) {
@@ -3086,7 +3095,11 @@ describe('BridgeActionRouter', () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
 
-      for (const payload of [{ kind: 'gitPush' }, { kind: 'githubCreatePr' }]) {
+      for (const payload of [
+        { kind: 'gitPush' },
+        { kind: 'githubCreatePr' },
+        { kind: 'githubMergePr', elevationAcknowledged: true }
+      ]) {
         const result = (await router.route('bridge.requestActionAck', {
           pairID: `pair-git-publish-deny-${payload.kind}`,
           payloadBase64: encodeGitAction(payload)
@@ -3128,6 +3141,34 @@ describe('BridgeActionRouter', () => {
           decision: 'allowed'
         })
       ])
+    })
+
+    it('denies githubMergePr without the workflowDelete elevation receipt before capability checks', async () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(allowlist, [
+        'monitor',
+        'diffReview',
+        'fileBrowse',
+        'fileRead',
+        'fileWrite',
+        'externalPublish'
+      ])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, executor })
+
+      for (const payload of [
+        { kind: 'githubMergePr' },
+        { kind: 'githubMergePr', elevationAcknowledged: false },
+        { kind: 'githubMergePr', elevationAcknowledged: true, prNumber: 7 }
+      ]) {
+        const result = (await router.route('bridge.requestActionAck', {
+          pairID: `pair-merge-elev-${JSON.stringify(payload)}`,
+          payloadBase64: encodeGitAction(payload)
+        })) as { accepted: boolean; reasonCode?: string }
+        expect(result.accepted).toBe(false)
+        expect(result.reasonCode).toBe('unknownAction')
+      }
+      expect(calls).toHaveLength(0)
     })
 
     it('denies git reads when the diffReview capability is absent', async () => {

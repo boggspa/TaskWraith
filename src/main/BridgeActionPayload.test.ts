@@ -1138,6 +1138,73 @@ describe('decodeBridgeActionPayload', () => {
       ).toMatchObject({ kind: 'unknown', rawKind: 'githubWatchPr' })
     })
 
+    it('decodes githubMergePr only with the phone elevation claim, and refuses a named PR target', () => {
+      const merge = decodeBridgeActionPayload(
+        encode({
+          kind: 'githubMergePr',
+          actionId: 'merge-1',
+          workspaceId: 'ws-1',
+          elevationAcknowledged: true
+        })
+      ).payload
+      expect(merge.kind).toBe('githubMergePr')
+      expect(merge).toMatchObject({ workspaceId: 'ws-1', elevationAcknowledged: true })
+      expect(payloadIsMutating(merge)).toBe(true)
+      expect(payloadRequiresWorkspaceGating(merge)).toBe(true)
+      expect(workspaceIdFromPayload(merge)).toBe('ws-1')
+
+      // Missing phone-sheet claim → unknown. This is only half the gate:
+      // decode-true is not host consent (see executeGithubMergePr).
+      expect(
+        decodeBridgeActionPayload(
+          encode({ kind: 'githubMergePr', actionId: 'merge-2', workspaceId: 'ws-1' })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'githubMergePr',
+            actionId: 'merge-3',
+            workspaceId: 'ws-1',
+            elevationAcknowledged: false
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'githubMergePr',
+            actionId: 'merge-4',
+            workspaceId: 'ws-1',
+            elevationAcknowledged: 'true'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      // Phone-chosen merge target is refused, not sanitised.
+      for (const extra of [
+        { prNumber: 7 },
+        { number: 7 },
+        { prUrl: 'https://github.com/o/r/pull/7' },
+        { url: 'https://github.com/o/r/pull/7' },
+        { path: '/tmp/repo' }
+      ]) {
+        expect(
+          decodeBridgeActionPayload(
+            encode({
+              kind: 'githubMergePr',
+              actionId: 'merge-target',
+              workspaceId: 'ws-1',
+              elevationAcknowledged: true,
+              ...extra
+            })
+          ).payload
+        ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+      }
+    })
+
     it('decodes githubCreatePr with optional title/body/draft', () => {
       const create = decodeBridgeActionPayload(
         encode({

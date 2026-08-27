@@ -3452,6 +3452,35 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Merge the current branch's GitHub PR. Destructive and irreversible
+    /// from the phone. Dual-gated, matching `terminalOpen` / the deferred
+    /// `workflowDelete` elevation contract:
+    ///
+    /// - `elevationAcknowledged` is the phone confirmation sheet's claim.
+    ///   The builder does not stamp `true` itself — a caller that skipped
+    ///   the sheet cannot mint that bit by constructing this payload with
+    ///   the workspace id alone. This bit is still not host consent: a
+    ///   paired client can pass `true` without any Mac involvement.
+    /// - The Mac independently runs `requestAgenticServiceApproval` before
+    ///   any merge callback. A forged `true` therefore cannot reach
+    ///   `githubMergePrFn`.
+    ///
+    /// The Mac derives the PR from the workspace checkout — this payload
+    /// has no PR number or URL. Host `githubMergePrFn` and
+    /// `requestGithubMergePrApprovalFn` are intentionally unwired while
+    /// `src/main/index.ts` is claimed; do not call this from UI.
+    public static func githubMergePr(
+        workspaceId: String,
+        elevationAcknowledged: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "githubMergePr", "actionId": actionId,
+            "workspaceId": workspaceId,
+            "elevationAcknowledged": elevationAcknowledged,
+        ])
+    }
+
     /// Requests a fresh, context-isolated sub-thread below parentThreadId.
     /// The provider is only a proposal from the phone: the Mac validates live
     /// admission, credentials and delegation policy before it creates a child.

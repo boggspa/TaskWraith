@@ -587,6 +587,42 @@ export interface BridgeGithubCreatePrAction extends BridgeActionMetadata {
   draft?: boolean
 }
 
+/** Merge the current branch's GitHub PR via `gh pr merge`.
+ *
+ * Destructive and irreversible from the phone — riding ordinary
+ * `githubCreatePr` / `externalPublish` authority would be a security
+ * defect. Dual-gated, matching `terminalOpen` / the deferred
+ * `workflowDelete` elevation contract:
+ *
+ * 1. Phone confirmation sheet. `elevationAcknowledged: true` must ride
+ *    the frame; decode refuses a missing or false receipt. This bit is
+ *    the phone's claim that it showed the sheet. It is NOT host consent
+ *    — a paired client can stamp `true` without any Mac involvement.
+ * 2. Host-verified approval at execution. The executor calls an injected
+ *    `requestGithubMergePrApprovalFn` that MUST go through
+ *    `requestAgenticServiceApproval` (the same path `terminalOpen` uses
+ *    for `shellCommands`). It must NOT use `beginExternalPublishReceipt`,
+ *    which auto-allows `origin: 'ios-bridge'`. A wired `githubMergePrFn`
+ *    without that host callback is refused; a forged phone bit never
+ *    reaches the merge callback.
+ *
+ * The Mac derives the PR from the workspace's current branch. A payload
+ * that names a PR number, URL, or path is REFUSED, not sanitised — the
+ * phone is not entitled to pick a merge target.
+ *
+ * Host `githubMergePrFn` and `requestGithubMergePrApprovalFn` are both
+ * optional and currently unwired (`src/main/index.ts` is claimed).
+ * Until both are supplied, the executor returns `notWired` (merge fn
+ * absent) or refuses (approval fn absent). Do not ship an iOS merge
+ * button that calls this action while those callbacks are absent. */
+export interface BridgeGithubMergePrAction extends BridgeActionMetadata {
+  kind: 'githubMergePr'
+  workspaceId: string
+  /** Phone confirmation-sheet claim. Must be literal true to decode.
+   * Not host consent — see the dual-gate comment above. */
+  elevationAcknowledged: boolean
+}
+
 /** Create an empty chat thread without starting a run. Used by the iOS
  * "New chat / New ensemble / New global" flows so the phone can land on
  * a welcome surface before the first prompt. */
@@ -1197,6 +1233,7 @@ export type BridgeActionPayload =
   | BridgeGithubPrStatusAction
   | BridgeGithubPrReadinessAction
   | BridgeGithubCreatePrAction
+  | BridgeGithubMergePrAction
   | BridgeCancelRunAction
   | BridgeWorkflowSetEnabledAction
   | BridgeWorkflowRunNowAction
@@ -1356,6 +1393,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'cancelRun':
     case 'ensembleCancelRound':
     case 'ensembleSkipActiveParticipant':
@@ -1456,6 +1494,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'cancelRun':
     case 'workflowSetEnabled':
     case 'workflowRunNow':
@@ -1602,6 +1641,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitCreateWorktree':
     case 'githubWatchPr':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'registerApnsToken':
     case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
@@ -1790,6 +1830,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isGithubCreatePr(parsed)
         ? (parsed as unknown as BridgeGithubCreatePrAction)
         : { kind: 'unknown', rawKind: 'githubCreatePr', raw: parsed }
+    case 'githubMergePr':
+      return isGithubMergePr(parsed)
+        ? (parsed as unknown as BridgeGithubMergePrAction)
+        : { kind: 'unknown', rawKind: 'githubMergePr', raw: parsed }
     case 'cancelRun':
       return isCancelRun(parsed)
         ? (parsed as unknown as BridgeCancelRunAction)
@@ -2468,6 +2512,19 @@ function isGithubCreatePr(v: Record<string, unknown>): boolean {
     (v.body === undefined ||
       (typeof v.body === 'string' && v.body.length <= MAX_GITHUB_PR_BODY_LENGTH)) &&
     (v.draft === undefined || typeof v.draft === 'boolean')
+  )
+}
+
+function isGithubMergePr(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    v.elevationAcknowledged === true &&
+    v.prNumber === undefined &&
+    v.number === undefined &&
+    v.prUrl === undefined &&
+    v.url === undefined &&
+    v.path === undefined
   )
 }
 

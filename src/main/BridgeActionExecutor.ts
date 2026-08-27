@@ -35,6 +35,7 @@ import type {
   BridgeGitCreateBranchAction,
   BridgeGitCreateWorktreeAction,
   BridgeGithubCreatePrAction,
+  BridgeGithubMergePrAction,
   BridgeGithubWatchPrAction,
   BridgeWorkflowRunNowAction,
   BridgeWorkflowSetEnabledAction,
@@ -210,6 +211,7 @@ export interface BridgeActionExecutor {
     action: BridgeGithubPrReadinessAction
   ): Promise<BridgeActionExecutionResult>
   executeGithubCreatePr(action: BridgeGithubCreatePrAction): Promise<BridgeActionExecutionResult>
+  executeGithubMergePr(action: BridgeGithubMergePrAction): Promise<BridgeActionExecutionResult>
   executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult>
   executeWorkflowSetEnabled(
     action: BridgeWorkflowSetEnabledAction,
@@ -499,6 +501,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeGithubCreatePrAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('githubCreatePr', action.workspaceId)
+  }
+  async executeGithubMergePr(
+    action: BridgeGithubMergePrAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('githubMergePr', action.workspaceId)
   }
   async executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult> {
     return notWired('cancelRun', action.runId)
@@ -927,6 +934,25 @@ export interface MainProcessActionExecutorDependencies {
     pr?: Record<string, unknown>
     reason?: string
   }>
+  /** Optional. Absent on purpose while src/main/index.ts is claimed;
+   * executeGithubMergePr returns notWired until this is supplied.
+   * Supplying this WITHOUT `requestGithubMergePrApprovalFn` still
+   * refuses — a merge callback is not consent. */
+  githubMergePrFn?: (action: BridgeGithubMergePrAction) => Promise<{
+    ok: boolean
+    pr?: Record<string, unknown>
+    reason?: string
+  }>
+  /** Host-authoritative merge consent, mirroring `terminalOpen`'s
+   * `requestAgenticServiceApproval` call. Must NOT wrap
+   * `beginExternalPublishReceipt` (that ledger auto-allows
+   * `origin: 'ios-bridge'`). A phone-stamped
+   * `elevationAcknowledged: true` is not this callback. Absent on
+   * purpose while src/main/index.ts is claimed; executeGithubMergePr
+   * will not invoke githubMergePrFn without it. */
+  requestGithubMergePrApprovalFn?: (
+    action: BridgeGithubMergePrAction
+  ) => Promise<boolean>
   gitBranchesFn?: (action: BridgeGitBranchesAction) => Promise<{
     ok: boolean
     branches?: Array<Record<string, unknown>>
@@ -1676,6 +1702,52 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] githubCreatePr failed: ${message}`)
       return { executed: false, message: `Create pull request failed: ${message}` }
+    }
+  }
+
+  async executeGithubMergePr(
+    action: BridgeGithubMergePrAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (action.elevationAcknowledged !== true) {
+      return {
+        executed: false,
+        message: 'Merge requires the workflowDelete elevation acknowledgement.'
+      }
+    }
+    if (!this.deps.githubMergePrFn) {
+      return notWired('githubMergePr', action.workspaceId)
+    }
+    // A wired merge callback is not consent. The phone bit above is the
+    // confirmation-sheet claim; this is the host-verification half
+    // terminalOpen has (requestAgenticServiceApproval) and merge lacked.
+    if (!this.deps.requestGithubMergePrApprovalFn) {
+      return {
+        executed: false,
+        message:
+          'Merge requires host-verified approval; a phone elevation receipt is not sufficient.'
+      }
+    }
+    this.log(`[BridgeActionExecutor] githubMergePr ws=${action.workspaceId}`)
+    try {
+      const approved = await this.deps.requestGithubMergePrApprovalFn(action)
+      if (!approved) {
+        return { executed: false, message: 'Merge was not approved.' }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] githubMergePr approval failed: ${message}`)
+      return { executed: false, message: `Merge approval failed: ${message}` }
+    }
+    try {
+      const result = await this.deps.githubMergePrFn(action)
+      if (result.ok && result.pr) {
+        return { executed: true, message: 'Pull request merged.', data: { pr: result.pr } }
+      }
+      return { executed: false, message: result.reason ?? 'Could not merge the pull request.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] githubMergePr failed: ${message}`)
+      return { executed: false, message: `Merge pull request failed: ${message}` }
     }
   }
 
