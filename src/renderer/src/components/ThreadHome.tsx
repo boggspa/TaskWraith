@@ -58,7 +58,7 @@ export interface ThreadHomeThreadOption {
   paneIndex?: number
 }
 
-export const THREAD_HOME_RECENT_LIMIT = 5
+export const THREAD_HOME_RECENT_LIMIT = 6
 
 function workspaceLabelForChat(chat: ChatRecord): string {
   if (chat.scope === 'global') return 'General'
@@ -257,10 +257,10 @@ export function ThreadHome({
               </span>
               <span className="thread-home-thread-provider-label">New</span>
             </button>
+            <div className="thread-home-list-heading" role="heading" aria-level={3}>
+              Active
+            </div>
             {threads.map(renderThreadRow)}
-            {threads.length === 0 && (
-              <div className="thread-home-empty-copy">No active threads right now.</div>
-            )}
             <div className="thread-home-list-heading" role="heading" aria-level={3}>
               Recents
             </div>
@@ -272,6 +272,9 @@ export function ThreadHome({
         </section>
 
         <section className="thread-home-section" aria-label="Thread tools">
+          <div className="thread-home-list-heading" role="heading" aria-level={3}>
+            Canvas
+          </div>
           <div className="thread-home-surface-grid">
             {THREAD_HOME_SURFACES.map((surface) => (
               <button

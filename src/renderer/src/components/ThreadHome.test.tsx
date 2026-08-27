@@ -48,7 +48,7 @@ describe('buildThreadHomeThreadOptions', () => {
     ).toEqual([])
   })
 
-  it('shows the five newest non-active recents using sidebar recency rules', () => {
+  it('shows the six newest non-active recents using sidebar recency rules', () => {
     const chats = Array.from({ length: 9 }, (_, index) => ({
       ...chat(`recent-${index + 1}`, `Recent ${index + 1}`),
       createdAt: (index + 1) * 100
@@ -62,13 +62,14 @@ describe('buildThreadHomeThreadOptions', () => {
       paneChatIds: ['recent-6']
     })
 
-    expect(THREAD_HOME_RECENT_LIMIT).toBe(5)
+    expect(THREAD_HOME_RECENT_LIMIT).toBe(6)
     expect(options.map((option) => option.chatId)).toEqual([
       'recent-6',
       'recent-5',
       'recent-4',
       'recent-3',
-      'recent-2'
+      'recent-2',
+      'recent-1'
     ])
     expect(options[0]).toMatchObject({ running: false, paneIndex: 0 })
   })
@@ -117,10 +118,14 @@ describe('ThreadHome', () => {
 
     expect(html).toContain('aria-label="Thread Home"')
     expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Alpha'))
-    expect(html.indexOf('Alpha')).toBeLessThan(html.indexOf('Recents'))
+    expect(html.indexOf('>Active</div>')).toBeLessThan(html.indexOf('Alpha'))
+    expect(html.indexOf('Alpha')).toBeLessThan(html.indexOf('>Recents</div>'))
     expect(html.indexOf('Recents')).toBeLessThan(html.indexOf('Beta'))
+    expect(html.indexOf('Beta')).toBeLessThan(html.indexOf('>Canvas</div>'))
     expect(html).toContain('Alpha')
     expect(html).toContain('class="thread-home-list-heading" role="heading" aria-level="3"')
+    expect((html.match(/thread-home-list-heading/g) || []).length).toBe(3)
+    expect(html).toContain('class="sidebar-chat-running"')
     expect(html).toContain('Pane 2')
     expect(html).toContain('class="thread-home-run-stats"')
     expect(html).toContain('2 changed files, 12 additions, 3 deletions, 1 commit')
@@ -153,8 +158,10 @@ describe('ThreadHome', () => {
       />
     )
     expect(html).toContain('aria-label="New Chat"')
-    expect(html).toContain('No active threads right now.')
+    expect(html).toContain('>Active</div>')
+    expect(html).not.toContain('No active threads right now.')
     expect(html).toContain('No recent threads yet.')
+    expect(html).toContain('>Canvas</div>')
     expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
   })
 
@@ -197,6 +204,13 @@ describe('ThreadHome', () => {
     )
     expect(css).toContain("[data-reduce-motion='true'] .thread-home-thread-row:hover")
     expect(css).not.toContain('color-mix(in srgb, var(--accent) 9%, var(--surface-2))')
+    const headingStart = css.indexOf('.thread-home-list-heading {')
+    const headingEnd = css.indexOf('}', headingStart)
+    const headingRule = css.slice(headingStart, headingEnd)
+    expect(headingRule).toContain("'Avenir Next'")
+    expect(headingRule).toContain('letter-spacing: -0.01em')
+    expect(headingRule).toContain('text-transform: none')
+    expect(css).toContain('.thread-home-thread-row .sidebar-chat-running {')
   })
 
   it('closes a successful embedded Canvas that resolves after its host unmounts', async () => {

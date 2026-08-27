@@ -100,10 +100,19 @@
   grid-column: 1 / -1;
   margin-top: 8px;
   color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family:
+    'Avenir Next',
+    Avenir,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    'Segoe UI',
+    sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: none;
 }
 
 .thread-home-thread-row {
@@ -289,7 +298,7 @@
   height: 11px;
 }
 
-.thread-home-thread-row .sidebar-running-ghost {
+.thread-home-thread-row .sidebar-chat-running {
   width: 18px;
   height: 18px;
 }
