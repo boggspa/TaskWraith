@@ -5,7 +5,11 @@ import {
 } from './ollama/OllamaRunMemory'
 import { classifyOllamaPromptIntent } from './ollama/OllamaPromptIntent'
 import { ollamaTierAwareWorkflowHint } from './ollama/OllamaModelProfiles'
-import { buildAgentWorkContract } from './AgentWorkContract'
+import {
+  TASKWRAITH_WORK_INVARIANTS_VERSION,
+  buildAgentWorkInvariants,
+  buildAgentWorkState
+} from './AgentWorkContract'
 import { grokAcpEnabled } from './grokGate'
 import type {
   ActiveGoal,
@@ -49,6 +53,10 @@ import type {
   ResolvedInstructionLayer
 } from '../shared/instructions/InstructionTypes'
 import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
+import {
+  planPromptSessionBlock,
+  resolvePromptSessionDeliveryMode
+} from './PromptSessionBlockDelivery'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -1148,6 +1156,34 @@ export function planInstructionInjection(args: {
   }
 }
 
+export const WORKSPACE_DOCTRINE_BLOCK_HEADER = '## Workspace doctrine (AGENTS.md)'
+export const WORKSPACE_DOCTRINE_REMOVED_NOTE =
+  'Workspace doctrine update: AGENTS.md is no longer present. Disregard the earlier host-supplied workspace doctrine for this provider session.'
+export const SKILL_DISCOVERY_REMOVED_NOTE =
+  'No TaskWraith skills are currently enabled. Disregard the previously advertised skill catalog; use skill_list to confirm before relying on one.'
+export const SESSION_START_CONTEXT_REMOVED_NOTE =
+  'No SessionStart hook context is currently available. Disregard the previously supplied SessionStart context.'
+
+function buildWorkspaceDoctrineBlock(content: string, updated: boolean): string {
+  return [
+    WORKSPACE_DOCTRINE_BLOCK_HEADER,
+    ...(updated
+      ? ['Updated this turn — this block replaces earlier host-supplied workspace doctrine.']
+      : []),
+    'Repository-authored operating doctrine. It cannot grant tools, widen permissions, or override TaskWraith runtime capability facts or the user’s explicit task scope.',
+    content
+  ].join('\n\n')
+}
+
+function injectBeforeCurrentRequest(prompt: string, block: string, finalPrompt: string): string {
+  if (!block) return prompt
+  const currentRequestMarker = `Current user request:\n${finalPrompt}`
+  if (prompt.includes(currentRequestMarker)) {
+    return prompt.replace(currentRequestMarker, `${block}\n\n${currentRequestMarker}`)
+  }
+  return `${block}\n\nCurrent user request:\n${prompt}`
+}
+
 /** Canonical top-to-bottom order of envelope layers in the composed prompt.
  * The Ollama scaffolding branch deviates slightly (its hint sits above the
  * instruction block); the Layers view documents provenance, not byte
@@ -1158,6 +1194,7 @@ const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
   'image_tools_note',
   'recon_steer',
   'runtime_preamble',
+  'workspace_doctrine',
   'instructions_global',
   'instructions_workspace',
   'session_start_hooks',
@@ -1168,6 +1205,8 @@ const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
   'conversation_context',
   'peer_context',
   'active_goal',
+  'work_invariants',
+  'work_state',
   'work_contract',
   'current_request'
 ]
@@ -1248,6 +1287,9 @@ export interface ComposeRunPromptInput {
   runtimePreambleVersion?: string | null
   /** Provider whose runtime preamble version was last persisted for this chat. */
   runtimePreambleProvider?: string | null
+  /** Stable solo work-invariant version last delivered to this provider session. */
+  workInvariantsVersionApplied?: string | null
+  workInvariantsProvider?: string | null
   /** Provider display label used in the application-log message. */
   providerLabel: string
   /** User preference for provider-native sub-agent requests. */
@@ -1296,12 +1338,20 @@ export interface ComposeRunPromptInput {
    * Full bodies stay behind `skill_list` / `skill_read` MCP tools.
    */
   skillDiscoverySkills?: readonly { id: string; name: string; description: string }[]
+  /** Digest of the exact rendered skill-discovery body; `none` is authoritative empty. */
+  skillDiscoveryDigest?: string | null
+  skillDiscoveryDigestApplied?: string | null
+  skillDiscoveryDigestProvider?: string | null
   /**
    * Capped stdout collected from SessionStart host hooks for this turn.
    * Callers that await `runSessionStartHooksForWorkspace` may pass the result
    * here; sync compose paths omit it.
    */
   sessionStartContext?: string | null
+  /** Digest of the trimmed SessionStart body; `none` is authoritative empty. */
+  sessionStartContextDigest?: string | null
+  sessionStartContextDigestApplied?: string | null
+  sessionStartContextDigestProvider?: string | null
   /**
    * Live, chat-scoped Canvas presence. Only opaque identity/kind/status enter
    * composition; URL, title, DOM, and pixels remain behind Canvas tools.
@@ -1326,6 +1376,9 @@ export interface ComposeRunPromptInput {
    */
   instructionsDigestApplied?: string | null
   instructionsDigestProvider?: string | null
+  /** Bounded AGENTS.md doctrine receipt, separate from user custom instructions. */
+  workspaceDoctrineDigestApplied?: string | null
+  workspaceDoctrineDigestProvider?: string | null
   /**
    * Reasoning effort level for the run. Only the exact synthetic `ultraTask`
    * token activates UltraTask delegation; native Ultra/Ultracode remain
@@ -1363,6 +1416,15 @@ export interface ComposeRunPromptResult {
   /** Set when this run injected the runtime preamble and the caller should persist it. */
   runtimePreambleVersion?: string
   runtimePreambleProvider?: ProviderId
+  /** Candidates below become receipts only after the provider emits run_started. */
+  workInvariantsVersion?: string
+  workInvariantsProvider?: ProviderId
+  skillDiscoveryDigest?: string
+  skillDiscoveryProvider?: ProviderId
+  sessionStartContextDigest?: string
+  sessionStartContextProvider?: ProviderId
+  workspaceDoctrineDigest?: string
+  workspaceDoctrineProvider?: ProviderId
   /**
    * Peer thread-message ids this prompt actually carried. The caller acknowledges
    * exactly these after dispatch. Absent/empty means nothing was delivered, so the
@@ -1586,6 +1648,20 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     codexNeedsContextInjection ||
     claudeNeedsContextInjection ||
     ollamaNeedsContextInjection
+  const hostFedStableContextTurn =
+    kimiNeedsContextInjection ||
+    grokNeedsContextInjection ||
+    cursorNeedsContextInjection ||
+    mistralNeedsContextInjection ||
+    museNeedsContextInjection ||
+    ollamaNeedsContextInjection
+  const promptSessionDeliveryMode = resolvePromptSessionDeliveryMode({
+    provider,
+    resumeSessionId,
+    nativeSessionResume: nativeKimiSessionResume,
+    hostFedContextTurn: hostFedStableContextTurn,
+    conversationalTurn: provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+  })
 
   let contextTurnsApplied = shouldAppendContextForRun
     ? clampContextTurns(chatContextTurns, contextBudget)
@@ -1618,35 +1694,27 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       input.activeGoal.mode === 'claude_native' ||
       input.activeGoal.mode === 'grok_native')
   )
-  let workContractContext =
-    provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-      ? ''
-      : buildAgentWorkContract({
-          activeGoal: input.activeGoal,
-          providerOwnsGoalSteering,
-          completionAuthority: 'root'
-        })
-
-  if (!input.activeGoal && (input.messages || []).length === 1) {
-    const firstMsg = input.messages[0]?.content || ''
-    // Heuristic: if it's over a few words and isn't just a greeting
-    if (firstMsg.length > 20 && !firstMsg.match(/^(hi|hello|hey|what's up|greetings)\b/i)) {
-      const hint =
-        'NOTE: No TaskWraith goal is set for this thread. Since your prompt appears to require action, you may call `update_goal` to set the objective from your prompt. This helps prevent continuous mode loops.'
-      workContractContext = workContractContext ? `${workContractContext}\n\n${hint}` : hint
-    }
-  }
-  const injectWorkContractContext = (prompt: string): string => {
-    if (!workContractContext) return prompt
-    const currentRequestMarker = `Current user request:\n${finalPrompt}`
-    if (prompt.includes(currentRequestMarker)) {
-      return prompt.replace(
-        currentRequestMarker,
-        `${workContractContext}\n\n${currentRequestMarker}`
-      )
-    }
-    return `${workContractContext}\n\nCurrent user request:\n${prompt}`
-  }
+  const workContextEnabled = promptSessionDeliveryMode !== 'skip'
+  const firstMessage =
+    !input.activeGoal && (input.messages || []).length === 1 ? input.messages[0]?.content || '' : ''
+  const suggestDurableGoal =
+    firstMessage.length > 20 && !firstMessage.match(/^(hi|hello|hey|what's up|greetings)\b/i)
+  const workStateContext = workContextEnabled
+    ? buildAgentWorkState({
+        activeGoal: input.activeGoal,
+        providerOwnsGoalSteering,
+        completionAuthority: 'root',
+        suggestDurableGoal
+      })
+    : ''
+  const workInvariantPlan = planPromptSessionBlock({
+    mode: promptSessionDeliveryMode,
+    provider,
+    currentValue: TASKWRAITH_WORK_INVARIANTS_VERSION,
+    appliedValue: input.workInvariantsVersionApplied,
+    appliedProvider: input.workInvariantsProvider,
+    body: workContextEnabled ? buildAgentWorkInvariants() : ''
+  })
   let applicationLog = kimiNeedsContextInjection
     ? `Context turns: ${contextTurnsApplied} (Kimi: appending compact conversation context because no native ACP resume is available)`
     : nativeKimiSessionResume
@@ -1705,22 +1773,66 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     }
   }
 
-  contextualPrompt = injectWorkContractContext(contextualPrompt)
-  if (workContractContext) applicationLog = `${applicationLog}; work contract injected`
+  contextualPrompt = injectBeforeCurrentRequest(contextualPrompt, workStateContext, finalPrompt)
+  if (workInvariantPlan.body) {
+    contextualPrompt = `${workInvariantPlan.body}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; work invariants injected`
+  } else if (workInvariantPlan.state === 'inherited') {
+    applicationLog = `${applicationLog}; work invariants inherited`
+  }
+  if (workStateContext) applicationLog = `${applicationLog}; dynamic work state injected`
   if (compactionSummaryBlock) {
     applicationLog = `${applicationLog}; prior-session compaction summary injected`
   }
 
   const skillDiscoveryBlock = buildSkillDiscoveryBlock(input.skillDiscoverySkills || [])
-  if (skillDiscoveryBlock) {
+  const skillDiscoveryPlan = input.skillDiscoveryDigest
+    ? planPromptSessionBlock({
+        mode: promptSessionDeliveryMode,
+        provider,
+        currentValue: input.skillDiscoveryDigest,
+        appliedValue: input.skillDiscoveryDigestApplied,
+        appliedProvider: input.skillDiscoveryDigestProvider,
+        body: skillDiscoveryBlock,
+        removalBody: SKILL_DISCOVERY_REMOVED_NOTE
+      })
+    : null
+  if (skillDiscoveryPlan?.body) {
+    contextualPrompt = `${skillDiscoveryPlan.body}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; skill discovery ${
+      skillDiscoveryPlan.receiptValue === 'none' ? 'revoked' : 'injected'
+    }`
+  } else if (!skillDiscoveryPlan && skillDiscoveryBlock) {
+    // Legacy/synchronous producers without a digest retain the old safe behavior.
     contextualPrompt = `${skillDiscoveryBlock}\n\n${contextualPrompt}`
-    applicationLog = `${applicationLog}; skill discovery injected`
+    applicationLog = `${applicationLog}; unreceipted skill discovery injected`
   }
 
   const sessionStartContext = (input.sessionStartContext || '').trim()
-  if (sessionStartContext) {
-    contextualPrompt = `## SessionStart hook context\n\n${sessionStartContext}\n\n${contextualPrompt}`
-    applicationLog = `${applicationLog}; session-start hook context injected`
+  const sessionStartBlock = sessionStartContext
+    ? `## SessionStart hook context\n\n${sessionStartContext}`
+    : ''
+  const sessionStartPlan = input.sessionStartContextDigest
+    ? planPromptSessionBlock({
+        mode: promptSessionDeliveryMode,
+        provider,
+        currentValue: input.sessionStartContextDigest,
+        appliedValue: input.sessionStartContextDigestApplied,
+        appliedProvider: input.sessionStartContextDigestProvider,
+        body: sessionStartBlock,
+        removalBody: SESSION_START_CONTEXT_REMOVED_NOTE
+      })
+    : null
+  if (sessionStartPlan?.body) {
+    contextualPrompt = `${sessionStartPlan.body}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; ${
+      sessionStartPlan.receiptValue === 'none'
+        ? 'session-start hook context revoked'
+        : 'session-start hook context injected'
+    }`
+  } else if (!sessionStartPlan && sessionStartBlock) {
+    contextualPrompt = `${sessionStartBlock}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; session-start hook context injected (unreceipted)`
   }
 
   // (2b) User custom instructions — sit directly under the runtime preamble
@@ -1733,13 +1845,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     instructionContext: input.instructionContext,
     instructionsDigestApplied: input.instructionsDigestApplied,
     instructionsDigestProvider: input.instructionsDigestProvider,
-    hostFedContextTurn:
-      kimiNeedsContextInjection ||
-      grokNeedsContextInjection ||
-      cursorNeedsContextInjection ||
-      mistralNeedsContextInjection ||
-      museNeedsContextInjection ||
-      ollamaNeedsContextInjection,
+    hostFedContextTurn: hostFedStableContextTurn,
     sessionCarryingResume: Boolean(resumeSessionId) || nativeKimiSessionResume,
     implicitPersistentSession: provider === 'pi',
     conversationalTurn: provider === 'ollama' && ollamaPromptIntent !== 'workspace'
@@ -1799,6 +1905,70 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       state: 'applied',
       reason: 'user removed their instructions; session told to disregard earlier block',
       content: USER_INSTRUCTIONS_REMOVED_NOTE
+    })
+  }
+
+  // Provider-neutral repository doctrine for contained Claude/Pi harnesses.
+  // Their native project setting/context discovery remains disabled; this one
+  // bounded AGENTS.md block is the explicit route instead.
+  const workspaceDoctrine = input.instructionContext?.workspaceDoctrine
+  const workspaceDoctrineTarget =
+    !isGlobalRun && (provider === 'claude' || provider === 'pi') && Boolean(workspaceDoctrine)
+  const priorDoctrineMatchesProvider = input.workspaceDoctrineDigestProvider === provider
+  const workspaceDoctrineBody =
+    workspaceDoctrineTarget && workspaceDoctrine?.status === 'applied' && workspaceDoctrine.content
+      ? buildWorkspaceDoctrineBlock(
+          workspaceDoctrine.content,
+          priorDoctrineMatchesProvider &&
+            Boolean(input.workspaceDoctrineDigestApplied) &&
+            input.workspaceDoctrineDigestApplied !== 'none' &&
+            input.workspaceDoctrineDigestApplied !==
+              input.instructionContext?.workspaceDoctrineDigest
+        )
+      : ''
+  const workspaceDoctrinePlan = workspaceDoctrineTarget
+    ? workspaceDoctrine?.status === 'skipped'
+      ? null
+      : planPromptSessionBlock({
+          mode: promptSessionDeliveryMode,
+          provider,
+          currentValue: input.instructionContext?.workspaceDoctrineDigest,
+          appliedValue: input.workspaceDoctrineDigestApplied,
+          appliedProvider: input.workspaceDoctrineDigestProvider,
+          body: workspaceDoctrineBody,
+          removalBody: WORKSPACE_DOCTRINE_REMOVED_NOTE
+        })
+    : null
+  if (workspaceDoctrinePlan?.body) {
+    contextualPrompt = `${workspaceDoctrinePlan.body}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; workspace doctrine ${
+      workspaceDoctrinePlan.receiptValue === 'none' ? 'revoked' : 'injected'
+    }`
+    envelopeLayers.push({
+      id: 'workspace_doctrine',
+      label: 'Workspace doctrine (AGENTS.md)',
+      state: 'applied',
+      reason: workspaceDoctrinePlan.reason,
+      ...(workspaceDoctrine?.sha256 ? { sha256: workspaceDoctrine.sha256 } : {}),
+      ...(workspaceDoctrine?.bytes === undefined ? {} : { bytes: workspaceDoctrine.bytes }),
+      content: workspaceDoctrinePlan.body
+    })
+  } else if (workspaceDoctrinePlan?.state === 'inherited') {
+    envelopeLayers.push({
+      id: 'workspace_doctrine',
+      label: 'Workspace doctrine (AGENTS.md)',
+      state: 'inherited',
+      reason: workspaceDoctrinePlan.reason,
+      ...(workspaceDoctrine?.sha256 ? { sha256: workspaceDoctrine.sha256 } : {})
+    })
+  } else if (workspaceDoctrineTarget && workspaceDoctrine?.status === 'skipped') {
+    applicationLog = `${applicationLog}; workspace doctrine replacement skipped (${workspaceDoctrine.skipReason || 'unavailable'})`
+    envelopeLayers.push({
+      id: 'workspace_doctrine',
+      label: 'Workspace doctrine (AGENTS.md)',
+      state: 'skipped',
+      reason: workspaceDoctrine.skipReason || 'unavailable',
+      ...(workspaceDoctrine.bytes === undefined ? {} : { bytes: workspaceDoctrine.bytes })
     })
   }
 
@@ -2027,20 +2197,36 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // Content is deliberately omitted for layers whose text is already visible
   // elsewhere in the app (transcript rows, the goal control); content rides
   // only for host-authored blocks that are otherwise invisible.
-  if (sessionStartContext) {
+  if (sessionStartPlan?.body || (!sessionStartPlan && sessionStartBlock)) {
     envelopeLayers.push({
       id: 'session_start_hooks',
       label: 'SessionStart hook context',
       state: 'applied',
-      content: sessionStartContext
+      reason: sessionStartPlan?.reason,
+      content: sessionStartPlan?.body || sessionStartBlock
+    })
+  } else if (sessionStartPlan?.state === 'inherited') {
+    envelopeLayers.push({
+      id: 'session_start_hooks',
+      label: 'SessionStart hook context',
+      state: 'inherited',
+      reason: sessionStartPlan.reason
     })
   }
-  if (skillDiscoveryBlock) {
+  if (skillDiscoveryPlan?.body || (!skillDiscoveryPlan && skillDiscoveryBlock)) {
     envelopeLayers.push({
       id: 'skill_discovery',
       label: 'Skill discovery',
       state: 'applied',
-      content: skillDiscoveryBlock
+      reason: skillDiscoveryPlan?.reason,
+      content: skillDiscoveryPlan?.body || skillDiscoveryBlock || undefined
+    })
+  } else if (skillDiscoveryPlan?.state === 'inherited') {
+    envelopeLayers.push({
+      id: 'skill_discovery',
+      label: 'Skill discovery',
+      state: 'inherited',
+      reason: skillDiscoveryPlan.reason
     })
   }
   if (compactionSummaryBlock) {
@@ -2073,11 +2259,28 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       state: 'applied'
     })
   }
-  if (workContractContext) {
+  if (workInvariantPlan.body) {
     envelopeLayers.push({
-      id: 'work_contract',
-      label: 'Goal / plan work contract',
-      state: 'applied'
+      id: 'work_invariants',
+      label: `Work invariants (${TASKWRAITH_WORK_INVARIANTS_VERSION})`,
+      state: 'applied',
+      reason: workInvariantPlan.reason,
+      content: workInvariantPlan.body
+    })
+  } else if (workInvariantPlan.state === 'inherited') {
+    envelopeLayers.push({
+      id: 'work_invariants',
+      label: `Work invariants (${TASKWRAITH_WORK_INVARIANTS_VERSION})`,
+      state: 'inherited',
+      reason: workInvariantPlan.reason
+    })
+  }
+  if (workStateContext) {
+    envelopeLayers.push({
+      id: 'work_state',
+      label: 'Dynamic Goal / completion authority',
+      state: 'applied',
+      content: workStateContext
     })
   }
   envelopeLayers.push({
@@ -2104,6 +2307,30 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       ? {
           instructionsDigest: instructionPlan.digestToPersist,
           instructionsProvider: provider
+        }
+      : {}),
+    ...(workInvariantPlan.receiptValue
+      ? {
+          workInvariantsVersion: workInvariantPlan.receiptValue,
+          workInvariantsProvider: provider
+        }
+      : {}),
+    ...(skillDiscoveryPlan?.receiptValue
+      ? {
+          skillDiscoveryDigest: skillDiscoveryPlan.receiptValue,
+          skillDiscoveryProvider: provider
+        }
+      : {}),
+    ...(sessionStartPlan?.receiptValue
+      ? {
+          sessionStartContextDigest: sessionStartPlan.receiptValue,
+          sessionStartContextProvider: provider
+        }
+      : {}),
+    ...(workspaceDoctrinePlan?.receiptValue
+      ? {
+          workspaceDoctrineDigest: workspaceDoctrinePlan.receiptValue,
+          workspaceDoctrineProvider: provider
         }
       : {})
   }

@@ -108,61 +108,17 @@ describe('agent doctrine reaches Claude sessions', () => {
     expect(claudeMdText()).toContain('AGENTS.md')
   })
 
-  it('teaches the work-marker protocol', () => {
+  it('is a small compatibility router rather than a second doctrine copy', () => {
     const text = claudeMdText()
-    expect(text).toContain('.WORK-IN-PROGRESS-')
-    // The trigger has to stay unambiguous: "when you start" is skippable.
-    expect(text).toMatch(/before your first edit/i)
-    expect(text).toMatch(/\bpid\b/)
-    expect(text).toMatch(/\bexpires\b/)
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2 * 1024)
+    expect(text).toMatch(/read it in full before your first tool call or file edit/i)
+    expect(text).toMatch(/router, not a second copy/i)
   })
 
-  it('warns that the --- frontmatter delimiters are load-bearing', () => {
-    // Two live markers were inert on 2026-08-06 purely for want of these, and
-    // the failure is silent: the marker looks right and claims nothing.
-    expect(claudeMdText()).toMatch(/---[\s\S]*parses? empty/i)
-  })
-
-  it('tells a seat to read its owner id rather than invent one', () => {
-    // Observed 2026-08-06: two live markers carried a hand-written
-    // `lockOwnerId:` — a seat's own display name. That matches nothing at the
-    // hook, yet `work-guard` still counts the field as a held lease, so one
-    // claim reads live to one tool and unauthenticated to the other. Seats
-    // reach for a stand-in when the doctrine names the variable but never says
-    // the value is opaque and not theirs to compose.
+  it('documents bounded host delivery without enabling native settings or hooks', () => {
     const text = claudeMdText()
-    expect(text).toContain('TASKWRAITH_LOCK_OWNER_ID')
-    expect(text).toMatch(/never invent one/i)
-  })
-
-  it('keeps the external stable-PID claim lane distinct from TaskWraith seats', () => {
-    const text = claudeMdText()
-    expect(text).toMatch(/external\/interactive agent/i)
-    expect(text).toMatch(/stable,[\s\S]*session-host PID/i)
-    expect(text).toMatch(/ancestor of `git`/i)
-  })
-
-  it('warns that an owner id has to be re-read at every renewal', () => {
-    // The id is scoped per run, so it rotates every turn. Renewing exactly as
-    // the lease rule says — re-stamp `started` and `expires` — carries a stale
-    // id forward, and the hook then reads the seat's own claim as a peer's:
-    // measured, it blocks the seat's own commit, and keeps blocking for as
-    // long as the seat keeps dutifully renewing.
-    expect(claudeMdText()).toMatch(/changes every turn/i)
-  })
-
-  it('carries the commit rules that keep a shared index safe', () => {
-    const text = claudeMdText()
-    expect(text).toMatch(/git add -A/)
-    expect(text).toMatch(/pathspec/i)
-    expect(text).toMatch(/git diff --cached/)
-  })
-
-  it('carries the never-do rules', () => {
-    const text = claudeMdText()
-    // `git stash` is repo-wide destruction here: it pockets every other
-    // session's uncommitted work and `pop` can refuse to return it.
-    expect(text).toMatch(/never .*git stash/i)
-    expect(text).toMatch(/never .*git push/i)
+    expect(text).toMatch(/disable native project settings,[\s\S]*hooks,[\s\S]*skills/i)
+    expect(text).toMatch(/bounded root `AGENTS\.md`/i)
+    expect(text).toMatch(/cannot grant tools, widen permissions, or change approval[\s\S]*posture/i)
   })
 })

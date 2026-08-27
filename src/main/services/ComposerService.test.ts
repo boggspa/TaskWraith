@@ -24,6 +24,7 @@ import {
   verifyRunPermissionPosture
 } from '../RunPermissionPosture'
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
+import { TASKWRAITH_WORK_INVARIANTS_VERSION } from '../AgentWorkContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
@@ -35,6 +36,10 @@ import {
   resetAntigravityAgyOptInEnabledProbeForTests,
   setAntigravityAgyOptInEnabledProbe
 } from '../antigravity/AntigravityAgyOptInEnabledSignal'
+import {
+  digestSessionStartContext,
+  digestSkillDiscoveryPrompt
+} from '../skillsHooks/resolveRunSkillHookContext'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -2678,5 +2683,109 @@ describe('composeRun prompt envelope', () => {
     expect(envelope?.layers.find((layer) => layer.id === 'instructions_global')?.content).toBe(
       'Be terse.'
     )
+  })
+})
+
+describe('composeRun admitted prompt-delivery candidates', () => {
+  const doctrineContext = {
+    layers: [],
+    digest: 'none',
+    enabled: true,
+    workspaceDoctrine: {
+      source: 'AGENTS.md' as const,
+      status: 'applied' as const,
+      sha256: 'doctrine-sha',
+      bytes: 24,
+      content: 'Inspect status before editing.'
+    },
+    workspaceDoctrineDigest: 'doctrine-sha'
+  }
+
+  it('returns cold candidates separately from the pre-dispatch metadata patch', async () => {
+    const chat = makeChat({ provider: 'claude' })
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => doctrineContext,
+      resolveSkillDiscoverySkills: () => [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      resolveSessionStartContext: () => 'branch=main'
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+
+    expect(payload.composer.promptDeliveryReceipts?.workInvariants).toEqual({
+      provider: 'claude',
+      value: TASKWRAITH_WORK_INVARIANTS_VERSION
+    })
+    expect(payload.composer.promptDeliveryReceipts?.skillDiscovery?.value).toMatch(/^[a-f0-9]{64}$/)
+    expect(payload.composer.promptDeliveryReceipts?.sessionStartContext?.value).toMatch(
+      /^[a-f0-9]{64}$/
+    )
+    expect(payload.composer.promptDeliveryReceipts?.workspaceDoctrine).toEqual({
+      provider: 'claude',
+      value: 'doctrine-sha'
+    })
+    expect(payload.composer.providerMetadataPatch ?? {}).not.toHaveProperty(
+      'taskWraithWorkInvariantsVersion'
+    )
+    expect(payload.composer.providerMetadataPatch ?? {}).not.toHaveProperty(
+      'taskWraithWorkspaceDoctrineDigest'
+    )
+  })
+
+  it('keeps a healthy resume slim while its cold fallback restores every stable block', async () => {
+    const skillDigest = digestSkillDiscoveryPrompt([
+      { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+    ])
+    const hookDigest = digestSessionStartContext('branch=main')
+    const chat = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'session-1',
+      providerMetadata: {
+        taskWraithWorkInvariantsVersion: TASKWRAITH_WORK_INVARIANTS_VERSION,
+        taskWraithWorkInvariantsProvider: 'claude',
+        taskWraithSkillDiscoveryDigest: skillDigest,
+        taskWraithSkillDiscoveryProvider: 'claude',
+        taskWraithSessionStartContextDigest: hookDigest,
+        taskWraithSessionStartContextProvider: 'claude',
+        taskWraithWorkspaceDoctrineDigest: 'doctrine-sha',
+        taskWraithWorkspaceDoctrineProvider: 'claude'
+      }
+    })
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => doctrineContext,
+      resolveSkillDiscoverySkills: () => [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      resolveSessionStartContext: () => 'branch=main'
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: chat.workspacePath,
+      userInput: 'Continue.',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+
+    expect(payload.prompt).not.toContain('<taskwraith_work_invariants')
+    expect(payload.prompt).not.toContain('## Available skills')
+    expect(payload.prompt).not.toContain('branch=main')
+    expect(payload.prompt).not.toContain('## Workspace doctrine')
+    expect(payload.resumeFallbackPrompt).toContain('<taskwraith_work_invariants')
+    expect(payload.resumeFallbackPrompt).toContain('## Available skills')
+    expect(payload.resumeFallbackPrompt).toContain('branch=main')
+    expect(payload.resumeFallbackPrompt).toContain('## Workspace doctrine')
+    expect(payload.composer.promptDeliveryReceipts).toBeUndefined()
   })
 })

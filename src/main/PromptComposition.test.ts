@@ -5,9 +5,13 @@ import {
   TASKWRAITH_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+  SESSION_START_CONTEXT_REMOVED_NOTE,
+  SKILL_DISCOVERY_REMOVED_NOTE,
   USER_INSTRUCTIONS_BLOCK_HEADER,
   USER_INSTRUCTIONS_REMOVED_NOTE,
   USER_INSTRUCTIONS_UPDATED_NOTE,
+  WORKSPACE_DOCTRINE_BLOCK_HEADER,
+  WORKSPACE_DOCTRINE_REMOVED_NOTE,
   buildConversationCompactionProjection,
   buildConversationContextBlock,
   buildConversationContextProjection,
@@ -28,6 +32,7 @@ import {
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
 import { makeHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import { TASKWRAITH_WORK_INVARIANTS_VERSION } from './AgentWorkContract'
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
@@ -186,7 +191,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       targetProvider: 'kimi'
     })
 
-    expect(sanitized).toContain('<taskwraith_work_contract>')
+    expect(sanitized).toContain('<taskwraith_work_state>')
     expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('this Claude workspace run')
   })
@@ -213,7 +218,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
     })
 
     expect(sanitized).toContain(TASKWRAITH_CORE_MCP_PROFILE_NOTE)
-    expect(sanitized).toContain('<taskwraith_work_contract>')
+    expect(sanitized).toContain('<taskwraith_work_state>')
     expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('mcp_taskwraith-broker')
     expect(sanitized).not.toContain('native Cursor Write')
@@ -669,10 +674,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       }
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain('Finish the composer goal affordance with tests.')
     expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
-    expect(result.applicationLog).toContain('work contract injected')
+    expect(result.applicationLog).toContain('dynamic work state injected')
   })
 
   it('injects progressive skill discovery and SessionStart hook context when provided', () => {
@@ -724,8 +729,8 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Paused objective.')
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
-    expect(result.contextualPrompt).toContain('current user request below')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain('Goal: current user request')
   })
 
   it('does not inject native Codex goals because app-server owns steering', () => {
@@ -753,7 +758,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Codex native goal state.')
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain('provider-native Goal state')
   })
 
@@ -781,7 +786,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Grok native slash goal state.')
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain(
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
@@ -1048,6 +1053,8 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(requested.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
     expect(requested.contextualPrompt).toContain('list_subthreads')
     expect(requested.contextualPrompt).toContain('read_subthread_result')
+    expect(requested.contextualPrompt).toContain('TaskWraith__capability_search')
+    expect(requested.contextualPrompt).toContain('TaskWraith__capability_invoke')
     // Recall must stay on delegate_to_subthread, never on the wave tool.
     expect(requested.contextualPrompt).toMatch(
       /Recall example:\s*TaskWraith__delegate_to_subthread\(\{[^}]*subThreadId/
@@ -1334,7 +1341,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt.match(/Current user request:/g)?.length).toBe(1)
   })
 
-  it('anchors the work contract immediately above the request for non-Ollama providers', () => {
+  it('anchors dynamic work state immediately above the request for non-Ollama providers', () => {
     const result = composeRunPrompt({
       instructionContext: null,
       provider: 'claude',
@@ -1348,8 +1355,9 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('Add a Zig joke test.')
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
-    expect(result.contextualPrompt).toContain('Current user request:\nAdd a Zig joke test.')
+    expect(result.contextualPrompt).toContain(
+      '</taskwraith_work_state>\n\nCurrent user request:\nAdd a Zig joke test.'
+    )
   })
 
   it('keeps thanks-only follow-ups free of the prior tool trajectory block', () => {
@@ -1625,7 +1633,7 @@ describe('Browser Canvas handoff', () => {
       openCanvasSessions: [{ canvasId: 'canvas-live-1', driver: 'web', status: 'active' }]
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain(
       'Current user request:\nCan you see the webpage in the browser canvas?'
     )
@@ -1739,7 +1747,7 @@ describe('Simulator Canvas handoff', () => {
       taskWraithMcpAdvertised: false
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain(`Current user request:\n${prompt}`)
     expect(result.contextualPrompt).not.toContain('simulator_status')
   })
@@ -2223,7 +2231,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_work_contract>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain('Current user request:\nContinue the work.')
     expect(result.contextualPrompt).not.toContain('Prior session summary')
     expect(result.contextualPrompt).not.toContain('FRESH detail')
@@ -2601,8 +2609,9 @@ describe('composeRunPrompt envelope layers', () => {
     const result = composeRunPrompt({ ...base, provider: 'cursor' })
     const ids = result.envelopeLayers.map((layer) => layer.id)
     expect(ids[ids.length - 1]).toBe('current_request')
-    expect(ids).toContain('work_contract')
-    expect(ids.indexOf('work_contract')).toBeLessThan(ids.indexOf('current_request'))
+    expect(ids).toContain('work_invariants')
+    expect(ids).toContain('work_state')
+    expect(ids.indexOf('work_state')).toBeLessThan(ids.indexOf('current_request'))
     expect(ids.indexOf('runtime_preamble')).toBeLessThan(ids.indexOf('instructions_global'))
     const globalLayer = result.envelopeLayers.find((layer) => layer.id === 'instructions_global')
     expect(globalLayer?.state).toBe('applied')
@@ -2643,5 +2652,245 @@ describe('composeRunPrompt envelope layers', () => {
     })
     expect(result.envelopeLayers).toHaveLength(1)
     expect(result.envelopeLayers[0].id).toBe('current_request')
+  })
+})
+
+describe('composeRunPrompt persistent solo context receipts', () => {
+  const base = {
+    instructionContext: null,
+    finalPrompt: 'Continue the focused task.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default',
+    providerLabel: 'Codex'
+  }
+
+  it('delivers work invariants cold, inherits them on resume, and restores them for fallback', () => {
+    const cold = composeRunPrompt({ ...base, provider: 'codex' })
+    expect(cold.contextualPrompt).toContain('<taskwraith_work_invariants')
+    expect(cold.workInvariantsVersion).toBe(TASKWRAITH_WORK_INVARIANTS_VERSION)
+
+    const resumed = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      resumeSessionId: 'thread-1',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'codex'
+    })
+    expect(resumed.contextualPrompt).not.toContain('<taskwraith_work_invariants')
+    expect(resumed.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(resumed.envelopeLayers.find((layer) => layer.id === 'work_invariants')?.state).toBe(
+      'inherited'
+    )
+    expect(resumed.workInvariantsVersion).toBeUndefined()
+
+    const fallback = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'codex'
+    })
+    expect(fallback.contextualPrompt).toContain('<taskwraith_work_invariants')
+  })
+
+  it('repeats invariants for host-fed providers and inherits them in Pi implicit sessions', () => {
+    const cursor = composeRunPrompt({
+      ...base,
+      provider: 'cursor',
+      providerLabel: 'Cursor',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'cursor'
+    })
+    expect(cursor.contextualPrompt).toContain('<taskwraith_work_invariants')
+    expect(cursor.workInvariantsVersion).toBeUndefined()
+
+    const pi = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'pi'
+    })
+    expect(pi.contextualPrompt).not.toContain('<taskwraith_work_invariants')
+    expect(pi.contextualPrompt).toContain('<taskwraith_work_state>')
+  })
+
+  it('suppresses matching skills and SessionStart, then injects only changed context', () => {
+    const matching = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship it.' }],
+      skillDiscoveryDigest: 'skills-v1',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContext: 'branch=main',
+      sessionStartContextDigest: 'hooks-v1',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(matching.contextualPrompt).not.toContain('## Available skills')
+    expect(matching.contextualPrompt).not.toContain('branch=main')
+    expect(matching.envelopeLayers.find((layer) => layer.id === 'skill_discovery')?.state).toBe(
+      'inherited'
+    )
+    expect(matching.envelopeLayers.find((layer) => layer.id === 'session_start_hooks')?.state).toBe(
+      'inherited'
+    )
+
+    const changedSkill = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship it.' }],
+      skillDiscoveryDigest: 'skills-v2',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContext: 'branch=main',
+      sessionStartContextDigest: 'hooks-v1',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(changedSkill.contextualPrompt).toContain('## Available skills')
+    expect(changedSkill.contextualPrompt).not.toContain('branch=main')
+    expect(changedSkill.skillDiscoveryDigest).toBe('skills-v2')
+    expect(changedSkill.sessionStartContextDigest).toBeUndefined()
+  })
+
+  it('revokes removed skill and SessionStart context without affecting first-empty sessions', () => {
+    const removed = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoveryDigest: 'none',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContextDigest: 'none',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(removed.contextualPrompt).toContain(SKILL_DISCOVERY_REMOVED_NOTE)
+    expect(removed.contextualPrompt).toContain(SESSION_START_CONTEXT_REMOVED_NOTE)
+    expect(removed.skillDiscoveryDigest).toBe('none')
+    expect(removed.sessionStartContextDigest).toBe('none')
+
+    const firstEmpty = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      skillDiscoveryDigest: 'none',
+      sessionStartContextDigest: 'none'
+    })
+    expect(firstEmpty.contextualPrompt).not.toContain(SKILL_DISCOVERY_REMOVED_NOTE)
+    expect(firstEmpty.contextualPrompt).not.toContain(SESSION_START_CONTEXT_REMOVED_NOTE)
+  })
+})
+
+describe('composeRunPrompt bounded workspace doctrine', () => {
+  const doctrineContext = (status: 'applied' | 'absent' | 'skipped' = 'applied') => ({
+    layers: [],
+    digest: 'none',
+    enabled: true,
+    workspaceDoctrine:
+      status === 'applied'
+        ? {
+            source: 'AGENTS.md' as const,
+            status,
+            sha256: 'doctrine-v1',
+            bytes: 42,
+            content: 'Before editing, inspect status and claim clean paths.'
+          }
+        : status === 'skipped'
+          ? {
+              source: 'AGENTS.md' as const,
+              status,
+              skipReason: 'too_large' as const,
+              bytes: 40_000
+            }
+          : { source: 'AGENTS.md' as const, status },
+    workspaceDoctrineDigest: status === 'applied' ? 'doctrine-v1' : 'none'
+  })
+  const base = {
+    finalPrompt: 'Make the requested change.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default'
+  }
+
+  it('delivers AGENTS.md to Claude/Pi, inherits matches, and never duplicates it into Codex', () => {
+    const claudeCold = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      instructionContext: doctrineContext()
+    })
+    expect(claudeCold.contextualPrompt).toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+    expect(claudeCold.workspaceDoctrineDigest).toBe('doctrine-v1')
+
+    const claudeResume = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext(),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(claudeResume.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+    expect(
+      claudeResume.envelopeLayers.find((layer) => layer.id === 'workspace_doctrine')?.state
+    ).toBe('inherited')
+
+    const piCold = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi',
+      instructionContext: doctrineContext()
+    })
+    expect(piCold.contextualPrompt).toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+
+    const codex = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      providerLabel: 'Codex',
+      instructionContext: doctrineContext()
+    })
+    expect(codex.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+  })
+
+  it('revokes a removed doctrine but retains prior session doctrine when replacement is unsafe', () => {
+    const removed = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext('absent'),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(removed.contextualPrompt).toContain(WORKSPACE_DOCTRINE_REMOVED_NOTE)
+    expect(removed.workspaceDoctrineDigest).toBe('none')
+
+    const skipped = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext('skipped'),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(skipped.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_REMOVED_NOTE)
+    expect(skipped.workspaceDoctrineDigest).toBeUndefined()
+    expect(skipped.envelopeLayers.find((layer) => layer.id === 'workspace_doctrine')?.state).toBe(
+      'skipped'
+    )
   })
 })

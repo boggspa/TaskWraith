@@ -6,8 +6,9 @@
  * several providers add private, provider-native system context the host
  * cannot inspect. These types describe the two USER-owned instruction layers
  * TaskWraith resolves before composition (a global document under userData
- * and a per-workspace `TASKWRAITH.md`), plus the per-run envelope snapshot
- * the Prompt Inspector renders.
+ * and a per-workspace `TASKWRAITH.md`), the bounded workspace doctrine
+ * TaskWraith resolves for providers whose native project-context discovery is
+ * disabled, plus the per-run envelope snapshot the Prompt Inspector renders.
  *
  * Precedence contract (host-enforced, not merely prompt-stated):
  *   runtime capability facts → global defaults → workspace defaults →
@@ -22,6 +23,19 @@
  * semantics, and a dot-directory home would be invisible in the workspace
  * file editor (dot-entries are skipped there). */
 export const WORKSPACE_INSTRUCTIONS_FILE = 'TASKWRAITH.md'
+
+/**
+ * Canonical provider-neutral workspace doctrine. TaskWraith resolves this
+ * exact root file for contained providers instead of enabling provider-native
+ * settings, hooks, skills, or project-context discovery.
+ */
+export const WORKSPACE_DOCTRINE_FILE = 'AGENTS.md'
+
+/**
+ * Strictly below Codex's 32 KiB native project-document boundary. The file is
+ * refused whole above this ceiling; doctrine is never cut mid-instruction.
+ */
+export const WORKSPACE_DOCTRINE_MAX_BYTES = 32 * 1024 - 1
 
 /**
  * Hard per-layer byte ceiling. An over-cap layer is SKIPPED whole, never
@@ -69,6 +83,23 @@ export interface ResolvedInstructionLayer {
   content?: string
 }
 
+/**
+ * Host-resolved root AGENTS.md. This is deliberately distinct from the
+ * Settings-controlled custom-instruction layers: disabling custom instructions
+ * must not silently remove repository coordination and safety doctrine.
+ */
+export interface ResolvedWorkspaceDoctrine {
+  source: typeof WORKSPACE_DOCTRINE_FILE
+  status: Exclude<InstructionLayerStatus, 'disabled'>
+  skipReason?: InstructionSkipReason
+  /** SHA-256 (hex) of normalized applied content. */
+  sha256?: string
+  /** Raw on-disk byte length, before newline normalization. */
+  bytes?: number
+  /** Normalized doctrine text. Present only when status === 'applied'. */
+  content?: string
+}
+
 export interface ResolvedInstructionContext {
   /** Global first, then workspace — the order they enter the envelope.
    * A run with no workspace scope simply has no workspace layer. */
@@ -82,6 +113,17 @@ export interface ResolvedInstructionContext {
   digest: string
   /** Mirror of the user setting; false lists both layers as 'disabled'. */
   enabled: boolean
+  /**
+   * Bounded host-resolved workspace doctrine. Omitted for global runs and by
+   * legacy/test producers that have not resolved workspace doctrine.
+   */
+  workspaceDoctrine?: ResolvedWorkspaceDoctrine
+  /**
+   * Stable digest of the applied doctrine, or `none` when no valid doctrine
+   * was resolved. Separate from `digest` so doctrine changes cannot masquerade
+   * as edits to Settings-controlled custom instructions.
+   */
+  workspaceDoctrineDigest?: string
 }
 
 // ============================================================================
@@ -98,12 +140,16 @@ export type PromptEnvelopeLayerId =
   | 'image_tools_note'
   | 'instructions_global'
   | 'instructions_workspace'
+  | 'workspace_doctrine'
   | 'session_start_hooks'
   | 'skill_discovery'
   | 'compaction_summary'
   | 'conversation_context'
   | 'peer_context'
   | 'active_goal'
+  | 'work_invariants'
+  | 'work_state'
+  /** Legacy recorded envelope id retained for historical decode. */
   | 'work_contract'
   | 'ollama_session_memory'
   | 'ollama_workflow_hint'

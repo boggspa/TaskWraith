@@ -6,6 +6,7 @@ import { createHash } from 'crypto'
 import { GLOBAL_INSTRUCTIONS_SOURCE_LABEL, resolveInstructionContext } from './InstructionResolver'
 import {
   INSTRUCTION_LAYER_MAX_BYTES,
+  WORKSPACE_DOCTRINE_FILE,
   WORKSPACE_INSTRUCTIONS_FILE
 } from '../../shared/instructions/InstructionTypes'
 
@@ -21,6 +22,12 @@ afterEach(() => {
 
 function writeWorkspaceFile(content: string | Buffer): string {
   const filePath = path.join(workspacePath, WORKSPACE_INSTRUCTIONS_FILE)
+  fs.writeFileSync(filePath, content)
+  return filePath
+}
+
+function writeDoctrineFile(content: string | Buffer): string {
+  const filePath = path.join(workspacePath, WORKSPACE_DOCTRINE_FILE)
   fs.writeFileSync(filePath, content)
   return filePath
 }
@@ -71,6 +78,8 @@ describe('resolveInstructionContext — layer shape', () => {
       workspacePath: null
     })
     expect(result.layers.map((layer) => layer.scope)).toEqual(['global'])
+    expect(result.workspaceDoctrine).toBeUndefined()
+    expect(result.workspaceDoctrineDigest).toBe('none')
   })
 
   it('lists both layers as disabled (digest none) when the setting is off', () => {
@@ -84,6 +93,91 @@ describe('resolveInstructionContext — layer shape', () => {
     expect(result.digest).toBe('none')
     expect(layerByScope(result, 'global').status).toBe('disabled')
     expect(layerByScope(result, 'workspace').status).toBe('disabled')
+  })
+
+  it('still resolves workspace doctrine when custom instructions are disabled', () => {
+    writeWorkspaceFile('Custom workspace preference.')
+    writeDoctrineFile('Repository doctrine remains active.')
+
+    const result = resolveInstructionContext({
+      enabled: false,
+      globalContent: 'Global preference.',
+      workspacePath
+    })
+
+    expect(result.enabled).toBe(false)
+    expect(result.digest).toBe('none')
+    expect(result.workspaceDoctrine).toMatchObject({
+      source: WORKSPACE_DOCTRINE_FILE,
+      status: 'applied',
+      content: 'Repository doctrine remains active.'
+    })
+    expect(result.workspaceDoctrineDigest).toBe(result.workspaceDoctrine?.sha256)
+  })
+})
+
+describe('resolveInstructionContext — workspace doctrine', () => {
+  it('resolves root AGENTS.md with a separate digest', () => {
+    writeWorkspaceFile('Prefer tabs in this repo.')
+    writeDoctrineFile('# Agent rules\r\n\r\nCheck ownership before editing.\r\n')
+
+    const result = resolveInstructionContext({
+      enabled: true,
+      globalContent: 'Answer in British English.',
+      workspacePath
+    })
+
+    expect(result.workspaceDoctrine).toMatchObject({
+      source: WORKSPACE_DOCTRINE_FILE,
+      status: 'applied',
+      content: '# Agent rules\n\nCheck ownership before editing.'
+    })
+    expect(result.workspaceDoctrineDigest).toBe(result.workspaceDoctrine?.sha256)
+    expect(result.workspaceDoctrineDigest).not.toBe('none')
+  })
+
+  it('reports a missing doctrine file as absent without changing custom-instruction digest', () => {
+    writeWorkspaceFile('Prefer tabs in this repo.')
+    const before = resolveInstructionContext({
+      enabled: true,
+      globalContent: '',
+      workspacePath
+    })
+    expect(before.workspaceDoctrine).toMatchObject({
+      source: WORKSPACE_DOCTRINE_FILE,
+      status: 'absent'
+    })
+    expect(before.workspaceDoctrineDigest).toBe('none')
+
+    writeDoctrineFile('Doctrine v1.')
+    const after = resolveInstructionContext({
+      enabled: true,
+      globalContent: '',
+      workspacePath
+    })
+    expect(after.workspaceDoctrine?.status).toBe('applied')
+    expect(after.workspaceDoctrineDigest).not.toBe('none')
+    expect(after.digest).toBe(before.digest)
+  })
+
+  it('changes only the doctrine digest when AGENTS.md changes', () => {
+    writeWorkspaceFile('Stable custom preference.')
+    writeDoctrineFile('Doctrine v1.')
+    const first = resolveInstructionContext({
+      enabled: true,
+      globalContent: '',
+      workspacePath
+    })
+
+    writeDoctrineFile('Doctrine v2.')
+    const second = resolveInstructionContext({
+      enabled: true,
+      globalContent: '',
+      workspacePath
+    })
+
+    expect(second.digest).toBe(first.digest)
+    expect(second.workspaceDoctrineDigest).not.toBe(first.workspaceDoctrineDigest)
   })
 })
 

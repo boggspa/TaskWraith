@@ -11,7 +11,11 @@ import {
   type ComposeRunPromptResult,
   type OpenCanvasPromptContext
 } from '../PromptComposition'
-import { resolveRunSkillHookContext } from '../skillsHooks/resolveRunSkillHookContext'
+import {
+  digestSessionStartContext,
+  digestSkillDiscoveryPrompt,
+  resolveRunSkillHookContext
+} from '../skillsHooks/resolveRunSkillHookContext'
 import type {
   PromptEnvelopeSnapshot,
   ResolvedInstructionContext
@@ -97,6 +101,7 @@ import {
   isDirectoryComposerAttachment,
   type ComposerAttachmentKind
 } from '../../shared/composerAttachment'
+import type { PromptDeliveryReceipts } from '../../shared/PromptDeliveryReceipts'
 
 // Known ids for historical decode. Compose/dispatch uses the shared live
 // admission predicate through `assertLiveProviderId`.
@@ -213,6 +218,8 @@ export interface ComposerRunMetadata {
    * this onto the ChatRun it appends, which is what persists it.
    */
   promptEnvelope?: PromptEnvelopeSnapshot
+  /** Persisted only after the provider admits the run (`run_started`). */
+  promptDeliveryReceipts?: PromptDeliveryReceipts
 }
 
 export type ComposerRunPayload = AgentRunPayload & {
@@ -741,7 +748,9 @@ export class ComposerService {
     let skillDiscoverySkills:
       | readonly { id: string; name: string; description: string }[]
       | undefined
+    let skillDiscoveryDigest: string | undefined
     let sessionStartContext: string | null | undefined
+    let sessionStartContextDigest: string | undefined
     if (!contextIsolated && workspacePathForSkills) {
       if (this.deps.resolveSkillDiscoverySkills || this.deps.resolveSessionStartContext) {
         skillDiscoverySkills = this.deps.resolveSkillDiscoverySkills?.(
@@ -751,6 +760,8 @@ export class ComposerService {
         sessionStartContext = this.deps.resolveSessionStartContext
           ? await this.deps.resolveSessionStartContext(workspacePathForSkills)
           : undefined
+        skillDiscoveryDigest = digestSkillDiscoveryPrompt(skillDiscoverySkills)
+        sessionStartContextDigest = digestSessionStartContext(sessionStartContext)
       } else {
         const skillHookContext = await resolveRunSkillHookContext({
           workspacePath: workspacePathForSkills,
@@ -758,7 +769,9 @@ export class ComposerService {
           allowWorkspaceHooks: settings.trustWorkspaceHooks === true
         })
         skillDiscoverySkills = skillHookContext.skillDiscoverySkills
+        skillDiscoveryDigest = skillHookContext.skillDiscoveryDigest
         sessionStartContext = skillHookContext.sessionStartContext
+        sessionStartContextDigest = skillHookContext.sessionStartContextDigest
       }
     }
     const openCanvasSessions = contextIsolated
@@ -825,6 +838,19 @@ export class ComposerService {
       instructionsDigestProvider: metadataString(chat, 'taskWraithInstructionsProvider'),
       runtimePreambleVersion: metadataString(chat, 'taskWraithRuntimePreambleVersion'),
       runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
+      workInvariantsVersionApplied: metadataString(chat, 'taskWraithWorkInvariantsVersion'),
+      workInvariantsProvider: metadataString(chat, 'taskWraithWorkInvariantsProvider'),
+      skillDiscoveryDigest,
+      skillDiscoveryDigestApplied: metadataString(chat, 'taskWraithSkillDiscoveryDigest'),
+      skillDiscoveryDigestProvider: metadataString(chat, 'taskWraithSkillDiscoveryProvider'),
+      sessionStartContextDigest,
+      sessionStartContextDigestApplied: metadataString(chat, 'taskWraithSessionStartContextDigest'),
+      sessionStartContextDigestProvider: metadataString(
+        chat,
+        'taskWraithSessionStartContextProvider'
+      ),
+      workspaceDoctrineDigestApplied: metadataString(chat, 'taskWraithWorkspaceDoctrineDigest'),
+      workspaceDoctrineDigestProvider: metadataString(chat, 'taskWraithWorkspaceDoctrineProvider'),
       providerLabel: getProviderLabel(provider),
       nativeSubAgentRequests: settings.nativeSubAgentRequests,
       activeGoal,
@@ -870,6 +896,42 @@ export class ComposerService {
               : {})
           }).contextualPrompt
         : undefined
+
+    const promptDeliveryReceipts: PromptDeliveryReceipts = {
+      ...(composed.workInvariantsVersion
+        ? {
+            workInvariants: {
+              provider: composed.workInvariantsProvider || provider,
+              value: composed.workInvariantsVersion
+            }
+          }
+        : {}),
+      ...(composed.skillDiscoveryDigest
+        ? {
+            skillDiscovery: {
+              provider: composed.skillDiscoveryProvider || provider,
+              value: composed.skillDiscoveryDigest
+            }
+          }
+        : {}),
+      ...(composed.sessionStartContextDigest
+        ? {
+            sessionStartContext: {
+              provider: composed.sessionStartContextProvider || provider,
+              value: composed.sessionStartContextDigest
+            }
+          }
+        : {}),
+      ...(composed.workspaceDoctrineDigest
+        ? {
+            workspaceDoctrine: {
+              provider: composed.workspaceDoctrineProvider || provider,
+              value: composed.workspaceDoctrineDigest
+            }
+          }
+        : {})
+    }
+    const hasPromptDeliveryReceipts = Object.keys(promptDeliveryReceipts).length > 0
 
     const providerMetadataPatchData = {
       ...buildProviderMetadataPatch(composed, codexHandoffsApplied),
@@ -1096,6 +1158,7 @@ export class ComposerService {
           : {}),
         planModeParsed: planParsed.planMode,
         ...(selfReflectiveRequested ? { selfReflectiveRequested: true } : {}),
+        ...(hasPromptDeliveryReceipts ? { promptDeliveryReceipts } : {}),
         promptEnvelope: buildPromptEnvelopeSnapshot({
           provider,
           model: requestedModel,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildAgentWorkContract } from './AgentWorkContract'
+import {
+  TASKWRAITH_WORK_INVARIANTS_VERSION,
+  buildAgentWorkContract,
+  buildAgentWorkInvariants,
+  buildAgentWorkState
+} from './AgentWorkContract'
 import { createActiveGoal } from './GoalState'
 
 describe('buildAgentWorkContract', () => {
@@ -64,5 +69,57 @@ describe('buildAgentWorkContract', () => {
 
     expect(block).toContain('provider-native Goal state')
     expect(block).not.toContain('Provider-private objective text.')
+  })
+})
+
+describe('split solo work context', () => {
+  it('keeps stable invariants compact and free of Ensemble-only semantics', () => {
+    const block = buildAgentWorkInvariants()
+
+    expect(block).toContain(TASKWRAITH_WORK_INVARIANTS_VERSION)
+    expect(block).toContain('Plan/Todos are execution steps')
+    expect(block).toContain('exact pathspecs or a private index')
+    expect(block).not.toMatch(/Ensemble|assignment/i)
+    expect(Buffer.byteLength(block, 'utf8')).toBeLessThan(700)
+  })
+
+  it('keeps an ordinary run-scoped Goal state below 250 bytes', () => {
+    const block = buildAgentWorkState({ completionAuthority: 'root' })
+
+    expect(block).toContain('current user request')
+    expect(block).toContain('Authority: root')
+    expect(Buffer.byteLength(block, 'utf8')).toBeLessThan(250)
+  })
+
+  it('adds the durable Goal route only when the caller identifies a first actionable turn', () => {
+    expect(
+      buildAgentWorkState({ completionAuthority: 'root', suggestDurableGoal: true })
+    ).toContain('call update_goal once')
+    expect(buildAgentWorkState({ completionAuthority: 'root' })).not.toContain(
+      'call update_goal once'
+    )
+  })
+
+  it('retains active-Goal provenance and provider-native objective privacy', () => {
+    const active = createActiveGoal('codex', 'Ship the complete solo split.', {
+      specification: {
+        kind: 'approved_plan',
+        sourceMessageId: 'source-message',
+        intendedPlanId: 'plan-1',
+        acceptanceCriteria: ['The warm prompt is compact.']
+      }
+    })
+    const projected = buildAgentWorkState({ activeGoal: active, completionAuthority: 'root' })
+    expect(projected).toContain('source-message')
+    expect(projected).toContain('plan-1')
+    expect(projected).toContain('The warm prompt is compact.')
+
+    const native = buildAgentWorkState({
+      activeGoal: { ...active, mode: 'codex_native' },
+      providerOwnsGoalSteering: true,
+      completionAuthority: 'root'
+    })
+    expect(native).toContain('provider-native Goal state')
+    expect(native).not.toContain(active.objective)
   })
 })

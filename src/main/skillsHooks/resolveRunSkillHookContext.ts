@@ -10,7 +10,8 @@ import {
   runSessionStartHooksForWorkspace,
   type HostHookIntegrationDeps
 } from '../hooks/hostHookIntegration'
-import type { SkillDiscoveryEntry } from '../skills/SkillPromptInjection'
+import { createHash } from 'crypto'
+import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from '../skills/SkillPromptInjection'
 import { getSkillsHooksSubsystem } from './registerSkillsHooksSubsystem'
 
 export interface RunSkillHookContextSkillsStore {
@@ -46,7 +47,33 @@ export interface ResolveRunSkillHookContextInput {
 
 export interface RunSkillHookContext {
   skillDiscoverySkills?: SkillDiscoveryEntry[]
+  /** SHA-256 of the rendered discovery block, or `none` when authoritatively empty. */
+  skillDiscoveryDigest?: string
   sessionStartContext?: string
+  /** SHA-256 of the trimmed SessionStart body, or `none` when authoritatively empty. */
+  sessionStartContextDigest?: string
+}
+
+const EMPTY_CONTEXT_DIGEST = 'none'
+const SKILL_DISCOVERY_DIGEST_VERSION = 'skill-discovery-v1'
+const SESSION_START_CONTEXT_DIGEST_VERSION = 'session-start-context-v1'
+
+function renderedBodyDigest(version: string, body: string | null | undefined): string {
+  const rendered = typeof body === 'string' ? body.trim() : ''
+  if (!rendered) return EMPTY_CONTEXT_DIGEST
+  return createHash('sha256').update(`${version}\0${rendered}`, 'utf8').digest('hex')
+}
+
+/** Digest exactly the compact discovery body that prompt composition can inject. */
+export function digestSkillDiscoveryPrompt(
+  skills: readonly SkillDiscoveryEntry[] | null | undefined
+): string {
+  return renderedBodyDigest(SKILL_DISCOVERY_DIGEST_VERSION, buildSkillDiscoveryBlock(skills || []))
+}
+
+/** Digest the same trimmed SessionStart body that prompt composition can inject. */
+export function digestSessionStartContext(context: string | null | undefined): string {
+  return renderedBodyDigest(SESSION_START_CONTEXT_DIGEST_VERSION, context)
 }
 
 const sessionStartContextByWorkspace = new Map<string, string>()
@@ -185,6 +212,8 @@ export async function resolveRunSkillHookContext(
 
   return {
     ...(skillDiscoverySkills ? { skillDiscoverySkills } : {}),
-    ...(sessionStartContext ? { sessionStartContext } : {})
+    skillDiscoveryDigest: digestSkillDiscoveryPrompt(skillDiscoverySkills),
+    ...(sessionStartContext ? { sessionStartContext } : {}),
+    sessionStartContextDigest: digestSessionStartContext(sessionStartContext)
   }
 }
