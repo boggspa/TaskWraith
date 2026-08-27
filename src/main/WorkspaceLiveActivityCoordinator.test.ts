@@ -113,6 +113,9 @@ describe('workspace Live Activity projection', () => {
     expect(two[0].summary).toMatchObject({
       phase: 'awaitingQuestion',
       activeRuns: 2,
+      activeSeats: 1,
+      respondedSeats: 0,
+      blockedSeats: 0,
       filesChanged: 12,
       additions: 539,
       deletions: 202,
@@ -184,6 +187,9 @@ describe('workspace Live Activity reconciliation', () => {
         id: 'ensemble',
         provider: 'ensemble',
         isEnsemble: true,
+        activeSeats: 0,
+        respondedSeats: 8,
+        blockedSeats: 0,
         seats: answered.map(() => ({ provider: 'pi', phase: 'complete' }))
       })
     )
@@ -209,6 +215,9 @@ describe('workspace Live Activity reconciliation', () => {
 
     expect(fanout.onTaskCard).toHaveBeenCalledWith(
       expect.objectContaining({
+        activeSeats: 1,
+        respondedSeats: 6,
+        blockedSeats: 1,
         seats: [
           { provider: 'codex', phase: 'complete' },
           { provider: 'codex', phase: 'complete' },

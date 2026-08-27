@@ -30,13 +30,16 @@ describe('live activity content state', () => {
     } as never)
     expect(Object.keys(state).sort()).toEqual([
       'activeRuns',
+      'activeSeats',
       'additions',
       'ahead',
       'behind',
+      'blockedSeats',
       'deletions',
       'filesChanged',
       'hasGitSnapshot',
       'phase',
+      'respondedSeats',
       'seats',
       'startedAtUnix'
     ])
@@ -64,6 +67,29 @@ describe('live activity content state', () => {
     expect(state).toMatchObject({ filesChanged: 0, additions: 0, deletions: 2 })
   })
 
+  it('derives missing seat counters and clamps explicit values', () => {
+    const derived = buildLiveActivityContentState({
+      phase: 'running',
+      startedAtUnix: 1,
+      seats: [
+        { provider: 'codex', phase: 'running' },
+        { provider: 'grok', phase: 'complete' },
+        { provider: 'pi', phase: 'failed' },
+        { provider: 'kimi', phase: 'cancelled' }
+      ]
+    })
+    expect(derived).toMatchObject({ activeSeats: 1, respondedSeats: 1, blockedSeats: 1 })
+
+    const explicit = buildLiveActivityContentState({
+      phase: 'running',
+      startedAtUnix: 1,
+      activeSeats: 4.8,
+      respondedSeats: -1,
+      blockedSeats: Number.NaN
+    })
+    expect(explicit).toMatchObject({ activeSeats: 4, respondedSeats: 0, blockedSeats: 0 })
+  })
+
   it('carries only anonymous workspace counters and distinguishes unavailable Git', () => {
     const state = buildLiveActivityContentState({
       phase: 'running',
@@ -78,6 +104,9 @@ describe('live activity content state', () => {
     expect(JSON.stringify(state)).not.toContain('secret')
     expect(buildLiveActivityContentState({ phase: 'running', startedAtUnix: 1 })).toMatchObject({
       activeRuns: 1,
+      activeSeats: 0,
+      respondedSeats: 0,
+      blockedSeats: 0,
       hasGitSnapshot: false
     })
   })

@@ -90,6 +90,9 @@ export function contentFingerprint(state: LiveActivityContentState): string {
     state.additions,
     state.deletions,
     state.activeRuns,
+    state.activeSeats,
+    state.respondedSeats,
+    state.blockedSeats,
     state.ahead,
     state.behind,
     state.hasGitSnapshot ? 1 : 0,
@@ -150,6 +153,9 @@ export interface WorkspaceLiveActivityInput {
   behind: number
   hasGitSnapshot: boolean
   seats: readonly { provider?: unknown; phase?: unknown }[]
+  activeSeats?: number
+  respondedSeats?: number
+  blockedSeats?: number
 }
 
 /** Mirrors TWRunActivityLimits so a pushed state ages out on the same schedule
@@ -212,6 +218,9 @@ export class LiveActivityPushFanout {
     additions?: number
     deletions?: number
     seats?: readonly { provider?: unknown; phase?: unknown }[]
+    activeSeats?: number
+    respondedSeats?: number
+    blockedSeats?: number
   }): void {
     if (!this.appearanceFn().enabled) return
 
@@ -244,7 +253,10 @@ export class LiveActivityPushFanout {
       filesChanged: card.filesChanged,
       additions: card.additions,
       deletions: card.deletions,
-      seats: card.seats
+      seats: card.seats,
+      activeSeats: card.activeSeats,
+      respondedSeats: card.respondedSeats,
+      blockedSeats: card.blockedSeats
     })
     const fingerprint = contentFingerprint(state)
     const terminal = isTerminalLiveActivityPhase(phase)
@@ -284,6 +296,9 @@ export class LiveActivityPushFanout {
       additions: summary.additions,
       deletions: summary.deletions,
       seats: summary.seats,
+      activeSeats: summary.activeSeats,
+      respondedSeats: summary.respondedSeats,
+      blockedSeats: summary.blockedSeats,
       activeRuns: summary.activeRuns,
       ahead: summary.ahead,
       behind: summary.behind,
@@ -336,6 +351,9 @@ export class LiveActivityPushFanout {
       additions?: number
       deletions?: number
       seats?: readonly { provider?: unknown; phase?: unknown }[]
+      activeSeats?: number
+      respondedSeats?: number
+      blockedSeats?: number
     },
     phase: LiveActivityPhase
   ): void {
@@ -404,6 +422,9 @@ export class LiveActivityPushFanout {
       additions?: number
       deletions?: number
       seats?: readonly { provider?: unknown; phase?: unknown }[]
+      activeSeats?: number
+      respondedSeats?: number
+      blockedSeats?: number
     },
     phase: LiveActivityPhase
   ): Promise<void> {
@@ -438,7 +459,10 @@ export class LiveActivityPushFanout {
         filesChanged: card.filesChanged,
         additions: card.additions,
         deletions: card.deletions,
-        seats: card.seats
+        seats: card.seats,
+        activeSeats: card.activeSeats,
+        respondedSeats: card.respondedSeats,
+        blockedSeats: card.blockedSeats
       }),
       collapseId: activityRef,
       needsUser: phase === 'awaitingApproval' || phase === 'awaitingQuestion',
@@ -495,6 +519,9 @@ export class LiveActivityPushFanout {
         additions: summary.additions,
         deletions: summary.deletions,
         seats: summary.seats,
+        activeSeats: summary.activeSeats,
+        respondedSeats: summary.respondedSeats,
+        blockedSeats: summary.blockedSeats,
         activeRuns: summary.activeRuns,
         ahead: summary.ahead,
         behind: summary.behind,

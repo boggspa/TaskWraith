@@ -69,6 +69,19 @@ describe('live activity phase mapping', () => {
   })
 })
 
+describe('live activity summary fingerprints', () => {
+  it('changes when only seat counters change', () => {
+    const base = buildLiveActivityContentState({ phase: 'running', startedAtUnix: 1 })
+    const changed = buildLiveActivityContentState({
+      phase: 'running',
+      startedAtUnix: 1,
+      activeSeats: 1
+    })
+
+    expect(contentFingerprint(changed)).not.toBe(contentFingerprint(base))
+  })
+})
+
 describe('live activity fanout', () => {
   let h: ReturnType<typeof harness>
   beforeEach(() => {
@@ -81,7 +94,14 @@ describe('live activity fanout', () => {
   })
 
   it('pushes an update for a live run', async () => {
-    h.fanout.onTaskCard({ id: 'chat-1', status: 'running', additions: 10 })
+    h.fanout.onTaskCard({
+      id: 'chat-1',
+      status: 'running',
+      additions: 10,
+      activeSeats: 2,
+      respondedSeats: 3,
+      blockedSeats: 1
+    })
     await vi.waitFor(() => expect(h.pushLiveActivityToToken).toHaveBeenCalledTimes(1))
     const [token, env, payload] = h.pushLiveActivityToToken.mock.calls[0] as never as [
       string,
@@ -91,6 +111,9 @@ describe('live activity fanout', () => {
     expect(token).toBe('abc123')
     expect(env).toBe('sandbox')
     expect(payload.event).toBe('update')
+    expect(payload).toMatchObject({
+      contentState: { activeSeats: 2, respondedSeats: 3, blockedSeats: 1 }
+    })
     // The collapse id is the OPAQUE activity ref, never the threadId — that is
     // what keeps the push itself from linking back to a conversation.
     expect(payload.collapseId).toBe('ref-1')
