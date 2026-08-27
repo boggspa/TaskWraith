@@ -133,6 +133,10 @@ describe('HostNodeGrokProvider', () => {
   it('runs a real ACP handshake, streams bounded output, and records an exact terminal receipt', async () => {
     const { factory, instance, child, appends, finishes, events } = open()
     const sent = frames(child)
+    // Live 2026-08-27 probe: grok 1.0.5 `agent stdio` inbound ACP methods are
+    // session/request_permission plus fs/terminal. `x.ai/ask_user_question` is a proprietary
+    // TUI ext_method; desktop injects MCP TaskWraith__ask_user_question instead. Do not flip
+    // supportsQuestions without a proven ACP agent→client question method on this Host path.
     expect(factory).toMatchObject({ supportsApprovals: true, supportsQuestions: false })
     const running = instance.run({
       runId: 'run-1',
@@ -261,6 +265,44 @@ describe('HostNodeGrokProvider', () => {
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'completed' })
   })
+
+  it('does not register elicitation/create or x.ai/ask_user_question as questions', async () => {
+    const interactions = {
+      register: vi.fn(async () => {
+        throw new Error('ACP questions have no event source on the Grok Host adapter')
+      })
+    } satisfies HostNodeInteractionResolver
+    const { factory, instance, child } = open({ interactions })
+    const sent = frames(child)
+    expect(factory.supportsQuestions).toBe(false)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    child.stdout.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'elicit-1',
+        method: 'elicitation/create',
+        params: { sessionId: 'session-1', mode: 'form', message: 'Pick a strategy?' }
+      }) + '\n'
+    )
+    child.stdout.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'ask-1',
+        method: 'x.ai/ask_user_question',
+        params: { questions: [{ question: 'Continue?' }] }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(interactions.register).not.toHaveBeenCalled()
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
   it('resolves unknown resource auth into configured or auth-required status', async () => {
     const unconfigured = open({ authState: 'unknown', isConfigured: () => false })
     await expect(unconfigured.instance.getStatus()).resolves.toMatchObject({

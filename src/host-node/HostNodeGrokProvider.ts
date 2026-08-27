@@ -632,6 +632,9 @@ export function createHostNodeGrokProvider(
     shortCode: entry.shortCode,
     offers,
     supportsApprovals: true,
+    // Keep false: grok 1.0.5 `agent stdio` inbound ACP methods are session/request_permission
+    // plus fs/terminal. `x.ai/ask_user_question` is a proprietary TUI ext_method; desktop
+    // injects MCP TaskWraith__ask_user_question instead of wiring that ACP extension.
     supportsQuestions: false,
     create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
       return new HostNodeGrokProviderInstance(input.runPort, input.interactions, offers, options)

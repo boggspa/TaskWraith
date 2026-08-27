@@ -632,6 +632,8 @@ export function createHostNodeKimiProvider(
     shortCode: entry.shortCode,
     offers,
     supportsApprovals: true,
+    // Keep false: live kimi-cli 1.47.0 ACP schema v0.10.8 CLIENT_METHODS has no
+    // elicitation/create; kimi_cli/wire `_request_question` is the TUI wire protocol, not ACP.
     supportsQuestions: false,
     create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
       return new HostNodeKimiProviderInstance(input.runPort, input.interactions, offers, options)

@@ -139,6 +139,10 @@ describe('HostNodeMistralProvider', () => {
   it('runs a real ACP handshake, streams bounded output, and records an exact terminal receipt', async () => {
     const { factory, instance, child, appends, finishes, events } = open()
     const sent = frames(child)
+    // Live 2026-08-27 probe: vibe 2.24.3 ACP SDK lists elicitation/create, but vibe/acp/agent.py
+    // never emits it (only session/request_permission). Host initialize does not advertise
+    // clientCapabilities.elicitation, which ACP requires before any elicitation/create. Do not
+    // flip supportsQuestions without a proven ACP agent→client question method on this Host path.
     expect(factory).toMatchObject({ supportsApprovals: true, supportsQuestions: false })
     const running = instance.run({
       runId: 'run-1',
@@ -322,6 +326,36 @@ describe('HostNodeMistralProvider', () => {
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'completed' })
   })
+
+  it('does not register elicitation/create as a question: vibe ACP agent never emits it', async () => {
+    const interactions = {
+      register: vi.fn(async () => {
+        throw new Error('ACP questions have no event source on the Mistral Host adapter')
+      })
+    } satisfies HostNodeInteractionResolver
+    const { factory, instance, child } = open({ interactions })
+    const sent = frames(child)
+    expect(factory.supportsQuestions).toBe(false)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    child.stdout.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'elicit-1',
+        method: 'elicitation/create',
+        params: { sessionId: 'session-1', mode: 'form', message: 'Pick a strategy?' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(interactions.register).not.toHaveBeenCalled()
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
   it('resolves unknown resource auth into configured or auth-required status', async () => {
     const unconfigured = open({ authState: 'unknown', isConfigured: () => false })
     await expect(unconfigured.instance.getStatus()).resolves.toMatchObject({

@@ -653,6 +653,9 @@ export function createHostNodeMistralProvider(
     shortCode: entry.shortCode,
     offers,
     supportsApprovals: true,
+    // Keep false: vibe 2.24.3 ACP SDK lists elicitation/create, but vibe/acp/agent.py never
+    // emits it (only session/request_permission). Host initialize does not advertise
+    // clientCapabilities.elicitation, which ACP requires before any elicitation/create.
     supportsQuestions: false,
     create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
       return new HostNodeMistralProviderInstance(input.runPort, input.interactions, offers, options)
