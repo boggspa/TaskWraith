@@ -25,8 +25,11 @@ import { MeshCanvasPanel, type MeshCanvasPanelHandle } from './MeshCanvasPanel'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
+import { isSubThreadChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
+import { selectRecentChats } from '../lib/recentChatsList'
 import { threadHomeRunStats, type ThreadHomeRunStats } from '../lib/threadHomeActivityStats'
+import { isHideableUnstartedDraft } from '../lib/unstartedDraftFilter'
 
 export type ThreadHomeSurface = 'charts' | 'browser' | 'mesh' | 'sketch' | 'media' | 'simulator'
 
@@ -54,6 +57,8 @@ export interface ThreadHomeThreadOption {
   stats?: ThreadHomeRunStats
   paneIndex?: number
 }
+
+export const THREAD_HOME_RECENT_LIMIT = 5
 
 function workspaceLabelForChat(chat: ChatRecord): string {
   if (chat.scope === 'global') return 'General'
@@ -96,6 +101,40 @@ export function buildThreadHomeThreadOptions(input: {
   })
 }
 
+/** Sidebar-parity recency, excluding live rows and non-primary/draft surfaces. */
+export function buildThreadHomeRecentThreadOptions(input: {
+  chats: readonly ChatRecord[]
+  runningChatIds: readonly string[]
+  paneChatIds: readonly (string | null)[]
+}): ThreadHomeThreadOption[] {
+  const running = new Set(input.runningChatIds)
+  const paneIndexByChatId = new Map<string, number>()
+  input.paneChatIds.forEach((chatId, paneIndex) => {
+    if (chatId && !paneIndexByChatId.has(chatId)) paneIndexByChatId.set(chatId, paneIndex)
+  })
+  const recent = selectRecentChats(
+    input.chats.filter(
+      (chat) =>
+        !running.has(chat.appChatId) &&
+        !chat.hiddenFromMainList &&
+        !isSubThreadChat(chat) &&
+        chat.parentChatRelation !== 'sideChat' &&
+        !isHideableUnstartedDraft(chat)
+    ),
+    { limit: THREAD_HOME_RECENT_LIMIT }
+  )
+  return recent.map((chat) => ({
+    chatId: chat.appChatId,
+    title: chat.title?.trim() || 'Untitled thread',
+    provider: chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini',
+    workspaceLabel: workspaceLabelForChat(chat),
+    running: false,
+    ...(paneIndexByChatId.has(chat.appChatId)
+      ? { paneIndex: paneIndexByChatId.get(chat.appChatId) }
+      : {})
+  }))
+}
+
 function ThreadHomeSurfaceGlyph({ surface }: { surface: ThreadHomeSurface }): ReactNode {
   if (surface === 'media') return <ChatMediaIcon />
   if (surface === 'browser') {
@@ -123,6 +162,7 @@ function ThreadHomeSurfaceGlyph({ surface }: { surface: ThreadHomeSurface }): Re
 export interface ThreadHomeProps {
   variant: 'main' | 'pane'
   threads: readonly ThreadHomeThreadOption[]
+  recentThreads: readonly ThreadHomeThreadOption[]
   authorityChatId?: string | null
   mediaCount?: number
   busySurface?: ThreadHomeSurface | null
@@ -138,6 +178,7 @@ export interface ThreadHomeProps {
 export function ThreadHome({
   variant,
   threads,
+  recentThreads,
   authorityChatId,
   mediaCount = 0,
   busySurface,
@@ -149,6 +190,36 @@ export function ThreadHome({
   onActivate
 }: ThreadHomeProps) {
   const surfaceDisabled = !authorityChatId || Boolean(busySurface)
+  const renderThreadRow = (thread: ThreadHomeThreadOption) => (
+    <button
+      key={thread.chatId}
+      type="button"
+      className={`thread-home-thread-row provider-${thread.provider}`}
+      onClick={() => onSelectThread(thread.chatId)}
+      aria-label={threadHomeThreadAriaLabel(thread)}
+    >
+      <span className="thread-home-thread-provider" aria-hidden>
+        <ProviderBrandLogoIcon provider={thread.provider} />
+      </span>
+      <span className="thread-home-thread-copy">
+        <strong>{thread.title}</strong>
+        <span className="thread-home-thread-subline">
+          <small>
+            {thread.workspaceLabel}
+            {thread.paneIndex !== undefined ? ` · Pane ${thread.paneIndex + 1}` : ''}
+          </small>
+          {thread.stats && <ThreadHomeStats stats={thread.stats} />}
+        </span>
+      </span>
+      {thread.running ? (
+        <SidebarRunningGhost />
+      ) : (
+        <span className="thread-home-thread-provider-label">
+          {thread.provider === 'ensemble' ? 'Ensemble' : getProviderLabel(thread.provider)}
+        </span>
+      )}
+    </button>
+  )
   return (
     <section
       className={`thread-home thread-home--${variant}`}
@@ -186,40 +257,16 @@ export function ThreadHome({
               </span>
               <span className="thread-home-thread-provider-label">New</span>
             </button>
-            {threads.map((thread) => (
-              <button
-                key={thread.chatId}
-                type="button"
-                className={`thread-home-thread-row provider-${thread.provider}`}
-                onClick={() => onSelectThread(thread.chatId)}
-                aria-label={threadHomeThreadAriaLabel(thread)}
-              >
-                <span className="thread-home-thread-provider" aria-hidden>
-                  <ProviderBrandLogoIcon provider={thread.provider} />
-                </span>
-                <span className="thread-home-thread-copy">
-                  <strong>{thread.title}</strong>
-                  <span className="thread-home-thread-subline">
-                    <small>
-                      {thread.workspaceLabel}
-                      {thread.paneIndex !== undefined ? ` · Pane ${thread.paneIndex + 1}` : ''}
-                    </small>
-                    {thread.stats && <ThreadHomeStats stats={thread.stats} />}
-                  </span>
-                </span>
-                {thread.running ? (
-                  <SidebarRunningGhost />
-                ) : (
-                  <span className="thread-home-thread-provider-label">
-                    {thread.provider === 'ensemble'
-                      ? 'Ensemble'
-                      : getProviderLabel(thread.provider)}
-                  </span>
-                )}
-              </button>
-            ))}
+            {threads.map(renderThreadRow)}
             {threads.length === 0 && (
               <div className="thread-home-empty-copy">No active threads right now.</div>
+            )}
+            <div className="thread-home-list-heading" role="heading" aria-level={3}>
+              Recents
+            </div>
+            {recentThreads.map(renderThreadRow)}
+            {recentThreads.length === 0 && (
+              <div className="thread-home-empty-copy">No recent threads yet.</div>
             )}
           </div>
         </section>
@@ -489,13 +536,19 @@ function ThreadHomeWorkspaceInner(
   }, [])
 
   const authorityChatId = authorityChat?.appChatId ?? null
-  const threads = useMemo(
-    () =>
-      buildThreadHomeThreadOptions({
+  const { threads, recentThreads } = useMemo(
+    () => ({
+      threads: buildThreadHomeThreadOptions({
         chats,
         runningChatIds,
         paneChatIds
       }),
+      recentThreads: buildThreadHomeRecentThreadOptions({
+        chats,
+        runningChatIds,
+        paneChatIds
+      })
+    }),
     [chats, paneChatIds, runningChatIds]
   )
 
@@ -589,6 +642,7 @@ function ThreadHomeWorkspaceInner(
       <ThreadHome
         variant={variant}
         threads={threads}
+        recentThreads={recentThreads}
         authorityChatId={authorityChatId}
         mediaCount={mediaRefs.length}
         busySurface={busySurface}

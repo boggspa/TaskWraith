@@ -96,21 +96,28 @@
   grid-column: 1 / -1;
 }
 
+.thread-home-list-heading {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .thread-home-thread-row {
   appearance: none;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--surface-border) 76%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-2) 58%, transparent);
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
   color: inherit;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-  backdrop-filter: blur(16px) saturate(135%);
-  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   cursor: pointer;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease,
-    transform 120ms ease;
+  transition: transform 120ms ease;
 }
 
 .thread-home-surface-card {
@@ -121,12 +128,6 @@
   color: inherit;
   cursor: pointer;
   transition: transform 120ms ease;
-}
-
-.thread-home-thread-row:hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-border));
-  background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
-  transform: translateY(-1px);
 }
 
 @keyframes surface-mask-shimmer-sweep {
@@ -141,7 +142,7 @@
 }
 
 .thread-home-surface-card:hover:not(:disabled),
-.thread-home-new-chat-row:hover {
+.thread-home-thread-row:hover {
   transform: translateY(-1px);
   -webkit-mask-image: linear-gradient(
     105deg,
@@ -165,10 +166,15 @@
 }
 
 [data-reduce-motion='true'] .thread-home-surface-card:hover:not(:disabled),
-[data-reduce-motion='true'] .thread-home-new-chat-row:hover,
+[data-reduce-motion='true'] .thread-home-thread-row:hover {
+  animation: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .thread-home-surface-card:hover:not(:disabled),
-  .thread-home-new-chat-row:hover {
+  .thread-home-thread-row:hover {
     animation: none;
     -webkit-mask-image: none;
     mask-image: none;
@@ -204,17 +210,7 @@
 }
 
 .thread-home-new-chat-row {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   grid-template-columns: 38px minmax(0, 1fr) auto;
-}
-
-.thread-home-new-chat-row:hover {
-  background: transparent;
-  border-color: transparent;
 }
 
 .thread-home-new-chat-row .thread-home-thread-provider :is(.sf-symbol-icon, svg) {

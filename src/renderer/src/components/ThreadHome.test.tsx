@@ -3,8 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord } from '../../../main/store/types'
 import {
+  THREAD_HOME_RECENT_LIMIT,
   THREAD_HOME_SURFACES,
   ThreadHome,
+  buildThreadHomeRecentThreadOptions,
   buildThreadHomeThreadOptions,
   settleThreadHomeCanvasOpen,
   type ThreadHomeCanvasOpenResult
@@ -45,6 +47,31 @@ describe('buildThreadHomeThreadOptions', () => {
       })
     ).toEqual([])
   })
+
+  it('shows the five newest non-active recents using sidebar recency rules', () => {
+    const chats = Array.from({ length: 9 }, (_, index) => ({
+      ...chat(`recent-${index + 1}`, `Recent ${index + 1}`),
+      createdAt: (index + 1) * 100
+    }))
+    chats[7] = { ...chats[7], pinned: true }
+    chats[6] = { ...chats[6], archived: true }
+
+    const options = buildThreadHomeRecentThreadOptions({
+      chats,
+      runningChatIds: ['recent-9'],
+      paneChatIds: ['recent-6']
+    })
+
+    expect(THREAD_HOME_RECENT_LIMIT).toBe(5)
+    expect(options.map((option) => option.chatId)).toEqual([
+      'recent-6',
+      'recent-5',
+      'recent-4',
+      'recent-3',
+      'recent-2'
+    ])
+    expect(options[0]).toMatchObject({ running: false, paneIndex: 0 })
+  })
 })
 
 describe('ThreadHome', () => {
@@ -69,6 +96,15 @@ describe('ThreadHome', () => {
             paneIndex: 1
           }
         ]}
+        recentThreads={[
+          {
+            chatId: 'b',
+            title: 'Beta',
+            provider: 'claude',
+            workspaceLabel: 'other-repo',
+            running: false
+          }
+        ]}
         authorityChatId="a"
         mediaCount={4}
         onNewChat={vi.fn()}
@@ -81,7 +117,10 @@ describe('ThreadHome', () => {
 
     expect(html).toContain('aria-label="Thread Home"')
     expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Alpha'))
+    expect(html.indexOf('Alpha')).toBeLessThan(html.indexOf('Recents'))
+    expect(html.indexOf('Recents')).toBeLessThan(html.indexOf('Beta'))
     expect(html).toContain('Alpha')
+    expect(html).toContain('class="thread-home-list-heading" role="heading" aria-level="3"')
     expect(html).toContain('Pane 2')
     expect(html).toContain('class="thread-home-run-stats"')
     expect(html).toContain('2 changed files, 12 additions, 3 deletions, 1 commit')
@@ -107,6 +146,7 @@ describe('ThreadHome', () => {
       <ThreadHome
         variant="main"
         threads={[]}
+        recentThreads={[]}
         onNewChat={vi.fn()}
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
@@ -114,6 +154,7 @@ describe('ThreadHome', () => {
     )
     expect(html).toContain('aria-label="New Chat"')
     expect(html).toContain('No active threads right now.')
+    expect(html).toContain('No recent threads yet.')
     expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
   })
 
@@ -139,6 +180,23 @@ describe('ThreadHome', () => {
     expect(css).toContain('padding-top: 70px')
     expect(canvasCss).toContain('.canvas-pane-close {')
     expect(canvasCss).not.toContain('.canvas-dock-panel .canvas-pane-close')
+  })
+
+  it('renders every thread row as transparent satellite content with the shared shimmer', () => {
+    const css = readFileSync(new URL('../assets/css/43-thread-home.css', import.meta.url), 'utf8')
+    const rowStart = css.indexOf('.thread-home-thread-row {')
+    const rowEnd = css.indexOf('}', rowStart)
+    const rowRule = css.slice(rowStart, rowEnd)
+
+    expect(rowRule).toContain('border: 1px solid transparent')
+    expect(rowRule).toContain('background: transparent')
+    expect(rowRule).toContain('box-shadow: none')
+    expect(rowRule).toContain('backdrop-filter: none')
+    expect(css).toContain(
+      '.thread-home-surface-card:hover:not(:disabled),\n.thread-home-thread-row:hover {'
+    )
+    expect(css).toContain("[data-reduce-motion='true'] .thread-home-thread-row:hover")
+    expect(css).not.toContain('color-mix(in srgb, var(--accent) 9%, var(--surface-2))')
   })
 
   it('closes a successful embedded Canvas that resolves after its host unmounts', async () => {
