@@ -34,6 +34,48 @@ struct TWRunActivityPlannerTests {
         #expect(TWRunActivityPlanner.phase(forCardStatus: nil) == nil)
     }
 
+    /// The union is `EnsembleParticipantStatus` in src/main/store/types.ts, and
+    /// it is NOT the card vocabulary above. The runtime says `answered` /
+    /// `yielded` / `sleeping` / `unreachable`; it never says `done`. Recognizing
+    /// only the legacy spellings left every successful seat sitting on
+    /// `.running`, which is what made a finished eight-seat round read `0/8` on
+    /// the lock screen (and `1/8` once a single failed seat was recognized).
+    ///
+    /// Terminal-ness here matches the Mac's own definition — see
+    /// `isDynamicStateReceiptTerminalStatus` and `statusToRunQueueJobStatus` in
+    /// EnsembleOrchestrator: a sleeping seat has finished its turn and is
+    /// waiting to be woken, so it is not still working.
+    @Test("real ensemble participant statuses map to the right seat phase")
+    func participantStatusMapping() {
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "answered") == .complete)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "yielded") == .complete)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "sleeping") == .complete)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "unreachable") == .failed)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "failed") == .failed)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "error") == .failed)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "skipped") == .cancelled)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "cancelled") == .cancelled)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "idle") == .running)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "running") == .running)
+    }
+
+    /// Unlike a card status, an unrecognized SEAT status must stay `.running`:
+    /// the seat is still part of the denominator, and quietly calling it
+    /// finished would overstate progress on a round that is still going.
+    @Test("an unknown seat status stays in the denominator")
+    func unknownSeatStatusIsNotFinished() {
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "reticulating") == .running)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: nil) == .running)
+        // Card-only statuses colliding onto a seat stay running. The TS mapper
+        // used to delegate to the card table and treat these as complete /
+        // awaitingApproval; Swift must not grow that same hole.
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "success") == .running)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "awaitingApproval") == .running)
+        // Legacy spellings still count — an older Mac may be driving this phone.
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "completed") == .complete)
+        #expect(TWRunActivityPlanner.seatPhase(forParticipantStatus: "done") == .complete)
+    }
+
     // MARK: - Plans
 
     @Test("a solo run carries diff counts and no seats")
@@ -55,7 +97,7 @@ struct TWRunActivityPlannerTests {
     func ensembleSeats() throws {
         let ensemble = try ensembleState([
             ("p-kimi", "kimi", 3, "running"),
-            ("p-claude", "claude", 1, "done"),
+            ("p-claude", "claude", 1, "answered"),
             ("p-codex", "codex", 2, "failed"),
         ])
         let plan = try #require(
@@ -73,6 +115,82 @@ struct TWRunActivityPlannerTests {
                 card: card(status: "running", provider: "claude", chatKind: "single"),
                 diff: nil, ensemble: ensemble, startedAt: start))
         #expect(solo.state.seats.isEmpty)
+    }
+
+    /// THE REGRESSION THIS SLICE EXISTS FOR. Eight seats that all answered is a
+    /// round that is over; it read `0/8` because none of the real statuses were
+    /// recognized. The fraction was always computed correctly — it was being fed
+    /// the wrong phases.
+    @Test("an ensemble whose seats all answered reads full, not 0/N")
+    func answeredRoundIsFullyFinished() throws {
+        let ensemble = try ensembleState(
+            (1...8).map { ("p-\($0)", "claude", $0, "answered") })
+        let plan = try #require(
+            TWRunActivityPlanner.plan(
+                card: card(status: "running", provider: "pi", chatKind: "ensemble"),
+                diff: nil, ensemble: ensemble, startedAt: start))
+        #expect(plan.state.seats.count == 8)
+        #expect(plan.state.seats.allSatisfy { $0.phase == .complete })
+        #expect(plan.state.seatsFinished == 8)
+        #expect(plan.state.progress == 1.0)
+    }
+
+    /// One seat of every kind the runtime can emit, so the count cannot be right
+    /// by accident: three terminal-good, one terminal-failed, one cancelled, and
+    /// two genuinely still working.
+    @Test("a mixed real-vocabulary round counts each terminal seat exactly once")
+    func mixedParticipantStatusesCount() throws {
+        let ensemble = try ensembleState([
+            ("p-1", "claude", 1, "answered"),
+            ("p-2", "codex", 2, "yielded"),
+            ("p-3", "kimi", 3, "sleeping"),
+            ("p-4", "grok", 4, "unreachable"),
+            ("p-5", "mistral", 5, "skipped"),
+            ("p-6", "pi", 6, "running"),
+            ("p-7", "ollama", 7, "idle"),
+        ])
+        let plan = try #require(
+            TWRunActivityPlanner.plan(
+                card: card(status: "running", provider: "pi", chatKind: "ensemble"),
+                diff: nil, ensemble: ensemble, startedAt: start))
+        #expect(
+            plan.state.seats.map(\.phase) == [
+                .complete, .complete, .complete, .failed, .cancelled, .running, .running,
+            ])
+        #expect(plan.state.seatsFinished == 5)
+        #expect(plan.state.progress == 5.0 / 7.0)
+    }
+
+    /// A new ensemble keeps whichever provider was active when it was created —
+    /// "pi" here. That seed stays on the wire on purpose (desktop surfaces and
+    /// the seat dots both read it), so the Live Activity has to normalize at
+    /// presentation instead: the card's identity is its CHAT KIND.
+    @Test("an ensemble is branded Ensemble even though the card carries a seed provider")
+    func ensembleProviderIsNormalized() throws {
+        let ensemble = try ensembleState([
+            ("p-claude", "claude", 1, "answered"),
+            ("p-codex", "codex", 2, "running"),
+        ])
+        let plan = try #require(
+            TWRunActivityPlanner.plan(
+                card: card(status: "running", provider: "pi", chatKind: "ensemble"),
+                diff: nil, ensemble: ensemble, startedAt: start))
+        #expect(plan.provider == "ensemble")
+        #expect(plan.isEnsemble)
+        // The dots still show each seat's OWN provider. Normalizing those too
+        // would paint eight identical tiles and throw away the only per-seat
+        // information the stack carries.
+        #expect(plan.state.seats.map(\.provider) == ["claude", "codex"])
+    }
+
+    @Test("a solo chat keeps its real provider")
+    func soloProviderIsNotNormalized() throws {
+        let solo = try #require(
+            TWRunActivityPlanner.plan(
+                card: card(status: "running", provider: "pi", chatKind: "single"),
+                diff: nil, ensemble: nil, startedAt: start))
+        #expect(solo.provider == "pi")
+        #expect(!solo.isEnsemble)
     }
 
     @Test("drafts and archived chats never get an activity")
@@ -167,6 +285,27 @@ struct TWRunActivityPlannerTests {
             startedAt: { _ in self.start })
         #expect(plans.count == 1)
         #expect(plans.first?.state.phase == .awaitingApproval)
+    }
+
+    /// Matches the Mac workspace-summary path: an ensemble member is branded
+    /// Ensemble even when its seed provider is still on the card. This is the
+    /// card identity, not a participant seat — those keep their own providers.
+    @Test("a workspace summary brands an ensemble member Ensemble, not its seed provider")
+    func workspaceAggregateNormalizesEnsembleMemberProvider() throws {
+        let ensemble = try card(
+            status: "running", provider: "pi", chatKind: "ensemble", id: "task-ens",
+            extra: monitorWorkspace("workspace-1", updatedAt: "2026-08-04T02:01:00Z"))
+        let solo = try card(
+            status: "running", provider: "codex", id: "task-solo",
+            extra: monitorWorkspace("workspace-1", updatedAt: "2026-08-04T02:00:00Z"))
+        let plans = TWRunActivityPlanner.plans(
+            cards: [ensemble, solo], diffs: [:], ensembles: [:], gitSnapshots: [:],
+            startedAt: { _ in self.start })
+        #expect(plans.count == 1)
+        let plan = try #require(plans.first)
+        #expect(plan.subject == .workspace("workspace-1"))
+        #expect(plan.provider == "taskwraith")
+        #expect(plan.state.seats.map(\.provider) == ["ensemble", "codex"])
     }
 
     // MARK: - Reconciliation

@@ -94,6 +94,18 @@ public enum TWRunActivityPlanner {
 
     /// Ensemble participant status → seat phase.
     ///
+    /// The vocabulary is `EnsembleParticipantStatus` in src/main/store/types.ts,
+    /// and it is NOT the card vocabulary above: the runtime says `answered` /
+    /// `yielded` / `sleeping` / `unreachable`, and never says `done`. This table
+    /// used to recognize only the legacy spellings, so every successful seat
+    /// stayed on `.running` and a finished eight-seat round read `0/8` on the
+    /// lock screen — `1/8` once one failed seat was the only thing counted.
+    ///
+    /// Terminal-ness matches the Mac's own definition (see
+    /// `isDynamicStateReceiptTerminalStatus` / `statusToRunQueueJobStatus` in
+    /// EnsembleOrchestrator): a `sleeping` seat has finished its turn and is
+    /// waiting to be woken, so it is not still working.
+    ///
     /// A seat that has not started yet maps to `.running`, not to a dedicated
     /// pending case. TWRunPhase is a WIRE enum the widget switches on, so a new
     /// case costs a decode fallback on every older build; that is not worth
@@ -101,9 +113,14 @@ public enum TWRunActivityPlanner {
     /// What the bar counts — finished vs total — is correct either way.
     public static func seatPhase(forParticipantStatus status: String?) -> TWRunPhase {
         switch status {
+        case "answered", "yielded", "sleeping": return .complete
+        // Legacy spellings, kept so an older Mac still counts correctly.
         case "completed", "done": return .complete
-        case "failed", "error": return .failed
+        case "failed", "error", "unreachable": return .failed
         case "skipped", "cancelled": return .cancelled
+        // "idle", "running", and anything a newer Mac invents. Unlike a card
+        // status, an unrecognized seat stays in the denominator: calling it
+        // finished would overstate progress on a round that is still going.
         default: return .running
         }
     }
@@ -135,7 +152,13 @@ public enum TWRunActivityPlanner {
         guard let phase = phase(forCardStatus: card.status) else { return nil }
         return TWActivityPlan(
             subject: .thread(card.id),
-            provider: card.provider ?? (card.isEnsemble ? "ensemble" : "codex"),
+            // An ensemble's identity is its CHAT KIND, not `card.provider`. A new
+            // ensemble keeps whichever provider happened to be active when it was
+            // created (the seed), and the wire keeps that value on purpose —
+            // desktop surfaces and the per-seat dots both read it. Branding the
+            // whole card "Pi" because the ensemble was born in a Pi chat is a
+            // presentation bug, so normalize here rather than on the wire.
+            provider: card.isEnsemble ? "ensemble" : (card.provider ?? "codex"),
             model: card.customModel,
             isEnsemble: card.isEnsemble,
             state: makeContentState(
@@ -200,7 +223,10 @@ public enum TWRunActivityPlanner {
             let git = gitSnapshots[workspaceId]
             let seats = orderedMembers.map {
                 TWSeatState(
-                    provider: $0.provider ?? ($0.isEnsemble ? "ensemble" : "codex"),
+                    // Same adapter-only rule as `plan`: an ensemble card's
+                    // identity is its chat kind. Per-participant providers live
+                    // on the thread activity, not on this per-card stack.
+                    provider: $0.isEnsemble ? "ensemble" : ($0.provider ?? "codex"),
                     phase: TWRunActivityPlanner.phase(forCardStatus: $0.status) ?? .running)
             }
             ranked.append(
