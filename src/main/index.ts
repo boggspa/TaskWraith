@@ -31399,6 +31399,7 @@ async function settleCodexNativeApprovalRequest(
         canvasEvalApproval: codexCanvasEvalApproval
       }
     )
+    approvalService?.publishRendererApprovalRequest(approvalPayload)
     safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
     // Fan out a wake-push to any paired iOS device. Summary uses
     // formatted.title (already curated for the user-facing approval
@@ -31599,6 +31600,7 @@ function maybeRequestCodexHostRerun(
       }
     }
   )
+  approvalService?.publishRendererApprovalRequest(approvalPayload)
   safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
   // Fan out a wake-push to any paired iOS device so the user can decide
   // away from the desktop. No-op if APNs is un-configured.
