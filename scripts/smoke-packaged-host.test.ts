@@ -28,6 +28,22 @@ describe('packaged production Host smoke', () => {
     expect(smoke).toContain('Emergency-only cleanup')
     expect(smoke).toContain('TASKWRAITH_HOST_REQUIRE_PACKAGE')
     expect(smoke).toContain('host-bin')
+    expect(smoke).toContain('MistralCredentialLane.js')
+    expect(smoke).not.toContain('exact production main/muse closure')
+    expect(smoke).toContain('main provider closure mismatch')
+    for (const provider of [
+      'Claude',
+      'Codex',
+      'Cursor',
+      'Grok',
+      'Kimi',
+      'Mistral',
+      'Muse',
+      'Ollama',
+      'Pi'
+    ]) {
+      expect(smoke).toContain(`HostNode${provider}Provider.js`)
+    }
     for (const launcher of [posix, cmd, powershell]) {
       expect(launcher).toContain('tui-runtime')
       expect(launcher).toMatch(/serve\s+--mode\s+production/)

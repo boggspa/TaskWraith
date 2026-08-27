@@ -164,34 +164,45 @@ async function validateHostResources(resources, target) {
 
 function validateHostPayload(hostRoot, label) {
   assertDir(hostRoot, label)
-  const allowedMuse = new Set([
-    'MuseCliArgs.js',
-    'MuseCronAssert.js',
-    'MuseExecJson.js',
-    'MuseIsolatedHome.js',
-    'MuseMcpConfig.js',
-    'MuseProbe.js',
-    'MuseRun.js',
-    'MuseSessionLog.js',
-    'MuseSkillPin.js',
-    'MuseToolProjection.js',
-    'MuseTypes.js',
-    'MuseUsage.js'
+  const expectedMainProviderModules = new Set([
+    ...[
+      'MuseCliArgs.js',
+      'MuseCronAssert.js',
+      'MuseExecJson.js',
+      'MuseIsolatedHome.js',
+      'MuseMcpConfig.js',
+      'MuseProbe.js',
+      'MuseRun.js',
+      'MuseSessionLog.js',
+      'MuseSkillPin.js',
+      'MuseToolProjection.js',
+      'MuseTypes.js',
+      'MuseUsage.js'
+    ].map((name) => path.join('muse', name)),
+    ...['MistralCliArgs.js', 'MistralCredentialLane.js', 'MistralQuotaEstimate.js'].map((name) =>
+      path.join('mistral', name)
+    )
   ])
   const mainRoot = path.join(hostRoot, 'main')
   if (!fs.existsSync(mainRoot)) {
-    fail(`${label} must contain the exact production main/muse closure`)
+    fail(`${label} must contain the exact production main provider closure`)
   } else {
     const emitted = filesUnder(mainRoot, () => true).map((candidate) =>
       path.relative(mainRoot, candidate)
     )
-    const expected = new Set([...allowedMuse].map((name) => path.join('muse', name)))
-    const allowed = new Set([...expected, ...[...expected].map((candidate) => `${candidate}.map`)])
-    if (
-      emitted.some((candidate) => !allowed.has(candidate)) ||
-      [...expected].some((candidate) => !emitted.includes(candidate))
-    ) {
-      fail(`${label} must contain only the exact production main/muse closure`)
+    const allowed = new Set([
+      ...expectedMainProviderModules,
+      ...[...expectedMainProviderModules].map((candidate) => `${candidate}.map`)
+    ])
+    const unexpected = emitted.filter((candidate) => !allowed.has(candidate))
+    const missing = [...expectedMainProviderModules].filter(
+      (candidate) => !emitted.includes(candidate)
+    )
+    if (unexpected.length > 0 || missing.length > 0) {
+      fail(
+        `${label} main provider closure mismatch` +
+          ` (missing: ${missing.join(', ') || 'none'}; unexpected: ${unexpected.join(', ') || 'none'})`
+      )
     }
   }
   for (const segments of [
@@ -211,7 +222,18 @@ function validateHostPayload(hostRoot, label) {
     ['host-node', 'HostNodeMuseCatalog.js'],
     ['host-node', 'HostNodeMuseAuthHandoff.js'],
     ['host-node', 'HostNodeMuseProvider.js'],
-    ['host-node', 'HostNodeProfileRunPort.js']
+    ['host-node', 'HostNodeProfileRunPort.js'],
+    ['host-node', 'HostNodeProviderRegistry.js'],
+    ['host-node', 'HostNodeProviderResources.js'],
+    ['host-node', 'HostNodeClaudeProvider.js'],
+    ['host-node', 'HostNodeCodexProvider.js'],
+    ['host-node', 'HostNodeCursorProvider.js'],
+    ['host-node', 'HostNodeGrokProvider.js'],
+    ['host-node', 'HostNodeKimiProvider.js'],
+    ['host-node', 'HostNodeMistralProvider.js'],
+    ['host-node', 'HostNodeOllamaProvider.js'],
+    ['host-node', 'HostNodePiProvider.js'],
+    ['host-shared', 'HostProviderCatalog.js']
   ]) {
     assertFile(path.join(hostRoot, ...segments), `${label} ${segments.join('/')}`)
   }
