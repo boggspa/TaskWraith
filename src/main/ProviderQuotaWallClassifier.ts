@@ -54,6 +54,9 @@ const PROVIDER_RULES: Partial<Record<ProviderId, ProviderRule>> = {
       /overloaded_error/i, // Anthropic 529 (capacity); treated as a transient wall
       /Claude AI usage limit reached\|\d{10}/i, // -p/stream-json stdout form, epoch reset
       /Claude usage limit reached/i, // interactive OAuth/subscription form
+      // Fable dedicated-credit wall. Require its /usage-credits recovery
+      // command so ordinary prose about credits cannot make a seat unavailable.
+      /You['’]re out of usage credits\.[\s\S]{0,96}\/usage-credits\b/i,
       // C1 — Claude subscription / "Fable" weekly wall, e.g.
       // "You've hit your limit · resets Jul 14". Envelope-anchored per Captain
       // G1: requires the distinctive opener AND a nearby reset token, so bare
