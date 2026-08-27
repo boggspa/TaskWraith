@@ -287,6 +287,40 @@
   padding-bottom: var(--composer-scroll-under-padding);
 }
 
+/* Compact Companion is intentionally one glass object, independent of the
+ * main-pane opacity/appearance choice. Reuse the canonical picker material so
+ * every theme gets the same reviewed light/dark alpha, shadow, and frost. */
+:root:has(.chat-compact-companion-window),
+:root:has(.chat-compact-companion-window) body,
+:root:has(.chat-compact-companion-window) #root,
+.chat-compact-companion-window,
+.chat-compact-companion-window .app-main {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+:root:has(.chat-compact-companion-window) .chat-compact-companion-window .app-transcript,
+:root[data-theme][data-appearance]:has(.chat-compact-companion-window)
+  .chat-compact-companion-window
+  .app-transcript {
+  background: var(--tw-popover-glass-bg) !important;
+  background-color: var(--tw-popover-glass-bg) !important;
+  background-image: var(--tw-neutral-material-sheen) !important;
+  box-shadow: var(--tw-popover-material-shadow) !important;
+  backdrop-filter: var(--tw-popover-material-backdrop) !important;
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop) !important;
+}
+
+:root[data-reduce-transparency='true']:has(.chat-compact-companion-window)
+  .chat-compact-companion-window
+  .app-transcript {
+  background: var(--tw-glass-solid) !important;
+  background-color: var(--tw-glass-solid) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 @media (max-width: 410px) {
   .compact-chat-composer-area {
     padding-inline: 10px;

@@ -25,6 +25,12 @@ describe('chat popout presentation handoff integration', () => {
     )
   })
 
+  it('keeps collaboration Channel chrome out of the compact companion only', () => {
+    expect(mainAppLayoutSource).toContain(
+      'isChatPopoutWindow && !isCompactChatCompanion && humanCollaborationControls'
+    )
+  })
+
   it('sends disclosure with focused, linked, and multiview popout handoffs', () => {
     const linked = sourceSlice(
       appSource,

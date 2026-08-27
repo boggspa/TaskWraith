@@ -2003,7 +2003,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               without this the button would VANISH in popouts — which is where it was
               the only working door before. Floating top-right is safe here precisely
               because MainPaneActionPill is also absent from popouts. */}
-          {isChatPopoutWindow && humanCollaborationControls && (
+          {isChatPopoutWindow && !isCompactChatCompanion && humanCollaborationControls && (
             <div className="human-collaboration-header-floating">
               {humanCollaborationControls}
             </div>
