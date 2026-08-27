@@ -48,6 +48,27 @@ describe('summarizeCollapsedActivityStack', () => {
     expect(summary.label).toContain('Edited')
   })
 
+  it('excludes MCP transport wrappers from the folded row and activity count', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({
+        toolName: 'callmcptool',
+        displayName: 'Used callmcptool',
+        status: 'error'
+      }),
+      activity({
+        toolName: 'unknown',
+        displayName: 'Used unknown',
+        parameters: { server: 'taskwraith', mcpToolName: 'workspace_search' }
+      }),
+      write('src/a.ts', 3, 1)
+    ])
+
+    expect(summary.activityCount).toBe(1)
+    expect(summary.label).toBe('Edited 1 file')
+    expect(summary.errorCount).toBe(0)
+    expect(summary.diff).toEqual({ additions: 3, deletions: 1, estimated: false })
+  })
+
   it('leads with thinking duration and follows tool families in first-appearance order', () => {
     const summary = summarizeCollapsedActivityStack([
       activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 8_000 }),

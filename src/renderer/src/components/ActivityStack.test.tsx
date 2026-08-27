@@ -1358,30 +1358,30 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('open raw events for full output')
   })
 
-  it('renders Used callmcptool as the dancing tool icon easter egg', () => {
+  it('hides MCP transport wrappers from rows and compact-group call counts', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
         activities={[
-          makeWriteActivity({
+          makeReadActivity({
             id: 'call-mcp-tool',
             toolName: 'callmcptool',
             displayName: 'Used callmcptool',
-            category: 'unknown',
             parameters: {},
             resultSummary: ''
-          })
+          }),
+          makeReadActivity({ id: 'read-a', parameters: { file_path: '/repo/a.ts' } }),
+          makeReadActivity({ id: 'read-b', parameters: { file_path: '/repo/b.ts' } })
         ]}
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('aria-label="Used callmcptool"')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>Used callmcptool<')
+    expect(html).not.toContain('callmcptool')
+    expect(html).toContain('2 raw tool calls')
+    expect(html).not.toContain('3 raw tool calls')
   })
 
-  it('renders generic MCP wrapper calls as the dancing tool icon easter egg', () => {
+  it('renders nothing for a stack containing only a generic MCP wrapper', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
@@ -1398,12 +1398,10 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>MCP<')
+    expect(html).toBe('')
   })
 
-  it('renders unknown wrapper calls as the dancing tool icon easter egg', () => {
+  it('renders nothing for an unknown activity carrying MCP wrapper evidence', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
@@ -1421,9 +1419,7 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>Used unknown<')
+    expect(html).toBe('')
   })
 
   it('does not obscure command-shaped unknown tool calls', () => {
@@ -1443,7 +1439,6 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).not.toContain('callmcp-tool-easter-egg')
     expect(html).toContain('Used unknown')
   })
 
@@ -1485,7 +1480,6 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).not.toContain('callmcp-tool-easter-egg')
     expect(html).toContain('MCP')
   })
 

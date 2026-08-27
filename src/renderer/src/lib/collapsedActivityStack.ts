@@ -1,4 +1,5 @@
 import type { ToolActivity } from '../../../main/store/types'
+import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
 import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
 
@@ -32,6 +33,13 @@ export function isThinkingStackActivity(activity: ToolActivity): boolean {
 export function activityStackHasLiveWork(activities: readonly ToolActivity[]): boolean {
   return activities.some(
     (activity) => activity.status === 'running' || activity.status === 'pending'
+  )
+}
+
+function isCollapsedStackPresentationActivity(activity: ToolActivity): boolean {
+  return (
+    !isHiddenInfrastructureToolName(activity.toolName || '') &&
+    !isMcpTransportWrapperActivity(activity)
   )
 }
 
@@ -94,7 +102,7 @@ export function summarizeCollapsedActivityStack(
 ): CollapsedStackSummary {
   // Synthetic housekeeping rows (AntiGravity init, unclassified agy steps)
   // never count toward the folded one-liner.
-  const activities = rawActivities.filter((a) => !isHiddenInfrastructureToolName(a.toolName || ''))
+  const activities = rawActivities.filter(isCollapsedStackPresentationActivity)
   let thinkingCount = 0
   let thinkingMs = 0
   let thinkingFailed = false
@@ -267,9 +275,7 @@ export function shouldAutoCollapseActivityStack(input: {
   // A stack made only of synthetic infrastructure rows has no user-facing
   // activity to fold, and previously produced a collapsed "0 activity steps"
   // control. Hidden work also cannot keep visible settled work expanded.
-  const visibleActivities = input.activities.filter(
-    (activity) => !isHiddenInfrastructureToolName(activity.toolName || '')
-  )
+  const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
   if (visibleActivities.length === 0) return false
   return !activityStackHasLiveWork(visibleActivities)
 }

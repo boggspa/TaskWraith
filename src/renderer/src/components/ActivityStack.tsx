@@ -38,6 +38,7 @@ import {
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
 import { isCodexReviewToolName } from '../../../shared/codexReview'
 import { isCodexMultiAgentToolName } from '../../../shared/codexMultiAgent'
+import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
@@ -54,7 +55,7 @@ import { renderActivitySummaryLabel } from '../lib/activitySummaryLabel'
 import { FileTypeIcon } from './FileTypeIcon'
 import { DigitOdometer } from './DigitOdometer'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
-import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
+import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
 import { CreativeTimelineDiffCard } from './CreativeTimelineDiffCard'
 import { creativeTimelineDiffModelFromActivity } from './CreativeTimelineDiffCardModel'
 import { CompactToolTrace } from './CompactToolTrace'
@@ -1111,94 +1112,6 @@ function getReadableActivityDisplayName(activity: ToolActivity): string {
   return displayLooksRaw ? fallback || displayName || rawToolName : displayName
 }
 
-const CALL_MCP_TOOL_WRAPPER_NAMES = new Set(['callmcptool', 'call_mcp_tool', 'mcp', 'use_tool'])
-
-const CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES = new Set([
-  'used callmcptool',
-  'used call_mcp_tool',
-  'used mcp',
-  'mcp',
-  'used an mcp tool'
-])
-
-const COMMAND_LIKE_ACTIVITY_KEYS = [
-  'command',
-  'cmd',
-  'script',
-  'bash',
-  'shell',
-  'shell_command',
-  'shellCommand',
-  'terminal_command',
-  'terminalCommand'
-]
-
-function plainRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function nestedActivityRecords(value: unknown): Record<string, unknown>[] {
-  const root = plainRecord(value)
-  if (!root) return []
-  const records = [root]
-  for (const key of ['parameters', 'params', 'payload', 'args', 'input', 'arguments']) {
-    const nested = plainRecord(root[key])
-    if (nested) records.push(nested)
-  }
-  return records
-}
-
-function hasCommandLikePayload(activity: ToolActivity): boolean {
-  if (activity.category === 'shell') return true
-  const records = [
-    ...(activity.parameters ? [activity.parameters] : []),
-    ...nestedActivityRecords(activity.rawUseEvent)
-  ]
-  return records.some((record) => Boolean(getStringParam(record, COMMAND_LIKE_ACTIVITY_KEYS)))
-}
-
-function hasMcpWrapperEvidence(activity: ToolActivity): boolean {
-  const records = [
-    ...(activity.parameters ? [activity.parameters] : []),
-    ...nestedActivityRecords(activity.rawUseEvent)
-  ]
-  return records.some((record) => {
-    const transportType = getStringParam(record, ['type', 'kind', 'tool_kind', 'toolKind'])
-    if (transportType?.toLowerCase().includes('mcp')) return true
-    if (
-      getStringParam(record, [
-        'server',
-        'serverName',
-        'server_name',
-        'providerIdentifier',
-        'provider_identifier',
-        'mcpToolName',
-        'mcp_tool_name',
-        'mcpTool',
-        'mcp_tool'
-      ])
-    ) {
-      return true
-    }
-    const wrapper = getStringParam(record, ['tool', 'toolName', 'tool_name', 'name'])
-    return wrapper ? CALL_MCP_TOOL_WRAPPER_NAMES.has(wrapper.toLowerCase()) : false
-  })
-}
-
-function isCallMcpToolActivity(activity: ToolActivity): boolean {
-  if (hasCommandLikePayload(activity)) return false
-  const toolName = (activity.toolName || '').trim().toLowerCase()
-  const displayName = (activity.displayName || '').trim().toLowerCase()
-  if (CALL_MCP_TOOL_WRAPPER_NAMES.has(toolName)) return true
-  if (CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES.has(displayName)) return true
-  if (toolName === 'unknown' || displayName === 'used unknown' || displayName === 'unknown') {
-    return hasMcpWrapperEvidence(activity)
-  }
-  return false
-}
-
 /**
  * Display cap for a thinking-trace body while its run is still streaming.
  * A very long trace otherwise renders as ONE ever-growing text node inside
@@ -1248,41 +1161,6 @@ function isThinkingTraceActivity(activity: ToolActivity): boolean {
 
 function activityProvider(activity: ToolActivity, fallback?: ProviderId): ProviderId | undefined {
   return activity.metadata?.ensembleProvider || activity.metadata?.provider || fallback
-}
-
-const CALL_MCP_TOOL_EASTER_EGG_FAMILIES: ToolFamily[] = [
-  'mcp',
-  'shell',
-  'search',
-  'edit',
-  'browser',
-  'task'
-]
-
-type CallMcpToolEasterEggStyle = CSSProperties & {
-  '--callmcp-delay': string
-}
-
-function CallMcpToolEasterEgg() {
-  return (
-    <span
-      className="callmcp-tool-easter-egg"
-      role="img"
-      aria-label="Used callmcptool"
-      title="Used callmcptool"
-    >
-      {CALL_MCP_TOOL_EASTER_EGG_FAMILIES.map((family, index) => (
-        <span
-          key={family}
-          className="callmcp-tool-easter-egg-icon"
-          style={{ '--callmcp-delay': `${index * -0.16}s` } as CallMcpToolEasterEggStyle}
-          aria-hidden="true"
-        >
-          <ToolFamilyIcon family={family} size={18} />
-        </span>
-      ))}
-    </span>
-  )
 }
 
 const PROGRESS_NOTE_CACHE_MAX = 64
@@ -2511,10 +2389,6 @@ function getInlineActivityTitle(
   workspacePath?: string,
   showFileHoverCard = true
 ): ReactNode {
-  if (isCallMcpToolActivity(activity)) {
-    return <CallMcpToolEasterEgg />
-  }
-
   if (isImageViewToolUse(activity.toolName, activity.parameters)) {
     return <>{IMAGE_VIEW_DISPLAY_NAME}</>
   }
@@ -2613,10 +2487,6 @@ function ActivityTitle({
   workspacePath?: string
   showFileHoverCard?: boolean
 }) {
-  if (isCallMcpToolActivity(activity)) {
-    return <CallMcpToolEasterEgg />
-  }
-
   if (isImageViewToolUse(activity.toolName, activity.parameters)) {
     return <>{IMAGE_VIEW_DISPLAY_NAME}</>
   }
@@ -3118,7 +2988,15 @@ export function ActivityStack({
   showDiffStats,
   thinkingTraceActions
 }: ActivityStackProps) {
-  const activities = useHydratedToolActivities(compactActivities)
+  const hydratedActivities = useHydratedToolActivities(compactActivities)
+  // Provider MCP discovery/pre-call envelopes stay in the stored transcript
+  // for audit/replay, but are presentation plumbing rather than user work.
+  // Filter after hydration so legacy `unknown` rows can use their raw MCP
+  // evidence, and make every downstream row/group count share this boundary.
+  const activities = useMemo(
+    () => hydratedActivities.filter((activity) => !isMcpTransportWrapperActivity(activity)),
+    [hydratedActivities]
+  )
   const activityAccent = providerAccentVar(providerHueClass || resolveProviderHueClass(provider))
   const activityAccentStyle = activityAccent
     ? ({ '--accent': activityAccent } as CSSProperties)
