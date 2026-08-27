@@ -380,7 +380,7 @@ function formatPrimitive(primitive: RemoteImageMarkupPrimitive): string {
 /** Provider-visible coordinate text. Image bytes may still be the original
  * photo; this is how the host names the marks. */
 export function formatRemoteImageMarkupForProvider(markup: RemoteImageMarkup): string {
-  const header = `[Image annotation on attachment ${markup.attachmentId}, schemaVersion ${markup.schemaVersion}]`
+  const header = `[Image annotation on attachment ${JSON.stringify(markup.attachmentId)}, schemaVersion ${markup.schemaVersion}]`
   if (markup.primitives.length === 0) return header
   return [header, ...markup.primitives.map(formatPrimitive)].join('\n')
 }
@@ -395,6 +395,23 @@ export function dispatchFieldsFromPersistedRemoteImages(
   return texts.length === 0
     ? { imagePaths }
     : { imagePaths, markupPromptText: texts.join('\n\n') }
+}
+
+/**
+ * Adds validated annotation coordinates to the provider prompt while leaving
+ * the user-visible composer text untouched. Coordinates are normalized to the
+ * original image, with (0, 0) at its top-left corner.
+ */
+export function appendRemoteImageMarkupToPrompt(
+  prompt: string,
+  markupPromptText: string | undefined
+): string {
+  const markup = markupPromptText?.trim()
+  if (!markup) return prompt
+  const coordinateContext =
+    '[Attached-image annotation coordinates: normalized x/y in 0..1; origin is top-left.]'
+  const suffix = `${coordinateContext}\n${markup}`
+  return prompt.trim() ? `${prompt}\n\n${suffix}` : suffix
 }
 
 /**

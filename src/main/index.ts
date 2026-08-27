@@ -1087,6 +1087,8 @@ import {
   type MaintenanceCompactionReservation
 } from './services/MaintenanceCompactionRegistry'
 import {
+  appendRemoteImageMarkupToPrompt,
+  dispatchFieldsFromPersistedRemoteImages,
   persistRemoteImageAttachments,
   purgeLegacyRemoteAttachmentTempRoot,
   type RemoteImageAttachmentInput
@@ -8636,6 +8638,9 @@ const remoteComposerInternalDispatches = new WeakMap<
       width: number
       height: number
     }>
+    /** Provider-only prompt enriched with validated annotation coordinates.
+     * The paired-device action keeps the user's original display text. */
+    providerPrompt?: string
     /** Mac-resolved runtime profile frozen when this queued prompt was created. */
     runtimeProfileId?: string
   }
@@ -45091,6 +45096,9 @@ if (isGeminiMcpBridgeProcess) {
         remoteComposerInternalDispatches.set(action, {
           appRunId: dispatch.appRunId,
           queueRunId: dispatch.queueRunId,
+          ...(leased.request?.prompt
+            ? { providerPrompt: leased.request.prompt }
+            : {}),
           ...(leased.runtimeProfileId ? { runtimeProfileId: leased.runtimeProfileId } : {}),
           ...(leased.request?.remoteComposer?.imagePaths?.length
             ? {
@@ -45463,6 +45471,7 @@ if (isGeminiMcpBridgeProcess) {
         // chat-owned transcript-media store, never raw base64 (which would
         // bloat every run-queue persistence write).
         let queuedImagePaths: string[] = []
+        let queuedProviderPrompt = text
         let queuedImageThumbnails: Array<{
           dataBase64: string
           mimeType: string
@@ -45476,7 +45485,12 @@ if (isGeminiMcpBridgeProcess) {
               attachments: action.imageAttachments,
               store: getTranscriptMediaAssetStore()
             })
-            queuedImagePaths = persisted.map((attachment) => attachment.path)
+            const dispatchFields = dispatchFieldsFromPersistedRemoteImages(persisted)
+            queuedImagePaths = dispatchFields.imagePaths
+            queuedProviderPrompt = appendRemoteImageMarkupToPrompt(
+              text,
+              dispatchFields.markupPromptText
+            )
             queuedImageThumbnails = buildBridgeImageThumbnails(
               persisted.map((attachment) => attachment.buffer)
             )
@@ -45557,7 +45571,9 @@ if (isGeminiMcpBridgeProcess) {
           ...(resolvedRuntimeProfileId ? { runtimeProfileId: resolvedRuntimeProfileId } : {}),
           request: {
             scope,
-            prompt: text,
+            // Provider-only annotation coordinates live in `prompt`; queue UI
+            // and the eventual transcript keep the user's original `displayPrompt`.
+            prompt: queuedProviderPrompt,
             displayPrompt: text,
             selectedModelType,
             customModel: '',
@@ -47074,6 +47090,7 @@ if (isGeminiMcpBridgeProcess) {
           // Phone-attached images ride the same lane the desktop ensemble
           // composer uses (startRound imageAttachments {path, name}).
           let steerImagePaths: string[] = []
+          let steerMarkupPromptText: string | undefined
           let steerImageThumbnails: Array<{
             dataBase64: string
             mimeType: string
@@ -47087,7 +47104,9 @@ if (isGeminiMcpBridgeProcess) {
                 attachments: action.imageAttachments,
                 store: getTranscriptMediaAssetStore()
               })
-              steerImagePaths = persisted.map((attachment) => attachment.path)
+              const dispatchFields = dispatchFieldsFromPersistedRemoteImages(persisted)
+              steerImagePaths = dispatchFields.imagePaths
+              steerMarkupPromptText = dispatchFields.markupPromptText
               for (const imagePath of steerImagePaths) {
                 authorizeImagePreviewPath(imagePath, {
                   mainAuthority: true,
@@ -47100,9 +47119,14 @@ if (isGeminiMcpBridgeProcess) {
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize steer attachments:', err)
               steerImagePaths = []
+              steerMarkupPromptText = undefined
               steerImageThumbnails = []
             }
           }
+          const steerProviderPrompt = appendRemoteImageMarkupToPrompt(
+            text,
+            steerMarkupPromptText
+          )
           // Desktop parity: MAIN resolves phone-supplied text through the same
           // authoritative matcher used by run-ensemble-round. The remote path
           // has no renderer advisory id, so only an exact structured link or a
@@ -47137,7 +47161,7 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             const absorbed = ensembleOrchestratorRef?.absorbMidRunSteering({
               chatId: action.threadId,
-              text,
+              text: steerProviderPrompt,
               roundId: absorbRound.roundId,
               ...(steerImagePaths.length
                 ? {
@@ -47158,7 +47182,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           const result = ensembleOrchestratorRef?.startRound({
             chatId: action.threadId,
-            prompt: text,
+            prompt: steerProviderPrompt,
             event: fakeEvent,
             mode: 'steer',
             ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
@@ -48252,6 +48276,7 @@ if (isGeminiMcpBridgeProcess) {
           // composer uses, but live in the chat-owned transcript-media store
           // rather than anonymous OS temp files.
           let iosImagePaths: string[] = []
+          let iosMarkupPromptText: string | undefined
           let iosImageThumbnails: Array<{
             dataBase64: string
             mimeType: string
@@ -48282,7 +48307,9 @@ if (isGeminiMcpBridgeProcess) {
                 attachments: action.imageAttachments,
                 store: getTranscriptMediaAssetStore()
               })
-              iosImagePaths = persisted.map((attachment) => attachment.path)
+              const dispatchFields = dispatchFieldsFromPersistedRemoteImages(persisted)
+              iosImagePaths = dispatchFields.imagePaths
+              iosMarkupPromptText = dispatchFields.markupPromptText
               for (const imagePath of iosImagePaths) {
                 authorizeImagePreviewPath(imagePath, {
                   mainAuthority: true,
@@ -48298,9 +48325,13 @@ if (isGeminiMcpBridgeProcess) {
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize image attachments:', err)
               iosImagePaths = []
+              iosMarkupPromptText = undefined
               iosImageThumbnails = []
             }
           }
+          const providerPrompt =
+            internalQueueDispatch?.providerPrompt ??
+            appendRemoteImageMarkupToPrompt(action.text, iosMarkupPromptText)
           // Proposed-plan implement-run idempotency (slice 2c-iii). An
           // Approve-origin run names the plan it implements. We re-read OUR
           // canonical status (never the phone's) and, in ONE synchronous block
@@ -48692,7 +48723,7 @@ if (isGeminiMcpBridgeProcess) {
           })
           const bridgePromptInput = {
             provider,
-            finalPrompt: action.text,
+            finalPrompt: providerPrompt,
             messages: priorMessages,
             chatContextTurns: bridgeSettings.chatContextTurns,
             ...(resumeSessionId ? { resumeSessionId } : {}),

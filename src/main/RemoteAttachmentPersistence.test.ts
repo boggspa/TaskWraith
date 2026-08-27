@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_REMOTE_IMAGE_MARKUP_JSON_BYTES,
   MAX_REMOTE_IMAGE_MARKUP_POINTS_PER_STROKE,
+  appendRemoteImageMarkupToPrompt,
   dispatchFieldsFromPersistedRemoteImages,
   persistRemoteImageAttachments,
   parseRemoteImageMarkup,
@@ -114,6 +115,22 @@ describe('persistRemoteImageAttachments', () => {
       imagePaths: ['/owned/transcript-media/digest.png'],
       markupPromptText: result[0]?.markupPromptText
     })
+  })
+
+  it('adds coordinates only to the provider prompt and states the coordinate space', () => {
+    const coordinates = '[Image annotation on attachment "shot-9", schemaVersion 1]\n- arrow'
+
+    expect(appendRemoteImageMarkupToPrompt('Fix this', undefined)).toBe('Fix this')
+    expect(appendRemoteImageMarkupToPrompt('Fix this', '   ')).toBe('Fix this')
+    expect(appendRemoteImageMarkupToPrompt('Fix this', coordinates)).toBe(
+      'Fix this\n\n' +
+        '[Attached-image annotation coordinates: normalized x/y in 0..1; origin is top-left.]\n' +
+        coordinates
+    )
+    expect(appendRemoteImageMarkupToPrompt('', coordinates)).toBe(
+      '[Attached-image annotation coordinates: normalized x/y in 0..1; origin is top-left.]\n' +
+        coordinates
+    )
   })
 
   it('rejects malformed or oversized markup before writing bytes', () => {
