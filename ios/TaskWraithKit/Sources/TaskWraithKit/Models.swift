@@ -917,6 +917,12 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     /// workspace the router would refuse. This bit includes the workspace
     /// allowlist grant, not just implementation liveness.
     public let createSubThread: Bool?
+    /// Host projects true only when BOTH merge callbacks (`githubMergePrFn`
+    /// and `requestGithubMergePrApprovalFn`) are injected AND this workspace
+    /// grants `externalPublish` — the router's requirement for `githubMergePr`.
+    /// Absent/false means the phone must not offer the merge control: a button
+    /// that appears and is then refused by the Mac is the spawn defect inverted.
+    public let githubMergePr: Bool?
 }
 
 /// One remote-terminal output chunk (raw shell bytes, base64).
@@ -3502,9 +3508,10 @@ public enum BridgeAction {
     ///   `githubMergePrFn`.
     ///
     /// The Mac derives the PR from the workspace checkout — this payload
-    /// has no PR number or URL. Host `githubMergePrFn` and
-    /// `requestGithubMergePrApprovalFn` are intentionally unwired while
-    /// `src/main/index.ts` is claimed; do not call this from UI.
+    /// has no PR number or URL. Both host callbacks are wired behind that
+    /// dual gate; UI calls this only when the Mac projects
+    /// `RemoteTaskCapabilities.githubMergePr == true` for the workspace (see
+    /// `GithubMergePrGate`), so an ungated surface never reaches this builder.
     public static func githubMergePr(
         workspaceId: String,
         elevationAcknowledged: Bool,

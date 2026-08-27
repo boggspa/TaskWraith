@@ -5881,6 +5881,47 @@ public final class RemoteSessionModel: ObservableObject {
         return pr
     }
 
+    /// Whether the Mac projects real merge support for this workspace. True only
+    /// when `capabilities.githubMergePr == true` (host-derived: both merge
+    /// callbacks injected) AND the workspace grants `externalPublish`, the
+    /// router's `githubMergePr` requirement. Absent/false is fail-closed: the
+    /// phone never offers a control that would call a `notWired` executor or be
+    /// refused by the router.
+    public func isGithubMergePrHostWired(forWorkspaceId workspaceId: String?) -> Bool {
+        guard let workspaceId,
+            let capabilities = workspaces.first(where: { $0.id == workspaceId })?.capabilities
+        else { return false }
+        return GithubMergePrGate.isAvailable(
+            hostProjected: capabilities.githubMergePr,
+            externalPublish: capabilities.externalPublish)
+    }
+
+    /// Merge the current branch's GitHub PR. DESTRUCTIVE and irreversible from
+    /// the phone.
+    ///
+    /// Fail-closed twice before anything is sent: the caller must pass the
+    /// elevation acknowledgement collected from its confirmation UI, and the
+    /// workspace must project merge support — so a capability that flips to
+    /// false between render and tap still cannot reach the wire. The Mac then
+    /// runs its own host-verified approval (`requestAgenticServiceApproval`)
+    /// before any merge: the phone's receipt is necessary, never sufficient.
+    public func mergeGithubPr(
+        workspaceId: String, elevationAcknowledged: Bool
+    ) async throws -> GitPullRequestSummary {
+        guard elevationAcknowledged,
+            isGithubMergePrHostWired(forWorkspaceId: workspaceId)
+        else {
+            throw RemoteFileActionError.denied(
+                "Merge isn't available — the Mac hasn't enabled pull request merge for this workspace.")
+        }
+        let ack = try await requestFileAction(
+            BridgeAction.githubMergePr(
+                workspaceId: workspaceId, elevationAcknowledged: elevationAcknowledged),
+            timeoutMs: 60_000)
+        guard let pr = ack.data?.pr else { throw RemoteFileActionError.malformedAck }
+        return pr
+    }
+
     /// Queue a peer thread message for another thread on the Mac.
     ///
     /// QUEUE-ONLY by construction: the Mac's gate denies a remote wake outright, so
