@@ -924,6 +924,10 @@ import {
   closeoutSubagentRefreshFingerprint
 } from './lib/closeoutSubagentRefresh'
 import {
+  applyRestingChatCloseout,
+  resolveRestingChatCloseoutTarget
+} from './lib/paneCloseoutAuthoring'
+import {
   findCloseoutCommitRepairTargets,
   repairCloseoutCommitTombstones
 } from './lib/closeoutCommitRepair'
@@ -25962,6 +25966,53 @@ function App(): React.JSX.Element {
     settings?.showRunCompleteSummary,
     updateChatById,
     visibleRunCompleteNotice
+  ])
+  // Resting Multiview panes: the effect above is keyed to currentChat, so a
+  // round finishing in a NON-focused pane had no close-out author at all — the
+  // pane sat on the bare ephemeral footer card (no Participants/Commits epic
+  // stack, no Worked-for body) until the chat was projected to host, whose
+  // selection finally authored it. Author the deterministic close-out for
+  // every resting pane chat at its completion; the focused effect and the AI
+  // summarizer converge on the same message id once the chat is opened.
+  const restingPaneCloseoutAuthoredRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!isMultiviewSplit) return
+    if (settings?.showRunCompleteSummary === false) return
+    for (const paneChatId of new Set(multiview.paneChatIds)) {
+      if (!paneChatId || paneChatId === currentChatIdRef.current) continue
+      const paneChat = chatByIdRef.current.get(paneChatId)
+      if (!paneChat || isChatSummaryRecord(paneChat)) continue
+      const target = resolveRestingChatCloseoutTarget(paneChat, {
+        isRunning: deriveChatIsRunning({ chat: paneChat, runningChatIds, runQueueJobs }),
+        showRunCompleteSummary: settings?.showRunCompleteSummary
+      })
+      if (!target) continue
+      // Once per completion: late-evidence enrichment (AI summary, commit
+      // repair) stays with the focused effects, and a re-completed round
+      // mints a fresh key. Guarded so steady-state deliveries cost one Set
+      // lookup per pane, not a transcript walk.
+      if (restingPaneCloseoutAuthoredRef.current.has(target.authoringKey)) continue
+      restingPaneCloseoutAuthoredRef.current.add(target.authoringKey)
+      if (restingPaneCloseoutAuthoredRef.current.size > 256) {
+        const oldest = restingPaneCloseoutAuthoredRef.current.values().next().value
+        if (oldest !== undefined) restingPaneCloseoutAuthoredRef.current.delete(oldest)
+      }
+      updateChatById(paneChatId, (source) =>
+        applyRestingChatCloseout(source, target, {
+          childChats: childChatsForCloseout(paneChatId, chats),
+          aiSummaries: closeoutAiSummaries
+        })
+      )
+    }
+  }, [
+    chats,
+    closeoutAiSummaries,
+    isMultiviewSplit,
+    multiview.paneChatIds,
+    runningChatIds,
+    runQueueJobs,
+    settings?.showRunCompleteSummary,
+    updateChatById
   ])
   // One-shot per chat per session: close-outs written while tool details were
   // already stripped but before commit evidence existed harvested zero commits
