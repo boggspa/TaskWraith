@@ -43,12 +43,13 @@ export function projectChatSurfacePendingApprovals<T>(
 export function mergeRecoveredPendingApprovals<T extends { id: string }>(
   recovered: readonly RoutedPendingApproval<T>[],
   approvalHeadByChatId: Readonly<Record<string, T | null | undefined>>,
-  approvalQueueByChatId: Readonly<Record<string, readonly T[] | undefined>>
+  approvalQueueByChatId: Readonly<Record<string, readonly T[] | undefined>>,
+  excludedApprovalIds: ReadonlySet<string> = new Set()
 ): ChatSurfacePendingApprovalState<T> {
   const orderedByChatId = new Map<string, T[]>()
   const seenByChatId = new Map<string, Set<string>>()
   const append = (chatId: string, approval: T | null | undefined): void => {
-    if (!chatId || !approval?.id) return
+    if (!chatId || !approval?.id || excludedApprovalIds.has(approval.id)) return
     const seen = seenByChatId.get(chatId) ?? new Set<string>()
     if (seen.has(approval.id)) return
     seen.add(approval.id)
@@ -78,5 +79,49 @@ export function mergeRecoveredPendingApprovals<T extends { id: string }>(
   return {
     approvalHeadByChatId: nextHeads,
     approvalQueueByChatId: nextQueues
+  }
+}
+
+/**
+ * Coordinates the short race window between subscribing to live approval IPC
+ * and receiving the authoritative recovery snapshot.
+ */
+export class PendingApprovalRecoveryWindow<T extends { id: string }> {
+  private pending = true
+  private cancelled = false
+  private readonly settledIds = new Set<string>()
+  private readonly liveRequests: RoutedPendingApproval<T>[] = []
+
+  recordLive(request: RoutedPendingApproval<T>): void {
+    if (!this.pending || this.cancelled) return
+    this.liveRequests.push(request)
+  }
+
+  recordSettled(approvalId: string): void {
+    if (!this.pending || this.cancelled || !approvalId) return
+    this.settledIds.add(approvalId)
+  }
+
+  reconcile(
+    recovered: readonly RoutedPendingApproval<T>[]
+  ): ChatSurfacePendingApprovalState<T> | null {
+    if (!this.pending || this.cancelled) return null
+    return mergeRecoveredPendingApprovals(
+      [...recovered, ...this.liveRequests],
+      {},
+      {},
+      this.settledIds
+    )
+  }
+
+  finish(): void {
+    this.pending = false
+    this.settledIds.clear()
+    this.liveRequests.length = 0
+  }
+
+  cancel(): void {
+    this.cancelled = true
+    this.finish()
   }
 }

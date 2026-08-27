@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   mergeRecoveredPendingApprovals,
+  PendingApprovalRecoveryWindow,
   projectChatSurfacePendingApprovals
 } from './chatSurfacePendingApprovals'
 
@@ -99,5 +100,55 @@ describe('projectChatSurfacePendingApprovals', () => {
         'pane-chat': [shared, liveHead]
       }
     })
+  })
+
+  it('does not revive a settled approval from either snapshot', () => {
+    const settled: Approval = { id: 'settled' }
+
+    expect(
+      mergeRecoveredPendingApprovals(
+        [{ chatId: 'pane-chat', approval: settled }],
+        { 'pane-chat': settled },
+        { 'pane-chat': [settled] },
+        new Set(['settled'])
+      )
+    ).toEqual({
+      approvalHeadByChatId: { 'pane-chat': null },
+      approvalQueueByChatId: {}
+    })
+  })
+
+  it('coordinates live, settled, and cancelled recovery races', () => {
+    const recovery = new PendingApprovalRecoveryWindow<Approval>()
+    recovery.recordLive({ chatId: 'pane-chat', approval: { id: 'live' } })
+    recovery.recordSettled('settled')
+
+    expect(
+      recovery.reconcile([
+        { chatId: 'pane-chat', approval: { id: 'recovered' } },
+        { chatId: 'pane-chat', approval: { id: 'settled' } }
+      ])
+    ).toEqual({
+      approvalHeadByChatId: { 'pane-chat': { id: 'recovered' } },
+      approvalQueueByChatId: { 'pane-chat': [{ id: 'live' }] }
+    })
+
+    recovery.cancel()
+    expect(recovery.reconcile([])).toBeNull()
+  })
+
+  it('subscribes to every approval settlement before reading the recovery snapshot', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const ipcStart = appSource.indexOf('const ipcUnsubscriptions: Array<() => void> = []')
+    const recoveryRead = appSource.indexOf('.getPendingAgentApprovals()', ipcStart)
+    expect(ipcStart).toBeGreaterThan(0)
+    expect(appSource.indexOf('onAgentApprovalRequest(', ipcStart)).toBeLessThan(recoveryRead)
+    expect(appSource.indexOf('onAgentApprovalTimeout(', ipcStart)).toBeLessThan(recoveryRead)
+    expect(appSource.indexOf('onAgentApprovalResolved(', ipcStart)).toBeLessThan(recoveryRead)
+
+    const approvalRecoveryBlock = appSource.slice(ipcStart, recoveryRead + 2000)
+    expect(approvalRecoveryBlock).toContain('previous?.id === request.id')
+    expect(approvalRecoveryBlock).toContain('approvalRecovery?.recordSettled(')
+    expect(approvalRecoveryBlock).toContain('approvalRecovery?.reconcile(recovered)')
   })
 })

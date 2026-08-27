@@ -963,7 +963,10 @@ import {
   ChatSurfaceComposerRuntime,
   ChatSurfaceComposerRuntimeRegistry
 } from './lib/chatSurfaceComposerRuntime'
-import { projectChatSurfacePendingApprovals } from './lib/chatSurfacePendingApprovals'
+import {
+  PendingApprovalRecoveryWindow,
+  projectChatSurfacePendingApprovals
+} from './lib/chatSurfacePendingApprovals'
 import { createPaneTopLeftChromeComposer } from './lib/paneTopLeftChrome'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
 import {
@@ -12462,8 +12465,45 @@ function App(): React.JSX.Element {
     }
 
     const ipcUnsubscriptions: Array<() => void> = []
+    const approvalRecovery =
+      typeof window.api.getPendingAgentApprovals === 'function'
+        ? new PendingApprovalRecoveryWindow<AgentApprovalRequest>()
+        : null
     const addIpcSubscription = (unsubscribe: (() => void) | null | undefined): void => {
       if (typeof unsubscribe === 'function') ipcUnsubscriptions.push(unsubscribe)
+    }
+    const resolveApprovalChatId = (request: AgentApprovalRequest): string | null => {
+      const handlers = appEventHandlersRef.current
+      const context = handlers.resolveActiveRunContext(
+        request.provider,
+        request.appRunId,
+        request.appChatId
+      )
+      return context?.chatId || request.appChatId || currentChatIdRef.current
+    }
+    const presentLiveApprovalRequest = (request: AgentApprovalRequest): void => {
+      const handlers = appEventHandlersRef.current
+      const targetChatId = resolveApprovalChatId(request)
+      if (targetChatId) approvalRecovery?.recordLive({ chatId: targetChatId, approval: request })
+      // 1.0.4-AK4 — queue when an approval is already pending for
+      // this chat. Pre-AK4 the second arrival would overwrite the
+      // first (losing the user's chance to act on it). With AK5/AK6
+      // parallel fan-out lanes each can produce their own approval gate
+      // simultaneously; queueing keeps them all addressable.
+      handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
+        // The recovery snapshot and live IPC can carry the same request in
+        // either order. Never queue a duplicate behind itself.
+        if (previous?.id === request.id) return previous
+        if (previous && targetChatId) {
+          handlers.enqueueApprovalForChat(targetChatId, request)
+          return previous
+        }
+        return request
+      })
+      handlers.appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
+      })
     }
 
     addIpcSubscription(
@@ -12503,37 +12543,14 @@ function App(): React.JSX.Element {
 
     if (typeof window.api.onAgentApprovalRequest === 'function') {
       addIpcSubscription(
-        window.api.onAgentApprovalRequest((request) => {
-          const handlers = appEventHandlersRef.current
-          const context = handlers.resolveActiveRunContext(
-            request.provider,
-            request.appRunId,
-            request.appChatId
-          )
-          const targetChatId = context?.chatId || request.appChatId || currentChatIdRef.current
-          // 1.0.4-AK4 — queue when an approval is already pending for
-          // this chat. Pre-AK4 the second arrival would overwrite the
-          // first (losing the user's chance to act on it). With AK5/AK6
-          // parallel fan-out lanes each can produce their own approval gate
-          // simultaneously; queueing keeps them all addressable.
-          handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
-            if (previous && targetChatId) {
-              handlers.enqueueApprovalForChat(targetChatId, request)
-              return previous
-            }
-            return request
-          })
-          handlers.appendThreadRawLog(targetChatId, {
-            type: 'info',
-            content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
-          })
-        })
+        window.api.onAgentApprovalRequest(presentLiveApprovalRequest)
       )
     }
 
     if (typeof window.api.onAgentApprovalTimeout === 'function') {
       addIpcSubscription(
         window.api.onAgentApprovalTimeout((timeout) => {
+          approvalRecovery?.recordSettled(timeout.approvalId)
           const handlers = appEventHandlersRef.current
           // Find which chat held this approval, clear it, and surface a
           // visible "auto-denied" note. The main process has already
@@ -12586,6 +12603,7 @@ function App(): React.JSX.Element {
     if (typeof window.api.onAgentApprovalResolved === 'function') {
       addIpcSubscription(
         window.api.onAgentApprovalResolved((resolved) => {
+          approvalRecovery?.recordSettled(resolved.approvalId)
           // Cross-surface acknowledgment: the approval was decided
           // SOMEWHERE — a paired iPhone, another window, or the auto-deny
           // timer — and main's ApprovalService has already executed the
@@ -12632,6 +12650,32 @@ function App(): React.JSX.Element {
           }
         })
       )
+    }
+
+    if (typeof window.api.getPendingAgentApprovals === 'function') {
+      void window.api
+        .getPendingAgentApprovals()
+        .then((requests) => {
+          if (!Array.isArray(requests)) return
+          const recovered = requests
+            .filter((request): request is AgentApprovalRequest => Boolean(request?.id))
+            .map((request) => ({ chatId: resolveApprovalChatId(request), approval: request }))
+            .filter(
+              (entry): entry is { chatId: string; approval: AgentApprovalRequest } =>
+                Boolean(entry.chatId)
+            )
+          const merged = approvalRecovery?.reconcile(recovered)
+          if (!merged) return
+          const handlers = appEventHandlersRef.current
+          handlers.setPendingAgentApprovalByChatId(merged.approvalHeadByChatId)
+          handlers.setPendingApprovalQueueByChatId(merged.approvalQueueByChatId)
+        })
+        .catch((error) => {
+          console.warn('[approval-recovery] pending approval hydration failed', error)
+        })
+        .finally(() => {
+          approvalRecovery?.finish()
+        })
     }
 
     if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function') {
@@ -13089,6 +13133,7 @@ function App(): React.JSX.Element {
     }
 
     ipcUnsubscriptions.unshift(() => {
+      approvalRecovery?.cancel()
       for (const timer of contextCompactionProgressTimersRef.current.values()) {
         window.clearTimeout(timer)
       }
