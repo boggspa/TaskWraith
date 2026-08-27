@@ -1416,8 +1416,26 @@ struct Composer: View {
         // `shouldQueueOutboundSends`, which deliberately does NOT divert on
         // `.stale`, because queueing a send that would have succeeded is its own
         // small dishonesty.
-        let offlineTrimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if model.shouldQueueOutboundSends, !offlineTrimmed.isEmpty, !card.id.isEmpty {
+        #if canImport(UIKit)
+            let offlineAttachmentCount = attachments.count
+        #else
+            let offlineAttachmentCount = 0
+        #endif
+        switch OfflineComposerSendPolicy.decide(
+            shouldQueue: model.shouldQueueOutboundSends,
+            threadId: card.id,
+            text: text,
+            attachmentCount: offlineAttachmentCount)
+        {
+        case .refuseAttachments:
+            // KEEP BOTH TEXT AND IMAGES. The text outbox cannot durably retain
+            // attachment bytes yet, so accepting this would split one send and
+            // silently deliver only half of what the user committed.
+            model.reportOfflineOutboxOutcome(
+                "Not sent. Image attachments can't be saved to the offline outbox yet. "
+                    + "Your message and images are still here.")
+            return
+        case .queueText(let offlineTrimmed):
             switch model.enqueueOfflinePrompt(threadId: card.id, text: offlineTrimmed) {
             case .queued:
                 // Delivery of the ATTEMPT is all we promise. The Mac stays
@@ -1443,6 +1461,8 @@ struct Composer: View {
                 break
             }
             return
+        case .sendNormally:
+            break
         }
 
         guard providerAdmission.isLive else { return }
