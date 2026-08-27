@@ -20,7 +20,21 @@ describe('validateMcpToolArgumentsBeforeApproval', () => {
     })
     if (result.ok) return
     expect(result.message).toContain('before approval')
-    expect(result.message).toContain('"action":"set_round_plan","goal":"Review."')
+    expect(result.message).toContain('"action":"set_round_plan","planSummary":"Review."')
+    expect(result.message).toContain('Do not retry the same invalid invocation')
+  })
+
+  it('rejects an empty portable Boss control call with the same actionable example', () => {
+    const result = validateMcpToolArgumentsBeforeApproval('ensemble_control', {}, definitions)
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'invalid_arguments',
+      issues: [{ path: '#/action', keyword: 'required' }]
+    })
+    if (result.ok) return
+    expect(result.message).toContain('before approval')
+    expect(result.message).toContain('"action":"set_round_plan","planSummary":"Review."')
     expect(result.message).toContain('Do not retry the same invalid invocation')
   })
 
@@ -42,7 +56,17 @@ describe('validateMcpToolArgumentsBeforeApproval', () => {
     expect(
       validateMcpToolArgumentsBeforeApproval(
         'ensemble_bossman_control',
-        { action: 'set_round_plan', goal: 'Review the current task.' },
+        { action: 'set_round_plan', planSummary: 'Review the current task.' },
+        definitions
+      )
+    ).toEqual({ ok: true })
+  })
+
+  it('accepts a valid populated portable Boss round-plan call', () => {
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'ensemble_control',
+        { action: 'set_round_plan', params: { planSummary: 'Review the current task.' } },
         definitions
       )
     ).toEqual({ ok: true })

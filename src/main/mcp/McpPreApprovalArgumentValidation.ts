@@ -8,7 +8,8 @@ import { validateGatewayToolArguments, type GatewayArgumentValidationIssue } fro
  * accept compatibility aliases that are not all represented in their schemas.
  */
 const PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
-  'ensemble_bossman_control'
+  'ensemble_bossman_control',
+  'ensemble_control'
 ])
 
 export type McpPreApprovalArgumentValidationResult =
@@ -33,10 +34,15 @@ function firstObjectExample(
 function invalidArgumentMessage(
   toolName: TaskWraithMcpToolName,
   schema: Record<string, unknown> | undefined,
-  issues: GatewayArgumentValidationIssue[]
+  issues: GatewayArgumentValidationIssue[],
+  definitions: readonly TaskWraithMcpToolDefinition[]
 ): string {
   const details = issues.map((issue) => issue.message).join(' ')
-  const example = firstObjectExample(schema)
+  let example = firstObjectExample(schema)
+  if (!example && toolName === 'ensemble_control') {
+    const canonical = definitions.find((entry) => entry.name === 'ensemble_bossman_control')
+    example = firstObjectExample(canonical?.inputSchema)
+  }
   const exampleHint = example
     ? ` Retry with a populated object such as ${JSON.stringify(example)}.`
     : ''
@@ -80,7 +86,12 @@ export function validateMcpToolArgumentsBeforeApproval(
   return {
     ok: false,
     code: 'invalid_arguments',
-    message: invalidArgumentMessage(toolName, definition.inputSchema, validation.issues),
+    message: invalidArgumentMessage(
+      toolName,
+      definition.inputSchema,
+      validation.issues,
+      definitions
+    ),
     issues: validation.issues
   }
 }

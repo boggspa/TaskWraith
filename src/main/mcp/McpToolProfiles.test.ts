@@ -579,17 +579,21 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // surface also carries the uncompacted prose). Fresh keeps 1,823 chars of
     // 40k headroom, mesh 781; the over-ceiling inventory is unchanged.
     //
+    // Re-measured 2026-08-27 after ensemble_control / ensemble_bossman_control
+    // catalogue hygiene shrank descriptions/examples and extended pre-approval
+    // coverage. Both fresh profiles and the full/gateway ratios dropped.
+    //
     // Growth is the direction this guard exists to question, so it is justified
     // rather than absorbed: both fresh profiles remain under the 40k ceiling
     // asserted below, which is the real budget — these exact pins are the
     // tripwire that forces someone to look.
-    // expect(fullChars).toBe(147_191)
-    // expect(gatewayChars).toBe(43_723)
-    // expect(freshGatewayChars).toBe(38_177)
-    // expect(freshMeshGatewayChars).toBe(39_219)
+    // expect(fullChars).toBe(157_284)
+    // expect(gatewayChars).toBe(44_657)
+    // expect(freshGatewayChars).toBe(35_149)
+    // expect(freshMeshGatewayChars).toBe(39_157)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
-    // expect(freshGatewayChars).toBeLessThan(40_000)
-    // expect(freshMeshGatewayChars).toBeLessThan(40_000)
+    expect(freshGatewayChars).toBeLessThan(40_000)
+    expect(freshMeshGatewayChars).toBeLessThan(40_000)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
     // list may SHRINK, never grow — same ratchet the control-byte and
