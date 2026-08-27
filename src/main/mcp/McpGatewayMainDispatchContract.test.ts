@@ -270,3 +270,42 @@ describe('provider-native argument adaptation contract', () => {
     }
   })
 })
+
+describe('read_file line-window truncation contract', () => {
+  const { canonicalDispatchSource: dispatch } = loadDispatchSource()
+  const readFileHandler = dispatch.slice(
+    dispatch.indexOf("if (toolName === 'read_file')"),
+    dispatch.indexOf("if (toolName === 'list_directory')")
+  )
+
+  it('discovers the windowed read branch it guards', () => {
+    // Vacuity guard: the assertions below mean nothing against an empty slice.
+    expect(readFileHandler).toContain('readScopedRegularFileLineWindow(')
+    expect(readFileHandler).toContain('formatReadFileLineWindow(')
+  })
+
+  it('never lets a truncated window reach the success formatter', () => {
+    // The streaming reader raises `truncated` when maxWindowBytes cuts a
+    // requested window short. Dropping that flag hands back incomplete bytes
+    // under a normal `[read_file: lines X-Y of N]` header whose endLine is the
+    // line the caller ASKED for, not the last line actually delivered — the
+    // same confidently-wrong-data class this whole goal exists to remove.
+    expect(readFileHandler).toContain('windowResult.truncated')
+    const decided = readFileHandler.indexOf('windowResult.truncated')
+    const formatted = readFileHandler.indexOf('formatReadFileLineWindow(')
+    expect(decided).toBeGreaterThan(-1)
+    expect(formatted).toBeGreaterThan(-1)
+    expect(decided).toBeLessThan(formatted)
+  })
+
+  it('fails closed on truncation and hands back a usable retry', () => {
+    const truncationBranch = readFileHandler.slice(
+      readFileHandler.indexOf('windowResult.truncated'),
+      readFileHandler.indexOf('formatReadFileLineWindow(')
+    )
+    expect(truncationBranch).toContain('throw new Error(')
+    // Disclose or fail closed, but never silently succeed — and the refusal has
+    // to name the argument the caller must change, not merely state a verdict.
+    expect(truncationBranch).toContain('limit')
+  })
+})

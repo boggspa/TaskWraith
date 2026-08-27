@@ -1962,10 +1962,15 @@ import {
   PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES,
   registerDiagnosticsHandlers
 } from './ipc/diagnosticsHandlers'
-import { readBoundedRegularFile } from './BoundedRegularFileReader'
+import {
+  formatReadFileLineWindow,
+  readBoundedRegularFile,
+  resolveReadFileLineWindowRequest
+} from './BoundedRegularFileReader'
 import {
   readScopedDirectory,
   readScopedRegularFile,
+  readScopedRegularFileLineWindow,
   updateScopedUtf8File,
   writeScopedUtf8FileWithLegacyCreate,
   type ScopedPathAuthority
@@ -40577,12 +40582,49 @@ async function executeGeminiMcpTool(
         String(args.path || args.file_path || ''),
         'read'
       )
-      const { buffer } = await readScopedRegularFile(authority, {
-        maxBytes: MAX_EDITOR_FILE_BYTES,
-        sizeLimitErrorMessage: 'File is too large to read through the MCP bridge.'
-      })
-      assertTextBuffer(buffer)
-      text = windowReadFileText(buffer.toString('utf8'), args)
+      // S4 — a requested line window is served by STREAMING, so the remedy this
+      // tool's own description recommends actually works on a monolith. The
+      // whole-file path below is untouched, and the byte cap is unchanged: it
+      // now bounds the RETURNED window rather than the file we had to buffer in
+      // order to discard almost all of it.
+      const lineWindow = resolveReadFileLineWindowRequest(args)
+      if (lineWindow) {
+        const windowResult = await readScopedRegularFileLineWindow(authority, lineWindow, {
+          maxWindowBytes: MAX_EDITOR_FILE_BYTES,
+          scanLimitErrorMessage:
+            'File is too large to scan for a line window through the MCP bridge. Narrow the window, or use run_shell_command with sed -n.'
+        })
+        // FAIL CLOSED. A truncated window cannot be described honestly: the cut
+        // lands on a byte boundary, so the last line may be partial while
+        // `endLine` still names the line the caller ASKED for. A success header
+        // over incomplete bytes is the same confidently-wrong-data failure this
+        // fix exists to remove, so refuse and hand back the window that fits.
+        if (windowResult.truncated) {
+          const completeLines = windowResult.window.toString('utf8').split('\n').length - 1
+          const retry =
+            completeLines > 0
+              ? `Retry with {"offset":${windowResult.startLine},"limit":${completeLines}} for the part that fits`
+              : 'Not even the first requested line fits within the cap'
+          throw new Error(
+            `read_file: lines ${windowResult.startLine}-${windowResult.endLine} exceed the ${MAX_EDITOR_FILE_BYTES}-byte window cap, so the window was cut short and cannot be reported accurately. ${retry}, or use run_shell_command with sed -n for a larger span.`
+          )
+        }
+        assertTextBuffer(windowResult.window)
+        text = formatReadFileLineWindow({
+          windowText: windowResult.window.toString('utf8'),
+          startLine: windowResult.startLine,
+          endLine: windowResult.endLine,
+          totalLines: windowResult.totalLines
+        })
+      } else {
+        const { buffer } = await readScopedRegularFile(authority, {
+          maxBytes: MAX_EDITOR_FILE_BYTES,
+          sizeLimitErrorMessage:
+            'File is too large to read through the MCP bridge. Pass offset and limit to read a bounded line window instead, which is served without the whole-file cap.'
+        })
+        assertTextBuffer(buffer)
+        text = windowReadFileText(buffer.toString('utf8'), args)
+      }
     } else if (toolName === 'list_directory') {
       markDispatchHandled('workspace-tools')
       const authority = resolveGeminiMcpGrantAwarePathAuthority(

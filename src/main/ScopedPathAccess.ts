@@ -9,7 +9,12 @@ import {
 } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
-import { readBoundedRegularFileHandle } from './BoundedRegularFileReader'
+import {
+  readBoundedLineWindowHandle,
+  readBoundedRegularFileHandle,
+  type BoundedLineWindowResult,
+  type ReadFileLineWindowRequest
+} from './BoundedRegularFileReader'
 
 export type ScopedPathAccessTestStage =
   | 'after_directory_snapshot'
@@ -99,6 +104,54 @@ export async function readScopedRegularFile(
     await assertDirectoryChainStable(directorySnapshot)
     await assertPathMatchesOpenedFile(targetPath, openedStat)
     return { buffer, stat: openedStat }
+  } finally {
+    await fileHandle.close()
+  }
+}
+
+/**
+ * S4 — the line-window sibling of readScopedRegularFile.
+ *
+ * Every security step is deliberately IDENTICAL to the whole-file read above:
+ * same authority normalization, same directory-chain snapshot, same
+ * requireRegularTarget, same openNoFollow, same opened-identity check, same
+ * post-read chain-stability and path-match assertions. Only the byte strategy
+ * differs — the window is streamed rather than buffered — so this adds a read
+ * shape without adding a way around the jail.
+ */
+export async function readScopedRegularFileLineWindow(
+  authority: ScopedPathAuthority,
+  request: ReadFileLineWindowRequest,
+  options: {
+    maxWindowBytes: number
+    regularFileErrorMessage?: string
+    scanLimitErrorMessage?: string
+  }
+): Promise<BoundedLineWindowResult> {
+  const { rootPath, targetPath } = await normalizeAuthority(authority, false)
+  const directorySnapshot = await snapshotDirectoryChain(rootPath, dirname(targetPath))
+  await runTestHook('after_directory_snapshot')
+
+  const pathStat = await requireRegularTarget(targetPath)
+  const fileHandle = await openNoFollow(targetPath, constants.O_RDONLY)
+  try {
+    const openedStat = await requireOpenedTarget(
+      fileHandle,
+      targetPath,
+      pathStat,
+      directorySnapshot
+    )
+    const result = await readBoundedLineWindowHandle(fileHandle, request, {
+      maxWindowBytes: options.maxWindowBytes,
+      regularFileErrorMessage:
+        options.regularFileErrorMessage || 'Selected path is not a regular file.',
+      ...(options.scanLimitErrorMessage
+        ? { scanLimitErrorMessage: options.scanLimitErrorMessage }
+        : {})
+    })
+    await assertDirectoryChainStable(directorySnapshot)
+    await assertPathMatchesOpenedFile(targetPath, openedStat)
+    return result
   } finally {
     await fileHandle.close()
   }

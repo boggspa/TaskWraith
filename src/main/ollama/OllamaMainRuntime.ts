@@ -445,7 +445,13 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
           : resolveWorkspacePathAuthority(context, rawPath)
         const { buffer, stat } = await readScopedRegularFile(authority, {
           maxBytes: MAX_EDITOR_FILE_BYTES,
-          sizeLimitErrorMessage: 'File is too large to read through the Ollama tool loop.'
+          // S4 (partial, disclosure-only): this loop has the same
+          // buffer-then-slice ordering the MCP read_file path had, so
+          // startLine/maxLines cannot rescue an oversized file here yet. Until
+          // the streaming window is wired in, name the route that DOES work in
+          // this loop rather than leaving a verdict with nowhere to go.
+          sizeLimitErrorMessage:
+            'File is too large to read through the Ollama tool loop. startLine/maxLines do not bypass this gate yet; read a bounded range with run_shell_command, for example: sed -n "300,320p" <path>.'
         })
         const targetPath = authority.targetPath
         assertTextBuffer(buffer)
