@@ -105,6 +105,7 @@ import {
   selectWindowBand,
   virtualWindowBandChanged,
   computeTranscriptScrollSpy,
+  decideScrollerBoxRefresh,
   findScrollAnchor,
   sumHeights,
   sumHeightOffsets,
@@ -1752,6 +1753,10 @@ function useTranscriptVirtualization(params: {
   const observerRef = useRef<ResizeObserver | null>(null)
   const measureRafRef = useRef<number | null>(null)
   const scrollRafRef = useRef<number | null>(null)
+  // Coalesces scroller-box (pane-local) resize handling; deliberately separate
+  // from scrollRafRef so a resize can never be swallowed by a pending scroll
+  // frame's early-return (and vice versa) — both read fresh metrics anyway.
+  const scrollerBoxRafRef = useRef<number | null>(null)
   // 1.0.7 — convergence guard for the pre-paint measurement effect. Counts
   // consecutive passes that only REWROTE existing measurement keys (no new
   // keys). A row whose measured height oscillates between two values for the
@@ -2083,12 +2088,87 @@ function useTranscriptVirtualization(params: {
     }
     scroller.addEventListener('scroll', refresh, { passive: true })
     window.addEventListener('resize', refresh)
+
+    // Pane-local geometry. A Multiview divider drag, a pane layout switch, or
+    // the pane composer's chrome collapsing at run end resizes THIS scroller
+    // with neither a window resize nor a scroll event, so viewportRef and the
+    // width bucket go stale, the mounted band under-covers the viewport, and
+    // the reader sees blank spacer until a manual scroll (the resting-pane
+    // "gap"). Observe the scroller box itself and run the same refresh the
+    // window-resize path runs — except this handler never flips hasScrolledRef:
+    // the observer's initial fire at observe time is not a scroll, and the
+    // forced-bottom-on-load window depends on that flag staying false until
+    // the snap-to-bottom lands. Policy in decideScrollerBoxRefresh.
+    let scrollerBoxObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      scrollerBoxObserver = new ResizeObserver(() => {
+        if (scrollerBoxRafRef.current !== null) return
+        scrollerBoxRafRef.current = requestAnimationFrame(() => {
+          scrollerBoxRafRef.current = null
+          const el = scrollRef.current
+          if (!el) return
+          const previousViewport = viewportRef.current
+          const bucketChanged = readMetricsInto(el)
+          const decision = decideScrollerBoxRefresh({
+            hasScrolled: hasScrolledRef.current,
+            bucketChanged,
+            viewportChanged: viewportRef.current !== previousViewport,
+            bandChanged:
+              hasScrolledRef.current &&
+              virtualWindowBandChanged(
+                committedBandRef.current,
+                selectWindowBand({
+                  scrollTop: scrollTopRef.current,
+                  viewportHeight: viewportRef.current,
+                  heights: windowHeightsRef.current,
+                  heightOffsets: windowHeightOffsetsRef.current,
+                  overscanPx: DEFAULT_OVERSCAN_PX,
+                  forceIndex: forcedRowIndexRef.current
+                })
+              )
+          })
+          if (decision.remeasure) bumpMeasure()
+          if (decision.rebaselineAnchor) {
+            const a = findScrollAnchor(
+              scrollTopRef.current,
+              heightsRef.current,
+              heightOffsetsRef.current
+            )
+            const anchorRow = rowsRef.current[a.index]
+            anchorRef.current = anchorRow
+              ? {
+                  rowKey: anchorRow.rowKey,
+                  aboveHeight: sumHeightOffsets(heightOffsetsRef.current, 0, a.index),
+                  offsetWithin: a.offsetWithin
+                }
+              : null
+            spySinkRef?.current?.(
+              computeTranscriptScrollSpy({
+                enabled: true,
+                scrollTop: scrollTopRef.current,
+                viewportHeight: viewportRef.current,
+                liveHeightOffsets: heightOffsetsRef.current,
+                windowHeights: windowHeightsRef.current,
+                windowHeightOffsets: windowHeightOffsetsRef.current
+              })
+            )
+          }
+          if (decision.reselectWindow) bumpScroll()
+        })
+      })
+      scrollerBoxObserver.observe(scroller)
+    }
     return () => {
       scroller.removeEventListener('scroll', refresh)
       window.removeEventListener('resize', refresh)
+      scrollerBoxObserver?.disconnect()
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current)
         scrollRafRef.current = null
+      }
+      if (scrollerBoxRafRef.current !== null) {
+        cancelAnimationFrame(scrollerBoxRafRef.current)
+        scrollerBoxRafRef.current = null
       }
     }
   }, [enabled, scrollRef, bumpScroll, bumpMeasure, contentRef, spySinkRef])

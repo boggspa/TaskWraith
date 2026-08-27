@@ -771,6 +771,53 @@ export function selectWindowBand(input: SelectWindowInput): VirtualWindowBand {
   }
 }
 
+export interface ScrollerBoxRefreshInput {
+  /** Whether the scroller has reported a real scroll position yet. */
+  hasScrolled: boolean
+  /** The width bucket crossed a boundary — cached measurements are stale. */
+  bucketChanged: boolean
+  /** The viewport (clientHeight) read a different value than last time. */
+  viewportChanged: boolean
+  /** The mounted band re-selected against the held heights would differ. */
+  bandChanged: boolean
+}
+
+export interface ScrollerBoxRefreshDecision {
+  /** Publish measureTick (re-key + re-measure mounted rows). */
+  remeasure: boolean
+  /** Re-capture the scroll anchor at the current position (and publish spy). */
+  rebaselineAnchor: boolean
+  /** Publish scrollTick so the window re-selects from fresh metrics. */
+  reselectWindow: boolean
+}
+
+/**
+ * Refresh policy for a SCROLLER-BOX resize (ResizeObserver), as opposed to a
+ * window resize or scroll event. A Multiview divider drag, a pane layout
+ * switch, or the pane composer's chrome collapsing at run end resizes the
+ * pane's scroller with neither of the two signals the virtualizer otherwise
+ * listens to — the stale viewport/bucket then under-covers the viewport with
+ * mounted rows and the reader sees blank spacer until a manual scroll.
+ *
+ * Differences from the scroll/window-resize path, both deliberate:
+ * - `hasScrolled` is never flipped here. The observer fires once at observe
+ *   time (not a scroll), and the forced-bottom-on-load window depends on the
+ *   flag staying false until the snap-to-bottom lands. Pre-scroll, a viewport
+ *   change still re-selects so the forced-bottom position uses the real size.
+ * - The anchor is re-baselined only when the box actually changed, so the
+ *   initial observe fire and sub-pixel no-ops touch nothing.
+ */
+export function decideScrollerBoxRefresh(
+  input: ScrollerBoxRefreshInput
+): ScrollerBoxRefreshDecision {
+  const boxChanged = input.viewportChanged || input.bucketChanged
+  return {
+    remeasure: input.bucketChanged,
+    rebaselineAnchor: input.hasScrolled && boxChanged,
+    reselectWindow: input.hasScrolled ? input.bandChanged : input.viewportChanged
+  }
+}
+
 /**
  * Scroll-spy snapshot for the user-message gutter (cut 1b). Progress and
  * viewport fraction use the LIVE height-offset total (so the rail fill

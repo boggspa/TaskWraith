@@ -32,6 +32,7 @@ import {
   computeAnchorDelta,
   windowReachesEnd,
   findScrollAnchor,
+  decideScrollerBoxRefresh,
   type VirtualRow
 } from './TranscriptVirtualWindow'
 
@@ -1141,5 +1142,89 @@ describe('getRowHeight geometry fallback (mid-transcript updating rows)', () => 
     const geometry = new Map([[geometryKey('m1#3', 820, false), 260]]) // other bucket
     expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, geometry)).toBe(1200)
     expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, undefined)).toBe(1200)
+  })
+})
+
+describe('decideScrollerBoxRefresh (pane-local scroller resize policy)', () => {
+  it('re-selects the window pre-scroll only when the viewport actually changed', () => {
+    // Before the first real scroll the window is driven by the
+    // forced-bottom-on-load position, which depends on the viewport height.
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: false,
+        bucketChanged: false,
+        viewportChanged: true,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: true })
+    // The observer's initial fire reports the size it already had — a no-op.
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: false,
+        bucketChanged: false,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: false })
+  })
+
+  it('after a real scroll, a grown pane re-baselines the anchor and re-selects on band change', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: false,
+        viewportChanged: true,
+        bandChanged: true
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: true, reselectWindow: true })
+  })
+
+  it('a width-bucket change invalidates measurements and re-baselines, even mid-history', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: true,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: true, rebaselineAnchor: true, reselectWindow: false })
+  })
+
+  it('an unchanged box after scrolling does nothing', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: false,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: false })
+  })
+})
+
+describe('useTranscriptVirtualization wiring (scroller box observer)', () => {
+  it('observes the scroller box and refreshes without flipping hasScrolled', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/TranscriptPanel.tsx'),
+      'utf8'
+    )
+    const start = source.indexOf('scrollerBoxObserver')
+    // A Multiview divider drag, layout switch, or composer chrome collapse
+    // resizes the pane's scroller with neither a window resize nor a scroll
+    // event; the virtualizer must observe the scroller box itself or its
+    // viewport/bucket metrics go stale and the mounted band under-covers the
+    // viewport (the resting-pane blank-gap-until-scroll report, 2026-08-27).
+    expect(start).toBeGreaterThan(-1)
+    const effectEnd = source.indexOf('// Shared ResizeObserver on individual mounted blocks', start)
+    expect(effectEnd).toBeGreaterThan(start)
+    const wiring = source.slice(start, effectEnd)
+    expect(wiring).toContain('decideScrollerBoxRefresh({')
+    expect(wiring).toContain('.observe(scroller)')
+    // The observer fires once at observe time; that initial fire is NOT a
+    // scroll, and forced-bottom-on-load depends on hasScrolledRef staying
+    // false until the snap-to-bottom runs.
+    expect(wiring).not.toContain('hasScrolledRef.current = true')
   })
 })
