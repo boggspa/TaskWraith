@@ -35,6 +35,24 @@ const participants: EnsembleParticipant[] = [
 ]
 
 describe('ComposerEnsembleToggleButton participant manager', () => {
+  it('keeps the popover trigger enabled while locking only On/Off mode changes', () => {
+    const modeControlStart = source.indexOf('const segmentedModeControl = (')
+    const modeControlEnd = source.indexOf('\n\n  const popover =', modeControlStart)
+    const modeControl = source.slice(modeControlStart, modeControlEnd)
+    const triggerStart = source.indexOf('className={`composer-ensemble-toggle-button')
+    const triggerEnd = source.indexOf('</button>', triggerStart)
+    const trigger = source.slice(triggerStart, triggerEnd)
+
+    expect(modeControlStart).toBeGreaterThan(-1)
+    expect(modeControl.match(/\n\s+disabled=\{modeToggleDisabled\}/g)).toHaveLength(2)
+    expect(modeControl).toContain('aria-disabled={modeToggleDisabled}')
+    expect(modeControl).toContain('title={modeToggleTitle}')
+    expect(source).toContain('if (modeToggleDisabled) return')
+    expect(triggerStart).toBeGreaterThan(-1)
+    expect(trigger).not.toContain('disabled=')
+    expect(trigger).toContain('aria-haspopup="dialog"')
+  })
+
   it('builds an add mutation immediately after the selected participant', () => {
     const draft: EnsembleParticipantAddDraft = {
       provider: 'kimi',

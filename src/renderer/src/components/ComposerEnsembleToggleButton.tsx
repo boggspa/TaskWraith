@@ -39,7 +39,7 @@ interface ComposerEnsembleToggleButtonProps {
   grokAvailable?: boolean
   cursorAvailable?: boolean
   composerStyle?: string
-  disabled?: boolean
+  modeToggleDisabled?: boolean
   title?: string
 }
 
@@ -60,7 +60,7 @@ export function ComposerEnsembleToggleButton({
   grokAvailable,
   cursorAvailable,
   composerStyle = 'default',
-  disabled = false,
+  modeToggleDisabled = false,
   title: overrideTitle
 }: ComposerEnsembleToggleButtonProps): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
@@ -171,7 +171,7 @@ export function ComposerEnsembleToggleButton({
     providerSnapshot,
     selectedParticipant?.provider || participants[participants.length - 1]?.provider || 'codex'
   )
-  const participantManagerDisabled = disabled || !onLiveRosterMutation
+  const participantManagerDisabled = !onLiveRosterMutation
   const participantAddDisabled = participants.length >= MAX_ENSEMBLE_PARTICIPANTS
   const participantRemoveDisabled =
     participantManagerDisabled ||
@@ -206,14 +206,20 @@ export function ComposerEnsembleToggleButton({
   }
 
   const selectMode = (nextEnabled: boolean): void => {
+    if (modeToggleDisabled) return
     setOpen(false)
     if (nextEnabled !== enabled) onToggle(nextEnabled)
   }
+  const modeToggleTitle = modeToggleDisabled
+    ? 'Finish the current turn first to change chat mode.'
+    : undefined
   const segmentedModeControl = (
     <div
       className="segmented-control segmented-control--compact composer-ensemble-toggle-segmented"
       role="radiogroup"
       aria-label="Ensemble mode"
+      aria-disabled={modeToggleDisabled}
+      title={modeToggleTitle}
     >
       <button
         type="button"
@@ -221,6 +227,7 @@ export function ComposerEnsembleToggleButton({
         onClick={() => selectMode(true)}
         role="radio"
         aria-checked={enabled}
+        disabled={modeToggleDisabled}
       >
         On
       </button>
@@ -230,6 +237,7 @@ export function ComposerEnsembleToggleButton({
         onClick={() => selectMode(false)}
         role="radio"
         aria-checked={!enabled}
+        disabled={modeToggleDisabled}
       >
         Off
       </button>
@@ -345,7 +353,6 @@ export function ComposerEnsembleToggleButton({
         aria-label={title}
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={disabled}
       >
         <ProviderGlyph provider="ensemble" />
       </button>

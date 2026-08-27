@@ -5351,14 +5351,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   grokAvailable={grokProviderAvailable}
                   cursorAvailable={cursorProviderAvailable}
                   composerStyle={appearance.composerStyle}
-                  disabled={isCurrentChatRunning}
-                  title={
-                    isCurrentChatRunning
-                      ? 'Finish the current turn first to change chat mode.'
-                      : isCurrentEnsembleChat
-                        ? 'Ensemble on'
-                        : 'Ensemble off'
-                  }
+                  modeToggleDisabled={isCurrentChatRunning}
+                  title={isCurrentEnsembleChat ? 'Ensemble on' : 'Ensemble off'}
                 />
                 {/* 1.0.4-AS3 — Screen Watch (Appwatch/Appshots) button.
                     Pre-AS3 the attached-window UX was an inline pill in the
