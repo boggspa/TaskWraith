@@ -866,6 +866,58 @@ describe('EnsembleParticipantsAboveRow', () => {
       )
     })
 
+    it('preserves UltraTask across Add Participant model switches when the destination still supports it', () => {
+      const kimiUltra = {
+        ...createEnsembleParticipantAddConfiguration('kimi', 'kimi-k2.7-code'),
+        reasoningEffort: 'ultraTask'
+      }
+      expect(
+        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3', undefined, kimiUltra)
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        reasoningEffort: 'ultraTask'
+      })
+      expect(
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.5', undefined, kimiUltra)
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'ultraTask',
+        fastModeEnabled: false
+      })
+      expect(
+        createEnsembleParticipantAddConfiguration(
+          'claude',
+          'claude-haiku-4-5',
+          undefined,
+          kimiUltra
+        )
+      ).toMatchObject({
+        model: 'claude-haiku-4-5',
+        reasoningEffort: undefined,
+        fastModeEnabled: false
+      })
+    })
+
+    it('still starts ordinary reasoning and Fast clean on Add Participant model switches', () => {
+      const highDraft = {
+        ...createEnsembleParticipantAddConfiguration('codex', 'gpt-5.5'),
+        reasoningEffort: 'high',
+        fastModeEnabled: true,
+        serviceTier: 'fast'
+      }
+      expect(
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.6-sol', undefined, highDraft)
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'low',
+        fastModeEnabled: false,
+        serviceTier: ''
+      })
+    })
+
     it('offers the full Spark ladder in the Add Participant popover fallback', () => {
       const providerGroups = [
         {

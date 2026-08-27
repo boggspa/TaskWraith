@@ -418,15 +418,18 @@ export function getEnsembleAddReasoningOptions(
 }
 
 /**
- * Resolve a fresh provider/model choice to canonical execution defaults. A
- * model switch starts clean instead of carrying reasoning/Fast state from the
- * previously previewed provider. The user can then tune this draft before the
- * single Add confirmation persists it.
+ * Resolve a fresh provider/model choice to canonical execution defaults.
+ * Fast and ordinary reasoning still start clean so a previewed provider does
+ * not leak into the draft. UltraTask is the exception: when `previous` is
+ * UltraTask and the destination still supports it, keep the synthetic stop
+ * (matching ensemble seat-change carry-over). Otherwise snap/drop it so it
+ * cannot become the destination default.
  */
 export function createEnsembleParticipantAddConfiguration(
   provider: ProviderId,
   requestedModel?: string,
-  providerGroups?: readonly CombinedModelPickerProviderGroup[]
+  providerGroups?: readonly CombinedModelPickerProviderGroup[],
+  previous?: Pick<EnsembleParticipantAddConfiguration, 'reasoningEffort'> | null
 ): EnsembleParticipantAddConfiguration {
   const participantDefaults = getDefaultEnsembleParticipantConfig(provider)
   const modelDefaults = getEnsembleModelDefaults(provider)
@@ -452,7 +455,18 @@ export function createEnsembleParticipantAddConfiguration(
     ? requestedModel!
     : defaultOption?.id || participantDefaults.model
   const modelOption = selectableRequestedOption || defaultOption
-  const normalized = normalizeProviderModelSelection(provider, model, modelOption)
+  const previousUltraTask =
+    String(previous?.reasoningEffort ?? '')
+      .trim()
+      .toLowerCase() === 'ultratask'
+      ? { reasoningEffort: 'ultraTask' }
+      : undefined
+  const normalized = normalizeProviderModelSelection(
+    provider,
+    model,
+    modelOption,
+    previousUltraTask
+  )
 
   return {
     provider,
@@ -1848,8 +1862,13 @@ export function EnsembleAddParticipantButton({
           )
         )
       }
-      setDraft(
-        createEnsembleParticipantAddConfiguration(provider, model, availableProviderGroups)
+      setDraft((current) =>
+        createEnsembleParticipantAddConfiguration(
+          provider,
+          model,
+          availableProviderGroups,
+          current
+        )
       )
     },
     [availableProviderGroups, bossmanAutoApprovals, draft.provider, participants]
