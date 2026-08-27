@@ -494,6 +494,80 @@ describe('resolveReasoningEffortForSeatChange', () => {
       })
     ).toBe('xhigh')
   })
+
+  it('preserves UltraTask when the destination model still supports it', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        previousEffort: 'ultratask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'antigravity',
+        model: 'gemini-api:gemini-3.6-flash',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      normalizeProviderModelSelection('kimi', 'kimi-k3', undefined, {
+        reasoningEffort: 'ultraTask'
+      }).reasoningEffort
+    ).toBe('ultraTask')
+  })
+
+  it('drops or snaps UltraTask when the destination does not support it', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'claude',
+        model: 'claude-haiku-4-5',
+        previousEffort: 'ultraTask'
+      })
+    ).toBeUndefined()
+    expect(
+      normalizeProviderModelSelection('claude', 'claude-haiku-4-5', undefined, {
+        reasoningEffort: 'ultraTask'
+      }).reasoningEffort
+    ).toBeUndefined()
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'ultraTask',
+        modelMetadata: {
+          ultraTaskSupported: false,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low' },
+            { reasoningEffort: 'medium' },
+            { reasoningEffort: 'high' },
+            { reasoningEffort: 'xhigh' }
+          ]
+        }
+      })
+    ).toBe('xhigh')
+  })
 })
 
 describe('resolveEnsembleParticipantSettings', () => {
