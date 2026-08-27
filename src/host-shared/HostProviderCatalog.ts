@@ -214,7 +214,7 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('granite4.1:3b', 'Granite 4.1 (3B Param)', STANDARD_REASONING),
         model('granite4.1:30b', 'Granite 4.1 (30B Param)', STANDARD_REASONING)
       ],
-      authFlows: [{ flowId: 'ollama:login', kind: 'manual', label: 'Sign in', available: true }]
+      authFlows: []
     },
     pi: {
       displayProvider: 'Pi',

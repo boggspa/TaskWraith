@@ -119,8 +119,13 @@ describe('HostProviderCatalog', () => {
     expect(hostProviderAuthFlows('pi')).toEqual([])
   })
 
+  it('keeps Ollama daemon-only with no begin-able manual flow', () => {
+    expect(hostProviderAuthFlows('ollama')).toEqual([])
+    expect(hostProviderCatalogEntry('ollama')?.authFlows).toEqual([])
+  })
+
   it('marks providers with manual login flows', () => {
-    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'mistral', 'muse']) {
+    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'mistral', 'muse']) {
       const flows = hostProviderAuthFlows(id)
       expect(flows.length).toBe(1)
       expect(flows[0].kind).toBe('manual')

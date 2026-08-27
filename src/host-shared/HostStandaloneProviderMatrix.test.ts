@@ -61,6 +61,17 @@ describe('HostStandaloneProviderMatrix', () => {
     })
     expect(pi?.envKeys).toEqual(Object.values(PI_UPSTREAM_KEY_ENV))
     expect(pi?.detail).toMatch(/No terminal login/)
+
+    const ollama = hostStandaloneProviderMatrix().find((row) => row.providerId === 'ollama')
+    expect(ollama).toMatchObject({
+      kind: 'live',
+      standaloneHost: 'composed',
+      run: 'available',
+      catalogManualFlow: false,
+      envKeys: []
+    })
+    expect(ollama?.detail).toMatch(/No terminal login/)
+    expect(ollama?.detail).toMatch(/daemon reachability/)
   })
 
   it('keeps Cursor setup-only rather than runnable', () => {

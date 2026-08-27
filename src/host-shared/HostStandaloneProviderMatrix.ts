@@ -88,9 +88,10 @@ const LIVE_STANDALONE: Readonly<Record<string, LiveStandaloneFacts>> = {
   ollama: {
     displayProvider: 'Ollama',
     run: 'available',
-    catalogManualFlow: true,
+    catalogManualFlow: false,
     envKeys: [],
-    detail: 'Local Ollama daemon; catalog advertises a manual sign-in flow when unauthenticated.'
+    detail:
+      'Local Ollama daemon. No terminal login and no begin-able catalog flow; Host uses daemon reachability as auth evidence.'
   },
   pi: {
     displayProvider: 'Pi',

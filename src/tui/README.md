@@ -129,13 +129,13 @@ controllable: HUD uses that thread's primary provider. Provider identity
 carries colour, while transcript prose stays neutral and detail remains in
 transient lenses.
 
-| Key                                              | Action                                                              |
-| ------------------------------------------------ | ------------------------------------------------------------------- |
-| `Enter`                                          | Send/open selected thread; confirm a picker row                     |
-| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune (model/reasoning), commands        |
-| `Page Up` / `Page Down`                          | Scroll transcript/history                                           |
+| Key                                              | Action                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `Enter`                                          | Send/open selected thread; confirm a picker row                                  |
+| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune (model/reasoning), commands                     |
+| `Page Up` / `Page Down`                          | Scroll transcript/history                                                        |
 | `Esc`                                            | Close lens; cancel a mid-flow `/new`/`/provider` and restore the previous thread |
-| `Ctrl+U`, `Ctrl+C`                               | Clear composer; clear then quit                                     |
+| `Ctrl+U`, `Ctrl+C`                               | Clear composer; clear then quit                                                  |
 
 Slash commands (COMMAND SPEC v1). Inline args are optional; invalid args are
 non-fatal notices and never throw out of the keypress loop. `/model` and
@@ -147,21 +147,21 @@ mid-flow `/new` and restores the previous thread. Hosts without `setup` +
 `provider-catalog` keep the old immediate-create fallback (`/new` with no
 id). `/seats` is rejected as solo-only.
 
-| Command                                         | Action                                                                                                                          |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `/model [id]`, `/m`                             | No argument opens the existing tune/model picker. With an id, stage that model for the next send; unknown id lists offered ids. |
-| `/think [level]`, `/reasoning`                  | Set reasoning against the **thread's offered ladder** (never a hardcoded list). No argument shows current + ladder.             |
+| Command                                         | Action                                                                                                                                     |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/model [id]`, `/m`                             | No argument opens the existing tune/model picker. With an id, stage that model for the next send; unknown id lists offered ids.            |
+| `/think [level]`, `/reasoning`                  | Set reasoning against the **thread's offered ladder** (never a hardcoded list). No argument shows current + ladder.                        |
 | `/new [provider]`                               | Fresh solo thread. No id opens the provider picker (↑/↓, Enter). Unique id skips the picker. Esc cancels and restores the previous thread. |
-| `/provider [id]`                                | Same guided flow as `/new`.                                                                                                     |
-| `/status`                                       | Host kind + connection, socket/profile path, thread provider/model/reasoning, advertised capabilities.                          |
-| `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                  |
-| `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                       |
-| `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                       |
-| `/seats`                                        | Rejected: standalone TUI is solo-only. Use `/new` or `/provider`.                                                               |
-| `/help`                                         | Command cheat sheet.                                                                                                            |
-| `/cancel`                                       | Cancel the active run.                                                                                                          |
-| `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                |
-| `/quit`, `/q`                                   | Exit the TUI; the Host remains running.                                                                                         |
+| `/provider [id]`                                | Same guided flow as `/new`.                                                                                                                |
+| `/status`                                       | Host kind + connection, socket/profile path, thread provider/model/reasoning, advertised capabilities.                                     |
+| `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                             |
+| `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                                  |
+| `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                                  |
+| `/seats`                                        | Rejected: standalone TUI is solo-only. Use `/new` or `/provider`.                                                                          |
+| `/help`                                         | Command cheat sheet.                                                                                                                       |
+| `/cancel`                                       | Cancel the active run.                                                                                                                     |
+| `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                           |
+| `/quit`, `/q`                                   | Exit the TUI; the Host remains running.                                                                                                    |
 
 Every setup, cancellation, and configuration action remains a bounded Host
 command with capability, actor, offer, and receipt validation.
@@ -199,12 +199,13 @@ produce.
 
 **Auth alternatives**
 
-| Provider                                           | Manual TTY login                                                         | Env-key alternative                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Codex, Claude, Kimi, Cursor, Mistral, Muse, Ollama | Catalog `*:login` when a launcher is present                             | None advertised                                               |
-| Grok                                               | `grok:login` (`grok login`) when a launcher is present                   | `XAI_API_KEY` or `GROK_API_KEY`                               |
-| Pi                                                 | None — `authFlows` stays empty; `beginAuth` refuses a fabricated handoff | Allowed upstream keys on the Host env (`PI_UPSTREAM_KEY_ENV`) |
-| AntiGravity                                        | Not a standalone provider                                                | Desktop consent only                                          |
+| Provider                                   | Manual TTY login                                                         | Env-key alternative                                           |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Codex, Claude, Kimi, Cursor, Mistral, Muse | Catalog `*:login` when a launcher is present                             | None advertised                                               |
+| Grok                                       | `grok:login` (`grok login`) when a launcher is present                   | `XAI_API_KEY` or `GROK_API_KEY`                               |
+| Pi                                         | None — `authFlows` stays empty; `beginAuth` refuses a fabricated handoff | Allowed upstream keys on the Host env (`PI_UPSTREAM_KEY_ENV`) |
+| Ollama                                     | None — daemon reachability is the auth evidence                          | None advertised                                               |
+| AntiGravity                                | Not a standalone provider                                                | Desktop consent only                                          |
 
 A detached Host still does not advertise an invisible manual-auth flow.
 
