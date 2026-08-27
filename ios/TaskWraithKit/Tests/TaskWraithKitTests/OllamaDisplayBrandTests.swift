@@ -70,6 +70,10 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "north-mini-code-1.0:q4_K_M")?.providerClass
                 == "cohere")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "glm-5.3-flash:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "Z.ai", providerClass: "zai", modelLabel: "GLM 5.3 Flash"))
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "glm-5.2:cloud")
                 == OllamaDisplayBrand(
                     providerLabel: "Z.ai", providerClass: "zai", modelLabel: "GLM 5.2"))
@@ -142,6 +146,10 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "nemotron-3.5-lightning:30b-mlx") == "nvidia")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "glm-5.3-flash:cloud")
+                == "zai")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "glm-5.2:cloud")
                 == "zai")

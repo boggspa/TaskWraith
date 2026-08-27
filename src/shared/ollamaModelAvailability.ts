@@ -37,6 +37,7 @@ const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   'deepseek-v4-pro:0813': 'DeepSeek V4 Pro (0813)',
   'deepseek-v4-pro:preview': 'DeepSeek V4 Pro (Preview)',
   'gemma4:31b': 'Gemma 4 (31B Param)',
+  'glm-5.3-flash': 'GLM 5.3 Flash',
   'glm-5.2': 'GLM 5.2',
   'glm-5.1': 'GLM 5.1',
   'gpt-oss:20b': 'GPT OSS (20B Param)',

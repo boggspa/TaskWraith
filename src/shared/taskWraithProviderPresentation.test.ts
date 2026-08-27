@@ -90,6 +90,12 @@ describe('TaskWraith TUI provider presentation', () => {
       hueKey: 'zai',
       modelLabel: 'GLM 5.2'
     })
+    expect(taskWraithModelLabel('ollama', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'glm-5.3-flash:cloud')).toMatchObject({
+      displayProvider: 'Z.ai',
+      hueKey: 'zai',
+      modelLabel: 'GLM 5.3 Flash'
+    })
     expect(taskWraithModelLabel('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'
     )

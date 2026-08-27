@@ -90,6 +90,11 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('rnj-1')?.providerLabel).toBe('Essential AI')
     expect(resolveOllamaDisplayBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
     expect(resolveOllamaDisplayBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
+    expect(resolveOllamaDisplayBrand('glm-5.3-flash:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai',
+      modelLabel: 'GLM 5.3 Flash'
+    })
     expect(resolveOllamaDisplayBrand('glm-5.2:cloud')).toMatchObject({
       providerLabel: 'Z.ai',
       providerClass: 'zai',
@@ -167,6 +172,7 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe('nvidia')
     expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
     expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
+    expect(resolveProviderHueClass('ollama', 'glm-5.3-flash:cloud')).toBe('zai')
     expect(resolveProviderHueClass('ollama', 'glm-5.2:cloud')).toBe('zai')
     expect(resolveProviderHueClass('ollama', 'minimax-m3:cloud')).toBe('minimax')
     expect(resolveProviderHueClass('ollama', 'kimi-k3:cloud')).toBe('kimi')

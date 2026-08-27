@@ -73,6 +73,7 @@ describe('ollama model availability helpers', () => {
   })
 
   it('resolves curated Cloud ids to display names without altering unknown ids', () => {
+    expect(ollamaCloudModelDisplayName('glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
     expect(ollamaCloudModelDisplayName('glm-5.2:cloud')).toBe('GLM 5.2')
     expect(ollamaCloudModelDisplayName('minimax-m3:cloud')).toBe('MiniMax M3')
     expect(ollamaCloudModelDisplayName('GLM-5.2')).toBe('GLM 5.2')
@@ -81,6 +82,7 @@ describe('ollama model availability helpers', () => {
 
   it('humanizes every model in the current direct Cloud catalog', () => {
     const expected = new Map([
+      ['glm-5.3-flash:cloud', 'GLM 5.3 Flash'],
       ['minimax-m2.7:cloud', 'MiniMax M2.7'],
       ['mistral-large-3:675b:cloud', 'Mistral Large 3 (675B Param)'],
       ['nemotron-3-super:cloud', 'Nemotron 3 Super'],

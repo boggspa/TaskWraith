@@ -10,6 +10,8 @@
  * no Electron/AppStore/WebContents dependencies.
  */
 
+import { ollamaCloudModelDisplayName } from '../../shared/ollamaModelAvailability'
+
 export const OLLAMA_CLOUD_API_BASE_URL = 'https://ollama.com'
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 
@@ -156,6 +158,8 @@ function ollamaCloudApiHeaders(
 
 function humanizeOllamaModelId(modelId: string): string {
   const base = modelId.replace(/^ollama\//, '').replace(/:latest$/, '')
+  const curated = ollamaCloudModelDisplayName(base)
+  if (curated) return curated
   return base
     .split(/[-:]/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

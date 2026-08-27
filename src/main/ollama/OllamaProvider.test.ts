@@ -3852,6 +3852,7 @@ describe('normalizeOllamaModels', () => {
   })
 
   it('maps common local model ids to human-readable labels', () => {
+    expect(humanizeOllamaModelId('glm-5.3-flash')).toBe('GLM 5.3 Flash')
     expect(humanizeOllamaModelId('glm-5.2')).toBe('GLM 5.2')
     expect(humanizeOllamaModelId('minimax-m3')).toBe('MiniMax M3')
     expect(humanizeOllamaModelId('kimi-k2.7-code:cloud')).toBe('Kimi K2.7 Code')

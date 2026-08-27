@@ -104,6 +104,7 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(shortModelName('ollama', '', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
     expect(shortModelName('ollama', '', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
+    expect(shortModelName('ollama', '', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
     expect(shortModelName('ollama', '', 'glm-4.7-flash:q4_K_M')).toBe(
       'GLM-4.7-Flash (30B-A3B Q4)'
     )

@@ -4,10 +4,15 @@ import { mergeOllamaModelCatalog, ollamaModelCatalogKey } from './ollamaModelCat
 describe('mergeOllamaModelCatalog', () => {
   it('humanises Cloud recommendations while preserving their exact wire ids', () => {
     const models = mergeOllamaModelCatalog([
+      { id: 'glm-5.3-flash:cloud', label: 'glm-5.3-flash' },
       { id: 'glm-5.2:cloud', label: 'glm-5.2' },
       { id: 'minimax-m3:cloud', label: 'minimax-m3' }
     ])
 
+    expect(models.find((model) => model.id === 'glm-5.3-flash:cloud')).toMatchObject({
+      id: 'glm-5.3-flash:cloud',
+      label: 'GLM 5.3 Flash'
+    })
     expect(models.find((model) => model.id === 'glm-5.2:cloud')).toMatchObject({
       id: 'glm-5.2:cloud',
       label: 'GLM 5.2'

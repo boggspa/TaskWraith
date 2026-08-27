@@ -259,6 +259,7 @@ describe('CombinedModelPicker', () => {
 
   it('separates Ollama Cloud models from local upstream-brand groups', () => {
     const groups = buildOllamaProviderGroups([
+      { id: 'glm-5.3-flash:cloud', label: 'GLM 5.3 Flash' },
       { id: 'glm-5.2:cloud', label: 'GLM 5.2' },
       { id: 'qwen3.5:cloud', label: 'Qwen 3.5' },
       { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
@@ -272,6 +273,7 @@ describe('CombinedModelPicker', () => {
       isCloud: true
     })
     expect(groups[0]?.models.map((model) => model.id)).toEqual([
+      'glm-5.3-flash:cloud',
       'glm-5.2:cloud',
       'qwen3.5:cloud'
     ])
@@ -279,6 +281,7 @@ describe('CombinedModelPicker', () => {
       'qwen3.5:9b',
       'granite4.1:3b'
     ])
+    expect(modelPickerHueClass('ollama', 'glm-5.3-flash:cloud', 'GLM 5.3 Flash')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'minimax-m3:cloud', 'MiniMax M3')).toBe('minimax')
     expect(modelPickerHueClass('ollama', 'kimi-k3:cloud', 'Kimi K3')).toBe('kimi')

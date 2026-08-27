@@ -213,6 +213,7 @@ describe('humaniseModelId', () => {
 
   describe('Ollama', () => {
     it('maps local Ollama tags to readable model names', () => {
+      expect(humaniseModelId('ollama', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
       expect(humaniseModelId('ollama', 'glm-5.2:cloud')).toBe('GLM 5.2')
       expect(humaniseModelId('ollama', 'minimax-m3:cloud')).toBe('MiniMax M3')
       expect(humaniseModelId('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')

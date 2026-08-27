@@ -137,6 +137,10 @@ describe('matchOllamaBrand', () => {
   })
 
   it('applies maker accents to Ollama Cloud model ids', () => {
+    expect(matchOllamaBrand('glm-5.3-flash:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai'
+    })
     expect(matchOllamaBrand('glm-5.2:cloud')).toMatchObject({
       providerLabel: 'Z.ai',
       providerClass: 'zai'
