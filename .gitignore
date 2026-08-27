@@ -30,6 +30,7 @@ papercuts/*
 !papercuts/README.md
 !papercuts/2026-07-19-retro.md
 !papercuts/2026-08-25-ts6305-noemit-residual.md
+!papercuts/2026-08-27-tool-adapter-papercuts.md
 /PLAN-IMPORT-CODEX-BRIEF.md
 docs/
 RELEASING.md
