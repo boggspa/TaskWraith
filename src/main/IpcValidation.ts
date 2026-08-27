@@ -728,6 +728,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // constructed AgentRunPayload + composer metadata back.
   'compose-run': ['object'],
   'cancel-agent-run': ['optionalProvider', 'optionalString'],
+  'get-pending-agent-approvals': [],
   'respond-agent-approval': ['nonEmptyString', 'approvalAction'],
   'run-gemini': [
     'workspacePath',

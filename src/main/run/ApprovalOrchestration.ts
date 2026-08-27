@@ -349,6 +349,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         workspacePath: request.workspacePath,
         metadata: { mainAuthority: true }
       })
+      approvalService.publishRendererApprovalRequest(approvalPayload)
       deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
       deps.notifyPairedDevicesOfApproval({
         approvalId,
@@ -963,6 +964,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           canvasEvalApproval: canvasEvalApproval || undefined
         }
       )
+      approvalService.publishRendererApprovalRequest(liveApprovalPayload)
       deps.safeSendToSender(sender, 'agent-approval-request', liveApprovalPayload)
       // Fan out a wake-push to any paired iOS device so the user can
       // approve the agentic-service request away from the desktop.

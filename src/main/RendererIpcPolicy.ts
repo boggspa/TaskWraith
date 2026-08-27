@@ -287,6 +287,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'request-ensemble-user-roster-mutation',
   'request-run-queue-job',
   'resize-gemini-session',
+  'get-pending-agent-approvals',
   'respond-agent-approval',
   'rollback-agent-thread',
   'run-agent',

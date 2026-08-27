@@ -2,7 +2,7 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { promises as fs } from 'fs'
 import { randomBytes } from 'crypto'
 import type { AgentApprovalAction, ChatRecord, ExternalPathGrant } from '../store/types'
-import type { ApprovalService } from '../services/ApprovalService'
+import type { ApprovalService, RendererApprovalRequest } from '../services/ApprovalService'
 import {
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata
@@ -53,7 +53,10 @@ export type RespondAgentApprovalResult = {
 }
 
 export interface ApprovalResponseHandlerDeps {
-  approvalService: Pick<ApprovalService, 'getPendingExternalPathDetection' | 'resolve'>
+  approvalService: Pick<
+    ApprovalService,
+    'getPendingExternalPathDetection' | 'listRendererApprovalRequests' | 'resolve'
+  >
   assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
   issueExternalPathGrant: (
     grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>
@@ -64,6 +67,17 @@ export interface ApprovalResponseHandlerDeps {
 }
 
 export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDeps): void {
+  ipcMain.handle('get-pending-agent-approvals', (event): RendererApprovalRequest[] =>
+    deps.approvalService.listRendererApprovalRequests().filter((request) => {
+      try {
+        deps.assertSenderCanRespond(event, request.id)
+        return true
+      } catch {
+        return false
+      }
+    })
+  )
+
   ipcMain.handle(
     'respond-agent-approval',
     async (

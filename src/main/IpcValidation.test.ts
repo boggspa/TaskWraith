@@ -702,6 +702,7 @@ describe('IpcValidation', () => {
   })
 
   it('validates approval actions and external grant access', () => {
+    expect(() => validateIpcArgs('get-pending-agent-approvals', [])).not.toThrow()
     expect(() => validateIpcArgs('respond-agent-approval', ['approval-1', 'accept'])).not.toThrow()
     expect(() =>
       validateIpcArgs('respond-agent-approval', ['approval-1', 'useProviderNative'])

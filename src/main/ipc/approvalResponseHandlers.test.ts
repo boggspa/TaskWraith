@@ -102,6 +102,7 @@ function createDeps(order: string[]) {
   const deps = {
     assertSenderCanRespond: vi.fn(),
     approvalService: {
+      listRendererApprovalRequests: vi.fn(() => []),
       getPendingExternalPathDetection: vi.fn(() => {
         order.push('getPendingExternalPathDetection')
         return detection
@@ -145,9 +146,42 @@ beforeEach(() => {
 })
 
 describe('registerApprovalResponseHandlers', () => {
-  it('registers the respond-agent-approval channel', () => {
+  it('registers the pending-read and response channels', () => {
     registerApprovalResponseHandlers(createDeps([]).deps)
+    expect(handlerFor('get-pending-agent-approvals')).toBeTypeOf('function')
     expect(handlerFor('respond-agent-approval')).toBeTypeOf('function')
+  })
+
+  it('returns only pending cards the renderer is authorized to answer', () => {
+    const { deps } = createDeps([])
+    vi.mocked(deps.approvalService.listRendererApprovalRequests).mockReturnValue([
+      {
+        id: 'owned',
+        provider: 'grok',
+        method: 'mcp/canvas_interact',
+        title: 'Owned approval',
+        body: 'Visible to this renderer.',
+        actions: ['accept', 'decline']
+      },
+      {
+        id: 'foreign',
+        provider: 'claude',
+        method: 'mcp/write_file',
+        title: 'Foreign approval',
+        body: 'Must not cross renderer ownership.',
+        actions: ['accept', 'decline']
+      }
+    ])
+    vi.mocked(deps.assertSenderCanRespond).mockImplementation((_event, requestId) => {
+      if (requestId === 'foreign') throw new Error('approval belongs to another renderer')
+    })
+    registerApprovalResponseHandlers(deps)
+
+    expect(handlerFor('get-pending-agent-approvals')({})).toEqual([
+      expect.objectContaining({ id: 'owned' })
+    ])
+    expect(deps.assertSenderCanRespond).toHaveBeenCalledWith({}, 'owned')
+    expect(deps.assertSenderCanRespond).toHaveBeenCalledWith({}, 'foreign')
   })
 
   it('rejects a renderer that does not own the pending approval before resolving it', async () => {

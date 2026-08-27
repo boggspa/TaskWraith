@@ -79,6 +79,7 @@ describe('RendererIpcPolicy', () => {
     'mutate-chat-transcript',
     'run-agent',
     'save-clipboard-image-attachment',
+    'get-pending-agent-approvals',
     'get-run-queue-jobs',
     'check-trust',
     'audit-run:start',

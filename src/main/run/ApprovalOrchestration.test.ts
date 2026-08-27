@@ -90,6 +90,10 @@ function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
         }),
         registerMain: vi.fn(() => {
           order.push('registerMain')
+        }),
+        publishRendererApprovalRequest: vi.fn(() => {
+          order.push('publishRendererApprovalRequest')
+          return true
         })
       }
     }) as never,
@@ -547,6 +551,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       'scheduleApprovalTimeout',
       'appendDurableRunEventForRoute',
       'recordApprovalLedgerRequest',
+      'publishRendererApprovalRequest',
       'safeSendToSender:agent-approval-request',
       'notifyPairedDevicesOfApproval'
     ])
@@ -1133,7 +1138,8 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     })
     deps.getApprovalService = vi.fn(() => ({
       registerGeminiTool,
-      registerMain: vi.fn()
+      registerMain: vi.fn(),
+      publishRendererApprovalRequest: vi.fn(() => true)
     })) as never
 
     const pending = createApprovalOrchestration(deps)(
@@ -1171,7 +1177,8 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     })
     deps.getApprovalService = vi.fn(() => ({
       registerGeminiTool,
-      registerMain: vi.fn()
+      registerMain: vi.fn(),
+      publishRendererApprovalRequest: vi.fn(() => true)
     })) as never
 
     const pending = createApprovalOrchestration(deps)(
@@ -1349,6 +1356,7 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
       'scheduleApprovalTimeout',
       'appendDurableRunEventForRoute',
       'recordApprovalLedgerRequest',
+      'publishRendererApprovalRequest',
       'safeSendToSender:agent-approval-request',
       'notifyPairedDevicesOfApproval'
     ])
@@ -1365,6 +1373,7 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
   it('(m2a2) attributes a main approval to the requesting ensemble seat', async () => {
     const order: string[] = []
     const sent: Array<Record<string, unknown>> = []
+    const published: Array<Record<string, unknown>> = []
     const registered: Array<Record<string, unknown>> = []
     const deps = {
       ...makeMainDeps(order),
@@ -1393,6 +1402,10 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
         registerMain: vi.fn((_id: string, info: Record<string, unknown>) => {
           registered.push(info)
           return true
+        }),
+        publishRendererApprovalRequest: vi.fn((payload: Record<string, unknown>) => {
+          published.push(payload)
+          return true
         })
       })),
       safeSendToSender: vi.fn((_sender: unknown, _channel: string, payload: unknown) => {
@@ -1408,6 +1421,7 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     await Promise.resolve()
 
     expect(sent).toHaveLength(1)
+    expect(published).toEqual(sent)
     expect(sent[0].title).toBe('K3Review: Allow Pi to retry write_file once?')
     expect(registered[0].title).toBe('K3Review: Allow Pi to retry write_file once?')
     expect((sent[0].preview as Record<string, unknown>).ensembleParticipant).toEqual({
@@ -1457,7 +1471,8 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     })
     deps.getApprovalService = vi.fn(() => ({
       registerGeminiTool: vi.fn(),
-      registerMain
+      registerMain,
+      publishRendererApprovalRequest: vi.fn(() => true)
     })) as never
 
     createMainApprovalOrchestration(deps)(
@@ -1484,7 +1499,8 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     })
     deps.getApprovalService = vi.fn(() => ({
       registerGeminiTool: vi.fn(),
-      registerMain
+      registerMain,
+      publishRendererApprovalRequest: vi.fn(() => true)
     })) as never
 
     createMainApprovalOrchestration(deps)(

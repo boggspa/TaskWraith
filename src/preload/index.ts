@@ -1152,6 +1152,7 @@ const api = {
     ipcRenderer.invoke('rollback-agent-thread', provider, threadId, numTurns),
   startAgentReview: (provider: ProviderId, threadId: string, params: any = {}) =>
     ipcRenderer.invoke('start-agent-review', provider, threadId, params),
+  getPendingAgentApprovals: () => ipcRenderer.invoke('get-pending-agent-approvals'),
   respondAgentApproval: (
     requestId: string,
     action:

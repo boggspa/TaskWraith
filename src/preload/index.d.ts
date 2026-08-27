@@ -1292,6 +1292,7 @@ declare global {
         numTurns?: number
       ) => Promise<any>
       startAgentReview: (provider: ProviderId, threadId: string, params?: any) => Promise<any>
+      getPendingAgentApprovals: () => Promise<AgentApprovalRequest[]>
       respondAgentApproval: (
         requestId: string,
         action: AgentApprovalAction,
