@@ -108,7 +108,15 @@ export function reduceSoloToolEventMessages(
   // assistant to the prior tool row would merge tool bursts that are separated
   // by text into one ActivityStack, destroying the interleaving (text → tools
   // → text → tools collapses to [all tools] → [all text]).
-  if (nextMessages.length === 0 || lastMsg?.role !== 'tool') {
+  //
+  // A kind-tagged tool row is a transcript CARD (sub-thread return, guest
+  // participant reply, …), rendered by its own component ahead of the
+  // ActivityStack branch — activities pushed into one are never drawn. Main
+  // appends the sub-thread return card as role:'tool' mid-run, so adopting it
+  // here froze the transcript for the rest of the burst (2026-08-26: 110
+  // events, 8 commits, invisible until the next assistant message). Cards
+  // must open a NEW row; only metadata-less burst rows are adoptable.
+  if (nextMessages.length === 0 || lastMsg?.role !== 'tool' || lastMsg?.metadata?.kind) {
     const toolMessage = createToolMessage()
     nextMessages = [...nextMessages, toolMessage]
     lastMsgIndex = nextMessages.length - 1

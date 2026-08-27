@@ -355,3 +355,117 @@ describe('chronology-preserving result pairing', () => {
     expect(secondBurst.messages[2].toolActivities?.map((a) => a.id)).toEqual(['call-2'])
   })
 })
+
+describe('kind-tagged tool cards never absorb the live burst', () => {
+  // 2026-08-26 frozen-transcript incident: main appends the sub-thread return
+  // card as role:'tool' (index.ts "Tool role keeps child-agent output out of
+  // system authority"), so once it was the transcript tail, EVERY subsequent
+  // activity of the still-running parent (41 kimi_thinking segments, 8
+  // git_commits, …110 events over 6 minutes) collapsed into the card's
+  // toolActivities — which SubThreadReturnCard never renders. The transcript
+  // read as frozen until the next assistant message re-anchored the tail.
+  // Shape below mirrors the persisted damaged record (runId absent,
+  // metadata.kind discriminates every transcript card).
+  const subThreadReturnCard = (): ChatMessage => ({
+    id: 'linked-child-return-d43d0468-1787778821189',
+    role: 'tool',
+    content: '↩ Result from Sub-thread (codex)\n\nProposed slices…',
+    timestamp: NOW,
+    metadata: {
+      kind: 'subThreadReturn',
+      subThreadId: 'd43d0468',
+      subThreadProvider: 'codex',
+      linkedChildRelation: 'subThread',
+      returnedAt: NOW
+    }
+  })
+
+  const thinkingUse = (id: string) => ({
+    type: 'tool_event',
+    isUse: true,
+    data: {
+      type: 'tool_use',
+      tool_id: id,
+      tool_name: 'kimi_thinking',
+      parameters: { title: 'Kimi thinking', kind: 'reasoning' }
+    }
+  })
+
+  it('opens a NEW tool row after a trailing sub-thread return card instead of collapsing into it', () => {
+    const card = subThreadReturnCard()
+    const result = reduce([card], thinkingUse('seg-38'))
+
+    expect(result.messages.map((message) => message.role)).toEqual(['tool', 'tool'])
+    // The card is untouched — same object, still no activities to render.
+    expect(result.messages[0]).toBe(card)
+    expect(result.messages[0].toolActivities).toBeUndefined()
+    // The burst lands in its own plain row, where ActivityStack renders it.
+    expect(result.messages[1].metadata?.kind).toBeUndefined()
+    expect(result.messages[1].toolActivities?.map((a) => a.id)).toEqual(['seg-38'])
+  })
+
+  it('collapses consecutive post-card events into the ONE new row (no fragmentation)', () => {
+    const first = reduce([subThreadReturnCard()], thinkingUse('seg-38'))
+    const second = reduce(first.messages, {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'commit-1', tool_name: 'git_commit', parameters: {} }
+    })
+
+    expect(second.messages).toHaveLength(2)
+    expect(second.messages[1].toolActivities?.map((a) => a.id)).toEqual(['seg-38', 'commit-1'])
+  })
+
+  it('pairs a post-card result into the post-card row, not the card', () => {
+    const card = subThreadReturnCard()
+    const afterUse = reduce([card], thinkingUse('seg-38'))
+    const afterResult = reduce(afterUse.messages, {
+      type: 'tool_event',
+      isResult: true,
+      data: { type: 'tool_result', tool_id: 'seg-38', content: 'Good, done thinking' }
+    })
+
+    expect(afterResult.messages).toHaveLength(2)
+    expect(afterResult.messages[0]).toBe(card)
+    expect(afterResult.messages[1].toolActivities?.[0]).toMatchObject({
+      id: 'seg-38',
+      status: 'success'
+    })
+  })
+
+  it('refuses adoption for ANY kind-tagged tool row (guest replies share the tool role)', () => {
+    const guestReply: ChatMessage = {
+      id: 'guest-reply-1',
+      role: 'tool',
+      content: 'Guest says hi',
+      timestamp: NOW,
+      metadata: { kind: 'guestParticipantReply' }
+    }
+    const result = reduce([guestReply], thinkingUse('seg-1'))
+
+    expect(result.messages).toHaveLength(2)
+    expect(result.messages[0]).toBe(guestReply)
+    expect(result.messages[0].toolActivities).toBeUndefined()
+    expect(result.messages[1].toolActivities?.map((a) => a.id)).toEqual(['seg-1'])
+  })
+
+  it('still adopts a trailing plain tool row carrying non-kind metadata', () => {
+    // The boundary is metadata.kind — the card discriminator — not metadata
+    // presence. A plain burst row that picked up unrelated metadata keeps
+    // collapsing consecutive events as before.
+    const plainWithMetadata: ChatMessage = {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: NOW,
+      metadata: { provider: 'kimi' },
+      toolActivities: [
+        { id: 'call-1', toolName: 'read_file', displayName: 'Read file', status: 'success' } as any
+      ]
+    }
+    const result = reduce([plainWithMetadata], thinkingUse('seg-2'))
+
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0].toolActivities?.map((a) => a.id)).toEqual(['call-1', 'seg-2'])
+  })
+})
