@@ -507,6 +507,67 @@ describe('ApprovalService — registries', () => {
     ])
   })
 
+  it('retains an exact renderer card only while its approval is pending', async () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+    svc.registerMain('renderer-1', {
+      provider: 'grok',
+      runId: 'r-1',
+      appChatId: 'ensemble-1',
+      resolve
+    })
+    const preview = {
+      toolName: 'canvas_interact',
+      ensembleParticipant: { participantId: 'work-2', role: 'Work2' }
+    }
+
+    expect(
+      svc.publishRendererApprovalRequest({
+        id: 'renderer-1',
+        approvalId: 'renderer-1',
+        provider: 'grok',
+        service: 'canvasInteraction',
+        appRunId: 'r-1',
+        appChatId: 'ensemble-1',
+        method: 'mcp/canvas_interact',
+        title: 'Work2: Approve Grok canvas interaction',
+        body: 'Review the exact canvas interaction.',
+        preview,
+        actions: ['accept', 'decline', 'cancel']
+      })
+    ).toBe(true)
+    expect(svc.listRendererApprovalRequests()).toEqual([
+      expect.objectContaining({
+        id: 'renderer-1',
+        appChatId: 'ensemble-1',
+        preview,
+        actions: ['accept', 'decline', 'cancel']
+      })
+    ])
+
+    expect(await svc.resolve('renderer-1', 'decline')).toBe(true)
+    expect(resolve).toHaveBeenCalledWith(false)
+    expect(svc.listRendererApprovalRequests()).toEqual([])
+  })
+
+  it('refuses to publish a renderer card without a live approval authority', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+
+    expect(
+      svc.publishRendererApprovalRequest({
+        id: 'orphan',
+        provider: 'grok',
+        method: 'mcp/canvas_interact',
+        title: 'Orphan approval',
+        body: 'Must not be recoverable.',
+        actions: ['accept', 'decline']
+      })
+    ).toBe(false)
+    expect(svc.listRendererApprovalRequests()).toEqual([])
+  })
+
   it('listProjectionCards projects non-default allowed actions', () => {
     const { deps } = makeDeps()
     const svc = new ApprovalService(deps)

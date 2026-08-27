@@ -220,6 +220,29 @@ export interface ApprovalRouteLookup {
   appChatId?: string
 }
 
+/**
+ * Exact in-memory card sent to the desktop renderer.
+ *
+ * This is deliberately separate from MobileApprovalCard: remote projections
+ * may truncate or withhold sensitive review material, while a renderer that
+ * reloads after a crash must rebuild the same desktop-only approval surface.
+ * The card is never persisted and is forgotten with the pending approval.
+ */
+export type RendererApprovalRequest = {
+  id: string
+  approvalId?: string
+  provider: ProviderId
+  service?: AgenticServiceId
+  appRunId?: string
+  appChatId?: string
+  method: string
+  title: string
+  body: string
+  preview?: unknown
+  params?: unknown
+  actions: AgentApprovalAction[]
+} & Record<string, unknown>
+
 export interface ResolveOptions {
   /** Typed user input (Codex elicitation / requestUserInput). */
   userInput?: string
@@ -362,6 +385,7 @@ export class ApprovalService {
   private pendingCodex = new Map<string, PendingCodexApproval>()
   private pendingKimi = new Map<string, PendingKimiApproval>()
   private pendingHostCommand = new Map<string, PendingHostCommandApproval>()
+  private pendingRendererRequests = new Map<string, RendererApprovalRequest>()
   private bossApprovalReviewAbortControllers = new Map<string, AbortController>()
   private scheduler: ApprovalTimeoutScheduler | null = null
   private readonly remoteAttentionFanout: RemoteAttentionApnsFanout
@@ -550,6 +574,7 @@ export class ApprovalService {
 
   deleteHostCommand(approvalId: string): void {
     this.pendingHostCommand.delete(approvalId)
+    this.pendingRendererRequests.delete(approvalId)
   }
 
   has(approvalId: string): boolean {
@@ -560,6 +585,35 @@ export class ApprovalService {
       this.pendingKimi.has(approvalId) ||
       this.pendingHostCommand.has(approvalId)
     )
+  }
+
+  /**
+   * Remember the exact card at the same boundary that publishes it to the
+   * renderer. Registration must happen first so an orphan card can never be
+   * revived after a rejected or already-settled approval.
+   */
+  publishRendererApprovalRequest(request: RendererApprovalRequest): boolean {
+    const approvalId = request.id.trim()
+    if (!approvalId || !this.has(approvalId)) return false
+    this.pendingRendererRequests.set(approvalId, {
+      ...request,
+      id: approvalId,
+      actions: [...request.actions]
+    })
+    return true
+  }
+
+  /** Exact pending desktop cards in publication order, for renderer recovery. */
+  listRendererApprovalRequests(): RendererApprovalRequest[] {
+    const requests: RendererApprovalRequest[] = []
+    for (const [approvalId, request] of this.pendingRendererRequests) {
+      if (!this.has(approvalId)) {
+        this.pendingRendererRequests.delete(approvalId)
+        continue
+      }
+      requests.push({ ...request, actions: [...request.actions] })
+    }
+    return requests
   }
 
   /**
@@ -1604,6 +1658,9 @@ export class ApprovalService {
       decisionSource?: 'user' | 'system'
     }
   ): void {
+    if (type === 'approval_resolved') {
+      this.pendingRendererRequests.delete(approvalId)
+    }
     try {
       const session = this.deps.runManager.get(context.appRunId)
       const appRunId = session?.runId ?? context.appRunId
