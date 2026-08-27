@@ -181,6 +181,7 @@ import {
   normalizeMcpToolArguments,
   isTaskWraithMcpToolName
 } from './mcp/McpResultHelpers'
+import { attachMcpResultRepairHints } from './mcp/McpResultRepairHints'
 import { replaceLiteralText } from './mcp/LiteralTextReplacement'
 import {
   AGENTIC_SERVICE_LABELS,
@@ -37233,7 +37234,8 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
-  let args = normalizeMcpToolArguments(rawArgs)
+  const receivedArgs = normalizeMcpToolArguments(rawArgs)
+  let args = receivedArgs
   // One envelope + alias convention for every Ensemble dispatch boundary. The
   // portable `{action, params:{...}}` shape, the flat shape, and snake_case
   // spellings all converge here BEFORE route hints, the dispatch contract,
@@ -38482,6 +38484,15 @@ async function executeGeminiMcpTool(
     let permissionRetryResult: McpToolExecutionResult | null = null
     let permissionRetryTargetToolName: TaskWraithMcpToolName | null = null
     let permissionRetryTargetExecuted = false
+    const mcpEnsembleJson = (result: unknown): string =>
+      mcpJson(
+        attachMcpResultRepairHints({
+          toolName,
+          receivedArguments: receivedArgs,
+          normalizedArguments: args,
+          result
+        })
+      )
     const applyRichResult = (result: McpToolExecutionResult) => {
       richResult = result
       pendingToolMediaPersistence = result.pendingToolMediaPersistence
@@ -39062,7 +39073,7 @@ async function executeGeminiMcpTool(
       }
       const result = buildEnsembleYieldToolResult({ outcome, reason, target })
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_send') {
       markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.sendSideMessageForRun(context.appRunId, {
@@ -39076,7 +39087,7 @@ async function executeGeminiMcpTool(
         error: 'no_active_run'
       }
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_fanout') {
       markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.fanoutForRun(context.appRunId, {
@@ -39101,7 +39112,7 @@ async function executeGeminiMcpTool(
           error: 'no_active_run' as const
         }))
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_fanout_all') {
       markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.fanoutAllForRun(context.appRunId, {
@@ -39117,7 +39128,7 @@ async function executeGeminiMcpTool(
           error: 'no_active_run' as const
         }))
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_await') {
       markDispatchHandled('ensemble-control')
       const result = await dispatchEnsembleAwaitTool(
@@ -39143,7 +39154,7 @@ async function executeGeminiMcpTool(
         }
       )
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_lane_result') {
       markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.laneResultForRun(context.appRunId, {
@@ -39156,7 +39167,7 @@ async function executeGeminiMcpTool(
         error: 'no_active_run' as const
       }
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_bossman_control') {
       markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
@@ -39309,7 +39320,7 @@ async function executeGeminiMcpTool(
           error: 'no_active_run' as const
         }))
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_poll_response') {
       markDispatchHandled('ensemble-control')
       const pollId = optionalString(args.pollId || args.poll_id) || ''
@@ -39342,7 +39353,7 @@ async function executeGeminiMcpTool(
         }
       )
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_propose_goal_complete') {
       markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.proposeGoalCompleteForRun(context.appRunId, {
@@ -39354,7 +39365,7 @@ async function executeGeminiMcpTool(
         error: 'no_active_run' as const
       }
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_roster_edit') {
       markDispatchHandled('ensemble-control')
       const result =
@@ -39387,7 +39398,7 @@ async function executeGeminiMcpTool(
                   error: 'no_active_run' as const
                 }))
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_brief_update') {
       markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.briefUpdateForRun(context.appRunId, {
@@ -39409,7 +39420,7 @@ async function executeGeminiMcpTool(
           error: 'no_active_run' as const
         }))
       toolIsError = result.ok === false
-      text = mcpJson(result)
+      text = mcpEnsembleJson(result)
     } else if (toolName === 'list_ensemble_participants') {
       markDispatchHandled('ensemble-control')
       const callingChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
@@ -39612,7 +39623,7 @@ async function executeGeminiMcpTool(
           transcriptEvent.metadata
         )
       }
-      text = mcpJson({
+      text = mcpEnsembleJson({
         ok: briefResult.ok,
         tool: 'scout_brief',
         message: briefResult.message,
