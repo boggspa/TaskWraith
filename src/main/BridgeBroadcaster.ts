@@ -11,7 +11,8 @@ import type { RemoteProjectionEnvelope, RemoteTaskCapabilities, RemoteTaskStatus
 import {
   deriveRemoteTaskStatusForChat,
   latestChatRun,
-  projectChatKind
+  projectChatKind,
+  projectGithubMergePrCapability
 } from './RemoteTaskProjection'
 
 const DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES = 700_000
@@ -149,6 +150,13 @@ export interface BridgeBroadcasterOptions {
   remoteProjectionEnvelopeMaxBytes?: number
   /** Injectable batch id factory for deterministic oversized-snapshot tests. */
   snapshotBatchIdFactory?: () => string
+  /**
+   * Host merge callbacks. Bound from index.ts with the same assignment
+   * pattern as `injectedCreateSubThreadFn` — live functions, never a hardcoded
+   * true. Workspace-summary projection reads these; absence fail-closes the bit.
+   */
+  githubMergePrFn?: unknown
+  requestGithubMergePrApprovalFn?: unknown
 }
 
 interface RemoteProjectionSnapshotBatchParams {
@@ -345,6 +353,10 @@ export class BridgeBroadcaster {
   private readonly canonicalChatWorkspaceId?: (
     workspaceId: string | null | undefined
   ) => string | null
+  /** Live host merge callback. Assigned after construction; not a capability grant. */
+  githubMergePrFn: unknown
+  /** Live host-approval callback for merge. Assigned after construction. */
+  requestGithubMergePrApprovalFn: unknown
   /** Per-throttle-key timestamp of the last successful emit. List
    * methods key on the bare method name; updated methods key on
    * `method:id` so two different chats can update in the same tick. */
@@ -367,6 +379,8 @@ export class BridgeBroadcaster {
       options.remoteProjectionEnvelopeMaxBytes ?? DEFAULT_REMOTE_PROJECTION_ENVELOPE_MAX_BYTES
     this.snapshotBatchIdFactory = options.snapshotBatchIdFactory ?? (() => randomUUID())
     this.canonicalChatWorkspaceId = options.canonicalChatWorkspaceId
+    this.githubMergePrFn = options.githubMergePrFn
+    this.requestGithubMergePrApprovalFn = options.requestGithubMergePrApprovalFn
   }
 
   private canonicalizeChat(chat: ChatRecord): ChatRecord {
@@ -846,7 +860,12 @@ export class BridgeBroadcaster {
       fileWrite: capabilities.has('fileWrite'),
       externalPublish: capabilities.has('externalPublish'),
       pin: capabilities.has('pin'),
-      yolo: capabilities.has('yolo')
+      yolo: capabilities.has('yolo'),
+      githubMergePr: projectGithubMergePrCapability(
+        this.githubMergePrFn,
+        this.requestGithubMergePrApprovalFn,
+        capabilities.has('externalPublish')
+      )
     }
   }
 

@@ -7,7 +7,11 @@ import {
   type BridgeBroadcasterAppStore
 } from './BridgeBroadcaster'
 import { buildRemoteProjectionEnvelope, buildRemoteTaskCard } from './RemoteTaskProjection'
-import { RemoteWorkspaceAllowlist } from './RemoteWorkspaceAllowlist'
+import {
+  READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
+  RemoteWorkspaceAllowlist,
+  type RemoteWorkspaceCapability
+} from './RemoteWorkspaceAllowlist'
 import type { ChatRecord, WorkspaceRecord } from './store/types'
 
 /** Build a stub AppStore that returns the supplied fixtures. The
@@ -63,6 +67,22 @@ function makeAllowlist(workspaceIds: string[]): RemoteWorkspaceAllowlist {
       workspaceId,
       path: `/tmp/projects/${workspaceId}`,
       mode: 'read-write'
+    })
+  }
+  return allowlist
+}
+
+function makeAllowlistWithCapabilities(
+  workspaceIds: string[],
+  capabilities: RemoteWorkspaceCapability[]
+): RemoteWorkspaceAllowlist {
+  const allowlist = new RemoteWorkspaceAllowlist({ now: () => 1000 })
+  for (const workspaceId of workspaceIds) {
+    allowlist.upsert({
+      workspaceId,
+      path: `/tmp/projects/${workspaceId}`,
+      mode: 'read-write',
+      capabilities
     })
   }
   return allowlist
@@ -1133,5 +1153,127 @@ describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
         }
       ]
     ])
+  })
+
+  describe('githubMergePr workspace-summary projection', () => {
+    const mergeFn = async () => ({ ok: true })
+    const approvalFn = async () => true
+    const publishCaps: RemoteWorkspaceCapability[] = [
+      ...READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
+      'externalPublish'
+    ]
+
+    function workspaceListCaps(
+      notify: ReturnType<typeof vi.fn>,
+      workspaceId: string
+    ): { githubMergePr?: boolean } | undefined {
+      const params = notify.mock.calls[0][1] as {
+        workspaces: Array<{
+          workspaceId: string
+          capabilities?: { githubMergePr?: boolean }
+        }>
+      }
+      return params.workspaces.find((ws) => ws.workspaceId === workspaceId)?.capabilities
+    }
+
+    it('projects true on the workspace summary iOS reads when both callbacks and externalPublish are present', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore([makeWorkspace({ id: 'ws-visible' })], [])
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlistWithCapabilities(['ws-visible'], publishCaps),
+        githubMergePrFn: mergeFn,
+        requestGithubMergePrApprovalFn: approvalFn,
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(true)
+    })
+
+    it('is explicitly false on a granted workspace without externalPublish, even with both callbacks', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore([makeWorkspace({ id: 'ws-visible' })], [])
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlist(['ws-visible']),
+        githubMergePrFn: mergeFn,
+        requestGithubMergePrApprovalFn: approvalFn,
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(false)
+    })
+
+    it('is explicitly false when the approval callback is missing', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore([makeWorkspace({ id: 'ws-visible' })], [])
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlistWithCapabilities(['ws-visible'], publishCaps),
+        githubMergePrFn: mergeFn,
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(false)
+    })
+
+    it('is explicitly false when the merge callback is missing', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore([makeWorkspace({ id: 'ws-visible' })], [])
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlistWithCapabilities(['ws-visible'], publishCaps),
+        requestGithubMergePrApprovalFn: approvalFn,
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(false)
+    })
+
+    it('does not advertise merge on a denied workspace stub', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore(
+        [
+          makeWorkspace({ id: 'ws-visible' }),
+          makeWorkspace({ id: 'ws-hidden', path: '/tmp/projects/hidden' })
+        ],
+        []
+      )
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlistWithCapabilities(['ws-visible'], publishCaps),
+        githubMergePrFn: mergeFn,
+        requestGithubMergePrApprovalFn: approvalFn,
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(true)
+      expect(workspaceListCaps(notify, 'ws-hidden')?.githubMergePr).not.toBe(true)
+    })
+
+    it('accepts post-construction callback binding the way index.ts assigns injected lets', () => {
+      const notify = vi.fn()
+      const store = makeFakeStore([makeWorkspace({ id: 'ws-visible' })], [])
+      const broadcaster = new BridgeBroadcaster({
+        daemon: { notify },
+        appStore: store,
+        allowlist: makeAllowlistWithCapabilities(['ws-visible'], publishCaps),
+        now: () => 1000
+      })
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(false)
+
+      broadcaster.githubMergePrFn = mergeFn
+      broadcaster.requestGithubMergePrApprovalFn = approvalFn
+      notify.mockClear()
+      broadcaster.resetThrottle()
+      broadcaster.broadcastWorkspaceList()
+      expect(workspaceListCaps(notify, 'ws-visible')?.githubMergePr).toBe(true)
+    })
   })
 })
