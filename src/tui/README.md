@@ -44,10 +44,13 @@ approval/question continuation events, so the standalone Host does not
 advertise those capabilities. It must not manufacture approval cards for a
 provider that cannot resume them safely.
 
-An interactively started `taskwraith-host serve` can hand
-`muse login` to that same terminal with exact, shell-free argv. A detached Host
-has no visible TTY and therefore does not advertise an invisible manual-auth
-flow; configure its approved credential environment or start it interactively.
+An interactively started `taskwraith-host serve` can hand a provider CLI login
+to that same terminal with exact, shell-free argv when the catalog advertises a
+manual flow. Grok also accepts `XAI_API_KEY` / `GROK_API_KEY` on the Host
+environment. Pi has no terminal login: configure allowed upstream API keys on
+the Host env instead. A detached Host has no visible TTY and therefore does not
+advertise an invisible manual-auth flow; configure its approved credential
+environment or start it interactively.
 
 ## Packages
 
@@ -159,19 +162,41 @@ advertise them (see Current boundary).
 ### Current boundary
 
 The Node Host owns private discovery/token/socket artifacts and the versioned
-local protocol (`node-host-v1`). Standalone production currently supports Muse
-through its Node-owned resource/run ports
-([`HostNodeProductionFactory.ts`](../host-node/HostNodeProductionFactory.ts)
-composes `HostNodeMuse*` only). The TUI supports cold workspace registration,
-thread creation/configuration/archive, provider offers/auth metadata, bounded
-history, and receipt replay through that Host. It deliberately omits arbitrary
-AppStore writes, permission bodies, credentials, raw provider payloads,
-desktop-only drag/drop/canvas/glass surfaces, and unbounded terminal control.
+local protocol (`node-host-v1`). Standalone production composes the nine live
+providers — Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, Mistral, Muse —
+through [`HostNodeProductionFactory.ts`](../host-node/HostNodeProductionFactory.ts).
+That membership is exactly `LIVE_SELECTABLE_PROVIDER_IDS`; the registry rejects
+any other id. The operator-facing matrix lives in
+[`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts).
 
-Goal `goal-1787698539643-zyrznc` (user-ruled 2026-08-25) intends to expand
-that factory to the live multi-provider inventory with capability-gated
-approvals/questions. That expansion is **not** shipped in this pass; do not
-read this README as claiming it.
+The TUI is a **solo**, multi-provider client (Pi/OMP-shaped): `/new` and cold
+start create single-provider threads. It is not an ensemble authoring surface.
+Existing desktop ensemble threads may still open for inspection. The TUI
+supports cold workspace registration, thread creation/configuration/archive,
+provider offers/auth metadata, bounded history, and receipt replay through that
+Host. It deliberately omits arbitrary AppStore writes, permission bodies,
+credentials, raw provider payloads, desktop-only drag/drop/canvas/glass
+surfaces, and unbounded terminal control.
+
+**AntiGravity / AGY** is desktop-conditional only (`isAntigravityOptInEnabled`
+plus a configured key in Electron settings). The standalone Host does **not**
+compose or admit it and does not grow a parallel consent wall.
+
+**Cursor** is setup/auth-only on this Host. `cursor-agent login` can run when a
+TTY launcher is present; `run()` stays a typed hard-stop because a write-capable
+Cursor argv requires MCP deny-list containment attestation the Node Host cannot
+produce.
+
+**Auth alternatives**
+
+| Provider                                           | Manual TTY login                                                         | Env-key alternative                                           |
+| -------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Codex, Claude, Kimi, Cursor, Mistral, Muse, Ollama | Catalog `*:login` when a launcher is present                             | None advertised                                               |
+| Grok                                               | `grok:login` (`grok login`) when a launcher is present                   | `XAI_API_KEY` or `GROK_API_KEY`                               |
+| Pi                                                 | None — `authFlows` stays empty; `beginAuth` refuses a fabricated handoff | Allowed upstream keys on the Host env (`PI_UPSTREAM_KEY_ENV`) |
+| AntiGravity                                        | Not a standalone provider                                                | Desktop consent only                                          |
+
+A detached Host still does not advertise an invisible manual-auth flow.
 
 ## Desktop coexistence rollout
 

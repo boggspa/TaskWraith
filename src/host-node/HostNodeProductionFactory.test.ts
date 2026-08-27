@@ -13,12 +13,17 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
+import {
+  hostStandaloneAntigravityStatus,
+  hostStandaloneComposedProviderIds
+} from '../host-shared/HostStandaloneProviderMatrix'
+import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from '../host-runtime/HostProfileAuthorityLease'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 import {
   taskWraithHostDiscoveryPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
-import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from '../host-runtime/HostProfileAuthorityLease'
 
 import { createHostNodeProductionServer } from './HostNodeProductionFactory'
 
@@ -68,17 +73,15 @@ it('composes all nine live providers on a cold profile', async () => {
   await client.connect()
   const statuses = await client.getProviderStatuses()
   const ids = statuses.map((status) => status.providerId).sort()
-  expect(ids).toEqual([
-    'claude',
-    'codex',
-    'cursor',
-    'grok',
-    'kimi',
-    'mistral',
-    'muse',
-    'ollama',
-    'pi'
-  ])
+  expect(ids).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS].sort())
+  expect(ids).toEqual([...hostStandaloneComposedProviderIds()].sort())
+  expect(ids).not.toContain('antigravity')
+  expect(hostStandaloneAntigravityStatus()).toMatchObject({
+    providerId: 'antigravity',
+    kind: 'conditional',
+    standaloneHost: 'unavailable',
+    run: 'unavailable'
+  })
   // Missing binaries are unavailable, never omitted.
   for (const status of statuses) {
     expect(['ready', 'auth_required', 'unavailable', 'degraded']).toContain(status.status)
@@ -206,7 +209,7 @@ it('wires a real optional provider terminal launcher into production auth flows'
   paths.push(parent)
   const binDir = join(parent, 'bin')
   mkdirSync(binDir)
-  for (const name of ['codex', 'kimi', 'vibe']) {
+  for (const name of ['codex', 'kimi', 'vibe', 'grok']) {
     const binary = join(binDir, name)
     writeFileSync(binary, '#!/bin/sh\n')
     chmodSync(binary, 0o700)
@@ -221,10 +224,14 @@ it('wires a real optional provider terminal launcher into production auth flows'
   const previousHome = process.env.HOME
   const previousCodexHome = process.env.CODEX_HOME
   const previousOpenAiKey = process.env.OPENAI_API_KEY
+  const previousXaiKey = process.env.XAI_API_KEY
+  const previousGrokKey = process.env.GROK_API_KEY
   process.env.PATH = binDir
   process.env.HOME = join(parent, 'empty-home')
   process.env.CODEX_HOME = join(parent, 'empty-codex-home')
   delete process.env.OPENAI_API_KEY
+  delete process.env.XAI_API_KEY
+  delete process.env.GROK_API_KEY
 
   const domainFor = (server: unknown) =>
     (
@@ -252,12 +259,14 @@ it('wires a real optional provider terminal launcher into production auth flows'
     const detachedCodex = detachedDomain.registry.getInstance('codex')
     const detachedClaude = detachedDomain.registry.getInstance('claude')
     const detachedCursor = detachedDomain.registry.getInstance('cursor')
+    const detachedGrok = detachedDomain.registry.getInstance('grok')
     await expect(detachedCodex.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
     await expect(detachedClaude.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
     await expect(detachedCursor.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
     await expect(detachedCodex.getAuthFlows()).resolves.toEqual([])
     await expect(detachedClaude.getAuthFlows()).resolves.toEqual([])
     await expect(detachedCursor.getAuthFlows()).resolves.toEqual([])
+    await expect(detachedGrok.getAuthFlows()).resolves.toEqual([])
     await detached.stop()
 
     const terminalLauncher = {
@@ -275,6 +284,7 @@ it('wires a real optional provider terminal launcher into production auth flows'
     const interactiveCodex = interactiveDomain.registry.getInstance('codex')
     const interactiveClaude = interactiveDomain.registry.getInstance('claude')
     const interactiveCursor = interactiveDomain.registry.getInstance('cursor')
+    const interactiveGrok = interactiveDomain.registry.getInstance('grok')
     await expect(interactiveCodex.getAuthFlows()).resolves.toEqual([
       expect.objectContaining({ flowId: 'codex:login' })
     ])
@@ -284,9 +294,17 @@ it('wires a real optional provider terminal launcher into production auth flows'
     await expect(interactiveCursor.getAuthFlows()).resolves.toEqual([
       expect.objectContaining({ flowId: 'cursor:login' })
     ])
+    await expect(interactiveGrok.getAuthFlows()).resolves.toEqual([
+      expect.objectContaining({
+        flowId: 'grok:login',
+        kind: 'manual',
+        available: true
+      })
+    ])
     await interactiveCodex.beginAuth('factory-auth-1')
     await interactiveClaude.beginAuth('factory-auth-2')
     await interactiveCursor.beginAuth('factory-auth-3')
+    await interactiveGrok.beginAuth('factory-auth-4')
     expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
       'codex',
       expect.objectContaining({ argv: [join(binDir, 'codex'), 'login'] })
@@ -299,6 +317,10 @@ it('wires a real optional provider terminal launcher into production auth flows'
       'cursor',
       expect.objectContaining({ argv: [join(binDir, 'cursor-agent'), 'login'] })
     )
+    expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+      'grok',
+      expect.objectContaining({ argv: [join(binDir, 'grok'), 'login'] })
+    )
     await interactive.stop()
   } finally {
     if (previousPath === undefined) delete process.env.PATH
@@ -309,6 +331,10 @@ it('wires a real optional provider terminal launcher into production auth flows'
     else process.env.CODEX_HOME = previousCodexHome
     if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
     else process.env.OPENAI_API_KEY = previousOpenAiKey
+    if (previousXaiKey === undefined) delete process.env.XAI_API_KEY
+    else process.env.XAI_API_KEY = previousXaiKey
+    if (previousGrokKey === undefined) delete process.env.GROK_API_KEY
+    else process.env.GROK_API_KEY = previousGrokKey
   }
 })
 

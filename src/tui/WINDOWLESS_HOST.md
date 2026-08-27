@@ -11,8 +11,13 @@
 > `[cli, 'serve', '--mode', 'production', '--profile', p]`, refuses any
 > executable that is not ordinary Node, and strips `ELECTRON_RUN_AS_NODE`.
 > `tw` auto-starts that Host when none is reachable; `tw --no-start-host`
-> is connect-only. Operator contract:
-> [`README.md`](./README.md) and [`DESIGN.md`](./DESIGN.md). Arc status:
+> is connect-only. Standalone production composes the nine live-selectable
+> providers; AntiGravity stays desktop-conditional and is not composed;
+> Cursor is setup/auth-only (run hard-stop); Grok advertises `grok login` plus
+> env keys; Pi is env-only with no begin-able login. Operator contract:
+> [`README.md`](./README.md) Current boundary,
+> [`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts),
+> and [`DESIGN.md`](./DESIGN.md). Arc status:
 > [`docs/HOST_ARC_STATUS.md`](../../docs/HOST_ARC_STATUS.md).
 >
 > App-side posture handling still exists

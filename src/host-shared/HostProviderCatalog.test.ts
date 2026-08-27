@@ -41,6 +41,15 @@ describe('HostProviderCatalog', () => {
     expect(hostProviderAuthFlows('gemini')).toEqual([])
   })
 
+  it('does not catalog AntiGravity; standalone Host never fabricates that row', () => {
+    expect(hasHostProviderCatalogEntry('antigravity')).toBe(false)
+    expect(hostProviderCatalogEntry('antigravity')).toBeNull()
+    expect(hostProviderOffers('antigravity', true)).toBeNull()
+    expect(hostProviderStatus('antigravity', true, true)).toBeNull()
+    expect(hostProviderAuthFlows('antigravity')).toEqual([])
+    expect(hostProviderCatalogIds()).not.toContain('antigravity')
+  })
+
   it('derives offers with deterministic revision and availability gating', () => {
     const muse = hostProviderOffers('muse', true)
     expect(muse).not.toBeNull()
@@ -92,17 +101,31 @@ describe('HostProviderCatalog', () => {
     }
   })
 
-  it('marks providers without manual login flows as empty', () => {
-    expect(hostProviderAuthFlows('grok')).toEqual([])
+  it('advertises Grok interactive login plus env-key alternative', () => {
+    const flows = hostProviderAuthFlows('grok')
+    expect(flows).toEqual([
+      {
+        flowId: 'grok:login',
+        kind: 'manual',
+        label: 'Sign in',
+        available: true,
+        detail:
+          'Interactive `grok login`, or set XAI_API_KEY / GROK_API_KEY in the Host environment.'
+      }
+    ])
+  })
+
+  it('keeps Pi env-only with no begin-able manual flow', () => {
     expect(hostProviderAuthFlows('pi')).toEqual([])
   })
 
   it('marks providers with manual login flows', () => {
-    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'ollama', 'mistral', 'muse']) {
+    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'mistral', 'muse']) {
       const flows = hostProviderAuthFlows(id)
       expect(flows.length).toBe(1)
       expect(flows[0].kind).toBe('manual')
       expect(flows[0].flowId).toBe(`${id}:login`)
+      expect(flows[0].available).toBe(true)
     }
   })
 

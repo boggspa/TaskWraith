@@ -177,7 +177,16 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('grok-4.5', 'Grok 4.5 Fast', STANDARD_REASONING),
         model('grok-composer-2.5-fast', 'Grok Composer 2.5 Fast', STANDARD_REASONING)
       ],
-      authFlows: []
+      authFlows: [
+        {
+          flowId: 'grok:login',
+          kind: 'manual',
+          label: 'Sign in',
+          available: true,
+          detail:
+            'Interactive `grok login`, or set XAI_API_KEY / GROK_API_KEY in the Host environment.'
+        }
+      ]
     },
     ollama: {
       displayProvider: 'Ollama',
