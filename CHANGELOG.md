@@ -171,6 +171,9 @@ context needed to answer.
   harvestable when tool detail is externalized, and tombstone repair is armed
   on the real record rather than its summary row, so a thread's Commits card
   fills in on open instead of staying empty.
+- **Multiview goes to eight.** Four full-height columns and a 4×2 eight-pane
+  grid join the layout picker; opening more work grows through the new shapes,
+  while closing or shrinking parks surviving panes rather than losing them.
 - **One transcript answers a keyboard scroll.** In Multiview, PageUp or End
   now acts on the focused pane alone instead of disengaging follow in every
   pane at once, and a terminal-resize drag is released when its pane
