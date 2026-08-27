@@ -174,6 +174,12 @@ context needed to answer.
 - **Multiview goes to eight.** Four full-height columns and a 4×2 eight-pane
   grid join the layout picker; opening more work grows through the new shapes,
   while closing or shrinking parks surviving panes rather than losing them.
+- **Every thread pane gets a home and an exit.** The top-right glass pill now
+  closes a thread view without deleting its history, draft, or active run.
+  Single-pane closes reveal Thread Home; empty Multiview panes use the same
+  home to reopen visible or running threads and launch independent Charts,
+  Browser, Mesh, Sketch, Media, or Simulator surfaces without changing the
+  inspector dock.
 - **One transcript answers a keyboard scroll.** In Multiview, PageUp or End
   now acts on the focused pane alone instead of disengaging follow in every
   pane at once, and a terminal-resize drag is released when its pane
