@@ -361,6 +361,37 @@ describe('MultiviewPaneGrid', () => {
     }
   })
 
+  it('renders the four-column and eight-way catalogue geometries', () => {
+    const vertical = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-4"
+        panes={makePanes(['a', 'b', 'c', 'd'])}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect((vertical.match(/data-pane-index=/g) || []).length).toBe(4)
+    expect(vertical).toContain('grid-template-columns:1fr 1fr 1fr 1fr')
+    expect(vertical).toContain('grid-template-rows:1fr')
+
+    const eightWay = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="eight-way"
+        panes={makePanes(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect((eightWay.match(/data-pane-index=/g) || []).length).toBe(8)
+    expect(eightWay).toContain('grid-template-columns:1fr 1fr 1fr 1fr')
+    expect(eightWay).toContain('grid-template-rows:1fr 1fr')
+    for (const area of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+      expect(eightWay).toContain(`grid-area:${area}`)
+    }
+  })
+
   it('renders a close button on non-focused cells only when onClosePane is given', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid

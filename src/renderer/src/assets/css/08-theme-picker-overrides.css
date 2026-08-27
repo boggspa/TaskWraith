@@ -10690,8 +10690,11 @@
   gap: 8px;
   min-width: min(420px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
   box-sizing: border-box;
   padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .composer-multiview-popover-header {

@@ -28,9 +28,17 @@ describe('buildMultiviewLayoutGridItems', () => {
       label: 'Vertical split',
       description: '3 panes'
     })
+    expect(items.find((i) => i.id === 'vertical-4')).toMatchObject({
+      label: '4 columns',
+      description: '4 panes'
+    })
     expect(items.find((i) => i.id === 'six-way')).toMatchObject({
       label: '6-Way',
       description: '6 panes'
+    })
+    expect(items.find((i) => i.id === 'eight-way')).toMatchObject({
+      label: '8-Way',
+      description: '8 panes'
     })
   })
 
