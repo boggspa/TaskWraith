@@ -1,6 +1,7 @@
 import { BLACKBOARD_CHANGE_KIND, type BlackboardChangePayload } from '../../shared/blackboardChange'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import { providerLabel } from '../ProviderAdapters'
+import type { ScoutBriefRecord } from '../ScoutBrief'
 import type { BlackboardEntry, ChatMessage, EnsembleParticipant } from '../store/types'
 
 export type BlackboardTranscriptParticipant = Pick<EnsembleParticipant, 'id' | 'provider' | 'model'>
@@ -94,5 +95,33 @@ export function buildBlackboardCleanedTranscriptEvent(
   return {
     content,
     metadata: mutationMetadata(participant, { action: 'cleaned', removedCount }, changedAt)
+  }
+}
+
+function scoutBriefCaveat(confidence: ScoutBriefRecord['confidence']): string {
+  if (confidence === 'low') return ' · needs verification'
+  if (confidence === 'medium') return ' · tentative'
+  return ''
+}
+
+/** Build the durable Blackboard-style handoff row for `scout_brief`. */
+export function buildScoutBriefSharedTranscriptEvent(
+  brief: ScoutBriefRecord,
+  participant: BlackboardTranscriptParticipant | undefined
+): BlackboardTranscriptEvent {
+  const metadata = mutationMetadata(
+    participant,
+    {
+      action: 'scoutBriefShared',
+      role: brief.participantRole,
+      ...(brief.confidence === 'high' ? {} : { confidence: brief.confidence })
+    },
+    brief.emittedAt
+  )
+  const displayProviderLabel =
+    metadata?.blackboardChange?.displayProviderLabel || providerLabel(brief.provider)
+  return {
+    content: `Scout brief shared · ${brief.participantRole} (${displayProviderLabel}) · Blackboard + next writer${scoutBriefCaveat(brief.confidence)}.`,
+    metadata
   }
 }

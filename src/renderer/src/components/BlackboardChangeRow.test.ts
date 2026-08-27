@@ -17,7 +17,9 @@ const cssSource = readFileSync(
   'utf8'
 )
 
-function messageWithChange(action: 'updated' | 'pollOpened' | 'cleaned'): ChatMessage {
+function messageWithChange(
+  action: 'updated' | 'pollOpened' | 'cleaned' | 'scoutBriefShared'
+): ChatMessage {
   const common = {
     action,
     provider: 'ollama',
@@ -36,22 +38,24 @@ function messageWithChange(action: 'updated' | 'pollOpened' | 'cleaned'): ChatMe
       blackboardChange:
         action === 'cleaned'
           ? { ...common, action, removedCount: 2 }
-          : action === 'pollOpened'
-            ? {
-                ...common,
-                action,
-                key: 'ship-or-hold',
-                category: 'decision',
-                scope: 'round',
-                optionCount: 3
-              }
-            : {
-                ...common,
-                action,
-                key: 'scout5-competitor-research',
-                category: 'note',
-                scope: 'session'
-              }
+          : action === 'scoutBriefShared'
+            ? { ...common, action, role: 'Competitive scout' }
+            : action === 'pollOpened'
+              ? {
+                  ...common,
+                  action,
+                  key: 'ship-or-hold',
+                  category: 'decision',
+                  scope: 'round',
+                  optionCount: 3
+                }
+              : {
+                  ...common,
+                  action,
+                  key: 'scout5-competitor-research',
+                  category: 'note',
+                  scope: 'session'
+                }
     }
   }
 }
@@ -93,6 +97,31 @@ describe('BlackboardChangeRow', () => {
     expect(renderToStaticMarkup(createElement(BlackboardChangeRow, { message }))).toBe('')
   })
 
+  it('renders Scout briefs as expandable Blackboard + next-writer handoffs', () => {
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, { message: messageWithChange('scoutBriefShared') })
+    )
+
+    expect(html).toContain('Scout brief shared')
+    expect(html).toContain('Competitive scout')
+    expect(html).toContain('(Alibaba)')
+    expect(html).toContain('Blackboard + next writer')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('confidence high')
+    expect(rowSource).toContain('blackboard-scout-brief-explanation')
+    expect(rowSource).toContain('later briefs update this entry')
+  })
+
+  it('shows confidence only as an exceptional medium/low caveat', () => {
+    const message = messageWithChange('scoutBriefShared')
+    if (message.metadata?.blackboardChange?.action === 'scoutBriefShared') {
+      message.metadata.blackboardChange.confidence = 'low'
+    }
+    const html = renderToStaticMarkup(createElement(BlackboardChangeRow, { message }))
+    expect(html).toContain('Needs verification')
+    expect(html).not.toContain('confidence low')
+  })
+
   it('reuses the seat/handoff event hierarchy while keeping Blackboard-specific tool styling', () => {
     expect(rowSource).toContain('seat-change-message blackboard-change-message')
     expect(rowSource).toContain('seat-change-row blackboard-change-row')
@@ -101,6 +130,7 @@ describe('BlackboardChangeRow', () => {
     expect(composerSource).toContain('<BlackboardGlyph />')
     expect(cssSource).toContain('.blackboard-change-icon {')
     expect(cssSource).toContain('color-mix(in srgb, var(--accent)')
+    expect(cssSource).toContain('.blackboard-scout-brief-explanation {')
   })
 })
 

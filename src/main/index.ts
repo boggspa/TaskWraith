@@ -2272,7 +2272,11 @@ import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { configuredEnsembleCaptainParticipantIds } from './EnsembleAuthorityResolution'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
-import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
+import {
+  handleScoutBrief,
+  type ScoutBriefConfidence,
+  type ScoutBriefRecord
+} from './ScoutBrief'
 import {
   formatBlackboardCapacityNotice,
   makeBlackboardEntry,
@@ -2289,7 +2293,8 @@ import {
 } from './blackboard/Blackboard'
 import {
   buildBlackboardCleanedTranscriptEvent,
-  buildBlackboardPostTranscriptEvent
+  buildBlackboardPostTranscriptEvent,
+  buildScoutBriefSharedTranscriptEvent
 } from './blackboard/BlackboardTranscript'
 import { ingestBlackboardPostImages } from './blackboard/BlackboardPostAttachments'
 import { applyBlackboardPollVoteToChat } from './blackboard/BlackboardPoll'
@@ -39547,6 +39552,7 @@ async function executeGeminiMcpTool(
       // active fan-out pass — the handler returns a structured
       // error in that case rather than silently logging.
       const runId = context.appRunId || ''
+      let recordedBrief: ScoutBriefRecord | undefined
       const briefResult = handleScoutBrief(
         runId,
         {
@@ -39567,15 +39573,28 @@ async function executeGeminiMcpTool(
             ensembleOrchestratorRef?.getParticipantMetaForRun(id) || null,
           isParticipantInScoutPass: (id: string) =>
             ensembleOrchestratorRef?.isParticipantInScoutPass(id) ?? false,
-          recordScoutBrief: (id: string, brief) =>
+          recordScoutBrief: (id: string, brief) => {
+            recordedBrief = brief
             ensembleOrchestratorRef?.recordScoutBrief(id, brief)
+          }
         }
       )
       // Append the result message to the transcript so the user
       // sees the brief was recorded (or rejected) without diving
       // into raw logs.
       if (briefResult.message) {
-        ensembleOrchestratorRef?.appendStatusForRun(runId, briefResult.message)
+        const transcriptEvent =
+          briefResult.ok && recordedBrief
+            ? buildScoutBriefSharedTranscriptEvent(
+                recordedBrief,
+                ensembleOrchestratorRef?.getParticipantMetaForRun(runId) || undefined
+              )
+            : { content: briefResult.message, metadata: undefined }
+        ensembleOrchestratorRef?.appendStatusForRun(
+          runId,
+          transcriptEvent.content,
+          transcriptEvent.metadata
+        )
       }
       text = mcpJson({
         ok: briefResult.ok,

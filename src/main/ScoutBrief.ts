@@ -80,6 +80,12 @@ export interface ScoutBriefResult {
     | 'unknown'
 }
 
+function confidenceCaveat(confidence: ScoutBriefConfidence): string {
+  if (confidence === 'low') return ' · needs verification'
+  if (confidence === 'medium') return ' · tentative'
+  return ''
+}
+
 const VALID_CONFIDENCE: readonly ScoutBriefConfidence[] = ['high', 'medium', 'low']
 const MAX_FINDINGS_LENGTH = 4000
 const MAX_LIST_ITEMS = 8
@@ -159,7 +165,7 @@ export function handleScoutBrief(
   deps.recordScoutBrief(runId, brief)
   return {
     ok: true,
-    message: `Fan-out brief recorded · ${meta.role} (${meta.provider}) · confidence ${confidence}.`
+    message: `Scout brief shared · ${meta.role} (${meta.provider}) · Blackboard + next writer${confidenceCaveat(confidence)}.`
   }
 }
 

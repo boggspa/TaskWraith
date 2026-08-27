@@ -64,6 +64,43 @@
   margin-left: 2px;
 }
 
+.blackboard-change-message.is-scout-brief .blackboard-change-row {
+  cursor: pointer;
+}
+
+.blackboard-scout-brief-role {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 520;
+}
+
+.blackboard-scout-brief-provider {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-scout-brief-caveat {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f5b14c) 28%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--warning, #f5b14c) 76%, var(--text-primary));
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-scout-brief-caveat.is-low {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text-primary));
+}
+
+.blackboard-scout-brief-explanation {
+  flex-wrap: wrap;
+  color: color-mix(in srgb, var(--text-primary) 56%, transparent);
+  font-size: var(--font-size-xs);
+}
+
 @media (max-width: 620px) {
   .blackboard-change-row {
     gap: 7px;

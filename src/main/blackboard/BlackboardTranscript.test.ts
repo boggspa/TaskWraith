@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import type { BlackboardEntry, EnsembleParticipant } from '../store/types'
 import {
   buildBlackboardCleanedTranscriptEvent,
-  buildBlackboardPostTranscriptEvent
+  buildBlackboardPostTranscriptEvent,
+  buildScoutBriefSharedTranscriptEvent
 } from './BlackboardTranscript'
 
 const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
@@ -88,9 +89,48 @@ describe('Blackboard transcript event builder', () => {
     })
   })
 
+  it('presents scout briefs as Blackboard + next-writer handoffs without routine high noise', () => {
+    const high = buildScoutBriefSharedTranscriptEvent(
+      {
+        participantId: participant.id,
+        participantRole: 'Competitive scout',
+        provider: participant.provider,
+        findings: 'The competitor route is bounded.',
+        confidence: 'high',
+        emittedAt: entry.createdAt
+      },
+      participant
+    )
+    const low = buildScoutBriefSharedTranscriptEvent(
+      {
+        participantId: participant.id,
+        participantRole: 'Competitive scout',
+        provider: participant.provider,
+        findings: 'The route may have changed.',
+        confidence: 'low',
+        emittedAt: entry.createdAt
+      },
+      participant
+    )
+
+    expect(high.content).toBe(
+      'Scout brief shared · Competitive scout (Alibaba) · Blackboard + next writer.'
+    )
+    expect(high.content).not.toContain('confidence')
+    expect(high.metadata?.blackboardChange).toMatchObject({
+      action: 'scoutBriefShared',
+      role: 'Competitive scout',
+      displayProviderLabel: 'Alibaba'
+    })
+    expect(high.metadata?.blackboardChange).not.toHaveProperty('confidence')
+    expect(low.content).toContain('needs verification')
+    expect(low.metadata?.blackboardChange).toMatchObject({ confidence: 'low' })
+  })
+
   it('wires post and cleanup metadata through the run-authored status seam', () => {
     expect(indexSource).toContain('buildBlackboardPostTranscriptEvent(entry, participant)')
     expect(indexSource).toContain('buildBlackboardCleanedTranscriptEvent(')
+    expect(indexSource).toContain('buildScoutBriefSharedTranscriptEvent(')
     expect(indexSource).toMatch(
       /appendStatusForRun\([\s\S]{0,180}transcriptEvent\.content,[\s\S]{0,80}transcriptEvent\.metadata/
     )

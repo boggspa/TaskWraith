@@ -51,6 +51,10 @@ describe('handleScoutBrief', () => {
       expect(brief.participantId).toBe('claude-1')
       expect(brief.participantRole).toBe('Reviewer')
       expect(brief.provider).toBe('claude')
+      expect(result.message).toBe(
+        'Scout brief shared · Reviewer (claude) · Blackboard + next writer.'
+      )
+      expect(result.message).not.toContain('confidence high')
     })
 
     it('accepts a brief with only required fields (no blockers/recs/tags)', () => {
@@ -65,6 +69,7 @@ describe('handleScoutBrief', () => {
       expect(brief.blockers).toBeUndefined()
       expect(brief.recommendations).toBeUndefined()
       expect(brief.tags).toBeUndefined()
+      expect(result.message).toContain('tentative')
     })
 
     it('truncates findings to MAX_FINDINGS_LENGTH', () => {

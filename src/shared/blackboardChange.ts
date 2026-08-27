@@ -10,9 +10,10 @@ export const BLACKBOARD_CHANGE_KIND = 'ensembleBlackboardChange'
 /** Fresh records share the short entrance animation used by seat changes. */
 export const BLACKBOARD_CHANGE_FRESH_WINDOW_MS = 120_000
 
-export type BlackboardChangeAction = 'updated' | 'pollOpened' | 'cleaned'
+export type BlackboardChangeAction = 'updated' | 'pollOpened' | 'cleaned' | 'scoutBriefShared'
 export type BlackboardChangeCategory = 'decision' | 'fact' | 'risk' | 'do-not-repeat' | 'note'
 export type BlackboardChangeScope = 'round' | 'session' | 'chat'
+export type BlackboardScoutBriefConfidence = 'medium' | 'low'
 
 interface BlackboardChangeAttribution {
   /** Runtime provider that made the tool call. */
@@ -44,10 +45,18 @@ export interface BlackboardCleanedPayload extends BlackboardChangeAttribution {
   removedCount: number
 }
 
+export interface BlackboardScoutBriefSharedPayload extends BlackboardChangeAttribution {
+  action: 'scoutBriefShared'
+  role: string
+  /** Routine high confidence is intentionally omitted; only caveats travel. */
+  confidence?: BlackboardScoutBriefConfidence
+}
+
 export type BlackboardChangePayload =
   | BlackboardEntryUpdatedPayload
   | BlackboardPollOpenedPayload
   | BlackboardCleanedPayload
+  | BlackboardScoutBriefSharedPayload
 
 const CATEGORIES = new Set<BlackboardChangeCategory>([
   'decision',
@@ -60,6 +69,7 @@ const SCOPES = new Set<BlackboardChangeScope>(['round', 'session', 'chat'])
 const MAX_KEY_LENGTH = 80
 const MAX_POLL_OPTIONS = 6
 const MAX_REMOVED_ENTRIES = 60
+const MAX_ROLE_LENGTH = 160
 
 function boundedText(value: unknown, maxLength: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength
@@ -89,6 +99,15 @@ export function isBlackboardChangePayload(value: unknown): value is BlackboardCh
       Number.isInteger(payload.removedCount) &&
       (payload.removedCount ?? 0) > 0 &&
       (payload.removedCount ?? 0) <= MAX_REMOVED_ENTRIES
+    )
+  }
+
+  if (payload.action === 'scoutBriefShared') {
+    return (
+      boundedText(payload.role, MAX_ROLE_LENGTH) &&
+      (payload.confidence === undefined ||
+        payload.confidence === 'medium' ||
+        payload.confidence === 'low')
     )
   }
 

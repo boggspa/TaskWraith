@@ -1404,6 +1404,21 @@ describe('RemoteThreadProjection', () => {
           }
         }),
         msg(6, {
+          id: 'scout-brief-shared',
+          role: 'system',
+          content: 'Scout brief shared · Competitive scout (Alibaba) · Blackboard + next writer.',
+          metadata: {
+            blackboardChange: {
+              action: 'scoutBriefShared',
+              role: 'Competitive scout',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba',
+              changedAt: '2026-08-15T12:03:00.000Z'
+            }
+          }
+        }),
+        msg(7, {
           id: 'ordinary',
           role: 'system',
           content: 'Round closed.',
@@ -1418,8 +1433,11 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[4].noticeKind).toBe('blackboardChange')
       expect(snap.rows[4].providerHueClass).toBe('alibaba')
       expect(snap.rows[4].speaker).toBeUndefined()
+      expect(snap.rows[5].noticeKind).toBe('blackboardChange')
+      expect(snap.rows[5].providerHueClass).toBe('alibaba')
+      expect(snap.rows[5].speaker).toBeUndefined()
       // Ordinary chrome keeps folding — the stamp marks the exceptions only.
-      expect(snap.rows[5].noticeKind).toBeUndefined()
+      expect(snap.rows[6].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed hop-change payload rather than stamping it', () => {

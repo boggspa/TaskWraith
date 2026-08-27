@@ -13,7 +13,7 @@ const attribution = {
 }
 
 describe('Blackboard transcript change payload', () => {
-  it('accepts updated, poll-opened, and cleaned mutations', () => {
+  it('accepts updated, poll-opened, cleaned, and scout-brief mutations', () => {
     expect(
       isBlackboardChangePayload({
         ...attribution,
@@ -21,6 +21,21 @@ describe('Blackboard transcript change payload', () => {
         key: 'scout5-competitor-research',
         category: 'note',
         scope: 'session'
+      })
+    ).toBe(true)
+    expect(
+      isBlackboardChangePayload({
+        ...attribution,
+        action: 'scoutBriefShared',
+        role: 'Competitive scout'
+      })
+    ).toBe(true)
+    expect(
+      isBlackboardChangePayload({
+        ...attribution,
+        action: 'scoutBriefShared',
+        role: 'Competitive scout',
+        confidence: 'low'
       })
     ).toBe(true)
     expect(
@@ -52,6 +67,14 @@ describe('Blackboard transcript change payload', () => {
         key: 'safe-key',
         category: 'note',
         scope: 'session'
+      })
+    ).toBe(false)
+    expect(
+      isBlackboardChangePayload({
+        ...attribution,
+        action: 'scoutBriefShared',
+        role: 'Competitive scout',
+        confidence: 'high'
       })
     ).toBe(false)
     expect(

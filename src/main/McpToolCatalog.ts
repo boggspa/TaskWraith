@@ -3851,7 +3851,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'scout_brief',
       description:
-        'Emit a structured brief from a parallel fan-out lane. The next serial writer/synthesizer receives the collected briefs in its prompt. Returns an error outside an active fan-out lane.',
+        'Share structured findings from a parallel fan-out lane with the next serial writer/synthesizer and upsert this scout\'s session Blackboard brief. Confidence is evidence quality: high = directly verified, medium = partly verified, low = tentative or incomplete. Returns an error outside an active fan-out lane.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
