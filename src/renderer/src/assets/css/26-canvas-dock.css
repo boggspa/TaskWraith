@@ -517,7 +517,7 @@
 }
 
 .canvas-dock-popout,
-.canvas-dock-panel .canvas-pane-close {
+.canvas-pane-close {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -533,7 +533,7 @@
 }
 
 .canvas-dock-popout:hover,
-.canvas-dock-panel .canvas-pane-close:hover {
+.canvas-pane-close:hover {
   opacity: 1;
   background: var(--button-bg, rgba(127, 127, 127, 0.12));
 }

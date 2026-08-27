@@ -315,6 +315,15 @@
   flex-direction: column;
 }
 
+/* The main-pane identity and action pills float over the transcript at the
+ * window edge. Full-pane Thread Home surfaces own real toolbars, so reserve
+ * their shared top safe area instead of letting either toolbar paint behind
+ * the glass. Pane variants keep using their cell-local geometry. */
+.thread-home-surface--main {
+  box-sizing: border-box;
+  padding-top: 70px;
+}
+
 .thread-home-surface-toolbar {
   flex: 0 0 auto;
   display: grid;

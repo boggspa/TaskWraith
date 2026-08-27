@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ForwardedRef,
+  type ReactNode
+} from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
@@ -113,7 +123,6 @@ export interface ThreadHomeProps {
   variant: 'main' | 'pane'
   threads: readonly ThreadHomeThreadOption[]
   authorityChatId?: string | null
-  authorityLabel?: string
   mediaCount?: number
   busySurface?: ThreadHomeSurface | null
   issue?: string | null
@@ -128,7 +137,6 @@ export function ThreadHome({
   variant,
   threads,
   authorityChatId,
-  authorityLabel,
   mediaCount = 0,
   busySurface,
   issue,
@@ -141,7 +149,7 @@ export function ThreadHome({
   return (
     <section
       className={`thread-home thread-home--${variant}`}
-      aria-labelledby={`thread-home-${variant}-title`}
+      aria-label="Thread Home"
       onPointerDownCapture={onActivate}
     >
       {onClosePane && (
@@ -338,20 +346,27 @@ export interface ThreadHomeWorkspaceProps {
   onDetachToPane?: (ref: ChatMediaRef) => void
 }
 
+export interface ThreadHomeWorkspaceHandle {
+  closeCurrentPane: () => void
+}
+
 /** Stateful host for one independent Thread Home instance. */
-export function ThreadHomeWorkspace({
-  variant,
-  chats,
-  runningChatIds,
-  paneChatIds,
-  authorityChat,
-  mediaRefs,
-  onSelectThread,
-  onClosePane,
-  onActivate,
-  onPreviewImage,
-  onDetachToPane
-}: ThreadHomeWorkspaceProps) {
+function ThreadHomeWorkspaceInner(
+  {
+    variant,
+    chats,
+    runningChatIds,
+    paneChatIds,
+    authorityChat,
+    mediaRefs,
+    onSelectThread,
+    onClosePane,
+    onActivate,
+    onPreviewImage,
+    onDetachToPane
+  },
+  ref: ForwardedRef<ThreadHomeWorkspaceHandle>
+) {
   const [surface, setSurface] = useState<ThreadHomeSurface | null>(null)
   const [busySurface, setBusySurface] = useState<ThreadHomeSurface | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
@@ -383,14 +398,32 @@ export function ThreadHomeWorkspace({
     [authorityChatId, chats, paneChatIds, runningChatIds]
   )
 
-  const closeSurface = (): void => {
+  const closeSurface = useCallback((): void => {
     const canvasId = canvasIdRef.current
     canvasIdRef.current = null
     setCanvas(null)
     setSurface(null)
     setIssue(null)
     if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
-  }
+  }, [])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      closeCurrentPane: () => {
+        if (surface) {
+          closeSurface()
+          return
+        }
+        if (authorityChatId) {
+          onSelectThread(authorityChatId)
+          return
+        }
+        onClosePane?.()
+      }
+    }),
+    [authorityChatId, closeSurface, onClosePane, onSelectThread, surface]
+  )
 
   const openSurface = async (next: ThreadHomeSurface): Promise<void> => {
     if (!authorityChatId) return
@@ -430,7 +463,6 @@ export function ThreadHomeWorkspace({
         variant={variant}
         threads={threads}
         authorityChatId={authorityChatId}
-        authorityLabel={authorityChat?.title}
         mediaCount={mediaRefs.length}
         busySurface={busySurface}
         issue={issue}
@@ -505,3 +537,5 @@ export function ThreadHomeWorkspace({
     </section>
   )
 }
+
+export const ThreadHomeWorkspace = forwardRef(ThreadHomeWorkspaceInner)

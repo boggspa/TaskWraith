@@ -33,12 +33,20 @@ describe('Thread Home integration', () => {
   })
 
   it('routes close through the glass pill and retires the old floating pane close button', () => {
-    const pillStart = layoutSource.indexOf('<MainPaneActionPill')
+    const pillStart = layoutSource.indexOf('<MainPaneActionPill\n')
     const pillEnd = layoutSource.indexOf('/>', pillStart)
     const pill = layoutSource.slice(pillStart, pillEnd)
     expect(pill).toContain('onCloseThread={')
     expect(pill).toContain('? () => multiview.closePane(multiview.focusedPaneIndex)')
+    expect(pill).toContain('mainThreadHomeWorkspaceRef.current?.closeCurrentPane()')
     expect(pill).toContain(': openThreadHome')
+    expect(pill).not.toContain('closeThreadDisabled=')
+
+    const mainHomeStart = layoutSource.indexOf('<ThreadHomeWorkspace', pillEnd)
+    const mainHomeEnd = layoutSource.indexOf('/>', mainHomeStart)
+    expect(layoutSource.slice(mainHomeStart, mainHomeEnd)).toContain(
+      'ref={mainThreadHomeWorkspaceRef}'
+    )
 
     const gridStart = layoutSource.indexOf('<MultiviewPaneGrid')
     const gridTracks = layoutSource.indexOf('columnFractions=', gridStart)

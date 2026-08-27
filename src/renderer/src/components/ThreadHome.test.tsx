@@ -59,7 +59,6 @@ describe('ThreadHome', () => {
           }
         ]}
         authorityChatId="a"
-        authorityLabel="Alpha"
         mediaCount={4}
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
@@ -68,7 +67,7 @@ describe('ThreadHome', () => {
       />
     )
 
-    expect(html).toContain('Thread Home')
+    expect(html).toContain('aria-label="Thread Home"')
     expect(html).toContain('Alpha')
     expect(html).toContain('Pane 2')
     expect(html).toContain('aria-label="Close empty pane"')
@@ -91,7 +90,7 @@ describe('ThreadHome', () => {
     const html = renderToStaticMarkup(
       <ThreadHome variant="main" threads={[]} onSelectThread={vi.fn()} onSelectSurface={vi.fn()} />
     )
-    expect(html).toContain('Select a thread first')
+    expect(html).toContain('No visible or running threads right now.')
     expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
   })
 
@@ -100,5 +99,22 @@ describe('ThreadHome', () => {
     expect(source).not.toContain('activateRightDock')
     expect(source).not.toContain('setRightDock')
     expect(source).not.toContain("presentation: 'dock'")
+  })
+
+  it('shares one close path between full-pane surface chrome and the glass pill', () => {
+    const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
+    const css = readFileSync(new URL('../assets/css/43-thread-home.css', import.meta.url), 'utf8')
+    const canvasCss = readFileSync(
+      new URL('../assets/css/26-canvas-dock.css', import.meta.url),
+      'utf8'
+    )
+
+    expect(source).toContain('closeCurrentPane: () =>')
+    expect(source).toContain('if (surface) {')
+    expect(source).toContain('closeSurface()')
+    expect(css).toContain('.thread-home-surface--main {')
+    expect(css).toContain('padding-top: 70px')
+    expect(canvasCss).toContain('.canvas-pane-close {')
+    expect(canvasCss).not.toContain('.canvas-dock-panel .canvas-pane-close')
   })
 })

@@ -106,7 +106,7 @@ import {
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
-import { ThreadHomeWorkspace } from '../../components/ThreadHome'
+import { ThreadHomeWorkspace, type ThreadHomeWorkspaceHandle } from '../../components/ThreadHome'
 import { AuditRunCard } from '../../components/AuditRunCard'
 import { AuditRunNotice } from '../../components/AuditRunNotice'
 import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
@@ -1289,6 +1289,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     isGlobalChat: isCurrentGlobalChat
   })
   const mainPaneActionPillRef = useRef<MainPaneActionPillHandle>(null)
+  const mainThreadHomeWorkspaceRef = useRef<ThreadHomeWorkspaceHandle>(null)
   const requestMainPaneWorkspaceStats = useCallback(
     () => mainPaneActionPillRef.current?.openWorkspaceStats(),
     []
@@ -2143,11 +2144,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   currentChat
                     ? isMultiviewSplit
                       ? () => multiview.closePane(multiview.focusedPaneIndex)
-                      : openThreadHome
+                      : threadHomeOpen
+                        ? () => mainThreadHomeWorkspaceRef.current?.closeCurrentPane()
+                        : openThreadHome
                     : undefined
                 }
                 closeThreadLabel={isMultiviewSplit ? 'Close pane' : 'Close thread view'}
-                closeThreadDisabled={threadHomeOpen && !isMultiviewSplit}
               />
             </>
           )}
@@ -2245,6 +2247,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
            */}
           {threadHomeOpen && !isMultiviewSplit ? (
             <ThreadHomeWorkspace
+              ref={mainThreadHomeWorkspaceRef}
               key={currentChatAppChatId || 'thread-home'}
               variant="main"
               chats={chats}
