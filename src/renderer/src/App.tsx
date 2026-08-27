@@ -31614,7 +31614,7 @@ function App(): React.JSX.Element {
     buildPaneComposerCtx
   ])
 
-  const composerCtx: ComposerProps = {
+  const composerCtx: ComposerProps & { onOpenCompactChat: () => void } = {
     // Slice H: shared stable base (handlers + chat-independent props).
     ...composerStableBase,
     prompt,
@@ -31665,6 +31665,7 @@ function App(): React.JSX.Element {
     imageAttachments,
     isAttachingWindow,
     openSlashCommandsRequestId: slashCommandsOpenRequestId,
+    onOpenCompactChat: openCompactChatCompanion,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
     isCurrentChatLinkedChild: currentChatIsLinkedChild,
