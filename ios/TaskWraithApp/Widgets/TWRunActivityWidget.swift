@@ -231,7 +231,7 @@ private struct ProviderStack: View {
             }
         }
         .frame(width: shown.isEmpty ? 0 : CGFloat(22 + max(0, shown.count - 1) * 14), height: 22)
-        .accessibilityLabel("\(seats.count) active providers")
+        .accessibilityLabel("Provider lineup, \(shown.count) shown")
     }
 }
 

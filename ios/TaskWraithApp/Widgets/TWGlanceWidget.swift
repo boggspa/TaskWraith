@@ -93,7 +93,7 @@ private struct TWGlanceView: View {
                 Spacer()
             } else {
                 VStack(alignment: .leading, spacing: family == .systemSmall ? 10 : 12) {
-                    ForEach(Array(visibleRows.enumerated()), id: \.element.threadId) { index, row in
+                    ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
                         if family == .systemSmall && index == 0 {
                             heroRowView(row)
                         } else {
@@ -199,6 +199,8 @@ private struct TWGlanceView: View {
         let isEnsemble = provider.lowercased() == "ensemble"
         Text(provider.prefix(1).uppercased() + provider.dropFirst())
             .font(.system(size: 9, weight: isEnsemble ? .bold : .medium, design: isEnsemble ? .rounded : .default))
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
             .padding(.horizontal, isEnsemble ? 4 : 0)
             .padding(.vertical, isEnsemble ? 2 : 0)
             .background(isEnsemble ? tint.opacity(0.15) : Color.clear)
