@@ -43,12 +43,16 @@ struct TWGlanceProvider: TimelineProvider {
             rows: [
                 TWWidgetSnapshot.Row(
                     threadId: "a", title: "Refactor the auth flow", status: "running",
-                    providerLabel: "Claude", tintHex: 0x5A8CFF,
+                    providerLabel: "Ensemble", tintHex: 0x5A8CFF,
                     updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
                 TWWidgetSnapshot.Row(
                     threadId: "b", title: "Ship the release notes", status: "completed",
                     providerLabel: "Codex", tintHex: 0x2DB777,
-                    updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
+                    updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 120000),
+                TWWidgetSnapshot.Row(
+                    threadId: "c", title: "Update widget UI", status: "failed",
+                    providerLabel: "Claude", tintHex: 0xFF3B30,
+                    updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 7200000)
             ])
     }
 }
@@ -60,12 +64,12 @@ private struct TWGlanceView: View {
     private var snapshot: TWWidgetSnapshot? { entry.snapshot }
     private var stale: Bool { snapshot?.isStale(now: entry.date) ?? false }
     private var visibleRows: [TWWidgetSnapshot.Row] {
-        let limit = family == .systemSmall ? 2 : TWWidgetSnapshot.maxRows
+        let limit = family == .systemSmall ? 2 : 3
         return Array((snapshot?.rows ?? []).prefix(limit))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 Text(snapshot?.hostName ?? "TaskWraith")
                     .font(.caption2.weight(.semibold))
@@ -78,41 +82,128 @@ private struct TWGlanceView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            .padding(.bottom, family == .systemSmall ? 8 : 10)
+
             if visibleRows.isEmpty {
                 Spacer()
                 Text("No recent runs.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 Spacer()
             } else {
-                ForEach(visibleRows) { row in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(tint(row))
-                            .frame(width: 7, height: 7)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(row.title)
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
-                            HStack(spacing: 3) {
-                                if let provider = row.providerLabel {
-                                    Text(provider)
-                                }
-                                Text(statusLabel(row.status))
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                VStack(alignment: .leading, spacing: family == .systemSmall ? 10 : 12) {
+                    ForEach(Array(visibleRows.enumerated()), id: \.element.threadId) { index, row in
+                        if family == .systemSmall && index == 0 {
+                            heroRowView(row)
+                        } else {
+                            compactRowView(row)
                         }
-                        Spacer(minLength: 0)
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
-        .padding(2)
+        .padding(family == .systemSmall ? 14 : 16)
         .opacity(stale ? 0.55 : 1)
         .containerBackground(.background, for: .widget)
+    }
+
+    @ViewBuilder
+    private func heroRowView(_ row: TWWidgetSnapshot.Row) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(row.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+
+            HStack(spacing: 6) {
+                statusCapsule(row)
+
+                if let provider = row.providerLabel {
+                    providerView(provider, tint: tint(row))
+                }
+
+                Spacer(minLength: 0)
+
+                if let timestamp = row.updatedAt {
+                    Text(ageString(from: timestamp, relativeTo: entry.date))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compactRowView(_ row: TWWidgetSnapshot.Row) -> some View {
+        if family == .systemMedium {
+            HStack(spacing: 8) {
+                statusCapsule(row)
+
+                Text(row.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if let provider = row.providerLabel {
+                    providerView(provider, tint: tint(row))
+                }
+
+                if let timestamp = row.updatedAt {
+                    Text(ageString(from: timestamp, relativeTo: entry.date))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    statusCapsule(row)
+
+                    if let provider = row.providerLabel {
+                        providerView(provider, tint: tint(row))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let timestamp = row.updatedAt {
+                        Text(ageString(from: timestamp, relativeTo: entry.date))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusCapsule(_ row: TWWidgetSnapshot.Row) -> some View {
+        Text(statusLabel(row.status).uppercased())
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2.5)
+            .background(tint(row).opacity(0.15))
+            .foregroundStyle(tint(row))
+            .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func providerView(_ provider: String, tint: Color) -> some View {
+        let isEnsemble = provider.lowercased() == "ensemble"
+        Text(provider.prefix(1).uppercased() + provider.dropFirst())
+            .font(.system(size: 9, weight: isEnsemble ? .bold : .medium, design: isEnsemble ? .rounded : .default))
+            .padding(.horizontal, isEnsemble ? 4 : 0)
+            .padding(.vertical, isEnsemble ? 2 : 0)
+            .background(isEnsemble ? tint.opacity(0.15) : Color.clear)
+            .foregroundStyle(isEnsemble ? tint : .secondary)
+            .clipShape(Capsule())
     }
 
     private func tint(_ row: TWWidgetSnapshot.Row) -> Color {
@@ -133,9 +224,16 @@ private struct TWGlanceView: View {
         case "awaitingQuestion": return "Needs you"
         case "cancelled": return "Cancelled"
         default:
-            // A status a newer app invents renders as itself, neutrally.
             return status.prefix(1).uppercased() + status.dropFirst()
         }
+    }
+
+    private func ageString(from timestamp: Int64, relativeTo date: Date) -> String {
+        let age = date.timeIntervalSince1970 - Double(timestamp) / 1000
+        if age < 60 { return "now" }
+        if age < 3600 { return "\(Int(age / 60))m" }
+        if age < 86400 { return "\(Int(age / 3600))h" }
+        return "\(Int(age / 86400))d"
     }
 }
 
@@ -147,5 +245,6 @@ struct TWGlanceWidget: Widget {
         .configurationDisplayName("Agent status")
         .description("Running and recently finished TaskWraith runs.")
         .supportedFamilies([.systemSmall, .systemMedium])
+        .contentMarginsDisabled()
     }
 }
