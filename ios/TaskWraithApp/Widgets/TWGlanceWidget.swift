@@ -126,8 +126,12 @@ private struct TWGlanceView: View {
     private func statusLabel(_ status: String) -> String {
         switch status {
         case "running": return "Running"
-        case "completed": return "Done"
+        case "completed", "success": return "Done"
         case "failed": return "Failed"
+        case "queued": return "Queued"
+        case "awaitingApproval": return "Needs approval"
+        case "awaitingQuestion": return "Needs you"
+        case "cancelled": return "Cancelled"
         default:
             // A status a newer app invents renders as itself, neutrally.
             return status.prefix(1).uppercased() + status.dropFirst()

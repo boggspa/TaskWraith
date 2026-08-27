@@ -74,3 +74,33 @@ public struct TWWidgetSnapshot: Codable, Sendable, Equatable {
         return try? JSONDecoder().decode(TWWidgetSnapshot.self, from: data)
     }
 }
+
+extension TWWidgetSnapshot.Row {
+    /// Pure mapping of a projected card's raw status/provider/update fields into the
+    /// values that should appear in the glance widget. Tint hex and localized provider
+    /// labels are resolved app-side by `RemoteSessionModel` against `TWTheme` (which
+    /// lives in TaskWraithUI and cannot be reached from TaskWraithKit).
+    public static func mappedStatus(
+        status: String?,
+        provider: String?,
+        chatKind: String?,
+        updatedAt: String?
+    ) -> (status: String, displayProvider: String?, updatedAtMs: Int64?) {
+        let displayStatus = status ?? "queued"
+        let displayProvider = chatKind == "ensemble" ? "ensemble" : provider
+        let updatedAtMs: Int64? = {
+            guard let raw = updatedAt, !raw.isEmpty else { return nil }
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let plain = ISO8601DateFormatter()
+            guard let date = fractional.date(from: raw) ?? plain.date(from: raw)
+            else { return nil }
+            return Int64(date.timeIntervalSince1970 * 1_000)
+        }()
+        return (
+            status: displayStatus,
+            displayProvider: displayProvider,
+            updatedAtMs: updatedAtMs
+        )
+    }
+}

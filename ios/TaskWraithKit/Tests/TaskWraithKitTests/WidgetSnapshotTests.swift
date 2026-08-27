@@ -47,4 +47,29 @@ struct WidgetSnapshotTests {
         #expect(decoded.rows.first?.status == "hibernating")
         #expect(decoded.rows.first?.tintHex == nil)
     }
+
+    @Test func awaitingApprovalIsNotFlattenedToCompleted() {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: "awaitingApproval", provider: "codex", chatKind: nil, updatedAt: nil)
+        #expect(mapped.status == "awaitingApproval")
+    }
+
+    @Test func cancelledIsNotFlattenedToCompleted() {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: "cancelled", provider: "codex", chatKind: nil, updatedAt: nil)
+        #expect(mapped.status == "cancelled")
+    }
+
+    @Test func ensembleOverridesSeedProvider() {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: "running", provider: "pi", chatKind: "ensemble", updatedAt: nil)
+        #expect(mapped.displayProvider == "ensemble")
+    }
+
+    @Test func updatedAtIsParsedFromISOString() {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: "running", provider: "codex", chatKind: nil,
+            updatedAt: "2024-12-01T08:00:00.000Z")
+        #expect(mapped.updatedAtMs == 1_733_040_000_000)
+    }
 }

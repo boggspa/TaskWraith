@@ -1203,42 +1203,71 @@ public final class RemoteSessionModel: ObservableObject {
         #endif
     }
 
+    /// Maps a card into the glance-widget row the widget extension will render.
+    /// Kept static and internal so tests can assert the mapping without
+    /// spinning up a full `RemoteSessionModel`.
+    static func glanceWidgetRow(for card: RemoteTaskCard) -> TWWidgetSnapshot.Row {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: card.status,
+            provider: card.provider,
+            chatKind: card.chatKind,
+            updatedAt: card.updatedAt)
+        func tintHex() -> UInt32? {
+            switch mapped.status {
+            case "running":
+                return TWTheme.providerAccentHex(mapped.displayProvider)
+            case "failed", "error":
+                return TWTheme.diffStatDelHex
+            case "success":
+                return TWTheme.diffStatAddHex
+            case "awaitingApproval", "awaitingQuestion":
+                return TWTheme.statusAttentionHex
+            default:
+                return nil
+            }
+        }
+        return TWWidgetSnapshot.Row(
+            threadId: card.threadId ?? card.id,
+            title: card.title?.isEmpty == false ? (card.title ?? "Task") : "Task",
+            status: mapped.status,
+            providerLabel: mapped.displayProvider.map { TWTheme.providerLabel($0) },
+            tintHex: tintHex(),
+            updatedAt: mapped.updatedAtMs)
+    }
+
+    /// Urgency rank for glance rows: needs-you first, then active (queued/running),
+    /// then terminal/other rows ordered by recency.
+    static func glanceWidgetSortRank(_ status: String) -> Int {
+        switch status {
+        case "awaitingApproval", "awaitingQuestion": return 0
+        case "queued", "running": return 1
+        default: return 2
+        }
+    }
+
     #if os(iOS)
         /// Write the home-screen glance widget's snapshot into the App Group.
         /// Colours resolve HERE (TWTheme is app-side only — the widget links
         /// TaskWraithKit alone and renders whatever hex it is handed).
-        /// Running rows lead, then the most recent terminals, capped by the
-        /// snapshot itself.
+        /// Rows are ordered by operational urgency (needs-you, active, then the
+        /// most recently updated terminals) so the widget surface stays useful even
+        /// without exposing task titles.
         private func syncGlanceWidgetSnapshot() {
             guard !isDemo else { return }
-            func tintHex(_ card: RemoteTaskCard) -> UInt32 {
-                switch card.status {
-                case "running":
-                    return TWTheme.providerAccentHex(card.provider)
-                case "failed", "error":
-                    return TWTheme.diffStatDelHex
-                default:
-                    return TWTheme.diffStatAddHex
+            let rows = taskCards
+                .map { Self.glanceWidgetRow(for: $0) }
+                .sorted { a, b in
+                    let rankA = Self.glanceWidgetSortRank(a.status)
+                    let rankB = Self.glanceWidgetSortRank(b.status)
+                    if rankA != rankB {
+                        return rankA < rankB
+                    }
+                    return (a.updatedAt ?? 0) > (b.updatedAt ?? 0)
                 }
-            }
-            func row(_ card: RemoteTaskCard) -> TWWidgetSnapshot.Row {
-                TWWidgetSnapshot.Row(
-                    threadId: card.threadId ?? card.id,
-                    title: card.title?.isEmpty == false ? (card.title ?? "Task") : "Task",
-                    status: card.status == "running"
-                        ? "running"
-                        : (card.status == "failed" || card.status == "error")
-                            ? "failed" : "completed",
-                    providerLabel: card.provider.map { TWTheme.providerLabel($0) },
-                    tintHex: tintHex(card),
-                    updatedAt: nil)
-            }
-            let running = taskCards.filter { $0.status == "running" }
-            let settled = taskCards.filter { $0.status != "running" }
             let snapshot = TWWidgetSnapshot(
                 generatedAt: Int64(Date().timeIntervalSince1970 * 1000),
                 hostName: pairedHosts.first?.macDisplayName,
-                rows: (running + settled).map(row))
+                rows: rows)
             snapshot.save(suiteName: TWPushKeyAccess.appGroup)
             #if canImport(WidgetKit)
                 WidgetCenter.shared.reloadTimelines(ofKind: "TWGlanceWidget")
