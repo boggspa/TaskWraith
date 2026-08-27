@@ -226,6 +226,7 @@ import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/
 import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
+import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -262,6 +263,7 @@ import type { ContextCompactionProgressEvent } from '../../../shared/contextComp
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
+import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
@@ -1025,6 +1027,9 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Only valid structured payloads are promoted; malformed records keep the
     // carrier sentence as their plain fallback.
     !isContinuationHopsChangePayload(msg.metadata?.continuationHopsChange) &&
+    // Human-owned Auto Approvals changes use the same durable before/after
+    // standing as seat and hop-limit changes.
+    !isAutoApprovalsChangePayload(msg.metadata?.autoApprovalsChange) &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -4769,6 +4774,9 @@ export const TranscriptPanel = memo(
             const isContinuationHopsChange = isContinuationHopsChangePayload(
               msg.metadata?.continuationHopsChange
             )
+            const isAutoApprovalsChange = isAutoApprovalsChangePayload(
+              msg.metadata?.autoApprovalsChange
+            )
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
@@ -5713,6 +5721,8 @@ export const TranscriptPanel = memo(
                   <SeatChangeRow key={msg.id} message={msg} />
                 ) : isContinuationHopsChange ? (
                   <ContinuationHopsChangeRow key={msg.id} message={msg} />
+                ) : isAutoApprovalsChange ? (
+                  <AutoApprovalsChangeRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
                   <CollapsedTranscriptRow
                     key={msg.id}

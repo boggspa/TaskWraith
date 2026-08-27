@@ -135,6 +135,7 @@ import {
 } from '../../shared/seatChange'
 import type { SeatParticipantAddedPayload, SeatRosterSeat } from '../../shared/seatChange'
 import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
+import { appendAutoApprovalsChangeTranscriptEvent } from './EnsembleAutoApprovalsTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import { sideMessageLaneMetadataForAudience } from '../../shared/ensembleSideMessage'
 import {
@@ -8429,6 +8430,10 @@ export class EnsembleOrchestrator {
     mutation: ResolvedEnsembleUserRosterMutation,
     boundary: boolean
   ): ChatRecord {
+    const autoApprovalsBefore = chat.ensemble?.bossmanAutoApprovals?.enabled === true
+    const autoApprovalsAfter = mutation.bossmanAutoApprovals?.enabled === true
+    const changedAt = this.deps.nowIso()
+    const changedAtMs = this.deps.now()
     const runtimeAction =
       mutation.action === 'add'
         ? 'add_participant'
@@ -8484,11 +8489,25 @@ export class EnsembleOrchestrator {
         secondInCommandParticipantId: mutation.secondInCommandParticipantId,
         bossmanAutoApprovals: mutation.bossmanAutoApprovals,
         activeRound,
-        updatedAt: this.deps.nowIso()
+        updatedAt: changedAt
       },
-      updatedAt: this.deps.now()
+      updatedAt: changedAtMs
     }
-    this.saveChatWithCheckpoint(updated, runtime ? 'round-updated' : 'participant-updated')
+    const updatedWithTranscript =
+      runtime && mutation.action === 'set_auto_approvals'
+        ? appendAutoApprovalsChangeTranscriptEvent(updated, {
+            id: `ensemble-auto-approvals-change-${runtime.roundId}-${changedAtMs}-${this.nextStatusSeq()}`,
+            before: autoApprovalsBefore,
+            after: autoApprovalsAfter,
+            changedAt,
+            changedAtMs,
+            roundId: runtime.roundId
+          })
+        : updated
+    this.saveChatWithCheckpoint(
+      updatedWithTranscript,
+      runtime ? 'round-updated' : 'participant-updated'
+    )
     if (runtime) {
       const addedParticipant =
         mutation.action === 'add' && mutation.affectedParticipantId
@@ -8496,7 +8515,7 @@ export class EnsembleOrchestrator {
           : undefined
       if (addedParticipant) {
         this.appendSeatParticipantAdded(runtime.chatId, runtime.roundId, addedParticipant)
-      } else {
+      } else if (mutation.action !== 'set_auto_approvals') {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
@@ -8504,7 +8523,7 @@ export class EnsembleOrchestrator {
         )
       }
     }
-    return this.deps.getChat(chat.appChatId) || updated
+    return this.deps.getChat(chat.appChatId) || updatedWithTranscript
   }
 
   private queueOrApplyParticipantSeatChange(input: {

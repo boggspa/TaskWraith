@@ -12312,6 +12312,72 @@
   color: inherit;
 }
 
+/* Thread-wide Auto Approvals uses the real roster Auto pill vocabulary. The
+ * row holds before for two seconds, then React flips `data-pressed`; these
+ * transitions are the visible neutral <-> orange state change. */
+.auto-approvals-change-row {
+  gap: 12px;
+}
+
+.auto-approvals-change-icon {
+  transition:
+    color 360ms ease,
+    filter 360ms ease;
+}
+
+.auto-approvals-change-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auto-approvals-change-icon.is-enabled {
+  color: var(--warning, #f5b14c);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--warning, #f5b14c) 38%, transparent));
+}
+
+.auto-approvals-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+.auto-approvals-change-pill {
+  width: auto;
+  min-width: 64px;
+  flex: 0 0 auto;
+  pointer-events: none;
+  transition:
+    color 360ms ease,
+    border-color 360ms ease,
+    background 360ms ease,
+    box-shadow 360ms ease;
+}
+
+.auto-approvals-change-state,
+.auto-approvals-change-actor {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  transition: color 360ms ease;
+}
+
+.auto-approvals-change-state.is-enabled {
+  color: color-mix(in srgb, var(--warning, #f5b14c) 68%, var(--text-primary));
+}
+
+.auto-approvals-change-actor {
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 52%, transparent);
+}
+
+.auto-approvals-change-was {
+  gap: 12px;
+}
+
 :root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row {
   animation: none !important;
 }
@@ -12320,11 +12386,22 @@
   transition: none !important;
 }
 
+:root[data-reduce-motion="true"] .auto-approvals-change-icon,
+:root[data-reduce-motion="true"] .auto-approvals-change-pill,
+:root[data-reduce-motion="true"] .auto-approvals-change-state {
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .seat-change-message.is-fresh .seat-change-row {
     animation: none !important;
   }
   .char-odometer__slot {
+    transition: none !important;
+  }
+  .auto-approvals-change-icon,
+  .auto-approvals-change-pill,
+  .auto-approvals-change-state {
     transition: none !important;
   }
 }

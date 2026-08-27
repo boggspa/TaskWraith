@@ -11763,6 +11763,56 @@ Next action:
     completeDispatchedRun(harness, 1)
   })
 
+  it('records live Auto Approvals toggles as structured before/after events', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate the release.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.requestUserRosterMutation({
+        chatId: 'ensemble-chat',
+        action: 'set_auto_approvals',
+        enabled: true
+      })
+    ).toMatchObject({ ok: true, status: 'applied' })
+    expect(harness.chat.messages.at(-1)).toMatchObject({
+      role: 'system',
+      content: 'User enabled thread-wide Auto Approvals.',
+      metadata: {
+        kind: 'ensembleAutoApprovalsChange',
+        ensembleRoundId: harness.chat.ensemble?.activeRound?.roundId,
+        autoApprovalsChange: { before: false, after: true }
+      }
+    })
+
+    expect(
+      harness.orchestrator.requestUserRosterMutation({
+        chatId: 'ensemble-chat',
+        action: 'set_auto_approvals',
+        enabled: false
+      })
+    ).toMatchObject({ ok: true, status: 'applied' })
+    expect(harness.chat.messages.at(-1)).toMatchObject({
+      role: 'system',
+      content: 'User disabled thread-wide Auto Approvals.',
+      metadata: {
+        kind: 'ensembleAutoApprovalsChange',
+        autoApprovalsChange: { before: true, after: false }
+      }
+    })
+    expect(
+      harness.chat.messages.some(
+        (message) => message.content === 'Thread-wide Auto Approvals updated.'
+      )
+    ).toBe(false)
+  })
+
   it('synchronizes live Captain mutations into runtime and active-round authority', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.participants = [

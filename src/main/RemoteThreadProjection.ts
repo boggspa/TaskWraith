@@ -73,6 +73,7 @@ import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProvi
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
+import { isAutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
 import {
   usageCacheCreationInputTokens,
   usageCacheReadInputTokens,
@@ -1738,6 +1739,9 @@ function distinguishedNoticeKind(
   // carrier sentence's plain standing instead of being promoted on a bad field.
   if (isContinuationHopsChangePayload(metadata.continuationHopsChange)) {
     return 'continuationHopsChange'
+  }
+  if (isAutoApprovalsChangePayload(metadata.autoApprovalsChange)) {
+    return 'autoApprovalsChange'
   }
   return undefined
 }

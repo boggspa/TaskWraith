@@ -2857,7 +2857,7 @@ export function EnsembleParticipantAuthorityControls({
         </PillButton>
         <PillButton
           size="compact"
-          className="ensemble-above-overflow-toggle is-auto"
+          className="ensemble-above-overflow-toggle is-auto thread-auto-approvals-pill"
           aria-label="Thread-wide Auto Approvals"
           aria-pressed={effectiveAutoApprovalsEnabled}
           title={
@@ -3325,7 +3325,7 @@ export function EnsembleChipRolePicker({
           </PillButton>
           <PillButton
             size="compact"
-            className="ensemble-above-overflow-toggle is-auto"
+            className="ensemble-above-overflow-toggle is-auto thread-auto-approvals-pill"
             aria-label="Thread-wide Auto Approvals"
             aria-pressed={effectiveAutoApprovalsEnabled}
             title={

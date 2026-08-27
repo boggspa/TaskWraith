@@ -2172,7 +2172,7 @@
   box-shadow: 0 0 10px color-mix(in srgb, var(--success, #34d399) 24%, transparent);
 }
 
-.ensemble-above-overflow-toggle.is-auto[aria-pressed='true'] {
+.thread-auto-approvals-pill:is([aria-pressed='true'], [data-pressed='true']) {
   --segmented-action-foreground: var(--warning, #f5b14c);
   --segmented-action-border: color-mix(
     in srgb,

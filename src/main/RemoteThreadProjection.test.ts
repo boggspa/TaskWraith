@@ -18,6 +18,7 @@ import {
   buildStaleRunSettlementNotice
 } from './RunFailureNotice'
 import type { ContinuationHopsChangePayload } from '../shared/continuationHopsChange'
+import type { AutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -1373,6 +1374,18 @@ describe('RemoteThreadProjection', () => {
           }
         }),
         msg(4, {
+          id: 'auto-approvals',
+          role: 'system',
+          content: 'User enabled thread-wide Auto Approvals.',
+          metadata: {
+            autoApprovalsChange: {
+              before: false,
+              after: true,
+              changedAt: '2026-08-15T12:01:00.000Z'
+            }
+          }
+        }),
+        msg(5, {
           id: 'ordinary',
           role: 'system',
           content: 'Round closed.',
@@ -1383,8 +1396,9 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0].noticeKind).toBe('fleetWave')
       expect(snap.rows[1].noticeKind).toBe('ensembleBossmanPoll')
       expect(snap.rows[2].noticeKind).toBe('continuationHopsChange')
+      expect(snap.rows[3].noticeKind).toBe('autoApprovalsChange')
       // Ordinary chrome keeps folding — the stamp marks the exceptions only.
-      expect(snap.rows[3].noticeKind).toBeUndefined()
+      expect(snap.rows[4].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed hop-change payload rather than stamping it', () => {
@@ -1406,6 +1420,25 @@ describe('RemoteThreadProjection', () => {
               actor: 'nobody',
               changedAt: 'soon'
             } as unknown as ContinuationHopsChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBeUndefined()
+    })
+
+    it('rejects a malformed Auto Approvals change rather than stamping it', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bad-auto-approvals',
+          role: 'system',
+          content: 'Thread-wide Auto Approvals updated.',
+          metadata: {
+            autoApprovalsChange: {
+              before: false,
+              after: false,
+              changedAt: 'soon'
+            } as unknown as AutoApprovalsChangePayload
           }
         })
       ])

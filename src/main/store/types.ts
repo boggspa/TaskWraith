@@ -9,6 +9,8 @@ import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
 import type { ContinuationHopsChangePayload } from '../../shared/continuationHopsChange'
+import type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
+export type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
 export type {
   ContinuationHopsChangeActor,
   ContinuationHopsChangePayload
@@ -3716,6 +3718,10 @@ export interface ChatMessage {
      * DigitOdometer transcript row. The carrier's plain `content` remains the
      * fallback for TUI, iOS, export, and older renderers. */
     continuationHopsChange?: ContinuationHopsChangePayload
+    /** Structured thread-wide Auto Approvals consent change. Desktop renders
+     *  the real Auto pill transitioning before -> after; plaintext clients use
+     *  the carrier message's explicit enabled/disabled sentence. */
+    autoApprovalsChange?: AutoApprovalsChangePayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */
