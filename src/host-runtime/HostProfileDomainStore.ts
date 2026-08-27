@@ -954,6 +954,37 @@ export class HostProfileDomainStore {
     return next
   }
 
+  persistThreadRecord(input: {
+    threadId: string
+    record: unknown
+    expectedRevision: number
+  }): HostProfileThread {
+    this.assertAuthority()
+    this.requireId(input.threadId)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new Error('Invalid expected revision')
+    }
+    const decoded = decodeThread(input.record)
+    if (decoded.appChatId !== input.threadId) {
+      throw new Error('Thread identity mismatch')
+    }
+    const current = this.getThread(input.threadId)
+    if (current === null) {
+      if (input.expectedRevision !== 0) {
+        throw new Error('Thread is not found')
+      }
+    } else if ((current.persistenceRevision ?? 0) !== input.expectedRevision) {
+      throw new Error('Thread persistence revision mismatch')
+    }
+    const next: HostProfileThread = {
+      ...decoded,
+      persistenceRevision: current === null ? 0 : this.nextRevision(current),
+      updatedAt: this.now()
+    }
+    this.writeThread(next)
+    return next
+  }
+
   appendTranscript(input: {
     threadId: string
     runId?: string

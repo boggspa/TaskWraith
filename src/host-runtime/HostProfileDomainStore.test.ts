@@ -481,4 +481,196 @@ describe('HostProfileDomainStore', () => {
       store.configureThread({ threadId: thread.appChatId, title: 'Still blocked' })
     ).toThrow('active')
   })
+
+  it('creates a thread record via optimistic persist with expectedRevision 0', () => {
+    const { store } = open()
+    const record = {
+      appChatId: 'id-new-thread',
+      scope: 'global',
+      title: 'Persisted create',
+      archived: false,
+      messages: [],
+      updatedAt: 1000,
+      unknownChatField: { preserved: true }
+    }
+    const persisted = store.persistThreadRecord({
+      threadId: 'id-new-thread',
+      record,
+      expectedRevision: 0
+    })
+    expect(persisted.appChatId).toBe('id-new-thread')
+    expect(persisted.title).toBe('Persisted create')
+    expect(persisted.persistenceRevision).toBe(0)
+    expect(persisted.unknownChatField).toEqual({ preserved: true })
+    expect(store.getThread('id-new-thread')).toMatchObject({
+      title: 'Persisted create',
+      persistenceRevision: 0
+    })
+  })
+
+  it('updates a thread record via optimistic persist and advances the Host-owned revision', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const record = {
+      ...thread,
+      title: 'After',
+      ensemble: {
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 1
+          }
+        ]
+      },
+      unknownChatField: { kept: true }
+    }
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record,
+      expectedRevision: 0
+    })
+    expect(persisted.title).toBe('After')
+    expect(persisted.persistenceRevision).toBe(1)
+    expect(persisted.ensemble).toEqual(record.ensemble)
+    expect(persisted.unknownChatField).toEqual({ kept: true })
+    const reloaded = store.getThread(thread.appChatId)
+    expect(reloaded?.title).toBe('After')
+    expect(reloaded?.persistenceRevision).toBe(1)
+  })
+
+  it('preserves ensemble state across a later updateRun after persistThreadRecord', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const record = {
+      ...thread,
+      ensemble: {
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Boss',
+            instructions: '',
+            order: 1
+          }
+        ]
+      }
+    }
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record,
+      expectedRevision: 0
+    })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'running'
+    })
+    const updated = store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      status: 'completed'
+    })
+    expect(updated.ensemble).toEqual(record.ensemble)
+    expect(updated.persistenceRevision).toBe(3)
+  })
+
+  it('rejects a persist when the record identity does not match the target thread', () => {
+    const { store } = open()
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: 'id-wanted',
+        record: {
+          appChatId: 'id-actual',
+          scope: 'global',
+          title: 'Mismatch',
+          archived: false,
+          messages: [],
+          updatedAt: 1
+        },
+        expectedRevision: 0
+      })
+    ).toThrow('identity')
+  })
+
+  it('rejects a persist with an invalid or negative expected revision', () => {
+    const { store } = open()
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: 'id-thread',
+        record: {
+          appChatId: 'id-thread',
+          scope: 'global',
+          title: 'Bad revision',
+          archived: false,
+          messages: [],
+          updatedAt: 1
+        },
+        expectedRevision: -1
+      })
+    ).toThrow('Invalid expected revision')
+  })
+
+  it('rejects an update when the thread does not exist and expectedRevision is not 0', () => {
+    const { store } = open()
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: 'id-missing',
+        record: {
+          appChatId: 'id-missing',
+          scope: 'global',
+          title: 'Missing',
+          archived: false,
+          messages: [],
+          updatedAt: 1
+        },
+        expectedRevision: 5
+      })
+    ).toThrow('not found')
+  })
+
+  it('rejects a persist when the current revision does not match the expected revision', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: thread.appChatId,
+        record: { ...thread, title: 'Lost race' },
+        expectedRevision: 99
+      })
+    ).toThrow('revision mismatch')
+  })
+
+  it('persists a record larger than 256 KB without inlining it in a control frame', () => {
+    const { store } = open()
+    const bigContent = 'x'.repeat(300_000)
+    const record = {
+      appChatId: 'id-big',
+      scope: 'global',
+      title: 'Big record',
+      archived: false,
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          content: bigContent,
+          timestamp: '2026-08-24T00:00:00.000Z'
+        }
+      ],
+      updatedAt: 1000
+    }
+    const persisted = store.persistThreadRecord({
+      threadId: 'id-big',
+      record,
+      expectedRevision: 0
+    })
+    expect(persisted.messages[0].content).toHaveLength(300_000)
+    expect(Buffer.byteLength(JSON.stringify(persisted), 'utf8')).toBeGreaterThan(256_000)
+    const reloaded = store.getThread('id-big')
+    expect(reloaded?.messages[0].content).toHaveLength(300_000)
+  })
 })
