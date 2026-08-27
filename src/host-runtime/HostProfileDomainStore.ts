@@ -36,6 +36,8 @@ import type {
   HostThreadHistoryRequest,
   HostTranscriptHistoryEntry
 } from '../shared/hostHistoryProtocol'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 
 export const HOST_PROFILE_WORKSPACES_FILENAME = 'workspaces.json'
 export const HOST_PROFILE_CHATS_DIRECTORY = 'chats'
@@ -115,6 +117,167 @@ export interface HostProfileDomainStoreOptions {
   readonly idFactory?: () => string
   /** Fault seam after durable temp fsync and before authoritative rename. */
   readonly beforeAtomicPublish?: (targetPath: string) => void
+}
+
+type StoredEnsembleParticipant = Record<string, unknown> & {
+  id: string
+  provider: string
+  enabled: boolean
+  role: string
+  instructions: string
+  order: number
+}
+
+type StoredEnsembleConfig = Record<string, unknown> & {
+  participants: StoredEnsembleParticipant[]
+}
+
+const HOST_ENSEMBLE_COMPANIONS = [
+  {
+    provider: 'claude',
+    role: 'Claude',
+    instructions: 'Explore the request, identify constraints, and propose the safest path forward.',
+    model: 'claude-sonnet-5'
+  },
+  {
+    provider: 'codex',
+    role: 'Codex',
+    instructions: 'Implement concrete code or workflow changes when the round calls for action.',
+    model: 'gpt-5.5'
+  },
+  {
+    provider: 'kimi',
+    role: 'Kimi',
+    instructions: 'Review prior responses for gaps, edge cases, and test coverage.',
+    model: 'kimi-k2.7-code'
+  },
+  {
+    provider: 'grok',
+    role: 'Grok',
+    instructions: 'Stress-test assumptions, failure modes, and simpler alternatives.',
+    model: 'grok-4.6'
+  },
+  {
+    provider: 'ollama',
+    role: 'Local',
+    instructions:
+      'Provide a local second opinion for summaries, triage, and small reasoning tasks.',
+    model: 'qwen3.5:9b'
+  }
+] as const
+
+function storedParticipant(value: unknown): StoredEnsembleParticipant | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Record<string, unknown>
+  if (
+    !safeId(candidate.id) ||
+    !safeId(candidate.provider) ||
+    typeof candidate.enabled !== 'boolean' ||
+    !safeText(candidate.role, 200) ||
+    typeof candidate.instructions !== 'string' ||
+    !Number.isSafeInteger(candidate.order)
+  ) {
+    return null
+  }
+  return candidate as StoredEnsembleParticipant
+}
+
+function storedEnsemble(value: unknown): StoredEnsembleConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Record<string, unknown>
+  if (!Array.isArray(candidate.participants) || candidate.participants.length === 0) return null
+  const participants = candidate.participants.map(storedParticipant)
+  if (participants.some((participant) => participant === null)) return null
+  return {
+    ...candidate,
+    participants: participants as StoredEnsembleParticipant[]
+  }
+}
+
+function resetStoredParticipantSession(
+  participant: StoredEnsembleParticipant
+): StoredEnsembleParticipant {
+  const {
+    taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
+    kimiAcpPostureVersion: _dropKimiPosture,
+    promptShellVersion: _dropPromptShell,
+    promptDynamicStateVersion: _dropPromptState,
+    ...rest
+  } = participant
+  return {
+    ...rest,
+    linkedProviderSessionId: null
+  }
+}
+
+function approvalModeForParticipant(participant: StoredEnsembleParticipant): string {
+  switch (participant.permissionPresetId) {
+    case 'read_only':
+    case 'plan':
+      return 'plan'
+    case 'workspace_write':
+    case 'full_access':
+      return 'auto_edit'
+    default:
+      return 'default'
+  }
+}
+
+function canonicalParticipantMetadata(
+  participant: StoredEnsembleParticipant
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    approvalMode: approvalModeForParticipant(participant)
+  }
+  if (typeof participant.model === 'string' && participant.model.length > 0) {
+    metadata.selectedModelType = participant.model
+  }
+  if (participant.permissionPresetId === 'plan') metadata.workflowMode = 'plan'
+  if (typeof participant.runtimeProfileId === 'string') {
+    metadata.runtimeProfileId = participant.runtimeProfileId
+  }
+  const effort = typeof participant.reasoningEffort === 'string' ? participant.reasoningEffort : ''
+  const fast = participant.fastModeEnabled === true
+  switch (participant.provider) {
+    case 'codex':
+      metadata.codexReasoningEffort = effort || 'medium'
+      metadata.codexServiceTier =
+        typeof participant.serviceTier === 'string' ? participant.serviceTier : fast ? 'fast' : ''
+      break
+    case 'claude':
+      metadata.claudeReasoningEffort = effort || 'medium'
+      metadata.claudeFastMode = fast
+      break
+    case 'kimi':
+      metadata.kimiFastMode = fast
+      metadata.kimiReasoningEffort = effort || 'on'
+      metadata.kimiThinkingEnabled = participant.thinkingEnabled !== false
+      break
+    case 'grok':
+      metadata.grokReasoningEffort = effort
+      break
+    case 'muse':
+      metadata.museReasoningEffort = effort
+      break
+    case 'mistral':
+      metadata.mistralReasoningEffort = effort
+      break
+    case 'pi':
+      metadata.piReasoningEffort = effort
+      break
+    case 'ollama':
+      metadata.ollamaReasoningEffort = effort
+      break
+    case 'cursor':
+      metadata.cursorReasoningEffort = effort
+      metadata.cursorFastMode = fast
+      break
+    case 'antigravity':
+      metadata.antigravityReasoningEffort = effort || null
+      metadata.antigravityUltraTaskSelected = effort.trim().toLowerCase() === 'ultratask'
+      break
+  }
+  return metadata
 }
 
 function safeId(value: unknown): value is string {
@@ -572,6 +735,205 @@ export class HostProfileDomainStore {
       delete (next as Record<string, unknown>).linkedGeminiSessionId
       delete (next as Record<string, unknown>).taskWraithMcpProfileReceipt
     }
+    this.writeThread(next)
+    return next
+  }
+
+  setThreadKind(input: {
+    threadId: string
+    targetKind: 'single' | 'ensemble'
+    canonicalProviderId?: string
+  }): HostProfileThread {
+    this.assertAuthority()
+    const current = this.requireThread(input.threadId)
+    const currentKind = current.chatKind === 'ensemble' ? 'ensemble' : 'single'
+    const targetKind = input.targetKind === 'ensemble' ? 'ensemble' : 'single'
+    if (currentKind === targetKind) return current
+    this.assertIdle(current)
+    const currentEnsemble = storedEnsemble(current.ensemble)
+    if (
+      currentKind === 'ensemble' &&
+      isEnsembleRoundDispatchLive(currentEnsemble?.activeRound as never)
+    ) {
+      throw new Error('Thread is active')
+    }
+
+    const now = this.now()
+    const nowIso = new Date(now).toISOString()
+    const currentMetadata =
+      current.providerMetadata && typeof current.providerMetadata === 'object'
+        ? { ...current.providerMetadata }
+        : {}
+
+    if (targetKind === 'single') {
+      if (!currentEnsemble) throw new Error('Ensemble configuration is unavailable')
+      const canonicalProviderId = input.canonicalProviderId
+      if (!safeId(canonicalProviderId)) throw new Error('Canonical provider is required')
+      const canonicalParticipant = currentEnsemble.participants.find(
+        (participant) => participant.provider === canonicalProviderId
+      )
+      if (!canonicalParticipant) throw new Error('Canonical provider is not in the Ensemble')
+      const { activeRound: _dropActiveRound, ...stashableConfig } = currentEnsemble
+      const providerMetadata = {
+        ...currentMetadata,
+        ...canonicalParticipantMetadata(canonicalParticipant),
+        stashedEnsemble: {
+          config: {
+            ...stashableConfig,
+            participants: currentEnsemble.participants.map(resetStoredParticipantSession)
+          },
+          provider: canonicalProviderId,
+          stashedAt: nowIso
+        }
+      }
+      const {
+        ensemble: _dropEnsemble,
+        linkedProviderSessionId: _dropProviderSession,
+        linkedGeminiSessionId: _dropGeminiSession,
+        taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
+        ...withoutEnsemble
+      } = current
+      const next: HostProfileThread = {
+        ...withoutEnsemble,
+        chatKind: 'single',
+        provider: canonicalProviderId,
+        providerMetadata,
+        persistenceRevision: this.nextRevision(current),
+        updatedAt: now
+      }
+      this.writeThread(next)
+      return next
+    }
+
+    if (!safeId(current.provider)) throw new Error('Thread provider is required')
+    const stash =
+      currentMetadata.stashedEnsemble && typeof currentMetadata.stashedEnsemble === 'object'
+        ? (currentMetadata.stashedEnsemble as Record<string, unknown>)
+        : null
+    const stashedConfig = storedEnsemble(stash?.config)
+    const restorable = stash?.provider === current.provider && stashedConfig !== null
+    let ensemble: StoredEnsembleConfig
+    if (restorable && stashedConfig) {
+      ensemble = {
+        ...stashedConfig,
+        participants: stashedConfig.participants.map(resetStoredParticipantSession),
+        updatedAt: nowIso
+      }
+    } else {
+      const selectedModelType = currentMetadata.selectedModelType
+      const selectedModel =
+        selectedModelType === 'custom' && typeof currentMetadata.customModel === 'string'
+          ? currentMetadata.customModel
+          : typeof selectedModelType === 'string'
+            ? selectedModelType
+            : undefined
+      const permissionPresetId =
+        currentMetadata.approvalMode === 'plan'
+          ? current.workflowMode === 'plan'
+            ? 'plan'
+            : 'read_only'
+          : currentMetadata.approvalMode === 'auto_edit'
+            ? 'workspace_write'
+            : 'default'
+      const effortKey =
+        current.provider === 'codex'
+          ? 'codexReasoningEffort'
+          : current.provider === 'claude'
+            ? 'claudeReasoningEffort'
+            : current.provider === 'kimi'
+              ? 'kimiReasoningEffort'
+              : current.provider === 'grok'
+                ? 'grokReasoningEffort'
+                : current.provider === 'muse'
+                  ? 'museReasoningEffort'
+                  : current.provider === 'mistral'
+                    ? 'mistralReasoningEffort'
+                    : current.provider === 'pi'
+                      ? 'piReasoningEffort'
+                      : current.provider === 'ollama'
+                        ? 'ollamaReasoningEffort'
+                        : current.provider === 'cursor'
+                          ? 'cursorReasoningEffort'
+                          : current.provider === 'antigravity'
+                            ? 'antigravityReasoningEffort'
+                            : null
+      const reasoningEffort =
+        effortKey && typeof currentMetadata[effortKey] === 'string'
+          ? currentMetadata[effortKey]
+          : undefined
+      const seed: StoredEnsembleParticipant = {
+        id: `ensemble-seed-${this.newId()}`,
+        provider: current.provider,
+        enabled: true,
+        role: current.provider,
+        instructions: '',
+        order: 1,
+        permissionPresetId,
+        ...(selectedModel ? { model: selectedModel } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(typeof currentMetadata.runtimeProfileId === 'string'
+          ? { runtimeProfileId: currentMetadata.runtimeProfileId }
+          : {}),
+        ...(current.provider === 'codex'
+          ? {
+              fastModeEnabled: currentMetadata.codexServiceTier === 'fast',
+              ...(typeof currentMetadata.codexServiceTier === 'string'
+                ? { serviceTier: currentMetadata.codexServiceTier }
+                : {})
+            }
+          : {}),
+        ...(current.provider === 'claude'
+          ? { fastModeEnabled: currentMetadata.claudeFastMode === true }
+          : {}),
+        ...(current.provider === 'kimi'
+          ? {
+              fastModeEnabled: currentMetadata.kimiFastMode === true,
+              thinkingEnabled: currentMetadata.kimiThinkingEnabled !== false
+            }
+          : {}),
+        ...(current.provider === 'cursor'
+          ? { fastModeEnabled: currentMetadata.cursorFastMode === true }
+          : {})
+      }
+      const companionTemplate =
+        HOST_ENSEMBLE_COMPANIONS.find((candidate) => candidate.provider !== current.provider) ??
+        HOST_ENSEMBLE_COMPANIONS[0]
+      const companion: StoredEnsembleParticipant = {
+        id: `ensemble-companion-${this.newId()}`,
+        provider: companionTemplate.provider,
+        enabled: true,
+        role: companionTemplate.role,
+        instructions: companionTemplate.instructions,
+        order: 2,
+        model: companionTemplate.model,
+        permissionPresetId: 'default'
+      }
+      ensemble = {
+        enabled: true,
+        maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
+        orchestrationMode: 'turn_bound',
+        maxContinuationHops: 6,
+        participants: [seed, companion],
+        bossmanParticipantId: seed.id,
+        captainParticipantIds: [companion.id],
+        secondInCommandParticipantId: companion.id,
+        updatedAt: nowIso
+      }
+    }
+    const { stashedEnsemble: _consumeStash, ...remainingMetadata } = currentMetadata
+    const next: HostProfileThread = {
+      ...current,
+      chatKind: 'ensemble',
+      ensemble,
+      ...(Object.keys(remainingMetadata).length > 0
+        ? { providerMetadata: remainingMetadata }
+        : { providerMetadata: undefined }),
+      persistenceRevision: this.nextRevision(current),
+      updatedAt: now
+    }
+    delete (next as Record<string, unknown>).linkedProviderSessionId
+    delete (next as Record<string, unknown>).linkedGeminiSessionId
+    delete (next as Record<string, unknown>).taskWraithMcpProfileReceipt
     this.writeThread(next)
     return next
   }

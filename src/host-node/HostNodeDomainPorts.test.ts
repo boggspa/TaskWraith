@@ -174,6 +174,44 @@ afterEach(() => {
 })
 
 describe('HostNodeDomainPorts', () => {
+  it('executes chat-kind configuration against the standalone Host-owned thread store', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-ensemble-on',
+          { threadId: thread.appChatId },
+          { chatKind: 'ensemble' }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({ chatKind: 'ensemble' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-ensemble-off',
+          { threadId: thread.appChatId },
+          { chatKind: 'single', canonicalProviderId: 'muse' }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      chatKind: 'single',
+      provider: 'muse'
+    })
+  })
+
   it('runs setup to a configured Muse thread, acknowledges composer after durable start, then records cancellation/history', async () => {
     const { domain, store, workspace, events } = open()
     const workspaceResult = await domain.executeCommand(

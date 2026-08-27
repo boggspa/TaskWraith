@@ -1,4 +1,7 @@
 import type {
+  HostActorIdentity,
+  HostAuthenticatedClientIdentity,
+  HostCapability,
   HostCommand,
   HostCommandReceipt,
   HostCursorPosition,
@@ -58,6 +61,9 @@ export interface HostProjectionBroker {
 export interface HostProjectionBrokerOptions {
   readonly userDataPath: string
   readonly appVersion: string
+  readonly client?: HostAuthenticatedClientIdentity
+  readonly actor?: HostActorIdentity
+  readonly capabilities?: readonly HostCapability[]
   readonly createClient?: () => HostProjectionClientPort
 }
 
@@ -78,16 +84,28 @@ export function createHostProjectionBroker(
     throw new Error('HostProjectionBroker requires appVersion')
   }
 
+  const clientIdentity: HostAuthenticatedClientIdentity = options.client ?? {
+    clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+    clientClass: 'desktop',
+    clientVersion: options.appVersion
+  }
+  const actorIdentity: HostActorIdentity = options.actor ?? {
+    ...TASKWRAITH_DESKTOP_HOST_ACTOR
+  }
+  if (
+    actorIdentity.clientId !== clientIdentity.clientId ||
+    actorIdentity.clientClass !== clientIdentity.clientClass
+  ) {
+    throw new Error('HostProjectionBroker actor must match its authenticated client')
+  }
+  const capabilities = options.capabilities ?? DESKTOP_HOST_CAPABILITIES
+
   const createClient =
     options.createClient ??
     ((): HostProjectionClientPort =>
       new HostProjectionClient({
-        client: {
-          clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
-          clientClass: 'desktop',
-          clientVersion: options.appVersion
-        },
-        capabilities: [...DESKTOP_HOST_CAPABILITIES],
+        client: clientIdentity,
+        capabilities: [...capabilities],
         userDataPath: options.userDataPath
       }) as unknown as HostProjectionClientPort)
 
@@ -159,7 +177,7 @@ export function createHostProjectionBroker(
     }
   }
 
-  return {
+  const broker: HostProjectionBroker = {
     async snapshot() {
       const outcome = await withClient((active) => active.getSnapshot())
       return outcome.ok
@@ -177,7 +195,7 @@ export function createHostProjectionBroker(
     async submitCommand(command) {
       const authenticatedCommand: HostCommand = {
         ...command,
-        actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
+        actor: { ...actorIdentity }
       }
       const outcome = await withClient((active) => active.submitCommand(authenticatedCommand))
       return outcome.ok ? { ok: true, receipt: outcome.value } : { ok: false, error: outcome.error }
@@ -190,4 +208,5 @@ export function createHostProjectionBroker(
 
     close: discardClient
   }
+  return broker
 }

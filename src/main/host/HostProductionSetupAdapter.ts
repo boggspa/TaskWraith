@@ -49,6 +49,8 @@ export interface HostProductionSetupChatPort {
   ): { readonly appChatId: string } | Promise<{ readonly appChatId: string }>
   configureThread(input: {
     readonly chatId: string
+    readonly chatKind?: 'single' | 'ensemble'
+    readonly canonicalProvider?: ProviderId
     readonly provider?: ProviderId
     readonly selectedModelType?: string
     readonly reasoningId?: string
@@ -471,6 +473,10 @@ export function createHostProductionSetupAdapter(
       configure: async (input) => {
         const chat = await options.chat.configureThread({
           chatId: input.threadId,
+          ...(input.chatKind !== undefined ? { chatKind: input.chatKind } : {}),
+          ...(input.canonicalProviderId !== undefined
+            ? { canonicalProvider: input.canonicalProviderId as ProviderId }
+            : {}),
           ...(input.providerId !== undefined ? { provider: input.providerId as ProviderId } : {}),
           ...(input.modelId !== undefined ? { selectedModelType: input.modelId } : {}),
           ...(input.reasoningId !== undefined ? { reasoningId: input.reasoningId } : {}),

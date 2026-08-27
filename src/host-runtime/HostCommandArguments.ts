@@ -428,6 +428,32 @@ function validateThreadConfigure(command: HostCommand): HostDecodeResult<Canonic
   if (!target.ok) return target
   const args = command.arguments
   const keys = Object.keys(args).sort()
+  if (args.chatKind === 'ensemble' && keys.length === 1 && keys[0] === 'chatKind') {
+    return {
+      ok: true,
+      value: { target: target.value, arguments: { chatKind: 'ensemble' } }
+    }
+  }
+  if (
+    args.chatKind === 'single' &&
+    keys.length === 2 &&
+    keys[0] === 'canonicalProviderId' &&
+    keys[1] === 'chatKind'
+  ) {
+    if (!isNonEmptyString(args.canonicalProviderId, HOST_PROTOCOL_MAX_ID)) {
+      return fail('thread.configure canonicalProviderId must be a bounded string')
+    }
+    return {
+      ok: true,
+      value: {
+        target: target.value,
+        arguments: { chatKind: 'single', canonicalProviderId: args.canonicalProviderId }
+      }
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(args, 'chatKind')) {
+    return fail('thread.configure chat-kind change is invalid')
+  }
   if (keys.length === 1 && keys[0] === 'title') {
     if (!isNonEmptyString(args.title, HOST_PROTOCOL_MAX_SHORT)) {
       return fail('thread.configure title must be a bounded string')

@@ -16,6 +16,22 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('HostProjectionBroker', () => {
+  it('requires a dedicated broker actor to match its authenticated client identity', () => {
+    expect(() =>
+      createHostProjectionBroker({
+        userDataPath: '/tmp/taskwraith-host-broker-test',
+        appVersion: 'test',
+        client: {
+          clientId: 'thread-kind-client',
+          clientClass: 'desktop',
+          clientVersion: 'test'
+        },
+        actor: TASKWRAITH_DESKTOP_HOST_ACTOR,
+        createClient: vi.fn()
+      })
+    ).toThrow('actor must match')
+  })
+
   it('single-flights one authenticated Desktop session across concurrent consumers', async () => {
     const gate = deferred()
     const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })

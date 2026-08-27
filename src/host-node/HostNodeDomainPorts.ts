@@ -415,6 +415,8 @@ export class HostNodeDomainPorts {
 
   private configureThread(input: {
     readonly threadId: string
+    readonly chatKind?: 'single' | 'ensemble'
+    readonly canonicalProviderId?: string
     readonly providerId?: string
     readonly modelId?: string
     readonly reasoningId?: string
@@ -422,6 +424,14 @@ export class HostNodeDomainPorts {
     readonly postureConsent?: true
     readonly title?: string
   }): { readonly threadId: string } {
+    if (input.chatKind !== undefined) {
+      const thread = this.options.store.setThreadKind({
+        threadId: input.threadId,
+        targetKind: input.chatKind,
+        ...(input.canonicalProviderId ? { canonicalProviderId: input.canonicalProviderId } : {})
+      })
+      return { threadId: thread.appChatId }
+    }
     if (input.providerId !== undefined && !this.registry.hasProvider(input.providerId)) {
       throw new Error('Standalone Host does not compose that provider')
     }

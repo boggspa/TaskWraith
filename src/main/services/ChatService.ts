@@ -182,6 +182,8 @@ export type CreateSingleThreadInput =
 /** Bounded Host configuration patch; never accepts an effective permission body. */
 export interface ConfigureThreadInput {
   readonly chatId: string
+  readonly chatKind?: ChatKind
+  readonly canonicalProvider?: ProviderId
   readonly provider?: ProviderId
   readonly selectedModelType?: unknown
   readonly reasoningId?: unknown
@@ -369,6 +371,37 @@ export class ChatService {
     if (!current || current.archived) throw new Error('Chat is not available for configuration.')
     assertHostSetupThreadIdle(current)
     this.deps.assertThreadSetupIdle?.(current)
+
+    if (input.chatKind !== undefined) {
+      if (input.chatKind !== 'single' && input.chatKind !== 'ensemble') {
+        throw new Error('Thread chat kind is invalid.')
+      }
+      if (
+        input.provider !== undefined ||
+        input.selectedModelType !== undefined ||
+        input.reasoningId !== undefined ||
+        input.postureId !== undefined ||
+        input.title !== undefined ||
+        (input.chatKind === 'ensemble' && input.canonicalProvider !== undefined) ||
+        (input.chatKind === 'single' && input.canonicalProvider === undefined)
+      ) {
+        throw new Error('Chat-kind configuration must be an exact mode change.')
+      }
+      if (input.chatKind === 'ensemble') {
+        const seedParticipant = buildExternalJoinSeedParticipant(current)
+        if (!seedParticipant) throw new Error('Thread provider is required for Ensemble mode.')
+        return this.setChatKind({
+          chatId,
+          targetKind: 'ensemble',
+          seedParticipant
+        })
+      }
+      return this.setChatKind({
+        chatId,
+        targetKind: 'single',
+        canonicalProvider: input.canonicalProvider
+      })
+    }
 
     const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
     const selectedModelType = sanitizeThreadModel(input.selectedModelType)

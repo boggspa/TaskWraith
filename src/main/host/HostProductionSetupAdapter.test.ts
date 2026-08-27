@@ -200,6 +200,29 @@ describe('HostProductionSetupAdapter', () => {
     })
   })
 
+  it('forwards an existing-roster provider when configuring a thread back to solo', async () => {
+    const { adapter, configureThread } = open()
+
+    await expect(
+      adapter.setupExecutor.execute(
+        command(
+          'thread.configure',
+          { threadId: 'thread-1' },
+          { chatKind: 'single', canonicalProviderId: 'kimi' }
+        ),
+        context
+      )
+    ).resolves.toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-1' }
+    })
+    expect(configureThread).toHaveBeenCalledWith({
+      chatId: 'thread-1',
+      chatKind: 'single',
+      canonicalProvider: 'kimi'
+    })
+  })
+
   it('binds provider login to the Host command id and reports terminal cancellation honestly', async () => {
     const { adapter, begin } = open()
     await expect(

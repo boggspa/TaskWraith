@@ -33,6 +33,8 @@ export interface HostSetupThreadPort {
   }): { readonly threadId: string } | Promise<{ readonly threadId: string }>
   configure(input: {
     readonly threadId: string
+    readonly chatKind?: 'single' | 'ensemble'
+    readonly canonicalProviderId?: string
     readonly providerId?: string
     readonly modelId?: string
     readonly reasoningId?: string
@@ -231,6 +233,12 @@ export class HostSetupCommandExecutor {
     }
     const result = await this.ports.thread.configure({
       threadId,
+      ...(command.arguments.chatKind === 'single' || command.arguments.chatKind === 'ensemble'
+        ? { chatKind: command.arguments.chatKind }
+        : {}),
+      ...(typeof command.arguments.canonicalProviderId === 'string'
+        ? { canonicalProviderId: command.arguments.canonicalProviderId }
+        : {}),
       ...(isSelection ? { providerId } : {}),
       ...(typeof command.arguments.modelId === 'string'
         ? { modelId: command.arguments.modelId }

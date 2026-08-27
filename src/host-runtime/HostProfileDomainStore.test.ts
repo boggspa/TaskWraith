@@ -191,6 +191,132 @@ describe('HostProfileDomainStore', () => {
     ).toThrow('Terminal run cannot change state')
   })
 
+  it('collapses an idle Ensemble onto the selected provider and restores the stashed roster', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.chatKind = 'ensemble'
+    raw.provider = 'codex'
+    raw.linkedProviderSessionId = 'top-level-session'
+    raw.taskWraithMcpProfileReceipt = { opaque: true }
+    raw.ensemble = {
+      enabled: true,
+      participants: [
+        {
+          id: 'kimi-boss',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Boss',
+          instructions: '',
+          order: 1,
+          model: 'kimi-k3',
+          reasoningEffort: 'high',
+          permissionPresetId: 'plan',
+          linkedProviderSessionId: 'kimi-session',
+          taskWraithMcpProfileReceipt: { opaque: true }
+        },
+        {
+          id: 'codex-worker',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: '',
+          order: 2,
+          model: 'gpt-5.6'
+        }
+      ],
+      bossmanParticipantId: 'kimi-boss'
+    }
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+
+    const collapsed = store.setThreadKind({
+      threadId: thread.appChatId,
+      targetKind: 'single',
+      canonicalProviderId: 'kimi'
+    })
+    expect(collapsed).toMatchObject({
+      chatKind: 'single',
+      provider: 'kimi',
+      providerMetadata: {
+        selectedModelType: 'kimi-k3',
+        approvalMode: 'plan',
+        workflowMode: 'plan',
+        kimiReasoningEffort: 'high'
+      }
+    })
+    expect(collapsed).not.toHaveProperty('ensemble')
+    expect(collapsed).not.toHaveProperty('linkedProviderSessionId')
+    expect(collapsed).not.toHaveProperty('taskWraithMcpProfileReceipt')
+    const stash = collapsed.providerMetadata?.stashedEnsemble as {
+      config?: { participants?: Array<Record<string, unknown>> }
+      provider?: string
+    }
+    expect(stash.provider).toBe('kimi')
+    expect(stash.config?.participants?.[0]).toMatchObject({
+      id: 'kimi-boss',
+      linkedProviderSessionId: null
+    })
+    expect(stash.config?.participants?.[0]).not.toHaveProperty('taskWraithMcpProfileReceipt')
+
+    const restored = store.setThreadKind({
+      threadId: thread.appChatId,
+      targetKind: 'ensemble'
+    })
+    expect(restored.chatKind).toBe('ensemble')
+    expect(
+      (restored.ensemble as { participants: Array<{ id: string }> }).participants.map(
+        (participant) => participant.id
+      )
+    ).toEqual(['kimi-boss', 'codex-worker'])
+    expect(restored.providerMetadata).not.toHaveProperty('stashedEnsemble')
+  })
+
+  it('refuses to collapse while an Ensemble round still has live dispatch evidence', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+    raw.chatKind = 'ensemble'
+    raw.provider = 'codex'
+    raw.ensemble = {
+      participants: [
+        {
+          id: 'codex-seat',
+          provider: 'codex',
+          enabled: true,
+          role: 'Codex',
+          instructions: '',
+          order: 1
+        }
+      ],
+      activeRound: {
+        status: 'running',
+        activeParticipantId: 'codex-seat',
+        participants: [
+          {
+            participantId: 'codex-seat',
+            provider: 'codex',
+            role: 'Codex',
+            order: 1,
+            status: 'running'
+          }
+        ]
+      }
+    }
+    writeFileSync(chatFile, JSON.stringify(raw))
+    chmodSync(chatFile, 0o600)
+
+    expect(() =>
+      store.setThreadKind({
+        threadId: thread.appChatId,
+        targetKind: 'single',
+        canonicalProviderId: 'codex'
+      })
+    ).toThrow('active')
+  })
+
   it('persists run-correlated transcript and full lifecycle metadata across restart', () => {
     const { profile, authority, store } = open()
     const thread = store.createThread({ scope: 'global' })

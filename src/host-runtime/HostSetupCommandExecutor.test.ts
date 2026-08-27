@@ -150,6 +150,43 @@ describe('HostSetupCommandExecutor', () => {
     ).resolves.toEqual({ status: 'failed', errorCode: 'setup_stale_offer' })
   })
 
+  it('routes chat-kind changes without treating an existing roster provider as a new offer', async () => {
+    const injected = ports()
+    const executor = new HostSetupCommandExecutor(injected)
+
+    await expect(
+      executor.execute(
+        command(
+          'thread.configure',
+          { threadId: 'thread-1' },
+          { chatKind: 'single', canonicalProviderId: 'kimi' }
+        ),
+        context
+      )
+    ).resolves.toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-1' }
+    })
+    expect(injected.currentOffers.read).not.toHaveBeenCalled()
+    expect(injected.thread.configure).toHaveBeenCalledWith({
+      threadId: 'thread-1',
+      chatKind: 'single',
+      canonicalProviderId: 'kimi'
+    })
+
+    vi.mocked(injected.thread.configure).mockClear()
+    await expect(
+      executor.execute(
+        command('thread.configure', { threadId: 'thread-1' }, { chatKind: 'ensemble' }),
+        context
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(injected.thread.configure).toHaveBeenCalledWith({
+      threadId: 'thread-1',
+      chatKind: 'ensemble'
+    })
+  })
+
   it('fails closed when a selected posture requires explicit consent', async () => {
     const injected = ports()
     vi.mocked(injected.currentOffers.read).mockReturnValue({

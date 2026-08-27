@@ -308,6 +308,59 @@ describe('ChatService Host setup methods', () => {
     })
   })
 
+  it('routes exact Host chat-kind configuration through the guarded setChatKind mutation', () => {
+    const current = makeChat({
+      provider: 'codex',
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 18,
+        orchestrationMode: 'turn_bound',
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'kimi-seat',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Kimi',
+            instructions: '',
+            order: 1
+          }
+        ],
+        updatedAt: '2026-08-27T00:00:00.000Z'
+      }
+    })
+    const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+      makeChat({ appChatId: chatId, provider: 'kimi', chatKind: targetKind })
+    )
+    const store = makeStore({ getChat: vi.fn(() => current), setChatKind })
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    expect(
+      service.configureThread({
+        chatId: 'chat-1',
+        chatKind: 'single',
+        canonicalProvider: 'kimi'
+      })
+    ).toMatchObject({ chatKind: 'single', provider: 'kimi' })
+    expect(setChatKind).toHaveBeenCalledWith('chat-1', 'single', {
+      seedParticipant: undefined,
+      canonicalProvider: 'kimi',
+      canonicalProviderMetadata: undefined
+    })
+
+    vi.mocked(store.getChat).mockReturnValue(makeChat({ provider: 'codex', chatKind: 'single' }))
+    service.configureThread({ chatId: 'chat-1', chatKind: 'ensemble' })
+    expect(setChatKind).toHaveBeenLastCalledWith(
+      'chat-1',
+      'ensemble',
+      expect.objectContaining({
+        seedParticipant: expect.objectContaining({ provider: 'codex', enabled: true })
+      })
+    )
+  })
+
   it('refuses configure/archive while a run or round is active', () => {
     const active = makeChat({
       runs: [{ runId: 'run-1', status: 'running' }] as ChatRecord['runs'],

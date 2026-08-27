@@ -1,5 +1,9 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
+import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import type {
+  ChatService,
+  RebindChatWorkspaceInput,
+  SetChatKindInput
+} from '../services/ChatService'
 import {
   isChatGitWorkflowState,
   type ChatGitWorkflowInput
@@ -34,6 +38,10 @@ import {
   parseChatComposerSelectionPatchRequest,
   type ChatComposerSelectionPatchResult
 } from '../../shared/chatComposerSelectionPatch'
+import {
+  createDesktopHostThreadKindCommandClient,
+  createHostThreadKindMutation
+} from '../host/HostThreadKindCommand'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
@@ -60,7 +68,6 @@ export interface ChatHandlerDeps {
     | 'createSubThread'
     | 'getSubThreads'
     | 'createSideChat'
-    | 'setChatKind'
     | 'rebindChatWorkspace'
     | 'queueChatWorkspaceRebind'
     | 'getSideChats'
@@ -69,6 +76,8 @@ export interface ChatHandlerDeps {
     // a silently-permitted collapse of a shared panel.
     | 'listHumanCollaborationShares'
   >
+  /** Host-owned chat-kind mutation; tests inject it, production uses a narrow main-only Host session. */
+  setChatKindMutation?: (input: SetChatKindInput) => Promise<ChatRecord>
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
   /** Revoke/claim provider approval authority synchronously before graph awaits. */
@@ -310,6 +319,17 @@ function assertReadableWorkspace(
 
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
   const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
+  const setChatKindMutation =
+    deps.setChatKindMutation ??
+    (() => {
+      return createHostThreadKindMutation({
+        client: createDesktopHostThreadKindCommandClient({
+          userDataPath: app.getPath('userData'),
+          appVersion: app.getVersion()
+        }),
+        getChat: (chatId) => deps.chatService.getChat(chatId)
+      })
+    })()
   const observeNoHistoryChat = (chat: ChatRecord): void => {
     if (deps.getSettings().storeLocalChatHistory === false) {
       deps.observeSoloSteerTranscriptRows(chat)
@@ -434,7 +454,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   })
   ipcMain.handle(
     'set-chat-kind',
-    (
+    async (
       event,
       args: {
         chatId: string
@@ -476,7 +496,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
           )
         }
       }
-      const chat = deps.chatService.setChatKind(args)
+      const chat = await setChatKindMutation({
+        chatId: args.chatId,
+        targetKind: args.targetKind,
+        ...(args.canonicalProvider ? { canonicalProvider: args.canonicalProvider } : {})
+      })
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }

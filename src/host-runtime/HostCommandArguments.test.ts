@@ -266,6 +266,37 @@ describe('validateHostCommandArguments', () => {
     ).toMatchObject({ ok: true, value: { arguments: { title: 'Retitled' } } })
     expect(
       validateHostCommandArguments(
+        command('thread.configure', { threadId: 'thread-id' }, { chatKind: 'ensemble' })
+      )
+    ).toMatchObject({ ok: true, value: { arguments: { chatKind: 'ensemble' } } })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.configure',
+          { threadId: 'thread-id' },
+          { chatKind: 'single', canonicalProviderId: 'kimi' }
+        )
+      )
+    ).toMatchObject({
+      ok: true,
+      value: { arguments: { chatKind: 'single', canonicalProviderId: 'kimi' } }
+    })
+    expect(
+      validateHostCommandArguments(
+        command('thread.configure', { threadId: 'thread-id' }, { chatKind: 'single' })
+      )
+    ).toEqual({ ok: false, error: 'thread.configure chat-kind change is invalid' })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.configure',
+          { threadId: 'thread-id' },
+          { chatKind: 'ensemble', canonicalProviderId: 'codex' }
+        )
+      )
+    ).toEqual({ ok: false, error: 'thread.configure chat-kind change is invalid' })
+    expect(
+      validateHostCommandArguments(
         command('thread.configure', { threadId: 'thread-id' }, { providerId: 'provider-id' })
       )
     ).toEqual({
