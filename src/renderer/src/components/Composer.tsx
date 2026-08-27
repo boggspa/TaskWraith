@@ -34,6 +34,7 @@ import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { buildParticipantReasoningSelectionPatch } from '../components/ParticipantPickerCluster'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import type { ComposerSuggestionModel } from '../lib/composerSuggestion'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
 import { failedLanesFromChat } from '../lib/composerSuggestionInputs'
@@ -1114,7 +1115,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     hasAttachmentPromptContent(prompt, imageAttachments) ||
     hasProjectReferenceContext ||
     Boolean(currentDiscordContextSelection)
-  const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
 
   /**
    * Model the user highlighted in the picker and then closed out of
@@ -1315,6 +1315,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     goalPopoverOpen &&
     Boolean(currentActiveGoal?.runtimeLedger) &&
     currentActiveGoal?.status !== 'completed'
+  const scheduledNowTick = useSharedNowTick(hasVisibleScheduledCountdown || hasGoalRuntimeTicker)
+  const scheduledNowMs = useMemo(
+    () => Date.now(),
+    [scheduledNowTick, hasVisibleScheduledCountdown, hasGoalRuntimeTicker]
+  )
   const goalRuntimeLabel = formatGoalRuntimePopoverLabel(currentActiveGoal, scheduledNowMs)
 
   // Second row of the roster-presets above-row section — Orchestration /
@@ -1358,15 +1363,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     )
   }
 
-  useEffect(() => {
-    if (!hasVisibleScheduledCountdown && !hasGoalRuntimeTicker) return
-    const interval = window.setInterval(() => setScheduledNowMs(Date.now()), 1_000)
-    return () => window.clearInterval(interval)
-  }, [hasGoalRuntimeTicker, hasVisibleScheduledCountdown])
-
   const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
   const agentApprovalAppearedAtRef = useRef<number | null>(null)
-  const [agentApprovalCountdownMs, setAgentApprovalCountdownMs] = useState<number | null>(null)
+  const agentApprovalSeenIdRef = useRef<string | null>(null)
   const [trustedSessionConfirmOpen, setTrustedSessionConfirmOpen] = useState(false)
   const [trustedSessionApprovalId, setTrustedSessionApprovalId] = useState<string | null>(null)
   const agentApprovalTimeoutMs = pendingAgentApproval
@@ -1548,12 +1547,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   ])
 
   useEffect(() => {
-    if (!pendingAgentApproval) {
-      agentApprovalAppearedAtRef.current = null
-      setAgentApprovalCountdownMs(null)
-      return
-    }
-    agentApprovalAppearedAtRef.current = Date.now()
+    if (!pendingAgentApproval) return
     const focusTimer = window.setTimeout(() => {
       agentApprovalCardRef.current
         ?.querySelector<HTMLButtonElement>(
@@ -1564,20 +1558,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return () => window.clearTimeout(focusTimer)
   }, [pendingAgentApproval?.id])
 
-  useEffect(() => {
-    if (!pendingAgentApproval || agentApprovalTimeoutMs == null) {
-      setAgentApprovalCountdownMs(null)
-      return
-    }
+  const pendingApprovalId = pendingAgentApproval?.id ?? null
+  if (pendingApprovalId !== agentApprovalSeenIdRef.current) {
+    agentApprovalSeenIdRef.current = pendingApprovalId
+    agentApprovalAppearedAtRef.current = pendingApprovalId ? Date.now() : null
+  }
+  const agentApprovalNowTick = useSharedNowTick(
+    Boolean(pendingAgentApproval && agentApprovalTimeoutMs != null)
+  )
+  const agentApprovalCountdownMs = useMemo(() => {
+    if (!pendingAgentApproval || agentApprovalTimeoutMs == null) return null
     const appearedAt = agentApprovalAppearedAtRef.current ?? Date.now()
-    const tick = (): void => {
-      const remaining = appearedAt + agentApprovalTimeoutMs - Date.now()
-      setAgentApprovalCountdownMs(Math.max(0, remaining))
-    }
-    tick()
-    const interval = window.setInterval(tick, 1_000)
-    return () => window.clearInterval(interval)
-  }, [agentApprovalTimeoutMs, pendingAgentApproval?.id])
+    return Math.max(0, appearedAt + agentApprovalTimeoutMs - Date.now())
+  }, [agentApprovalNowTick, agentApprovalTimeoutMs, pendingApprovalId])
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity

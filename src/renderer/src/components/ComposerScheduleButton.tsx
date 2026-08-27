@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { ClockSymbolIcon } from '../components/AppChromeSymbols'
@@ -56,7 +57,9 @@ export function ComposerScheduleButton({
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
-  const [nowMs, setNowMs] = useState(() => Date.now())
+  const scheduleTickEnabled = open || Boolean(value)
+  const nowTick = useSharedNowTick(scheduleTickEnabled)
+  const nowMs = useMemo(() => Date.now(), [nowTick, scheduleTickEnabled])
   const [busy, setBusy] = useState(false)
 
   // `/schedule` opens the same popover the icon does. Keyed on the signal only:
@@ -67,12 +70,6 @@ export function ComposerScheduleButton({
     setOpen(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSignal])
-
-  useEffect(() => {
-    if (!open && !value) return
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1_000)
-    return () => window.clearInterval(interval)
-  }, [open, value])
 
   useEffect(() => {
     if (!open) {

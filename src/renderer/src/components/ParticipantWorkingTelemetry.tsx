@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, type JSX } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import type { ProviderId } from '../../../main/store/types'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import {
@@ -98,23 +99,15 @@ function ParticipantWorkingTelemetry({
     setDisplayState(reconciledDisplayState)
   }
   const displayedTokens = reconciledDisplayState.tokens
-  const [nowMs, setNowMs] = useState(() => Date.now())
+  const nowTick = useSharedNowTick()
   // Compaction resets only the token epoch. Elapsed time remains anchored to
   // the active run/turn, so a mid-run reset never restarts this timer.
   const turnKey = `${runId || 'no-run'}:${startedAt || 'no-start'}`
+  const nowMs = useMemo(() => Date.now(), [nowTick, turnKey])
 
   useEffect(() => {
     targetTokensRef.current = targetTokens
   }, [targetTokens])
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setNowMs(Date.now()))
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.clearInterval(timer)
-    }
-  }, [turnKey])
 
   useEffect(() => {
     const timer = window.setInterval(() => {

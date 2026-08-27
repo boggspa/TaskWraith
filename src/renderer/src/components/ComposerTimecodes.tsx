@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { ClockSymbolIcon } from './AppChromeSymbols'
 
 const ZERO_RUN_TIMECODE = '00:00:00:00'
@@ -27,22 +28,21 @@ export interface ComposerTimecodePresentation {
 
 /**
  * Live "now" tick shared by the interactive timecode button and the pane-bottom
- * timecode bar. One rAF for the first paint, then a 1s interval while a run is
- * in flight (idle threads don't tick). `startedAt` in the dep list restarts the
- * cadence when a new turn begins.
+ * timecode bar. One rAF for the first paint (turn start only), then the
+ * renderer-wide 1s shared tick while a run is in flight (idle threads don't
+ * subscribe). `now` is sampled in the same render as the tick — no
+ * effect→setState echo per second. `startedAt` restarts the first-paint rAF
+ * when a new turn begins.
  */
 export function useTimecodeNow(running: boolean, startedAt?: string | null): number {
-  const [now, setNow] = useState(() => Date.now())
+  const nowTick = useSharedNowTick(running)
+  const [rafNow, setRafNow] = useState(() => Date.now())
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setNow(Date.now()))
-    if (!running) return () => window.cancelAnimationFrame(frame)
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.clearInterval(timer)
-    }
+    const frame = window.requestAnimationFrame(() => setRafNow(Date.now()))
+    return () => window.cancelAnimationFrame(frame)
   }, [running, startedAt])
-  return now
+  const tickNow = useMemo(() => Date.now(), [nowTick, running, startedAt])
+  return tickNow > rafNow ? tickNow : rafNow
 }
 
 export function getComposerTimecodePresentation({
