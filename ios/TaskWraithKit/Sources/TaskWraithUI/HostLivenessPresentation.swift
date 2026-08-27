@@ -266,30 +266,24 @@ extension HostLiveness {
     }
 }
 
-// MARK: - Pass-2 integration surface
+// MARK: - Integration (wired)
 //
-// This module is intentionally headless. `ComposerView.swift` and
-// `RemoteSessionModel.swift` are owned by other lanes this pass, so nothing here
-// is wired. A pass-2 integration lane should:
+// This module stays headless and unit-testable; the wiring lives at the call
+// sites and is live on master:
 //
-//  1. Build `HostLivenessInputs` at the call site that already knows all six
-//     values — `sessionPhase` from the model, the three host fields from the
-//     current `PairedHostProjection`, `transportHealthy` from the relay client's
-//     socket state, and `peerAckFailing` from the wake/ack path that already
-//     distinguishes a healthy socket from a silent peer.
-//  2. Call `HostLiveness.derive(_:)`. On `nil`, render nothing new and leave the
-//     existing `ConnectionBanner` in charge.
-//  3. Render `copy.headline` / `copy.detail` in the connection banner area.
-//  4. In the composer send path, branch on `shouldQueueOutbound`: when true,
-//     enqueue through `OfflineComposerQueue` and surface `copy.queueNotice`
-//     instead of the current behaviour, which restores the draft and shows a
-//     failure. When false, send as today.
-//  5. Flush the outbox when the session reaches `.connected` — see the flush
-//     contract in `OfflineComposerQueue`.
-//
-// Deliberately NOT decided here: whether the liveness cell lives in the thread
-// header or the composer rail. That is a design call, and this type serves
-// either.
+//  - `RemoteSessionModel.hostLiveness` builds the inputs at the model's choke
+//    point (session phase, the paired-host projection, the probe ledger) and
+//    derives via `HostLiveness.derive`. On `nil` nothing new renders — the
+//    existing `ConnectionBanner` stays in charge.
+//  - `AppShell` renders `HostLivenessStatusBanner` above the shell when the
+//    derived state `warrantsBanner` (live stays quiet by design), with
+//    `requestReconnect(.user)` as the retry action.
+//  - `ComposerView`'s send path branches through `OfflineComposerSendPolicy` on
+//    `shouldQueueOutbound`: when true it enqueues via `OfflineComposerQueue`
+//    and surfaces `copy.queueNotice` instead of restoring the draft with a
+//    failure; when false it sends as before.
+//  - The outbox flushes when the session reaches `.connected` — see the flush
+//    contract in `OfflineComposerQueue`.
 
 /// Records what the health probes `RemoteSessionModel` ALREADY runs returned,
 /// and derives the two `HostLivenessInputs` fields nothing else exposes:
