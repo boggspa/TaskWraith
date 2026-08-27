@@ -85,14 +85,31 @@ export function resolveGitReportedPaths(repoRoot: string, paths: readonly string
   return paths.map((path) => (isAbsolute(path) ? resolve(path) : resolve(repoRoot, path)))
 }
 
+export interface GitCommitPathCoverageOptions {
+  /** Private-index patches must cover every requested path before commit. */
+  requireDeclaredPaths?: boolean
+}
+
 export function assertCommittedPathsCovered(
   declaredAbsolutePaths: readonly string[],
-  actualAbsolutePaths: readonly string[]
+  actualAbsolutePaths: readonly string[],
+  options: GitCommitPathCoverageOptions = {}
 ): void {
   if (actualAbsolutePaths.length === 0) throw new Error('The commit slice contains no changes.')
   const uncovered = actualAbsolutePaths.filter(
     (actual) => !declaredAbsolutePaths.some((declared) => pathCovers(declared, actual))
   )
+  if (options.requireDeclaredPaths) {
+    const missingPaths = declaredAbsolutePaths.filter(
+      (declared) => !actualAbsolutePaths.some((actual) => pathCovers(declared, actual))
+    )
+    if (missingPaths.length > 0) {
+      const missingPathList = missingPaths.map((path) => JSON.stringify(path)).join(', ')
+      throw new Error(
+        `Commit slice is missing declared paths (missingPaths: ${missingPathList}). For an untracked file, include an explicit git diff --no-index /dev/null <file> patch record.`
+      )
+    }
+  }
   if (uncovered.length > 0) {
     throw new Error(
       `Commit slice escaped its declared paths: ${uncovered.map((path) => JSON.stringify(path)).join(', ')}`

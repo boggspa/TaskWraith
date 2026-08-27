@@ -149,6 +149,17 @@ describe('commit-slice path coverage', () => {
   })
 })
 
+it('rejects a declared path missing from a strict private-index slice', () => {
+  const root = resolve('/tmp/repo')
+  expect(() =>
+    assertCommittedPathsCovered(
+      [resolve(root, 'src/a.ts'), resolve(root, 'src/new-file.ts')],
+      [resolve(root, 'src/a.ts')],
+      { requireDeclaredPaths: true }
+    )
+  ).toThrow(/missingPaths/)
+})
+
 describe('private-index commit integration', () => {
   it('commits only the supplied hunk and preserves unrelated shared-index staging', async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-commit-slice-integration-'))
@@ -197,6 +208,54 @@ describe('private-index commit integration', () => {
       expect(await readFile(resolve(workspace, 'a.txt'), 'utf8')).toBe('ONE\nTWO\n')
       expect((await git(workspace, ['diff', '--cached', '--name-only'])).trim()).toBe('b.txt')
       expect(await git(workspace, ['diff', '--', 'a.txt'])).toContain('+TWO')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a private-index patch that omits a requested untracked file before commit', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-commit-slice-missing-path-'))
+    try {
+      await git(workspace, ['init'])
+      await git(workspace, ['config', 'user.name', 'TaskWraith Test'])
+      await git(workspace, ['config', 'user.email', 'taskwraith@example.test'])
+      await writeFile(resolve(workspace, 'a.txt'), 'base\n')
+      await git(workspace, ['add', '--', 'a.txt'])
+      await git(workspace, ['commit', '-m', 'base'])
+      const baseHead = (await git(workspace, ['rev-parse', 'HEAD'])).trim()
+
+      await writeFile(resolve(workspace, 'a.txt'), 'changed\n')
+      await writeFile(resolve(workspace, 'new.txt'), 'untracked\n')
+
+      await expect(
+        executeGitCommit(
+          integrationDeps(),
+          {
+            message: 'must not omit requested new file',
+            mode: 'private_index',
+            paths: ['a.txt', 'new.txt'],
+            patch: [
+              'diff --git a/a.txt b/a.txt',
+              '--- a/a.txt',
+              '+++ b/a.txt',
+              '@@ -1 +1 @@',
+              '-base',
+              '+changed',
+              ''
+            ].join('\n')
+          },
+          workspace,
+          {
+            scope: 'workspace',
+            cwd: workspace,
+            workspacePath: workspace,
+            assertMutationAuthorized: () => {},
+            assertMutationStillLive: () => {}
+          }
+        )
+      ).rejects.toThrow(/missingPaths.*new\.txt.*git diff --no-index/i)
+      expect((await git(workspace, ['rev-parse', 'HEAD'])).trim()).toBe(baseHead)
+      expect(await readFile(resolve(workspace, 'new.txt'), 'utf8')).toBe('untracked\n')
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }

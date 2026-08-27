@@ -1453,7 +1453,9 @@ export async function executeGitCommit(
       repoRoot,
       nulSeparatedPaths(privateNames.stdout)
     )
-    assertCommittedPathsCovered(declaredCoveragePaths, actualAbsolutePaths)
+    assertCommittedPathsCovered(declaredCoveragePaths, actualAbsolutePaths, {
+      requireDeclaredPaths: request.mode === 'private_index'
+    })
 
     const currentHead = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
     if (hostCommandFailed(currentHead)) {
