@@ -5,6 +5,7 @@ import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTabl
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
+  CombinedModelPickerProviderHeader,
   buildOllamaProviderGroups,
   emptyProviderModelsLabel,
   flattenUnifiedProviderModels,
@@ -15,6 +16,7 @@ import {
   resolveCombinedPickerPosition,
   runCombinedModelPickerConfirmAction
 } from './CombinedModelPicker'
+import type { ProviderId } from '../../../main/store/types'
 import {
   OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL,
   OllamaCloudIcon
@@ -426,6 +428,55 @@ describe('CombinedModelPicker', () => {
     ])
   })
 
+  it('removes collapsed provider rows from the unified keyboard-navigation order', () => {
+    const entries = flattenUnifiedProviderModels(
+      [
+        {
+          provider: 'codex',
+          modelOptions: [
+            { id: 'gpt-5.5', label: 'GPT-5.5' },
+            { id: 'gpt-5.4', label: 'GPT-5.4' }
+          ]
+        },
+        {
+          provider: 'claude',
+          modelOptions: [{ id: 'claude-opus-4-8', label: 'Opus 4.8' }]
+        }
+      ],
+      new Set<ProviderId>(['codex'])
+    )
+
+    expect(entries.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
+      'claude:claude-opus-4-8'
+    ])
+  })
+
+  it('renders provider headers as accessible disclosure buttons', () => {
+    const expanded = renderToStaticMarkup(
+      <CombinedModelPickerProviderHeader
+        provider="pi"
+        label="Pi"
+        expanded
+        onToggle={() => undefined}
+      />
+    )
+    const collapsed = renderToStaticMarkup(
+      <CombinedModelPickerProviderHeader
+        provider="pi"
+        label="Pi"
+        expanded={false}
+        onToggle={() => undefined}
+      />
+    )
+
+    expect(expanded).toContain('aria-expanded="true"')
+    expect(expanded).toContain('aria-label="Collapse Pi models"')
+    expect(expanded).toContain('composer-combined-picker-provider-chevron is-expanded')
+    expect(collapsed).toContain('aria-expanded="false"')
+    expect(collapsed).toContain('aria-label="Expand Pi models"')
+    expect(collapsed).not.toContain('composer-combined-picker-provider-chevron is-expanded')
+  })
+
   it('keeps the unified model rail fixed-height and independently scrollable', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
@@ -436,6 +487,12 @@ describe('CombinedModelPicker', () => {
     )
     expect(css).toMatch(
       /\.composer-combined-picker-models\.is-unified-model-list\s*\{[\s\S]*?overflow-y:\s*auto;/
+    )
+    expect(css).toMatch(
+      /\.composer-combined-picker-provider-chevron\s*\{[\s\S]*?margin-left:\s*auto;/
+    )
+    expect(css).toMatch(
+      /\.composer-combined-picker-provider-chevron\.is-expanded\s*\{[\s\S]*?transform:\s*rotate\(90deg\);/
     )
   })
 

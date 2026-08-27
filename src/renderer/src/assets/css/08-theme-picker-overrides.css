@@ -9817,9 +9817,26 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
   min-height: 24px;
   padding: 3px 10px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.composer-combined-picker-provider-header:hover,
+.composer-combined-picker-provider-header:focus-visible {
+  background: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 9%, transparent);
+}
+.composer-combined-picker-provider-header:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--model-provider-accent, var(--accent)) 58%, transparent);
+  outline-offset: -1px;
 }
 .composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header {
   color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 76%, var(--text-primary));
@@ -9841,6 +9858,7 @@
   height: 13px;
 }
 .composer-combined-picker-provider-header-label {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   font-size: 10px;
@@ -9851,7 +9869,31 @@
   white-space: nowrap;
 }
 .composer-combined-picker-provider-header .composer-provider-paused-pill {
+  margin-left: 0;
+}
+.composer-combined-picker-provider-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
   margin-left: auto;
+  flex: 0 0 12px;
+  opacity: 0.72;
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform 130ms ease;
+}
+.composer-combined-picker-provider-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+.composer-combined-picker-provider-chevron svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+:root[data-reduce-motion="true"] .composer-combined-picker-provider-chevron {
+  transition: none;
 }
 .composer-combined-picker-empty-provider {
   padding: 5px 10px 6px 31px;

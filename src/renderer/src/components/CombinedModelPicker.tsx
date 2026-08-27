@@ -343,11 +343,91 @@ export type UnifiedModelEntry = {
   option: CombinedModelPickerModelOption
 }
 
+const NO_COLLAPSED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
+
 export function flattenUnifiedProviderModels(
-  groups: readonly CombinedModelPickerProviderGroup[]
+  groups: readonly CombinedModelPickerProviderGroup[],
+  collapsedProviderIds: ReadonlySet<ProviderId> = NO_COLLAPSED_PROVIDER_GROUPS
 ): UnifiedModelEntry[] {
   return groups.flatMap((group) =>
-    group.modelOptions.map((option) => ({ provider: group.provider, option }))
+    collapsedProviderIds.has(group.provider)
+      ? []
+      : group.modelOptions.map((option) => ({ provider: group.provider, option }))
+  )
+}
+
+function toggleCollapsedProviderGroup(
+  collapsedProviderIds: ReadonlySet<ProviderId>,
+  provider: ProviderId
+): Set<ProviderId> {
+  const next = new Set(collapsedProviderIds)
+  if (next.has(provider)) next.delete(provider)
+  else next.add(provider)
+  return next
+}
+
+function ProviderGroupDisclosureChevron({ expanded }: { expanded: boolean }): React.JSX.Element {
+  return (
+    <span
+      className={`composer-combined-picker-provider-chevron ${expanded ? 'is-expanded' : ''}`}
+      aria-hidden
+    >
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M6.2 4.7 10 8.1 6.2 11.5" />
+      </svg>
+    </span>
+  )
+}
+
+export function CombinedModelPickerProviderHeader({
+  provider,
+  label,
+  pauseLabel,
+  rerouteLabel,
+  expanded,
+  disabled,
+  onToggle
+}: {
+  provider: ProviderId
+  label: string
+  pauseLabel?: string
+  rerouteLabel?: string
+  expanded: boolean
+  disabled?: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  const actionLabel = `${expanded ? 'Collapse' : 'Expand'} ${label} models`
+  return (
+    <button
+      type="button"
+      className="composer-combined-picker-provider-header"
+      aria-expanded={expanded}
+      aria-label={actionLabel}
+      title={actionLabel}
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      <span className="composer-combined-picker-provider-header-icon" aria-hidden>
+        <ProviderBrandLogoIcon provider={provider} />
+      </span>
+      <span className="composer-combined-picker-provider-header-label">{label}</span>
+      {pauseLabel && (
+        <span
+          className="composer-provider-paused-pill"
+          title={[pauseLabel, rerouteLabel].filter(Boolean).join('\n')}
+        >
+          Paused
+        </span>
+      )}
+      <ProviderGroupDisclosureChevron expanded={expanded} />
+    </button>
   )
 }
 
@@ -1175,11 +1255,12 @@ export function CombinedModelPicker({
   const [providerHighlight, setProviderHighlight] = useState(0)
   const [modelHighlight, setModelHighlight] = useState(0)
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
+  const [collapsedProviderIds, setCollapsedProviderIds] = useState<Set<ProviderId>>(() => new Set())
   const resetSignatureRef = useRef<string | null>(null)
 
   const unifiedModelEntries = useMemo<UnifiedModelEntry[]>(
-    () => flattenUnifiedProviderModels(unifiedProviderGroups),
-    [unifiedProviderGroups]
+    () => flattenUnifiedProviderModels(unifiedProviderGroups, collapsedProviderIds),
+    [collapsedProviderIds, unifiedProviderGroups]
   )
 
   useEffect(() => {
@@ -1514,12 +1595,14 @@ export function CombinedModelPicker({
       ? {
           providerIndex: 0,
           activeOllamaProviderId: null,
-          modelIndex: Math.max(
-            0,
-            unifiedModelEntries.findIndex(
-              (entry) => entry.provider === provider && entry.option.id === selectedModelId
-            )
-          ),
+          modelIndex: collapsedProviderIds.has(provider)
+            ? -1
+            : Math.max(
+                0,
+                unifiedModelEntries.findIndex(
+                  (entry) => entry.provider === provider && entry.option.id === selectedModelId
+                )
+              ),
           reasoningIndex: 0,
           focusedColumn: 'model' as CombinedModelPickerColumn
         }
@@ -1550,7 +1633,8 @@ export function CombinedModelPicker({
     reasoningOptions,
     selectedReasoning,
     unifiedModelEntries,
-    provider
+    provider,
+    collapsedProviderIds
   ])
 
   // Click-outside + Escape dismiss.
@@ -1788,16 +1872,23 @@ export function CombinedModelPicker({
         )}
         {isUnifiedProviderPicker ? (
           unifiedProviderGroups.map((group, groupIndex) => {
+            const groupCollapsed = collapsedProviderIds.has(group.provider)
             const modelOffset = unifiedProviderGroups
               .slice(0, groupIndex)
-              .reduce((count, item) => count + item.modelOptions.length, 0)
+              .reduce(
+                (count, item) =>
+                  count + (collapsedProviderIds.has(item.provider) ? 0 : item.modelOptions.length),
+                0
+              )
             const groupSelected = group.provider === provider
+            const groupLabel = group.label || getProviderName(group.provider)
+            const visibleGroupModelOptions = groupCollapsed ? [] : group.modelOptions
             return (
               <section
                 key={group.provider}
                 className={`composer-combined-picker-provider-group ${
                   groupSelected ? 'is-current' : ''
-                }`}
+                } ${groupCollapsed ? 'is-collapsed' : ''}`}
                 data-provider={group.provider}
                 style={
                   {
@@ -1805,28 +1896,26 @@ export function CombinedModelPicker({
                   } as React.CSSProperties
                 }
               >
-                <div className="composer-combined-picker-provider-header">
-                  <span className="composer-combined-picker-provider-header-icon" aria-hidden>
-                    <ProviderBrandLogoIcon provider={group.provider} />
-                  </span>
-                  <span className="composer-combined-picker-provider-header-label">
-                    {group.label || getProviderName(group.provider)}
-                  </span>
-                  {group.pauseLabel && (
-                    <span
-                      className="composer-provider-paused-pill"
-                      title={[group.pauseLabel, group.rerouteLabel].filter(Boolean).join('\n')}
-                    >
-                      Paused
-                    </span>
-                  )}
-                </div>
-                {group.modelOptions.length === 0 && (
+                <CombinedModelPickerProviderHeader
+                  provider={group.provider}
+                  label={groupLabel}
+                  pauseLabel={group.pauseLabel}
+                  rerouteLabel={group.rerouteLabel}
+                  expanded={!groupCollapsed}
+                  disabled={disabled}
+                  onToggle={() => {
+                    setCollapsedProviderIds((current) =>
+                      toggleCollapsedProviderGroup(current, group.provider)
+                    )
+                    setModelHighlight(-1)
+                  }}
+                />
+                {!groupCollapsed && group.modelOptions.length === 0 && (
                   <div className="composer-combined-picker-empty-provider">
                     {emptyProviderModelsLabel(group.provider)}
                   </div>
                 )}
-                {group.modelOptions.map((option, optionIndex) => {
+                {visibleGroupModelOptions.map((option, optionIndex) => {
                   const rowIndex = modelOffset + optionIndex
                   const selected = group.provider === provider && option.id === selectedModelId
                   const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
