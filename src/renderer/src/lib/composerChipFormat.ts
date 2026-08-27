@@ -449,21 +449,9 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     return value.charAt(0).toUpperCase() + value.slice(1)
   }
 
-  // UltraTask is a provider-agnostic wrapper that auto-selects the highest
-  // reasoning tier; display it directly when any provider has ultraTask selected.
-  const ultraTaskValue = String(
-    ctx.codexReasoningEffort ||
-    ctx.claudeReasoningEffort ||
-    ctx.grokReasoningEffort ||
-    ctx.cursorReasoningEffort ||
-    ctx.kimiReasoningEffort ||
-    ctx.museReasoningEffort ||
-    ctx.mistralReasoningEffort ||
-    ctx.piReasoningEffort ||
-    ctx.ollamaReasoningEffort
-  ).trim().toLowerCase()
-  if (ultraTaskValue === 'ultratask') return 'UltraTask'
-
+  // Do not OR leftover sibling-provider effort fields. CombinedModelPicker
+  // historically passed every provider's live state at once, so a prior
+  // Kimi/Codex UltraTask selection stuck on Gemini / Composer 2.5 chips.
   return ''
 }
 

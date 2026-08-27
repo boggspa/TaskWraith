@@ -462,6 +462,39 @@ describe('reasoningDisplayLabel', () => {
       reasoningDisplayLabel({ ...base, provider: 'muse', museReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
   })
+
+  it('does not leak leftover UltraTask from another provider onto the chip', () => {
+    expect(
+      reasoningDisplayLabel({
+        provider: 'gemini',
+        composerStyle: 'gemini',
+        modelId: 'gemini-2.5-pro',
+        modelLabel: 'Gemini 2.5 Pro',
+        kimiReasoningEffort: 'ultraTask',
+        kimiThinkingEnabled: true,
+        codexReasoningEffort: 'ultraTask'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'composer-2.5-fast',
+        modelLabel: 'Composer 2.5 Fast',
+        kimiReasoningEffort: 'ultraTask',
+        cursorReasoningEffort: 'ultraTask'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'grok',
+        composerStyle: 'grok',
+        modelId: 'grok-composer-2.5-fast',
+        modelLabel: 'Grok Composer 2.5 Fast',
+        grokReasoningEffort: 'ultraTask'
+      })
+    ).toBe('')
+  })
 })
 
 describe('formatComposerModelChip', () => {
