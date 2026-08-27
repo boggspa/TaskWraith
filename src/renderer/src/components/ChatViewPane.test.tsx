@@ -436,12 +436,13 @@ describe('ChatViewPane chrome actions', () => {
     expect(html).toContain('>People</button>')
   })
 
-  it('renders the same six workspace actions as the focused pane with pane-scoped ids', () => {
+  it('renders the same seven workspace actions as the focused pane with pane-scoped ids', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
           chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
           currentWorkspacePath: '/repo',
+          onClosePane: vi.fn(),
           topLeftChromeAction: {
             id: 'workspace-sidebar',
             title: 'Hide workspace sidebar',
@@ -482,7 +483,15 @@ describe('ChatViewPane chrome actions', () => {
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
       (match) => match[1]
     )
-    expect(actionIds).toEqual(['fx', 'info', 'workspace-stats', 'popout', 'run', 'home'])
+    expect(actionIds).toEqual([
+      'fx',
+      'info',
+      'workspace-stats',
+      'popout',
+      'run',
+      'home',
+      'close'
+    ])
     expect(html).toContain('title="Hide workspace sidebar"')
     expect(html).toContain('sidebar-toggle')
     expect(html).toContain('id="multiview-pane-1-fx-trigger"')
@@ -494,6 +503,7 @@ describe('ChatViewPane chrome actions', () => {
     expect(html).toContain('pane-preview-menu')
     expect(html).toContain('Preview :5173')
     expect(html).toContain('title="Hide sidebar home"')
+    expect(html).toContain('aria-label="Close pane"')
   })
 })
 

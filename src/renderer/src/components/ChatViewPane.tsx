@@ -143,6 +143,8 @@ export interface ChatViewPaneProps extends Omit<
   ) => void
   /** Local pane activation. It never projects the chat into the App singleton. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
+  /** Non-destructive pane close. The thread remains available in the sidebar. */
+  onClosePane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
 }
 
@@ -316,6 +318,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.gitSnapshotPath === b.gitSnapshotPath &&
     a.gitPrCiStore === b.gitPrCiStore &&
     a.onFocusPane === b.onFocusPane &&
+    a.onClosePane === b.onClosePane &&
     a.ariaLabel === b.ariaLabel
   )
 }
@@ -485,6 +488,12 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onRun={() => invokeAction(runAction)}
           homeOpen={Boolean(homeAction?.active)}
           onToggleHome={() => invokeAction(homeAction)}
+          onCloseThread={
+            props.onClosePane && chatId
+              ? () => props.onClosePane?.(props.paneIndex, chatId)
+              : undefined
+          }
+          closeThreadLabel="Close pane"
         />
       )}
     </>
