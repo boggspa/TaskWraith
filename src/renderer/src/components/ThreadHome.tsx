@@ -158,20 +158,7 @@ export function ThreadHome({
         </div>
       )}
       <div className="thread-home-scroll">
-        <header className="thread-home-header">
-          <span className="thread-home-eyebrow">Thread Home</span>
-          <h2 id={`thread-home-${variant}-title`}>Choose what lives here</h2>
-          <p>
-            Open an active thread or give this pane a dedicated Canvas surface.
-            {authorityLabel ? ` Surfaces attach to ${authorityLabel}.` : ''}
-          </p>
-        </header>
-
         <section className="thread-home-section" aria-labelledby={`thread-home-${variant}-threads`}>
-          <div className="thread-home-section-heading">
-            <h3 id={`thread-home-${variant}-threads`}>Active threads</h3>
-            <span>{threads.length}</span>
-          </div>
           {threads.length ? (
             <div className="thread-home-thread-list">
               {threads.map((thread) => (
@@ -219,10 +206,6 @@ export function ThreadHome({
           className="thread-home-section"
           aria-labelledby={`thread-home-${variant}-surfaces`}
         >
-          <div className="thread-home-section-heading">
-            <h3 id={`thread-home-${variant}-surfaces`}>Canvas & media</h3>
-            {!authorityChatId && <span>Select a thread first</span>}
-          </div>
           <div className="thread-home-surface-grid">
             {THREAD_HOME_SURFACES.map((surface) => (
               <button
