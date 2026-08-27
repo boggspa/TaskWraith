@@ -61,6 +61,7 @@ import {
 } from '../antigravity/AntigravityGoalLifecycleFallback'
 import { resolveEnsemblePromptTransportProfile } from '../antigravity/AntigravityEnsemblePromptProfile'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
+import { retainedAuthorityTerminalHandoffSignal } from './EnsembleAuthorityTerminalHandoff'
 import {
   buildBossApprovalReviewPrompt,
   isBossApprovalReviewEligible,
@@ -6298,21 +6299,11 @@ export class EnsembleOrchestrator {
     if (activeLaneCount === 0) return undefined
 
     const participants = chat.ensemble?.participants || []
-    const configuredManagerIds = [
-      this.activeBossmanParticipantId(chat, runtime),
-      ...this.activeCaptainParticipantIds(chat, runtime)
-    ].filter(
-      (participantId, index, all): participantId is string =>
-        typeof participantId === 'string' &&
-        participantId !== run.participant.id &&
-        all.indexOf(participantId) === index
+    const eligibleManagers = this.availablePeerFanoutManagers(
+      chat,
+      runtime,
+      run.participant.id
     )
-    const eligibleManagers = configuredManagerIds
-      .map((participantId) => participants.find((participant) => participant.id === participantId))
-      .filter((participant): participant is EnsembleParticipant => Boolean(participant))
-      .filter((participant) =>
-        this.canReceiveActiveFanoutManagerHandoff(chat, runtime, participant)
-      )
     const eligibleManagerIds = new Set(eligibleManagers.map((participant) => participant.id))
     const detail =
       target && !isUserYieldTarget(target)
@@ -6353,6 +6344,29 @@ export class EnsembleOrchestrator {
       eligibleManagerParticipantIds: eligibleManagers.map((participant) => participant.id),
       suggestedAliases
     }
+  }
+
+  private availablePeerFanoutManagers(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    sourceParticipantId: string
+  ): EnsembleParticipant[] {
+    const participants = chat.ensemble?.participants || []
+    const configuredManagerIds = [
+      this.activeBossmanParticipantId(chat, runtime),
+      ...this.activeCaptainParticipantIds(chat, runtime)
+    ].filter(
+      (participantId, index, all): participantId is string =>
+        typeof participantId === 'string' &&
+        participantId !== sourceParticipantId &&
+        all.indexOf(participantId) === index
+    )
+    return configuredManagerIds
+      .map((participantId) => participants.find((participant) => participant.id === participantId))
+      .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+      .filter((participant) =>
+        this.canReceiveActiveFanoutManagerHandoff(chat, runtime, participant)
+      )
   }
 
   private unsettledFanoutLaneCount(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): number {
@@ -17584,7 +17598,57 @@ export class EnsembleOrchestrator {
           runtime.yieldRouting?.kind === 'queue' &&
           Boolean(runtime.yieldRouting.targetParticipantId) &&
           !this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)
+        const retainedChat = this.deps.getChat(runtime.chatId) || chat
+        const retainedParticipant = retainedChat.ensemble?.participants.find(
+          (entry) => entry.id === run.participant.id
+        )
+        const terminalHandoff = retainedAuthorityTerminalHandoffSignal({
+          provider: run.participant.provider,
+          status: run.status,
+          content: run.content,
+          replacementSeatReady: retainedParticipant
+            ? ensembleSeatExecutionConfigChanged(run.participant, retainedParticipant)
+            : false
+        })
         if (retainAuthorityRing) {
+          if (terminalHandoff && !pendingDeferredNonManagerYield) {
+            const peerManager = this.availablePeerFanoutManagers(
+              retainedChat,
+              runtime,
+              participant.id
+            ).find(
+              (candidate) =>
+                !evaluateBossQuotaSoftUnavailable(retainedChat, runtime.roundId, {
+                  id: candidate.id,
+                  provider: candidate.provider
+                })
+            )
+            if (
+              peerManager &&
+              this.requeueAuthorityForActiveFanoutHold(
+                runtime,
+                remaining,
+                peerManager,
+                `${participantDisplayName(participant)} ${terminalHandoff.reason}; ${participantDisplayName(peerManager)} takes over the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled.`
+              )
+            ) {
+              runtime.pendingAuthorityFanoutSynthesisParticipantId = peerManager.id
+              this.clearFanoutAwaitReminderTurns(runtime, participant.id)
+              continue
+            }
+            runtime.pendingAuthorityFanoutSynthesisParticipantId = undefined
+            runtime.returnedControlToUser = true
+            remaining.length = 0
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              `${participantDisplayName(participant)} ${terminalHandoff.reason}. No eligible peer Boss/Captain can take over; waiting for fan-out settlement and returning control to the user instead of retrying the terminal seat.`
+            )
+            if (ownedFanoutWork) {
+              await this.waitForOwnedFanoutSettlements(runtime, run)
+            }
+            break
+          }
           noteMissingOnce()
           if (waveActive) {
             this.clearNonAuthorityFanoutYieldRouting(runtime, run)

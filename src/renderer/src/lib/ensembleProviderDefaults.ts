@@ -835,11 +835,7 @@ export function buildProviderChangeParticipantPatch(
  */
 export type ProviderModelSelectionMetadata = Pick<
   CodexModelOption,
-  | 'supportedReasoningEfforts'
-  | 'defaultReasoningEffort'
-  | 'capabilities'
-  | 'additionalSpeedTiers'
-  | 'ultraTaskSupported'
+  'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'capabilities' | 'additionalSpeedTiers'
 >
 
 /**
@@ -996,9 +992,6 @@ const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
   ultracode: 6,
   // Muse Meta ceiling stop (shared Ultracode index).
   ultra: 6,
-  // CombinedModelPicker LADDER_STOPS index 7. Token is normalized lowercase;
-  // pickers persist camelCase `ultraTask`.
-  ultratask: 7,
   // Kimi binary thinking rides Light when mapping onto the shared ladder.
   on: 1
 }
@@ -1011,27 +1004,9 @@ function effortLadderRank(value?: string | null): number | null {
     : null
 }
 
-/** Live catalog rows win; otherwise curated ensemble defaults. Unknown/custom
- * ids stay false so UltraTask cannot become the destination default. */
-function destinationSupportsUltraTask(
-  provider: ProviderId,
-  model: string,
-  modelMetadata?: ProviderModelSelectionMetadata | null
-): boolean {
-  if (modelMetadata?.ultraTaskSupported === true) return true
-  if (modelMetadata?.ultraTaskSupported === false) return false
-  return (
-    getEnsembleModelDefaults(provider).modelOptions.find((option) => option.id === model)
-      ?.ultraTaskSupported === true
-  )
-}
-
 /**
  * Keep the previous effort when still enabled; otherwise snap to the nearest
  * enabled ladder stop (ties → higher), else the model/provider default.
- * UltraTask is a synthetic picker stop (not a catalog reasoning option), so
- * it is preserved only when the destination model still advertises support —
- * matching solo `buildQueuedProviderChange`.
  */
 export function resolveReasoningEffortForSeatChange(options: {
   provider: ProviderId
@@ -1042,16 +1017,12 @@ export function resolveReasoningEffortForSeatChange(options: {
   const { provider, model, previousEffort, modelMetadata } = options
   const fallbackMetadata = fallbackModelSelectionMetadata(provider, model)
   const metadata = modelMetadata ? { ...fallbackMetadata, ...modelMetadata } : fallbackMetadata
-  const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
-  if (normalizedPrevious === 'ultratask' && destinationSupportsUltraTask(provider, model, metadata)) {
-    return 'ultraTask'
-  }
-
   const enabled = enabledReasoningEffortsForModel(provider, model, metadata)
   if (enabled.length === 0) return undefined
 
+  const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
   const exactPrevious = resolveEnabledEffortToken(normalizedPrevious, enabled)
-  if (exactPrevious) return exactPrevious === 'ultratask' ? 'ultraTask' : exactPrevious
+  if (exactPrevious) return exactPrevious
 
   const previousRank = effortLadderRank(normalizedPrevious)
   if (previousRank != null) {
