@@ -6,11 +6,13 @@
  * (flow rows at 48-66) and src/main/providers/ProviderTerminalSetupController.ts
  * (begin/cancel at 62-80). Desktop reuse is a named follow-up.
  *
- * This module opens a user-visible terminal for a provider's interactive login.
- * It waits until that child process closes so callers can probe credentials
- * afterwards. Spawn, close, and a zero exit code never mean authenticated —
- * Host adapters must call getAuthStatus / credential probes for that evidence.
- * Pi is intentionally absent: it is env-key-only and has no terminal login.
+ * This module opens a user-visible terminal for a provider's interactive login
+ * and resolves as soon as that child spawns. Spawn, close, and a zero exit
+ * code never mean authenticated — Host adapters must call getAuthStatus /
+ * credential probes for that evidence. The child stays in pendingBinaries
+ * until it closes (or a post-spawn error settles) so a duplicate login is
+ * blocked while the terminal is still open. Pi is intentionally absent: it is
+ * env-key-only and has no terminal login.
  */
 
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
@@ -27,18 +29,18 @@ export interface HostNodeTerminalLauncherOptions {
 }
 
 /**
- * Process-close receipt for a manual login. There is no authenticated field on
- * purpose: a closed login binary is not credential evidence.
+ * Spawn receipt for a manual login. There is no authenticated, closed, or
+ * exitCode field on purpose: a spawned (or later-closed) login binary is not
+ * credential evidence.
  */
 export interface HostNodeTerminalLoginHandoff {
   readonly providerId: string
-  readonly closed: true
-  readonly exitCode: number | null
+  readonly spawned: true
 }
 
 /**
  * Provider-facing login port. Tests may resolve void; the real launcher returns
- * a closed handoff that must never be read as authentication.
+ * a spawn receipt that must never be read as authentication.
  */
 export interface HostNodeProviderTerminalLauncher {
   launchForProvider(
@@ -89,7 +91,7 @@ function validateLoginArgv(providerId: string, argv: unknown): readonly string[]
 
 /**
  * Open an interactive provider login in the Host process's existing terminal.
- * Resolves only after the child closes. That close is not authentication.
+ * Resolves as soon as the child spawns. That spawn is not authentication.
  */
 export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
   private readonly pendingBinaries = new Set<string>()
@@ -132,7 +134,7 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
       throw new Error(`${providerId} login terminal handoff could not start.`)
     }
 
-    const exitCode = await new Promise<number | null>((resolveHandoff, rejectHandoff) => {
+    return await new Promise<HostNodeTerminalLoginHandoff>((resolveHandoff, rejectHandoff) => {
       let spawned = false
       let settled = false
       const fail = (message: string): void => {
@@ -141,25 +143,32 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
         this.pendingBinaries.delete(binary)
         rejectHandoff(new Error(message))
       }
+      const releasePending = (): void => {
+        this.pendingBinaries.delete(binary)
+      }
       child.once('spawn', () => {
         spawned = true
+        if (settled) return
+        settled = true
+        resolveHandoff({ providerId, spawned: true })
       })
       child.once('error', () => {
-        if (!spawned) fail(`${providerId} login terminal handoff failed.`)
-      })
-      child.once('close', (code) => {
-        if (settled) return
         if (!spawned) {
           fail(`${providerId} login terminal handoff failed.`)
           return
         }
-        settled = true
-        this.pendingBinaries.delete(binary)
-        resolveHandoff(typeof code === 'number' ? code : null)
+        // Spawn already resolved beginAuth; still drop the pending lock so a
+        // later retry is not stuck if close never arrives.
+        releasePending()
+      })
+      child.once('close', () => {
+        if (!spawned) {
+          fail(`${providerId} login terminal handoff failed.`)
+          return
+        }
+        releasePending()
       })
     })
-
-    return { providerId, closed: true, exitCode }
   }
 }
 

@@ -52,9 +52,8 @@ function open(
         providerId: string,
         input: { readonly argv: readonly string[] }
       ) => Promise<void | {
-        readonly closed: true
+        readonly spawned: true
         readonly providerId: string
-        readonly exitCode: number | null
       }>
     }
     readonly configuredThread?: HostProviderRunThread

@@ -2,29 +2,37 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createHostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
 
-function fakeSpawn(options: { shouldError?: boolean; exitCode?: number | null } = {}) {
+function emitableChild() {
   const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
   const child = {
     once: (event: string, listener: (...args: unknown[]) => void) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener])
       return child
+    },
+    emit: (event: string, ...args: unknown[]) => {
+      for (const listener of listeners.get(event) ?? []) listener(...args)
     }
-  } as never
+  }
+  return child
+}
+
+function fakeSpawn(options: { shouldError?: boolean; exitCode?: number | null } = {}) {
   return vi.fn(() => {
+    const child = emitableChild()
     setTimeout(() => {
       if (options.shouldError) {
-        for (const listener of listeners.get('error') ?? []) listener()
+        child.emit('error')
         return
       }
-      for (const listener of listeners.get('spawn') ?? []) listener()
-      for (const listener of listeners.get('close') ?? []) listener(options.exitCode ?? 0)
+      child.emit('spawn')
+      child.emit('close', options.exitCode ?? 0)
     }, 0)
-    return child
+    return child as never
   })
 }
 
 describe('HostNodeTerminalLauncher', () => {
-  it('launches Muse login with exact [binary, login] argv and waits for close', async () => {
+  it('launches Muse login with exact [binary, login] argv and resolves on spawn', async () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const handoff = await launcher.launchForProvider('muse', {
@@ -34,8 +42,10 @@ describe('HostNodeTerminalLauncher', () => {
       shell: false,
       stdio: 'inherit'
     })
-    expect(handoff).toEqual({ providerId: 'muse', closed: true, exitCode: 0 })
+    expect(handoff).toEqual({ providerId: 'muse', spawned: true })
     expect(handoff).not.toHaveProperty('authenticated')
+    expect(handoff).not.toHaveProperty('closed')
+    expect(handoff).not.toHaveProperty('exitCode')
   })
 
   it('launches Claude login with catalogued [binary, auth, login] argv', async () => {
@@ -53,7 +63,7 @@ describe('HostNodeTerminalLauncher', () => {
     const launcher = createHostNodeTerminalLauncher({ spawn })
     await expect(
       launcher.launchForProvider('grok', { argv: ['/usr/local/bin/grok', 'login'] })
-    ).resolves.toEqual({ providerId: 'grok', closed: true, exitCode: 0 })
+    ).resolves.toEqual({ providerId: 'grok', spawned: true })
     expect(spawn).toHaveBeenCalledWith('/usr/local/bin/grok', ['login'], {
       shell: false,
       stdio: 'inherit'
@@ -90,17 +100,9 @@ describe('HostNodeTerminalLauncher', () => {
     )
   })
 
-  it('does not resolve on spawn; close is required and still is not authentication', async () => {
-    const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
-    const spawn = vi.fn(() => {
-      const child = {
-        once: (event: string, listener: (...args: unknown[]) => void) => {
-          listeners.set(event, [...(listeners.get(event) ?? []), listener])
-          return child
-        }
-      } as never
-      return child
-    })
+  it('resolves on spawn without waiting for close and still is not authentication', async () => {
+    const child = emitableChild()
+    const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
     let resolved: unknown = 'pending'
     const pending = launcher
@@ -109,47 +111,89 @@ describe('HostNodeTerminalLauncher', () => {
         resolved = handoff
         return handoff
       })
-    for (const listener of listeners.get('spawn') ?? []) listener()
-    await Promise.resolve()
-    expect(resolved).toBe('pending')
-    for (const listener of listeners.get('close') ?? []) listener(0)
+    child.emit('spawn')
     await expect(pending).resolves.toEqual({
       providerId: 'codex',
-      closed: true,
-      exitCode: 0
+      spawned: true
     })
     expect(resolved).not.toHaveProperty('authenticated')
+    expect(resolved).not.toHaveProperty('closed')
+    expect(resolved).not.toHaveProperty('exitCode')
   })
 
-  it('returns a closed handoff for a non-zero exit without claiming authentication', async () => {
-    const spawn = fakeSpawn({ exitCode: 1 })
+  it('does not treat a later close or non-zero exit as authentication', async () => {
+    const child = emitableChild()
+    const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
-    await expect(
-      launcher.launchForProvider('kimi', { argv: ['/usr/local/bin/kimi', 'login'] })
-    ).resolves.toEqual({ providerId: 'kimi', closed: true, exitCode: 1 })
+    const pending = launcher.launchForProvider('kimi', {
+      argv: ['/usr/local/bin/kimi', 'login']
+    })
+    child.emit('spawn')
+    const handoff = await pending
+    child.emit('close', 1)
+    expect(handoff).toEqual({ providerId: 'kimi', spawned: true })
+    expect(handoff).not.toHaveProperty('authenticated')
+    expect(handoff).not.toHaveProperty('exitCode')
   })
 
   it('rejects duplicate pending handoffs until the first child closes', async () => {
-    const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
-    const spawn = vi.fn(() => {
-      const child = {
-        once: (event: string, listener: (...args: unknown[]) => void) => {
-          listeners.set(event, [...(listeners.get(event) ?? []), listener])
-          return child
-        }
-      } as never
-      return child
-    })
+    const child = emitableChild()
+    const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const first = launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
     await expect(launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })).rejects.toThrow(
       'muse login terminal handoff is already pending.'
     )
-    for (const listener of listeners.get('spawn') ?? []) listener()
+    child.emit('spawn')
+    await first
     await expect(launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })).rejects.toThrow(
       'muse login terminal handoff is already pending.'
     )
-    for (const listener of listeners.get('close') ?? []) listener(0)
-    await first
+    child.emit('close', 0)
+    const retryChild = emitableChild()
+    spawn.mockImplementationOnce(() => retryChild as never)
+    const retry = launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
+    retryChild.emit('spawn')
+    await expect(retry).resolves.toBeUndefined()
+  })
+
+  it('rejects a pre-spawn error and unblocks a later login', async () => {
+    const failing = emitableChild()
+    const spawn = vi.fn(() => failing as never)
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    const first = launcher.launchForProvider('codex', {
+      argv: ['/usr/local/bin/codex', 'login']
+    })
+    failing.emit('error')
+    await expect(first).rejects.toThrow('codex login terminal handoff failed.')
+
+    const retryChild = emitableChild()
+    spawn.mockImplementationOnce(() => retryChild as never)
+    const retry = launcher.launchForProvider('codex', {
+      argv: ['/usr/local/bin/codex', 'login']
+    })
+    retryChild.emit('spawn')
+    await expect(retry).resolves.toEqual({ providerId: 'codex', spawned: true })
+  })
+
+  it('releases pendingBinaries on a post-spawn error with no close', async () => {
+    const child = emitableChild()
+    const spawn = vi.fn(() => child as never)
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    const first = launcher.launchForProvider('claude', {
+      argv: ['/usr/local/bin/claude', 'auth', 'login']
+    })
+    child.emit('spawn')
+    await expect(first).resolves.toEqual({ providerId: 'claude', spawned: true })
+    child.emit('error')
+    await Promise.resolve()
+
+    const retryChild = emitableChild()
+    spawn.mockImplementationOnce(() => retryChild as never)
+    const retry = launcher.launchForProvider('claude', {
+      argv: ['/usr/local/bin/claude', 'auth', 'login']
+    })
+    retryChild.emit('spawn')
+    await expect(retry).resolves.toEqual({ providerId: 'claude', spawned: true })
   })
 })
