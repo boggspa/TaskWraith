@@ -6,6 +6,7 @@ import type {
   CanvasPopoutSurface
 } from '../../main/canvas/CanvasPopoutWindowManager'
 import { CanvasDockPanel } from './components/CanvasDockPanel'
+import { useAppearance } from './hooks/useAppearance'
 import {
   ChatMediaDockPanel,
   collectChatMediaRefs,
@@ -132,6 +133,7 @@ function MediaCanvasPopout({ chatId }: { chatId: string }) {
 }
 
 export function CanvasPopoutApp() {
+  useAppearance()
   const [request, setRequest] = useState<CanvasPopoutOpenInput | null>(() =>
     parseCanvasPopoutRequest(new URLSearchParams(window.location.search))
   )
