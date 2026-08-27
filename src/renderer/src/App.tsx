@@ -859,6 +859,10 @@ import {
 } from './lib/startupNewChatTarget'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
 import {
+  launchWelcomeBackgroundThread,
+  type WelcomeBackgroundThreadTarget
+} from './lib/welcomeBackgroundThread'
+import {
   buildLaunchPreviewTargets,
   launchPreviewActionTitle,
   type LaunchPreviewTarget
@@ -16442,6 +16446,70 @@ function App(): React.JSX.Element {
   const appendBusyRunToExecutionStackRef = useRef(appendBusyRunToExecutionStack)
   appendBusyRunToExecutionStackRef.current = appendBusyRunToExecutionStack
 
+  const welcomeBackgroundSubmitInFlightRef = useRef<Set<string>>(new Set())
+  const dispatchWelcomeBackgroundRequest = async (
+    request: QueuedRunRequest,
+    target: WelcomeBackgroundThreadTarget,
+    requestedSchedule: string,
+    scheduledRunAt?: string
+  ): Promise<void> => {
+    const sourceChatId = target.chat.appChatId
+    if (welcomeBackgroundSubmitInFlightRef.current.has(sourceChatId)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
+    welcomeBackgroundSubmitInFlightRef.current.add(sourceChatId)
+    try {
+      await launchWelcomeBackgroundThread(
+        { target, request, scheduledRunAt },
+        {
+          createWorkspaceChat: (workspaceId, workspacePath) =>
+            window.api.createChat(workspaceId, workspacePath),
+          createGlobalChat: () => window.api.createGlobalChat(),
+          createEnsembleChat: (args) => window.api.createEnsembleChat(args),
+          saveChat: (chat) => window.api.saveChat(chat),
+          recordChat: (chat) => {
+            chatByIdRef.current.set(chat.appChatId, chat)
+            setChats((current) => mergeChatRecord(current, chat))
+          },
+          projectIdsForChat: (chatId) =>
+            listProjects()
+              .filter((project) => !project.archived && project.memberChatIds.includes(chatId))
+              .map((project) => project.id),
+          addChatToProject: (projectId, chatId) => {
+            addChatToProject(projectId, chatId)
+          },
+          createRunId: createAppRunId,
+          queueRun: (queued, reason) => {
+            void queueRunRequest(queued, reason)
+          },
+          executeRun: (queued) => {
+            void executeRun(queued)
+          },
+          currentDraft: (chatId) => composerDraftsByChatIdRef.current[chatId] || '',
+          clearDraft: (chatId) => setChatPromptDraft(chatId, ''),
+          clearSubmittedContext: clearSubmittedExecutionStackContext,
+          reapAbandonedChats: reapAbandonedChatsAfterCreate,
+          formatScheduledRunTime
+        }
+      )
+      if (
+        scheduledRunAt &&
+        requestedSchedule &&
+        scheduleRunAtByChatId[sourceChatId] === requestedSchedule
+      ) {
+        setScheduleRunAtForChat(sourceChatId, '')
+      }
+    } catch (error) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      const message = `Could not start a background thread: ${redactLog(String(error))}`
+      appendThreadRawLog(sourceChatId, { type: 'stderr', content: message })
+      window.alert(message)
+    } finally {
+      welcomeBackgroundSubmitInFlightRef.current.delete(sourceChatId)
+    }
+  }
+
   const handleRun = (
     overrideModel?: string,
     existingPrompt?: string,
@@ -16466,19 +16534,36 @@ function App(): React.JSX.Element {
      * explicit id above, this is only allowed to disambiguate one matching
      * plain mention when MAIN resolves the current roster.
      */
-    exactPickerParticipantId?: string
+    exactPickerParticipantId?: string,
+    backgroundTarget?: WelcomeBackgroundThreadTarget
   ) => {
-    const baseRequest = buildRunRequest(
-      overrideModel,
-      existingPrompt,
-      approvalModeOverride || workflowModeOverride
+    if (
+      backgroundTarget &&
+      (!isReusableWelcomeChat(backgroundTarget.chat) ||
+        workflowDraft?.chatId === backgroundTarget.chat.appChatId ||
+        welcomeBackgroundSubmitInFlightRef.current.has(backgroundTarget.chat.appChatId))
+    ) {
+      return
+    }
+    const requestTarget = backgroundTarget
+      ? {
+          chat: backgroundTarget.chat,
+          prompt: backgroundTarget.prompt,
+          sessionTrust: backgroundTarget.sessionTrust,
+          imageAttachments: backgroundTarget.imageAttachments,
+          discordContextSelection: backgroundTarget.discordContextSelection,
+          ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
+          ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {}),
+          claimProjectReferenceContext: true
+        }
+      : approvalModeOverride || workflowModeOverride
         ? {
             ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
             ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {}),
             claimProjectReferenceContext: true
           }
         : undefined
-    )
+    const baseRequest = buildRunRequest(overrideModel, existingPrompt, requestTarget)
     // One consent notice per WORKSPACE (owner directive 2026-08-05): the
     // first prompt sent into a never-consented workspace at an edit-capable
     // mode raises the generic Tier-1 sheet; Continue records the workspace
@@ -16494,16 +16579,22 @@ function App(): React.JSX.Element {
               .filter((participant) => participant.enabled)
               .map((participant) => permissionPresetToApprovalMode(participant.permissionPresetId))
           : [baseRequest.approvalMode]
+      const consentWorkspace = baseRequest.chatRecord
+        ? getWorkspaceForChat(baseRequest.chatRecord)
+        : currentWorkspace
       const firstSendConsent = decideFirstSendWorkspaceConsent({
         approvalModes: consentModes,
         workspacePath: baseRequest.chatRecord?.workspacePath ?? currentWorkspacePath,
         acknowledgedDefault: acknowledgedElevationDefaults
       })
       if (firstSendConsent) {
+        if (backgroundTarget) {
+          settleProjectReferenceContextForRequest(baseRequest, 'rejected')
+        }
         setPendingElevation({
           tier: firstSendConsent.tier,
           provider: baseRequest.provider,
-          workspaceLabel: currentWorkspace?.displayName ?? null,
+          workspaceLabel: consentWorkspace?.displayName ?? null,
           ackKey: firstSendConsent.ackKey,
           persistAck: firstSendConsent.persistAckOnConfirm,
           toMode: 'default',
@@ -16516,7 +16607,8 @@ function App(): React.JSX.Element {
                 dmTargetParticipantId,
                 approvalModeOverride,
                 workflowModeOverride,
-                exactPickerParticipantId
+                exactPickerParticipantId,
+                backgroundTarget
               )
             } finally {
               firstSendConsentGrantedRef.current = false
@@ -16584,6 +16676,29 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
     }
 
+    if (backgroundTarget) {
+      const sourceChatId = backgroundTarget.chat.appChatId
+      const requestedSchedule = scheduleRunAtByChatId[sourceChatId] || ''
+      const backgroundScheduledRunAt = requestedSchedule
+        ? normalizeScheduledQueueRunAt(requestedSchedule) || undefined
+        : undefined
+      if (requestedSchedule && !backgroundScheduledRunAt) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(sourceChatId, {
+          type: 'info',
+          content: 'Choose a future time for scheduled runs.'
+        })
+        return
+      }
+      void dispatchWelcomeBackgroundRequest(
+        request,
+        backgroundTarget,
+        requestedSchedule,
+        backgroundScheduledRunAt
+      )
+      return
+    }
+
     if (!existingPrompt && scheduleRunAt) {
       const scheduledRunAt = normalizeScheduledQueueRunAt(scheduleRunAt)
       if (!scheduledRunAt) {
@@ -16646,6 +16761,47 @@ function App(): React.JSX.Element {
 
     void executeRun(request)
   }
+  const handleRunRef = useRef(handleRun)
+  handleRunRef.current = handleRun
+  const runWelcomeBackgroundTarget = useCallback(
+    (
+      target: WelcomeBackgroundThreadTarget,
+      dmTargetParticipantId?: string,
+      exactPickerParticipantId?: string
+    ): void => {
+      handleRunRef.current(
+        undefined,
+        undefined,
+        dmTargetParticipantId,
+        undefined,
+        undefined,
+        exactPickerParticipantId,
+        target
+      )
+    },
+    []
+  )
+  const handleRunInBackground = useCallback(
+    (dmTargetParticipantId?: string, exactPickerParticipantId?: string): void => {
+      const sourceChatId = currentChatIdRef.current
+      if (!sourceChatId) return
+      const sourceChat = chatByIdRef.current.get(sourceChatId)
+      if (!sourceChat) return
+      runWelcomeBackgroundTarget(
+        {
+          chat: sourceChat,
+          prompt: composerDraftsByChatIdRef.current[sourceChatId] || '',
+          sessionTrust,
+          imageAttachments:
+            imageAttachmentsByChatIdRef.current[sourceChatId] || EMPTY_IMAGE_ATTACHMENTS,
+          discordContextSelection: discordContextSelectionByChatIdRef.current[sourceChatId] || null
+        },
+        dmTargetParticipantId,
+        exactPickerParticipantId
+      )
+    },
+    [runWelcomeBackgroundTarget, sessionTrust]
+  )
 
   const createSideChatFromCurrentChat = async (
     seedPrompt = '',
@@ -30674,6 +30830,30 @@ function App(): React.JSX.Element {
           dmTargetParticipantId,
           exactPickerParticipantId
         )
+      const paneHandleRunInBackground = (
+        dmTargetParticipantId?: string,
+        exactPickerParticipantId?: string
+      ): Promise<void> | void => {
+        const sourceChat = chatByIdRef.current.get(viewerChatId)
+        if (!sourceChat) return
+        runWelcomeBackgroundTarget(
+          {
+            chat: sourceChat,
+            prompt: composerDraftsByChatIdRef.current[viewerChatId] || '',
+            sessionTrust:
+              viewerPaneIndex === multiview.focusedPaneIndex &&
+              currentChatIdRef.current === viewerChatId
+                ? sessionTrust
+                : false,
+            imageAttachments:
+              imageAttachmentsByChatIdRef.current[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
+            discordContextSelection:
+              discordContextSelectionByChatIdRef.current[viewerChatId] || null
+          },
+          dmTargetParticipantId,
+          exactPickerParticipantId
+        )
+      }
       const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
       const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
         handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
@@ -31008,6 +31188,7 @@ function App(): React.JSX.Element {
         dualComposerTelemetry: viewerDualTelemetry,
         // ── pane-scoped action handlers ──
         handleRun: paneHandleRun,
+        handleRunInBackground: paneHandleRunInBackground,
         handleCancel: paneHandleCancel,
         handleProviderChange: paneHandleProviderChange,
         handleReviewCurrentDiff: async () => {
@@ -31208,6 +31389,7 @@ function App(): React.JSX.Element {
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
       handleRunMultiviewPane,
+      runWelcomeBackgroundTarget,
       handleSteerMultiviewPane,
       handleSaveExecutionGraph,
       imageAttachmentsByChatId,
@@ -31221,6 +31403,7 @@ function App(): React.JSX.Element {
       resumeAppWatchSnapshot,
       runQueueJobs,
       runningChatIds,
+      sessionTrust,
       pendingEnsembleSeatSelections,
       selectedParticipantIdByChatId,
       setChatPromptDraft,
@@ -31239,6 +31422,7 @@ function App(): React.JSX.Element {
       workflowDraft,
       multiviewGitSnapshotStore,
       multiviewPrCiStore,
+      multiview.focusedPaneIndex,
       multiview.layout,
       updateChatById
     ]
@@ -31314,6 +31498,7 @@ function App(): React.JSX.Element {
     externalPathGrantPromptBusy,
     goalPopoverOpen,
     handleCopyCurrentTranscript,
+    handleRunInBackground,
     imageAttachments,
     isAttachingWindow,
     openSlashCommandsRequestId: slashCommandsOpenRequestId,

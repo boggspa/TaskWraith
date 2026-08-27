@@ -195,6 +195,7 @@ import { resolveComposerGitActionBasePath } from '../lib/composerFocusedWorkspac
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { pathComparisonKey } from '../lib/pathDisplay'
+import { shouldStartWelcomeThreadInBackground } from '../lib/welcomeBackgroundThread'
 import {
   MIN_WORKSPACE_TERMINAL_HEIGHT,
   MAX_WORKSPACE_TERMINAL_HEIGHT,
@@ -372,6 +373,10 @@ export interface ComposerProps {
   handleReorderQueuedMessages: any
   handleReviewCurrentDiff: any
   handleRun: any
+  handleRunInBackground?: (
+    dmTargetParticipantId?: string,
+    exactPickerParticipantId?: string
+  ) => void | Promise<void>
   handleRunImportedPlan: any
   handleSelectExistingWorkspace: any
   handleSelectMultiviewLayout: any
@@ -750,6 +755,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleReorderQueuedMessages,
     handleReviewCurrentDiff,
     handleRun,
+    handleRunInBackground,
     handleRunImportedPlan,
     handleSelectExistingWorkspace,
     handleSelectMultiviewLayout,
@@ -3252,6 +3258,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             if (tryHandleInlineGoalSlashSubmit()) {
                               return
                             }
+                            const startInBackground =
+                              typeof handleRunInBackground === 'function' &&
+                              shouldStartWelcomeThreadInBackground({
+                                isWelcomeChat: Boolean(isWelcomeChat),
+                                isWorkflowChatWelcome: Boolean(isWorkflowChatWelcome),
+                                metaKey: e.metaKey,
+                                ctrlKey: e.ctrlKey,
+                                shiftKey: e.shiftKey,
+                                altKey: e.altKey,
+                                isComposing: e.nativeEvent.isComposing
+                              })
                             // Solo live-steering lane: when a round is in flight,
                             // Return-key (no modifier) dispatches `handleSteer`
                             // instead of queuing/cancelling — this is the
@@ -3296,20 +3313,28 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : null
                             const dmTarget =
                               dmFromMention ||
-                              (isCurrentEnsembleChat &&
-                              effectiveSelectedParticipantId &&
-                              (e.metaKey || e.ctrlKey)
+                              (!startInBackground &&
+                                isCurrentEnsembleChat &&
+                                effectiveSelectedParticipantId &&
+                                (e.metaKey || e.ctrlKey)
                                 ? effectiveSelectedParticipantId
                                 : undefined)
                             composerSuggestion.observeSentDraft(prompt)
-                            handleRun(
-                              undefined,
-                              undefined,
-                              dmTarget || undefined,
-                              undefined,
-                              undefined,
-                              dmFromPicker
-                            )
+                            if (startInBackground) {
+                              void handleRunInBackground(
+                                dmTarget || undefined,
+                                dmFromPicker
+                              )
+                            } else {
+                              handleRun(
+                                undefined,
+                                undefined,
+                                dmTarget || undefined,
+                                undefined,
+                                undefined,
+                                dmFromPicker
+                              )
+                            }
                             pickerParticipantMentionsByChatIdRef.current.delete(
                               currentComposerChatId
                             )
@@ -5188,9 +5213,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                         ? currentProviderRunUnavailableReason
                                       : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
-                                          : isCurrentEnsembleChat && effectiveSelectedParticipantId
-                                          ? `Run full ensemble round  ·  ${primaryModifierLabel} click = DM the selected chip`
-                                          : 'Run'
+                                          : isWelcomeChat &&
+                                              !isWorkflowChatWelcome &&
+                                              typeof handleRunInBackground === 'function'
+                                            ? `Run · ${primaryModifierLabel} + Return = start a new thread in background`
+                                            : isCurrentEnsembleChat &&
+                                                effectiveSelectedParticipantId
+                                              ? `Run full ensemble round  ·  ${primaryModifierLabel} click = DM the selected chip`
+                                              : 'Run'
                               }
                               aria-label="Run prompt"
                               aria-keyshortcuts="Enter Meta+Enter Control+Enter"
