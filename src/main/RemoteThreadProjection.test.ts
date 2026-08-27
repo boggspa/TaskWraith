@@ -19,6 +19,7 @@ import {
 } from './RunFailureNotice'
 import type { ContinuationHopsChangePayload } from '../shared/continuationHopsChange'
 import type { AutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
+import type { BlackboardChangePayload } from '../shared/blackboardChange'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -1386,6 +1387,23 @@ describe('RemoteThreadProjection', () => {
           }
         }),
         msg(5, {
+          id: 'blackboard-change',
+          role: 'system',
+          content: 'Blackboard updated: note / scout5-competitor-research.',
+          metadata: {
+            blackboardChange: {
+              action: 'updated',
+              key: 'scout5-competitor-research',
+              category: 'note',
+              scope: 'session',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba',
+              changedAt: '2026-08-15T12:02:00.000Z'
+            }
+          }
+        }),
+        msg(6, {
           id: 'ordinary',
           role: 'system',
           content: 'Round closed.',
@@ -1397,8 +1415,11 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[1].noticeKind).toBe('ensembleBossmanPoll')
       expect(snap.rows[2].noticeKind).toBe('continuationHopsChange')
       expect(snap.rows[3].noticeKind).toBe('autoApprovalsChange')
+      expect(snap.rows[4].noticeKind).toBe('blackboardChange')
+      expect(snap.rows[4].providerHueClass).toBe('alibaba')
+      expect(snap.rows[4].speaker).toBeUndefined()
       // Ordinary chrome keeps folding — the stamp marks the exceptions only.
-      expect(snap.rows[4].noticeKind).toBeUndefined()
+      expect(snap.rows[5].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed hop-change payload rather than stamping it', () => {
@@ -1439,6 +1460,30 @@ describe('RemoteThreadProjection', () => {
               after: false,
               changedAt: 'soon'
             } as unknown as AutoApprovalsChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBeUndefined()
+    })
+
+    it('rejects a malformed Blackboard change rather than stamping it', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bad-blackboard-change',
+          role: 'system',
+          content: 'Blackboard updated.',
+          metadata: {
+            blackboardChange: {
+              action: 'updated',
+              key: '',
+              category: 'note',
+              scope: 'session',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba); color: red',
+              changedAt: 'soon'
+            } as unknown as BlackboardChangePayload
           }
         })
       ])

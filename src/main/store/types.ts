@@ -10,7 +10,9 @@ import type { ContextCompactionProvenance } from '../../shared/contextCompaction
 import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
 import type { ContinuationHopsChangePayload } from '../../shared/continuationHopsChange'
 import type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
+import type { BlackboardChangePayload } from '../../shared/blackboardChange'
 export type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
+export type { BlackboardChangePayload } from '../../shared/blackboardChange'
 export type {
   ContinuationHopsChangeActor,
   ContinuationHopsChangePayload
@@ -3722,6 +3724,10 @@ export interface ChatMessage {
      *  the real Auto pill transitioning before -> after; plaintext clients use
      *  the carrier message's explicit enabled/disabled sentence. */
     autoApprovalsChange?: AutoApprovalsChangePayload
+    /** Run-authored Blackboard mutation promoted to a provider-accented,
+     *  tool-call-style transcript row. The carrier sentence remains the
+     *  plaintext fallback for TUI, iOS, exports, and older renderers. */
+    blackboardChange?: BlackboardChangePayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */

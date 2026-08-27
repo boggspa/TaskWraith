@@ -2287,6 +2287,10 @@ import {
   validateBlackboardPollOptions,
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
+import {
+  buildBlackboardCleanedTranscriptEvent,
+  buildBlackboardPostTranscriptEvent
+} from './blackboard/BlackboardTranscript'
 import { ingestBlackboardPostImages } from './blackboard/BlackboardPostAttachments'
 import { applyBlackboardPollVoteToChat } from './blackboard/BlackboardPoll'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
@@ -39584,8 +39588,9 @@ async function executeGeminiMcpTool(
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
       const activeRound = chat?.ensemble?.activeRound
-      const participantId =
-        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || 'system'
+      const participant =
+        ensembleOrchestratorRef?.getParticipantMetaForRun(context.appRunId || '') || undefined
+      const participantId = participant?.id || 'system'
       // Only ROUND-scoped posts need an active round to attach to; session/chat
       // notes are durable shared memory that must stay writable between rounds.
       // Shared with the user-facing post-blackboard-entry IPC path via
@@ -39754,11 +39759,11 @@ async function executeGeminiMcpTool(
                 updatedAt: Date.now()
               }
               saveAndBroadcastChat(updated)
+              const transcriptEvent = buildBlackboardPostTranscriptEvent(entry, participant)
               ensembleOrchestratorRef?.appendStatusForRun(
                 context.appRunId || '',
-                entry.poll
-                  ? `Blackboard poll opened: ${entry.key} (${entry.poll.options.length} choices).`
-                  : `Blackboard updated: ${entry.category} / ${entry.key}.`
+                transcriptEvent.content,
+                transcriptEvent.metadata
               )
               text = mcpJson({
                 ok: true,
@@ -39952,6 +39957,8 @@ async function executeGeminiMcpTool(
       markDispatchHandled('blackboard')
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
+      const participant =
+        ensembleOrchestratorRef?.getParticipantMetaForRun(context.appRunId || '') || undefined
       if (!chat?.ensemble) {
         toolIsError = true
         text = mcpJson({
@@ -39985,9 +39992,15 @@ async function executeGeminiMcpTool(
             updatedAt: Date.now()
           }
           saveAndBroadcastChat(updated)
+          const transcriptEvent = buildBlackboardCleanedTranscriptEvent(
+            result.removed.length,
+            timestamp,
+            participant
+          )
           ensembleOrchestratorRef?.appendStatusForRun(
             context.appRunId || '',
-            `Blackboard cleaned: removed ${result.removed.length} ${result.removed.length === 1 ? 'entry' : 'entries'}.`
+            transcriptEvent.content,
+            transcriptEvent.metadata
           )
           text = mcpJson({
             ok: true,

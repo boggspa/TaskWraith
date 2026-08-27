@@ -227,6 +227,7 @@ import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscr
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
 import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
+import { isBlackboardChangePayload } from '../../../shared/blackboardChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -264,6 +265,7 @@ import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
 import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
+import { BlackboardChangeRow } from './BlackboardChangeRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
@@ -1030,6 +1032,9 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Human-owned Auto Approvals changes use the same durable before/after
     // standing as seat and hop-limit changes.
     !isAutoApprovalsChangePayload(msg.metadata?.autoApprovalsChange) &&
+    // Run-authored Blackboard mutations are tool-call-style events, not
+    // anonymous system notices. Malformed legacy records keep the fallback.
+    !isBlackboardChangePayload(msg.metadata?.blackboardChange) &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -4777,6 +4782,9 @@ export const TranscriptPanel = memo(
             const isAutoApprovalsChange = isAutoApprovalsChangePayload(
               msg.metadata?.autoApprovalsChange
             )
+            const isBlackboardChange = isBlackboardChangePayload(
+              msg.metadata?.blackboardChange
+            )
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
@@ -5723,6 +5731,8 @@ export const TranscriptPanel = memo(
                   <ContinuationHopsChangeRow key={msg.id} message={msg} />
                 ) : isAutoApprovalsChange ? (
                   <AutoApprovalsChangeRow key={msg.id} message={msg} />
+                ) : isBlackboardChange ? (
+                  <BlackboardChangeRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
                   <CollapsedTranscriptRow
                     key={msg.id}

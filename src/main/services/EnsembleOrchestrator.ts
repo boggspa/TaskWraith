@@ -6880,11 +6880,15 @@ export class EnsembleOrchestrator {
    * formatting other lifecycle notes use. No-op when the run isn't
    * known (e.g. the participant has already finalised).
    */
-  appendStatusForRun(runId: string, note: string): boolean {
+  appendStatusForRun(
+    runId: string,
+    note: string,
+    metadata?: NonNullable<ChatMessage['metadata']>
+  ): boolean {
     if (!runId || !note) return false
     const run = this.actionableRunForTool(runId)
     if (!run) return false
-    this.appendRoundStatus(run.chatId, run.roundId, note)
+    this.appendRoundStatus(run.chatId, run.roundId, note, { metadata })
     return true
   }
 
@@ -14448,18 +14452,27 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * 1.0.4-AK6 — lookup the participant's role + provider for
+   * 1.0.4-AK6 — lookup the participant's frozen run identity for
    * scout-brief recording. Used by the dispatch site to populate
-   * the brief's identity fields without exposing the orchestrator's
-   * internal run registry.
+   * brief identity fields and provider-attributed transcript events without
+   * exposing the orchestrator's internal run registry. Model comes from the
+   * active run, not the mutable future-turn roster, so upstream branding stays
+   * exact when a seat edit lands during the call.
    */
-  getParticipantMetaForRun(runId: string): { role: string; provider: ProviderId } | null {
+  getParticipantMetaForRun(runId: string): {
+    id: string
+    role: string
+    provider: ProviderId
+    model?: string
+  } | null {
     if (!runId) return null
     const run = this.actionableRunForTool(runId)
     if (!run) return null
     return {
+      id: run.participant.id,
       role: run.participant.role || '',
-      provider: run.participant.provider
+      provider: run.participant.provider,
+      ...(run.participant.model ? { model: run.participant.model } : {})
     }
   }
 
@@ -22355,6 +22368,9 @@ export class EnsembleOrchestrator {
     options: {
       fanoutCategory?: 'user' | 'orchestrated'
       fanoutLabel?: string
+      /** Structured transcript promotion supplied by a trusted main-process
+       *  tool dispatcher. Plain status callers leave this absent. */
+      metadata?: NonNullable<ChatMessage['metadata']>
     } = {}
   ): string | null {
     const chat = this.deps.getChat(chatId)
@@ -22383,6 +22399,7 @@ export class EnsembleOrchestrator {
             timestamp,
             metadata: {
               kind: 'ensembleRoundStatus',
+              ...options.metadata,
               ensembleRoundId: roundId,
               ...(options.fanoutCategory
                 ? {

@@ -74,6 +74,7 @@ import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
 import { isAutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
+import { isBlackboardChangePayload } from '../shared/blackboardChange'
 import {
   usageCacheCreationInputTokens,
   usageCacheReadInputTokens,
@@ -1743,6 +1744,9 @@ function distinguishedNoticeKind(
   if (isAutoApprovalsChangePayload(metadata.autoApprovalsChange)) {
     return 'autoApprovalsChange'
   }
+  if (isBlackboardChangePayload(metadata.blackboardChange)) {
+    return 'blackboardChange'
+  }
   return undefined
 }
 
@@ -2933,6 +2937,12 @@ function messageProviderHueClass(
   metadata: Record<string, unknown> | undefined
 ): string | undefined {
   if (!metadata) return undefined
+  // Blackboard calls intentionally carry no `ensembleProvider`: that field
+  // would make iOS render a seat-name speaker header. Preserve provider
+  // attribution through the validated glyph/row hue alone.
+  if (isBlackboardChangePayload(metadata.blackboardChange)) {
+    return metadata.blackboardChange.displayHueClass
+  }
   const provider =
     providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
   if (!provider) return undefined

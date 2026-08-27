@@ -3324,6 +3324,17 @@ describe('EnsembleOrchestrator', () => {
 
     // Owned run ⇒ non-null participant id ⇒ injectTrustedMediaRefs branch-3 true.
     expect(harness.orchestrator.getParticipantIdForRun(runId)).not.toBeNull()
+    // A future-turn roster edit must not repaint a tool call already in flight.
+    // Replace (rather than mutate) the live seat to mirror roster-save behavior.
+    harness.chat.ensemble!.participants = harness.chat.ensemble!.participants.map((participant) =>
+      participant.id === 'claude' ? { ...participant, model: 'future-claude-model' } : participant
+    )
+    expect(harness.orchestrator.getParticipantMetaForRun(runId)).toEqual({
+      id: 'claude',
+      role: 'Reviewer',
+      provider: 'claude',
+      model: 'claude-model'
+    })
     // An unrelated id stays a miss ⇒ false ⇒ solo-Codex IPC fallback.
     expect(harness.orchestrator.getParticipantIdForRun(`${runId}-other`)).toBeNull()
   })
@@ -3757,6 +3768,50 @@ describe('EnsembleOrchestrator', () => {
     // transcript renderer + measurement cache rely on.
     const allIds = harness.chat.messages.map((m) => m.id)
     expect(new Set(allIds).size).toBe(allIds.length)
+  })
+
+  it('preserves trusted structured metadata on a run-authored status row', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Share durable findings.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const changedAt = '2026-08-27T12:40:00.000Z'
+    expect(
+      harness.orchestrator.appendStatusForRun(
+        harness.dispatched[0].appRunId!,
+        'Blackboard updated: note / scout5-competitor-research.',
+        {
+          kind: 'ensembleBlackboardChange',
+          blackboardChange: {
+            action: 'updated',
+            key: 'scout5-competitor-research',
+            category: 'note',
+            scope: 'session',
+            provider: 'claude',
+            displayProviderLabel: 'Claude',
+            displayHueClass: 'claude',
+            changedAt
+          }
+        }
+      )
+    ).toBe(true)
+
+    const status = harness.chat.messages.find(
+      (message) => message.metadata?.kind === 'ensembleBlackboardChange'
+    )
+    expect(status).toMatchObject({
+      role: 'system',
+      content: 'Blackboard updated: note / scout5-competitor-research.',
+      metadata: {
+        kind: 'ensembleBlackboardChange',
+        ensembleRoundId: expect.any(String),
+        blackboardChange: { action: 'updated', displayHueClass: 'claude' }
+      }
+    })
   })
 
   it('dispatches duplicate-provider participants by participant id', async () => {

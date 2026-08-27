@@ -1,0 +1,75 @@
+/* Run-authored Blackboard mutations sit at the same transcript hierarchy as
+ * seat and handoff changes, but use the compact tool-call vocabulary: one
+ * provider-accented Blackboard glyph, action, target, and time. There is no
+ * assistant header or seat label; attribution stays visual (plus the row's
+ * accessible label) so the event reads as a call, not a message. */
+.blackboard-change-row {
+  gap: 9px;
+  cursor: default;
+}
+
+.blackboard-change-icon {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 30%, transparent));
+}
+
+.blackboard-change-icon .blackboard-glyph {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.blackboard-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 560;
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.blackboard-change-category {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.blackboard-change-separator {
+  flex: 0 0 auto;
+  margin-inline: -3px;
+  color: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-change-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text-primary) 68%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-change-detail {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 44%, transparent);
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-change-time {
+  margin-left: 2px;
+}
+
+@media (max-width: 620px) {
+  .blackboard-change-row {
+    gap: 7px;
+  }
+
+  .blackboard-change-time {
+    display: none;
+  }
+}
