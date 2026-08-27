@@ -5688,9 +5688,33 @@ struct ThreadRowView: View, Equatable {
             errorText = nil
             Task {
                 do {
-                    let fetched = try await model.fetchThreadMedia(
-                        threadId: threadId, rowId: rowId, mediaId: item.id,
-                        variant: "full", maxBytes: 8 * 1024 * 1024)
+                    var assembler = FullSizeMediaAssembler()
+                    var currentOffset = 0
+                    while assembler.needsMore {
+                        let chunk = try await model.fetchThreadMediaChunk(
+                            threadId: threadId, rowId: rowId, mediaId: item.id,
+                            offset: currentOffset, length: FullSizeMediaAssembler.chunkLength)
+                        try assembler.append(chunk: chunk.data, totalBytes: chunk.totalBytes)
+                        currentOffset += chunk.data.count
+                    }
+                    let allData = try assembler.finish()
+                    guard UIImage(data: allData) != nil else {
+                        throw FullSizeMediaFetchError.undecodableImage
+                    }
+                    let fetched = TranscriptMediaFetchResult(
+                        id: item.id,
+                        rowId: rowId,
+                        threadId: threadId,
+                        name: item.name,
+                        source: item.source,
+                        mimeType: item.mimeType ?? "image/jpeg",
+                        dataBase64: allData.base64EncodedString(),
+                        width: item.width,
+                        height: item.height,
+                        byteLength: allData.count,
+                        variant: "full",
+                        totalBytes: nil,
+                        offset: nil)
                     await MainActor.run {
                         self.preview = TranscriptMediaPreview(payload: .image(fetched))
                         self.fetchingMediaId = nil
