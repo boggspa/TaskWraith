@@ -218,7 +218,7 @@ export interface ComposerRunMetadata {
    * this onto the ChatRun it appends, which is what persists it.
    */
   promptEnvelope?: PromptEnvelopeSnapshot
-  /** Persisted only after the provider admits the run (`run_started`). */
+  /** Persisted only after successful provider terminal evidence. */
   promptDeliveryReceipts?: PromptDeliveryReceipts
 }
 

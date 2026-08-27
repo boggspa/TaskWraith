@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { promptDeliveryReceiptMetadataPatch } from './promptDeliveryReceipts'
+import {
+  promptDeliveryReceiptMetadataPatch,
+  promptDeliveryReceiptsPersistableStatus
+} from './promptDeliveryReceipts'
 
 describe('promptDeliveryReceiptMetadataPatch', () => {
   it('persists every admitted candidate under its stable metadata key', () => {
@@ -38,14 +41,19 @@ describe('promptDeliveryReceiptMetadataPatch', () => {
     ).toEqual({})
   })
 
-  it('persists candidates only after the provider admits run_started', () => {
+  it('persists candidates only after successful terminal evidence', () => {
     const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     const runStarted = appSource.indexOf("event.type === 'run_started'")
     const runFinished = appSource.indexOf("event.type === 'run_finished'", runStarted)
     expect(runStarted).toBeGreaterThan(0)
     expect(runFinished).toBeGreaterThan(runStarted)
     const call = 'const promptDeliveryPatch = promptDeliveryReceiptMetadataPatch('
-    expect(appSource.slice(0, runStarted)).not.toContain(call)
-    expect(appSource.slice(runStarted, runFinished)).toContain(call)
+    expect(appSource.slice(0, runFinished)).not.toContain(call)
+    expect(appSource.slice(runFinished)).toContain(call)
+    expect(promptDeliveryReceiptsPersistableStatus('success')).toBe(true)
+    expect(promptDeliveryReceiptsPersistableStatus('success_with_warnings')).toBe(true)
+    expect(promptDeliveryReceiptsPersistableStatus('completed')).toBe(true)
+    expect(promptDeliveryReceiptsPersistableStatus('failed')).toBe(false)
+    expect(promptDeliveryReceiptsPersistableStatus('cancelled')).toBe(false)
   })
 })

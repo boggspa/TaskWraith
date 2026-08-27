@@ -279,7 +279,10 @@ import {
   findCurrentChatSearchMatches
 } from './lib/currentChatSearch'
 import { formatAssistantMessageLabel } from './lib/assistantMessageLabel'
-import { promptDeliveryReceiptMetadataPatch } from './lib/promptDeliveryReceipts'
+import {
+  promptDeliveryReceiptMetadataPatch,
+  promptDeliveryReceiptsPersistableStatus
+} from './lib/promptDeliveryReceipts'
 import { groupAdjacentToolMessages } from './lib/transcriptToolMessageGrouping'
 import {
   MIN_RIGHT_PANEL_WIDTH,
@@ -15768,17 +15771,6 @@ function App(): React.JSX.Element {
                 }
               }
             } else if (event.type === 'run_started') {
-              const promptDeliveryPatch = promptDeliveryReceiptMetadataPatch(
-                (composerMetadata as { promptDeliveryReceipts?: PromptDeliveryReceipts })
-                  .promptDeliveryReceipts,
-                effectiveRunProvider
-              )
-              if (Object.keys(promptDeliveryPatch).length > 0) {
-                updated.providerMetadata = {
-                  ...(updated.providerMetadata || {}),
-                  ...promptDeliveryPatch
-                }
-              }
               const sessionId = normalizeGeminiResumeTarget(event.session_id)
               if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
                 if (effectiveRunProvider !== 'gemini') {
@@ -15817,6 +15809,19 @@ function App(): React.JSX.Element {
               }
               updated.runs = runs
             } else if (event.type === 'run_finished') {
+              if (promptDeliveryReceiptsPersistableStatus(event.status)) {
+                const promptDeliveryPatch = promptDeliveryReceiptMetadataPatch(
+                  (composerMetadata as { promptDeliveryReceipts?: PromptDeliveryReceipts })
+                    .promptDeliveryReceipts,
+                  effectiveRunProvider
+                )
+                if (Object.keys(promptDeliveryPatch).length > 0) {
+                  updated.providerMetadata = {
+                    ...(updated.providerMetadata || {}),
+                    ...promptDeliveryPatch
+                  }
+                }
+              }
               if (isVisibleRunChat()) setIsThinking(false)
               const runs = [...(updated.runs || [])]
               const renderMetrics = drainStreamRenderMetrics(currentRunId)

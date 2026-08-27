@@ -42,3 +42,9 @@ export function promptDeliveryReceiptMetadataPatch(
   }
   return patch
 }
+
+/** A failed/cancelled run may not have delivered its composed prompt. Repeating
+ * stable context is harmless; falsely suppressing it is not. */
+export function promptDeliveryReceiptsPersistableStatus(status: unknown): boolean {
+  return status === 'success' || status === 'success_with_warnings' || status === 'completed'
+}

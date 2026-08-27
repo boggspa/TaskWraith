@@ -1416,7 +1416,7 @@ export interface ComposeRunPromptResult {
   /** Set when this run injected the runtime preamble and the caller should persist it. */
   runtimePreambleVersion?: string
   runtimePreambleProvider?: ProviderId
-  /** Candidates below become receipts only after the provider emits run_started. */
+  /** Candidates below become receipts only after successful provider completion. */
   workInvariantsVersion?: string
   workInvariantsProvider?: ProviderId
   skillDiscoveryDigest?: string
