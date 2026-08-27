@@ -6471,14 +6471,24 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     statusMessage: string
   ): boolean {
-    const existingIdx = remaining.findIndex((entry) => entry.id === participant.id)
+    // A user may queue a provider/model change while this authority turn is
+    // active. The execution boundary applies it before we reach this hold, but
+    // `participant` is the immutable snapshot that just ran. Rehydrate by id
+    // so the retained turn uses the user's newly-authoritative seat instead of
+    // dispatching the exhausted configuration again.
+    const retainedParticipant =
+      this.deps
+        .getChat(runtime.chatId)
+        ?.ensemble?.participants.find((entry) => entry.id === participant.id) || participant
+    const existingIdx = remaining.findIndex((entry) => entry.id === retainedParticipant.id)
     if (existingIdx === 0) {
+      remaining[0] = retainedParticipant
       this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
       return true
     }
     if (existingIdx > 0) {
-      const [existing] = remaining.splice(existingIdx, 1)
-      remaining.unshift(existing)
+      remaining.splice(existingIdx, 1)
+      remaining.unshift(retainedParticipant)
       this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
       return true
     }
@@ -6486,7 +6496,7 @@ export class EnsembleOrchestrator {
       const continuation = this.tryAppendContinuationTurn(
         runtime,
         remaining,
-        participant,
+        retainedParticipant,
         statusMessage,
         {
           allowAnsweredParticipant: true,
@@ -6504,7 +6514,7 @@ export class EnsembleOrchestrator {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
-          `${statusMessage} Could not re-summon ${participantDisplayName(participant)}: ${this.describeContinuationDecline(continuation)}.`
+          `${statusMessage} Could not re-summon ${participantDisplayName(retainedParticipant)}: ${this.describeContinuationDecline(continuation)}.`
         )
         return false
       }
@@ -6512,7 +6522,7 @@ export class EnsembleOrchestrator {
     // Turn-bound seats speak once by default; an active fan-out authority hold
     // outranks that so ordinary writers cannot race unsettled lanes. The same
     // force path covers continuous hop/budget refusals above.
-    remaining.unshift(participant)
+    remaining.unshift(retainedParticipant)
     this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
     return true
   }
