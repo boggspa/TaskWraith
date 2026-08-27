@@ -1,8 +1,6 @@
-import {
-  resolveCanonicalToolName,
-  resolveCatalogToolName
-} from './canonicalToolCoalesce'
+import { resolveCanonicalToolName, resolveCatalogToolName } from './canonicalToolCoalesce'
 import { resolveToolDispatchContractStrict } from './providerActionTaxonomy'
+import type { ToolActivity } from '../main/store/types'
 
 export type ToolInvocationParameters = Record<string, unknown>
 
@@ -68,6 +66,40 @@ const TRANSPORT_ONLY_KEYS = new Set([
   'function'
 ])
 
+const MCP_TRANSPORT_WRAPPER_NAMES = new Set(['callmcptool', 'call_mcp_tool', 'mcp', 'use_tool'])
+
+const MCP_TRANSPORT_WRAPPER_DISPLAY_NAMES = new Set([
+  'used callmcptool',
+  'used call_mcp_tool',
+  'used mcp',
+  'mcp',
+  'used an mcp tool'
+])
+
+const COMMAND_LIKE_ACTIVITY_KEYS = [
+  'command',
+  'cmd',
+  'script',
+  'bash',
+  'shell',
+  'shell_command',
+  'shellCommand',
+  'terminal_command',
+  'terminalCommand'
+] as const
+
+const ACTIVITY_NESTED_RECORD_KEYS = [
+  'parameters',
+  'params',
+  'payload',
+  'args',
+  'input',
+  'arguments',
+  'rawInput',
+  'toolInput',
+  'tool_input'
+] as const
+
 function recordFrom(value: unknown): ToolInvocationParameters | undefined {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as ToolInvocationParameters
@@ -81,6 +113,87 @@ function recordFrom(value: unknown): ToolInvocationParameters | undefined {
   } catch {
     return undefined
   }
+}
+
+function firstStringField(
+  record: ToolInvocationParameters,
+  keys: readonly string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+function nestedActivityRecords(value: unknown): ToolInvocationParameters[] {
+  const root = recordFrom(value)
+  if (!root) return []
+  const records = [root]
+  for (const key of ACTIVITY_NESTED_RECORD_KEYS) {
+    const nested = recordFrom(root[key])
+    if (nested) records.push(nested)
+  }
+  return records
+}
+
+function activityPayloadRecords(activity: ToolActivity): ToolInvocationParameters[] {
+  return [
+    ...(activity.parameters ? [activity.parameters] : []),
+    ...nestedActivityRecords(activity.rawUseEvent)
+  ]
+}
+
+function hasCommandLikeActivityPayload(activity: ToolActivity): boolean {
+  if (activity.category === 'shell') return true
+  return activityPayloadRecords(activity).some((record) =>
+    Boolean(firstStringField(record, COMMAND_LIKE_ACTIVITY_KEYS))
+  )
+}
+
+function hasMcpTransportEvidence(activity: ToolActivity): boolean {
+  return activityPayloadRecords(activity).some((record) => {
+    const transportType = firstStringField(record, ['type', 'kind', 'tool_kind', 'toolKind'])
+    if (transportType?.toLowerCase().includes('mcp')) return true
+    if (
+      firstStringField(record, [
+        'server',
+        'serverName',
+        'server_name',
+        'providerIdentifier',
+        'provider_identifier',
+        'mcpToolName',
+        'mcp_tool_name',
+        'mcpTool',
+        'mcp_tool'
+      ])
+    ) {
+      return true
+    }
+    const wrapper = firstStringField(record, ['tool', 'toolName', 'tool_name', 'name'])
+    return wrapper ? MCP_TRANSPORT_WRAPPER_NAMES.has(wrapper.toLowerCase()) : false
+  })
+}
+
+/**
+ * Whether a stored activity is only a provider's MCP transport envelope.
+ *
+ * Grok and Cursor can emit these opaque discovery/pre-call wrappers alongside
+ * the concrete tool activity. Keep the wrapper in the transcript/audit model,
+ * but omit it from user-facing rows and derived tool-call counts. A
+ * command-shaped activity is never hidden: several historical providers used
+ * the same generic names for real shell work.
+ */
+export function isMcpTransportWrapperActivity(activity: ToolActivity): boolean {
+  if (hasCommandLikeActivityPayload(activity)) return false
+  const toolName = (activity.toolName || '').trim().toLowerCase()
+  const displayName = (activity.displayName || '').trim().toLowerCase()
+  if (MCP_TRANSPORT_WRAPPER_NAMES.has(toolName)) return true
+  if (MCP_TRANSPORT_WRAPPER_DISPLAY_NAMES.has(displayName)) return true
+  if (toolName === 'unknown' || displayName === 'used unknown' || displayName === 'unknown') {
+    return hasMcpTransportEvidence(activity)
+  }
+  return false
 }
 
 function parameterRecord(value: unknown): ToolInvocationParameters {
@@ -209,7 +322,9 @@ export function mergeToolResultParameters(
   }
 }
 
-function capabilityTargetParameters(parameters: ToolInvocationParameters): ToolInvocationParameters {
+function capabilityTargetParameters(
+  parameters: ToolInvocationParameters
+): ToolInvocationParameters {
   for (const key of [
     'rawInput',
     'input',

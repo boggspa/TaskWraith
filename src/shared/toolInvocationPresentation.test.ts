@@ -1,12 +1,85 @@
 import { describe, expect, it } from 'vitest'
+import type { ToolActivity } from '../main/store/types'
 
 import {
   extractToolInvocationParameters,
+  isMcpTransportWrapperActivity,
   mergeToolResultParameters,
   presentToolInvocation
 } from './toolInvocationPresentation'
 
+function activity(overrides: Partial<ToolActivity>): ToolActivity {
+  return {
+    id: 'activity-1',
+    toolName: 'read_file',
+    displayName: 'Read file',
+    category: 'read',
+    status: 'success',
+    ...overrides
+  }
+}
+
 describe('tool invocation presentation', () => {
+  it('identifies opaque MCP transport wrappers without hiding concrete MCP tools', () => {
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({ toolName: 'callMcpTool', displayName: 'Used callmcptool', category: 'unknown' })
+      )
+    ).toBe(true)
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({ toolName: 'mcp', displayName: 'MCP', category: 'unknown' })
+      )
+    ).toBe(true)
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({
+          toolName: 'unknown',
+          displayName: 'Used unknown',
+          category: 'unknown',
+          parameters: { mcpToolName: 'workspace_search', server: 'taskwraith' },
+          rawUseEvent: { type: 'mcpToolCall', arguments: { query: 'needle' } }
+        })
+      )
+    ).toBe(true)
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({
+          toolName: 'mcp__taskwraith__read_file',
+          displayName: 'Read file',
+          parameters: { path: 'README.md', server: 'taskwraith' },
+          rawUseEvent: { type: 'mcpToolCall' }
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('keeps command-shaped generic activities visible', () => {
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({
+          toolName: 'mcp',
+          displayName: 'MCP',
+          category: 'unknown',
+          parameters: { command: 'bash ./scripts/check.sh' }
+        })
+      )
+    ).toBe(false)
+    expect(
+      isMcpTransportWrapperActivity(
+        activity({
+          toolName: 'unknown',
+          displayName: 'Used unknown',
+          category: 'unknown',
+          rawUseEvent: {
+            type: 'mcpToolCall',
+            arguments: { command: 'rg needle src' }
+          }
+        })
+      )
+    ).toBe(false)
+  })
+
   it('retains populated argument bags when another envelope bag is empty', () => {
     expect(
       extractToolInvocationParameters({
