@@ -32,6 +32,18 @@ export interface CanvasEmbedIpcAuthority {
     workspacePaths?: Iterable<string>
   }) => string[]
   openChatIds: () => Set<string>
+  /** Rebind live embedded views and renderer ownership without reloading them. */
+  transferRenderer: (input: {
+    canvasIds: readonly string[]
+    fromSenderId: number
+    toSenderId: number
+    context: CanvasCallContext
+    toSurfaceHostId?: number
+    presentation?: 'dock'
+  }) => CanvasSessionSummary[]
+  /** Close every embedded Canvas still owned by a renderer window. */
+  closeRenderer: (senderId: number) => Promise<string[]>
+  ownedCanvasIds: (senderId: number) => string[]
   clear: () => void
 }
 
@@ -378,6 +390,105 @@ export function registerCanvasEmbedIpc(
           .map((entry) => entry.context.chatId)
           .filter((chatId): chatId is string => Boolean(chatId))
       )
+    },
+    transferRenderer(input) {
+      const canvasIds = [...new Set(input.canvasIds)]
+      const prepared = canvasIds.map((canvasId) => {
+        const entry = owned.get(canvasId)
+        if (
+          !entry ||
+          entry.senderId !== input.fromSenderId ||
+          !sameAuthority(entry.context, input.context)
+        ) {
+          throw new Error('Renderer does not own this Canvas transfer.')
+        }
+        if (!deps.embed.has(canvasId)) {
+          throw new Error('Canvas does not have a live embedded surface to move.')
+        }
+        const summary = deps.controller.status(canvasId, entry.context)
+        if (!summary || summary.status === 'closed') {
+          throw new Error('Canvas is no longer active.')
+        }
+        return { canvasId, entry, summary, previousHostId: entry.context.surfaceHostId }
+      })
+      const moved: typeof prepared = []
+      try {
+        for (const candidate of prepared) {
+          deps.embed.reparent(candidate.canvasId, input.toSurfaceHostId)
+          candidate.entry.senderId = input.toSenderId
+          candidate.entry.context = {
+            ...candidate.entry.context,
+            ...(input.toSurfaceHostId === undefined
+              ? { surfaceHostId: undefined }
+              : { surfaceHostId: input.toSurfaceHostId })
+          }
+          moved.push(candidate)
+          if (input.presentation === 'dock') {
+            if (!deps.controller.presentInDock) {
+              throw new Error('Canvas dock presentation transfer is unavailable.')
+            }
+            candidate.summary = deps.controller.presentInDock(
+              candidate.canvasId,
+              candidate.entry.context
+            )
+          }
+        }
+      } catch (error) {
+        for (const candidate of [...moved].reverse()) {
+          try {
+            deps.embed.reparent(candidate.canvasId, candidate.previousHostId)
+          } catch {
+            // Preserve the original transfer failure. The still-live view is
+            // retained by CanvasService and can be closed by history cleanup.
+          }
+          candidate.entry.senderId = input.fromSenderId
+          candidate.entry.context = {
+            ...candidate.entry.context,
+            surfaceHostId: candidate.previousHostId
+          }
+        }
+        throw error
+      }
+      return prepared.map((candidate) => candidate.summary)
+    },
+    async closeRenderer(senderIdToClose) {
+      const candidates = [...owned.entries()].filter(
+        ([, entry]) => entry.senderId === senderIdToClose
+      )
+      // Phase 1 is deliberately await-free: renderer loss means none of these
+      // views has a React owner left to hide it. Park and de-authorize the
+      // entire renderer cohort before even one sketch persistence/driver close
+      // can yield, otherwise a later tab could still cover recovery UI.
+      for (const [canvasId] of candidates) {
+        owned.delete(canvasId)
+        deps.embed.setVisible(canvasId, false)
+      }
+      // Phase 2 starts every close before awaiting the cohort. A stuck/slow
+      // surface therefore cannot prevent teardown of its siblings.
+      const outcomes = await Promise.allSettled(
+        candidates.map(async ([canvasId, entry]) => {
+          try {
+            await deps.controller.close(canvasId, entry.context)
+          } finally {
+            deps.embed.detach(canvasId)
+          }
+        })
+      )
+      const failures = outcomes.filter(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+      )
+      if (failures.length) {
+        throw new AggregateError(
+          failures.map((failure) => failure.reason),
+          'One or more renderer-owned Canvas surfaces could not be closed.'
+        )
+      }
+      return candidates.map(([canvasId]) => canvasId)
+    },
+    ownedCanvasIds(senderIdToList) {
+      return [...owned.entries()]
+        .filter(([, entry]) => entry.senderId === senderIdToList)
+        .map(([canvasId]) => canvasId)
     },
     clear() {
       for (const canvasId of owned.keys()) deps.embed.detach(canvasId)

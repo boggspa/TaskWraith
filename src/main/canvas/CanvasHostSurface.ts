@@ -47,12 +47,16 @@ export interface CanvasHostSurface {
   setNavigationState?(state: CanvasSurfaceNavigationState): void
   /** Optional floating-window control for moving the same Canvas into the dock. */
   onDockRequest?(callback: () => void | Promise<void>): void
+  /** Optional floating tab-strip control for opening another Browser tab. */
+  onNewTabRequest?(callback: () => void | Promise<void>): void
 }
 
-const FLOATING_CHROME_HEIGHT = 48
+const FLOATING_TAB_HEIGHT = 36
+const FLOATING_TOOLBAR_HEIGHT = 44
+const FLOATING_CHROME_HEIGHT = FLOATING_TAB_HEIGHT + FLOATING_TOOLBAR_HEIGHT
 const FLOATING_COMMAND_PROTOCOL = 'taskwraith-canvas:'
 
-function normalizeFloatingAddress(raw: string): string | null {
+export function normalizeFloatingAddress(raw: string): string | null {
   const input = raw.trim()
   if (!input || /\s/.test(input)) return null
   const scheme = input.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/s)
@@ -92,7 +96,7 @@ function normalizeFloatingAddress(raw: string): string | null {
   }
 }
 
-function floatingChromeHtml(kind: CanvasSurfaceKind): string {
+export function floatingChromeHtml(kind: CanvasSurfaceKind): string {
   const browserControls =
     kind === 'web'
       ? `<button id="back" name="action" value="back" aria-label="Back" title="Back" disabled>‹</button>
@@ -105,6 +109,7 @@ function floatingChromeHtml(kind: CanvasSurfaceKind): string {
            <span id="progress" aria-hidden="true"></span>
          </div>`
       : `<div class="surface-title">Sketch Canvas</div>`
+  const initialTitle = kind === 'web' ? 'New tab' : 'Sketch Canvas'
   return `<!doctype html>
 <html>
 <head>
@@ -114,7 +119,9 @@ function floatingChromeHtml(kind: CanvasSurfaceKind): string {
   :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   * { box-sizing: border-box; }
   body { margin: 0; height: ${FLOATING_CHROME_HEIGHT}px; overflow: hidden; background: #171719; color: #ececef; }
-  form { height: 100%; display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  form { display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 9px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .tabs { height: ${FLOATING_TAB_HEIGHT}px; background: rgba(255,255,255,.025); }
+  .toolbar { position: relative; height: ${FLOATING_TOOLBAR_HEIGHT}px; }
   button { height: 30px; min-width: 30px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: 17px/1 system-ui, sans-serif; cursor: pointer; }
   button:hover { background: rgba(255,255,255,.09); }
   button:disabled { opacity: .28; cursor: default; }
@@ -126,13 +133,18 @@ function floatingChromeHtml(kind: CanvasSurfaceKind): string {
   #address::placeholder { color: rgba(235,235,240,.42); }
   #progress { position: absolute; left: 0; right: 100%; bottom: -1px; height: 2px; border-radius: 2px; background: #6e91ff; opacity: 0; }
   #progress.loading { opacity: 1; animation: load 1.35s ease-in-out infinite; }
+  .tab { display: flex; align-items: center; min-width: 92px; max-width: 220px; height: 27px; padding: 0 10px; border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.075); font: 550 11px/1 system-ui, sans-serif; }
+  #tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .surface-title { min-width: 0; flex: 1; padding-left: 5px; font: 600 12px/1 system-ui, sans-serif; }
+  .spacer { flex: 1; }
   .dock { min-width: 56px; padding: 0 10px; border: 1px solid rgba(255,255,255,.14); font-size: 11px; }
   #status { position: absolute; left: 12px; right: 76px; bottom: 1px; overflow: hidden; color: #ff8e8e; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; pointer-events: none; }
   @keyframes load { 0% { left: 0; right: 80%; } 50% { left: 35%; right: 20%; } 100% { left: 85%; right: 0; } }
   @media (prefers-color-scheme: light) {
     body { background: #f3f3f5; color: #202126; }
     form { border-bottom-color: rgba(0,0,0,.14); }
+    .tabs { background: rgba(0,0,0,.025); }
+    .tab { border-color: rgba(0,0,0,.13); background: rgba(255,255,255,.78); }
     button:hover { background: rgba(0,0,0,.07); }
     .address-wrap { border-color: rgba(0,0,0,.13); background: rgba(255,255,255,.75); }
     #address::placeholder { color: rgba(32,33,38,.42); }
@@ -141,10 +153,14 @@ function floatingChromeHtml(kind: CanvasSurfaceKind): string {
 </style>
 </head>
 <body>
-  <form method="get" action="${FLOATING_COMMAND_PROTOCOL}//command">
+  <form class="tabs" method="get" action="${FLOATING_COMMAND_PROTOCOL}//command">
+    <button class="tab" type="button" aria-current="page"><span id="tab-title">${initialTitle}</span></button>
+    <span class="spacer"></span>
+    <button class="dock" name="action" value="dock" aria-label="Show canvas in dock" title="Show canvas in dock">Dock</button>
+  </form>
+  <form class="toolbar" method="get" action="${FLOATING_COMMAND_PROTOCOL}//command">
     <button type="submit" name="action" value="navigate" hidden aria-hidden="true"></button>
     ${browserControls}
-    <button class="dock" name="action" value="dock" aria-label="Move canvas to dock" title="Move canvas to dock">Dock</button>
     <span id="status" role="status" aria-live="polite"></span>
   </form>
 </body>
@@ -185,6 +201,7 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
     | ((input: CanvasSurfaceNavigationInput) => Promise<CanvasSurfaceNavigationState>)
     | null = null
   let dockRequest: (() => void | Promise<void>) | null = null
+  let newTabRequest: (() => void | Promise<void>) | null = null
   let latestState: CanvasSurfaceNavigationState = {
     url: '',
     title: '',
@@ -221,6 +238,7 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
       const progress = document.getElementById('progress');
       const security = document.getElementById('security');
       const status = document.getElementById('status');
+      const tabTitle = document.getElementById('tab-title');
       if (address && document.activeElement !== address) {
         address.value = state.url === 'about:blank' ? '' : state.url;
         address.title = state.url === 'about:blank' ? '' : state.url;
@@ -231,6 +249,7 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
       if (progress) progress.classList.toggle('loading', state.isLoading === true);
       if (security) security.classList.toggle('secure', String(state.url || '').startsWith('https:'));
       if (status) status.textContent = '';
+      if (tabTitle) tabTitle.textContent = state.title || (state.url && state.url !== 'about:blank' ? state.url : 'New tab');
     })()`)
     if (state.title && !win.isDestroyed()) win.setTitle(`${state.title} — TaskWraith Browser`)
   }
@@ -262,6 +281,16 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
         return
       }
       void Promise.resolve(dockRequest()).catch((error) =>
+        renderError(error instanceof Error ? error.message : String(error))
+      )
+      return
+    }
+    if (action === 'new-tab') {
+      if (!newTabRequest) {
+        renderError('New tab is not ready yet.')
+        return
+      }
+      void Promise.resolve(newTabRequest()).catch((error) =>
         renderError(error instanceof Error ? error.message : String(error))
       )
       return
@@ -320,6 +349,9 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
     },
     onDockRequest: (callback) => {
       dockRequest = callback
+    },
+    onNewTabRequest: (callback) => {
+      newTabRequest = callback
     }
   }
 }

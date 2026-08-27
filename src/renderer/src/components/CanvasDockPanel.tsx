@@ -36,6 +36,10 @@ import {
 import { shouldOpenMeshFromChatRehydrate } from '../lib/simulatorCanvasPanelHelpers'
 import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
+import type {
+  CanvasPopoutSessionSeed,
+  CanvasPopoutSurface
+} from '../../../main/canvas/CanvasPopoutWindowManager'
 
 export type CanvasDockSessionKind = 'web' | 'sketch' | 'chart'
 
@@ -270,6 +274,15 @@ function PopOutGlyph() {
   )
 }
 
+function DockGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2.75" y="3" width="10.5" height="10" rx="1.25" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M9.25 3v10M6.5 8h4.75M9.5 6.25 11.25 8 9.5 9.75" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function GlobeGlyph({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -354,6 +367,10 @@ function ShieldGlyph() {
 
 export interface CanvasDockPanelProps {
   chatId: string
+  /** The same panel is reused as the complete contents of a Canvas pop-out. */
+  host?: 'dock' | 'popout'
+  initialSurface?: Exclude<CanvasPopoutSurface, 'media'>
+  initialSession?: CanvasPopoutSessionSeed
 }
 
 interface CanvasPresentationBridge {
@@ -361,15 +378,41 @@ interface CanvasPresentationBridge {
   clearBrowserProfile?: () => Promise<
     { ok: true; closedSurfaceCount: number } | { ok: false; error: string }
   >
+  openPopout?: (args: {
+    chatId: string
+    surface: Exclude<CanvasPopoutSurface, 'media'>
+    session?: CanvasPopoutSessionSeed
+  }) => Promise<{ ok: true } | { ok: false; error: string }>
+  dockPopout?: (args: {
+    chatId: string
+    surface: Exclude<CanvasPopoutSurface, 'media'>
+  }) => Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }>
 }
 
-export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
+export function CanvasDockPanel({
+  chatId,
+  host = 'dock',
+  initialSurface = 'browser',
+  initialSession
+}: CanvasDockPanelProps) {
+  const sessionStoreKey = host === 'popout' ? `${chatId}:popout` : chatId
+  // Seed before the first snapshot so a transferred WebContentsView never
+  // paints an empty frame while the pop-out waits for its first list refresh.
+  useState(() => {
+    if (initialSession) {
+      canvasDockSessionStore.add(sessionStoreKey, {
+        canvasId: initialSession.canvasId,
+        kind: initialSession.kind
+      })
+    }
+    return true
+  })
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => canvasDockSessionStore.subscribe(listener), []),
-    () => canvasDockSessionStore.snapshot(chatId),
+    () => canvasDockSessionStore.snapshot(sessionStoreKey),
     // Server snapshot: the static-markup tests render through React's server
     // path, which requires it; same source of truth.
-    () => canvasDockSessionStore.snapshot(chatId)
+    () => canvasDockSessionStore.snapshot(sessionStoreKey)
   )
   const [ownedSummaries, setOwnedSummaries] = useState<ReadonlyMap<string, CanvasDockSummary>>(
     new Map()
@@ -378,8 +421,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<'web' | 'sketch' | null>(null)
   const [showLauncher, setShowLauncher] = useState(false)
-  const [showMesh, setShowMesh] = useState(false)
-  const [showSimulator, setShowSimulator] = useState(false)
+  const [showMesh, setShowMesh] = useState(initialSurface === 'mesh')
+  const [showSimulator, setShowSimulator] = useState(initialSurface === 'simulator')
   const [openMenu, setOpenMenu] = useState<'surfaces' | 'profile' | null>(null)
   const [confirmingProfileClear, setConfirmingProfileClear] = useState(false)
   const [profileBusy, setProfileBusy] = useState(false)
@@ -420,6 +463,23 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   }, [chatId])
 
   useEffect(() => {
+    if (initialSession) {
+      canvasDockSessionStore.add(sessionStoreKey, {
+        canvasId: initialSession.canvasId,
+        kind: initialSession.kind
+      })
+      setShowLauncher(false)
+    }
+    setShowMesh(initialSurface === 'mesh')
+    setShowSimulator(initialSurface === 'simulator')
+    if (initialSurface === 'browser' || initialSurface === 'sketch') {
+      setShowLauncher(
+        !initialSession && canvasDockSessionStore.snapshot(sessionStoreKey).sessions.length === 0
+      )
+    }
+  }, [initialSession, initialSurface, sessionStoreKey])
+
+  useEffect(() => {
     if (!openMenu) return
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setOpenMenu(null)
@@ -457,10 +517,11 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         }
       }
 
-      for (const candidate of selectUnownedDockPresentations(
-        decodedChatWide,
-        new Set(ownedById.keys())
-      )) {
+      const adoptablePresentations =
+        host === 'dock'
+          ? selectUnownedDockPresentations(decodedChatWide, new Set(ownedById.keys()))
+          : []
+      for (const candidate of adoptablePresentations) {
         // Chart docks are native TelemetryPane tabs — no WebContentsView to adopt.
         if (candidate.driver === 'chart') {
           continue
@@ -494,21 +555,21 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
 
       for (const summary of ownedById.values()) {
         if (summary.presentation !== 'dock') continue
-        const stored = canvasDockSessionStore.snapshot(chatId)
+        const stored = canvasDockSessionStore.snapshot(sessionStoreKey)
         if (stored.sessions.some((session) => session.canvasId === summary.canvasId)) continue
-        canvasDockSessionStore.add(chatId, {
+        canvasDockSessionStore.add(sessionStoreKey, {
           canvasId: summary.canvasId,
           kind: dockSessionKindFromDriver(summary.driver)
         })
       }
 
-      canvasDockSessionStore.reconcile(chatId, new Set(ownedById.keys()))
+      canvasDockSessionStore.reconcile(sessionStoreKey, new Set(ownedById.keys()))
       setOwnedSummaries(ownedById)
       setChatSummaries(decodedChatWide)
     } catch {
       // Listing is best-effort; the launcher stays usable without it.
     }
-  }, [chatId])
+  }, [chatId, host, sessionStoreKey])
 
   useEffect(() => {
     void refresh()
@@ -520,8 +581,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   useEffect(() => {
     const api = window.api?.meshCanvas
     let cancelled = false
-    setShowMesh(false)
-    setShowSimulator(false)
+    setShowMesh(host === 'popout' && initialSurface === 'mesh')
+    setShowSimulator(host === 'popout' && initialSurface === 'simulator')
     if (!api)
       return () => {
         cancelled = true
@@ -547,7 +608,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     return () => {
       cancelled = true
     }
-  }, [chatId, openMeshSurface])
+  }, [chatId, host, initialSurface, openMeshSurface])
 
   // The composer can explicitly open Mesh Canvas before any scene exists. Keep
   // that one-shot renderer request long enough for this dock to mount, then
@@ -660,7 +721,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       const result = await open()
       if (chatIdRef.current !== chatId) return
       if (result?.ok) {
-        canvasDockSessionStore.add(chatId, { canvasId: result.canvasId, kind: mode })
+        canvasDockSessionStore.add(sessionStoreKey, { canvasId: result.canvasId, kind: mode })
         setShowLauncher(false)
         void refresh()
       } else {
@@ -739,7 +800,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const closeSession = async (canvasId: string): Promise<void> => {
     const api = window.api?.canvas
     const session = state.sessions.find((entry) => entry.canvasId === canvasId)
-    canvasDockSessionStore.remove(chatId, canvasId)
+    canvasDockSessionStore.remove(sessionStoreKey, canvasId)
     try {
       // Chart tabs are never renderer-embed-owned; close through the chat-scoped
       // path (same authority as closing an agent canvas). Web/sketch embeds use
@@ -756,32 +817,35 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   }
 
   const popOutSession = async (session: CanvasDockSessionRef): Promise<void> => {
-    const api = window.api?.canvas
+    const api = window.api?.canvas as
+      | (typeof window.api.canvas & CanvasPresentationBridge)
+      | undefined
     if (!api) return
     // Chart tabs are dock-native; there is no floating-window host for them.
     if (session.kind === 'chart') return
     setError(null)
-    const summary = ownedSummaries.get(session.canvasId)
-    // Close the embed first: a sketch's document is chat-persisted (lossless);
-    // a web canvas reopens at its current URL (page state resets — same as any
-    // reload). Two live surfaces over one sketch doc would fight, so never
-    // open the window before the embed is gone.
-    canvasDockSessionStore.remove(chatId, session.canvasId)
-    try {
-      await api.close(session.canvasId)
-    } catch {
-      // Best-effort; the window open below is what the user asked for.
+    if (!api.openPopout) {
+      setError('Canvas pop-out needs the updated preload bridge. Restart TaskWraith and try again.')
+      return
     }
+    const summary = ownedSummaries.get(session.canvasId)
     try {
-      const result =
-        session.kind === 'sketch'
-          ? await api.openSketchWindow({ chatId })
-          : await api.openWindow({
-              ...(summary?.url && summary.url !== 'about:blank' ? { url: summary.url } : {}),
-              chatId
-            })
-      if (chatIdRef.current === chatId && result && !result.ok) {
+      const result = await api.openPopout({
+        chatId,
+        surface: session.kind === 'sketch' ? 'sketch' : 'browser',
+        session: {
+          canvasId: session.canvasId,
+          kind: session.kind,
+          ...(summary?.url ? { url: summary.url } : {}),
+          ...(summary?.title ? { title: summary.title } : {})
+        }
+      })
+      if (!result.ok) {
         setError(friendlyCanvasError(result.error))
+      } else if (chatIdRef.current === chatId) {
+        // Main has atomically reparented the live WebContentsView. Removing the
+        // local tab now unmounts its old bounds reporter without closing/reloading it.
+        canvasDockSessionStore.remove(sessionStoreKey, session.canvasId)
       }
     } catch (err) {
       if (chatIdRef.current === chatId) {
@@ -789,6 +853,28 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       }
     }
     void refresh()
+  }
+
+  const popOutSpecialSurface = async (surface: 'mesh' | 'simulator'): Promise<void> => {
+    const api = window.api?.canvas as
+      | (typeof window.api.canvas & CanvasPresentationBridge)
+      | undefined
+    if (!api?.openPopout) {
+      setError('Canvas pop-out needs the updated preload bridge. Restart TaskWraith and try again.')
+      return
+    }
+    setError(null)
+    try {
+      const result = await api.openPopout({ chatId, surface })
+      if (!result.ok) {
+        setError(friendlyCanvasError(result.error))
+        return
+      }
+      if (surface === 'mesh') setShowMesh(false)
+      else setShowSimulator(false)
+    } catch (error) {
+      setError(friendlyCanvasError(error instanceof Error ? error.message : String(error)))
+    }
   }
 
   const closeAgentCanvas = async (canvasId: string): Promise<void> => {
@@ -814,6 +900,30 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const launcherVisible = showLauncher || !sessions.length
   const showingSpecialSurface = showMesh || showSimulator
   const toolbarTitle = showSimulator ? 'Simulator Canvas' : showMesh ? 'Mesh Canvas' : 'New tab'
+  const currentSurface: Exclude<CanvasPopoutSurface, 'media'> = showSimulator
+    ? 'simulator'
+    : showMesh
+      ? 'mesh'
+      : active?.kind === 'sketch'
+        ? 'sketch'
+        : 'browser'
+
+  const showPopoutInDock = async (): Promise<void> => {
+    const api = window.api?.canvas as
+      | (typeof window.api.canvas & CanvasPresentationBridge)
+      | undefined
+    if (!api?.dockPopout) {
+      setError('Dock transfer needs the updated preload bridge. Restart TaskWraith and try again.')
+      return
+    }
+    setError(null)
+    try {
+      const result = await api.dockPopout({ chatId, surface: currentSurface })
+      if (!result.ok) setError(friendlyCanvasError(result.error))
+    } catch (error) {
+      setError(friendlyCanvasError(error instanceof Error ? error.message : String(error)))
+    }
+  }
 
   const showBrowserSurface = (newTab: boolean): void => {
     setShowMesh(false)
@@ -847,7 +957,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                     setShowLauncher(false)
                     setShowMesh(false)
                     setShowSimulator(false)
-                    canvasDockSessionStore.activate(chatId, session.canvasId)
+                    canvasDockSessionStore.activate(sessionStoreKey, session.canvasId)
                   }}
                 >
                   <span className="canvas-dock-tab-label">{label}</span>
@@ -862,6 +972,32 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
           </span>
         )}
         <div className="canvas-dock-toolbar-actions">
+          {host === 'popout' ? (
+            <button
+              type="button"
+              className="canvas-dock-placement"
+              onClick={() => void showPopoutInDock()}
+              aria-label="Show Canvas in dock"
+              title="Show in dock"
+            >
+              <DockGlyph />
+              <span>Dock</span>
+            </button>
+          ) : showSimulator || showMesh || (active && active.kind !== 'chart') ? (
+            <button
+              type="button"
+              className="canvas-dock-placement"
+              onClick={() => {
+                if (showSimulator) void popOutSpecialSurface('simulator')
+                else if (showMesh) void popOutSpecialSurface('mesh')
+                else if (active) void popOutSession(active)
+              }}
+              aria-label="Move Canvas to a floating window"
+              title="Move to a floating window"
+            >
+              <PopOutGlyph />
+            </button>
+          ) : null}
           <button
             type="button"
             className={`canvas-dock-new${openMenu === 'surfaces' ? ' is-active' : ''}`}
@@ -883,24 +1019,26 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
               />
             </svg>
           </button>
-          <button
-            type="button"
-            className={`canvas-dock-more${openMenu === 'profile' ? ' is-active' : ''}`}
-            onClick={() => {
-              setOpenMenu((current) => (current === 'profile' ? null : 'profile'))
-              setConfirmingProfileClear(false)
-            }}
-            aria-label="Browser profile and privacy"
-            aria-haspopup="dialog"
-            aria-expanded={openMenu === 'profile'}
-            title="Browser profile and privacy"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-              <circle cx="3.25" cy="8" r="1" />
-              <circle cx="8" cy="8" r="1" />
-              <circle cx="12.75" cy="8" r="1" />
-            </svg>
-          </button>
+          {host === 'dock' ? (
+            <button
+              type="button"
+              className={`canvas-dock-more${openMenu === 'profile' ? ' is-active' : ''}`}
+              onClick={() => {
+                setOpenMenu((current) => (current === 'profile' ? null : 'profile'))
+                setConfirmingProfileClear(false)
+              }}
+              aria-label="Browser profile and privacy"
+              aria-haspopup="dialog"
+              aria-expanded={openMenu === 'profile'}
+              title="Browser profile and privacy"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <circle cx="3.25" cy="8" r="1" />
+                <circle cx="8" cy="8" r="1" />
+                <circle cx="12.75" cy="8" r="1" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -1146,17 +1284,6 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                       onNavigateError={(message) => setError(friendlyCanvasError(message))}
                     />
                   ) : undefined
-                }
-                actions={
-                  <button
-                    type="button"
-                    className="canvas-dock-popout"
-                    onClick={() => void popOutSession(active)}
-                    aria-label="Move canvas to a floating window"
-                    title="Move to a floating window"
-                  >
-                    <PopOutGlyph />
-                  </button>
                 }
                 onClose={() => void closeSession(active.canvasId)}
               />

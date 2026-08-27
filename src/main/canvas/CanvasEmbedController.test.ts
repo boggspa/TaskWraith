@@ -45,16 +45,17 @@ class FakeParent implements EmbedParentWindow {
 
 function make() {
   const parent = new FakeParent()
+  const secondary = new FakeParent()
   const created: FakeView[] = []
   const controller = new CanvasEmbedController({
-    getParentWindow: () => parent,
+    getParentWindow: (hostId) => (hostId === 2 ? secondary : parent),
     createView: () => {
       const v = new FakeView()
       created.push(v)
       return v
     }
   })
-  return { parent, created, controller }
+  return { parent, secondary, created, controller }
 }
 
 describe('CanvasEmbedController', () => {
@@ -140,6 +141,32 @@ describe('CanvasEmbedController', () => {
     expect(() => controller.detach('c1')).not.toThrow() // idempotent
   })
 
+  it('reparents a live view without destroying it and uses the destination zoom', () => {
+    const { parent, secondary, created, controller } = make()
+    secondary.zoom = 1.5
+    const surface = controller.surfaceFor('c1')({ partition: 'p', width: 200, height: 100 })
+    controller.setBounds('c1', { x: 10, y: 20, width: 200, height: 100 })
+    controller.setVisible('c1', true)
+
+    controller.reparent('c1', 2)
+
+    expect(parent.children).toHaveLength(0)
+    expect(secondary.children).toEqual([created[0]])
+    expect(created[0].closed).toBe(false)
+    expect(created[0].bounds).toEqual({ x: 15, y: 30, width: 300, height: 150 })
+    expect(surface.isDestroyed()).toBe(false)
+
+    controller.detach('c1')
+    expect(secondary.children).toHaveLength(0)
+  })
+
+  it('binds a newly-created surface directly to its requested renderer host', () => {
+    const { parent, secondary, controller } = make()
+    controller.surfaceFor('c1', 2)({ partition: 'p', width: 20, height: 10 })
+    expect(parent.children).toHaveLength(0)
+    expect(secondary.children).toHaveLength(1)
+  })
+
   it('surfaceFor replaces a stale entry for the same id', () => {
     const { parent, created, controller } = make()
     controller.surfaceFor('c1')({ partition: 'p', width: 1, height: 1 })
@@ -167,7 +194,7 @@ describe('CanvasEmbedController', () => {
       createView: () => new FakeView()
     })
     expect(() => controller.surfaceFor('c1')({ partition: 'p', width: 1, height: 1 })).toThrow(
-      /Main window is unavailable/
+      /host window is unavailable/
     )
   })
 })

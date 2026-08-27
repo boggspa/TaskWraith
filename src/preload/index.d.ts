@@ -1565,6 +1565,26 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        openPopout: (args: {
+          chatId: string
+          surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+          session?: {
+            canvasId: string
+            kind: 'web' | 'sketch'
+            url?: string
+            title?: string
+          }
+        }) => Promise<
+          | { ok: true; senderId: number; created: boolean }
+          | { ok: false; error: string }
+        >
+        dockPopout: (args: {
+          chatId: string
+          surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+        }) => Promise<
+          | { ok: true; canvasIds: string[] }
+          | { ok: false; error: string }
+        >
         listForChat: (chatId: string) => Promise<unknown[]>
         /**
          * Structured chart document for a chat-owned chart canvas (TelemetryPane).
@@ -1599,6 +1619,26 @@ declare global {
         list: () => Promise<unknown[]>
         onEvent: (handler: (event: unknown) => void) => () => void
         onNavState: (handler: (payload: unknown) => void) => () => void
+        onPopoutOpenSurface: (
+          handler: (payload: {
+            chatId: string
+            surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+            session?: {
+              canvasId: string
+              kind: 'web' | 'sketch'
+              url?: string
+              title?: string
+            }
+          }) => void
+        ) => () => void
+        onPopoutDockRequest: (
+          handler: (payload: {
+            chatId: string
+            surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+            canvases: unknown[]
+          }) => void
+        ) => () => void
+        onPopoutChatUpdated: (handler: (payload: { chatId: string }) => void) => () => void
       }
       meshCanvas: {
         listForChat: (chatId: string) => Promise<unknown[]>

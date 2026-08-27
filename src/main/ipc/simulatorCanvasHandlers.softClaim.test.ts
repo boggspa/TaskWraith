@@ -23,6 +23,7 @@ describe('simulatorCanvasHandlers soft-claim fail-closed', () => {
     const rotate = vi.fn(async () => ({ ok: true, stdout: '', stderr: '' }))
 
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(),

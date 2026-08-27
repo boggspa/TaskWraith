@@ -762,6 +762,8 @@ export interface CanvasController {
     ctx: CanvasCallContext,
     opts?: { chargeInteraction?: boolean }
   ): Promise<CanvasNavState>
+  /** Main-owned live placement update used when a Canvas pop-out returns. */
+  presentInDock?(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 
@@ -771,6 +773,9 @@ export interface CanvasCallContext {
   chatId?: string
   runId?: string
   workspacePath?: string
+  /** Main-owned renderer WebContents id for an embedded Canvas host. Never
+   * accepted from MCP/tool input; renderer IPC stamps it from the sender. */
+  surfaceHostId?: number
   /**
    * Ensemble seat that opened the canvas (when present). Device-driver lease
    * mint uses this as ownerParticipantId.

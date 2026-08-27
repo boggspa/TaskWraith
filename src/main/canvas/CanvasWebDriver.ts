@@ -754,6 +754,10 @@ export interface CanvasWebDriverDeps {
   onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
   /** Human asks to move this standalone surface into the app dock. */
   onDockRequest?: () => void | Promise<void>
+  /** Human asks for another Browser tab in the same floating host. */
+  onNewTabRequest?: () => void | Promise<void>
+  /** Host window/tab was closed outside the service teardown path. */
+  onSurfaceClosed?: () => void
   /** Shared in production; injectable so driver tests stay session-local. */
   browserProfile?: CanvasBrowserProfileController
 }
@@ -800,6 +804,8 @@ export class CanvasWebDriver implements CanvasDriver {
   private readonly onNavigationCommitted?: (state: CanvasNavState) => void
   private readonly onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
   private readonly onDockRequest?: () => void | Promise<void>
+  private readonly onNewTabRequest?: () => void | Promise<void>
+  private readonly onSurfaceClosed?: () => void
   private readonly browserProfile: CanvasBrowserProfileController
   private releaseProfileRegistration: (() => void) | null = null
 
@@ -815,6 +821,8 @@ export class CanvasWebDriver implements CanvasDriver {
     this.onNavigationCommitted = deps.onNavigationCommitted
     this.onHumanNavigate = deps.onHumanNavigate
     this.onDockRequest = deps.onDockRequest
+    this.onNewTabRequest = deps.onNewTabRequest
+    this.onSurfaceClosed = deps.onSurfaceClosed
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -884,6 +892,7 @@ export class CanvasWebDriver implements CanvasDriver {
       this.onHumanNavigate ? this.onHumanNavigate(input) : this.navigate(input)
     )
     if (this.onDockRequest) surface.onDockRequest?.(this.onDockRequest)
+    if (this.onNewTabRequest) surface.onNewTabRequest?.(this.onNewTabRequest)
 
     // Single-page-browser popup policy: no new window EVER escapes the canvas,
     // but a target=_blank / window.open link navigates THIS surface in place
@@ -922,6 +931,7 @@ export class CanvasWebDriver implements CanvasDriver {
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
       this.releaseBrowserProfile()
+      this.onSurfaceClosed?.()
     })
 
     if (initialUrl) await this.loadUrl(wc, initialUrl)

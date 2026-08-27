@@ -25,6 +25,51 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'cancel-ensemble-round',
   'cancel-gemini',
   'capture-snapshot',
+  // Canvas utility pop-outs are main-created, chat-owned secondary renderers.
+  // Every payload-bearing handler re-resolves that exact sender/chat binding;
+  // WebContentsView ownership adds a second sender-id check for bounds/close.
+  'canvas:open-popout',
+  'canvas:dock-popout',
+  'canvas:open-embedded',
+  'canvas:open-sketch-embedded',
+  'canvas:adopt-embedded',
+  'canvas:set-bounds',
+  'canvas:set-visible',
+  'canvas:close',
+  'canvas:close-chat',
+  'canvas:navigate-chat',
+  'canvas:list',
+  'canvas:list-chat',
+  'canvas:chart-document',
+  'mesh-scene:list-chat',
+  'mesh-scene:view',
+  'mesh-scene:import-user-model',
+  'mesh-scene:import-user-package',
+  'mesh-scene:close-presentation',
+  'mesh-scene:delete',
+  'simulator-canvas:status',
+  'simulator-canvas:claim-control',
+  'simulator-canvas:release-control',
+  'simulator-canvas:session',
+  'simulator-canvas:open-app',
+  'simulator-canvas:list-devices',
+  'simulator-canvas:boot',
+  'simulator-canvas:pick-app',
+  'simulator-canvas:install',
+  'simulator-canvas:launch',
+  'simulator-canvas:terminate',
+  'simulator-canvas:screenshot',
+  'simulator-canvas:interaction-status',
+  'simulator-canvas:tap',
+  'simulator-canvas:type',
+  'simulator-canvas:scroll',
+  'simulator-canvas:inspect',
+  'simulator-canvas:button',
+  'simulator-canvas:rotate',
+  'simulator-canvas:authorize-pasteboard-intent',
+  'simulator-canvas:clipboard-push',
+  'simulator-canvas:clipboard-pull',
+  'simulator-control:setup-status',
   'changelog-snapshot',
   // Main may operate every Channel; chat renderers are narrowed again by the
   // persisted chat ownership resolved inside registerChannelHandlers.
@@ -426,63 +471,16 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'terminal:list',
   'terminal:getScrollback',
 
-  // Canvas WebContentsView state belongs to the primary window. Popouts and
-  // other secondary renderers must not create or reposition an overlay over it.
+  // Standalone page windows and the app-wide profile reset remain primary-only.
+  // Embedded/dock transfer channels are secondary-safe above because their
+  // handlers bind both the chat and exact renderer-owned WebContentsView.
   'canvas:open-window',
-  'canvas:open-embedded',
   'canvas:open-sketch-window',
-  'canvas:open-sketch-embedded',
-  'canvas:adopt-embedded',
-  'canvas:set-bounds',
-  'canvas:set-visible',
-  'canvas:close',
-  'canvas:close-chat',
   'canvas:clear-browser-profile',
-  'canvas:navigate-chat',
-  'canvas:list',
-  'canvas:list-chat',
-  'canvas:chart-document',
-
-  // Mesh Canvas's private asset URLs and human file picker are rendered only
-  // in the main chat window; secondary renderers have no independent surface.
-  'mesh-scene:list-chat',
-  'mesh-scene:view',
-  'mesh-scene:import-user-model',
-  'mesh-scene:import-user-package',
-  'mesh-scene:close-presentation',
-  'mesh-scene:delete',
-
-  // Simulator Canvas dock lives in the main chat window only; secondary
-  // renderers have no independent bezel surface for host simctl actions.
-  'simulator-canvas:status',
-  'simulator-canvas:claim-control',
-  'simulator-canvas:release-control',
-  'simulator-canvas:session',
-  'simulator-canvas:open-app',
-  'simulator-canvas:list-devices',
-  'simulator-canvas:boot',
-  'simulator-canvas:pick-app',
-  'simulator-canvas:install',
-  'simulator-canvas:launch',
-  'simulator-canvas:terminate',
-  'simulator-canvas:screenshot',
-  'simulator-canvas:interaction-status',
-  'simulator-canvas:tap',
-  'simulator-canvas:type',
-  'simulator-canvas:scroll',
-  'simulator-canvas:inspect',
-  'simulator-canvas:button',
-  'simulator-canvas:rotate',
-  'simulator-canvas:authorize-pasteboard-intent',
-  'simulator-canvas:clipboard-push',
-  'simulator-canvas:clipboard-pull',
   // Simulator control can install a local companion, so only the primary
-  // settings/canvas renderer may request its status or begin setup.
-  'simulator-control:setup-status',
+  // settings/canvas renderer may begin setup. Read-only setup status is safe
+  // in a Canvas pop-out and is classified above.
   'simulator-control:setup',
-  'simulator-canvas:claim-control',
-  'simulator-canvas:pick-app',
-  'simulator-canvas:session',
 
   // Office suite documents live in the main window's right dock only; there
   // is no office popout surface, so secondary renderers have no claim on

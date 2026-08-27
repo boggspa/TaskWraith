@@ -1404,6 +1404,26 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-sketch-embedded', args),
+    openPopout: (args: {
+      chatId: string
+      surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+      session?: {
+        canvasId: string
+        kind: 'web' | 'sketch'
+        url?: string
+        title?: string
+      }
+    }): Promise<
+      | { ok: true; senderId: number; created: boolean }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-popout', args),
+    dockPopout: (args: {
+      chatId: string
+      surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+    }): Promise<
+      | { ok: true; canvasIds: string[] }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:dock-popout', args),
     // Chat-scoped list/close for the right-dock Canvas panel: covers agent-opened
     // canvases too (redacted summaries, no pixels), unlike `list` which only
     // returns canvases this renderer opened itself.
@@ -1458,6 +1478,38 @@ const api = {
       const wrapped = (_event: unknown, payload: unknown) => handler(payload)
       ipcRenderer.on('canvas-nav-state', wrapped)
       return () => ipcRenderer.removeListener('canvas-nav-state', wrapped)
+    },
+    onPopoutOpenSurface: (
+      handler: (payload: {
+        chatId: string
+        surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+        session?: {
+          canvasId: string
+          kind: 'web' | 'sketch'
+          url?: string
+          title?: string
+        }
+      }) => void
+    ) => {
+      const wrapped = (_event: unknown, payload: Parameters<typeof handler>[0]) => handler(payload)
+      ipcRenderer.on('canvas-popout-open-surface', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-open-surface', wrapped)
+    },
+    onPopoutDockRequest: (
+      handler: (payload: {
+        chatId: string
+        surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+        canvases: unknown[]
+      }) => void
+    ) => {
+      const wrapped = (_event: unknown, payload: Parameters<typeof handler>[0]) => handler(payload)
+      ipcRenderer.on('canvas-popout-dock-request', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-dock-request', wrapped)
+    },
+    onPopoutChatUpdated: (handler: (payload: { chatId: string }) => void) => {
+      const wrapped = (_event: unknown, payload: { chatId: string }) => handler(payload)
+      ipcRenderer.on('canvas-popout-chat-updated', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-chat-updated', wrapped)
     }
   },
 

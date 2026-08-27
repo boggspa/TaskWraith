@@ -233,7 +233,7 @@ describe('CanvasDockPanel (static render)', () => {
       // The sketch session was added last → active; labels fall back per kind.
       expect(html).toContain('Sketch canvas')
       expect(html).toContain('canvas-pane-host')
-      expect(html).toContain('aria-label="Move canvas to a floating window"')
+      expect(html).toContain('aria-label="Move Canvas to a floating window"')
       expect(html).toContain('aria-label="Close canvas pane"')
       expect(html).toContain('aria-label="Choose canvas surface"')
       expect(html).toContain('aria-label="Browser profile and privacy"')
@@ -278,11 +278,36 @@ describe('CanvasDockPanel (static render)', () => {
       expect(html).toContain('aria-label="Telemetry chart"')
       // Native pane — never a WebContentsView host or floating-window pop-out.
       expect(html).not.toContain('canvas-pane-host')
-      expect(html).not.toContain('aria-label="Move canvas to a floating window"')
+      expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
       expect(html).not.toContain('canvas-browser-chrome')
     } finally {
       canvasDockSessionStore.remove('chat-chart', 'c-chart')
     }
+  })
+
+  it('reuses the full tab/surface toolbar in a pop-out with the inverse dock action', () => {
+    const html = renderToStaticMarkup(
+      <CanvasDockPanel chatId="chat-popout" host="popout" initialSurface="mesh" />
+    )
+    expect(html).toContain('Mesh Canvas')
+    expect(html).toContain('aria-label="Show Canvas in dock"')
+    expect(html).toContain('aria-label="Choose canvas surface"')
+    expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
+  })
+
+  it('transfers live Browser/Sketch views instead of closing and reopening them', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    const transfer = source.slice(
+      source.indexOf('const popOutSession'),
+      source.indexOf('const closeAgentCanvas')
+    )
+    expect(transfer).toContain('api.openPopout')
+    expect(transfer).toContain('canvasDockSessionStore.remove')
+    expect(transfer).not.toContain('api.close(session.canvasId)')
+    expect(transfer).not.toContain('api.openWindow')
   })
 
   it('adopts chart dock presentations without adoptEmbedded (native pane path)', () => {

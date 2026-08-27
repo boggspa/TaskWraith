@@ -2736,6 +2736,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     onPreviewImage={setPreviewChatMediaRef}
                     onDetachToPane={openMediaPane}
                     promoteToProjectLibrary={chatMediaPromoteTarget}
+                    onPopOut={
+                      currentChat
+                        ? () => {
+                            void window.api.canvas
+                              .openPopout({ chatId: currentChat.appChatId, surface: 'media' })
+                              .then((result) => {
+                                if (result.ok) setChatMediaPanelOpenPreservingTranscript(false)
+                              })
+                          }
+                        : undefined
+                    }
                   />
                 )}
 

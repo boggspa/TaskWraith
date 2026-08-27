@@ -1370,6 +1370,11 @@ import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
 import { resolveNativeWindowCanvasOpenTarget } from './canvas/NativeWindowCanvasOpenResolver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
+import { registerCanvasPopoutIpc } from './canvas/CanvasPopoutIpc'
+import {
+  CanvasPopoutWindowManager,
+  type CanvasPopoutOpenInput
+} from './canvas/CanvasPopoutWindowManager'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type {
   CanvasDriverKind,
@@ -2414,6 +2419,62 @@ const workspacePopoutOwners = new Map<
     externalWriteAllowed?: boolean
   }
 >()
+let closeCanvasPopoutRenderer: (senderId: number) => Promise<string[]> = async () => []
+const canvasPopoutWindowManager = new CanvasPopoutWindowManager({
+  createWindow: () => {
+    const win = new BrowserWindow({
+      width: 1080,
+      height: 760,
+      minWidth: 520,
+      minHeight: 420,
+      show: false,
+      autoHideMenuBar: true,
+      title: 'TaskWraith Canvas',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+      backgroundColor: resolvePopoutBackgroundColor(false),
+      ...(process.platform === 'linux' ? { icon } : {}),
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: false
+      }
+    })
+    attachSpellcheckContextTracking(win)
+    win.webContents.setWindowOpenHandler((details) => {
+      openSafeShellTargetDetached(details.url)
+      return { action: 'deny' }
+    })
+    return win
+  },
+  loadWindow: async (win, input: CanvasPopoutOpenInput) => {
+    const query: Record<string, string> = {
+      popout: 'canvas',
+      chat: input.chatId,
+      surface: input.surface
+    }
+    if (input.session) {
+      query.canvas = input.session.canvasId
+      query.canvasKind = input.session.kind
+      if (input.session.url) query.url = input.session.url
+      if (input.session.title) query.title = input.session.title
+    }
+    const browserWindow = win as BrowserWindow
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      const target = new URL(process.env['ELECTRON_RENDERER_URL'])
+      for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value)
+      await browserWindow.loadURL(target.toString())
+    } else {
+      await browserWindow.loadFile(join(__dirname, '../renderer/index.html'), { query })
+    }
+  },
+  onWindowClosed: ({ senderId, reason }) => {
+    if (reason === 'closed') return closeCanvasPopoutRenderer(senderId).then(() => undefined)
+    return undefined
+  }
+})
 
 type RendererFilesystemCapability = 'external-grant' | 'git' | 'workspace-diff' | 'workspace-file'
 
@@ -2435,6 +2496,14 @@ function workspacePopoutOwnerForSender(senderId: number): WorkspacePopoutAuthori
   for (const [key, win] of workspacePopoutWindows) {
     if (win.isDestroyed() || win.webContents.id !== senderId) continue
     return workspacePopoutOwners.get(key)
+  }
+  const canvasOwner = canvasPopoutWindowManager.ownerForSender(senderId)
+  if (canvasOwner) {
+    return {
+      kind: 'chat',
+      chatId: canvasOwner.chatId,
+      workspacePath: AppStore.getChat(canvasOwner.chatId)?.workspacePath || undefined
+    }
   }
   return undefined
 }
@@ -4512,8 +4581,14 @@ const canvasBrowserProfile = new CanvasBrowserProfile({
   resolveSession: (partition) => session.fromPartition(partition)
 })
 const canvasEmbedController = new CanvasEmbedController({
-  getParentWindow: () =>
-    mainWindow && !mainWindow.isDestroyed() ? asEmbedParent(mainWindow) : null,
+  getParentWindow: (hostId) => {
+    if (hostId !== undefined) {
+      const contents = electronWebContents.fromId(hostId)
+      const host = contents ? BrowserWindow.fromWebContents(contents) : null
+      return host && !host.isDestroyed() ? asEmbedParent(host) : null
+    }
+    return mainWindow && !mainWindow.isDestroyed() ? asEmbedParent(mainWindow) : null
+  },
   createView: createElectronEmbedView
 })
 // One shared offscreen image engine for both the image_* tools and the canvas
@@ -4537,6 +4612,7 @@ const meshSceneService = new MeshSceneService({
   now: () => new Date().toISOString(),
   broadcast: (event: MeshSceneEvent) => {
     safeSendToWebContents(mainWindow, 'mesh-scene-event', event)
+    canvasPopoutWindowManager.broadcast('mesh-scene-event', event, event.chatId)
   }
 })
 const meshToolExecutors = createMeshToolExecutors(meshSceneService)
@@ -4622,10 +4698,12 @@ const simulatorToolExecutors = createSimulatorToolExecutors({
   sessionStore: simulatorSessionStore,
   isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false,
   presentCanvas: (event) => {
-    safeSendToWebContents(mainWindow, 'simulator-canvas-event', {
+    const payload = {
       kind: 'agent.presented',
       ...event
-    })
+    }
+    safeSendToWebContents(mainWindow, 'simulator-canvas-event', payload)
+    canvasPopoutWindowManager.broadcast('simulator-canvas-event', payload, event.chatId)
   }
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
@@ -4662,6 +4740,7 @@ const canvasService = new CanvasService({
     opts?: {
       embedded?: boolean
       appChatId?: string
+      surfaceHostId?: number
       appRunId?: string
       ownerParticipantId?: string
       deviceTarget?: { udid: string; bundleId: string }
@@ -4673,6 +4752,8 @@ const canvasService = new CanvasService({
       onNavigationCommitted?: (state: CanvasNavState) => void
       onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
       onDockRequest?: () => void | Promise<void>
+      onNewTabRequest?: () => void | Promise<void>
+      onSurfaceClosed?: () => void
     }
   ) => {
     if (kind === 'window') {
@@ -4756,17 +4837,25 @@ const canvasService = new CanvasService({
         initialDocument: opts?.initialSketchDocument,
         onDocumentChange: opts?.onSketchDocumentChange,
         onDockRequest: opts?.onDockRequest,
-        ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {})
+        onNewTabRequest: opts?.onNewTabRequest,
+        onSurfaceClosed: opts?.onSurfaceClosed,
+        ...(opts?.embedded
+          ? { createSurface: canvasEmbedController.surfaceFor(sessionId, opts.surfaceHostId) }
+          : {})
       })
     }
     if (kind === 'web') {
       return new CanvasWebDriver(sessionId, {
         browserProfile: canvasBrowserProfile,
-        ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {}),
+        ...(opts?.embedded
+          ? { createSurface: canvasEmbedController.surfaceFor(sessionId, opts.surfaceHostId) }
+          : {}),
         onNavState: opts?.onNavState,
         onNavigationCommitted: opts?.onNavigationCommitted,
         onHumanNavigate: opts?.onHumanNavigate,
-        onDockRequest: opts?.onDockRequest
+        onDockRequest: opts?.onDockRequest,
+        onNewTabRequest: opts?.onNewTabRequest,
+        onSurfaceClosed: opts?.onSurfaceClosed
       })
     }
     throw new Error(`Canvas driver "${kind}" is not available in this build.`)
@@ -4776,9 +4865,11 @@ const canvasService = new CanvasService({
   now: () => new Date().toISOString(),
   broadcast: (event: CanvasEventRecord) => {
     safeSendToWebContents(mainWindow, 'canvas-event', event)
+    canvasPopoutWindowManager.broadcast('canvas-event', event, event.chatId)
   },
   broadcastNavState: (payload) => {
     safeSendToWebContents(mainWindow, 'canvas-nav-state', payload)
+    canvasPopoutWindowManager.broadcast('canvas-nav-state', payload, payload.chatId)
   },
   historyParticipants: [meshSceneService],
   logger: console
@@ -6537,7 +6628,26 @@ const canvasEmbedIpcAuthority = registerCanvasEmbedIpc(ipcMain, {
     if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chatId)) {
       throw new Error('Canvas chat authority is unavailable.')
     }
-    return { chatId, workspacePath: chat.workspacePath }
+    return { chatId, workspacePath: chat.workspacePath, surfaceHostId: event.sender.id }
+  }
+})
+closeCanvasPopoutRenderer = (senderId) => canvasEmbedIpcAuthority.closeRenderer(senderId)
+
+registerCanvasPopoutIpc(ipcMain, {
+  windows: canvasPopoutWindowManager,
+  canvas: canvasEmbedIpcAuthority,
+  resolveContext: (event, chatId) => {
+    assertRendererChatScope(event, chatId)
+    const chat = AppStore.getChat(chatId)
+    if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chatId)) {
+      throw new Error('Canvas chat authority is unavailable.')
+    }
+    return { chatId, workspacePath: chat.workspacePath, surfaceHostId: event.sender.id }
+  },
+  mainRendererSenderId: () =>
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : undefined,
+  showInDock: (input) => {
+    safeSendToWebContents(mainWindow, 'canvas-popout-dock-request', input)
   }
 })
 
@@ -6563,7 +6673,18 @@ registerSimulatorCanvasHandlers(ipcMain, {
   getIdb: () => simulatorIdbClient,
   isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false,
   getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
-  showOpenDialog: (window, options) => dialog.showOpenDialog(window, options)
+  showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+  resolveContext: (event, chatId) => {
+    const isMain = isMainRendererSender(event)
+    const popoutOwner = canvasPopoutWindowManager.ownerForSender(event.sender.id)
+    if (!isMain && popoutOwner?.chatId !== chatId) {
+      throw new Error('Renderer is not authorized for this Simulator Canvas.')
+    }
+    const chat = AppStore.getChat(chatId)
+    if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chatId)) {
+      throw new Error('Simulator Canvas chat authority is unavailable.')
+    }
+  }
 })
 
 registerSimulatorControlSetupHandlers(ipcMain, {
@@ -10986,6 +11107,11 @@ function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number)
   }
   broadcastChatPopoutUpdateExcept(chat, excludedSenderId)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
+  canvasPopoutWindowManager.broadcast(
+    'canvas-popout-chat-updated',
+    { chatId: chat.appChatId },
+    chat.appChatId
+  )
   markHumanCollaborationProjectionDirty?.(chat.appChatId)
 }
 

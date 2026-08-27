@@ -7,6 +7,42 @@ import { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import { registerSimulatorCanvasHandlers } from './simulatorCanvasHandlers'
 
 describe('registerSimulatorCanvasHandlers', () => {
+  it('re-authorizes the exact renderer/chat before reading or mutating simulator state', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (_channel: string, _handler: (...args: unknown[]) => unknown) =>
+        handlers.set(_channel, _handler)
+    } as unknown as IpcMain
+    const screenshot = vi.fn()
+    const resolveContext = vi.fn((_event: IpcMainInvokeEvent, chatId: string) => {
+      if (chatId !== 'chat-owned') throw new Error('Renderer chat ownership does not match.')
+    })
+    registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext,
+      getHostControl: () =>
+        ({
+          status: vi.fn(),
+          openSimulatorApp: vi.fn(),
+          listDevices: vi.fn(),
+          boot: vi.fn(),
+          install: vi.fn(),
+          launch: vi.fn(),
+          terminate: vi.fn(),
+          screenshot
+        }) as never,
+      getControllerLease: () => ({ claimHuman: vi.fn(), peek: vi.fn(), release: vi.fn() }),
+      getInteraction: () =>
+        ({ interactionStatus: vi.fn(), tap: vi.fn(), type: vi.fn(), scroll: vi.fn() }) as never
+    })
+
+    const event = { sender: { id: 9 } } as unknown as IpcMainInvokeEvent
+    await expect(
+      handlers.get('simulator-canvas:screenshot')?.(event, 'chat-foreign', 'device-a')
+    ).rejects.toThrow(/ownership/)
+    expect(screenshot).not.toHaveBeenCalled()
+    expect(resolveContext).toHaveBeenCalledWith(event, 'chat-foreign')
+  })
+
   it('keeps preview read-only while Simulator control is disabled', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {
@@ -18,6 +54,7 @@ describe('registerSimulatorCanvasHandlers', () => {
     const openSimulatorApp = vi.fn()
     const screenshot = vi.fn(async () => ({ ok: true }))
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(async () => ({ installed: true, platform: 'darwin' })),
@@ -125,6 +162,7 @@ describe('registerSimulatorCanvasHandlers', () => {
     }))
 
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () => hostControl as never,
       getControllerLease: () => ({ claimHuman, peek: () => null, release }),
       getInteraction: () => interaction,
@@ -328,6 +366,7 @@ describe('registerSimulatorCanvasHandlers', () => {
       updatedAt: 1
     }))
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(),
@@ -414,6 +453,7 @@ describe('registerSimulatorCanvasHandlers', () => {
       )
     }
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(),
@@ -518,6 +558,7 @@ describe('registerSimulatorCanvasHandlers', () => {
       rotate: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' }))
     }
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(),
@@ -588,6 +629,7 @@ describe('registerSimulatorCanvasHandlers', () => {
       scroll: vi.fn()
     }
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () => hostControl as never,
       getControllerLease: () => ({
         claimHuman: vi.fn(() => ({
@@ -646,6 +688,7 @@ describe('registerSimulatorCanvasHandlers', () => {
       }
     }))
     registerSimulatorCanvasHandlers(ipcMain, {
+      resolveContext: vi.fn(),
       getHostControl: () =>
         ({
           status: vi.fn(),

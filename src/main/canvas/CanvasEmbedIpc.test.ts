@@ -20,11 +20,12 @@ function fakeIpc() {
 
 function fakeDeps() {
   const calls: Array<[string, unknown[]]> = []
+  let openCanvasId = 'c1'
   const controller = {
     open: async (input: unknown, ctx: unknown) => {
       calls.push(['open', [input, ctx]])
       return {
-        canvasId: 'c1',
+        canvasId: openCanvasId,
         url: 'http://localhost:3000/',
         title: 'T',
         viewport: { width: 800, height: 600 }
@@ -88,6 +89,7 @@ function fakeDeps() {
     has: (id: string) => id === 'c1',
     setBounds: (id: string, rect: unknown) => calls.push(['setBounds', [id, rect]]),
     setVisible: (id: string, visible: boolean) => calls.push(['setVisible', [id, visible]]),
+    reparent: (id: string, hostId?: number) => calls.push(['reparent', [id, hostId]]),
     detach: (id: string) => calls.push(['detach', [id]])
   } as unknown as Parameters<typeof registerCanvasEmbedIpc>[1]['embed']
   const resolveContext = vi.fn((_event: unknown, chatId: string) => ({
@@ -98,7 +100,16 @@ function fakeDeps() {
     closedCanvasIds: ['c1'],
     closedSurfaceCount: 1
   }))
-  return { controller, embed, clearBrowserProfile, resolveContext, calls }
+  return {
+    controller,
+    embed,
+    clearBrowserProfile,
+    resolveContext,
+    calls,
+    setOpenCanvasId: (canvasId: string) => {
+      openCanvasId = canvasId
+    }
+  }
 }
 
 describe('registerCanvasEmbedIpc', () => {
@@ -501,5 +512,86 @@ describe('registerCanvasEmbedIpc', () => {
     expect(authority.invalidateAuthorities({ chatIds: ['chat-a'] })).toEqual(['c1'])
     expect(authority.openChatIds()).toEqual(new Set())
     expect(deps.calls).toContainEqual(['detach', ['c1']])
+  })
+
+  it('moves a live embed to another renderer without reopening it', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    const authority = registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', {
+      url: 'http://localhost:3000',
+      chatId: 'chat-a'
+    })
+
+    const summaries = authority.transferRenderer({
+      canvasIds: ['c1'],
+      fromSenderId: 1,
+      toSenderId: 2,
+      context: { chatId: 'chat-a', workspacePath: '/workspace/a' },
+      toSurfaceHostId: 2
+    })
+
+    expect(summaries).toEqual([expect.objectContaining({ canvasId: 'c1' })])
+    expect(deps.calls).toContainEqual(['reparent', ['c1', 2]])
+    expect(authority.ownedCanvasIds(1)).toEqual([])
+    expect(authority.ownedCanvasIds(2)).toEqual(['c1'])
+    expect(() => ipc.invoke('canvas:set-visible', 'c1', true)).toThrow(/does not own/)
+    expect(await ipc.invokeAs(2, 'canvas:list')).toEqual([
+      expect.objectContaining({ canvasId: 'c1' })
+    ])
+  })
+
+  it('closes every Canvas owned by a renderer window when that window exits', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    const authority = registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', { chatId: 'chat-a' })
+
+    await expect(authority.closeRenderer(1)).resolves.toEqual(['c1'])
+    const hideIndex = deps.calls.findIndex(
+      (call) => call[0] === 'setVisible' && call[1][0] === 'c1' && call[1][1] === false
+    )
+    const closeIndex = deps.calls.findIndex(
+      (call) => call[0] === 'close' && call[1][0] === 'c1'
+    )
+    expect(hideIndex).toBeGreaterThanOrEqual(0)
+    expect(hideIndex).toBeLessThan(closeIndex)
+    expect(deps.calls).toContainEqual([
+      'close',
+      ['c1', { chatId: 'chat-a', workspacePath: '/workspace/a' }]
+    ])
+    expect(deps.calls).toContainEqual(['detach', ['c1']])
+    expect(authority.ownedCanvasIds(1)).toEqual([])
+  })
+
+  it('parks every renderer-owned view before awaiting any driver close', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    let releaseFirst!: () => void
+    const firstClose = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    ;(deps.controller as { close: (id: string, ctx: unknown) => Promise<void> }).close = vi.fn(
+      async (id: string, ctx: unknown) => {
+        deps.calls.push(['close', [id, ctx]])
+        if (id === 'c1') await firstClose
+      }
+    )
+    const authority = registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', { chatId: 'chat-a' })
+    deps.setOpenCanvasId('c2')
+    await ipc.invoke('canvas:open-embedded', { chatId: 'chat-a' })
+
+    const closing = authority.closeRenderer(1)
+
+    expect(deps.calls).toContainEqual(['setVisible', ['c1', false]])
+    expect(deps.calls).toContainEqual(['setVisible', ['c2', false]])
+    expect(deps.calls).toContainEqual([
+      'close',
+      ['c2', { chatId: 'chat-a', workspacePath: '/workspace/a' }]
+    ])
+    expect(authority.ownedCanvasIds(1)).toEqual([])
+    releaseFirst()
+    await expect(closing).resolves.toEqual(['c1', 'c2'])
   })
 })

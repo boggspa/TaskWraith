@@ -64,6 +64,9 @@ export interface SimulatorCanvasIpcDeps {
     window: BrowserWindow,
     options: OpenDialogOptions
   ) => Promise<{ canceled: boolean; filePaths: string[] }>
+  /** Main-owned sender/chat check. Production admits only the primary renderer
+   * or the exact chat's dedicated Canvas pop-out. */
+  resolveContext?: (event: IpcMainInvokeEvent, chatId: string) => void
 }
 
 function requiredString(value: unknown, label: string): string {
@@ -71,6 +74,19 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`Simulator Canvas ${label} is invalid.`)
   }
   return value
+}
+
+function authorizedChat(
+  deps: SimulatorCanvasIpcDeps,
+  event: IpcMainInvokeEvent,
+  value: unknown
+): string {
+  const chatId = requiredString(value, 'chatId')
+  if (!deps.resolveContext) {
+    throw new Error('Simulator Canvas renderer authority is unavailable.')
+  }
+  deps.resolveContext(event, chatId)
+  return chatId
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -180,8 +196,8 @@ export function registerSimulatorCanvasHandlers(
     }
   })
 
-  ipcMain.handle('simulator-canvas:claim-control', async (_event, chatId: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:claim-control', async (event, chatId: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     if (deps.isSimulatorControlEnabled?.() === false) {
       return { ok: false, error: SIMULATOR_CONTROL_DISABLED_MESSAGE, code: 'disabled' }
     }
@@ -192,8 +208,8 @@ export function registerSimulatorCanvasHandlers(
     return { ok: true, token: claimed.token }
   })
 
-  ipcMain.handle('simulator-canvas:release-control', async (_event, chatId: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:release-control', async (event, chatId: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     const released = deps.getControllerLease().release({
       chatId: id,
       runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
@@ -209,15 +225,15 @@ export function registerSimulatorCanvasHandlers(
     return { ok: true, released: true, token: released.token }
   })
 
-  ipcMain.handle('simulator-canvas:session', async (_event, chatId: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:session', async (event, chatId: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     const session = deps.getSessionStore?.().get(id) ?? null
     const controller = deps.getControllerLease().peek(id)
     return { ok: true, session, controller }
   })
 
-  ipcMain.handle('simulator-canvas:open-app', async (_event, chatId: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:open-app', async (event, chatId: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     return deps.getHostControl().openSimulatorApp(humanControl(deps, id))
   })
 
@@ -225,15 +241,15 @@ export function registerSimulatorCanvasHandlers(
     return deps.getHostControl().listDevices()
   })
 
-  ipcMain.handle('simulator-canvas:boot', async (_event, chatId: unknown, udid: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:boot', async (event, chatId: unknown, udid: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     return deps.getHostControl().boot(requiredString(udid, 'udid'), humanControl(deps, id))
   })
 
   ipcMain.handle('simulator-canvas:pick-app', async (event, chatId: unknown) => {
     // Authority check: chatId must be a well-formed identity even though the
     // picker itself does not mutate the device — it only returns a human path.
-    requiredString(chatId, 'chatId')
+    const id = authorizedChat(deps, event, chatId)
     const showOpenDialog = deps.showOpenDialog
     const getWindow = deps.getRequestingWindow
     if (!showOpenDialog || !getWindow) {
@@ -249,13 +265,15 @@ export function registerSimulatorCanvasHandlers(
     })
     const appPath = selection.canceled ? null : selection.filePaths[0]
     if (!appPath || !appPath.trim()) return { ok: true, canceled: true }
+    // The picker may outlive its originating chat/window.
+    authorizedChat(deps, event, id)
     return { ok: true, canceled: false, appPath: appPath.trim() }
   })
 
   ipcMain.handle(
     'simulator-canvas:install',
-    async (_event, chatId: unknown, udid: unknown, appPath: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown, appPath: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       return deps
         .getHostControl()
         .install(
@@ -268,8 +286,8 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle(
     'simulator-canvas:launch',
-    async (_event, chatId: unknown, udid: unknown, bundleId: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown, bundleId: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       return deps
         .getHostControl()
         .launch(
@@ -282,21 +300,21 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle(
     'simulator-canvas:terminate',
-    async (_event, chatId: unknown, udid: unknown, bundleId: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown, bundleId: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       return deps
         .getHostControl()
         .terminate(requiredString(udid, 'udid'), optionalString(bundleId), humanControl(deps, id))
     }
   )
 
-  ipcMain.handle('simulator-canvas:screenshot', async (_event, chatId: unknown, udid: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:screenshot', async (event, chatId: unknown, udid: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     return deps.getHostControl().screenshot(requiredString(udid, 'udid'), { chatId: id })
   })
 
-  ipcMain.handle('simulator-canvas:interaction-status', async (_event, chatId: unknown) => {
-    const id = requiredString(chatId, 'chatId')
+  ipcMain.handle('simulator-canvas:interaction-status', async (event, chatId: unknown) => {
+    const id = authorizedChat(deps, event, chatId)
     const status = deps.getInteraction().interactionStatus(id)
     const controller = deps.getControllerLease().peek(id)
     const orientation = deps.getSessionStore?.().get(id)?.orientation
@@ -311,30 +329,33 @@ export function registerSimulatorCanvasHandlers(
     }
   })
 
-  ipcMain.handle('simulator-canvas:tap', async (_event, payload: unknown) => {
+  ipcMain.handle('simulator-canvas:tap', async (event, payload: unknown) => {
     const gesture = parseTap(payload)
+    authorizedChat(deps, event, gesture.chatId)
     const lease = ensureHumanLease(deps, gesture.chatId)
     if (!lease.ok) return { ok: false as const, error: lease.error }
     return deps.getInteraction().tap(gesture)
   })
 
-  ipcMain.handle('simulator-canvas:type', async (_event, payload: unknown) => {
+  ipcMain.handle('simulator-canvas:type', async (event, payload: unknown) => {
     const gesture = parseType(payload)
+    authorizedChat(deps, event, gesture.chatId)
     const lease = ensureHumanLease(deps, gesture.chatId)
     if (!lease.ok) return { ok: false as const, error: lease.error }
     return deps.getInteraction().type(gesture)
   })
 
-  ipcMain.handle('simulator-canvas:scroll', async (_event, payload: unknown) => {
+  ipcMain.handle('simulator-canvas:scroll', async (event, payload: unknown) => {
     const gesture = parseScroll(payload)
+    authorizedChat(deps, event, gesture.chatId)
     const lease = ensureHumanLease(deps, gesture.chatId)
     if (!lease.ok) return { ok: false as const, error: lease.error }
     return deps.getInteraction().scroll(gesture)
   })
 
-  ipcMain.handle('simulator-canvas:inspect', async (_event, chatId: unknown, udid: unknown) => {
+  ipcMain.handle('simulator-canvas:inspect', async (event, chatId: unknown, udid: unknown) => {
     // Read-only AX dump — chatId validates the caller identity; no controller lease.
-    requiredString(chatId, 'chatId')
+    authorizedChat(deps, event, chatId)
     const idb = deps.getIdb?.()
     if (!idb?.describeAll) {
       return { ok: false, error: 'idb is not available for Simulator Canvas inspect.' }
@@ -347,8 +368,8 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle(
     'simulator-canvas:button',
-    async (_event, chatId: unknown, udid: unknown, button: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown, button: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       // Validate allowlist before humanControl so a bad arg cannot steal the lease.
       if (!isSimulatorHardwareButton(button)) {
         throw new Error(
@@ -367,8 +388,8 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle(
     'simulator-canvas:rotate',
-    async (_event, chatId: unknown, udid: unknown, direction: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown, direction: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       // Validate allowlist before humanControl so a bad arg cannot steal the lease.
       if (!isSimulatorRotateDirection(direction)) {
         throw new Error(
@@ -403,7 +424,7 @@ export function registerSimulatorCanvasHandlers(
   ipcMain.handle(
     'simulator-canvas:clipboard-push',
     async (event, chatId: unknown, udid: unknown, intentToken: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+      const id = authorizedChat(deps, event, chatId)
       const device = requiredString(udid, 'udid')
       const token = requiredString(intentToken, 'intent token')
       // Consume the one-shot proof BEFORE any lease claim: without a fresh
@@ -420,8 +441,8 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle(
     'simulator-canvas:clipboard-pull',
-    async (_event, chatId: unknown, udid: unknown) => {
-      const id = requiredString(chatId, 'chatId')
+    async (event, chatId: unknown, udid: unknown) => {
+      const id = authorizedChat(deps, event, chatId)
       return deps
         .getHostControl()
         .pasteboardSync(requiredString(udid, 'udid'), 'sim-to-host', humanControl(deps, id))

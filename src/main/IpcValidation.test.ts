@@ -322,6 +322,15 @@ describe('IpcValidation', () => {
     ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
     expect(() =>
+      validateIpcArgs('canvas:open-popout', [
+        { chatId: 'chat-1', surface: 'browser', session: { canvasId: 'canvas-1', kind: 'web' } }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:dock-popout', [{ chatId: 'chat-1', surface: 'mesh' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('canvas:open-popout', ['bad'])).toThrow(/object/)
+    expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: 800, height: 600 }])
     ).not.toThrow()
     expect(() =>

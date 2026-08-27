@@ -421,6 +421,8 @@ export interface CanvasSketchDriverDeps {
   initialDocument?: CanvasSketchDocument
   onDocumentChange?: (document: CanvasSketchDocument) => void
   onDockRequest?: () => void | Promise<void>
+  onNewTabRequest?: () => void | Promise<void>
+  onSurfaceClosed?: () => void
 }
 
 function unsupported(verb: string): never {
@@ -627,6 +629,8 @@ export class CanvasSketchDriver implements CanvasDriver {
   private readonly initialDocument?: CanvasSketchDocument
   private readonly onDocumentChange?: (document: CanvasSketchDocument) => void
   private readonly onDockRequest?: () => void | Promise<void>
+  private readonly onNewTabRequest?: () => void | Promise<void>
+  private readonly onSurfaceClosed?: () => void
   private consoleEntries: CanvasConsoleEntry[] = []
   private lastDocument: CanvasSketchDocument | null = null
   private persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -638,6 +642,8 @@ export class CanvasSketchDriver implements CanvasDriver {
     this.initialDocument = deps.initialDocument
     this.onDocumentChange = deps.onDocumentChange
     this.onDockRequest = deps.onDockRequest
+    this.onNewTabRequest = deps.onNewTabRequest
+    this.onSurfaceClosed = deps.onSurfaceClosed
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -674,6 +680,7 @@ export class CanvasSketchDriver implements CanvasDriver {
     })
     this.surface = surface
     if (this.onDockRequest) surface.onDockRequest?.(this.onDockRequest)
+    if (this.onNewTabRequest) surface.onNewTabRequest?.(this.onNewTabRequest)
     surface.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.hardenSession(surface.webContents)
     surface.webContents.on('console-message', (details) => {
@@ -693,6 +700,7 @@ export class CanvasSketchDriver implements CanvasDriver {
     })
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
+      this.onSurfaceClosed?.()
     })
 
     await waitForLoad(surface, `data:text/html;charset=utf-8,${encodeURIComponent(SKETCH_HTML)}`)

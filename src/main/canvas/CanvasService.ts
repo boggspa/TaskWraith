@@ -78,8 +78,11 @@ export interface CanvasServiceDeps {
     sessionId: string,
     opts?: {
       embedded?: boolean
-      /** Canonical main-owned chat authority for content-addressed image reads. */
+      /** Canonical main-owned chat authority for surface grouping and
+       * content-addressed image reads. */
       appChatId?: string
+      /** Main-owned renderer WebContents id for an embedded surface host. */
+      surfaceHostId?: number
       /** Canonical main-owned run authority for a native-window target. */
       appRunId?: string
       /** Ensemble seat owner for device-driver controller lease mint. */
@@ -100,6 +103,10 @@ export interface CanvasServiceDeps {
       onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
       /** Floating Browser/Sketch control requests a dock presentation. */
       onDockRequest?: () => void | Promise<void>
+      /** Floating tab-strip + opens another Browser tab in the same chat host. */
+      onNewTabRequest?: () => void | Promise<void>
+      /** Native window/tab closed by the human rather than CanvasService. */
+      onSurfaceClosed?: () => void
     }
   ) => CanvasDriver
   store: CanvasStore
@@ -746,7 +753,14 @@ export class CanvasService implements CanvasController {
     try {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
-        appChatId: imageAppChatId ?? windowAppChatId ?? deviceAppChatId,
+        appChatId:
+          imageAppChatId ??
+          windowAppChatId ??
+          deviceAppChatId ??
+          canonicalAuthority(ctx.chatId),
+        ...(Number.isSafeInteger(ctx.surfaceHostId)
+          ? { surfaceHostId: ctx.surfaceHostId }
+          : {}),
         ...(windowAppRunId || deviceAppRunId ? { appRunId: windowAppRunId ?? deviceAppRunId } : {}),
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
         ...(deviceTarget ? { deviceTarget, provider: ctx.provider } : {}),
@@ -766,6 +780,24 @@ export class CanvasService implements CanvasController {
             }
           : undefined,
         onDockRequest: () => this.moveFloatingSurfaceToDock(canvasId, generation, ctx),
+        onNewTabRequest: () =>
+          this.open(
+            {
+              driver: 'web',
+              viewport
+            },
+            ctx
+          ).then(() => undefined),
+        onSurfaceClosed: () => {
+          // BrowserWindow/tab close is an external lifecycle edge. If service
+          // initiated teardown it already removed the session, making this an
+          // idempotent no-op; otherwise retire the durable record and audit it.
+          void this.close(canvasId, ctx).catch((error) => {
+            this.deps.logger?.warn?.(
+              `canvas: host-close teardown failed for ${canvasId}: ${String(error)}`
+            )
+          })
+        },
         ...(driverKind === 'web'
           ? {
               onHumanNavigate: (input: CanvasNavigateInput) =>
@@ -1746,6 +1778,15 @@ export class CanvasService implements CanvasController {
     const session = this.sessions.get(canvasId)
     if (!session || !this.owns(session.record, ctx)) return
     await this.teardown(canvasId, session, ctx)
+  }
+
+  presentInDock(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary {
+    const session = this.require(canvasId, ctx)
+    if (session.record.driver !== 'web' && session.record.driver !== 'sketch') {
+      throw new Error('Only live Browser and Sketch canvases can return to the dock.')
+    }
+    session.presentation = 'dock'
+    return this.liveSummary(session)
   }
 
   /**

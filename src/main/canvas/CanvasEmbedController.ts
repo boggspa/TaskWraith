@@ -1,7 +1,7 @@
 /**
  * CanvasEmbedController — hosts canvas previews as WebContentsViews embedded in
- * the app's main window (the renderer-pane surface), instead of standalone
- * BrowserWindows.
+ * an app renderer window (the main dock or a chat-scoped Canvas pop-out),
+ * instead of standalone page BrowserWindows.
  *
  * It hands the CanvasWebDriver an embedded {@link CanvasHostSurface} via
  * `surfaceFor(canvasId)` (so the driver's scripting/SSRF logic is unchanged), and
@@ -44,12 +44,16 @@ export interface EmbedParentWindow {
 }
 
 export interface CanvasEmbedControllerDeps {
-  getParentWindow: () => EmbedParentWindow | null
+  /** Resolve the renderer window that owns this embedded surface. Undefined is
+   * the primary app window for backwards-compatible callers. */
+  getParentWindow: (hostId?: number) => EmbedParentWindow | null
   createView: (partition: string) => EmbeddedViewHandle
 }
 
 interface EmbeddedEntry {
   view: EmbeddedViewHandle
+  parent: EmbedParentWindow
+  hostId?: number
   visible: boolean
   bounds: CanvasEmbedRect
   destroyed: boolean
@@ -111,20 +115,29 @@ export class CanvasEmbedController {
    * `deps.createSurface`. Creates the WebContentsView, attaches it to the parent
    * window, and tracks it for later setBounds/setVisible/detach.
    */
-  surfaceFor(canvasId: string): (opts: CanvasSurfaceOptions) => CanvasHostSurface {
-    return (opts) => this.createSurface(canvasId, opts)
+  surfaceFor(
+    canvasId: string,
+    hostId?: number
+  ): (opts: CanvasSurfaceOptions) => CanvasHostSurface {
+    return (opts) => this.createSurface(canvasId, opts, hostId)
   }
 
-  private createSurface(canvasId: string, opts: CanvasSurfaceOptions): CanvasHostSurface {
-    const parent = this.deps.getParentWindow()
+  private createSurface(
+    canvasId: string,
+    opts: CanvasSurfaceOptions,
+    hostId?: number
+  ): CanvasHostSurface {
+    const parent = this.deps.getParentWindow(hostId)
     if (!parent || parent.isDestroyed()) {
-      throw new Error('Main window is unavailable for an embedded canvas.')
+      throw new Error('Canvas host window is unavailable for an embedded canvas.')
     }
     // Replace any stale entry for this id.
     this.detach(canvasId)
     const view = this.deps.createView(opts.partition)
     const entry: EmbeddedEntry = {
       view,
+      parent,
+      ...(hostId === undefined ? {} : { hostId }),
       // A model-requested dock presentation can be created before React has
       // mounted the dock and reported its bounds. Start hidden + parked so the
       // WebContentsView never flashes over unrelated consent or transcript UI.
@@ -141,7 +154,7 @@ export class CanvasEmbedController {
       getTitle: () => view.webContents.getTitle(),
       setContentSize: (width, height) => {
         entry.bounds = { ...entry.bounds, width: Math.max(0, width), height: Math.max(0, height) }
-        if (entry.visible) this.safeSetBounds(entry, this.scaled(entry.bounds))
+        if (entry.visible) this.safeSetBounds(entry, this.scaled(entry, entry.bounds))
       },
       isDestroyed: () => entry.destroyed || view.webContents.isDestroyed(),
       destroy: () => this.detach(canvasId),
@@ -157,8 +170,8 @@ export class CanvasEmbedController {
    * the same factor to sit over the pane. (Stored bounds stay raw; we scale only at
    * the setBounds call, so a later zoom change is picked up on the next report.)
    */
-  private scaled(rect: CanvasEmbedRect): CanvasEmbedRect {
-    const zoom = this.deps.getParentWindow()?.getZoomFactor?.() ?? 1
+  private scaled(entry: EmbeddedEntry, rect: CanvasEmbedRect): CanvasEmbedRect {
+    const zoom = entry.parent.getZoomFactor?.() ?? 1
     if (!Number.isFinite(zoom) || zoom <= 0 || zoom === 1) return rect
     return {
       x: Math.round(rect.x * zoom),
@@ -173,7 +186,7 @@ export class CanvasEmbedController {
     const entry = this.entries.get(canvasId)
     if (!entry || entry.destroyed) return
     entry.bounds = clampRect(rect)
-    if (entry.visible) this.safeSetBounds(entry, this.scaled(entry.bounds))
+    if (entry.visible) this.safeSetBounds(entry, this.scaled(entry, entry.bounds))
   }
 
   /** Show/hide the view (e.g. hide while an app modal occludes the pane). */
@@ -184,7 +197,39 @@ export class CanvasEmbedController {
     this.safeSetVisible(entry, visible)
     // Belt-and-suspenders: park it off-screen when hidden so it can't paint over
     // the DOM even if a platform ignores setVisible.
-    this.safeSetBounds(entry, visible ? this.scaled(entry.bounds) : OFFSCREEN)
+    this.safeSetBounds(entry, visible ? this.scaled(entry, entry.bounds) : OFFSCREEN)
+  }
+
+  /**
+   * Move a live WebContentsView between renderer windows without reloading its
+   * page, browser history, sign-in state, or sketch document. Ownership is
+   * still transferred separately by CanvasEmbedIpc; this method only changes
+   * the native view parent.
+   */
+  reparent(canvasId: string, hostId?: number): void {
+    const entry = this.entries.get(canvasId)
+    if (!entry || !this.canDrive(entry)) {
+      throw new Error('Canvas does not have a live embedded surface to move.')
+    }
+    const nextParent = this.deps.getParentWindow(hostId)
+    if (!nextParent || nextParent.isDestroyed()) {
+      throw new Error('Canvas destination window is unavailable.')
+    }
+    if (entry.parent === nextParent) {
+      entry.hostId = hostId
+      return
+    }
+    try {
+      entry.parent.removeChildView(entry.view)
+    } catch {
+      // Electron may already have detached the child while its old window was
+      // closing. addChildView below remains the authoritative destination.
+    }
+    nextParent.addChildView(entry.view)
+    entry.parent = nextParent
+    entry.hostId = hostId
+    this.safeSetVisible(entry, entry.visible)
+    this.safeSetBounds(entry, entry.visible ? this.scaled(entry, entry.bounds) : OFFSCREEN)
   }
 
   /** Detach + destroy the embedded view for a canvas (idempotent). */
@@ -193,9 +238,8 @@ export class CanvasEmbedController {
     if (!entry) return
     this.entries.delete(canvasId)
     entry.destroyed = true
-    const parent = this.deps.getParentWindow()
     try {
-      if (parent && !parent.isDestroyed()) parent.removeChildView(entry.view)
+      if (!entry.parent.isDestroyed()) entry.parent.removeChildView(entry.view)
     } catch {
       // Parent may be torn down.
     }

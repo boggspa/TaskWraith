@@ -51,13 +51,9 @@ describe('RendererIpcPolicy', () => {
     'ensemble-roster-presets:sync',
     'attach-window:pick',
     'attach-window:control-session',
-    'canvas:open-embedded',
-    'canvas:adopt-embedded',
-    'canvas:set-bounds',
+    'canvas:open-window',
     'canvas:clear-browser-profile',
-    'mesh-scene:import-user-model',
-    'mesh-scene:import-user-package',
-    'mesh-scene:view',
+    'simulator-control:setup',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',
     'execution-graphs:diagnostics',
@@ -104,6 +100,25 @@ describe('RendererIpcPolicy', () => {
   ])('allows %s to reach its read or owner-scoped domain policy', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+  })
+
+  it.each([
+    'canvas:open-popout',
+    'canvas:dock-popout',
+    'canvas:open-embedded',
+    'canvas:adopt-embedded',
+    'canvas:set-bounds',
+    'canvas:navigate-chat',
+    'mesh-scene:view',
+    'mesh-scene:import-user-model',
+    'simulator-canvas:session',
+    'simulator-canvas:screenshot',
+    'simulator-canvas:tap',
+    'simulator-control:setup-status'
+  ])('lets a Canvas pop-out reach the exact-owner policy for %s', (channel) => {
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
   it.each(['brand-new-settings-channel', 'get-setting', '', 'authorize-image-preview'])(
@@ -252,11 +267,12 @@ describe('RendererIpcPolicy', () => {
     expect(main).toContain("ipcMain.on('authorize-dropped-attachment'")
   })
 
-  it('exposes Canvas dock adoption and profile reset only through the main-renderer bridge', () => {
+  it('exposes scoped Canvas dock adoption while keeping profile reset main-only', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
 
-    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(false)
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:clear-browser-profile')).toBe(true)
     expect(preload).toContain("ipcRenderer.invoke('canvas:adopt-embedded', args)")
     expect(preload).toContain("ipcRenderer.invoke('canvas:clear-browser-profile')")

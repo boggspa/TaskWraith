@@ -26764,6 +26764,48 @@ function App(): React.JSX.Element {
       setRightDockTab('canvas')
     })
   }, [currentChat?.appChatId])
+  // A Canvas utility window can return its whole live surface to the main dock.
+  // Main has already reparented every WebContentsView before this event; this
+  // renderer only selects the owning chat and mounts the corresponding chrome.
+  useEffect(() => {
+    const api = window.api?.canvas
+    if (!api?.onPopoutDockRequest) return
+    return api.onPopoutDockRequest((payload) => {
+      void (async () => {
+        const target =
+          chatByIdRef.current.get(payload.chatId) ?? (await window.api.getChat(payload.chatId))
+        if (!target) return
+        await handleSelectChatRef.current(target)
+        if (payload.surface === 'media') {
+          closeOtherRightDockPanels('media')
+          setChatMediaPanelOpenPreservingTranscript(true)
+          setRightDockTab('media')
+          return
+        }
+        closeOtherRightDockPanels('canvas')
+        setIsCanvasDockPanelOpen(true)
+        setRightDockTab('canvas')
+        if (payload.surface === 'mesh') requestMeshCanvasOpen(payload.chatId)
+        if (payload.surface === 'simulator') requestSimulatorCanvasOpen(payload.chatId)
+        if (
+          payload.canvases.length === 0 &&
+          (payload.surface === 'browser' || payload.surface === 'sketch')
+        ) {
+          const open =
+            payload.surface === 'sketch'
+              ? window.api.canvas.openSketchEmbedded({
+                  chatId: payload.chatId,
+                  presentation: 'dock'
+                })
+              : window.api.canvas.openEmbedded({
+                  chatId: payload.chatId,
+                  presentation: 'dock'
+                })
+          void open.catch(() => undefined)
+        }
+      })()
+    })
+  }, [closeOtherRightDockPanels, setChatMediaPanelOpenPreservingTranscript])
   // Simulator QA tools present the built-in surface for the active chat. A
   // background chat event never steals the user's current dock context.
   useEffect(() => {

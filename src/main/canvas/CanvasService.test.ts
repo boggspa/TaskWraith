@@ -51,6 +51,7 @@ function deferred<T>(): {
 class FakeDriver implements CanvasDriver {
   readonly kind = 'web' as const
   opened = false
+  openCalls = 0
   closed = false
   failOpen = false
   closeCalls = 0
@@ -58,6 +59,7 @@ class FakeDriver implements CanvasDriver {
   lastOpenInput?: CanvasOpenInput
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
+    this.openCalls += 1
     if (this.failOpen) throw new Error('boom')
     this.opened = true
     this.lastOpenInput = input
@@ -262,6 +264,44 @@ describe('CanvasService', () => {
     })
   })
 
+  it('threads the exact renderer host into embedded driver construction', async () => {
+    await service.open(
+      { driver: 'web', embed: true, presentation: 'dock' },
+      { chatId: 'chat-a', surfaceHostId: 42 }
+    )
+
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42
+    })
+  })
+
+  it('opens another floating Browser tab through the host chrome callback', async () => {
+    const first = await service.open({ driver: 'sketch' }, { chatId: 'chat-a' })
+    const requestNewTab = lastDriverOpts?.onNewTabRequest
+    expect(requestNewTab).toBeTypeOf('function')
+
+    await requestNewTab?.()
+
+    const live = service.list({ chatId: 'chat-a' })
+    expect(live).toHaveLength(2)
+    expect(live.map((entry) => entry.driver)).toEqual(['sketch', 'web'])
+    expect(live.some((entry) => entry.canvasId === first.canvasId)).toBe(true)
+  })
+
+  it('retires a session when its native host tab closes itself', async () => {
+    const opened = await service.open({ driver: 'web' }, { chatId: 'chat-a' })
+    const surfaceClosed = lastDriverOpts?.onSurfaceClosed
+    expect(surfaceClosed).toBeTypeOf('function')
+
+    surfaceClosed?.()
+    await vi.waitFor(() => {
+      expect(service.status(opened.canvasId, { chatId: 'chat-a' })?.status).toBe('closed')
+    })
+    expect(events.some((event) => event.kind === 'session.closed')).toBe(true)
+  })
+
   it('moves a floating browser into the dock through its main-owned callback', async () => {
     const opened = await service.open(
       { driver: 'web', url: 'https://example.com/start' },
@@ -282,6 +322,17 @@ describe('CanvasService', () => {
       presentation: 'dock',
       url: 'http://localhost:3000/?token=secret'
     })
+  })
+
+  it('marks a transferred live surface as dock-presented without reopening it', async () => {
+    const opened = await service.open({ driver: 'web' }, { chatId: 'chat-a' })
+    const openCallsBefore = fake.openCalls
+
+    const summary = service.presentInDock(opened.canvasId, { chatId: 'chat-a' })
+
+    expect(summary).toMatchObject({ canvasId: opened.canvasId, presentation: 'dock' })
+    expect(service.list({ chatId: 'chat-a' })[0]).toMatchObject({ presentation: 'dock' })
+    expect(fake.openCalls).toBe(openCallsBefore)
   })
 
   it('rejects an unsupported driver', async () => {

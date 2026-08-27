@@ -442,6 +442,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:open-embedded': ['optionalCanvasOpenArgs'],
   'canvas:open-sketch-window': ['optionalCanvasSketchArgs'],
   'canvas:open-sketch-embedded': ['optionalCanvasSketchArgs'],
+  'canvas:open-popout': ['object'],
+  'canvas:dock-popout': ['object'],
   'canvas:adopt-embedded': ['canvasAdoptArgs'],
   'canvas:set-bounds': ['nonEmptyString', 'canvasBounds'],
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
