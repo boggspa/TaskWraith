@@ -354,10 +354,27 @@ private struct MigratingOutboxPersistence: OfflineComposerQueuePersistence {
 
     func writeOutbox(_ data: Data) {
         primary.writeOutbox(data)
-        // Clear only when the legacy bytes are the exact queue just copied.
-        // If both keys somehow hold different data, preserving the older bytes
-        // is safer than guessing that they are duplicates.
-        if legacy.readOutbox() == data { legacy.clearOutbox() }
+        // JSON object key order is not stable across a decode/re-encode, so
+        // byte equality alone can leave the migrated queue duplicated under
+        // the superseded key. Clear only when the bytes match OR both blobs
+        // decode to the exact same queue. If they contain different prompts,
+        // preserving the older bytes is safer than guessing.
+        guard let legacyData = legacy.readOutbox() else { return }
+        let isSameQueue: Bool
+        if legacyData == data {
+            isSameQueue = true
+        } else {
+            let decoder = JSONDecoder()
+            if let legacyQueue = try? decoder.decode(
+                [QueuedComposerSend].self, from: legacyData),
+                let primaryQueue = try? decoder.decode([QueuedComposerSend].self, from: data)
+            {
+                isSameQueue = legacyQueue == primaryQueue
+            } else {
+                isSameQueue = false
+            }
+        }
+        if isSameQueue { legacy.clearOutbox() }
     }
 
     func clearOutbox() {
