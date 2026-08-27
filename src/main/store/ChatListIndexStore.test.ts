@@ -5,6 +5,15 @@ const preservedIndexStat = vi.hoisted(() => ({
   value: null as unknown
 }))
 
+/**
+ * Records every readFileSync path while enabled, so a test can assert HOW MUCH
+ * durable I/O a single call performed rather than only what it returned.
+ */
+const readFileProbe = vi.hoisted(() => ({
+  enabled: false,
+  paths: [] as string[]
+}))
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
   return {
@@ -14,6 +23,12 @@ vi.mock('fs', async (importOriginal) => {
         return preservedIndexStat.value as never
       }
       return actual.statSync(...args)
+    },
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+      if (readFileProbe.enabled && typeof args[0] === 'string') {
+        readFileProbe.paths.push(args[0])
+      }
+      return actual.readFileSync(...args) as never
     }
   }
 })
@@ -424,5 +439,125 @@ describe('ChatListIndexStore cache + projection', () => {
     )
     expect(() => unavailable.removeEntries(['chat-a'])).toThrow('Chat list index is read-only')
     expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  /**
+   * Runs `fn` with the readFileSync probe on and returns both its result and
+   * every path read. Enabled narrowly so the test file's own snapshotTree
+   * reads never pollute a measurement.
+   */
+  function recordReads<T>(fn: () => T): { result: T; paths: string[] } {
+    readFileProbe.enabled = true
+    readFileProbe.paths = []
+    try {
+      return { result: fn(), paths: [...readFileProbe.paths] }
+    } finally {
+      readFileProbe.enabled = false
+      readFileProbe.paths = []
+    }
+  }
+
+  it('cold readAll reads each chat summary file once, not once per stale JSONL line', () => {
+    const chatIds = Array.from({ length: 20 }, (_, i) => `chat-${i}`)
+    // 5 revisions x 20 chats = 100 append-only lines over 20 live chats.
+    // shouldCompact needs >100 lines, so nothing compacts mid-measurement.
+    for (let revision = 0; revision < 5; revision++) {
+      for (const chatId of chatIds) {
+        store.writeEntry(
+          chatId,
+          makeItem(chatId, {
+            title: `${chatId} v${revision}`,
+            runsSummary: [{ runId: `${chatId}-r${revision}`, diffFileCount: revision }]
+          })
+        )
+      }
+    }
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    expect(fs.readFileSync(indexPath, 'utf-8').trim().split('\n')).toHaveLength(100)
+
+    store.clearCache()
+    const { result, paths } = recordReads(() => store.readAll())
+
+    // One summary read per LIVE chat. Reading inside the record loop made this
+    // one per LINE (100), and 80 of those parses were discarded immediately.
+    const summaryReads = paths.filter((p) => p.includes('chat-list-summaries'))
+    expect(summaryReads).toHaveLength(20)
+    expect(new Set(summaryReads).size).toBe(20)
+
+    // The dedupe must still resolve the LAST line for each chat.
+    expect(Object.keys(result)).toHaveLength(20)
+    expect(result['chat-7']?.title).toBe('chat-7 v4')
+    expect(result['chat-7']?.runsSummary?.[0]?.runId).toBe('chat-7-r4')
+  })
+
+  it('resolves last-line-wins across tombstones when deduping the cold parse', () => {
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    const line = (chatId: string, entry: unknown): string =>
+      JSON.stringify({ chatId, entry }) + '\n'
+    fs.writeFileSync(
+      indexPath,
+      line('chat-a', makeItem('chat-a', { title: 'A v1' })) +
+        line('chat-b', makeItem('chat-b', { title: 'B v1' })) +
+        line('chat-a', null) +
+        line('chat-b', makeItem('chat-b', { title: 'B v2' })) +
+        line('chat-a', makeItem('chat-a', { title: 'A v2' })) +
+        line('chat-c', makeItem('chat-c', { title: 'C v1' })) +
+        line('chat-c', null),
+      'utf-8'
+    )
+
+    store.clearCache()
+    const all = store.readAll()
+    // chat-a: tombstoned then rewritten => the rewrite is the last word.
+    expect(all['chat-a']?.title).toBe('A v2')
+    expect(all['chat-b']?.title).toBe('B v2')
+    // chat-c: tombstoned last => stays gone.
+    expect(all['chat-c']).toBeUndefined()
+    expect(Object.keys(all).sort()).toEqual(['chat-a', 'chat-b'])
+  })
+
+  it('a read-only Host caches the legacy projection instead of re-parsing per call', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ 'chat-legacy': makeItem('chat-legacy', { title: 'Legacy chat' }) }),
+      'utf-8'
+    )
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    const cold = recordReads(() => readOnly.readAll())
+    expect(cold.result['chat-legacy']?.title).toBe('Legacy chat')
+    expect(cold.paths.filter((p) => p === legacyPath)).toHaveLength(1)
+    expect(readOnly.isCacheValid()).toBe(true)
+
+    // Repeat reads must not touch the legacy file again.
+    const warm = recordReads(() => {
+      readOnly.readAll()
+      return readOnly.readEntry('chat-legacy')
+    })
+    expect(warm.result?.title).toBe('Legacy chat')
+    expect(warm.paths.filter((p) => p === legacyPath)).toHaveLength(0)
+  })
+
+  it('a JSONL arriving after a legacy-sourced cache invalidates that cache', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ 'chat-x': makeItem('chat-x', { title: 'From legacy' }) }),
+      'utf-8'
+    )
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+    expect(readOnly.readAll()['chat-x']?.title).toBe('From legacy')
+    expect(readOnly.isCacheValid()).toBe(true)
+
+    // Another process migrates: the JSONL exists now and must win at once.
+    fs.writeFileSync(
+      path.join(dir, 'chat-list-index.jsonl'),
+      JSON.stringify({ chatId: 'chat-x', entry: makeItem('chat-x', { title: 'From JSONL' }) }) +
+        '\n',
+      'utf-8'
+    )
+    expect(readOnly.isCacheValid()).toBe(false)
+    expect(readOnly.readAll()['chat-x']?.title).toBe('From JSONL')
   })
 })
