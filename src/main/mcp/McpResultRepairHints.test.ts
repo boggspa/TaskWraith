@@ -292,3 +292,236 @@ describe('S5 run_task claim rejection names the working route', () => {
     expect((error as Error).message).not.toContain('run_shell_command with the equivalent command')
   })
 })
+
+describe('blackboard repair entries', () => {
+  it('capacity exhaustion names the real escapes and hands back a working read call', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'my-decision', value: 'We will ship it.', category: 'decision' },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_capacity_exhausted',
+        counts: { session: 50, chat: 8, round: 2 },
+        error: '60/60 protected session/chat entries. New unique posts will be rejected.'
+      }
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      repair: {
+        receivedKeys: ['category', 'key', 'value'],
+        retryTemplate: { tool: 'blackboard_read', arguments: { last: 60 } }
+      }
+    })
+    const repair = (result as { repair: { why: string } }).repair
+    expect(repair.why).toContain('blackboard_delete')
+    expect(repair.why).toContain('ttlMinutes')
+    expect(repair.why).toContain('upsert')
+  })
+
+  it('key-too-long echoes the measured lengths and preserves the caller value', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'k'.repeat(143), value: 'Keep this text.' },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_key_too_long',
+        maxLength: 80,
+        originalLength: 143
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('143')
+    expect(repair.why).toContain('80')
+    expect(repair.retryTemplate.key).not.toBe('k'.repeat(143))
+    expect(repair.retryTemplate.value).toBe('Keep this text.')
+  })
+
+  it('value-too-long preserves the caller key and swaps the value for a placeholder', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'my-note', value: 'v'.repeat(9000) },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_value_too_long',
+        maxLength: 8000,
+        originalLength: 9000
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('9000')
+    expect(repair.why).toContain('8000')
+    expect(repair.retryTemplate.key).toBe('my-note')
+    expect(repair.retryTemplate.value).not.toBe('v'.repeat(9000))
+  })
+
+  it('poll bounds failures name the allowed range and hand back the correct shape', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'poll', value: 'Pick one.', pollOptions: ['only-one'] },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_poll_options_invalid',
+        error: 'pollOptions must contain 2–6 plain-text choices.',
+        minItems: 2,
+        maxItems: 6
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('2–6')
+    expect(repair.retryTemplate.key).toBe('poll')
+    expect(repair.retryTemplate.value).toBe('Pick one.')
+    expect(repair.retryTemplate.pollOptions).toEqual(['<choice 1>', '<choice 2>'])
+  })
+
+  it('duplicate poll options teach the normalization rule', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'poll', value: 'Pick one.', pollOptions: ['same', ' same '] },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_poll_options_duplicate',
+        error: 'pollOptions choices must be unique.'
+      }
+    })
+
+    expect((result as { repair: { why: string } }).repair.why).toContain('unique')
+  })
+
+  it('missing key/value hands back both fields with the caller parts preserved', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'has-key-only', category: 'fact' },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        error: 'blackboard_post requires non-empty key and value.'
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('key')
+    expect(repair.why).toContain('value')
+    expect(repair.retryTemplate.key).toBe('has-key-only')
+    expect(repair.retryTemplate.value).toBe('<value>')
+    expect(repair.retryTemplate.category).toBe('fact')
+  })
+
+  it('delete with no matches routes to a read first', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_delete',
+      receivedArguments: { keys: ['retired-long-ago'] },
+      result: {
+        ok: false,
+        tool: 'blackboard_delete',
+        error: 'No blackboard entries matched. Pass ids, keys, category, or all:true to delete.'
+      }
+    })
+
+    expect(result).toMatchObject({
+      repair: { retryTemplate: { tool: 'blackboard_read', arguments: {} } }
+    })
+  })
+
+  it('leaves blackboard successes and unknown codes untouched', () => {
+    const success = { ok: true, tool: 'blackboard_post' }
+    const unknown = { ok: false, tool: 'blackboard_post', code: 'blackboard_images_unreadable' }
+
+    expect(
+      attachMcpResultRepairHints({
+        toolName: 'blackboard_post',
+        receivedArguments: {},
+        result: success
+      })
+    ).toBe(success)
+    expect(
+      attachMcpResultRepairHints({
+        toolName: 'blackboard_post',
+        receivedArguments: {},
+        result: unknown
+      })
+    ).toBe(unknown)
+  })
+
+  it('ttl_invalid hands back the post with a valid-range ttl placeholder', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'my-note', value: 'Short-lived.', ttlMinutes: 50000 },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        code: 'blackboard_ttl_invalid',
+        error: 'ttlMinutes must be an integer from 1 to 10080.'
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('10080')
+    expect(repair.why).toContain('null')
+    expect(repair.retryTemplate.key).toBe('my-note')
+    expect(repair.retryTemplate.value).toBe('Short-lived.')
+    expect(repair.retryTemplate.ttlMinutes).not.toBe(50000)
+  })
+
+  it('a round-scoped post with no active round retries as the session scope the message advises', () => {
+    const result = attachMcpResultRepairHints({
+      toolName: 'blackboard_post',
+      receivedArguments: { key: 'round-note', value: 'Worth keeping.', scope: 'round' },
+      result: {
+        ok: false,
+        tool: 'blackboard_post',
+        error:
+          'Round-scoped blackboard entries require an active Ensemble round. Use scope "session" or "chat" for durable notes.'
+      }
+    })
+
+    const repair = (result as { repair: { why: string; retryTemplate: Record<string, unknown> } })
+      .repair
+    expect(repair.why).toContain('session')
+    expect(repair.retryTemplate).toMatchObject({
+      key: 'round-note',
+      value: 'Worth keeping.',
+      scope: 'session'
+    })
+  })
+
+  it('keeps environment-state failures as verdicts by design', () => {
+    // Coverage boundary: repairs attach to CALLER-CORRECTABLE input failures.
+    // A non-ensemble chat, a failed image ingest, and a finalization failure
+    // are environment/host states — no argument change fixes them, so they
+    // stay verdicts on purpose.
+    const notEnsemble = {
+      ok: false,
+      tool: 'blackboard_post',
+      error: 'blackboard_post requires an Ensemble chat.'
+    }
+    const finalizeFailed = {
+      ok: false,
+      tool: 'blackboard_post',
+      error: 'Blackboard entry could not be finalized after image ingestion.'
+    }
+
+    for (const result of [notEnsemble, finalizeFailed]) {
+      expect(
+        attachMcpResultRepairHints({
+          toolName: 'blackboard_post',
+          receivedArguments: { key: 'k', value: 'v' },
+          result
+        })
+      ).toBe(result)
+    }
+  })
+})

@@ -181,7 +181,10 @@ import {
   normalizeMcpToolArguments,
   isTaskWraithMcpToolName
 } from './mcp/McpResultHelpers'
-import { attachMcpResultRepairHints } from './mcp/McpResultRepairHints'
+import {
+  attachMcpResultRepairHints,
+  buildCapabilityInvokeUnknownTargetHint
+} from './mcp/McpResultRepairHints'
 import { replaceLiteralText } from './mcp/LiteralTextReplacement'
 import {
   AGENTIC_SERVICE_LABELS,
@@ -37585,18 +37588,33 @@ async function executeGeminiMcpTool(
       const error = resolution.ok
         ? 'The resolved capability is not a canonical TaskWraith tool.'
         : resolution.message
+      // S5a — this rejection was a pure verdict: it named a tool that plainly
+      // exists and never said WHY the gateway cannot reach it. The builder
+      // turns that into a repair (call the direct tool, or capability_search
+      // first). Wired here rather than inside attachMcpResultRepairHints
+      // because this path returns long before the mcpEnsembleJson seam exists.
+      const rejection = {
+        ok: false,
+        tool: toolName,
+        ...(resolution.ok
+          ? {}
+          : {
+              code: resolution.code,
+              issues: resolution.issues,
+              conflicts: resolution.conflicts
+            }),
+        error
+      }
+      const capabilityRepair = buildCapabilityInvokeUnknownTargetHint({
+        toolName,
+        receivedArguments: receivedArgs,
+        normalizedArguments: args,
+        result: rejection
+      })
       const result: McpToolExecutionResult = {
         ...mcpStructuredJsonResult({
-          ok: false,
-          tool: toolName,
-          ...(resolution.ok
-            ? {}
-            : {
-                code: resolution.code,
-                issues: resolution.issues,
-                conflicts: resolution.conflicts
-              }),
-          error
+          ...rejection,
+          ...(capabilityRepair ? { repair: capabilityRepair } : {})
         }),
         isError: true
       }
@@ -39890,14 +39908,14 @@ async function executeGeminiMcpTool(
       })
       if (!chat?.ensemble) {
         toolIsError = true
-        text = mcpJson({
+        text = mcpEnsembleJson({
           ok: false,
           tool: 'blackboard_post',
           error: 'blackboard_post requires an Ensemble chat.'
         })
       } else if (!roundResolution.ok) {
         toolIsError = true
-        text = mcpJson({
+        text = mcpEnsembleJson({
           ok: false,
           tool: 'blackboard_post',
           error: roundResolution.error
@@ -39913,7 +39931,7 @@ async function executeGeminiMcpTool(
         const pollOptions = validateBlackboardPollOptions(pollOptionsInput)
         if (fieldError) {
           toolIsError = true
-          text = mcpJson({
+          text = mcpEnsembleJson({
             ok: false,
             tool: 'blackboard_post',
             code: fieldError.code,
@@ -39922,7 +39940,7 @@ async function executeGeminiMcpTool(
           })
         } else if (!expiry.ok) {
           toolIsError = true
-          text = mcpJson({
+          text = mcpEnsembleJson({
             ok: false,
             tool: 'blackboard_post',
             code: expiry.code,
@@ -39930,7 +39948,7 @@ async function executeGeminiMcpTool(
           })
         } else if (!pollOptions.ok) {
           toolIsError = true
-          text = mcpJson({
+          text = mcpEnsembleJson({
             ok: false,
             tool: 'blackboard_post',
             code: pollOptions.code,
@@ -39962,7 +39980,7 @@ async function executeGeminiMcpTool(
           const preflightEntry = makeBlackboardEntry(entryInput)
           if (!preflightEntry) {
             toolIsError = true
-            text = mcpJson({
+            text = mcpEnsembleJson({
               ok: false,
               tool: 'blackboard_post',
               error: 'blackboard_post requires non-empty key and value.'
@@ -39979,7 +39997,7 @@ async function executeGeminiMcpTool(
             )
             if (!preflightUpsert.ok) {
               toolIsError = true
-              text = mcpJson({
+              text = mcpEnsembleJson({
                 ok: false,
                 tool: 'blackboard_post',
                 code: preflightUpsert.code,
@@ -40008,7 +40026,7 @@ async function executeGeminiMcpTool(
                 })
             if (persistedImages && !persistedImages.ok) {
               toolIsError = true
-              text = mcpJson({
+              text = mcpEnsembleJson({
                 ok: false,
                 tool: 'blackboard_post',
                 code: persistedImages.code,
@@ -40028,7 +40046,7 @@ async function executeGeminiMcpTool(
               : null
             if (!toolIsError && (!entry || !upsert || !upsert.ok)) {
               toolIsError = true
-              text = mcpJson({
+              text = mcpEnsembleJson({
                 ok: false,
                 tool: 'blackboard_post',
                 error: 'Blackboard entry could not be finalized after image ingestion.'
@@ -40067,7 +40085,7 @@ async function executeGeminiMcpTool(
       const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
       if (!chat?.ensemble) {
         toolIsError = true
-        text = mcpJson({
+        text = mcpEnsembleJson({
           ok: false,
           tool: 'blackboard_read',
           error: 'blackboard_read requires an Ensemble chat.'
@@ -40247,7 +40265,7 @@ async function executeGeminiMcpTool(
         ensembleOrchestratorRef?.getParticipantMetaForRun(context.appRunId || '') || undefined
       if (!chat?.ensemble) {
         toolIsError = true
-        text = mcpJson({
+        text = mcpEnsembleJson({
           ok: false,
           tool: 'blackboard_delete',
           error: 'blackboard_delete requires an Ensemble chat.'
@@ -40261,7 +40279,7 @@ async function executeGeminiMcpTool(
         })
         if (result.removed.length === 0) {
           toolIsError = true
-          text = mcpJson({
+          text = mcpEnsembleJson({
             ok: false,
             tool: 'blackboard_delete',
             error: 'No blackboard entries matched. Pass ids, keys, category, or all:true to delete.'
