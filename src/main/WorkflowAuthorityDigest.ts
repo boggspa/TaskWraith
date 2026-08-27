@@ -1,4 +1,9 @@
-import { createHash } from 'node:crypto'
+// Namespace import (not `{ createHash }`): this module sat in the renderer
+// bundle's import graph on 2026-08-26 (via the scheduled-occurrence authority
+// modules) and a named `node:crypto` import fails the client rollup at bind
+// time. A namespace binding resolves the member only at call time, which only
+// ever happens in the main process. Keep this a namespace import.
+import * as nodeCrypto from 'node:crypto'
 import type {
   ScheduledTaskAttachmentRef,
   WorkflowDefinition,
@@ -106,7 +111,7 @@ export function workflowAuthorityDigest(
   workflow: WorkflowDefinition,
   canonicalPath: (value: string) => string
 ): string {
-  return createHash('sha256')
+  return nodeCrypto.createHash('sha256')
     .update(stableStringify(workflowAuthorityEnvelope(workflow, canonicalPath)))
     .digest('hex')
 }

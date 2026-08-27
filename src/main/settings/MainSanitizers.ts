@@ -1,4 +1,8 @@
-import { resolve } from 'node:path'
+// Namespace import (not `{ resolve }`): this module sat in the renderer
+// bundle's import graph on 2026-08-26 and a named `node:path` import fails
+// the client rollup at bind time. A namespace binding resolves the member
+// only at call time, which only ever happens in the main process.
+import * as nodePath from 'node:path'
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
@@ -693,7 +697,7 @@ function workspaceGrantConsolidationKey(grant: AgenticWorkspaceGrant): string | 
   ) {
     return null
   }
-  return `${resolve(grant.workspacePath)}\u0000${grant.service}`
+  return `${nodePath.resolve(grant.workspacePath)}\u0000${grant.service}`
 }
 
 /**
@@ -732,7 +736,7 @@ export function consolidateAgenticWorkspaceGrants(
     const alreadyNormalized =
       group.length === 1 &&
       group[0].provider === 'agents' &&
-      resolve(group[0].workspacePath) === group[0].workspacePath
+      nodePath.resolve(group[0].workspacePath) === group[0].workspacePath
     if (alreadyNormalized) {
       result.push(group[0])
       continue
@@ -766,7 +770,7 @@ export function consolidateAgenticWorkspaceGrants(
     }
     const merged: AgenticWorkspaceGrant = {
       id: base.id,
-      workspacePath: resolve(base.workspacePath),
+      workspacePath: nodePath.resolve(base.workspacePath),
       provider: 'agents',
       service: base.service,
       createdAt,

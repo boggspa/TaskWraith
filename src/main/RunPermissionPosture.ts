@@ -1,4 +1,9 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+// Namespace import (not `{ createHash, createHmac, timingSafeEqual }`): this
+// module sat in the renderer bundle's import graph on 2026-08-26 and a named
+// `node:crypto` import fails the client rollup at bind time. A namespace
+// binding resolves the members only at call time, which only ever happens in
+// the main process. Keep this a namespace import.
+import * as nodeCrypto from 'node:crypto'
 import {
   parseResolvedProjectReferenceContext,
   serializeResolvedProjectReferenceContext
@@ -120,7 +125,7 @@ export function signRunPermissionPosture(
   effectivePermissions: EffectiveRunPermissions | null | undefined,
   context?: RunPermissionPostureContext | null
 ): string {
-  return createHmac('sha256', secret)
+  return nodeCrypto.createHmac('sha256', secret)
     .update(canonicalRunPermissionPosture(approvalMode, effectivePermissions, context))
     .digest('hex')
 }
@@ -205,7 +210,7 @@ export function verifyRunPermissionPosture(
       'hex'
     )
     const actual = Buffer.from(signatureHex, 'hex')
-    return expected.length === actual.length && timingSafeEqual(expected, actual)
+    return expected.length === actual.length && nodeCrypto.timingSafeEqual(expected, actual)
   } catch {
     return false
   }
@@ -433,7 +438,7 @@ function snapshotContext(
 }
 
 function sha256Hex(value: string): string {
-  return createHash('sha256').update(value).digest('hex')
+  return nodeCrypto.createHash('sha256').update(value).digest('hex')
 }
 
 /**
