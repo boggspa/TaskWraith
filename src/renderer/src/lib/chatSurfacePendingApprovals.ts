@@ -11,6 +11,16 @@ export interface ChatSurfacePendingApprovals<T> {
   pendingApprovalQueueByChatId: Record<string, readonly T[]>
 }
 
+export interface RoutedPendingApproval<T> {
+  chatId: string
+  approval: T
+}
+
+export interface ChatSurfacePendingApprovalState<T> {
+  approvalHeadByChatId: Record<string, T | null>
+  approvalQueueByChatId: Record<string, T[]>
+}
+
 export function projectChatSurfacePendingApprovals<T>(
   chatId: string,
   approvalHeadByChatId: Readonly<Record<string, T | null | undefined>>,
@@ -21,5 +31,52 @@ export function projectChatSurfacePendingApprovals<T>(
   return {
     pendingAgentApproval,
     pendingApprovalQueueByChatId: queue ? { [chatId]: queue } : {}
+  }
+}
+
+/**
+ * Merge an authoritative recovery snapshot with events already received by the
+ * rebuilt renderer. Recovered requests lead because they were pending before
+ * the snapshot read; live events append, with approval id deduplication across
+ * both delivery paths.
+ */
+export function mergeRecoveredPendingApprovals<T extends { id: string }>(
+  recovered: readonly RoutedPendingApproval<T>[],
+  approvalHeadByChatId: Readonly<Record<string, T | null | undefined>>,
+  approvalQueueByChatId: Readonly<Record<string, readonly T[] | undefined>>
+): ChatSurfacePendingApprovalState<T> {
+  const orderedByChatId = new Map<string, T[]>()
+  const seenByChatId = new Map<string, Set<string>>()
+  const append = (chatId: string, approval: T | null | undefined): void => {
+    if (!chatId || !approval?.id) return
+    const seen = seenByChatId.get(chatId) ?? new Set<string>()
+    if (seen.has(approval.id)) return
+    seen.add(approval.id)
+    seenByChatId.set(chatId, seen)
+    const ordered = orderedByChatId.get(chatId) ?? []
+    ordered.push(approval)
+    orderedByChatId.set(chatId, ordered)
+  }
+
+  for (const entry of recovered) append(entry.chatId, entry.approval)
+  const existingChatIds = new Set([
+    ...Object.keys(approvalHeadByChatId),
+    ...Object.keys(approvalQueueByChatId)
+  ])
+  for (const chatId of existingChatIds) {
+    append(chatId, approvalHeadByChatId[chatId])
+    for (const approval of approvalQueueByChatId[chatId] ?? []) append(chatId, approval)
+  }
+
+  const nextHeads: Record<string, T | null> = {}
+  const nextQueues: Record<string, T[]> = {}
+  for (const chatId of new Set([...existingChatIds, ...orderedByChatId.keys()])) {
+    const ordered = orderedByChatId.get(chatId) ?? []
+    nextHeads[chatId] = ordered[0] ?? null
+    if (ordered.length > 1) nextQueues[chatId] = ordered.slice(1)
+  }
+  return {
+    approvalHeadByChatId: nextHeads,
+    approvalQueueByChatId: nextQueues
   }
 }

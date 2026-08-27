@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { projectChatSurfacePendingApprovals } from './chatSurfacePendingApprovals'
+import {
+  mergeRecoveredPendingApprovals,
+  projectChatSurfacePendingApprovals
+} from './chatSurfacePendingApprovals'
 
 type Approval = { id: string }
 
@@ -65,5 +68,36 @@ describe('projectChatSurfacePendingApprovals', () => {
     expect(paneComposerBuilder).toContain('projectChatSurfacePendingApprovals(')
     expect(paneComposerBuilder).toContain('...panePendingApprovals')
     expect(paneComposerBuilder).not.toContain('pendingAgentApproval: null')
+  })
+
+  it('merges recovered requests before newer live events without duplicates', () => {
+    const recoveredHead: Approval = { id: 'recovered-head' }
+    const shared: Approval = { id: 'shared' }
+    const liveHead: Approval = { id: 'live-head' }
+    const unrelated: Approval = { id: 'unrelated' }
+
+    expect(
+      mergeRecoveredPendingApprovals(
+        [
+          { chatId: 'pane-chat', approval: recoveredHead },
+          { chatId: 'pane-chat', approval: shared }
+        ],
+        {
+          'pane-chat': liveHead,
+          'other-chat': unrelated
+        },
+        {
+          'pane-chat': [shared]
+        }
+      )
+    ).toEqual({
+      approvalHeadByChatId: {
+        'pane-chat': recoveredHead,
+        'other-chat': unrelated
+      },
+      approvalQueueByChatId: {
+        'pane-chat': [shared, liveHead]
+      }
+    })
   })
 })
