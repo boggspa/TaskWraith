@@ -364,28 +364,88 @@ public struct OfflineComposerQueueStore: Sendable {
     /// Queued prompts are addressed by thread id, and thread ids are not
     /// globally unique across Macs. A single shared outbox therefore risks
     /// delivering one Mac's prompt CONTENT into a colliding thread on a
-    /// DIFFERENT Mac — a leak, not a tidiness problem. Partitioning by the
-    /// pinned host identity makes that structurally impossible.
+    /// DIFFERENT Mac — a leak, not a tidiness problem.
+    ///
+    /// Distinct host identities CANNOT share a key. That is a property of the
+    /// encoding, not a probability: the suffix is an injective (reversible)
+    /// escape of the identity's UTF-8 bytes, so two different byte sequences
+    /// always produce two different keys.
+    ///
+    /// Precondition, stated because it is the one way this could bite: the
+    /// derivation is over UTF-8 BYTES, while Swift `String` equality is
+    /// Unicode canonical equivalence. A caller that passed the same identity
+    /// in two different normalisation forms would get two partitions for one
+    /// Mac — losing a queue rather than mixing two. `pinnedMacIdentityB64` is
+    /// ASCII base64, which has no normalisation variance, so this cannot arise
+    /// today; a non-ASCII identity source would need normalising first.
     public static func key(forHostIdentity identity: String) -> String {
-        // Do NOT build the key by sanitizing the identity INTO the key text.
-        // Pinned identities are base64, where `+`, `/` and `=` are ordinary
-        // characters, so folding punctuation to one placeholder makes `abc+def`
-        // and `abc/def` — two DIFFERENT Macs — share a partition. That is the
-        // exact cross-host mixing this partition exists to prevent, wearing a
-        // key that looks correctly scoped. (Caught by a test, not by review.)
+        // History, so nobody "simplifies" this back: the first version built
+        // the key by sanitizing punctuation OUT of the identity. Pinned
+        // identities are base64, where `+` and `/` are ordinary characters, so
+        // `abc+def` and `abc/def` — two DIFFERENT Macs — collapsed onto ONE
+        // partition, wearing a key that looked correctly scoped. The second
+        // version hashed with FNV-1a, which fixed that collision but left a
+        // 64-bit non-cryptographic hash as the only thing separating one
+        // user's prompt text from another host's queue. Deterministic is not
+        // the same as collision-resistant, and a probabilistic argument is the
+        // wrong shape of guarantee in front of message content.
         //
-        // Hash the RAW bytes instead. FNV-1a rather than `hashValue`, which is
-        // seeded per process and would hand the same Mac a different partition
-        // on every launch — losing the queue on relaunch, silently.
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        // So: escape rather than hash or digest. Unreserved bytes pass through
+        // (the key stays readable for a base64 identity, which is almost all of
+        // it); everything else becomes `~XX`. The escape marker is ITSELF
+        // escaped, which is what makes the encoding unambiguous and therefore
+        // injective — decode is a pure function of the output.
+        //
+        // Not `hashValue`: it is seeded per process, so the same Mac would get
+        // a fresh partition on every launch and silently lose its queue.
+        var encoded = ""
+        encoded.reserveCapacity(identity.utf8.count + 8)
         for byte in identity.utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x0000_0100_0000_01b3
+            let isUnreserved =
+                (byte >= 0x41 && byte <= 0x5A)  // A-Z
+                || (byte >= 0x61 && byte <= 0x7A)  // a-z
+                || (byte >= 0x30 && byte <= 0x39)  // 0-9
+                || byte == 0x2D  // -
+                || byte == 0x5F  // _
+            // `~` is deliberately NOT unreserved: it is the escape marker, and
+            // admitting it here lets identity `~2B` forge the encoding of `+`,
+            // putting two different Macs on one queue. Verified by deleting
+            // this exclusion and watching both partition tests go red.
+            if isUnreserved {
+                encoded.append(Character(UnicodeScalar(byte)))
+            } else {
+                encoded.append("~")
+                encoded.append(Self.hexDigits[Int(byte >> 4)])
+                encoded.append(Self.hexDigits[Int(byte & 0x0F)])
+            }
         }
-        // Readable prefix is a debugging affordance only; the hash carries the
-        // uniqueness, so a collision here cannot merge two hosts.
-        let readable = String(identity.filter { $0.isLetter || $0.isNumber }.prefix(24))
-        return "tw.composer.outbox.v2.\(readable).\(String(hash, radix: 16))"
+        return "tw.composer.outbox.v2.\(encoded)"
+    }
+
+    private static let hexDigits: [Character] = Array("0123456789ABCDEF")
+
+    /// Recover the identity a key was built for. Exists to make the injectivity
+    /// claim above CHECKABLE rather than merely asserted — a round-trip test
+    /// proves distinct identities cannot share a key far more directly than
+    /// enumerating pairs that happen not to collide.
+    public static func hostIdentity(fromKey key: String) -> String? {
+        let prefix = "tw.composer.outbox.v2."
+        guard key.hasPrefix(prefix) else { return nil }
+        var bytes: [UInt8] = []
+        var rest = Substring(key.dropFirst(prefix.count))
+        while let next = rest.first {
+            if next == "~" {
+                let hex = rest.dropFirst().prefix(2)
+                guard hex.count == 2, let byte = UInt8(hex, radix: 16) else { return nil }
+                bytes.append(byte)
+                rest = rest.dropFirst(3)
+            } else {
+                guard let ascii = next.asciiValue else { return nil }
+                bytes.append(ascii)
+                rest = rest.dropFirst()
+            }
+        }
+        return String(bytes: bytes, encoding: .utf8)
     }
 
     /// Build a store scoped to one paired Mac.
@@ -405,11 +465,27 @@ public struct OfflineComposerQueueStore: Sendable {
     /// exists to prevent. They are quarantined and COUNTED, so the user can be
     /// told they exist and decide what happens to them.
     public static func legacyQuarantinedCount(suiteName: String? = nil) -> Int {
+        legacyQuarantinedPrompts(suiteName: suiteName).count
+    }
+
+    /// The quarantined prompts THEMSELVES, not just how many.
+    ///
+    /// A count alone tells the user something of theirs is stranded and gives
+    /// them no way to read it back — which is a quieter version of the loss
+    /// this type exists to prevent. Recovery UI is not in this file's scope,
+    /// but the data it needs is, and withholding it would force the surface to
+    /// re-derive the legacy key by hand.
+    ///
+    /// Read-only by construction: nothing here deletes or migrates the legacy
+    /// blob. Deciding which Mac these belong to is the user's call, not ours.
+    public static func legacyQuarantinedPrompts(suiteName: String? = nil)
+        -> [QueuedComposerSend]
+    {
         let persistence = UserDefaultsOutboxPersistence(suiteName: suiteName, key: defaultsKey)
         guard let data = persistence.readOutbox(),
             let decoded = try? JSONDecoder().decode([QueuedComposerSend].self, from: data)
-        else { return 0 }
-        return decoded.count
+        else { return [] }
+        return decoded
     }
 
     /// Load the persisted outbox. A missing or undecodable blob yields an empty

@@ -2130,6 +2130,17 @@ public final class RemoteSessionModel: ObservableObject {
         OfflineComposerQueueStore.legacyQuarantinedCount()
     }
 
+    /// The quarantined prompts themselves, so a recovery surface can show the
+    /// user what is stranded instead of only how much.
+    ///
+    /// FOLLOW-UP, named rather than implied: nothing renders these yet. Until
+    /// something does, a user with legacy prompts can neither read them nor
+    /// clear them — smaller than losing them, still not good enough. The UI
+    /// belongs in the composer/settings surface, which this lane does not own.
+    public var offlineOutboxLegacyQuarantinedPrompts: [QueuedComposerSend] {
+        OfflineComposerQueueStore.legacyQuarantinedPrompts()
+    }
+
     /// Accept a prompt the user pressed send on while the Mac was not
     /// answering. The returned outcome is NOT discardable — see the note on
     /// `OfflineComposerQueue.enqueue`; the caller must render every case.

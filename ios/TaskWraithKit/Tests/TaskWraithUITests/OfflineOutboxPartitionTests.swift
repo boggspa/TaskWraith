@@ -61,7 +61,45 @@ struct OfflineOutboxPartitionTests {
     func keysAreStableAcrossLaunches() {
         #expect(
             OfflineComposerQueueStore.key(forHostIdentity: "stable-identity")
-                == "tw.composer.outbox.v2.stableidentity.1e31ee615006832f")
+                == "tw.composer.outbox.v2.stable-identity")
+    }
+
+    /// THE injectivity proof, and the reason the encoding is an escape rather
+    /// than a hash.
+    ///
+    /// A digest can only ever be checked by enumerating pairs that happen not
+    /// to collide, which demonstrates nothing about the pairs you did not
+    /// think of. A reversible encoding can be checked directly: if every key
+    /// decodes back to exactly the identity it came from, then two distinct
+    /// identities cannot possibly share a key. This is the difference between
+    /// "no collision has been observed" and "a collision cannot exist".
+    @Test("Every key decodes back to its exact identity")
+    func keyEncodingIsReversible() {
+        let identities = [
+            "abc+def", "abc/def", "AA==", "AA//", "~", "~~", "~7E", "tw~2Bx",
+            "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+/x=", "unpaired",
+            "", " ", ".", "a.b", "emoji-🔑-identity", "tab\tsep", "new\nline",
+        ]
+        for identity in identities {
+            let key = OfflineComposerQueueStore.key(forHostIdentity: identity)
+            #expect(
+                OfflineComposerQueueStore.hostIdentity(fromKey: key) == identity,
+                "round-trip failed for \(identity.debugDescription) via \(key)")
+        }
+        // Injectivity restated as the property callers actually rely on.
+        let keys = Set(identities.map(OfflineComposerQueueStore.key(forHostIdentity:)))
+        #expect(keys.count == identities.count, "distinct identities produced a shared key")
+    }
+
+    /// The escape marker must itself be escaped, or the encoding is ambiguous
+    /// and the round-trip above would be the only thing hiding it. A literal
+    /// `~` in an identity must not be able to imitate an escape sequence.
+    @Test("The escape marker cannot be forged by a literal in the identity")
+    func escapeMarkerIsItselfEscaped() {
+        #expect(
+            OfflineComposerQueueStore.key(forHostIdentity: "~2B")
+                != OfflineComposerQueueStore.key(forHostIdentity: "+"))
+        #expect(!OfflineComposerQueueStore.key(forHostIdentity: "~").hasSuffix("."))
     }
 
     @Test("Prompts queued for one host are invisible to another")
@@ -121,6 +159,24 @@ struct OfflineOutboxPartitionTests {
         #expect(
             OfflineComposerQueueStore.legacyQuarantinedCount(suiteName: suite) == 1,
             "legacy prompts must survive normal outbox use")
+    }
+
+    /// A count tells the user something of theirs is stranded and gives them
+    /// no way to read it back. The data has to be retrievable before any
+    /// recovery surface can exist.
+    @Test("Quarantined prompts are retrievable, not just countable")
+    func quarantinedPromptsAreReadable() {
+        let suite = scratchSuite()
+        defer { clean(suite) }
+
+        OfflineComposerQueueStore(suiteName: suite).save(queue("stranded text", thread: "T-old"))
+
+        let recovered = OfflineComposerQueueStore.legacyQuarantinedPrompts(suiteName: suite)
+        #expect(recovered.map(\.text) == ["stranded text"])
+        #expect(recovered.map(\.threadId) == ["T-old"])
+
+        // Reading must not consume them.
+        #expect(OfflineComposerQueueStore.legacyQuarantinedPrompts(suiteName: suite).count == 1)
     }
 
     @Test("An empty legacy outbox reports nothing to quarantine")
