@@ -5516,7 +5516,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                            onChange={(event) => setGoalDraft(event.target.value)}
                             placeholder="Describe the objective and stopping condition (Markdown supported)"
 	                            aria-label="Goal objective"
-	                            rows={3}
+	                            rows={6}
 	                            maxLength={MAX_ACTIVE_GOAL_OBJECTIVE_CHARS}
 	                          />
 	                          <div className="composer-goal-popover-actions">

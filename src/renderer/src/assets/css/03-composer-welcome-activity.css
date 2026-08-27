@@ -6106,7 +6106,12 @@
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
-  max-height: min(360px, calc(100vh - 16px));
+  /* Grow into the whole window so a long goal reads in full. The popover is
+     anchored above the goal pill, so the 96px reserve is the chrome below that
+     pill (pill row + turn row + composer padding + the 8px edge margin/gap the
+     positioner in App.tsx keeps) -- that keeps a tall popover from spilling
+     back down over the composer. */
+  max-height: calc(100vh - 96px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -6259,8 +6264,10 @@
 .composer-goal-textarea {
   width: 100%;
   resize: vertical;
-  min-height: 72px;
-  max-height: 180px;
+  /* ~6 rows at var(--font-size-sm)/1.35 plus padding and border, so composing a
+     goal does not feel cramped. Keep in sync with rows={6} in Composer.tsx. */
+  min-height: 124px;
+  max-height: min(360px, calc(100vh - 260px));
   padding: 7px 8px;
   border-radius: 7px;
   border: 1px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
@@ -6649,8 +6656,11 @@
   position: fixed;
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
-  max-height: min(400px, calc(100vh - 16px));
+  /* See .composer-goal-popover for the 96px reserve. */
+  max-height: calc(100vh - 96px);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   padding: 11px 12px 12px;
   transform: translateY(-100%);
@@ -6671,6 +6681,7 @@
 }
 
 .composer-plan-popover-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -6713,7 +6724,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 350px;
+  /* The popover's max-height is the ceiling now; min-height:0 lets this be the
+     flex child that scrolls rather than overflowing the popover. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
