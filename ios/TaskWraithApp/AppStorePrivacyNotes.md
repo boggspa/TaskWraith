@@ -44,6 +44,27 @@ prompt, and they travel over the same paired encrypted channel to the user's
 Mac. They may then be sent by the Mac to the selected provider runtime/account
 as part of the user's prompt.
 
+## Voice input (on-device dictation)
+
+The composer offers an optional microphone button for dictation. Audio is
+recorded locally and transcribed using Apple's **on-device** speech recognizer
+(`SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`). The audio
+stream never leaves the device, is never stored, and is never sent to
+TaskWraith, the paired Mac, or any provider. Only the final text transcript is
+inserted into the composer's text field and, if the user sends it, travels over
+the existing paired encrypted channel to the user's Mac as an ordinary message.
+
+On-device recognition limits language support to what Apple's offline model
+covers for the current locale. If on-device recognition is unavailable, the
+feature surfaces an "unavailable" state and does not fall back to server-side
+transcription. Microphone and speech-recognition permissions are requested on
+the first tap; either denial disables the button without blocking other app
+functionality.
+
+App Store Connect: disclose microphone and speech-recognition usage as
+**app functionality**, not analytics/tracking. No audio content is collected,
+retained, or linked to identity.
+
 Offline Demo Mode uses canned local sample data and does not require pairing,
 relay transport, APNs registration, or provider accounts.
 

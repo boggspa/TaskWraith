@@ -77,6 +77,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: 'TaskWraith uses the camera to scan the pairing QR code shown on your Mac.'
         NSLocalNetworkUsageDescription: 'TaskWraith connects to the pairing relay on your local network to reach your Mac.'
+        NSMicrophoneUsageDescription: 'TaskWraith uses the microphone for composer-local dictation. Audio is transcribed on-device and never sent to TaskWraith or your Mac as audio.'
+        NSSpeechRecognitionUsageDescription: 'TaskWraith uses on-device speech recognition for composer dictation. Transcripts are processed locally and only the final text is sent to your Mac as a message.'
         # ATS: NO global bypass. Apple's scoped local-networking exception
         # covers LAN, unqualified/.local names, and IPv4/IPv6 literals. The
         # client further restricts ws:// to LAN + Tailscale's 100.64/10 range;

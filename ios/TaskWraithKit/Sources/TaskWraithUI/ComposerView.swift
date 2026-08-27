@@ -140,6 +140,12 @@ struct Composer: View {
     #if canImport(UIKit)
         @State private var pickedItems: [PhotosPickerItem] = []
         @State private var attachments: [(name: String, image: UIImage)] = []
+        #if os(iOS)
+            /// Composer-local dictation. Lives next to `photosButton`; the
+            /// live session is iOS-only (`onDevice()`), matching the Speech
+            /// + AVAudioEngine stack. Denied/unavailable must stay visible.
+            @StateObject private var voiceController = ComposerVoiceController.onDevice()
+        #endif
     #endif
 
     /// Participants available to @-mention: a true ensemble's round participants.
@@ -392,7 +398,16 @@ struct Composer: View {
             // Composer is reused across threads on iPhone (no per-thread .id) —
             // clear focus so thread B doesn't inherit thread A's expanded state.
             inputFocused = false
+            #if os(iOS)
+                // A reused composer must not keep the previous thread's mic hot.
+                voiceController.cancel()
+                bindVoiceTranscript()
+            #endif
         }
+        #if os(iOS)
+            .onAppear { bindVoiceTranscript() }
+            .onDisappear { voiceController.cancel() }
+        #endif
         .onChange(of: isExpanded, initial: true) { _, expanded in
             onExpandedChange?(expanded)
         }
@@ -726,6 +741,9 @@ struct Composer: View {
                     }
                 }
             }
+            #if os(iOS)
+                voiceStatusBanner
+            #endif
             #if canImport(UIKit)
                 if !attachments.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -780,6 +798,9 @@ struct Composer: View {
                     HStack(alignment: .bottom, spacing: 8) {
                         #if canImport(UIKit)
                             photosButton
+                            #if os(iOS)
+                                micButton
+                            #endif
                         #endif
                         if shell.effects.contains(.terminalCaret) {
                             Text(">")
@@ -826,6 +847,9 @@ struct Composer: View {
                     #if canImport(UIKit)
                         // Ensembles included: steer now carries attachments.
                         photosButton
+                        #if os(iOS)
+                            micButton
+                        #endif
                     #endif
                     if shell.effects.contains(.terminalCaret) {
                         Text(">")
@@ -1282,7 +1306,115 @@ struct Composer: View {
         }
     #endif
 
+    #if os(iOS)
+        /// Composer-local microphone. Button chrome is derived from the
+        /// controller state so denied/unavailable cannot render as a dead mic.
+        private var micButton: some View {
+            let chrome = ComposerVoiceWiring.chrome(for: voiceController.state)
+            let iconColor: Color = {
+                if chrome.isFailure { return TWTheme.statusFailed }
+                if chrome.isListening { return TWTheme.chroma1 }
+                return TWTheme.textSecondary
+            }()
+            return Button {
+                ComposerVoiceWiring.perform(
+                    chrome.tap,
+                    start: { voiceController.start() },
+                    stop: { voiceController.stop() })
+            } label: {
+                Image(systemName: chrome.systemImage)
+                    .font(.body)
+                    .foregroundStyle(iconColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(chrome.tap == .none)
+            .accessibilityLabel(chrome.accessibilityLabel)
+            .accessibilityHint(chrome.accessibilityHint)
+            .accessibilityValue(chrome.accessibilityValue)
+        }
+
+        /// Denied/unavailable captions, plus a live preview of the partial
+        /// transcript. Partials never touch `text` — only `onTranscriptReady`
+        /// does, via `ComposerVoiceWiring.appendFinalTranscript`.
+        @ViewBuilder private var voiceStatusBanner: some View {
+            let chrome = ComposerVoiceWiring.chrome(for: voiceController.state)
+            if let caption = chrome.statusCaption {
+                Text(caption)
+                    .font(.caption2)
+                    .foregroundStyle(chrome.isFailure ? TWTheme.statusFailed : TWTheme.textSecondary)
+                    .accessibilityLabel(caption)
+            } else if chrome.isListening, !voiceController.partialTranscript.isEmpty {
+                Text(voiceController.partialTranscript)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(2)
+                    .accessibilityLabel("Dictation preview")
+                    .accessibilityValue(voiceController.partialTranscript)
+                    .accessibilityHint(
+                        "Not inserted yet. Stop dictation to add this to the message.")
+            }
+        }
+
+        private func bindVoiceTranscript() {
+            voiceController.onTranscriptReady = { final in
+                text = ComposerVoiceWiring.appendFinalTranscript(final, to: text)
+            }
+        }
+    #endif
+
+    /// Short, single-line preview of a dropped prompt, so an eviction names
+    /// what it dropped instead of just admitting one happened.
+    private static func outboxPreview(_ text: String) -> String {
+        let flat =
+            text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return flat.count <= 40 ? flat : String(flat.prefix(40)) + "…"
+    }
+
     private func sendCurrent() {
+        #if os(iOS)
+            // Drop in-flight dictation so a late final cannot append after send.
+            voiceController.cancel()
+        #endif
+        // ITEM 1 — ACCEPT AND QUEUE.
+        //
+        // Before this branch an offline send fell straight through the
+        // `providerAdmission.isLive` guard below and silently did nothing: the
+        // exact "app seems broken" failure this feature replaces. Only the
+        // honestly-reachable liveness states divert here — see
+        // `shouldQueueOutboundSends`, which deliberately does NOT divert on
+        // `.stale`, because queueing a send that would have succeeded is its own
+        // small dishonesty.
+        let offlineTrimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if model.shouldQueueOutboundSends, !offlineTrimmed.isEmpty, !card.id.isEmpty {
+            switch model.enqueueOfflinePrompt(threadId: card.id, text: offlineTrimmed) {
+            case .queued:
+                // Delivery of the ATTEMPT is all we promise. The Mac stays
+                // authoritative and may still reject this on flush, so the copy
+                // must never say the work "will run".
+                model.reportOfflineOutboxOutcome(
+                    model.hostLiveness?.copy.queueNotice
+                        ?? "Saved. This sends as soon as your Mac answers.")
+                text = ""
+            case let .queuedEvicting(_, evicted):
+                // R2: an eviction is never silent, and it names its victim.
+                model.reportOfflineOutboxOutcome(
+                    "Saved. The outbox was full, so the oldest waiting prompt was dropped: "
+                        + "“\(Self.outboxPreview(evicted.text))”")
+                text = ""
+            case let .rejectedFull(capacity):
+                // KEEP THE TEXT. Clearing it here would lose the prompt
+                // outright — strictly worse than the refusal being reported.
+                model.reportOfflineOutboxOutcome(
+                    "Not sent. \(capacity) prompts are already waiting and none can be dropped "
+                        + "safely. Your message is still here — try again once your Mac answers.")
+            case .rejectedEmpty:
+                break
+            }
+            return
+        }
+
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if canImport(UIKit)
@@ -1416,6 +1548,9 @@ struct Composer: View {
     }
 
     private func scheduleCurrent(runAt: Date) {
+        #if os(iOS)
+            voiceController.cancel()
+        #endif
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, canScheduleFromThisComposer else { return }
@@ -1468,6 +1603,152 @@ struct Composer: View {
             return "Ask the Ensemble"
         }
         return "Ask \(providerName) anything…"
+    }
+}
+
+/// Presentation + insertion for the composer microphone button.
+///
+/// Extracted from `Composer` so the wiring can be tested on the macOS
+/// `swift test` build without standing up SwiftUI or a microphone. The view
+/// is a thin adapter over these two functions: chrome for the button, and
+/// `appendFinalTranscript` as the only path that mutates the draft. Partials
+/// never go through that path — they stay on `controller.partialTranscript`.
+enum ComposerVoiceWiring {
+    enum Tap: Equatable {
+        /// Idle — begin a take.
+        case start
+        /// Authorizing or listening — stop (authorizing is cancel-equivalent).
+        case stop
+        /// Denied / unavailable — `start()` re-requests authorization so a
+        /// refused mic is not a dead control.
+        case retry
+        /// Finalizing — ignore extra taps while the transcript flushes.
+        case none
+    }
+
+    struct Chrome: Equatable {
+        var systemImage: String
+        var accessibilityLabel: String
+        var accessibilityHint: String
+        var accessibilityValue: String
+        var isListening: Bool
+        var isFinalizing: Bool
+        var isFailure: Bool
+        var tap: Tap
+        /// Visible caption so denied/unavailable cannot be a silent no-op.
+        var statusCaption: String?
+    }
+
+    static func chrome(for state: ComposerVoiceState) -> Chrome {
+        switch state {
+        case .idle:
+            return Chrome(
+                systemImage: "mic",
+                accessibilityLabel: "Dictate",
+                accessibilityHint: "Starts on-device dictation into this message.",
+                accessibilityValue: "Idle",
+                isListening: false,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .start,
+                statusCaption: nil)
+        case .authorizing:
+            return Chrome(
+                systemImage: "mic",
+                accessibilityLabel: "Waiting for microphone permission",
+                accessibilityHint: "Stops and cancels the permission request.",
+                accessibilityValue: "Authorizing",
+                isListening: true,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .stop,
+                statusCaption: "Waiting for permission…")
+        case .listening:
+            return Chrome(
+                systemImage: "mic.fill",
+                accessibilityLabel: "Stop dictation",
+                accessibilityHint: "Stops listening and inserts the final transcript.",
+                accessibilityValue: "Listening",
+                isListening: true,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .stop,
+                statusCaption: nil)
+        case .finalizing:
+            return Chrome(
+                systemImage: "mic.fill",
+                accessibilityLabel: "Finishing dictation",
+                accessibilityHint: "Inserting the final transcript.",
+                accessibilityValue: "Finalizing",
+                isListening: false,
+                isFinalizing: true,
+                isFailure: false,
+                tap: .none,
+                statusCaption: "Finishing…")
+        case .denied(let reason):
+            let label: String
+            switch reason {
+            case .speechRecognitionDenied:
+                label = "Speech recognition permission denied"
+            case .microphoneDenied:
+                label = "Microphone permission denied"
+            case .restricted:
+                label = "Speech recognition is restricted"
+            }
+            return Chrome(
+                systemImage: "mic.slash",
+                accessibilityLabel: label,
+                accessibilityHint:
+                    "Tries again. If permission stays denied, enable Microphone and Speech Recognition in Settings.",
+                accessibilityValue: "Denied",
+                isListening: false,
+                isFinalizing: false,
+                isFailure: true,
+                tap: .retry,
+                statusCaption: label)
+        case .unavailable(let reason):
+            let label: String
+            let value: String
+            switch reason {
+            case .recognizerUnavailable:
+                label = "On-device dictation unavailable"
+                value = "Unavailable"
+            case .audioEngineFailure(let detail):
+                label = "Microphone failed to start"
+                value = detail.isEmpty ? "Unavailable" : detail
+            }
+            return Chrome(
+                systemImage: "mic.slash",
+                accessibilityLabel: label,
+                accessibilityHint: "Tries to start dictation again.",
+                accessibilityValue: value,
+                isListening: false,
+                isFinalizing: false,
+                isFailure: true,
+                tap: .retry,
+                statusCaption: label)
+        }
+    }
+
+    static func perform(_ tap: Tap, start: () -> Void, stop: () -> Void) {
+        switch tap {
+        case .start, .retry: start()
+        case .stop: stop()
+        case .none: break
+        }
+    }
+
+    /// Append a finalized transcript the way a committed paste would. Never
+    /// call this with a partial — MentionTextView already refuses to publish
+    /// while `markedTextRange` is set, and this helper is the Swift-side twin:
+    /// only `onTranscriptReady` (the automatic final / leftover-on-stop) may
+    /// mutate the composer draft.
+    static func appendFinalTranscript(_ transcript: String, to draft: String) -> String {
+        let piece = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !piece.isEmpty else { return draft }
+        if draft.isEmpty { return piece }
+        if let last = draft.last, last.isWhitespace { return draft + piece }
+        return draft + " " + piece
     }
 }
 
