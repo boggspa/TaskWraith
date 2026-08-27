@@ -122,32 +122,42 @@ remain inside `tw --ascii --width 80`.
 ### Controls and layout
 
 `--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
-`--no-animation` change presentation only. Solo threads use compact HUD plus
-composer; ensemble threads add a baton row. Provider identity carries colour,
-while transcript prose stays neutral and detail remains in transient lenses.
+`--no-animation` change presentation only. Threads use compact HUD plus
+composer. There is no ensemble baton, seat lens, or mission-cast chrome.
+Opening a Host-projected ensemble thread is view-compatible, not
+controllable: HUD uses that thread's primary provider. Provider identity
+carries colour, while transcript prose stays neutral and detail remains in
+transient lenses.
 
-| Key                                              | Action                                     |
-| ------------------------------------------------ | ------------------------------------------ |
-| `Enter`                                          | Send/open selected thread                  |
-| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune, commands |
-| `Page Up` / `Page Down`                          | Scroll transcript/history                  |
-| `Esc`, `Ctrl+U`, `Ctrl+C`                        | Close lens, clear composer, clear/quit     |
+| Key                                              | Action                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| `Enter`                                          | Send/open selected thread; confirm a picker row                     |
+| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune (model/reasoning), commands        |
+| `Page Up` / `Page Down`                          | Scroll transcript/history                                           |
+| `Esc`                                            | Close lens; cancel a mid-flow `/new`/`/provider` and restore the previous thread |
+| `Ctrl+U`, `Ctrl+C`                               | Clear composer; clear then quit                                     |
 
 Slash commands (COMMAND SPEC v1). Inline args are optional; invalid args are
 non-fatal notices and never throw out of the keypress loop. `/model` and
 `/think` reuse the existing offers/tune plumbing (`getThreadOffers`,
-`TuiPendingSelection`, `applyTuneSelection`). `/new` uses the existing
-`thread.create` flow with a solo/`single` chatKind default.
+`TuiPendingSelection`, `applyTuneSelection`). `/new` and `/provider` reuse
+cold-start: provider picker → auth → offers → model/reasoning → solo thread.
+A unique `/new claude` or `/provider kimi` skips the picker. Esc cancels a
+mid-flow `/new` and restores the previous thread. Hosts without `setup` +
+`provider-catalog` keep the old immediate-create fallback (`/new` with no
+id). `/seats` is rejected as solo-only.
 
 | Command                                         | Action                                                                                                                          |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `/model [id]`, `/m`                             | No argument opens the existing tune/model picker. With an id, stage that model for the next send; unknown id lists offered ids. |
 | `/think [level]`, `/reasoning`                  | Set reasoning against the **thread's offered ladder** (never a hardcoded list). No argument shows current + ladder.             |
-| `/new`                                          | Create and switch to a fresh solo thread.                                                                                       |
+| `/new [provider]`                               | Fresh solo thread. No id opens the provider picker (↑/↓, Enter). Unique id skips the picker. Esc cancels and restores the previous thread. |
+| `/provider [id]`                                | Same guided flow as `/new`.                                                                                                     |
 | `/status`                                       | Host kind + connection, socket/profile path, thread provider/model/reasoning, advertised capabilities.                          |
 | `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                  |
 | `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                       |
-| `/seats`, `/tune`                               | Seat roster / tune lens.                                                                                                        |
+| `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                       |
+| `/seats`                                        | Rejected: standalone TUI is solo-only. Use `/new` or `/provider`.                                                               |
 | `/help`                                         | Command cheat sheet.                                                                                                            |
 | `/cancel`                                       | Cancel the active run.                                                                                                          |
 | `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                |
