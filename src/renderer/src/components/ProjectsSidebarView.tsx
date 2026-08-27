@@ -52,6 +52,8 @@ import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { IdentityIconPicker } from './IdentityIconPicker'
 import { ActiveRunsSection } from './ActiveRunsSection'
+import { SidebarOverflowMenu } from './SidebarOverflowMenu'
+import { createSidebarChatPopoutAction } from '../lib/sidebarChatPopoutAction'
 import {
   loadSidebarThreadOrderState,
   orderSidebarThreads,
@@ -79,6 +81,7 @@ interface ProjectsSidebarViewProps {
   searchQuery: string
   isSearchActive: boolean
   onSelectChat: (chat: ChatRecord) => void
+  onOpenChatPopout?: (chat: ChatRecord) => void
   /** Start a Project Home for an unhomed project: the host creates/focuses a
    * pristine General draft and auto-claims it on its first committed send. */
   onStartProjectHome?: (projectId: string) => void
@@ -253,6 +256,7 @@ export function ProjectsSidebarView({
   searchQuery,
   isSearchActive,
   onSelectChat,
+  onOpenChatPopout,
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
@@ -800,6 +804,12 @@ export function ProjectsSidebarView({
           </span>
           {isRunning && <SidebarRunningGhost />}
         </button>
+        {onOpenChatPopout && (
+          <SidebarOverflowMenu
+            triggerLabel="Thread actions"
+            items={[createSidebarChatPopoutAction(chat, onOpenChatPopout)]}
+          />
+        )}
         <button
           type="button"
           className={`sidebar-project-icon-button sidebar-project-home-toggle ${
@@ -1318,6 +1328,7 @@ export function ProjectsSidebarView({
         surface="work"
         workChatIds={workChatIds}
         onSelectChat={onSelectChat}
+        onOpenChatPopout={onOpenChatPopout}
         onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
       />
       <div className="sidebar-section-header sidebar-projects-header">

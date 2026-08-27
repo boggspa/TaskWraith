@@ -475,6 +475,13 @@
   gap: 4px;
 }
 
+.sidebar-project-member:hover .sidebar-overflow-trigger,
+.sidebar-project-member:focus-within .sidebar-overflow-trigger,
+.sidebar-active-run-entry:hover .sidebar-overflow-trigger,
+.sidebar-active-run-entry:focus-within .sidebar-overflow-trigger {
+  opacity: 1;
+}
+
 .sidebar-active-run-entry .sidebar-active-run-row {
   flex: 1 1 auto;
   min-width: 0;

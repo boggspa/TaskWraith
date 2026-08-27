@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest'
 
 const appSource = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 const mainSource = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+const mainAppLayoutSource = readFileSync(
+  join(process.cwd(), 'src/renderer/src/app/views/MainAppLayout.tsx'),
+  'utf8'
+)
 
 function sourceSlice(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -14,6 +18,10 @@ function sourceSlice(source: string, start: string, end: string): string {
 }
 
 describe('chat popout presentation handoff integration', () => {
+  it('routes sidebar thread pop-outs through the handoff-aware launcher', () => {
+    expect(mainAppLayoutSource).toContain('onOpenChatPopout={popOutLinkedChat}')
+  })
+
   it('sends disclosure with focused, linked, and multiview popout handoffs', () => {
     const linked = sourceSlice(
       appSource,

@@ -61,6 +61,7 @@ import { AppShellStatsToolbar } from './AppShellStatsToolbar'
 import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
+import { createSidebarChatPopoutAction } from '../lib/sidebarChatPopoutAction'
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -212,6 +213,8 @@ interface SidebarProps {
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
+  /** Open this chat in its own pop-out window (all chat types). */
+  onOpenChatPopout?: (chat: ChatRecord) => void
   onOpenSettings: () => void
   /** Live update snapshot for the one-click pill above the masthead. */
   updateSnapshot?: UpdateStateSnapshot | null
@@ -3037,6 +3040,7 @@ export function Sidebar({
   activeThreadGraphProjectId,
   onOpenChatInSidePanel,
   onOpenInMultiview,
+  onOpenChatPopout,
   onOpenSettings,
   updateSnapshot,
   onQuickUpdate,
@@ -4549,6 +4553,14 @@ export function Sidebar({
         }
       })
     }
+    if (onOpenChatPopout) {
+      items.push(
+        createSidebarChatPopoutAction(chat, (targetChat) => {
+          acknowledgeChatTerminalOutcome(targetChat)
+          onOpenChatPopout(targetChat)
+        })
+      )
+    }
     if (hasWorkspaceDirectory) {
       items.push({
         id: 'show-workspace-in-finder',
@@ -5223,6 +5235,7 @@ export function Sidebar({
                 searchQuery={sidebarSearchQuery}
                 isSearchActive={isSidebarSearchActive}
                 onSelectChat={selectAndAcknowledgeChat}
+                onOpenChatPopout={onOpenChatPopout}
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={reportSelectedProject}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
@@ -5288,6 +5301,7 @@ export function Sidebar({
               runningChatIds={runningChatIds}
               surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
               onSelectChat={selectAndAcknowledgeChat}
+              onOpenChatPopout={onOpenChatPopout}
               onInspectRun={onInspectRun}
               onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
             />

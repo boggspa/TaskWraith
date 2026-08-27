@@ -265,6 +265,7 @@ describe('deriveVisibleActiveRunEntries', () => {
         currentChat={ensemble}
         surface="code"
         onSelectChat={() => undefined}
+        onOpenChatPopout={() => undefined}
       />
     )
 
@@ -273,6 +274,8 @@ describe('deriveVisibleActiveRunEntries', () => {
     expect(html).not.toContain('sidebar-active-run-provider')
     expect(html).toContain('sidebar-chat-running')
     expect(html).toContain('sidebar-active-runs-count">1</span>')
+    expect(html).toContain('aria-label="Thread actions"')
+    expect(html).toContain('sidebar-overflow-menu')
   })
 
   it('uses the real target job without duplicating the transitioning chat', () => {

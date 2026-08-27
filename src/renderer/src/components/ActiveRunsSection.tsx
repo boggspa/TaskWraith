@@ -11,6 +11,8 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { SidebarOverflowMenu } from './SidebarOverflowMenu'
+import { createSidebarChatPopoutAction } from '../lib/sidebarChatPopoutAction'
 
 type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
 
@@ -66,6 +68,7 @@ interface ActiveRunsSectionProps {
   surface?: ActiveRunsSurface
   workChatIds?: readonly string[]
   onSelectChat: (chat: ChatRecord) => void
+  onOpenChatPopout?: (chat: ChatRecord) => void
   onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   /** Reserved: a runId-targeted inspector deep-link. Not wired — clicking a
    * row now opens the chat THREAD (transcript), not the Run Inspector. */
@@ -79,6 +82,7 @@ export function ActiveRunsSection({
   surface,
   workChatIds = [],
   onSelectChat,
+  onOpenChatPopout,
   onAddRunQueueJobToWorkspaceBoard
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
@@ -198,6 +202,12 @@ export function ActiveRunsSection({
                     <span className="sidebar-run-status tone-muted">Queued</span>
                   )}
                 </button>
+                {onOpenChatPopout && (
+                  <SidebarOverflowMenu
+                    triggerLabel="Thread actions"
+                    items={[createSidebarChatPopoutAction(chat, onOpenChatPopout)]}
+                  />
+                )}
                 {!isTransitionFallback && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
                   <button
                     type="button"

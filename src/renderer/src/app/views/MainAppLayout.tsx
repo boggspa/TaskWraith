@@ -1424,6 +1424,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
                 onOpenInMultiview={handleOpenInMultiview}
+                onOpenChatPopout={popOutLinkedChat}
                 onOpenSettings={() => setShowSettings(true)}
                 updateSnapshot={updateStatus.snapshot}
                 onQuickUpdate={handleSidebarQuickUpdate}

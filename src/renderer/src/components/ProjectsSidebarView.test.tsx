@@ -367,6 +367,26 @@ describe('ProjectsSidebarView', () => {
     expect(html).toContain('draggable="true"')
   })
 
+  it('offers the shared pop-out action on Work project threads', () => {
+    seedStore([projectRecord('project-a', 'Alpha', ['chat-1'])], [])
+    fake.store.set('taskwraith-sidebar-expanded-project-ids', JSON.stringify(['project-a']))
+
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[chatRecord('chat-1', 'Pop-out thread')]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        onOpenChatPopout={() => undefined}
+      />
+    )
+
+    expect(html).toContain('sidebar-project-member')
+    expect(html).toContain('aria-label="Thread actions"')
+    expect(html).toContain('sidebar-overflow-menu')
+  })
+
   it('offers Start Project Home on unhomed projects when the host provides the handler', () => {
     seedStore([projectRecord('project-a', 'Alpha', [])], [])
     const html = renderToStaticMarkup(

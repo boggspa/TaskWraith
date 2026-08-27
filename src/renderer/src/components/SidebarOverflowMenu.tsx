@@ -51,6 +51,15 @@ const GROUP_ORDER: NonNullable<SidebarOverflowMenuItem['group']>[] = [
   'destructive'
 ]
 
+export const SIDEBAR_CONTEXT_MENU_HOST_SELECTOR = [
+  '.sidebar-item',
+  '.sidebar-pinned-item',
+  '.sidebar-recents-item',
+  '.sidebar-workspace-board-item',
+  '.sidebar-project-member',
+  '.sidebar-active-run-entry'
+].join(', ')
+
 /**
  * Decide whether a capture-phase scroll event should dismiss an open menu.
  *
@@ -216,9 +225,8 @@ export function SidebarOverflowMenu({
     // parent) so we skip the trigger itself — the trigger is a role="button"
     // span, which a plain `closest('[role=button]')` would wrongly match.
     const host =
-      (trigger.parentElement?.closest(
-        '.sidebar-item, .sidebar-pinned-item, .sidebar-recents-item, .sidebar-workspace-board-item'
-      ) as HTMLElement | null) ?? null
+      (trigger.parentElement?.closest(SIDEBAR_CONTEXT_MENU_HOST_SELECTOR) as HTMLElement | null) ??
+      null
     if (!host) return
     const handleContextMenu = (event: globalThis.MouseEvent): void => {
       if (items.length === 0) return
