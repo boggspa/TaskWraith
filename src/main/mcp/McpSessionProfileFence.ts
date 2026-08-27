@@ -270,17 +270,40 @@ export function resolveTaskWraithMcpProfile(input: {
   }
 }
 
-/** A receipted Claude store identity is authoritative over a stale run payload. */
-export function shouldRejectTaskWraithMcpStaleDispatch(input: {
+export type TaskWraithMcpDispatchSessionResolution =
+  | { action: 'unchanged'; providerSessionId: string | null }
+  | { action: 'rebase'; providerSessionId: string | null }
+  | { action: 'reject_unknown_store'; providerSessionId: null }
+
+/**
+ * Resolve the session a payload should carry at the synchronous main-process
+ * dispatch boundary.
+ *
+ * A known Claude store identity is authoritative, but a mismatch is benign:
+ * no prompt has reached the provider yet, so rebase the payload onto the
+ * current seat session (including null for an intentional fresh birth). Only
+ * an orphan payload with no canonical store identity remains a refusal; there
+ * is no seat authority to rebase it against.
+ */
+export function resolveTaskWraithMcpDispatchSession(input: {
   provider: ProviderId
   requestedProviderSessionId?: string | null
   storeProviderSessionId?: string | null
   storeIdentityKnown?: boolean
-}): boolean {
+}): TaskWraithMcpDispatchSessionResolution {
   const requestedProviderSessionId = nonEmptyString(input.requestedProviderSessionId)
-  if (input.provider !== 'claude') return false
-  if (input.storeIdentityKnown === false) return requestedProviderSessionId !== null
-  return requestedProviderSessionId !== nonEmptyString(input.storeProviderSessionId)
+  if (input.provider !== 'claude') {
+    return { action: 'unchanged', providerSessionId: requestedProviderSessionId }
+  }
+  if (input.storeIdentityKnown === false) {
+    return requestedProviderSessionId
+      ? { action: 'reject_unknown_store', providerSessionId: null }
+      : { action: 'unchanged', providerSessionId: null }
+  }
+  const storeProviderSessionId = nonEmptyString(input.storeProviderSessionId)
+  return requestedProviderSessionId === storeProviderSessionId
+    ? { action: 'unchanged', providerSessionId: requestedProviderSessionId }
+    : { action: 'rebase', providerSessionId: storeProviderSessionId }
 }
 
 export function isTaskWraithMcpRouteProviderMatch(input: {

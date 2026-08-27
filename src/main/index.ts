@@ -1564,8 +1564,8 @@ import {
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpProfileReceiptForSession,
   isTaskWraithMcpRouteProviderMatch,
+  resolveTaskWraithMcpDispatchSession,
   resolveTaskWraithMcpProfile,
-  shouldRejectTaskWraithMcpStaleDispatch,
   shouldAcceptTaskWraithMcpSessionId,
   taskWraithCoreMcpProfileOptInEnabled,
   taskWraithMcpRunStartedWithPinnedReceipt,
@@ -17686,18 +17686,21 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   if (storeState.ephemeralProviderReroute || storeState.mainOwnedContextIsolated) {
     applied.providerSessionId = null
   }
-  if (
-    shouldRejectTaskWraithMcpStaleDispatch({
-      provider: applied.provider,
-      requestedProviderSessionId: applied.providerSessionId,
-      storeProviderSessionId: storeState.storeSessionId,
-      storeIdentityKnown: storeState.chatFound
-    })
-  ) {
+  const dispatchSession = resolveTaskWraithMcpDispatchSession({
+    provider: applied.provider,
+    requestedProviderSessionId: applied.providerSessionId,
+    storeProviderSessionId: storeState.storeSessionId,
+    storeIdentityKnown: storeState.chatFound
+  })
+  if (dispatchSession.action === 'reject_unknown_store') {
     throw new Error(
-      'The Claude session changed before dispatch; retry this turn on the current session.'
+      'The Claude session could not be verified before dispatch because its canonical chat identity is unavailable.'
     )
   }
+  // The store owns seat identity. A pre-dispatch A→B change is safe to absorb:
+  // no prompt reached Claude on A, and the profile/fence resolution below now
+  // runs synchronously against B. This must never become participant failure.
+  applied.providerSessionId = dispatchSession.providerSessionId
   const claudePinnedMcpReceipt =
     applied.provider === 'claude' &&
     isTaskWraithMcpProfileReceiptForSession(storeState.storeReceipt, {

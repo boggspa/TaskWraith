@@ -28,6 +28,27 @@ describe('provider seat generation main-process integration', () => {
     expect(runtimeProfile).toContain('storeProviderSessionId: null')
   })
 
+  it('rebases a pre-dispatch Claude payload onto the current store session', () => {
+    const runtimeProfile = sourceBetween(
+      'function applyRuntimeProfileToPayload(',
+      'async function getCliProviderStatus('
+    )
+    const sessionResolution = runtimeProfile.indexOf('resolveTaskWraithMcpDispatchSession({')
+    const sessionRebase = runtimeProfile.indexOf(
+      'applied.providerSessionId = dispatchSession.providerSessionId'
+    )
+    const exactProfileResolution = runtimeProfile.indexOf(
+      'const resolution = resolveTaskWraithMcpProfile({'
+    )
+
+    expect(sessionResolution).toBeGreaterThanOrEqual(0)
+    expect(sessionRebase).toBeGreaterThan(sessionResolution)
+    expect(exactProfileResolution).toBeGreaterThan(sessionRebase)
+    expect(runtimeProfile).not.toContain(
+      'The Claude session changed before dispatch; retry this turn on the current session.'
+    )
+  })
+
   it('fingerprints stable seat prefix configuration without hashing user prompts', () => {
     const generationInput = sourceBetween(
       'function providerSeatGenerationInputForPayload(',

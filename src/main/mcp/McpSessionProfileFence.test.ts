@@ -43,8 +43,8 @@ import {
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpRouteProviderMatch,
+  resolveTaskWraithMcpDispatchSession,
   resolveTaskWraithMcpProfile,
-  shouldRejectTaskWraithMcpStaleDispatch,
   shouldAcceptTaskWraithMcpSessionId,
   taskWraithCoreMcpProfileOptInEnabled,
   taskWraithMcpRunStartedWithPinnedReceipt,
@@ -422,56 +422,69 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('rejects any Claude payload that differs from the authoritative store session', () => {
+  it('rebases a Claude payload onto the authoritative store session before dispatch', () => {
     expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
+      resolveTaskWraithMcpDispatchSession({
         provider: 'claude',
         requestedProviderSessionId: 'stale-a',
         storeProviderSessionId: 'store-b'
       })
-    ).toBe(true)
+    ).toEqual({ action: 'rebase', providerSessionId: 'store-b' })
     expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
+      resolveTaskWraithMcpDispatchSession({
         provider: 'claude',
         requestedProviderSessionId: 'store-b',
         storeProviderSessionId: 'store-b'
       })
-    ).toBe(false)
+    ).toEqual({ action: 'unchanged', providerSessionId: 'store-b' })
     expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
-        provider: 'claude',
-        requestedProviderSessionId: 'orphan-a',
-        storeIdentityKnown: false
-      })
-    ).toBe(true)
-    expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
-        provider: 'claude',
-        requestedProviderSessionId: null,
-        storeIdentityKnown: false
-      })
-    ).toBe(false)
-    expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
+      resolveTaskWraithMcpDispatchSession({
         provider: 'claude',
         requestedProviderSessionId: null,
         storeProviderSessionId: 'store-b'
       })
-    ).toBe(true)
+    ).toEqual({ action: 'rebase', providerSessionId: 'store-b' })
     expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
+      resolveTaskWraithMcpDispatchSession({
         provider: 'claude',
         requestedProviderSessionId: 'stale-a',
         storeProviderSessionId: null
       })
-    ).toBe(true)
+    ).toEqual({ action: 'rebase', providerSessionId: null })
     expect(
-      shouldRejectTaskWraithMcpStaleDispatch({
+      resolveTaskWraithMcpDispatchSession({
         provider: 'claude',
         requestedProviderSessionId: null,
         storeProviderSessionId: null
       })
-    ).toBe(false)
+    ).toEqual({ action: 'unchanged', providerSessionId: null })
+  })
+
+  it('rejects only an orphaned stale Claude payload with no canonical store identity', () => {
+    expect(
+      resolveTaskWraithMcpDispatchSession({
+        provider: 'claude',
+        requestedProviderSessionId: 'orphan-a',
+        storeIdentityKnown: false
+      })
+    ).toEqual({ action: 'reject_unknown_store', providerSessionId: null })
+    expect(
+      resolveTaskWraithMcpDispatchSession({
+        provider: 'claude',
+        requestedProviderSessionId: null,
+        storeIdentityKnown: false
+      })
+    ).toEqual({ action: 'unchanged', providerSessionId: null })
+  })
+
+  it('leaves non-Claude provider sessions unchanged', () => {
+    expect(
+      resolveTaskWraithMcpDispatchSession({
+        provider: 'codex',
+        requestedProviderSessionId: 'codex-a',
+        storeProviderSessionId: 'codex-b'
+      })
+    ).toEqual({ action: 'unchanged', providerSessionId: 'codex-a' })
   })
 
   it('requires an exact provider match for an ensemble route', () => {
