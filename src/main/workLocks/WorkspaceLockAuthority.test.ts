@@ -98,7 +98,7 @@ function runtimeMarkerContents(root: string): string[] {
 }
 
 describe('WorkspaceLockAuthority', () => {
-  it('reuses decoded WAL state until the durable journal revision changes', async () => {
+  it('reuses decoded WAL state until an external durable journal append changes its revision', async () => {
     const h = harness()
     const readEvents = vi.spyOn(h.persistence, 'readEvents')
     const authority = await WorkspaceLockAuthority.open({
@@ -111,15 +111,22 @@ describe('WorkspaceLockAuthority', () => {
     authority.snapshot()
     expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
 
-    const eventsPath = path.join(
-      h.userData,
-      WORKSPACE_LOCK_AUTHORITY_DIRECTORY,
-      WORKSPACE_LOCK_EVENTS_FILENAME
-    )
-    const future = new Date(Date.now() + 60_000)
-    fs.utimesSync(eventsPath, future, future)
-    authority.snapshot()
-    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen + 1)
+    const beforeExternalAppend = h.persistence.readEvents()
+    const external = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        instance: { ...h.dependencies.instance, instanceId: 'external-instance' }
+      }
+    })
+    const afterExternalAppend = h.persistence.readEvents()
+    expect(afterExternalAppend.byteLength).toBeGreaterThan(beforeExternalAppend.byteLength)
+    expect(afterExternalAppend.revision).not.toBe(beforeExternalAppend.revision)
+
+    const readsBeforeStaleSnapshot = readEvents.mock.calls.length
+    expect(authority.snapshot().sequence).toBe(external.snapshot().sequence)
+    expect(readEvents).toHaveBeenCalledTimes(readsBeforeStaleSnapshot + 1)
+    external.dispose()
     authority.dispose()
   })
 
