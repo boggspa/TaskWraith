@@ -19,7 +19,7 @@ import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
 import { ProfileWriterLivePeerError } from './host/DesktopWriterArbitration'
 import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
-import type { HostProfileAuthorityLease } from './host-runtime/HostProfileAuthorityLease'
+import type { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 

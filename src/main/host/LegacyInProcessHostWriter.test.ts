@@ -25,7 +25,7 @@ import {
 } from './LegacyInProcessHostWriter'
 
 const profiles: string[] = []
-const heldLeases: Array<{ release(): boolean }> = []
+const heldLeases: HostProfileAuthorityLease[] = []
 
 function profile(): string {
   const path = mkdtempSync(join(tmpdir(), 'legacy-in-process-host-'))
@@ -33,7 +33,13 @@ function profile(): string {
   return path
 }
 
-function hold(lease: { release(): boolean } | null | undefined): typeof lease {
+function hold(lease: HostProfileAuthorityLease): HostProfileAuthorityLease
+function hold(
+  lease: HostProfileAuthorityLease | null | undefined
+): HostProfileAuthorityLease | null | undefined
+function hold(
+  lease: HostProfileAuthorityLease | null | undefined
+): HostProfileAuthorityLease | null | undefined {
   if (lease) heldLeases.push(lease)
   return lease
 }
