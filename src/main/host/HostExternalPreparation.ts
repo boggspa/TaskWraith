@@ -13,6 +13,7 @@ import {
 } from './HostExternalRuntimeState'
 import type { HostExternalEnsureResult, HostExternalSupervisor } from './HostExternalSupervisor'
 import { persistLegacyStoreWriterGate } from './LegacyStoreWriterGatePersistence'
+import { arbitrateDesktopProfileWriters } from './DesktopWriterArbitration'
 
 export type HostExternalPreparationPhase =
   | 'idle'
@@ -25,9 +26,19 @@ export type HostExternalPreparationPhase =
 export interface HostExternalPreparationWriterGate {
   beginDrain(): boolean
   awaitDrained(): Promise<void>
-  markHostOwned(input: { hostId: string; generation: number; cutoverId: string }): boolean
+  markHostOwned(input: {
+    hostId: string
+    generation: number
+    cutoverId: string
+    pid?: number
+  }): boolean
   rollbackDrain(): boolean
   snapshot(): LegacyStoreWriterGateSnapshot
+  hydrateFromDurable?(input: {
+    state: 'draining' | 'host-owned' | 'closed'
+    ownership?: { hostId: string; generation: number; cutoverId: string; pid?: number }
+  }): boolean
+  reclaimStaleOwnership?(): boolean
 }
 
 export interface HostExternalPreparationOptions {
@@ -129,8 +140,29 @@ export function createHostExternalPreparation(
     if (phaseValue !== 'idle') throw new Error('External Host preparation is one-shot.')
     phaseValue = 'preparing'
     try {
-      const cutoverId = createCutoverId()
       await options.migrateLegacyUserData()
+      const decision = arbitrateDesktopProfileWriters({
+        profilePath: options.profilePath,
+        gate: writerGate,
+        intent: 'external-prepare'
+      })
+      if (decision === 'already-host-owned') {
+        const existing = writerGate.snapshot().ownership
+        const cutoverId = existing?.cutoverId ?? createCutoverId()
+        supervisor = options.createSupervisor()
+        ensureResult = await supervisor.ensureAvailable()
+        published = true
+        prepared = publishPrepared({
+          profilePath: options.profilePath,
+          cutoverId,
+          supervisor,
+          createSupervisor: options.createSupervisor,
+          result: ensureResult
+        })
+        phaseValue = 'prepared'
+        return prepared
+      }
+      const cutoverId = createCutoverId()
       if (!writerGate.beginDrain()) {
         throw new Error('Legacy writer drain could not begin for external Host preparation.')
       }
@@ -141,7 +173,8 @@ export function createHostExternalPreparation(
         !writerGate.markHostOwned({
           hostId: ensureResult.welcome.hostId,
           generation: ensureResult.welcome.generation,
-          cutoverId
+          cutoverId,
+          pid: ensureResult.kind === 'launched' ? (ensureResult.pid ?? process.pid) : process.pid
         })
       ) {
         throw new Error('Legacy writer ownership could not transfer to the external Host.')

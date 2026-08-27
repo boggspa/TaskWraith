@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { HostProfileAuthorityLease } from '../../host-runtime/HostProfileAuthorityLease'
+import {
+  IN_PROCESS_DESKTOP_HOST_ID,
+  writeHostProfileWriterFence
+} from '../../host-runtime/HostProfileWriterFence'
 import { createLegacyStoreWriterGate } from '../store/LegacyStoreWriterGate'
+import { ProfileWriterLivePeerError } from './DesktopWriterArbitration'
 import {
   DESKTOP_WRITER_FENCE_PURPOSE,
   persistLegacyStoreWriterGate,
@@ -47,7 +53,8 @@ describe('drainLegacyStoreForInProcessHost', () => {
       ownership: {
         hostId: LEGACY_IN_PROCESS_HOST_ID,
         generation: 0,
-        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID
+        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID,
+        pid: process.pid
       }
     })
     expect(readDesktopWriterFence(profilePath)).toEqual({
@@ -57,7 +64,8 @@ describe('drainLegacyStoreForInProcessHost', () => {
       ownership: {
         hostId: LEGACY_IN_PROCESS_HOST_ID,
         generation: 0,
-        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID
+        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID,
+        pid: process.pid
       }
     })
     expect(gate.admit({ operation: 'save', pathFamily: 'chats' })).toBeNull()
@@ -77,6 +85,92 @@ describe('drainLegacyStoreForInProcessHost', () => {
       cutoverId: 'cutover-existing'
     })
     expect(readDesktopWriterFence(profilePath)).toBeNull()
+  })
+
+  it('refuses in-process fallback when a live Host lease already owns the profile', async () => {
+    const profilePath = profile()
+    const lease = HostProfileAuthorityLease.acquire({ profilePath })
+    const gate = createLegacyStoreWriterGate()
+    await expect(
+      drainLegacyStoreForInProcessHost({ profilePath, writerGate: gate })
+    ).rejects.toThrow(ProfileWriterLivePeerError)
+    expect(gate.snapshot().state).toBe('open')
+    expect(readDesktopWriterFence(profilePath)).toBeNull()
+    expect(lease.release()).toBe(true)
+  })
+
+  it('does not overwrite a live in-process peer ownership record', async () => {
+    const profilePath = profile()
+    writeHostProfileWriterFence(profilePath, {
+      state: 'host-owned',
+      ownership: {
+        hostId: IN_PROCESS_DESKTOP_HOST_ID,
+        generation: 0,
+        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID,
+        pid: 77
+      }
+    })
+    const gate = createLegacyStoreWriterGate()
+    await expect(
+      drainLegacyStoreForInProcessHost({
+        profilePath,
+        writerGate: gate,
+        inspect: {
+          currentPid: process.pid,
+          inspectPid: () => 'live',
+          peekLease: () => ({ kind: 'absent' })
+        }
+      })
+    ).rejects.toThrow(ProfileWriterLivePeerError)
+    expect(readDesktopWriterFence(profilePath)?.ownership).toEqual({
+      hostId: IN_PROCESS_DESKTOP_HOST_ID,
+      generation: 0,
+      cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID,
+      pid: 77
+    })
+    expect(gate.snapshot().state).toBe('open')
+  })
+
+  it('reclaims a stale in-process fence then takes ownership', async () => {
+    const profilePath = profile()
+    writeHostProfileWriterFence(profilePath, {
+      state: 'host-owned',
+      ownership: {
+        hostId: IN_PROCESS_DESKTOP_HOST_ID,
+        generation: 0,
+        cutoverId: 'stale-cutover',
+        pid: 9_999_999
+      }
+    })
+    const gate = createLegacyStoreWriterGate()
+    await drainLegacyStoreForInProcessHost({
+      profilePath,
+      writerGate: gate,
+      inspect: {
+        inspectPid: () => 'stale',
+        peekLease: () => ({ kind: 'absent' })
+      }
+    })
+    expect(readDesktopWriterFence(profilePath)).toMatchObject({
+      state: 'host-owned',
+      ownership: {
+        hostId: LEGACY_IN_PROCESS_HOST_ID,
+        cutoverId: LEGACY_IN_PROCESS_CUTOVER_ID,
+        pid: process.pid
+      }
+    })
+  })
+
+  it('is a no-op when this process already owns the in-process fence', async () => {
+    const profilePath = profile()
+    const gate = createLegacyStoreWriterGate()
+    await drainLegacyStoreForInProcessHost({ profilePath, writerGate: gate })
+    const first = readDesktopWriterFence(profilePath)
+    await drainLegacyStoreForInProcessHost({
+      profilePath,
+      writerGate: createLegacyStoreWriterGate()
+    })
+    expect(readDesktopWriterFence(profilePath)).toEqual(first)
   })
 })
 

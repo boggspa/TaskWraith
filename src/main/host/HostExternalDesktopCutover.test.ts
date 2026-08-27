@@ -23,6 +23,7 @@ describe('Desktop external Host cutover', () => {
     expect(bootstrap).toContain('drainLegacyStoreForInProcessHost')
     expect(bootstrap).not.toContain("TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '1'")
     expect(bootstrap).toContain('using in-process Host')
+    expect(bootstrap).toContain('ProfileWriterLivePeerError')
     expect(bootstrap.indexOf('prepareMainProcess:')).toBeLessThan(
       bootstrap.indexOf("loadMainProcess: () => import('./index')")
     )

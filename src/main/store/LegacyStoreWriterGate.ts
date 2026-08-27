@@ -15,11 +15,18 @@ export interface LegacyStoreWriterAdmission {
   readonly pathFamily: string
 }
 
+export interface LegacyStoreWriterOwnership {
+  readonly hostId: string
+  readonly generation: number
+  readonly cutoverId: string
+  readonly pid?: number
+}
+
 export interface LegacyStoreWriterGateSnapshot {
   readonly state: LegacyStoreWriterGateState
   readonly inFlight: number
   readonly hostOwned: boolean
-  readonly ownership?: Readonly<{ hostId: string; generation: number; cutoverId: string }>
+  readonly ownership?: Readonly<LegacyStoreWriterOwnership>
 }
 
 export interface LegacyStoreWriterAdmissionLease {
@@ -54,7 +61,7 @@ export class LegacyStoreWriterGate {
   private inFlightValue = 0
   private readonly active = new Map<object, number>()
   private readonly drainedWaiters = new Set<() => void>()
-  private ownershipValue?: Readonly<{ hostId: string; generation: number; cutoverId: string }>
+  private ownershipValue?: Readonly<LegacyStoreWriterOwnership>
   private readonly context = new AsyncLocalStorage<readonly object[]>()
 
   admit(input: LegacyStoreWriterAdmission): LegacyStoreWriterAdmissionLease | null {
@@ -162,7 +169,7 @@ export class LegacyStoreWriterGate {
     return new Promise((resolve) => this.drainedWaiters.add(resolve))
   }
 
-  markHostOwned(input: { hostId: string; generation: number; cutoverId: string }): boolean {
+  markHostOwned(input: LegacyStoreWriterOwnership): boolean {
     if (
       this.stateValue !== 'draining' ||
       this.inFlightValue !== 0 ||
@@ -170,16 +177,58 @@ export class LegacyStoreWriterGate {
       !canonical(input.hostId) ||
       !canonical(input.cutoverId) ||
       !Number.isSafeInteger(input.generation) ||
-      input.generation < 0
+      input.generation < 0 ||
+      (input.pid !== undefined &&
+        (!Number.isSafeInteger(input.pid) || input.pid <= 0 || input.pid > 2_147_483_647))
     ) {
       return false
     }
     this.ownershipValue = Object.freeze({
       hostId: input.hostId,
       generation: input.generation,
-      cutoverId: input.cutoverId
+      cutoverId: input.cutoverId,
+      ...(input.pid !== undefined ? { pid: input.pid } : {})
     })
     this.stateValue = 'host-owned'
+    return true
+  }
+
+  /** Restore a durable fence into an idle in-memory gate. Does not admit writers. */
+  hydrateFromDurable(input: {
+    state: Exclude<LegacyStoreWriterGateState, 'open'>
+    ownership?: LegacyStoreWriterOwnership
+  }): boolean {
+    if (this.stateValue !== 'open' || this.inFlightValue !== 0 || !input) return false
+    if (input.state === 'host-owned') {
+      if (
+        !input.ownership ||
+        !canonical(input.ownership.hostId) ||
+        !canonical(input.ownership.cutoverId) ||
+        !Number.isSafeInteger(input.ownership.generation) ||
+        input.ownership.generation < 0 ||
+        (input.ownership.pid !== undefined &&
+          (!Number.isSafeInteger(input.ownership.pid) ||
+            input.ownership.pid <= 0 ||
+            input.ownership.pid > 2_147_483_647))
+      ) {
+        return false
+      }
+      this.ownershipValue = Object.freeze({
+        hostId: input.ownership.hostId,
+        generation: input.ownership.generation,
+        cutoverId: input.ownership.cutoverId,
+        ...(input.ownership.pid !== undefined ? { pid: input.ownership.pid } : {})
+      })
+    }
+    this.stateValue = input.state
+    return true
+  }
+
+  /** Forget durable ownership after the caller proved the owner is stale. */
+  reclaimStaleOwnership(): boolean {
+    if (this.inFlightValue !== 0) return false
+    this.stateValue = 'open'
+    this.ownershipValue = undefined
     return true
   }
 

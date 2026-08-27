@@ -47,6 +47,12 @@ describe('HostProfileAuthorityLease', () => {
       token: first.owner.token
     })
 
+    expect(
+      HostProfileAuthorityLease.peek(hostOptions(profile, { pid: 202, liveness: () => 'live' }))
+    ).toMatchObject({
+      kind: 'live',
+      owner: { pid: 101 }
+    })
     const secondOptions = hostOptions(profile, {
       pid: 202,
       liveness: (owner) => (owner.pid === 101 ? 'live' : 'unknown')
@@ -64,6 +70,24 @@ describe('HostProfileAuthorityLease', () => {
     expect(first.release()).toBe(true)
     expect(first.release()).toBe(false)
     expect(nodeFs.existsSync(recordPath)).toBe(false)
+  })
+
+  it('peeks absent and stale owners without mkdir or acquire', () => {
+    expect(
+      HostProfileAuthorityLease.peek({
+        profilePath: join(tmpdir(), 'host-authority-peek-missing')
+      })
+    ).toEqual({ kind: 'absent' })
+    const profile = createProfile()
+    expect(HostProfileAuthorityLease.peek({ profilePath: profile })).toEqual({ kind: 'absent' })
+    const stale = HostProfileAuthorityLease.acquire(
+      hostOptions(profile, { pid: 101, liveness: () => 'stale' })
+    )
+    expect(
+      HostProfileAuthorityLease.peek(hostOptions(profile, { pid: 202, liveness: () => 'stale' }))
+    ).toMatchObject({ kind: 'stale', owner: { pid: 101 } })
+    expect(stale.release()).toBe(true)
+    expect(HostProfileAuthorityLease.peek({ profilePath: profile })).toEqual({ kind: 'absent' })
   })
 
   it('fails closed on malformed, oversized, and linked owner records', () => {

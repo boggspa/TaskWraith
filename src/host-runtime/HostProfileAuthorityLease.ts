@@ -37,6 +37,13 @@ export interface HostProfileAuthorityOwnerRecord {
   readonly token: string
 }
 
+export type HostProfileAuthorityPeek =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'live'; readonly owner: HostProfileAuthorityOwnerRecord }
+  | { readonly kind: 'stale'; readonly owner: HostProfileAuthorityOwnerRecord }
+  | { readonly kind: 'unknown'; readonly owner: HostProfileAuthorityOwnerRecord }
+  | { readonly kind: 'unreadable' }
+
 export interface HostProfileAuthorityProcessIdentity {
   readonly pid: number
   readonly processStartIdentity: string
@@ -256,6 +263,59 @@ export class HostProfileAuthorityLease {
     throw new HostProfileAuthorityLeaseBlockedError(
       'The profile authority changed during stale-owner recovery; refusing an unproven acquisition.'
     )
+  }
+
+  /**
+   * Read-only liveness of the durable owner record. Does not mkdir, acquire,
+   * or reclaim. Malformed artefacts fail closed as `unreadable`.
+   */
+  static peek(
+    options: Pick<
+      HostProfileAuthorityLeaseOptions,
+      'profilePath' | 'fs' | 'platform' | 'processPort'
+    >
+  ): HostProfileAuthorityPeek {
+    if (!options || typeof options.profilePath !== 'string' || !isAbsolute(options.profilePath)) {
+      return { kind: 'unreadable' }
+    }
+    const fs = options.fs || productionFs
+    const platform = options.platform || process.platform
+    const processPort = options.processPort || defaultProcessPort
+    const configuredPath = resolve(options.profilePath)
+    if (configuredPath === parse(configuredPath).root) return { kind: 'unreadable' }
+    let profilePath: string
+    try {
+      const stat = fs.lstatSync(configuredPath)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: 'unreadable' }
+      profilePath = fs.realpathSync(configuredPath)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return { kind: 'absent' }
+      return { kind: 'unreadable' }
+    }
+    const resolved: ResolvedOptions = {
+      fs,
+      platform,
+      processPort,
+      clock: defaultClock,
+      identity: defaultIdentity,
+      profilePath,
+      ownerPath: joinLeaf(profilePath, HOST_PROFILE_AUTHORITY_LEASE_FILENAME),
+      reclaimGuardPath: joinLeaf(profilePath, HOST_PROFILE_AUTHORITY_RECLAIM_GUARD_FILENAME)
+    }
+    try {
+      const observed = readOptionalOwnerRecord(
+        resolved,
+        resolved.ownerPath,
+        'profile authority owner'
+      )
+      if (!observed) return { kind: 'absent' }
+      const liveness = inspectOwner(processPort, observed.record)
+      if (liveness === 'live') return { kind: 'live', owner: observed.record }
+      if (liveness === 'stale') return { kind: 'stale', owner: observed.record }
+      return { kind: 'unknown', owner: observed.record }
+    } catch {
+      return { kind: 'unreadable' }
+    }
   }
 
   /** The canonical profile root this instance fenced. */

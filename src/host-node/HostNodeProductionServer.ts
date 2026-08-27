@@ -12,6 +12,10 @@ import { join } from 'node:path'
 import type { HostLocalServerOptions } from '../host-runtime/HostLocalServer'
 import { HostLocalServer } from '../host-runtime/HostLocalServer'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
+import {
+  assertHostMayOpenProfileWriters,
+  writeHostProfileWriterFence
+} from '../host-runtime/HostProfileWriterFence'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
 import {
   createHostStandaloneComposition,
@@ -169,15 +173,30 @@ export class HostNodeProductionServer {
 
   private async startOnce(): Promise<void> {
     try {
+      const usingDefaultAcquire = typeof this.options.acquireLease !== 'function'
       this.lease = (
         this.options.acquireLease ??
-        ((path) => HostProfileAuthorityLease.acquire({ profilePath: path }))
+        ((path) => {
+          assertHostMayOpenProfileWriters(path)
+          return HostProfileAuthorityLease.acquire({ profilePath: path })
+        })
       )(this.options.profilePath)
       this.lease.assertHeld()
       this.installSignals()
       if (this.stopRequested) return
 
       this.identity = this.options.resolveIdentity(this.lease.path, this.lease)
+      if (usingDefaultAcquire) {
+        writeHostProfileWriterFence(this.lease.path, {
+          state: 'host-owned',
+          ownership: {
+            hostId: this.identity.hostId,
+            generation: 0,
+            cutoverId: 'host-node-production',
+            pid: process.pid
+          }
+        })
+      }
       const store = (this.options.createStore ?? ((input) => new HostProfileDomainStore(input)))({
         profilePath: this.lease.path,
         authority: { assertProfileAuthority: () => this.lease!.assertHeld() }

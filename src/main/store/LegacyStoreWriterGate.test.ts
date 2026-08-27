@@ -161,4 +161,23 @@ describe('LegacyStoreWriterGate', () => {
     ).toThrow()
     expect(gate.snapshot().inFlight).toBe(0)
   })
+
+  it('hydrates durable host-owned state and reclaims stale ownership back to open', () => {
+    const gate = createLegacyStoreWriterGate()
+    expect(
+      gate.hydrateFromDurable({
+        state: 'host-owned',
+        ownership: { hostId: 'host-1', generation: 2, cutoverId: 'cutover-1', pid: 44 }
+      })
+    ).toBe(true)
+    expect(gate.snapshot()).toMatchObject({
+      state: 'host-owned',
+      hostOwned: true,
+      ownership: { hostId: 'host-1', generation: 2, cutoverId: 'cutover-1', pid: 44 }
+    })
+    expect(gate.admit({ operation: 'save', pathFamily: 'chats' })).toBeNull()
+    expect(gate.reclaimStaleOwnership()).toBe(true)
+    expect(gate.snapshot()).toEqual({ state: 'open', inFlight: 0, hostOwned: false })
+    expect(gate.admit({ operation: 'save', pathFamily: 'chats' })).not.toBeNull()
+  })
 })

@@ -1,9 +1,16 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { HostProfileAuthorityLease } from '../../host-runtime/HostProfileAuthorityLease'
+import {
+  HOST_PROFILE_WRITER_FENCE_PURPOSE,
+  writeHostProfileWriterFence
+} from '../../host-runtime/HostProfileWriterFence'
 import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
 import { createLegacyStoreWriterGate } from '../store/LegacyStoreWriterGate'
+import { readDesktopWriterFence } from './LegacyStoreWriterGatePersistence'
 import type { PreparedExternalHost } from './HostExternalRuntimeState'
 import type { HostExternalSupervisor } from './HostExternalSupervisor'
 import { createHostExternalPreparation } from './HostExternalPreparation'
@@ -46,6 +53,18 @@ function supervisor(result: 'existing' | 'launched', order: string[] = []) {
     close: vi.fn(() => order.push('detach'))
   } as unknown as HostExternalSupervisor
 }
+
+const profiles: string[] = []
+
+function profile(): string {
+  const path = mkdtempSync(join(tmpdir(), 'external-prep-fence-'))
+  profiles.push(path)
+  return path
+}
+
+afterEach(() => {
+  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+})
 
 describe('HostExternalPreparation', () => {
   it('orders migration, writer drain, Host readiness, ownership, and publication', async () => {
@@ -187,6 +206,59 @@ describe('HostExternalPreparation', () => {
     expect(source).not.toMatch(
       /electron|AppStore|\.\.\/\.\.\/tui|from ['"]\.\.\/index|import\s*\(/i
     )
+  })
+
+  it('attaches to a live Host without overwriting the durable ownership record', async () => {
+    const profilePath = profile()
+    const lease = HostProfileAuthorityLease.acquire({ profilePath })
+    writeHostProfileWriterFence(profilePath, {
+      state: 'host-owned',
+      ownership: {
+        hostId: 'tui-host',
+        generation: 4,
+        cutoverId: 'cutover-existing',
+        pid: lease.owner.pid
+      }
+    })
+    const gate = createLegacyStoreWriterGate()
+    const owner = supervisor('existing')
+    const preparation = createHostExternalPreparation({
+      profilePath,
+      migrateLegacyUserData: vi.fn(),
+      writerGate: gate,
+      createSupervisor: () => owner,
+      createCutoverId: () => 'cutover-should-not-write',
+      publishPrepared: (input) => input,
+      clearPrepared: vi.fn(() => true),
+      createShutdownClient: () => ({ shutdown: vi.fn() })
+    })
+
+    await expect(preparation.prepare()).resolves.toMatchObject({
+      profilePath,
+      cutoverId: 'cutover-existing',
+      result: { kind: 'existing', welcome: { hostId: 'host-1' } }
+    })
+    expect(gate.snapshot()).toMatchObject({
+      state: 'host-owned',
+      ownership: {
+        hostId: 'tui-host',
+        generation: 4,
+        cutoverId: 'cutover-existing'
+      }
+    })
+    expect(readDesktopWriterFence(profilePath)).toEqual({
+      schemaVersion: 1,
+      purpose: HOST_PROFILE_WRITER_FENCE_PURPOSE,
+      state: 'host-owned',
+      ownership: {
+        hostId: 'tui-host',
+        generation: 4,
+        cutoverId: 'cutover-existing',
+        pid: lease.owner.pid
+      }
+    })
+    expect(gate.beginDrain()).toBe(false)
+    expect(lease.release()).toBe(true)
   })
 
   it('persists the default writer gate so the Host can see ownership', () => {

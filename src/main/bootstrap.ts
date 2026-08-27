@@ -17,6 +17,7 @@ import {
 } from './host/HostExternalPreparation'
 import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
+import { ProfileWriterLivePeerError } from './host/DesktopWriterArbitration'
 import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
@@ -159,7 +160,17 @@ void bootstrapMainProcess({
         )
       }
       externalHostPreparation = null
-      await drainLegacyStoreForInProcessHost({ profilePath })
+      try {
+        await drainLegacyStoreForInProcessHost({ profilePath })
+      } catch (fallbackError) {
+        if (
+          fallbackError instanceof ProfileWriterLivePeerError ||
+          (fallbackError instanceof Error && fallbackError.name === 'ProfileWriterLivePeerError')
+        ) {
+          throw fallbackError
+        }
+        throw error
+      }
     }
   },
   cleanupPreparedMainProcess: async () => {

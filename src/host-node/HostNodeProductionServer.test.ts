@@ -1,7 +1,28 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  IN_PROCESS_DESKTOP_HOST_ID,
+  ProfileWriterLivePeerError,
+  readHostProfileWriterFence,
+  writeHostProfileWriterFence
+} from '../host-runtime/HostProfileWriterFence'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
+
+const profiles: string[] = []
+
+function profile(): string {
+  const path = mkdtempSync(join(tmpdir(), 'host-node-writer-fence-'))
+  profiles.push(path)
+  return path
+}
+
+afterEach(() => {
+  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+})
 
 function harness(overrides: Record<string, unknown> = {}) {
   const order: string[] = []
@@ -371,6 +392,38 @@ describe('HostNodeProductionServer', () => {
     h.projectionDirty()
     await Promise.resolve()
     expect(h.composition.reconcileProjection).toHaveBeenCalled()
+    await h.server.stop()
+  })
+
+  it('refuses default acquire when a live in-process Desktop owns the profile', async () => {
+    const profilePath = profile()
+    writeHostProfileWriterFence(profilePath, {
+      state: 'host-owned',
+      ownership: {
+        hostId: IN_PROCESS_DESKTOP_HOST_ID,
+        generation: 0,
+        cutoverId: 'legacy-in-process',
+        pid: process.pid
+      }
+    })
+    const h = harness({ profilePath, acquireLease: undefined })
+    await expect(h.server.start()).rejects.toThrow(ProfileWriterLivePeerError)
+    expect(h.order).toEqual([])
+  })
+
+  it('writes the durable writer fence after a default production acquire', async () => {
+    const profilePath = profile()
+    const h = harness({ profilePath, acquireLease: undefined })
+    await h.server.start()
+    expect(readHostProfileWriterFence(profilePath)).toMatchObject({
+      state: 'host-owned',
+      ownership: {
+        hostId: 'host',
+        generation: 0,
+        cutoverId: 'host-node-production',
+        pid: process.pid
+      }
+    })
     await h.server.stop()
   })
 })
