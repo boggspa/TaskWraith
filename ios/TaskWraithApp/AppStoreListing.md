@@ -20,9 +20,8 @@ text), README "App Store screenshots" (regenerating the screenshot set).
 
 ## Promotional text (≤170 chars, editable without review)
 
-> Monitor, steer, and approve your Mac's coding agents from your phone —
-> task content is end-to-end encrypted and private by architecture. Try the
-> built-in demo, no setup needed.
+> Agent approvals with a policy — five tiers, expiry, auto-deny, per-seat
+> authority across providers. E2EE to your Mac. Demo included, no setup.
 
 ## Description (draft)
 
@@ -34,9 +33,11 @@ turns from anywhere.
 - **Live task feed** — running agents, streaming answers with the same
   type-out feel as the desktop, tool activity, file changes, and run
   summaries.
-- **Approvals on your lock screen, when push is configured** — approve or deny
-  an agent's request from the notification (Face ID / passcode required), or
-  from the app with full context.
+- **Approvals with a policy, on your lock screen when push is configured** —
+  five permission tiers, auto-deny countdown and expiry, per-seat authority,
+  and row-level provider/model provenance across different vendors' models
+  in one run. Approve or deny from the notification (Face ID / passcode
+  required), or from the app with full context.
 - **Live Activities** — follow a run's coarse phase and change counts on the
   Lock Screen or Dynamic Island, with Mac and iOS off switches.
 - **Answer questions mid-run** — agents that need a decision surface it as
@@ -61,7 +62,7 @@ iOS Settings.
 `[USER: verify against ASC search data]`
 
 ```
-agent,coding,claude,codex,ai,developer,pair,remote,approve,diff,terminal,e2ee
+agent,coding,claude,codex,ai,developer,pair,remote,approve,diff,e2ee,policy,ensemble,permission
 ```
 
 ## Review notes (paste into ASC "Notes" — this is the 2.1 defuser)
