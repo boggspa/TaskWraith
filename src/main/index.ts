@@ -42503,6 +42503,14 @@ function isSolidWorkspaceChromePopout(targetWindow: BrowserWindow): boolean {
   return false
 }
 
+function isCompactChatPopout(targetWindow: BrowserWindow): boolean {
+  for (const [key, win] of workspacePopoutWindows.entries()) {
+    if (win !== targetWindow || !key.startsWith('chat:')) continue
+    return workspacePopoutOwners.get(key)?.presentation === 'compact'
+  }
+  return false
+}
+
 function appendGeminiCliSessionArgs(
   args: string[],
   model: string = 'cli-default',
@@ -42583,8 +42591,11 @@ const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSett
   const isMac = process.platform === 'darwin'
   const isWindows = process.platform === 'win32'
   const forceSolidWorkspaceChrome = isSolidWorkspaceChromePopout(targetWindow)
+  const forceCompactGlass = isCompactChatPopout(targetWindow)
   const useMaterialWindow =
-    (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
+    (forceCompactGlass ||
+      settings.appearanceMode === 'native_glass' ||
+      settings.appearanceMode === 'soft_glass') &&
     !settings.reduceTransparency &&
     !forceSolidWorkspaceChrome
   const useGlassWindow = isMac && useMaterialWindow
@@ -43102,8 +43113,9 @@ async function openWorkspacePopout(
       existingOwner &&
       existingOwner.presentation !== presentation
     ) {
-      applyChatPopoutWindowPresentation(existing, presentation)
       existingOwner.presentation = presentation
+      applyChatPopoutWindowPresentation(existing, presentation)
+      applyNativeGlassToWindow(existing, AppStore.getSettings())
       safeSendToWebContents(existing, 'chat-popout-presentation-changed', { presentation })
     }
     if (
@@ -43134,8 +43146,11 @@ async function openWorkspacePopout(
   const settings = AppStore.getSettings()
   const forceSolidWorkspaceChrome =
     kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
+  const forceCompactGlass = kind === 'chat' && presentation === 'compact'
   const useMaterialWindow =
-    (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
+    (forceCompactGlass ||
+      settings.appearanceMode === 'native_glass' ||
+      settings.appearanceMode === 'soft_glass') &&
     !settings.reduceTransparency &&
     !forceSolidWorkspaceChrome
   const useGlassWindow = isMac && useMaterialWindow

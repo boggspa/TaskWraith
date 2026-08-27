@@ -38,6 +38,17 @@ describe('chat popout presentation integration', () => {
     expect(launcher).toContain('applyChatPopoutWindowPresentation(existing, presentation)')
     expect(launcher).toContain("'chat-popout-presentation-changed'")
     expect(launcher).toContain('chatPopoutWindowPreset(presentation)')
+    expect(launcher).toContain("forceCompactGlass = kind === 'chat' && presentation === 'compact'")
+    expect(launcher).toContain('applyNativeGlassToWindow(existing, AppStore.getSettings())')
     expect(launcher).toContain("presentation: kind === 'chat' ? presentation : undefined")
+  })
+
+  it('keeps compact glass independent from the app-wide appearance mode', () => {
+    const glass = sourceSlice('function isCompactChatPopout', 'function appendGeminiCliSessionArgs')
+    const updater = sourceSlice('const applyNativeGlassToWindow', 'function windowBoundsAreVisible')
+
+    expect(glass).toContain("workspacePopoutOwners.get(key)?.presentation === 'compact'")
+    expect(updater).toContain('const forceCompactGlass = isCompactChatPopout(targetWindow)')
+    expect(updater).toContain('(forceCompactGlass ||')
   })
 })
