@@ -708,11 +708,17 @@ describe('HostProductionSuppliers workspace derivation', () => {
     expect(result.ok).toBe(true)
   })
 
-  it('donor output fails projector when path is empty (red proof — delete fix and this goes green-red)', async () => {
-    // This test proves the consumer contract: if the donor emitted path:''
-    // the projector WOULD reject it. The donor now skips empty-path rows
-    // so this scenario can only be constructed directly — it documents
-    // what happens if someone reverts the fix.
+  it('quarantines an empty-path workspace before it can reach a client', () => {
+    // Consumer contract: even if a donor regression reintroduces path:'',
+    // the final projector must omit that row. Quarantine keeps valid state
+    // usable and makes the omission visible instead of failing the snapshot.
+    const validWorkspace = {
+      id: 'ws-good',
+      name: 'good',
+      path: '/tmp/good',
+      pinned: true,
+      updatedAt: 1
+    }
     const result = projectHostSnapshot({
       position: {
         generation: 1,
@@ -722,7 +728,10 @@ describe('HostProductionSuppliers workspace derivation', () => {
       },
       recovery: { reopenStatus: 'clean' },
       health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
-      workspaces: [{ id: 'ws-bad', name: 'bad', path: '', pinned: false, updatedAt: 0 }],
+      workspaces: [
+        validWorkspace,
+        { id: 'ws-bad', name: 'bad', path: '', pinned: false, updatedAt: 0 }
+      ],
       threads: [],
       runs: [],
       missions: [],
@@ -737,10 +746,20 @@ describe('HostProductionSuppliers workspace derivation', () => {
       warnings: []
     })
 
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain('path is required')
-    }
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.workspaces).toEqual([validWorkspace])
+    expect(result.value.workspaces.some((workspace) => workspace.id === 'ws-bad')).toBe(false)
+    expect(result.value.warnings).toContainEqual(
+      expect.objectContaining({
+        warningId: 'projection_rows_omitted:workspaces',
+        severity: 'warning',
+        code: 'projection_rows_omitted',
+        message: expect.stringContaining('family workspaces omitted 1')
+      })
+    )
+    expect(result.value.health.hostStatus).toBe('ok')
+    expect(result.value.threads).toEqual([])
   })
 })
 
