@@ -33,7 +33,7 @@ struct TranscriptFollowPolicyTests {
             TranscriptFollowPolicy.shouldScroll(
                 autoFollow: true,
                 force: false,
-                lastUserTouchAt: now.addingTimeInterval(-1),
+                lastUserTouchAt: now.addingTimeInterval(-3),
                 now: now
             )
         )
@@ -55,8 +55,8 @@ struct TranscriptFollowPolicyTests {
         )
     }
 
-    @Test func userTouchQuietPeriodCoversInertiaAfterFingerLift() {
-        #expect(TranscriptFollowPolicy.userTouchQuietPeriod == 0.6)
+    @Test func repairPinsWaitForTheFullScrollSettlePeriod() {
+        #expect(TranscriptFollowPolicy.userScrollSettlePeriod == 2.5)
         #expect(
             TranscriptFollowPolicy.shouldScroll(
                 autoFollow: true,
@@ -71,12 +71,25 @@ struct TranscriptFollowPolicyTests {
                 force: false,
                 lastUserTouchAt: now.addingTimeInterval(-0.6),
                 now: now
+            ) == false
+        )
+        #expect(
+            TranscriptFollowPolicy.shouldScroll(
+                autoFollow: true,
+                force: true,
+                lastUserTouchAt: now.addingTimeInterval(-2.49),
+                now: now
+            ) == false
+        )
+        #expect(
+            TranscriptFollowPolicy.shouldScroll(
+                autoFollow: true,
+                force: true,
+                lastUserTouchAt: now.addingTimeInterval(-2.5),
+                now: now
             )
         )
-        // The disappearance edge no longer flips here — it runs to
-        // `userScrollSettlePeriod`, because a flick is still moving the
-        // transcript long after this window closes. See
-        // `decelerationAfterAFlickStillCountsAsUserIntent`.
+        // Sentinel intent uses the same full window.
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                 lastUserTouchAt: now.addingTimeInterval(-0.59), now: now
@@ -211,7 +224,7 @@ struct TranscriptFollowPolicyTests {
             let mayRepair = TranscriptFollowPolicy.shouldScroll(
                 autoFollow: true, force: true, lastUserTouchAt: lastUserTouchAt, now: now)
             #expect(
-                !(mayRepair && !isTheUser && millisecondsSinceTouch < 2_500),
+                !(mayRepair && isTheUser),
                 "a repair pin was permitted \(millisecondsSinceTouch)ms after the last touch, while the scroll may still be decelerating from that gesture"
             )
         }
@@ -224,12 +237,6 @@ struct TranscriptFollowPolicyTests {
     /// pill appears — rather than the transcript snapping back to the tail.
     @Test func decelerationAfterAFlickStillCountsAsUserIntent() {
         #expect(TranscriptFollowPolicy.userScrollSettlePeriod == 2.5)
-        // The ordering is the whole invariant: if the settle period were ever
-        // SHORTER than the pin-suppression window, the yank comes straight back.
-        #expect(
-            TranscriptFollowPolicy.userScrollSettlePeriod
-                >= TranscriptFollowPolicy.userTouchQuietPeriod
-        )
         for secondsSinceFingerLift in stride(from: 0.0, to: 2.5, by: 0.1) {
             #expect(
                 TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(

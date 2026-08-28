@@ -65,13 +65,11 @@ enum TranscriptTouchTrackingPolicy {
 /// position. `force` at the call site only bypasses the reveal-pin throttle —
 /// it must never override an explicit unfollow (`autoFollow == false`).
 enum TranscriptFollowPolicy {
-    /// Quiet window after a finger leaves the transcript, before a content-driven
-    /// pin may move the offset again.
-    static let userTouchQuietPeriod: TimeInterval = 0.6
     /// How long a flick can still be MOVING the transcript after the finger has
-    /// gone. UIKit deceleration outlives `userTouchQuietPeriod` several times
-    /// over, and until it stops the scroll is still the user's gesture playing
-    /// out — see `sentinelDisappearanceEndsFollowing`.
+    /// gone. Until it stops, the scroll is still the user's gesture playing out.
+    /// This same full window gates both sentinel intent and content-driven repair
+    /// pins: letting pins resume earlier is what made a completed transcript fight
+    /// the final deceleration and bounce away from the position the user chose.
     static let userScrollSettlePeriod: TimeInterval = 2.5
     /// After a programmatic pin, ignore sentinel `onAppear` re-arm so a settle
     /// pass that briefly shows the bottom cannot undo a user unfollow.
@@ -87,7 +85,7 @@ enum TranscriptFollowPolicy {
         // the requestFollowPin call site. Unfollow always wins.
         _ = force
         guard autoFollow else { return false }
-        return now.timeIntervalSince(lastUserTouchAt) >= userTouchQuietPeriod
+        return now.timeIntervalSince(lastUserTouchAt) >= userScrollSettlePeriod
     }
 
     /// May sentinel `onAppear` turn following back on?
@@ -121,13 +119,11 @@ enum TranscriptFollowPolicy {
     /// recovered it — the 2026-07-28 "picker during streaming" stall, which
     /// reproduced on a plain send with no picker at all.
     ///
-    /// The window is `userScrollSettlePeriod`, NOT the shorter
-    /// `userTouchQuietPeriod` this shared with `shouldScroll` until 2026-08-07.
-    /// Sharing one constant left the two edges adjacent with nothing in between:
-    /// the instant a disappearance stopped counting as the user's, a repair pin
-    /// was already permitted. A flick whose sentinel dematerialised during
-    /// deceleration therefore latched nothing off AND scrolled back to the tail,
-    /// which is the transcript fighting the gesture in the opposite direction.
+    /// The same `userScrollSettlePeriod` also gates `shouldScroll`. A shorter
+    /// repair-pin window left an overlap where the sentinel still represented the
+    /// user's decelerating flick but a deferred content/layout pin was already
+    /// allowed to move the viewport. A flick whose sentinel dematerialised during
+    /// that overlap therefore fought a programmatic tail pin.
     /// A flick's deceleration is that gesture still playing out, so it belongs
     /// on the user's side of the line; only a transcript provably at rest can
     /// attribute a disappearance to layout.
@@ -2150,6 +2146,11 @@ struct ThreadDetailView: View {
             }
         }
         .background(TWTheme.appBg)
+        // Native scroll dismissal is the deterministic iPad escape hatch when
+        // the custom UITextView owns first responder. The explicit tap and
+        // keyboard-chevron paths remain as fallbacks; this adds the standard
+        // drag-down interaction users expect from a transcript.
+        .scrollDismissesKeyboard(.interactively)
         // Observe-only touch tracker (simultaneousGesture): stamps
         // `lastUserTouchAt` so touch-gated unfollow and settle suppression
         // work. Phone uses minimumDistance 0; iPad uses 12 so the recognizer
