@@ -518,6 +518,26 @@ const barrierChatRecordPersist = (chatId: string): Promise<void> => {
  */
 const HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000
 
+/**
+ * Structural view of the client's erasure capability (thread.record.delete).
+ * The contract is agreed with the client slice: delete supersedes any queued
+ * persist for the chat before issuing, and a missing record is an idempotent
+ * success. Accessed structurally so this file compiles while the capability
+ * lands; the guard fails loudly if a build ever wires one without the other.
+ */
+type HostThreadRecordErasurePort = {
+  deleteRecord(input: { chatId: string; expectedRevision: number }): Promise<void>
+}
+
+const hostThreadRecordErasure = (): HostThreadRecordErasurePort => {
+  const client: unknown = hostThreadRecordPersist()
+  const deleteRecord = (client as Partial<HostThreadRecordErasurePort>).deleteRecord
+  if (typeof deleteRecord !== 'function') {
+    throw new Error('Host thread-record erasure is unavailable in this build.')
+  }
+  return { deleteRecord: (input) => deleteRecord.call(client, input) }
+}
+
 async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promise<void> {
   const bound =
     Number.isSafeInteger(timeoutMs) && (timeoutMs as number) > 0
@@ -7435,7 +7455,12 @@ export class AppStore {
     const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
     normalizedChat.persistenceRevision =
       previousChatForFeedback === null ? 0 : expectedRevision + 1
-    if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
+    // Tombstone guard: a deleted chat must never be re-saved. The Host-routed
+    // delete is an async round trip, so unlike the legacy path (where the
+    // unlink is synchronous) the window cannot be narrowed by a stat — honor
+    // the tombstone for the whole in-flight erasure, or a late save would
+    // resurrect a chat the user just deleted.
+    if (deletedChatIds.has(normalizedChat.appChatId)) {
       return previousChatForFeedback || normalizedChat
     }
     // In-memory projection: this process reads the new record immediately.
@@ -8326,10 +8351,177 @@ export class AppStore {
     return normalizeHistoryDeletionIntent(draft)
   }
 
+  /**
+   * The truncate scrub, shared by the legacy write path and the Host-routed
+   * path: history and session/orchestration state are stripped while the
+   * roster and other durable non-history fields are retained. The record is
+   * stamped with the next persistence revision — which the Host's
+   * persistThreadRecord assigns identically (current+1), so both paths agree.
+   */
+  private static buildTruncatedChatRecordForErasure(
+    chat: ChatRecord,
+    intent: HistoryDeletionIntent
+  ): ChatRecord {
+    const {
+      taskWraithMcpProfileReceipt: _dropReceipt,
+      seatGeneration: _dropSeatGeneration,
+      contextCompactionSummary: _dropContextCompaction,
+      linkedGeminiSessionId: _dropGeminiSession,
+      linkedProviderSessionId: _dropProviderSession,
+      activeGoal: _dropGoal,
+      chatTodos: _dropTodos,
+      soloWakeups: _dropSoloWakeups,
+      ollamaSessionMemory: _dropOllamaMemory,
+      ollamaSessionMemories: _dropOllamaMemories,
+      delegationContext: _dropDelegationContext,
+      ...retainedChat
+    } = chat
+    const ensemble = chat.ensemble
+      ? (() => {
+          const {
+            activeRound: _dropActiveRound,
+            workSession: _dropWorkSession,
+            sessionActivityLedger: _dropActivity,
+            bossmanControlState: _dropBossControl,
+            lastRoundSummary: _dropLastSummary,
+            roundSummaries: _dropRoundSummaries,
+            wakeups: _dropWakeups,
+            blackboard: _dropBlackboard,
+            escalationSignals: _dropEscalations,
+            ...retainedEnsemble
+          } = chat.ensemble!
+          return {
+            ...retainedEnsemble,
+            participants: retainedEnsemble.participants.map((participant) => {
+              const {
+                taskWraithMcpProfileReceipt: _dropParticipantReceipt,
+                seatGeneration: _dropParticipantGeneration,
+                contextCompactionSummary: _dropParticipantSummary,
+                promptShellVersion: _dropShell,
+                promptDynamicStateVersion: _dropDynamic,
+                tokenTotals: _dropTotals,
+                kimiAcpNativeSession: _dropNativeMarker,
+                kimiAcpPostureVersion: _dropPosture,
+                ...retainedParticipant
+              } = participant
+              return { ...retainedParticipant, linkedProviderSessionId: null }
+            }),
+            updatedAt: intent.createdAt
+          }
+        })()
+      : undefined
+    return compactChatForPersist(
+      this.normalizeChatRecord({
+        ...retainedChat,
+        ...(ensemble ? { ensemble } : {}),
+        messages: [],
+        runs: [],
+        updatedAt: Date.parse(intent.createdAt),
+        persistenceRevision: chatPersistenceRevision(chat) + 1
+      })
+    )
+  }
+
+  /**
+   * The chat-records step when the Host owns chats/<id>.json. Only the record
+   * removal/rewrite travels through the Host — delete via thread.record.delete
+   * (which supersedes any queued persist for the chat, so a queued save cannot
+   * resurrect a deleted chat), truncate via thread.record.persist with main's
+   * already-scrubbed complete record. Sequenced per chat: erasure is rare and
+   * each Host round trip must settle before the verification sweep reruns.
+   */
+  /**
+   * Journal retirement when the Host owns the gate. The V2 and legacy journal
+   * subsystems are read-only in this mode, but their pre-cutover artifacts are
+   * desktop-owned legacy bytes that must not survive an erasure
+   * (NON-NEGOTIABLE #4), so they are removed directly.
+   */
+  private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
+    chatUpdateProjectionTracker.drop(chatId)
+    const legacyJournalDir = path.join(userDataPath, 'chat-journal')
+    for (const suffix of ['.tombstone', '.jsonl', '.snapshot.json']) {
+      fs.rmSync(path.join(legacyJournalDir, `${chatId}${suffix}`), { force: true })
+    }
+    const v2JournalDir = path.join(userDataPath, 'chat-journal-v2')
+    for (const suffix of ['.checkpoint.json', '.mutations.jsonl', '.tombstone']) {
+      fs.rmSync(path.join(v2JournalDir, `${chatId}${suffix}`), { force: true })
+    }
+  }
+
+  private static async executeHostChatRecordErasure(
+    intent: HistoryDeletionIntent
+  ): Promise<void> {
+    if (intent.kind === 'truncate') {
+      const chatId = intent.rootChatId!
+      const chatPath = chatPathForId(chatsDir, chatId)
+      // Drain the per-chat queue before rewriting: a still-queued persist
+      // would otherwise land AFTER the truncated record and resurrect the old
+      // content. The drain also anchors the on-disk revision this persist
+      // builds on.
+      await hostThreadRecordPersist().drain(chatId)
+      const stored = readJsonStrictIfPresent(chatPath)
+      if (stored === null) return
+      const chat = chatComposerSelectionOverlayStore.apply(
+        this.normalizeChatRecord(stored as ChatRecord)
+      )
+      const truncated = this.buildTruncatedChatRecordForErasure(chat, intent)
+      // The chat's journal/V2 artifacts are pure history once truncated —
+      // retire them before the rewrite, mirroring the legacy step's ordering.
+      this.purgeChatJournalArtifactsHostOwned(chatId)
+      if (chatContainsTruncatableHistory(chat)) {
+        await hostThreadRecordPersist().persist({
+          chatId,
+          record: truncated,
+          expectedRevision: chatPersistenceRevision(chat)
+        })
+      }
+      chatComposerSelectionOverlayStore.delete(chatId)
+      this.chatRecordCache.delete(chatId)
+      hostPersistShadowChatIds.delete(chatId)
+      const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
+      if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
+        throw new Error(
+          'Truncated chat still contains a durable history or orchestration source.'
+        )
+      }
+      return
+    }
+    if (intent.kind === 'global') {
+      // Same desktop-side retirement order as the legacy step, minus the
+      // chatsDir removal: that directory is the Host's store root, so records
+      // go one delete at a time and the directory stays for the Host. The
+      // journal directories are desktop-owned legacy artifacts (the Host has
+      // its own store), so their removal stays here — erased transcript must
+      // not outlive a global clear in any durable copy.
+      saveCoalescer.discardAll()
+      chatUpdateProjectionTracker.clear()
+      chatComposerSelectionOverlayStore.clearCache()
+      removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
+      removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
+    } else {
+      // Discard, never flush, and tombstone the journal before the unlink —
+      // same ordering guarantees as the legacy step.
+      for (const chatId of intent.chatIds) saveCoalescer.discard(chatId)
+      for (const chatId of intent.chatIds) this.purgeChatJournalArtifactsHostOwned(chatId)
+    }
+    for (const chatId of intent.chatIds) {
+      const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+      // Already absent (idempotent recovery re-run): nothing to delete.
+      if (stored !== null) {
+        const expectedRevision = chatPersistenceRevision((stored as ChatRecord | null) ?? null)
+        await hostThreadRecordErasure().deleteRecord({ chatId, expectedRevision })
+      }
+      chatComposerSelectionOverlayStore.delete(chatId)
+      this.chatRecordCache.delete(chatId)
+      hostPersistShadowChatIds.delete(chatId)
+      hostPersistUnconfirmedChatIds.delete(chatId)
+    }
+  }
+
   private static executeHistoryDeletionStep(
     intent: HistoryDeletionIntent,
     step: HistoryDeletionStep
-  ): void {
+  ): void | Promise<void> {
     if (historyDeletionFailureStepsForTests.has(step)) {
       throw new Error(`Injected history deletion failure at ${step}.`)
     }
@@ -8626,6 +8818,15 @@ export class AppStore {
       return
     }
     if (step === 'chat-records') {
+      if (!legacyStoreCanWrite()) {
+        // The Host owns chats/<id>.json: only the record removal/rewrite
+        // travels (thread.record.delete / thread.record.persist); every other
+        // erasure ledger above stays in main, exactly as Work1's 84a5d849f
+        // modeling decided. This is the only async step — everything else in
+        // the transaction completes synchronously, preserving the legacy
+        // path's in-tick semantics.
+        return this.executeHostChatRecordErasure(intent)
+      }
       if (intent.kind === 'global') {
         // T3a-1: drop every deferred write BEFORE the directory goes. A
         // pending timer would otherwise recreate a chat file after deletion,
@@ -8653,64 +8854,7 @@ export class AppStore {
         const chat = chatComposerSelectionOverlayStore.apply(
           this.normalizeChatRecord(stored as ChatRecord)
         )
-        const {
-          taskWraithMcpProfileReceipt: _dropReceipt,
-          seatGeneration: _dropSeatGeneration,
-          contextCompactionSummary: _dropContextCompaction,
-          linkedGeminiSessionId: _dropGeminiSession,
-          linkedProviderSessionId: _dropProviderSession,
-          activeGoal: _dropGoal,
-          chatTodos: _dropTodos,
-          soloWakeups: _dropSoloWakeups,
-          ollamaSessionMemory: _dropOllamaMemory,
-          ollamaSessionMemories: _dropOllamaMemories,
-          delegationContext: _dropDelegationContext,
-          ...retainedChat
-        } = chat
-        const ensemble = chat.ensemble
-          ? (() => {
-              const {
-                activeRound: _dropActiveRound,
-                workSession: _dropWorkSession,
-                sessionActivityLedger: _dropActivity,
-                bossmanControlState: _dropBossControl,
-                lastRoundSummary: _dropLastSummary,
-                roundSummaries: _dropRoundSummaries,
-                wakeups: _dropWakeups,
-                blackboard: _dropBlackboard,
-                escalationSignals: _dropEscalations,
-                ...retainedEnsemble
-              } = chat.ensemble!
-              return {
-                ...retainedEnsemble,
-                participants: retainedEnsemble.participants.map((participant) => {
-                  const {
-                    taskWraithMcpProfileReceipt: _dropParticipantReceipt,
-                    seatGeneration: _dropParticipantGeneration,
-                    contextCompactionSummary: _dropParticipantSummary,
-                    promptShellVersion: _dropShell,
-                    promptDynamicStateVersion: _dropDynamic,
-                    tokenTotals: _dropTotals,
-                    kimiAcpNativeSession: _dropNativeMarker,
-                    kimiAcpPostureVersion: _dropPosture,
-                    ...retainedParticipant
-                  } = participant
-                  return { ...retainedParticipant, linkedProviderSessionId: null }
-                }),
-                updatedAt: intent.createdAt
-              }
-            })()
-          : undefined
-        const truncated = compactChatForPersist(
-          this.normalizeChatRecord({
-            ...retainedChat,
-            ...(ensemble ? { ensemble } : {}),
-            messages: [],
-            runs: [],
-            updatedAt: Date.parse(intent.createdAt),
-            persistenceRevision: chatPersistenceRevision(chat) + 1
-          })
-        )
+        const truncated = this.buildTruncatedChatRecordForErasure(chat, intent)
         if (chatContainsTruncatableHistory(chat)) {
           writeJson(chatPath, truncated)
           incrementalChatPersistence.replaceAuthoritative(chatId, truncated)
@@ -8749,6 +8893,15 @@ export class AppStore {
       return
     }
     if (step === 'chat-list-index') {
+      if (!legacyStoreCanWrite()) {
+        // The index store asserts writable and is gate-frozen in this mode.
+        // It is a desktop-local accelerator: its rows self-heal from source
+        // metadata, so once the Host has removed a record the stale row no
+        // longer matches and is dropped on the next read.
+        chatListIndexStore.clearCache()
+        for (const chatId of intent.chatIds) this.chatListIndexWriteAtByChatId.delete(chatId)
+        return
+      }
       if (intent.kind === 'global') {
         removePathStrict(chatListIndexPath, 'chat list index')
         // Also remove per-chat summary directory.
@@ -8797,7 +8950,7 @@ export class AppStore {
     }
   }
 
-  private static executeHistoryDeletion(intent: HistoryDeletionIntent): void {
+  private static executeHistoryDeletion(intent: HistoryDeletionIntent): void | Promise<void> {
     const completedQuiescence = new Set(intent.completedQuiescenceTargetIds)
     const pendingQuiescence = intent.quiescenceTargets
       .map((target) => target.id)
@@ -8819,10 +8972,85 @@ export class AppStore {
     }
 
     const failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }> = []
-    for (const step of HISTORY_DELETION_STEPS) {
+    // Sync drive: only the Host-routed chat-records step returns a promise;
+    // every legacy step completes in-tick, so the legacy transaction keeps
+    // its synchronous completion semantics (and its synchronous throws).
+    for (let index = 0; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
+      if (intent.completedSteps.includes(step)) continue
+      let settled: void | Promise<void>
+      try {
+        settled = this.executeHistoryDeletionStep(intent, step)
+      } catch (error) {
+        failures.push({ step, message: historyDeletionErrorMessage(error) })
+        continue
+      }
+      if (settled) {
+        return settled.then(
+          () => {
+            intent.completedSteps.push(step)
+            intent.failures = []
+            intent.updatedAt = new Date().toISOString()
+            writeHistoryDeletionIntent(intent)
+            return this.executeHistoryDeletionRemainder(intent, failures, index + 1)
+          },
+          (error: unknown) => {
+            failures.push({ step, message: historyDeletionErrorMessage(error) })
+            return this.executeHistoryDeletionRemainder(intent, failures, index + 1)
+          }
+        )
+      }
+      intent.completedSteps.push(step)
+      intent.failures = []
+      intent.updatedAt = new Date().toISOString()
+      writeHistoryDeletionIntent(intent)
+    }
+
+    // Re-run every idempotent boundary once under the still-held lifecycle
+    // authority. This is both final residual verification and a last sweep for
+    // a late writer that raced an earlier store step.
+    for (let index = 0; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
+      let settled: void | Promise<void>
+      try {
+        settled = this.executeHistoryDeletionStep(intent, step)
+      } catch (error) {
+        if (!failures.some((failure) => failure.step === step)) {
+          failures.push({ step, message: historyDeletionErrorMessage(error) })
+        }
+        continue
+      }
+      if (settled) {
+        // Reached only on a recovery re-run where the first loop skipped the
+        // Host-routed step via completedSteps.
+        return settled.then(
+          () => this.executeHistoryDeletionVerificationRemainder(intent, failures, index + 1),
+          (error: unknown) => {
+            if (!failures.some((failure) => failure.step === step)) {
+              failures.push({ step, message: historyDeletionErrorMessage(error) })
+            }
+            return this.executeHistoryDeletionVerificationRemainder(intent, failures, index + 1)
+          }
+        )
+      }
+    }
+
+    this.finishHistoryDeletion(intent, failures)
+  }
+
+  /** Async continuation once a step goes async mid-loop: finish the first
+   * loop, the verification sweep, and the epilogue, in order. */
+  private static async executeHistoryDeletionRemainder(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>,
+    firstLoopStart: number
+  ): Promise<void> {
+    for (let index = firstLoopStart; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
       if (intent.completedSteps.includes(step)) continue
       try {
-        this.executeHistoryDeletionStep(intent, step)
+        const settled = this.executeHistoryDeletionStep(intent, step)
+        if (settled) await settled
         intent.completedSteps.push(step)
         intent.failures = []
         intent.updatedAt = new Date().toISOString()
@@ -8831,20 +9059,32 @@ export class AppStore {
         failures.push({ step, message: historyDeletionErrorMessage(error) })
       }
     }
+    return this.executeHistoryDeletionVerificationRemainder(intent, failures, 0)
+  }
 
-    // Re-run every idempotent boundary once under the still-held lifecycle
-    // authority. This is both final residual verification and a last sweep for
-    // a late writer that raced an earlier store step.
-    for (const step of HISTORY_DELETION_STEPS) {
+  private static async executeHistoryDeletionVerificationRemainder(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>,
+    verificationStart: number
+  ): Promise<void> {
+    for (let index = verificationStart; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
       try {
-        this.executeHistoryDeletionStep(intent, step)
+        const settled = this.executeHistoryDeletionStep(intent, step)
+        if (settled) await settled
       } catch (error) {
         if (!failures.some((failure) => failure.step === step)) {
           failures.push({ step, message: historyDeletionErrorMessage(error) })
         }
       }
     }
+    this.finishHistoryDeletion(intent, failures)
+  }
 
+  private static finishHistoryDeletion(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>
+  ): void {
     if (failures.length > 0) {
       intent.failures = failures
       intent.updatedAt = new Date().toISOString()
@@ -8880,7 +9120,7 @@ export class AppStore {
     }
   }
 
-  static recoverPendingHistoryDeletion(): void {
+  static recoverPendingHistoryDeletion(): void | Promise<void> {
     if (this.historyDeletionRunning) return
     const intent = readHistoryDeletionIntent()
     if (!intent) return
@@ -8892,11 +9132,19 @@ export class AppStore {
       throw new HistoryDeletionQuiescenceRequiredError(intent.operationId, pending)
     }
     this.historyDeletionRunning = true
+    let settled: void | Promise<void>
     try {
-      this.executeHistoryDeletion(intent)
-    } finally {
+      settled = this.executeHistoryDeletion(intent)
+    } catch (error) {
       this.historyDeletionRunning = false
+      throw error
     }
+    if (settled) {
+      return settled.finally(() => {
+        this.historyDeletionRunning = false
+      })
+    }
+    this.historyDeletionRunning = false
   }
 
   private static historyDeletionPreparation(
@@ -8979,7 +9227,7 @@ export class AppStore {
     writeHistoryDeletionIntent(intent)
   }
 
-  static commitPreparedHistoryDeletion(operationId: string): void {
+  static commitPreparedHistoryDeletion(operationId: string): void | Promise<void> {
     if (this.historyDeletionRunning)
       throw new Error('A history deletion transaction is already running.')
     const intent = readHistoryDeletionIntent()
@@ -8987,16 +9235,29 @@ export class AppStore {
       throw new Error('History deletion commit does not match the pending operation.')
     }
     this.historyDeletionRunning = true
+    let settled: void | Promise<void>
     try {
-      this.executeHistoryDeletion(intent)
-    } finally {
+      settled = this.executeHistoryDeletion(intent)
+    } catch (error) {
       this.historyDeletionRunning = false
+      throw error
     }
+    if (settled) {
+      return settled.finally(() => {
+        this.historyDeletionRunning = false
+      })
+    }
+    this.historyDeletionRunning = false
   }
 
-  private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void {
+  private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void | Promise<void> {
     const prepared = this.prepareHistoryDeletion(input)
-    this.commitPreparedHistoryDeletion(prepared.operationId)
+    return this.commitPreparedHistoryDeletion(prepared.operationId)
+  }
+
+  /** True while the legacy writer gate admits writes (open, or a retained drain admission). */
+  static legacyStoreWritesOpen(): boolean {
+    return legacyStoreCanWrite()
   }
 
   static deleteChat(chatId: string, _seen: Set<string> = new Set()): void {
@@ -9004,6 +9265,18 @@ export class AppStore {
       if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
       this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
     })
+  }
+
+  /**
+   * Host-owned-gate delete: the same transaction, with only the chat-record
+   * removal routed through the Host (thread.record.delete). Callers select
+   * this via legacyStoreWritesOpen() so the legacy entry keeps its
+   * synchronous signature and semantics exactly.
+   */
+  static deleteChatViaHost(chatId: string): Promise<void> {
+    if (!isSafeChatId(chatId)) return Promise.reject(new Error('Chat id must be a safe chat id.'))
+    const settled = this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+    return settled ? settled : Promise.resolve()
   }
 
   static truncateChatHistory(chatId: string): ChatRecord | null {
@@ -9018,10 +9291,32 @@ export class AppStore {
     )
   }
 
+  /**
+   * Host-owned-gate truncate: the record is scrubbed by the same
+   * buildTruncatedChatRecordForErasure and travels via thread.record.persist
+   * with main's complete record (never delete), per the 84a5d849f modeling.
+   */
+  static truncateChatHistoryViaHost(chatId: string): Promise<ChatRecord | null> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('Chat id must be a safe chat id.'))
+    }
+    if (!this.getChat(chatId)) return Promise.resolve(null)
+    const settled = this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
+    return settled ? settled.then(() => this.getChat(chatId)) : Promise.resolve(this.getChat(chatId))
+  }
+
   static clearChats(workspaceId?: string): void {
     runLegacyStoreWriteAdmission({ operation: 'clear-chats', pathFamily: 'chats' }, () => {
       this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
     })
+  }
+
+  /** Host-owned-gate clear: repeated thread.record.delete over the frozen intent.chatIds. */
+  static clearChatsViaHost(workspaceId?: string): Promise<void> {
+    const settled = this.runHistoryDeletion(
+      workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' }
+    )
+    return settled ? settled : Promise.resolve()
   }
 
   // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so

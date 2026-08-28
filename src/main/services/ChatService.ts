@@ -249,8 +249,12 @@ export interface ChatServiceStore {
     request: ChatComposerSelectionPatchRequest
   ) => Promise<{ chat: ChatRecord; changed: boolean }>
   deleteChat: (chatId: string) => void
+  deleteChatViaHost?: (chatId: string) => Promise<void>
   truncateChatHistory?: (chatId: string) => ChatRecord | null
+  truncateChatHistoryViaHost?: (chatId: string) => Promise<ChatRecord | null>
   clearChats: (workspaceId?: string) => void
+  clearChatsViaHost?: (workspaceId?: string) => Promise<void>
+  legacyStoreWritesOpen?: () => boolean
 }
 
 export interface ChatServiceDeps {
@@ -1741,7 +1745,7 @@ export class ChatService {
     }
   }
 
-  deleteChat(chatId: string): void {
+  deleteChat(chatId: string): void | Promise<void> {
     const id = requireSafeChatId(chatId, 'Chat id')
     // Settle any active shares first so deleting a shared chat actually ends the
     // share (revocation bites on the collaborator's next inbound action) instead
@@ -1750,15 +1754,25 @@ export class ChatService {
     if (store && store.hasShareForChat(id)) {
       this.endCollaborationShares(store.listShares(id))
     }
-    this.deps.appStore.deleteChat(id)
+    if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.deleteChatViaHost) {
+      this.deps.appStore.deleteChat(id)
+      return
+    }
+    return this.deps.appStore.deleteChatViaHost(id)
   }
 
-  truncateChatHistory(chatId: string): ChatRecord | null {
+  truncateChatHistory(chatId: string): ChatRecord | null | Promise<ChatRecord | null> {
     const id = requireSafeChatId(chatId, 'Chat id')
     if (!this.deps.appStore.truncateChatHistory) {
       throw new Error('Strict chat history truncation is unavailable.')
     }
-    return this.deps.appStore.truncateChatHistory(id)
+    if (
+      (this.deps.appStore.legacyStoreWritesOpen?.() ?? true) ||
+      !this.deps.appStore.truncateChatHistoryViaHost
+    ) {
+      return this.deps.appStore.truncateChatHistory(id)
+    }
+    return this.deps.appStore.truncateChatHistoryViaHost(id)
   }
 
   async clearChats(workspaceId?: string): Promise<void> {
@@ -1768,7 +1782,7 @@ export class ChatService {
     }
     try {
       await this.prepareClearChats(workspaceId)
-      this.commitClearChats(workspaceId)
+      await this.commitClearChats(workspaceId)
     } finally {
       this.finishClearChats(workspaceId)
     }
@@ -1822,8 +1836,12 @@ export class ChatService {
   }
 
   /** Commit the durable chat deletion after every external store has cleared. */
-  commitClearChats(workspaceId?: string): void {
-    this.deps.appStore.clearChats(workspaceId)
+  commitClearChats(workspaceId?: string): void | Promise<void> {
+    if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.clearChatsViaHost) {
+      this.deps.appStore.clearChats(workspaceId)
+      return
+    }
+    return this.deps.appStore.clearChatsViaHost(workspaceId)
   }
 
   /** Release the prepare-phase admission hold for the same clear scope. */

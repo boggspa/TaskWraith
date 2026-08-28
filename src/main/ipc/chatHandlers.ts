@@ -135,7 +135,7 @@ export interface ChatHandlerDeps {
   reapAbandonedChats: (
     deps: ReapAbandonedChatsDeps,
     renderer?: RendererReapContext
-  ) => string[]
+  ) => string[] | Promise<string[]>
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
   /** Chat ids with a live share or a contribution awaiting host review. */

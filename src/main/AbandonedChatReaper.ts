@@ -171,7 +171,7 @@ export interface ReapAbandonedChatsDeps {
   getScheduledChatIds: () => Set<string>
   /** Chat ids with a live share or a contribution awaiting host review. */
   getSharedChatIds?: () => Set<string>
-  deleteChat: (chatId: string) => void
+  deleteChat: (chatId: string) => unknown
 }
 
 /**
@@ -184,7 +184,7 @@ export function reapAbandonedChats(
   deps: ReapAbandonedChatsDeps,
   renderer: RendererReapContext = {},
   limit: number = MAX_CREATE_TIME_REAP
-): string[] {
+): string[] | Promise<string[]> {
   const ids = reapableAbandonedChatIds(deps.getChats(), {
     protectedChatIds: new Set(renderer.protectedChatIds ?? []),
     draftChatIds: new Set(renderer.draftChatIds ?? []),
@@ -198,8 +198,23 @@ export function reapAbandonedChats(
     survivorCount: 1
   })
   const toReap = limit >= 0 ? ids.slice(0, limit) : ids
-  for (const id of toReap) deps.deleteChat(id)
-  return toReap
+  // Sequenced, not a fired-and-forgotten map: a Host-routed delete is an
+  // async round trip, and the store admits one durable deletion intent at a
+  // time, so concurrent deletes would self-collide. A synchronous deleter
+  // (e.g. the candidate collector) never starts the chain and the result
+  // stays synchronous, preserving the caller's in-tick selection protocol.
+  let chain: Promise<void> | null = null
+  for (const id of toReap) {
+    if (chain) {
+      chain = chain.then(() => deps.deleteChat(id) as Promise<void>)
+      continue
+    }
+    const deletion = deps.deleteChat(id)
+    if (deletion && typeof (deletion as PromiseLike<void>).then === 'function') {
+      chain = Promise.resolve(deletion as Promise<void>)
+    }
+  }
+  return chain ? chain.then(() => toReap) : toReap
 }
 
 /** Chat ids that are a parent of at least one other chat in `chats`. */

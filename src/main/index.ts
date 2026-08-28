@@ -41754,7 +41754,7 @@ async function executeGeminiMcpTool(
             isolation
           })
           if (!workerPermissions.ok) {
-            AppStore.deleteChat(subThread.appChatId)
+            await AppStore.deleteChat(subThread.appChatId)
             throw new Error(`delegate_wave: ${workerPermissions.reason}`)
           }
           const subThreadEffectivePermissions = workerPermissions.effectivePermissions
@@ -41905,7 +41905,7 @@ async function executeGeminiMcpTool(
             runId: subThreadRunId
           }
         },
-        rollbackWorker: (child) => {
+        rollbackWorker: async (child) => {
           // Cancel before delete so a fire-and-forget dispatch cannot keep running
           // after the wave rolls back a later spawn failure.
           try {
@@ -41936,7 +41936,7 @@ async function executeGeminiMcpTool(
           } catch {
             // Best-effort card cleanup.
           }
-          AppStore.deleteChat(child.subThreadId)
+          await AppStore.deleteChat(child.subThreadId)
         },
         projectFleetWaveCard: ({
           waveId,
@@ -51934,7 +51934,7 @@ if (isGeminiMcpBridgeProcess) {
           })
           await holds.codexAdmissionHold.completion
         },
-        commit: (operationId) => {
+        commit: async (operationId) => {
           // Checkpoint and collaboration erasure join the broad transaction
           // pre-commit under the same durable intent; a purge failure keeps
           // the operation pending and resumable.
@@ -51959,7 +51959,7 @@ if (isGeminiMcpBridgeProcess) {
             )
             purgeHumanCollaborationForErasure(pending.kind, pending.chatIds)
           }
-          AppStore.commitPreparedHistoryDeletion(operationId)
+          await AppStore.commitPreparedHistoryDeletion(operationId)
         },
         releaseHolds: (preparation, holds) => {
           const releaseErrors: unknown[] = []
@@ -55184,11 +55184,33 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.recordHistoryDeletionQuiesced(operationId, targetIds),
       commitDelete: (chatId) => {
         purgeSessionCheckpointsForScopedDeletion('chat', chatId)
-        chatService.deleteChat(chatId)
+        const deletion = chatService.deleteChat(chatId)
+        if (deletion) {
+          // Host-owned gate: this coordinator predates the async commit
+          // boundary and cannot await; the transaction is already durably
+          // initiated (intent journal + tombstone) and completes in the
+          // background, with recovery on the durable intent if we crash.
+          void (deletion as Promise<void>).then(
+            () => undefined,
+            (error) => console.error('[delete] Host-routed chat deletion failed after commit', error)
+          )
+        }
       },
       commitTruncate: (chatId) => {
         purgeSessionCheckpointsForScopedDeletion('truncate', chatId)
-        return chatService.truncateChatHistory(chatId)
+        const truncated = chatService.truncateChatHistory(chatId)
+        if (truncated && typeof (truncated as Promise<ChatRecord | null>).then === 'function') {
+          // Same bridge as commitDelete: durably initiated, completes in the
+          // background; the success-broadcast record awaits the coordinator's
+          // async-commit follow-up.
+          void (truncated as Promise<ChatRecord | null>).then(
+            () => undefined,
+            (error) =>
+              console.error('[truncate] Host-routed truncation failed after commit', error)
+          )
+          return null
+        }
+        return truncated as ChatRecord | null
       },
       beginUsageHistoryMutation: (preparation) => usageHistoryDeletionTarget.acquire(preparation),
       purgeUsageHistoryStrict: async (preparation, hold) => {
