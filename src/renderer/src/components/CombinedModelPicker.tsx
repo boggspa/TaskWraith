@@ -345,6 +345,7 @@ export type UnifiedModelEntry = {
 
 const NO_COLLAPSED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
 const NO_EXPANDED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
+const NO_UNIFIED_PROVIDER_GROUPS: readonly CombinedModelPickerProviderGroup[] = []
 
 export function flattenUnifiedProviderModels(
   groups: readonly CombinedModelPickerProviderGroup[],
@@ -1227,7 +1228,7 @@ export function CombinedModelPicker({
   onOpenChange,
   onCloseWithHighlight
 }: CombinedModelPickerProps): React.JSX.Element {
-  const unifiedProviderGroups = providerGroups || []
+  const unifiedProviderGroups = providerGroups || NO_UNIFIED_PROVIDER_GROUPS
   const isUnifiedProviderPicker = unifiedProviderGroups.length > 0
   const selectedProviderGroup = isUnifiedProviderPicker
     ? unifiedProviderGroups.find((group) => group.provider === provider)

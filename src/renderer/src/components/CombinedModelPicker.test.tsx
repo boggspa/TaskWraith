@@ -512,9 +512,7 @@ describe('CombinedModelPicker', () => {
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
       'utf8'
     )
-    const headerRule = css.match(
-      /\.composer-combined-picker-provider-header\s*\{([^}]*)\}/
-    )?.[1]
+    const headerRule = css.match(/\.composer-combined-picker-provider-header\s*\{([^}]*)\}/)?.[1]
     const labelRule = css.match(
       /\.composer-combined-picker-provider-header-label\s*\{([^}]*)\}/
     )?.[1]

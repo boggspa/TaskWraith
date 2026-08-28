@@ -9823,11 +9823,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: color-mix(
-    in srgb,
-    var(--model-provider-accent, var(--accent)) 76%,
-    var(--text-primary)
-  );
+  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 76%, var(--text-primary));
   font: inherit;
   font-family: var(--font-sans);
   text-align: left;
