@@ -55184,33 +55184,11 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.recordHistoryDeletionQuiesced(operationId, targetIds),
       commitDelete: (chatId) => {
         purgeSessionCheckpointsForScopedDeletion('chat', chatId)
-        const deletion = chatService.deleteChat(chatId)
-        if (deletion) {
-          // Host-owned gate: this coordinator predates the async commit
-          // boundary and cannot await; the transaction is already durably
-          // initiated (intent journal + tombstone) and completes in the
-          // background, with recovery on the durable intent if we crash.
-          void (deletion as Promise<void>).then(
-            () => undefined,
-            (error) => console.error('[delete] Host-routed chat deletion failed after commit', error)
-          )
-        }
+        return chatService.deleteChat(chatId)
       },
       commitTruncate: (chatId) => {
         purgeSessionCheckpointsForScopedDeletion('truncate', chatId)
-        const truncated = chatService.truncateChatHistory(chatId)
-        if (truncated && typeof (truncated as Promise<ChatRecord | null>).then === 'function') {
-          // Same bridge as commitDelete: durably initiated, completes in the
-          // background; the success-broadcast record awaits the coordinator's
-          // async-commit follow-up.
-          void (truncated as Promise<ChatRecord | null>).then(
-            () => undefined,
-            (error) =>
-              console.error('[truncate] Host-routed truncation failed after commit', error)
-          )
-          return null
-        }
-        return truncated as ChatRecord | null
+        return chatService.truncateChatHistory(chatId)
       },
       beginUsageHistoryMutation: (preparation) => usageHistoryDeletionTarget.acquire(preparation),
       purgeUsageHistoryStrict: async (preparation, hold) => {
