@@ -275,11 +275,17 @@ async function runProductionRoundTrip(launcher, target) {
   const tokenPath = path.join(profile, 'taskwraith-host-v2.token')
   const leasePath = path.join(profile, 'taskwraith-host-authority-v1.json')
   const identityPath = path.join(profile, 'host-runtime', 'host-install-identity.json')
+  const legacyChatsPath = path.join(profile, 'chats')
   const workspace = path.join(profile, 'workspace')
   const museBinary = path.join(profile, 'muse')
   let child = null
   try {
     fs.mkdirSync(workspace)
+    // Real pre-Host Desktop profiles inherited the process umask and commonly
+    // carry chats/ as 0755. The bundled Host must safely tighten that known
+    // app-owned directory rather than fail before publishing discovery.
+    fs.mkdirSync(legacyChatsPath, { mode: 0o755 })
+    if (target.platform !== 'win32') fs.chmodSync(legacyChatsPath, 0o755)
     const launcherArgs = ['--profile', canonicalProfile]
     const childEnv = {}
 
@@ -299,6 +305,9 @@ async function runProductionRoundTrip(launcher, target) {
     assertOwnerOnly(tokenPath, 'production Host token')
     assertOwnerOnly(leasePath, 'production Host authority lease')
     assertOwnerOnly(identityPath, 'production Host identity')
+    if (target.platform !== 'win32' && (fs.lstatSync(legacyChatsPath).mode & 0o7777) !== 0o700) {
+      fail('production Host must tighten a legacy chats directory to owner-only')
+    }
 
     const response = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
       type: 'request',

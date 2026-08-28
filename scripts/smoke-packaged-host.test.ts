@@ -28,6 +28,8 @@ describe('packaged production Host smoke', () => {
     expect(smoke).toContain('Emergency-only cleanup')
     expect(smoke).toContain('TASKWRAITH_HOST_REQUIRE_PACKAGE')
     expect(smoke).toContain('host-bin')
+    expect(smoke).toContain('legacyChatsPath')
+    expect(smoke).toContain('must tighten a legacy chats directory to owner-only')
     expect(smoke).toContain('MistralCredentialLane.js')
     expect(smoke).not.toContain('exact production main/muse closure')
     expect(smoke).toContain('main provider closure mismatch')

@@ -1353,10 +1353,50 @@ export class HostProfileDomainStore {
     } catch {
       throw new Error('Profile directory cannot be initialized')
     }
-    const stat = lstatSync(path)
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Unsafe profile directory')
-    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
-      throw new Error('Profile directory is not owner-only')
+    const before = lstatSync(path)
+    if (!before.isDirectory() || before.isSymbolicLink()) {
+      throw new Error('Unsafe profile directory')
+    }
+    if (process.platform === 'win32') return
+
+    // Legacy Desktop profiles created `chats/` with the process umask (often
+    // 0755). The standalone and in-process Hosts both require owner-only
+    // profile state, so tighten that known app-owned directory during takeover
+    // instead of making every existing installation fail before discovery is
+    // published. Bind the repair to an O_NOFOLLOW directory descriptor and
+    // verify the pathname still names the same inode after fchmod.
+    const fd = openSync(
+      path,
+      constants.O_RDONLY | (constants.O_DIRECTORY || 0) | (constants.O_NOFOLLOW || 0)
+    )
+    try {
+      const opened = fstatSync(fd)
+      if (
+        !opened.isDirectory() ||
+        String(opened.ino) !== String(before.ino) ||
+        String(opened.dev) !== String(before.dev)
+      ) {
+        throw new Error('Profile directory changed while opening')
+      }
+      if ((opened.mode & 0o7777) !== PRIVATE_DIRECTORY_MODE) {
+        fchmodSync(fd, PRIVATE_DIRECTORY_MODE)
+        fsyncSync(fd)
+      }
+      const repaired = fstatSync(fd)
+      const current = lstatSync(path)
+      if (
+        !repaired.isDirectory() ||
+        (repaired.mode & 0o7777) !== PRIVATE_DIRECTORY_MODE ||
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        String(current.ino) !== String(repaired.ino) ||
+        String(current.dev) !== String(repaired.dev) ||
+        (current.mode & 0o7777) !== PRIVATE_DIRECTORY_MODE
+      ) {
+        throw new Error('Profile directory owner-only repair could not be verified')
+      }
+    } finally {
+      closeSync(fd)
     }
   }
 

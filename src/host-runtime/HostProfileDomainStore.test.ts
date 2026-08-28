@@ -1,6 +1,8 @@
 import {
   chmodSync,
+  lstatSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -39,6 +41,21 @@ afterEach(() => {
 })
 
 describe('HostProfileDomainStore', () => {
+  it('tightens a legacy process-umask chats directory to owner-only during Host takeover', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-legacy-mode-'))
+    profiles.push(profile)
+    const chats = join(profile, HOST_PROFILE_CHATS_DIRECTORY)
+    mkdirSync(chats, { mode: 0o755 })
+    if (process.platform !== 'win32') chmodSync(chats, 0o755)
+    const authority = { assertProfileAuthority: vi.fn() }
+
+    expect(() => new HostProfileDomainStore({ profilePath: profile, authority })).not.toThrow()
+    if (process.platform !== 'win32') {
+      expect(lstatSync(chats).mode & 0o7777).toBe(0o700)
+    }
+    expect(authority.assertProfileAuthority).toHaveBeenCalled()
+  })
+
   it('asserts authority before profile access and canonicalizes workspace aliases idempotently', () => {
     const { store, workspace, authority } = open()
     const first = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
