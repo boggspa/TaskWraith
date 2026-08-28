@@ -392,6 +392,7 @@ export class HostNodeProductionServer {
     const base: HostCapability[] = ['bootstrap', 'snapshot', 'deltas']
     if (this.options.threadOffersProvider) base.push('model-offers')
     if (this.domain?.supportsWorkspaceGit) base.push('workspace-git')
+    if (this.domain?.supportsEnsembleSeatControl) base.push('ensemble')
     base.push(
       'provider-catalog',
       'provider-auth',

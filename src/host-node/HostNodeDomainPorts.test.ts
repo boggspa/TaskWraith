@@ -313,6 +313,125 @@ describe('HostNodeDomainPorts', () => {
     })
   })
 
+  it('allows a local actor to toggle only a seat on the targeted ensemble thread', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const first = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const second = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [first, second]) {
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+    }
+    const firstRecord = store.getThread(first.appChatId)!
+    const secondRecord = store.getThread(second.appChatId)!
+    const firstParticipants = (firstRecord.ensemble as { participants: Array<{ id: string }> })
+      .participants
+    const secondParticipants = (secondRecord.ensemble as { participants: Array<{ id: string }> })
+      .participants
+    const toggle = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-toggle',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[0]!.id, enabled: false }
+    )
+
+    expect(domain.evaluateAuthority(context, toggle)).toEqual({ decision: 'allow' })
+    await expect(domain.executeCommand(context, toggle, { id: 'tui-target' })).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'ensemble_seat_disabled'
+    })
+    expect(
+      (
+        store.getThread(first.appChatId)!.ensemble as {
+          participants: Array<{ id: string; enabled: boolean }>
+        }
+      ).participants.find((participant) => participant.id === firstParticipants[0]!.id)
+    ).toMatchObject({ enabled: false })
+
+    const lastSeat = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-last',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[1]!.id, enabled: false }
+    )
+    expect(domain.evaluateAuthority(context, lastSeat)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_last_seat_required'
+    })
+
+    const crossThread = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-cross-thread',
+      { threadId: first.appChatId },
+      { participantId: secondParticipants[0]!.id, enabled: false }
+    )
+    expect(domain.evaluateAuthority(context, crossThread)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_participant_not_found'
+    })
+
+    const current = store.getThread(first.appChatId)!
+    store.persistThreadRecord({
+      threadId: current.appChatId,
+      expectedRevision: current.persistenceRevision ?? 0,
+      record: {
+        ...current,
+        ensemble: {
+          ...(current.ensemble as Record<string, unknown>),
+          activeRound: { status: 'running' }
+        }
+      }
+    })
+    const activeRoundToggle = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-active-round',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[0]!.id, enabled: true }
+    )
+    expect(domain.evaluateAuthority(context, activeRoundToggle)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_round_active'
+    })
+
+    const ios = {
+      actor: { actorId: 'ios-1', clientId: 'ios-1', clientClass: 'ios' as const },
+      client: { clientId: 'ios-1', clientClass: 'ios' as const, clientVersion: '1.0.0' }
+    }
+    expect(
+      domain.evaluateAuthority(ios, {
+        ...toggle,
+        actor: ios.actor
+      })
+    ).toEqual({
+      decision: 'deny',
+      reason: 'standalone_local_actor_required'
+    })
+  })
+
+  it('refuses composer.send on an ensemble thread instead of running one provider', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+    store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+    const send = command(
+      'composer.send',
+      'cmd-ensemble-send',
+      { threadId: thread.appChatId },
+      { text: 'This must not masquerade as an ensemble round.' }
+    )
+
+    expect(domain.evaluateAuthority(context, send)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_round_unavailable'
+    })
+    await expect(domain.executeCommand(context, send, { id: 'tui-target' })).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'authority_denied'
+    })
+    expect(store.getThread(thread.appChatId)?.runs ?? []).toEqual([])
+  })
+
   it('allows only the exact Desktop Host actor to mutate workspace records', async () => {
     const { domain, store, workspace } = open()
     const upsert = desktopCommand(

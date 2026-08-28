@@ -46,7 +46,10 @@ import {
   type HostAuthorityCallContext
 } from '../host-runtime/HostAuthority'
 import { projectHostProfileDomainSnapshot } from '../host-runtime/HostProfileDomainProjection'
-import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import {
+  HostProfileDomainStore,
+  type HostProfileThread
+} from '../host-runtime/HostProfileDomainStore'
 import {
   consumeHostThreadRecordTransfer,
   HostThreadRecordTransferIntegrityError,
@@ -239,6 +242,58 @@ function projectHostGitResult(result: HostGitReadResult): HostWorkspaceGitReadRe
   })
 }
 
+interface HostNodeEnsembleParticipant extends Record<string, unknown> {
+  readonly id: string
+  readonly provider: string
+  readonly enabled: boolean
+  readonly order: number
+}
+
+interface HostNodeEnsembleRecord extends Record<string, unknown> {
+  readonly participants: readonly HostNodeEnsembleParticipant[]
+  readonly activeRound?: unknown
+}
+
+function ensembleForSeatControl(thread: HostProfileThread): HostNodeEnsembleRecord | null {
+  if (thread.chatKind !== 'ensemble') return null
+  const raw = thread.ensemble
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const participants = (raw as Record<string, unknown>).participants
+  if (!Array.isArray(participants) || participants.length === 0) return null
+  const seen = new Set<string>()
+  const decoded: HostNodeEnsembleParticipant[] = []
+  for (const participant of participants) {
+    if (!participant || typeof participant !== 'object' || Array.isArray(participant)) return null
+    const record = participant as Record<string, unknown>
+    if (
+      !isCanonicalId(record.id) ||
+      !isCanonicalId(record.provider) ||
+      typeof record.enabled !== 'boolean' ||
+      !Number.isInteger(record.order) ||
+      (record.order as number) < 0 ||
+      seen.has(record.id)
+    ) {
+      return null
+    }
+    seen.add(record.id)
+    decoded.push(record as HostNodeEnsembleParticipant)
+  }
+  return {
+    ...(raw as Record<string, unknown>),
+    participants: decoded
+  } as HostNodeEnsembleRecord
+}
+
+function ensembleRoundIsActive(ensemble: HostNodeEnsembleRecord): boolean {
+  const round = ensemble.activeRound
+  return (
+    Boolean(round) &&
+    typeof round === 'object' &&
+    !Array.isArray(round) &&
+    (round as Record<string, unknown>).status === 'running'
+  )
+}
+
 function isSetupMutationName(name: HostCommand['name']): boolean {
   return (
     name === 'workspace.register' ||
@@ -375,6 +430,10 @@ export class HostNodeDomainPorts {
     return this.options.gitReadService !== undefined
   }
 
+  get supportsEnsembleSeatControl(): boolean {
+    return true
+  }
+
   async gitRead(
     context: HostAuthorityCallContext,
     request: HostWorkspaceGitReadParams
@@ -502,9 +561,45 @@ export class HostNodeDomainPorts {
       return { decision: 'allow' }
     }
 
-    if (command.name !== 'composer.send' && command.name !== 'run.cancel') {
+    if (
+      command.name !== 'composer.send' &&
+      command.name !== 'run.cancel' &&
+      command.name !== 'ensemble.seat.toggle'
+    ) {
       return { decision: 'deny', reason: 'standalone_command_unsupported' }
     }
+    const profileThread = this.options.store.getThread(command.target.threadId)
+    if (!profileThread || profileThread.archived || profileThread.scope !== 'workspace') {
+      return { decision: 'deny', reason: 'standalone_thread_required' }
+    }
+
+    if (command.name === 'ensemble.seat.toggle') {
+      const ensemble = ensembleForSeatControl(profileThread)
+      if (!ensemble) {
+        return { decision: 'deny', reason: 'standalone_ensemble_thread_required' }
+      }
+      if (ensembleRoundIsActive(ensemble)) {
+        return { decision: 'deny', reason: 'standalone_ensemble_round_active' }
+      }
+      const participantId = command.arguments.participantId as string
+      const participant = ensemble.participants.find((candidate) => candidate.id === participantId)
+      if (!participant) {
+        return { decision: 'deny', reason: 'standalone_ensemble_participant_not_found' }
+      }
+      if (
+        participant.enabled &&
+        command.arguments.enabled === false &&
+        ensemble.participants.filter((candidate) => candidate.enabled).length <= 1
+      ) {
+        return { decision: 'deny', reason: 'standalone_ensemble_last_seat_required' }
+      }
+      return { decision: 'allow' }
+    }
+
+    if (command.name === 'composer.send' && profileThread.chatKind === 'ensemble') {
+      return { decision: 'deny', reason: 'standalone_ensemble_round_unavailable' }
+    }
+
     const thread = this.runPort.getThread(command.target.threadId)
     if (!thread) {
       return { decision: 'deny', reason: 'standalone_thread_required' }
@@ -581,6 +676,10 @@ export class HostNodeDomainPorts {
         : failed('question_not_found')
     }
 
+    if (command.name === 'ensemble.seat.toggle') {
+      return this.toggleEnsembleSeat(decoded.value)
+    }
+
     if (command.name !== 'composer.send') return failed('command_unsupported')
 
     const thread = this.runPort.getThread(command.target.threadId)
@@ -623,6 +722,60 @@ export class HostNodeDomainPorts {
       return failed('run_not_started')
     }
     return { status: 'succeeded', resultSummary: 'run_started' }
+  }
+
+  private toggleEnsembleSeat(command: HostCommand): HostCommandExecutionResult {
+    try {
+      const current = this.options.store.getThread(command.target.threadId)
+      if (!current || current.archived || current.scope !== 'workspace') {
+        return failed('ensemble_thread_not_found')
+      }
+      const ensemble = ensembleForSeatControl(current)
+      if (!ensemble) return failed('ensemble_thread_required')
+      if (ensembleRoundIsActive(ensemble)) {
+        return failed('ensemble_round_active')
+      }
+      const participantId = command.arguments.participantId as string
+      const enabled = command.arguments.enabled as boolean
+      const participant = ensemble.participants.find((candidate) => candidate.id === participantId)
+      if (!participant) return failed('ensemble_participant_not_found')
+      if (
+        participant.enabled &&
+        enabled === false &&
+        ensemble.participants.filter((candidate) => candidate.enabled).length <= 1
+      ) {
+        return failed('ensemble_last_seat_required')
+      }
+      if (participant.enabled === enabled) {
+        return { status: 'succeeded', resultSummary: 'ensemble_seat_unchanged' }
+      }
+
+      const participants = ensemble.participants.map((candidate) =>
+        candidate.id === participantId ? { ...candidate, enabled } : candidate
+      )
+      this.options.store.persistThreadRecord({
+        threadId: current.appChatId,
+        expectedRevision: current.persistenceRevision ?? 0,
+        record: {
+          ...current,
+          ensemble: {
+            ...ensemble,
+            participants,
+            updatedAt: new Date(this.now()).toISOString()
+          }
+        }
+      })
+      return {
+        status: 'succeeded',
+        resultSummary: enabled ? 'ensemble_seat_enabled' : 'ensemble_seat_disabled'
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === 'Thread persistence revision mismatch') {
+        return failed('ensemble_seat_revision_conflict')
+      }
+      return failed('ensemble_seat_toggle_failed')
+    }
   }
 
   private upsertWorkspaceRecord(command: HostCommand): HostCommandExecutionResult {

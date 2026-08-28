@@ -114,6 +114,13 @@ const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set([
 ])
 
 /**
+ * Direct user control on the caller's own thread. The domain rechecks thread
+ * and participant ownership; the transport evaluator admits only exact local
+ * desktop/tui/test actors and never creates an approval loop.
+ */
+const LOCAL_THREAD_COMMANDS: ReadonlySet<HostCommandName> = new Set(['ensemble.seat.toggle'])
+
+/**
  * Domain mutation commands with no pre-existing governing authority in
  * the codebase (R5 C3 + C7). PermissionService governs agentic tool-call
  * permissions; NativeApprovalPolicy governs native OS preflight. Neither
@@ -125,7 +132,6 @@ const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set([
 const MUTATION_COMMANDS_NO_AUTHORITY: ReadonlySet<HostCommandName> = new Set([
   'composer.send',
   'run.cancel',
-  'ensemble.seat.toggle',
   'channel.member.revoke',
   'channel.close',
   'thread.select'
@@ -150,9 +156,23 @@ const ALL_CLASSIFIED: ReadonlySet<HostCommandName> = new Set([
   ...READ_COMMANDS,
   ...RESPONSE_COMMANDS,
   ...DESKTOP_INTERNAL_COMMANDS,
+  ...LOCAL_THREAD_COMMANDS,
   ...MUTATION_COMMANDS_NO_AUTHORITY,
   ...SETUP_COMMANDS
 ])
+
+function isExactLocalActor(command: HostCommand, context: HostAuthorityCallContext): boolean {
+  return (
+    (context.client.clientClass === 'desktop' ||
+      context.client.clientClass === 'tui' ||
+      context.client.clientClass === 'test') &&
+    context.actor.clientId === context.client.clientId &&
+    context.actor.clientClass === context.client.clientClass &&
+    command.actor.actorId === context.actor.actorId &&
+    command.actor.clientId === context.actor.clientId &&
+    command.actor.clientClass === context.actor.clientClass
+  )
+}
 
 function isExactDesktopInternalActor(
   command: HostCommand,
@@ -239,17 +259,23 @@ export function createHostProductionAuthorityEvaluator(
       }
     }
 
+    if (LOCAL_THREAD_COMMANDS.has(name as HostCommandName)) {
+      if (!isExactLocalActor(command, context)) {
+        return {
+          decision: 'denied',
+          reason: 'thread-command-requires-exact-local-actor',
+          policy: 'host-arc-r5-c5-local-thread'
+        }
+      }
+      return {
+        decision: 'allowed',
+        reason: 'exact-local-thread-actor',
+        policy: 'host-arc-r5-c5-local-thread'
+      }
+    }
+
     if (SETUP_COMMANDS.has(name as HostCommandName)) {
-      const locallyBound =
-        (context.client.clientClass === 'desktop' ||
-          context.client.clientClass === 'tui' ||
-          context.client.clientClass === 'test') &&
-        context.actor.clientId === context.client.clientId &&
-        context.actor.clientClass === context.client.clientClass &&
-        command.actor.actorId === context.actor.actorId &&
-        command.actor.clientId === context.actor.clientId &&
-        command.actor.clientClass === context.actor.clientClass
-      if (!locallyBound) {
+      if (!isExactLocalActor(command, context)) {
         return {
           decision: 'denied',
           reason: 'setup-requires-exact-local-actor',
@@ -314,6 +340,11 @@ export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES: readonly HostCommand
 /** App-internal commands allowed only for the exact authenticated Desktop Host actor. */
 export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL: readonly HostCommandName[] = [
   ...DESKTOP_INTERNAL_COMMANDS
+].sort() as HostCommandName[]
+
+/** Local thread commands allowed only for an exact authenticated local actor. */
+export const HOST_PRODUCTION_AUTHORITY_EVALUATOR_LOCAL_THREAD: readonly HostCommandName[] = [
+  ...LOCAL_THREAD_COMMANDS
 ].sort() as HostCommandName[]
 
 /** Mutation commands that default to deferred (no existing authority). */

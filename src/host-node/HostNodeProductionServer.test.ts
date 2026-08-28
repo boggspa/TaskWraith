@@ -71,6 +71,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     threadHistory: vi.fn(),
     historySince: vi.fn(),
     supportsWorkspaceGit: false,
+    supportsEnsembleSeatControl: false,
     gitRead: vi.fn(),
     registry: { supportsApprovals: false, supportsQuestions: false },
     interactions: new HostNodeInteractionRegistry(),
@@ -242,6 +243,19 @@ describe('HostNodeProductionServer', () => {
       workspaceId: 'workspace-1',
       scope: 'status'
     })
+    await available.server.stop()
+  })
+
+  it('offers ensemble only when the constructed domain serves seat control', async () => {
+    const unavailable = harness()
+    await unavailable.server.start()
+    expect(unavailable.capabilityOffer()).not.toContain('ensemble')
+    await unavailable.server.stop()
+
+    const available = harness()
+    available.domain.supportsEnsembleSeatControl = true
+    await available.server.start()
+    expect(available.capabilityOffer()).toContain('ensemble')
     await available.server.stop()
   })
 

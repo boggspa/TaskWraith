@@ -30,6 +30,7 @@ import {
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED,
+  HOST_PRODUCTION_AUTHORITY_EVALUATOR_LOCAL_THREAD,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_READS,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES,
   HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP,
@@ -169,6 +170,7 @@ describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
     const responses = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_RESPONSES)
     const deferred = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_DEFERRED)
     const desktopInternal = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL)
+    const localThread = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_LOCAL_THREAD)
     const setup = new Set(HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP)
 
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
@@ -176,12 +178,18 @@ describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
       const inResponses = responses.has(name)
       const inDeferred = deferred.has(name)
       const inDesktopInternal = desktopInternal.has(name)
+      const inLocalThread = localThread.has(name)
       const inSetup = setup.has(name)
 
       // Exactly one set
-      const count = [inReads, inResponses, inDeferred, inDesktopInternal, inSetup].filter(
-        Boolean
-      ).length
+      const count = [
+        inReads,
+        inResponses,
+        inDeferred,
+        inDesktopInternal,
+        inLocalThread,
+        inSetup
+      ].filter(Boolean).length
       expect(count).toBe(1)
     }
   })
@@ -266,6 +274,36 @@ describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
     })
   })
 
+  it('ensemble.seat.toggle allows exact local actors without an approval challenge', () => {
+    for (const clientClass of ['desktop', 'tui', 'test'] as const) {
+      expect(evaluate('ensemble.seat.toggle', { clientClass })).toMatchObject({
+        decision: 'allowed',
+        policy: 'host-arc-r5-c5-local-thread'
+      })
+    }
+    expect(evaluate('ensemble.seat.toggle', { clientClass: 'ios' })).toMatchObject({
+      decision: 'denied',
+      policy: 'host-arc-r5-c5-local-thread'
+    })
+
+    const evaluator = createHostProductionAuthorityEvaluator()
+    const command = makeCommand('ensemble.seat.toggle', {
+      actor: makeActor({ actorId: 'spoofed-actor' })
+    })
+    const result = evaluator(command, {
+      actor: makeActor(),
+      client: {
+        clientId: TASKWRAITH_DESKTOP_HOST_ACTOR.clientId,
+        clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
+        clientVersion: '1.0.0'
+      }
+    }) as AppStoreHostAuthorityEvaluation
+    expect(result).toMatchObject({
+      decision: 'denied',
+      policy: 'host-arc-r5-c5-local-thread'
+    })
+  })
+
   it.each([...HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP])(
     '%s → allowed only for exact local desktop/tui/test actors',
     (name) => {
@@ -341,12 +379,13 @@ describe('HostProductionAuthorityEvaluator clientClass ordering (C5)', () => {
     }
   )
 
-  it('only setup and desktop-internal commands distinguish local from remote classes', () => {
+  it('only setup, local-thread, and desktop-internal commands distinguish local from remote classes', () => {
     for (const name of HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE) {
       const results = allClientClasses.map((cc) => evaluate(name, { clientClass: cc }))
       const decisions = new Set(results.map((r) => r.decision))
       if (
         HOST_PRODUCTION_AUTHORITY_EVALUATOR_SETUP.includes(name) ||
+        HOST_PRODUCTION_AUTHORITY_EVALUATOR_LOCAL_THREAD.includes(name) ||
         HOST_PRODUCTION_AUTHORITY_EVALUATOR_DESKTOP_INTERNAL.includes(name)
       ) {
         expect(decisions).toEqual(new Set(['allowed', 'denied']))
