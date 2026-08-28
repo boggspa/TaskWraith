@@ -772,7 +772,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(codex.fastModeCapableModelIds.has('gpt-5.6-luna')).toBe(true)
   })
 
-  it('warns before Cerebras GLM-4.7 retires and removes only that row on the date', () => {
+  it('warns before Pi model sunsets and removes each reached row from Add Participant', () => {
     const before = getEnsembleModelDefaults('pi', new Date(2026, 7, 16, 23, 59))
     expect(
       before.modelOptions.find((option) => option.id === 'cerebras/zai-glm-4.7')
@@ -780,11 +780,32 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       label: 'GLM-4.7 (Cerebras)',
       retiresAt: '2026-08-17'
     })
+    expect(
+      before.modelOptions.find((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toMatchObject({
+      label: 'Ox Alpha',
+      retiresAt: '2026-08-28'
+    })
 
-    const retired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
-    expect(retired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(false)
-    expect(retired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
-    expect(retired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    const cerebrasRetired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
+    expect(cerebrasRetired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(
+      false
+    )
+    expect(
+      cerebrasRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toBe(true)
+
+    const oxAlphaRetired = getEnsembleModelDefaults('pi', new Date(2026, 7, 28, 0, 0))
+    expect(
+      oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toBe(false)
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(
+      true
+    )
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/zai/glm-5.2')).toBe(
+      true
+    )
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {

@@ -348,12 +348,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             accentProvider: 'mistral'
           },
           {
-            name: 'Ox Alpha',
-            blurb:
-              "OpenRouter's unbranded stealth lane on Pi — a preview that can be withdrawn any day.",
-            accentProvider: 'openrouter'
-          },
-          {
             name: 'Laguna S 2.1',
             blurb:
               'Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.',

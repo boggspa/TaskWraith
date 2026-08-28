@@ -17,8 +17,8 @@
  * ships a bundled list rather than shelling out to `pi --list-models`.
  * Built-in metadata below is extracted from pi 0.84.2's bundled catalog
  * (@earendil-works/pi-ai providers/data). Newer Mistral deployments and the
- * user-approved OpenRouter Ox Alpha exception are registered per run; re-check
- * both sources on pi upgrades.
+ * curated OpenRouter routes are registered per run; re-check both sources on
+ * pi upgrades.
  *
  * Curation is deliberate: flagship coder models per allowed upstream. Resold
  * duplicates stay out unless they expose a distinct user-paid entitlement
@@ -418,9 +418,12 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: false
   },
   // OpenRouter — user-approved exceptions only. Pi 0.82.1 does not bundle
-  // these models, so PiOpenRouterModelRegistration writes their metadata in the
-  // selected run's isolated home before Pi starts.
+  // these models, so PiOpenRouterModelRegistration writes active metadata in
+  // the selected run's isolated home before Pi starts.
   {
+    // Historical metadata only: lifecycle filtering hides this from current
+    // offers and policy refuses a new run, while saved chats/seats retain its
+    // original label and context window.
     wireId: 'openrouter/stealth/ox-alpha',
     upstream: 'openrouter',
     modelId: 'stealth/ox-alpha',

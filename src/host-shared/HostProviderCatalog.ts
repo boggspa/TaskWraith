@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto'
 
+import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 import {
   KIMI_K27_MODEL_ID,
@@ -328,11 +329,15 @@ function hashEntry(entry: Omit<HostProviderCatalogEntry, 'providerId'>): string 
 export function hostProviderCatalogEntry(providerId: string): HostProviderCatalogEntry | null {
   const entry = CATALOG[providerId]
   if (!entry) return null
+  const activeModels =
+    providerId === 'pi'
+      ? entry.models.filter((model) => !isPiModelRetired(model.modelId))
+      : entry.models
   return {
     providerId,
     displayProvider: entry.displayProvider,
     shortCode: entry.shortCode,
-    models: entry.models.map((m) => ({
+    models: activeModels.map((m) => ({
       modelId: m.modelId,
       label: m.label,
       available: m.available,

@@ -52,7 +52,7 @@ describe('codexModelContextConfig', () => {
 })
 
 describe('getStaticProviderModels (Pi lifecycle)', () => {
-  it('warns before Cerebras GLM-4.7 retires and removes it on the date', () => {
+  it('warns before Pi model sunsets and removes each model on its retirement date', () => {
     const before = getStaticProviderModels('pi', {
       now: new Date(2026, 7, 16, 23, 59)
     })
@@ -60,13 +60,28 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
       label: 'GLM-4.7 (Cerebras)',
       retiresAt: '2026-08-17'
     })
+    expect(before.find((model) => model.id === 'openrouter/stealth/ox-alpha')).toMatchObject({
+      label: 'Ox Alpha',
+      retiresAt: '2026-08-28'
+    })
 
-    const retired = getStaticProviderModels('pi', {
+    const cerebrasRetired = getStaticProviderModels('pi', {
       now: new Date(2026, 7, 17, 0, 0)
     })
-    expect(retired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
-    expect(retired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
-    expect(retired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    expect(cerebrasRetired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
+    expect(cerebrasRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      true
+    )
+
+    const oxAlphaRetired = getStaticProviderModels('pi', {
+      now: new Date(2026, 7, 28, 0, 0)
+    })
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      false
+    )
+    expect(oxAlphaRetired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
+    expect(oxAlphaRetired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/zai/glm-5.2')).toBe(true)
   })
 })
 

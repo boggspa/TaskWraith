@@ -9,7 +9,9 @@
 export const PI_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.freeze({
   // Cerebras public model catalogue, verified 2026-07-29:
   // https://inference-docs.cerebras.ai/models/overview
-  'cerebras/zai-glm-4.7': '2026-08-17'
+  'cerebras/zai-glm-4.7': '2026-08-17',
+  // OpenRouter withdrew this route; the user approved its retirement on 2026-08-28.
+  'openrouter/stealth/ox-alpha': '2026-08-28'
 })
 
 const ISO_CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/

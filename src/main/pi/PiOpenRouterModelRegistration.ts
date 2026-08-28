@@ -23,23 +23,16 @@ export interface PiOpenRouterCustomModelRegistration {
  * owner-only home instead of refreshing or exposing the aggregator catalog.
  *
  * Sources: OpenRouter Models API, verified 2026-08-21:
- * - `stealth/ox-alpha`: 1,048,576-token context, 131,072-token output cap,
- *   free input/output, text + image input, and OpenRouter reasoning support.
  * - `zai/glm-5.2`: 256,000-token context, free input/output, text-only input.
  * - `poolside/laguna-s-2.1`: 256,000-token context, free input/output, text-only input.
  * - `nvidia/nemotron-3-ultra-550b-a55b:free`: 1,000,000-token context, 65,536-token output cap,
  *   free input/output, text-only input.
+ *
+ * OpenRouter withdrew `stealth/ox-alpha` on 2026-08-28. Its historical
+ * metadata remains in PiModels, PiBrandTable, and context-window lookups so
+ * saved chats and ensemble seats still render, but no new Pi home registers it.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
-  {
-    modelId: 'stealth/ox-alpha',
-    label: 'Ox Alpha',
-    reasoning: true,
-    input: ['text', 'image'],
-    contextWindow: 1_048_576,
-    maxTokens: 131_072,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  },
   {
     modelId: 'zai/glm-5.2',
     label: 'GLM 5.2',

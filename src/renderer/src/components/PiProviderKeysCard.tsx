@@ -31,7 +31,11 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
   { id: 'mistral', label: 'Mistral', keyHint: 'console.mistral.ai' },
   { id: 'groq', label: 'Groq', keyHint: 'console.groq.com' },
   { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' },
-  { id: 'openrouter', label: 'OpenRouter', keyHint: 'Ox Alpha only · openrouter.ai/keys' }
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    keyHint: 'GLM 5.2, Laguna S 2.1 & Nemotron 3 Ultra · openrouter.ai/keys'
+  }
 ]
 
 /**
@@ -141,7 +145,8 @@ export function PiProviderKeysCardView({
       </div>
       <p>
         Your own API keys for Pi&apos;s curated upstream models — DeepSeek, GLM, Qwen, MiniMax,
-        Xiaomi&apos;s MiMo, Mistral, open-weights serving, and OpenRouter&apos;s Ox Alpha.
+        Xiaomi&apos;s MiMo, Mistral, open-weights serving, and OpenRouter&apos;s GLM 5.2, Laguna S
+        2.1, and Nemotron 3 Ultra.
       </p>
       <div className="settings-provider-auth-command">
         <code>npm install -g @earendil-works/pi-coding-agent</code>

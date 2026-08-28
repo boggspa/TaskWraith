@@ -1358,7 +1358,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         freeModel: true,
         sourceUrl: 'https://openrouter.ai/stealth/ox-alpha',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'OpenRouter Ox Alpha is the Pi seat’s single-model, free-usage exception.'
+        notes:
+          'Retired 2026-08-28; retained only so historical Pi chats and ensemble seats keep their cost records.'
       },
       {
         modelId: 'openrouter/zai/glm-5.2',

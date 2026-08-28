@@ -242,7 +242,6 @@ describe('notification registry', () => {
       'Qwen3.8 Max',
       'Xiaomi MiMo',
       'Mistral Large 3',
-      'Ox Alpha',
       'Laguna S 2.1',
       'Nemotron 3 Ultra'
     ])
@@ -254,12 +253,12 @@ describe('notification registry', () => {
       'qwen',
       'xiaomi',
       'mistral',
-      'openrouter',
       'poolside',
       'nvidia'
     ])
-    // GLM-4.7 (Cerebras) was retired from the card, so no row wears cerebras.
+    // Retired Pi rows stay out of New Additions, so no row wears either upstream hue.
     expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('cerebras')
+    expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('openrouter')
 
     // Muse Glimmer is an Ollama runtime entry even though Meta also has its own
     // provider surface; do not split either new local model into a new group.

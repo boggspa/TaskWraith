@@ -16,11 +16,12 @@
  * subscription terms. Pi itself happily talks to Anthropic/OpenAI/Google/
  * xAI/OpenRouter, so the wall must live on OUR side and fail closed.
  *
- * The user-approved exception is OpenRouter's Ox Alpha only. It is a single
- * model TaskWraith does not offer through another seat; admitting its whole
- * upstream catalogue would reintroduce duplicate model pickers. The exception
- * is therefore enforced as an exact model-id allowlist, not a broad upstream
- * pass-through:
+ * The user-approved OpenRouter exception is a small curated set of models
+ * TaskWraith does not offer through another seat; admitting its whole upstream
+ * catalogue would reintroduce duplicate model pickers. The exception is
+ * therefore enforced as an exact model-id allowlist, not a broad upstream
+ * pass-through. Retired models remain in historical metadata, but the
+ * lifecycle gate refuses them before Pi can start a new run:
  *
  *  1. Upstream allowlist — only the upstreams below may be configured,
  *     surfaced, or passed to `--provider`.
@@ -111,7 +112,6 @@ export const XIAOMI_TOKEN_PLAN_UPSTREAMS: readonly PiUpstreamId[] = [
  * route in Pi's picker.
  */
 export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
-  'stealth/ox-alpha',
   'zai/glm-5.2',
   'poolside/laguna-s-2.1',
   'nvidia/nemotron-3-ultra-550b-a55b:free'
@@ -149,13 +149,21 @@ export function piModelPolicyVerdict(
   if (!trimmed) {
     return { allowed: false, reason: 'Pi model id is empty.' }
   }
+  const wireModelId = `${upstream}/${trimmed}`
+  if (isPiModelRetired(wireModelId, now)) {
+    const retiredAt = piModelRetiresAt(wireModelId)
+    return {
+      allowed: false,
+      reason: `${PI_UPSTREAM_LABELS[upstream]} model '${trimmed}' was retired on ${retiredAt}. Choose an active model before starting another run.`
+    }
+  }
   if (
     upstream === 'openrouter' &&
     !(PI_OPENROUTER_ALLOWED_MODEL_IDS as readonly string[]).includes(trimmed)
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to specific models (Ox Alpha, GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra).`
+      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {
@@ -164,14 +172,6 @@ export function piModelPolicyVerdict(
         allowed: false,
         reason: `Pi model '${trimmed}' is a resold copy of a model TaskWraith hosts first-party.`
       }
-    }
-  }
-  const wireModelId = `${upstream}/${trimmed}`
-  if (isPiModelRetired(wireModelId, now)) {
-    const retiredAt = piModelRetiresAt(wireModelId)
-    return {
-      allowed: false,
-      reason: `${PI_UPSTREAM_LABELS[upstream]} model '${trimmed}' was retired on ${retiredAt}. Choose an active model before starting another run.`
     }
   }
   return { allowed: true }

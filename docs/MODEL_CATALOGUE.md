@@ -272,7 +272,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Qwen3 32B (Groq)** `groq/qwen/qwen3-32b`                 | —            | —    | 131K context via Groq.                      |
 | **GLM-4.7 (Cerebras)** `cerebras/zai-glm-4.7`              | —            | —    | 131K context via Cerebras. **Retired 2026-08-17**; no longer offered for new runs, kept here so older transcripts still decode. |
 | **GPT-OSS 120B (Cerebras)** `cerebras/gpt-oss-120b`        | —            | —    | 131K context via Cerebras.                  |
-| **Ox Alpha** `openrouter/stealth/ox-alpha`                 | —            | —    | 1M context via OpenRouter.                  |
+| **Ox Alpha** `openrouter/stealth/ox-alpha`                 | —            | —    | **Retired 2026-08-28** after OpenRouter withdrew it; no longer offered for new runs, kept here so older chats and saved ensemble seats still decode. |
 | **GLM 5.2** `openrouter/zai/glm-5.2`                       | —            | —    | 256K context via OpenRouter.                |
 | **Laguna S 2.1** `openrouter/poolside/laguna-s-2.1`        | —            | —    | 256K context via OpenRouter.                |
 | **Nemotron 3 Ultra** `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | — | — | 1M context via OpenRouter.                  |

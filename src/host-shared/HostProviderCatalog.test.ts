@@ -147,4 +147,15 @@ describe('HostProviderCatalog', () => {
       expect(model.modelId).toMatch(/^[a-z0-9-]+\//)
     }
   })
+
+  it('does not include retired Ox Alpha in the current Pi offer catalog', () => {
+    const offers = hostProviderOffers('pi', true)
+    expect(offers).not.toBeNull()
+    expect(offers!.models.map((model) => model.modelId)).not.toContain(
+      'openrouter/stealth/ox-alpha'
+    )
+    expect(offers!.models.map((model) => model.modelId)).toEqual(
+      expect.arrayContaining(['openrouter/zai/glm-5.2', 'openrouter/poolside/laguna-s-2.1'])
+    )
+  })
 })

@@ -225,7 +225,7 @@ describe('provider dispatch integration', () => {
     )
   })
 
-  it('registers the scoped OpenRouter Ox Alpha model only inside Pi’s isolated home', () => {
+  it('registers scoped active OpenRouter models only inside Pi’s isolated home', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
     expect(pi).toContain("upstream === 'openrouter'")

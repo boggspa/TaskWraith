@@ -22556,7 +22556,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   const keyLoad = piKeyStoreRef?.loadKeys()
   if (!keyLoad || keyLoad.status !== 'ok' || Object.keys(keyLoad.keys).length === 0) {
     failFast(
-      'No Pi upstream API keys are configured. Add at least one key (DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, Cerebras, or OpenRouter for Ox Alpha) in Settings → Providers → Pi.',
+      'No Pi upstream API keys are configured. Add at least one key (DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, Cerebras, or OpenRouter) in Settings → Providers → Pi.',
       true
     )
     return

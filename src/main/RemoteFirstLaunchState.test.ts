@@ -469,7 +469,6 @@ describe('buildRemoteFirstLaunchState', () => {
       'Qwen3.8 Max',
       'Xiaomi MiMo',
       'Mistral Large 3',
-      'Ox Alpha',
       'Laguna S 2.1',
       'Nemotron 3 Ultra'
     ])
@@ -479,7 +478,6 @@ describe('buildRemoteFirstLaunchState', () => {
       'qwen',
       'xiaomi',
       'mistral',
-      'openrouter',
       'poolside',
       'nvidia'
     ])

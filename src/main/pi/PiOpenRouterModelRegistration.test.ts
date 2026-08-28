@@ -88,13 +88,25 @@ describe('writePiOpenRouterModelRegistration', () => {
     }
   })
 
-  it('leaves Pi’s home untouched for every model outside the one-model exception', () => {
+  it('leaves Pi’s home untouched for every model outside the curated exception', () => {
     const home = isolatedHome()
 
     expect(
       writePiOpenRouterModelRegistration({
         isolatedHomeDir: home,
         modelId: 'anthropic/claude-opus-5'
+      })
+    ).toBe(false)
+    expect(() => statSync(join(home, 'models.json'))).toThrow()
+  })
+
+  it('does not recreate retired Ox Alpha in a new Pi home', () => {
+    const home = isolatedHome()
+
+    expect(
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: home,
+        modelId: 'stealth/ox-alpha'
       })
     ).toBe(false)
     expect(() => statSync(join(home, 'models.json'))).toThrow()
@@ -107,7 +119,7 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(() =>
       writePiOpenRouterModelRegistration({
         isolatedHomeDir: home,
-        modelId: 'stealth/ox-alpha'
+        modelId: 'zai/glm-5.2'
       })
     ).toThrow()
     expect(readFileSync(join(home, 'models.json'), 'utf8')).toBe('{}')

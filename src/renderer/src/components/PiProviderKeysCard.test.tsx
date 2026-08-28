@@ -35,19 +35,20 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
 }
 
 describe('PiProviderKeysCardView', () => {
-  it('lists the allowlisted upstreams, including OpenRouter’s Ox Alpha-only lane', () => {
+  it('lists the allowlisted upstreams, including OpenRouter’s active curated models', () => {
     const html = render()
     for (const upstream of PI_CARD_UPSTREAMS) {
       expect(html, upstream.id).toContain(upstream.label)
     }
     // The wall, restated as a UI invariant: the card must never offer a lane
     // to a provider TaskWraith hosts first-party. OpenRouter is the explicit
-    // one-model Ox Alpha exception and is asserted above through the card list.
+    // curated-model exception and is asserted above through the card list.
     for (const forbidden of ['Anthropic', 'OpenAI', 'GitHub Copilot', 'Kimi']) {
       expect(html, forbidden).not.toContain(`>${forbidden}<`)
     }
     expect(PI_CARD_UPSTREAMS).toHaveLength(9)
-    expect(html).toContain('Ox Alpha only')
+    expect(html).toContain('GLM 5.2, Laguna S 2.1 &amp; Nemotron 3 Ultra')
+    expect(html).not.toContain('Ox Alpha')
   })
 
   it('requires the Xiaomi cluster from the Dedicated Base URL instead of guessing a region', () => {
