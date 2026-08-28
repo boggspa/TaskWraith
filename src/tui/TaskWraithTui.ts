@@ -239,7 +239,13 @@ export class TaskWraithTui {
             'commands',
             'receipts'
           ],
-          optionalCapabilities: ['provider-catalog', 'provider-auth', 'history', 'setup'],
+          optionalCapabilities: [
+            'provider-catalog',
+            'provider-auth',
+            'history',
+            'setup',
+            'workspace-git'
+          ],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }
@@ -884,6 +890,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'tune') {
       this.handleTuneKey(key)
+      return
+    }
+    if (this.state.overlay === 'git') {
+      this.handleGitKey(key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -1669,8 +1679,105 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    if (command === '/git') {
+      await this.runGitCommand(arguments_)
+      return
+    }
     this.setNotice(`Unknown command: ${raw}`, 'warning', 3_000)
     this.render()
+  }
+
+  /**
+   * `/git [status|diff|log] [path]` — a capability-gated workspace-git READ.
+   * `available: false` is a first-class calm state (a Host without git is a
+   * normal configuration), and a Host-truncated result is bannered by the
+   * renderer, never presented as complete. Interactive only: demo mode shows
+   * a notice and never fabricates git data.
+   */
+  private async runGitCommand(arguments_: string[]): Promise<void> {
+    const scopeArgument = arguments_[0]?.toLowerCase()
+    let scope: 'status' | 'diff' | 'log'
+    if (scopeArgument === undefined) {
+      scope = this.state.git?.scope ?? 'status'
+    } else if (scopeArgument === 'status' || scopeArgument === 'diff' || scopeArgument === 'log') {
+      scope = scopeArgument
+    } else {
+      this.setNotice(
+        `/git expects status, diff, or log — not "${arguments_.join(' ')}".`,
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    await this.openGitOverlay(scope, arguments_[1])
+  }
+
+  private async openGitOverlay(scope: 'status' | 'diff' | 'log', path?: string): Promise<void> {
+    this.state.overlay = 'git'
+    this.state.git = { scope, ...(path ? { path } : {}), loading: true }
+    this.render()
+    await this.loadGitRead(scope, path)
+  }
+
+  private async loadGitRead(scope: 'status' | 'diff' | 'log', path?: string): Promise<void> {
+    if (!this.client) return // demo mode: the renderer shows the notice.
+    const threadId = this.state.selectedThreadId
+    const threadWorkspaceId =
+      this.state.thread?.thread.workspaceId ??
+      this.state.snapshot?.threads.find((thread) => thread.id === threadId)?.workspaceId
+    if (!threadId || !threadWorkspaceId) {
+      this.state.git = {
+        scope,
+        ...(path ? { path } : {}),
+        error: 'Open a thread in a workspace to read its git state.'
+      }
+      this.render()
+      return
+    }
+    try {
+      const outcome = await this.client.getWorkspaceGitRead({
+        workspaceId: threadWorkspaceId,
+        scope,
+        ...(path ? { path } : {})
+      })
+      // Staleness guard: a scope switch or overlay close during the round trip
+      // must not land an older answer over a newer one.
+      if (this.state.overlay !== 'git' || this.state.git?.scope !== scope) return
+      this.state.git = { scope, ...(path ? { path } : {}), outcome }
+      this.render()
+    } catch (error) {
+      if (this.state.overlay !== 'git') return
+      this.state.git = {
+        scope,
+        ...(path ? { path } : {}),
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.render()
+    }
+  }
+
+  private handleGitKey(key: Keypress): void {
+    const git = this.state.git
+    if (!git) return
+    if (key.name === 'r') {
+      this.state.git = { ...git, loading: true }
+      this.render()
+      void this.loadGitRead(git.scope, git.path)
+      return
+    }
+    const scope =
+      key.name === 's'
+        ? ('status' as const)
+        : key.name === 'd'
+          ? ('diff' as const)
+          : key.name === 'l'
+            ? ('log' as const)
+            : null
+    if (scope === null || scope === git.scope) return
+    this.state.git = { scope, loading: true }
+    this.render()
+    void this.loadGitRead(scope)
   }
 
   private async commandOffers(): Promise<TaskWraithControlThreadOffers | undefined> {

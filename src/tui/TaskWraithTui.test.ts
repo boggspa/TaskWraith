@@ -24,7 +24,9 @@ import {
 } from '../shared/hostProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
-  type HostLocalTransportHostFrame
+  type HostLocalTransportHostFrame,
+  type HostWorkspaceGitReadParams,
+  type HostWorkspaceGitReadResult
 } from '../shared/hostProtocolTransport'
 import type {
   HostHistorySinceRequest,
@@ -118,6 +120,7 @@ interface FakeHostHandlers {
   providerAuthStatus?: (providerId: string) => HostProviderAuthStatusProjection
   threadHistory?: (request: HostThreadHistoryRequest) => HostThreadHistoryPage
   historySince?: (request: HostHistorySinceRequest) => HostHistorySinceResult
+  workspaceGitRead?: (params: HostWorkspaceGitReadParams) => HostWorkspaceGitReadResult
   resultRef?: (command: HostCommand) => HostResultRef | undefined
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
@@ -453,6 +456,19 @@ class FakeHostV2 {
         result: {
           kind: 'history.since',
           result: this.handlers.historySince(message.params as HostHistorySinceRequest)
+        }
+      })
+      return
+    }
+    if (kind === 'workspace.git.read' && this.handlers.workspaceGitRead) {
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'workspace.git.read',
+          result: this.handlers.workspaceGitRead(message.params as HostWorkspaceGitReadParams)
         }
       })
       return
@@ -1907,5 +1923,109 @@ describe('TaskWraithTui reconnect revival', () => {
     await new Promise((resolve) => setTimeout(resolve, 300))
     expect(revives).toBe(0)
     tui.stop()
+  })
+
+  it('opens the /git overlay with a calm unavailable state when the Host has no git capability', async () => {
+    // The fake Host offers no workspace-git — a normal configuration, NOT an
+    // error. RED at HEAD: /git was an unknown command and no overlay opened.
+    const { userDataPath } = await setupHost(makeHostSnapshot())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread visible')
+    feed(input, '/git\r')
+    await waitFor(
+      () => output.lastFrame.includes('git is unavailable on this Host'),
+      'calm unavailable state'
+    )
+    expect(output.lastFrame).not.toContain('Unknown command')
+    expect(output.lastFrame).not.toContain('failed')
+  })
+
+  it('renders branch and status rows when the Host serves workspace git reads', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: (params) => {
+        expect(params.workspaceId).toBe('ws-1')
+        return {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          files: [
+            {
+              path: 'src/tui/render.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            },
+            {
+              path: 'src/tui/new-file.ts',
+              index: 'A',
+              workingTree: 'A',
+              kind: 'created',
+              staged: true,
+              unstaged: false
+            },
+            {
+              path: 'notes.txt',
+              index: '?',
+              workingTree: '?',
+              kind: 'untracked',
+              staged: false,
+              unstaged: false
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread visible')
+    feed(input, '/git\r')
+    await waitFor(() => output.lastFrame.includes('main'), 'branch rendered')
+    await waitFor(() => output.lastFrame.includes('src/tui/render.ts'), 'status row rendered')
+    expect(output.lastFrame).toContain('0123456')
+  })
+
+  it('shows the truncation banner when the Host marks a diff truncated', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-truncated-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: () => ({
+        scope: 'diff',
+        branch: 'main',
+        head: '0123456789abcdef0123456789abcdef01234567',
+        truncated: true,
+        text: 'diff --git a/big.ts b/big.ts\n@@ -1 +1 @@\n+partial'
+      })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread visible')
+    feed(input, '/git diff\r')
+    // A truncated diff rendered as complete is the failure the 128KiB cap
+    // exists to prevent — the banner must be plainly visible.
+    await waitFor(() => output.lastFrame.includes('truncated'), 'truncation banner')
+    expect(output.lastFrame).toContain('partial')
+  })
+
+  it('shows a notice instead of fabricating git data in demo mode', async () => {
+    const { input, output, tui } = startTui(join(tmpdir(), 'taskwraith-tui-git-demo-'), {
+      demo: true
+    })
+    await tui.start()
+    feed(input, '/git\r')
+    await waitFor(() => output.lastFrame.includes('demo'), 'demo notice rendered')
+    expect(output.lastFrame).not.toContain('main')
+    expect(output.lastFrame).not.toContain('Unknown command')
   })
 })

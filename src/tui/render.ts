@@ -900,6 +900,13 @@ function renderHelpOverlay(
     overlayValue('/status', 'Host, connection, and thread detail', width, ansi, glyphs),
     overlayValue('/clear', 'clear the local transcript view', width, ansi, glyphs),
     overlayValue(
+      '/git',
+      `workspace git status/diff/log lens${sep}/git diff [path]`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue(
       '/threads',
       `switch thread${sep}/context for workspace detail`,
       width,
@@ -1015,6 +1022,172 @@ function renderTuneOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+/**
+ * The /git overlay: a capability-gated READ (status | diff | log), never a
+ * mutation. The three non-negotiables: capability-unavailable is a calm
+ * configuration state (never a red failure), a Host-truncated result is
+ * plainly bannered (never rendered as if complete), and every line is
+ * width-bounded and glyph-laddered so 80x24 + ASCII/NO_COLOR hold.
+ */
+function renderGitOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const lines = [borderTitle('Git', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const git = state.git
+  const footer = borderedLine(
+    ansi.dim('s status · d diff · l log · r refresh · Esc close'),
+    width,
+    ansi,
+    glyphs
+  )
+
+  // Demo mode: show a notice; never fabricate a plausible repo state.
+  if (state.connection === 'demo') {
+    lines.push(
+      borderedLine(
+        ansi.dim('git reads need a live Host — this demo session has none.'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  if (!git) {
+    lines.push(borderedLine(ansi.dim('No git read yet.'), width, ansi, glyphs))
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  // Header: branch + short head + scope tabs (active scope inverted).
+  const result = git.outcome?.available ? git.outcome.result : undefined
+  const branch = result?.branch ?? null
+  const head = result?.head ? result.head.slice(0, 7) : null
+  const identity = branch
+    ? `${glyphs.gitBranch} ${terminalLabel(branch)}${head ? ` ${ansi.dim(`@ ${head}`)}` : ''}`
+    : ansi.dim('no branch')
+  const tabs = (['status', 'diff', 'log'] as const)
+    .map((tab) => (tab === git.scope ? ansi.inverse(` ${tab} `) : ` ${tab} `))
+    .join(ansi.dim('·'))
+  lines.push(borderedLine(joinLeftRight(identity, tabs, width - 2), width, ansi, glyphs))
+
+  const body: string[] = []
+  if (git.loading) {
+    body.push(borderedLine(ansi.dim(`reading ${git.scope}…`), width, ansi, glyphs))
+  } else if (git.error) {
+    body.push(
+      borderedLine(
+        tone(ansi, terminalLabel(`git read failed · ${git.error}`), 'error'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!git.outcome) {
+    body.push(borderedLine(ansi.dim('No git read yet.'), width, ansi, glyphs))
+  } else if (!git.outcome.available) {
+    // A Host without git is a normal configuration — calm, not a failure.
+    body.push(borderedLine(ansi.dim('git is unavailable on this Host'), width, ansi, glyphs))
+  } else if (git.outcome.result.scope === 'status') {
+    const status = git.outcome.result
+    const staged = status.files.filter((file) => file.staged).length
+    const unstaged = status.files.filter((file) => file.unstaged).length
+    const untracked = status.files.filter((file) => file.kind === 'untracked').length
+    body.push(
+      borderedLine(
+        ansi.dim(`staged ${staged} · unstaged ${unstaged} · untracked ${untracked}`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    const rowCapacity = Math.max(1, capacity - 2)
+    for (const file of status.files.slice(0, rowCapacity)) {
+      const marker =
+        file.kind === 'created'
+          ? tone(ansi, glyphs.diffAdd, 'good')
+          : file.kind === 'deleted'
+            ? tone(ansi, glyphs.diffRemove, 'error')
+            : file.kind === 'untracked'
+              ? '?'
+              : file.kind === 'conflicted'
+                ? tone(ansi, glyphs.statusNeedsInput, 'warning')
+                : file.kind === 'renamed'
+                  ? glyphs.pendingChange
+                  : file.kind === 'ignored'
+                    ? glyphs.statusPending
+                    : '~'
+      const flags = `${file.staged ? 'S' : glyphs.statusPending}${file.unstaged ? 'U' : glyphs.statusPending}`
+      const renamedFrom = file.originalPath
+        ? ` ${ansi.dim(`(from ${terminalLabel(file.originalPath)}` + ')')}`
+        : ''
+      const row = `${marker} ${truncateAnsi(terminalLabel(file.path), Math.max(8, width - 10))}${ansi.dim(` ${flags}`)}${renamedFrom}`
+      body.push(borderedLine(row, width, ansi, glyphs))
+    }
+    if (status.files.length > rowCapacity) {
+      body.push(
+        borderedLine(ansi.dim(`… ${status.files.length - rowCapacity} more`), width, ansi, glyphs)
+      )
+    }
+    if (!status.files.length) {
+      body.push(borderedLine(ansi.dim('working tree clean'), width, ansi, glyphs))
+    }
+  } else {
+    // diff / log: bounded text lines. A Host-truncated result is bannered at
+    // the top — a partial view must never read as the whole diff.
+    const text = git.outcome.result.text
+    const rawLines = text.split('\n')
+    if (git.outcome.result.truncated) {
+      body.push(
+        borderedLine(
+          tone(ansi, 'truncated by the Host (128 KiB cap) — showing a partial view', 'warning'),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+    const textCapacity = Math.max(1, capacity - (git.outcome.result.truncated ? 3 : 1))
+    for (const rawLine of rawLines.slice(0, textCapacity)) {
+      const line = truncateAnsi(terminalLabel(rawLine), Math.max(8, width - 4))
+      const toned =
+        rawLine.startsWith('+') && !rawLine.startsWith('++')
+          ? tone(ansi, line, 'good')
+          : rawLine.startsWith('-') && !rawLine.startsWith('--')
+            ? tone(ansi, line, 'error')
+            : rawLine.startsWith('@')
+              ? ansi.dim(line)
+              : rawLine.startsWith('diff --git')
+                ? ansi.bold(line)
+                : line
+      body.push(borderedLine(toned, width, ansi, glyphs))
+    }
+    if (rawLines.length > textCapacity) {
+      body.push(
+        borderedLine(
+          ansi.dim(`… ${rawLines.length - textCapacity} more lines`),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+  }
+  for (const line of body.slice(0, capacity)) lines.push(line)
+  lines.push(footer)
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
 function renderOverlay(
   state: TaskWraithTuiState,
   width: number,
@@ -1036,6 +1209,9 @@ function renderOverlay(
   }
   if (state.overlay === 'tune') {
     return renderTuneOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'git') {
+    return renderGitOverlay(state, width, height, ansi, glyphs)
   }
   return renderHelpOverlay(width, height, ansi, glyphs)
 }

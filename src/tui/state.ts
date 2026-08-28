@@ -4,6 +4,7 @@ import {
   type HostSnapshot
 } from '../shared/hostProtocol'
 import type { HostHistoryCursor } from '../shared/hostHistoryProtocol'
+import type { HostWorkspaceGitReadOutcome } from '../host-client/HostProjectionClient'
 import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import type {
   TaskWraithControlProviderPresentation,
@@ -23,8 +24,18 @@ export type TuiConnectionState =
   | 'incompatible-protocol'
   | 'demo'
   | 'replay'
-export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup'
+export type TuiOverlay =
+  | 'none'
+  | 'context'
+  | 'threads'
+  | 'missions'
+  | 'help'
+  | 'tune'
+  | 'setup'
+  | 'git'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
+/** The three workspace-git read scopes the Host serves (no show, no blame). */
+export type TuiGitScope = 'status' | 'diff' | 'log'
 /** First-run Host setup traps until ready; `/new`/`/provider` can be cancelled. */
 export type TuiColdStartIntent = 'required' | 'new-thread'
 
@@ -63,6 +74,20 @@ export interface TuiHistoryState {
   readonly nextBefore?: HostHistoryCursor
   readonly previewOnly: boolean
   readonly loadingOlder?: boolean
+}
+
+/**
+ * The /git overlay's current read. `outcome` is the client's first-class
+ * union: `available: false` is a calm configuration state, never an error.
+ * `error` is set only when the request genuinely failed (disconnect, Host
+ * error) — a distinct render path from capability-unavailable.
+ */
+export interface TuiGitState {
+  scope: TuiGitScope
+  path?: string
+  loading?: boolean
+  outcome?: HostWorkspaceGitReadOutcome
+  error?: string
 }
 
 export interface TaskWraithTuiState {
@@ -105,6 +130,8 @@ export interface TaskWraithTuiState {
   coldStartPostureIndex?: number
   /** Full Host history, when the negotiated capability is available. */
   history?: TuiHistoryState
+  /** The /git overlay's current workspace-git read. */
+  git?: TuiGitState
 }
 
 function row(

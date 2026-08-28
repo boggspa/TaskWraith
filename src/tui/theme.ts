@@ -103,6 +103,14 @@ export interface TuiGlyphSet {
   reasoningOn: string
   reasoningOff: string
 
+  // Git overlay.
+  /** The current branch marker. */
+  gitBranch: string
+  /** A diff line the Host added (+). */
+  diffAdd: string
+  /** A diff line the Host removed (-). */
+  diffRemove: string
+
   // Empty-state sky.
   star: string
 
@@ -147,6 +155,10 @@ export const TUI_GLYPHS_UNICODE: TuiGlyphSet = {
 
   reasoningOn: '✦',
   reasoningOff: '·',
+
+  gitBranch: '⎇',
+  diffAdd: '+',
+  diffRemove: '-',
 
   star: '✦',
 
@@ -195,6 +207,10 @@ export const TUI_GLYPHS_ASCII: TuiGlyphSet = {
 
   reasoningOn: '#',
   reasoningOff: '.',
+
+  gitBranch: '*',
+  diffAdd: '+',
+  diffRemove: '-',
 
   star: '.',
 

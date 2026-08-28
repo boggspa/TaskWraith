@@ -48,11 +48,16 @@ function renderedHome(
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup' = 'none'
+  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup' | 'git' = 'none',
+  git?: TaskWraithTuiState['git']
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
   const state = createTaskWraithTuiDemoState(now)
   state.overlay = overlay
+  if (git) {
+    state.connection = 'connected'
+    state.git = git
+  }
   return renderTaskWraithTui(state, {
     width,
     height,
@@ -613,5 +618,111 @@ describe('TaskWraith TUI renderer', () => {
     expect(lines.some((line) => line.startsWith('└'))).toBe(true)
     expect(output).not.toContain('Electron')
     expect(output).not.toContain('sidecar')
+  })
+
+  it('renders the git overlay status rows, branch and scope tabs within 80 columns', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          files: [
+            {
+              path: 'src/tui/render.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            },
+            {
+              path: 'src/tui/new-file.ts',
+              index: 'A',
+              workingTree: 'A',
+              kind: 'created',
+              staged: true,
+              unstaged: false
+            },
+            {
+              path: 'notes.txt',
+              index: '?',
+              workingTree: '?',
+              kind: 'untracked',
+              staged: false,
+              unstaged: false
+            }
+          ]
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('main')
+    expect(output).toContain('0123456')
+    expect(output).toContain('src/tui/render.ts')
+    expect(output).toContain('staged 1')
+    expect(output).toContain('untracked 1')
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
+  })
+
+  it('banners a Host-truncated diff plainly and never presents it as complete', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'diff',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'diff',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: true,
+          text: 'diff --git a/big.ts b/big.ts\n@@ -1 +1 @@\n+partial'
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('truncated')
+    expect(output).toContain('partial view')
+  })
+
+  it('renders capability-unavailable calmly, and degrades to ASCII without the unicode branch glyph', () => {
+    const unavailable = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: { available: false, reason: 'capability-unavailable' }
+    }).join('\n')
+    expect(unavailable).toContain('git is unavailable on this Host')
+    expect(unavailable).not.toContain('failed')
+
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.overlay = 'git'
+    state.git = {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          files: []
+        }
+      }
+    }
+    const ascii = renderTaskWraithTui(state, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false,
+      glyphs: TUI_GLYPHS_ASCII
+    })
+    expect(ascii).not.toContain(TUI_GLYPHS_UNICODE.gitBranch)
+    expect(ascii).toContain(TUI_GLYPHS_ASCII.gitBranch)
   })
 })
