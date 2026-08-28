@@ -9861,9 +9861,9 @@
   overflow: hidden;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.065em;
+  letter-spacing: 0;
   text-overflow: ellipsis;
-  text-transform: uppercase;
+  text-transform: none;
   white-space: nowrap;
 }
 .composer-combined-picker-provider-header .composer-provider-paused-pill {

@@ -507,7 +507,7 @@ describe('CombinedModelPicker', () => {
     expect(collapsed).not.toContain('composer-combined-picker-provider-chevron is-expanded')
   })
 
-  it('uses each provider accent with the shared OS UI font and tracked uppercase labels', () => {
+  it('uses each provider accent with the shared OS UI font and natural title-case labels', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
       'utf8'
@@ -521,8 +521,8 @@ describe('CombinedModelPicker', () => {
     expect(headerRule).toContain('var(--model-provider-accent, var(--accent)) 76%')
     expect(headerRule).toContain('font-family: var(--font-sans)')
     expect(labelRule).toBeDefined()
-    expect(labelRule).toContain('letter-spacing: 0.065em')
-    expect(labelRule).toContain('text-transform: uppercase')
+    expect(labelRule).toContain('letter-spacing: 0;')
+    expect(labelRule).toContain('text-transform: none;')
     expect(css).not.toContain(
       '.composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header'
     )
