@@ -1,10 +1,11 @@
 # Security Engineering Ledger
 
-This ledger keeps release-sensitive security findings in the tracked source
-tree. An entry records a code-verified risk or a bounded hypothesis; it does not
+This ledger keeps release-sensitive security findings out of the published
+source tree: it is deliberately untracked and gitignored, per SECURITY.md.
+An entry records a code-verified risk or a bounded hypothesis; it does not
 by itself assert exploitation, data loss, or a reportable security incident.
 Confirmed vulnerabilities should still follow the private reporting process in
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](../SECURITY.md).
 
 The original evidence was assessed on **2026-07-19** at commit
 `87c8c0645a4d9d8a6a2c3c8e0f3646cfac05b0da`. Dated remediation updates below
@@ -271,12 +272,12 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Ensemble routing and desktop IPC authority
 - **Original evidence:**
   - The renderer mention path in
-    [`ComposerMentionTrigger.ts`](src/renderer/src/lib/ComposerMentionTrigger.ts)
+    [`ComposerMentionTrigger.ts`](../src/renderer/src/lib/ComposerMentionTrigger.ts)
     could turn an ambiguous provider alias into one participant id, while the
     main-process resolver in
-    [`EnsembleMentionAlias.ts`](src/main/services/EnsembleMentionAlias.ts)
+    [`EnsembleMentionAlias.ts`](../src/main/services/EnsembleMentionAlias.ts)
     rejected ambiguity.
-  - Desktop dispatch in [`index.ts`](src/main/index.ts) trusted the renderer's
+  - Desktop dispatch in [`index.ts`](../src/main/index.ts) trusted the renderer's
     `dmTargetParticipantId`; remote dispatch re-resolved the raw prompt in main.
     The two ingress paths therefore had different routing authority.
   - A stale source comment said the picker inserted a stable
@@ -297,15 +298,15 @@ same-UID residual boundaries when reconciling the final clean tip.
     missing, disabled, stale, or prompt-mismatched targets fail before launch.
   - `formatEnsembleDmMention` and retry paths preserve exact participant identity
     in structured links.
-  - [`EnsemblePrompt.ts`](src/main/EnsemblePrompt.ts) now states the actual
+  - [`EnsemblePrompt.ts`](../src/main/EnsemblePrompt.ts) now states the actual
     fail-closed split: an ambiguous in-round provider mention emits a warning
     and changes no routing, while a new-round directed send is rejected before
     launch. It retains participant-picker and unique role/model guidance rather
     than teaching the older order-selected behavior.
   - Regression coverage lives in
-    [`EnsemblePrompt.test.ts`](src/main/EnsemblePrompt.test.ts),
-    [`EnsembleMentionAlias.test.ts`](src/main/services/EnsembleMentionAlias.test.ts),
-    [`ComposerMentionTrigger.test.ts`](src/renderer/src/lib/ComposerMentionTrigger.test.ts),
+    [`EnsemblePrompt.test.ts`](../src/main/EnsemblePrompt.test.ts),
+    [`EnsembleMentionAlias.test.ts`](../src/main/services/EnsembleMentionAlias.test.ts),
+    [`ComposerMentionTrigger.test.ts`](../src/renderer/src/lib/ComposerMentionTrigger.test.ts),
     and the directed-run ingress suites.
 - **Verification still required:** Run the exact integrated candidate through
   roster-order permutations with conflicting permission presets and a desktop
@@ -333,7 +334,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   stores, while its separate hash-only execution event could not prove which
   approval authorized it. No approval bypass was evidenced.
 - **2026-07-19 remediation update:**
-  - [`CanvasEvalAudit.ts`](src/main/canvas/CanvasEvalAudit.ts) now keeps the exact
+  - [`CanvasEvalAudit.ts`](../src/main/canvas/CanvasEvalAudit.ts) now keeps the exact
     script in the transient desktop payload and projects a minimal schema-v2
     receipt into durable stores: approval id, exact UTF-16-code-unit SHA-256,
     character and byte lengths, redaction marker, and no script/result content.
@@ -344,10 +345,10 @@ same-UID residual boundaries when reconciling the final clean tip.
     before execution and a matching `eval.completed` outcome afterwards. A
     pre-execution persistence failure blocks execution.
   - Integration and sink coverage lives in
-    [`CanvasEvalPersistenceIntegration.test.ts`](src/main/canvas/CanvasEvalPersistenceIntegration.test.ts),
-    [`CanvasEvalAudit.test.ts`](src/main/canvas/CanvasEvalAudit.test.ts),
-    [`CanvasService.test.ts`](src/main/canvas/CanvasService.test.ts), and
-    [`CanvasStore.test.ts`](src/main/canvas/CanvasStore.test.ts).
+    [`CanvasEvalPersistenceIntegration.test.ts`](../src/main/canvas/CanvasEvalPersistenceIntegration.test.ts),
+    [`CanvasEvalAudit.test.ts`](../src/main/canvas/CanvasEvalAudit.test.ts),
+    [`CanvasService.test.ts`](../src/main/canvas/CanvasService.test.ts), and
+    [`CanvasStore.test.ts`](../src/main/canvas/CanvasStore.test.ts).
 - **Boundary of the claim:** The digest is integrity/correlation metadata, not
   encryption. The candidate covers TaskWraith-owned structured durable sinks;
   provider-authored prose, opaque provider-native history, and external debug
@@ -405,7 +406,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **2026-07-20 Path-B re-entry (initial posture; broker details superseded by
   the 2026-07-22 update below):**
   - Managed Cursor is live again in
-    [`LIVE_SELECTABLE_PROVIDER_IDS`](src/shared/retiredProviders.ts).
+    [`LIVE_SELECTABLE_PROVIDER_IDS`](../src/shared/retiredProviders.ts).
   - Production `runCursorProvider` is **always-enabled** (no brittle per-build
     fingerprint gate on the spawn path). Containment lives on the argv:
     `buildContainedCursorReadOnlyArgv` / `buildContainedCursorWriteArgv` both
@@ -422,12 +423,12 @@ same-UID residual boundaries when reconciling the final clean tip.
     placed directly under `$HOME` can leave `$HOME` writable; network egress is
     not proven blocked.
   - Regression anchors include
-    [`CursorPathBLaunchPlanIntegration.test.ts`](src/main/cursor/CursorPathBLaunchPlanIntegration.test.ts)
+    [`CursorPathBLaunchPlanIntegration.test.ts`](../src/main/cursor/CursorPathBLaunchPlanIntegration.test.ts)
     (production entry uses contained builders only — it asserts the immutable
     plan argv is what gets spawned),
-    [`CursorCliArgs.test.ts`](src/main/cursor/CursorCliArgs.test.ts),
-    [`ProviderAdapters.test.ts`](src/main/ProviderAdapters.test.ts),
-    [`retiredProviders.test.ts`](src/shared/retiredProviders.test.ts), and the
+    [`CursorCliArgs.test.ts`](../src/main/cursor/CursorCliArgs.test.ts),
+    [`ProviderAdapters.test.ts`](../src/main/ProviderAdapters.test.ts),
+    [`retiredProviders.test.ts`](../src/shared/retiredProviders.test.ts), and the
     credentialed live suite
   - *Anchor provenance (2026-08-16):* this list previously cited
     `CursorManagedRunGate.test.ts`, which no longer exists — the module it
@@ -436,7 +437,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     `src/`. The protection itself is intact and independently verified; only
     the citation was dead, and it has been repointed to the integration test
     that actually exercises the contained-argv path.
-    [`CursorStartupContainment.live.test.ts`](src/main/cursor/CursorStartupContainment.live.test.ts).
+    [`CursorStartupContainment.live.test.ts`](../src/main/cursor/CursorStartupContainment.live.test.ts).
 - **Release disposition:** Source-ahead may ship Path-B Cursor as a selectable
   managed provider with the residual partial-backstop risks disclosed above.
   Do not reintroduce bare uncontained `cursor-agent` argv or claim TaskWraith
@@ -490,7 +491,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   - `cancelProviderRun` claims terminal authority and calls
     `ApprovalService.cancelForRun` synchronously before awaiting transport
     termination.
-  - [`HistoryClearAdmissionGate.ts`](src/main/HistoryClearAdmissionGate.ts)
+  - [`HistoryClearAdmissionGate.ts`](../src/main/HistoryClearAdmissionGate.ts)
     fences global, workspace, and chat scopes before the first await. New tool
     and approval admission consult that gate; `ApprovalService.registrationBlocked`
     also rejects terminal-claimed runs.
@@ -501,11 +502,11 @@ same-UID residual boundaries when reconciling the final clean tip.
     compare-and-set after expiry recovery. `ApprovalService.persistSignedElevatedAccept`
     writes that durable decision before any execution/provider lane resumes.
   - Coverage lives in
-    [`ApprovalService.test.ts`](src/main/services/ApprovalService.test.ts),
-    [`AuditService.test.ts`](src/main/services/AuditService.test.ts),
-    [`AppStoreAuditRetention.test.ts`](src/main/AppStoreAuditRetention.test.ts),
-    [`chatHandlers.test.ts`](src/main/ipc/chatHandlers.test.ts), and
-    [`NativeCanvasApprovalContracts.test.ts`](src/main/canvas/NativeCanvasApprovalContracts.test.ts).
+    [`ApprovalService.test.ts`](../src/main/services/ApprovalService.test.ts),
+    [`AuditService.test.ts`](../src/main/services/AuditService.test.ts),
+    [`AppStoreAuditRetention.test.ts`](../src/main/AppStoreAuditRetention.test.ts),
+    [`chatHandlers.test.ts`](../src/main/ipc/chatHandlers.test.ts), and
+    [`NativeCanvasApprovalContracts.test.ts`](../src/main/canvas/NativeCanvasApprovalContracts.test.ts).
 - **Boundary of the fix:** This closes acceptance of a still-pending approval
   after authority ended. It does not prove that an already-executing Canvas
   operation or live Canvas surface is retired by every lifecycle transition;
@@ -534,7 +535,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **2026-07-19 remediation update:**
   - `sanitizeCanvasEvalCompatPayload` and
     `createCanvasEvalCompatSanitizer` in
-    [`CanvasEvalAudit.ts`](src/main/canvas/CanvasEvalAudit.ts) canonicalize every
+    [`CanvasEvalAudit.ts`](../src/main/canvas/CanvasEvalAudit.ts) canonicalize every
     explicit identity, inspect known nested/gateway envelopes, correlate every
     supported result-id alias under a run-scoped opaque digest, and fail closed
     on conflicting ids, id-less calls, saturation, malformed JSONL, and delayed
@@ -542,7 +543,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   - Durable projections are allowlists; copied provider fields are not spread
     into the safe event. Stateful stdout/stderr sanitizers run before raw
     forwarding or delayed provider-error caching.
-  - [`CanvasEvalAudit.test.ts`](src/main/canvas/CanvasEvalAudit.test.ts) covers
+  - [`CanvasEvalAudit.test.ts`](../src/main/canvas/CanvasEvalAudit.test.ts) covers
     conflicting identity aliases, all result-id aliases, direct/gateway and
     JSON-string envelopes, nested decoys, saturation, split/malformed lines,
     delayed results, and provider-error caches.
@@ -578,9 +579,9 @@ same-UID residual boundaries when reconciling the final clean tip.
   - `assertCanvasEvalApprovalReceipt` binds schema, algorithm, exact UTF-16 code
     units, both lengths, and approval id before execution.
   - The forged-receipt, nested-decoy, and canonical-argument cases are covered
-    by [`CanvasEvalAudit.test.ts`](src/main/canvas/CanvasEvalAudit.test.ts) and
+    by [`CanvasEvalAudit.test.ts`](../src/main/canvas/CanvasEvalAudit.test.ts) and
     native wiring by
-    [`NativeCanvasApprovalContracts.test.ts`](src/main/canvas/NativeCanvasApprovalContracts.test.ts).
+    [`NativeCanvasApprovalContracts.test.ts`](../src/main/canvas/NativeCanvasApprovalContracts.test.ts).
 - **Verification still required:** Prove direct, gateway, native Kimi, native
   Codex, compat-only, and malformed-provider paths cannot mint or project an
   authoritative receipt from provider bytes.
@@ -609,18 +610,18 @@ same-UID residual boundaries when reconciling the final clean tip.
     completed result.
   - Root-chat deletion cascades descendants in `AppStore.deleteChat`; the
     callback fences the requested chat, not every descendant Canvas owner.
-  - [`CanvasService.test.ts`](src/main/canvas/CanvasService.test.ts) proves global
+  - [`CanvasService.test.ts`](../src/main/canvas/CanvasService.test.ts) proves global
     purge fencing for selected operations, but no regression covers scoped
     Canvas retirement plus late generic MCP results.
 - **2026-07-19 source-ahead remediation:**
-  - [`CanvasDeviceDriver.ts`](src/main/canvas/CanvasDeviceDriver.ts) now blocks
+  - [`CanvasDeviceDriver.ts`](../src/main/canvas/CanvasDeviceDriver.ts) now blocks
     new work during close, joins in-flight open/screenshot operations, prevents
     late frames, generation-fences install/launch races, uses strict private
     screenshot-temp cleanup, and retains failed native teardown for retry.
   - Independent review accepted that device-driver boundary; its focused suite
     passed 21/21, and the combined three-file lifecycle/privacy review passed
     65/65.
-  - [`CanvasService.ts`](src/main/canvas/CanvasService.ts) now carries explicit
+  - [`CanvasService.ts`](../src/main/canvas/CanvasService.ts) now carries explicit
     chat/workspace history holds and revisions plus per-Canvas generations.
     `beginAuthorityHistoryClear` raises scoped admission synchronously, retires
     matching pending/live sessions before its first await, joins driver close,
@@ -674,7 +675,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   path could reach provider execution outside TaskWraith's brokered workspace
   and approval boundary.
 - **2026-07-19 remediation update:**
-  - [`KimiProductionContainment.ts`](src/main/kimi/KimiProductionContainment.ts)
+  - [`KimiProductionContainment.ts`](../src/main/kimi/KimiProductionContainment.ts)
     introduces an unguessable, mode-0700, empty synthetic cwd under the isolated
     seat home; `assertReadyForSpawn` rechecks ownership, type, mode, and emptiness
     immediately before spawn.
@@ -683,11 +684,11 @@ same-UID residual boundaries when reconciling the final clean tip.
     only workspace surface and applies the static native fs/exec/egress/fan-out
     deny wall. `buildKimiProductionSessionPlan` refuses sessions born before the
     new posture version.
-  - [`KimiAcpClient.ts`](src/main/kimi/KimiAcpClient.ts) now defaults to the
+  - [`KimiAcpClient.ts`](../src/main/kimi/KimiAcpClient.ts) now defaults to the
     fs-free initialize posture, and
-    [`KimiProductionContainment.test.ts`](src/main/kimi/KimiProductionContainment.test.ts)
+    [`KimiProductionContainment.test.ts`](../src/main/kimi/KimiProductionContainment.test.ts)
     exercises the pure boundary.
-  - Both normal turns and native compaction in [`index.ts`](src/main/index.ts)
+  - Both normal turns and native compaction in [`index.ts`](../src/main/index.ts)
     now consume one `buildKimiProductionAcpSnapshot`: process and ACP cwd use the
     private directory, initialize parameters omit client filesystem, the
     authenticated loopback TaskWraith gateway is the sole workspace surface,
@@ -695,7 +696,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     immediately before the synchronous `runKimiAcpTurn` spawn.
   - `createJoinedKimiCleanup` joins private-cwd, bridge, and isolated-home
     teardown. The source-ahead qualification suite in
-    [`KimiProductionContainment.live.test.ts`](src/main/kimi/KimiProductionContainment.live.test.ts)
+    [`KimiProductionContainment.live.test.ts`](../src/main/kimi/KimiProductionContainment.live.test.ts)
     now defines the exact 16-title `acp-synthetic-cwd-gateway-v1` contract:
     private process/session cwd, inert workspace config, fs-free initialize,
     the exact nine-tool native deny roster with same-id terminal denials and no
@@ -737,14 +738,14 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Kimi authentication and isolated-home lifecycle
 - **Original evidence:**
   - `persistRotatedCredential` inside
-    [`KimiAcpHome.ts`](src/main/kimi/KimiAcpHome.ts) performs an asynchronous
+    [`KimiAcpHome.ts`](../src/main/kimi/KimiAcpHome.ts) performs an asynchronous
     read/compare/copy sequence with no process-wide lock, lease, compare-and-swap,
     or atomic multi-file transaction.
   - Kimi Code uses rotating, single-use refresh tokens. Two isolated seats may
     begin from the same source credential, race refresh, and then independently
     copy credential and OAuth artifacts back to the real home.
   - The test named “never regresses the real home to an older credential” in
-    [`KimiAcpHome.test.ts`](src/main/kimi/KimiAcpHome.test.ts) is sequential: it
+    [`KimiAcpHome.test.ts`](../src/main/kimi/KimiAcpHome.test.ts) is sequential: it
     proves the expiry comparison rejects one already-older snapshot, not that
     concurrent refresh or multi-file writeback is safe.
 - **Impact:** Parallel seats can invalidate one another's refresh token, lose a
@@ -757,7 +758,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   deliberately interleaved seats, crashes between artifact writes, and a stale
   cleanup after a newer refresh.
 - **2026-07-19 remediation update:**
-  - [`KimiOAuthCredentialLease.ts`](src/main/kimi/KimiOAuthCredentialLease.ts)
+  - [`KimiOAuthCredentialLease.ts`](../src/main/kimi/KimiOAuthCredentialLease.ts)
     now owns a private source-home authority record for the entire managed OAuth
     lifetime: exact credential snapshot, isolated-home seed, provider process,
     rotated writeback, home scrub, and lease removal. A second OAuth-backed
@@ -777,14 +778,14 @@ same-UID residual boundaries when reconciling the final clean tip.
     replayable phases are `claimed` → `seeded` → `committed` → `scrubbed`; the
     candidate home is scrubbed and fsynced before the durable lease is removed.
     Acquisition replays a dead owner's durable state before
-    [`KimiAcpHome.ts`](src/main/kimi/KimiAcpHome.ts) may scrub or reseed that
+    [`KimiAcpHome.ts`](../src/main/kimi/KimiAcpHome.ts) may scrub or reseed that
     seat, preventing restart cleanup from deleting the only rotated candidate.
-  - [`KimiOAuthCredentialLease.test.ts`](src/main/kimi/KimiOAuthCredentialLease.test.ts)
+  - [`KimiOAuthCredentialLease.test.ts`](../src/main/kimi/KimiOAuthCredentialLease.test.ts)
     exercises whole-lifetime exclusion, dead-owner recovery, live orphan-child
     refusal, stale-writer rejection, a private-path swap, an unsafe lock path,
     every durable crash boundary, candidate loss after the source commit, and
     same-seat recovery-before-scrub.
-    [`KimiAcpHome.test.ts`](src/main/kimi/KimiAcpHome.test.ts) separately proves
+    [`KimiAcpHome.test.ts`](../src/main/kimi/KimiAcpHome.test.ts) separately proves
     OAuth exclusion through joined cleanup and concurrent API-key preparation.
   - Independent reclaim review found a narrower pathname race in an intermediate
     `transition.lock` recovery. A contender that classified an old lock as stale
@@ -824,8 +825,8 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Severity/status:** High / `Remediated` (source-ahead candidate; verification and commissioning pending)
 - **Owner:** TaskWraith maintainers — Provider qualification and Kimi admission
 - **Original evidence:**
-  - [`provider-containment-canary.cjs`](scripts/provider-containment-canary.cjs)
-    and [`verify-provider-canary-aggregate.cjs`](scripts/verify-provider-canary-aggregate.cjs)
+  - [`provider-containment-canary.cjs`](../scripts/provider-containment-canary.cjs)
+    and ``verify-provider-canary-aggregate.cjs`` (removed in `d06edb2f0`)
     validate an exact Kimi binary/capability/runtime tuple and explicitly stamp
     `fingerprintEnforcementScope: 'release-evidence-only'`.
   - At initial review, the qualification manifest was consumed by the
@@ -836,7 +837,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **2026-07-19 remediation update:**
   - The source-ahead canary now names the strict Kimi qualification scope
     `acp-synthetic-cwd-gateway-v1` and its reviewed roster contains only
-    [`KimiProductionContainment.live.test.ts`](src/main/kimi/KimiProductionContainment.live.test.ts).
+    [`KimiProductionContainment.live.test.ts`](../src/main/kimi/KimiProductionContainment.live.test.ts).
     The older empty-MCP native diagnostics remain useful manual evidence but are
     not release-qualifying suites. The hosted `macos-15` tuple uses the official
     native 0.27.0 ARM64 distribution and a protected workflow that writes its
@@ -847,7 +848,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     ignores the legacy key, which remains only for usage-history compatibility.
     Passing the hosted tuple does not automatically attest or authenticate a
     different production tuple.
-  - [`KimiRuntimeAdmission.ts`](src/main/kimi/KimiRuntimeAdmission.ts) introduces
+  - [`KimiRuntimeAdmission.ts`](../src/main/kimi/KimiRuntimeAdmission.ts) introduces
     an exact executable/startup gate: descriptor-bound identity capture, digest
     and stat revalidation, bounded inventory probes under fresh roots, exact
     version/capability/posture matching, a branded admitted path, and another
@@ -902,7 +903,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   OAuth authority tracked by TW-SEC-2026-009 is remediated but still awaits
   exact-candidate verification. User-initiated
   provider-terminal actions in
-  [`providerTerminalHandlers.ts`](src/main/ipc/providerTerminalHandlers.ts)—Kimi
+  [`providerTerminalHandlers.ts`](../src/main/ipc/providerTerminalHandlers.ts)—Kimi
   login and upgrade—remain outside contained ACP and managed-run admission. The
   candidate labels them `scope: user-owned-provider-setup`, returns
   `managedRunReady: false`, and warns that success does not qualify a runtime;
@@ -935,7 +936,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   schedule migration, and whole-tree check are green.
 - **2026-07-21 disposition update:** The shipped 1.8.5 admission seam
   deliberately drops the exact-tuple fence for desktop seats:
-  [`KimiRuntimeAdmission.ts`](src/main/kimi/KimiRuntimeAdmission.ts) hardcodes
+  [`KimiRuntimeAdmission.ts`](../src/main/kimi/KimiRuntimeAdmission.ts) hardcodes
   `allowUnattestedDevelopment = true` with no packaged-build branch, so an
   unknown binary that passes the structural gate (descriptor-bound identity,
   bounded probes, exact version parse, ACP-only posture) admits as explicitly
@@ -956,7 +957,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — MCP bridge bootstrap, Kimi ACP diagnostics, and diagnostic storage
 - **Original evidence:**
   - `startGeminiMcpBridgeProcess` in
-    [`McpBridgeRuntime.ts`](src/main/mcp/McpBridgeRuntime.ts) passed
+    [`McpBridgeRuntime.ts`](../src/main/mcp/McpBridgeRuntime.ts) passed
     `argv.slice(1)` verbatim to `bridgeLog` at process startup. The bridge argv
     contains `--token` followed by the live broker bearer secret and also
     contains the local socket route.
@@ -970,11 +971,11 @@ same-UID residual boundaries when reconciling the final clean tip.
     do not make retention of a live bearer secret safe or prove the parent
     directory/existing file remains privately owned and non-aliased.
   - The production `runKimiAcpProvider` path in
-    [`index.ts`](src/main/index.ts) also installed an `onRawFrame` callback. When
+    [`index.ts`](../src/main/index.ts) also installed an `onRawFrame` callback. When
     `TASKWRAITH_KIMI_ACP_DEBUG` was enabled, it serialized the first part of
     every inbound and outbound ACP frame directly to process stderr.
   - The outgoing `session/new` frame carries the production HTTP MCP server
-    definition from [`KimiHttpMcpBridge.ts`](src/main/kimi/KimiHttpMcpBridge.ts),
+    definition from [`KimiHttpMcpBridge.ts`](../src/main/kimi/KimiHttpMcpBridge.ts),
     including its local URL and `Authorization: Bearer` header. Other ACP frames
     can carry cwd, prompt, and path-bearing provider content. An opt-in debug
     environment flag is not a safe authority boundary for raw production
@@ -986,7 +987,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   prompt content. This is confirmed secret disclosure to diagnostic sinks; no
   unauthorized broker call or downstream durable retention is asserted.
 - **2026-07-19 remediation update:**
-  - [`McpBridgeRuntime.ts`](src/main/mcp/McpBridgeRuntime.ts) now constructs
+  - [`McpBridgeRuntime.ts`](../src/main/mcp/McpBridgeRuntime.ts) now constructs
     launch and runtime diagnostics from structural allowlists. Startup logging
     records only fixed non-secret state; tool calls and failures expose bounded
     kinds/counts and allowlisted tool names rather than raw argv, unknown names,
@@ -998,16 +999,16 @@ same-UID residual boundaries when reconciling the final clean tip.
     against history-clear epoch advance and strict truncation, closing the
     reviewed paused-before-write race.
   - `formatKimiProductionAcpDebugFrame` in
-    [`KimiProductionContainment.ts`](src/main/kimi/KimiProductionContainment.ts)
+    [`KimiProductionContainment.ts`](../src/main/kimi/KimiProductionContainment.ts)
     emits only fixed frame direction/kind, method, RPC-id presence, and bounded
     error-code metadata. It does not serialize ACP params or results, so MCP
     Authorization headers, prompts, paths, and provider text do not reach
     stderr through that production debug hook.
   - Independent focused re-audit accepted the content minimization and
     append/clear serialization. The privacy and paused-race regressions in
-    [`McpBridgeRuntimeSafeWrite.test.ts`](src/main/mcp/McpBridgeRuntimeSafeWrite.test.ts)
+    [`McpBridgeRuntimeSafeWrite.test.ts`](../src/main/mcp/McpBridgeRuntimeSafeWrite.test.ts)
     and the Kimi frame-sentinel coverage in
-    [`KimiProductionContainment.test.ts`](src/main/kimi/KimiProductionContainment.test.ts)
+    [`KimiProductionContainment.test.ts`](../src/main/kimi/KimiProductionContainment.test.ts)
     passed. After retiring two stale/non-fail-closed Kimi expectations, the
     focused bridge pair passed 45/45; the three-file independent lifecycle and
     privacy review passed 65/65. The whole-tree check remains pending.
@@ -1066,7 +1067,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   or alter a later seat's startup behavior. This finding does not assert that a
   reviewed build actually created such an artifact.
 - **2026-07-19 remediation update:**
-  - [`KimiAcpHome.ts`](src/main/kimi/KimiAcpHome.ts) replaces the fixed cleanup
+  - [`KimiAcpHome.ts`](../src/main/kimi/KimiAcpHome.ts) replaces the fixed cleanup
     list with `KIMI_SESSION_CONTINUITY_TOP_LEVEL`. Only `sessions/` and
     `session_index.jsonl` survive, and their file types are checked without
     following symlinks.
@@ -1075,7 +1076,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     strict preparation failure prevents provider spawn.
   - The same source-ahead change validates that the credential-bearing seat
     home stays inside a private real-directory boundary.
-  - [`KimiAcpHome.test.ts`](src/main/kimi/KimiAcpHome.test.ts) proves native
+  - [`KimiAcpHome.test.ts`](../src/main/kimi/KimiAcpHome.test.ts) proves native
     session continuity survives while runtime configuration, credentials,
     OAuth state, plugins/skills, and stale MCP material are removed; a scrub
     failure fails preparation closed.
@@ -1103,10 +1104,10 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Run admission, chat mutation, and approval lifecycle
 - **Original evidence:**
   - `dispatchRunWithProviderPause` and the scheduled-dispatch wrapper in
-    [`index.ts`](src/main/index.ts) consult `historyClearBlocksRunPayload` only
+    [`index.ts`](../src/main/index.ts) consult `historyClearBlocksRunPayload` only
     before entering the asynchronous dispatch pipeline.
-  - [`RunDispatchFacade.ts`](src/main/run/RunDispatchFacade.ts) can then await
-    configuration repair and PDF expansion. [`RunCoordinator.ts`](src/main/services/RunCoordinator.ts)
+  - [`RunDispatchFacade.ts`](../src/main/run/RunDispatchFacade.ts) can then await
+    configuration repair and PDF expansion. [`RunCoordinator.ts`](../src/main/services/RunCoordinator.ts)
     subsequently applies the runtime profile, awaits provider preflight and
     reference-context capture, and only then calls `authorizeBeforeAdapterRun`
     immediately before the adapter.
@@ -1120,16 +1121,16 @@ same-UID residual boundaries when reconciling the final clean tip.
     the provider adapter and create new run events or messages for authority
     that was deleted or truncated.
   - At initial review, `PendingMainApproval` in
-    [`ApprovalService.ts`](src/main/services/ApprovalService.ts) carried a run id
+    [`ApprovalService.ts`](../src/main/services/ApprovalService.ts) carried a run id
     and optional workspace path, but no `appChatId`. The preflight approval
-    payload in [`ApprovalOrchestration.ts`](src/main/run/ApprovalOrchestration.ts)
+    payload in [`ApprovalOrchestration.ts`](../src/main/run/ApprovalOrchestration.ts)
     displayed the chat id without retaining it in the pending main record. Until
     `RunManager` has registered the run, `cancelForChat` therefore cannot
     correlate and settle that modal during delete or truncate.
 - **2026-07-19 remediation update:**
-  - [`HistoryClearAdmissionGate.ts`](src/main/HistoryClearAdmissionGate.ts) now
+  - [`HistoryClearAdmissionGate.ts`](../src/main/HistoryClearAdmissionGate.ts) now
     maintains global/workspace/chat mutation generations and opaque dispatch
-    reservations. [`RunCoordinator.ts`](src/main/services/RunCoordinator.ts)
+    reservations. [`RunCoordinator.ts`](../src/main/services/RunCoordinator.ts)
     holds a supplied reservation across provider preflight/reference capture,
     re-authorizes immediately before the adapter, and releases it on every exit.
   - Main wiring now derives canonical chat existence, workspace, and durable
@@ -1140,7 +1141,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   - A first candidate still reserved too late, after configuration repair and
     PDF expansion. The current source-ahead candidate moves `reserveDispatch`
     to the first operation in
-    [`RunDispatchFacade.ts`](src/main/run/RunDispatchFacade.ts), before either
+    [`RunDispatchFacade.ts`](../src/main/run/RunDispatchFacade.ts), before either
     await, and passes that outer reservation through `RunCoordinator` for final
     authorization and release instead of recapturing post-mutation state.
   - The later candidate added persistence authorization and rollback around
@@ -1156,7 +1157,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     before provider/transcript projection. Independent adversarial review of
     that boundary passed 232/232.
   - A stronger concurrent rollback probe found a narrower defect in
-    [`TranscriptMediaAssetStore.ts`](src/main/services/TranscriptMediaAssetStore.ts).
+    [`TranscriptMediaAssetStore.ts`](../src/main/services/TranscriptMediaAssetStore.ts).
     Two overlapping `rollbackOwnedFileWriteStrict` calls could make the second
     reject for singleton-purge contention after its caller had dropped the
     pending capability, leaving the second file bytes and chat grant durable
@@ -1169,7 +1170,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     rollback and history-purge-collision regressions passed in the independent
     222/222 media/AV batch plus 5/5 `ToolMediaPersistenceGate` tests.
   - A subsequent dispatcher re-audit found a distinct commit-order defect in
-    [`index.ts`](src/main/index.ts): the pending AV rollback receipt can be
+    [`index.ts`](../src/main/index.ts): the pending AV rollback receipt can be
     committed and retired before later throw-capable result projection,
     injection, or grant work has completed. If that later work throws, the catch
     path returns an error without a live receipt to revoke the already-owned AV
@@ -1222,7 +1223,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Data lifecycle, history erasure, and orphan recovery
 - **Original evidence:**
   - At initial review, global `AppStore.clearChats` in
-    [`store/index.ts`](src/main/store/index.ts) independently removes the chat
+    [`store/index.ts`](../src/main/store/index.ts) independently removes the chat
     directory/index, run events and artifacts, run queue and recovery data,
     approval and feedback ledgers, sub-thread mailboxes, and current/legacy Kimi
     seat state. Most of those calls use `deletePathBestEffort`, and the method
@@ -1234,7 +1235,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     failures were intentionally swallowed so the visible chat could disappear
     while related records remained.
   - The first source-ahead `deleteChatWithLifecycle` path in
-    [`chatHandlers.ts`](src/main/ipc/chatHandlers.ts) begins chat mutation holds,
+    [`chatHandlers.ts`](../src/main/ipc/chatHandlers.ts) begins chat mutation holds,
     revokes approvals, and joins selected Canvas/execution-graph cleanup before
     the core delete. The renderer abandoned-chat reaper now routes candidates
     through that helper, which is useful remediation progress.
@@ -1244,7 +1245,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     scoped admission holds, approval
     revocation, Canvas retirement, and execution-graph cleanup.
 - **2026-07-19 source-ahead remediation:**
-  - [`store/index.ts`](src/main/store/index.ts) now contains durable
+  - [`store/index.ts`](../src/main/store/index.ts) now contains durable
     `HistoryDeletionIntent` primitives that record quiescence and per-store
     completion, retry idempotent boundaries, retain the journal on failure,
     surface `HistoryDeletionIncompleteError`, and expose
@@ -1256,25 +1257,25 @@ same-UID residual boundaries when reconciling the final clean tip.
   - The candidate changes store reads to discover orphan sub-thread candidates
     rather than deleting them as a read side effect. Main now routes scoped
     chat deletion and truncation through
-    [`ScopedHistoryDeletionCoordinator.ts`](src/main/ScopedHistoryDeletionCoordinator.ts),
+    [`ScopedHistoryDeletionCoordinator.ts`](../src/main/ScopedHistoryDeletionCoordinator.ts),
     which durably prepares, raises Canvas/admission holds, revokes chat
     authority, records external-sink receipts, and commits through the store
     transaction. Renderer/remote orphan draining uses that lifecycle path.
   - Main now routes global/workspace clear through
-    [`HistoryDeletionTransactionCoordinator.ts`](src/main/HistoryDeletionTransactionCoordinator.ts).
+    [`HistoryDeletionTransactionCoordinator.ts`](../src/main/HistoryDeletionTransactionCoordinator.ts).
     It durably prepares before external destruction, acquires admission,
     Canvas, and bridge holds, quiesces provider/graph/media/bridge targets,
     records receipts, and commits the store transaction. Startup resumes a
     pending broad or scoped preparation before run-queue recovery rather than
     recomputing its topology.
   - The recovery candidate also uses `requireReacquiredHistoryDeletionHolds` in
-    [`HistoryDeletionQuiescence.ts`](src/main/services/HistoryDeletionQuiescence.ts)
+    [`HistoryDeletionQuiescence.ts`](../src/main/services/HistoryDeletionQuiescence.ts)
     to remove old Canvas/bridge receipt projections for each resumed attempt.
     Fresh strict purges are re-awaited and re-receipted before commit. Current-tip
     independent review confirmed that earlier false-green recovery window is
     closed.
   - Full-size Canvas screenshots and their durable ownership ledger live in
-    [`TranscriptMediaAssetStore.ts`](src/main/services/TranscriptMediaAssetStore.ts).
+    [`TranscriptMediaAssetStore.ts`](../src/main/services/TranscriptMediaAssetStore.ts).
     It now has strict scoped purge and owned-write rollback, a synchronous
     transaction-long `beginHistoryMutation` hold, ingest-generation invalidation,
     and active-ingest join/rollback. Broad and scoped coordinators retain that
@@ -1288,13 +1289,13 @@ same-UID residual boundaries when reconciling the final clean tip.
     global/workspace wiring, cascade batching, and overlapping async-ingest
     rollback are independently clean on the current tip. The focused media set
     in
-    [`TranscriptMediaAssetStore.test.ts`](src/main/services/TranscriptMediaAssetStore.test.ts)
+    [`TranscriptMediaAssetStore.test.ts`](../src/main/services/TranscriptMediaAssetStore.test.ts)
     and adjacent lifecycle suites passed 110/110 across eight files.
   - At the first reviewed Project-reference boundary, capture had a pre-capture
     authority fence but its content-addressed snapshots had no chat/run
     ownership, refcount, rollback, deletion step, or external-sink target.
-    [`ProjectReferenceArtifactLedger.ts`](src/main/services/ProjectReferenceArtifactLedger.ts)
-    and [`ProjectReferenceArtifactStore.ts`](src/main/services/ProjectReferenceArtifactStore.ts)
+    [`ProjectReferenceArtifactLedger.ts`](../src/main/services/ProjectReferenceArtifactLedger.ts)
+    and [`ProjectReferenceArtifactStore.ts`](../src/main/services/ProjectReferenceArtifactStore.ts)
     now add exact owners, batch rollback, history holds, durable purge recovery,
     strict scoped/global deletion, reconciliation, and fsynced publication. The
     broad/scoped coordinators also carry a distinct Project-reference deletion
@@ -1315,10 +1316,10 @@ same-UID residual boundaries when reconciling the final clean tip.
     files.
   - A subsequent review found two derived local stores outside the complete
     transaction at that point.
-    [`PdfAttachmentRenderService.ts`](src/main/services/PdfAttachmentRenderService.ts)
+    [`PdfAttachmentRenderService.ts`](../src/main/services/PdfAttachmentRenderService.ts)
     wrote rendered attachment pages beneath the first-party
     `pdf-page-cache`, without a history-scope owner/hold, deletion target, or
-    startup purge tied to the originating chat. [`index.ts`](src/main/index.ts)
+    startup purge tied to the originating chat. [`index.ts`](../src/main/index.ts)
     also used the shared first-party `media-staging` directory for daemon AV
     outputs and `composer-dictation-*.wav`. Its cleanup was per-call
     best-effort plus an age/prefix sweep; it did not synchronously block new
@@ -1339,7 +1340,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     chat/checkpoint save, so this residual is scoped to unfenced native
     maintenance work and provider-session state, not host transcript
     resurrection.
-  - [`RegenerableHistoryByteStore.ts`](src/main/services/RegenerableHistoryByteStore.ts)
+  - [`RegenerableHistoryByteStore.ts`](../src/main/services/RegenerableHistoryByteStore.ts)
     now owns first-party regenerable PDF cache, daemon/media staging, dictation,
     and temporary preview bytes under one process-lifetime generation. Scoped
     and broad history transactions synchronously raise admission holds, revoke
@@ -1354,13 +1355,13 @@ same-UID residual boundaries when reconciling the final clean tip.
     entry fail closed, subject to the explicit final-pathname limitation below;
     same-inode content changes are removed with the entry rather than treated as
     a separate mismatch.
-  - [`PdfAttachmentRenderService.ts`](src/main/services/PdfAttachmentRenderService.ts)
+  - [`PdfAttachmentRenderService.ts`](../src/main/services/PdfAttachmentRenderService.ts)
     now keys cache entries from descriptor-read content rather than pathname or
     mtime, renders from a stable private copy, validates complete PNG structure,
     CRCs, DEFLATE data, dimensions, and scanlines, and publishes only a complete
     success manifest through atomic rename. Main holds the exact derived-byte
     reservation until every page is durably promoted to chat-owned
-    [`TranscriptMediaAssetStore.ts`](src/main/services/TranscriptMediaAssetStore.ts)
+    [`TranscriptMediaAssetStore.ts`](../src/main/services/TranscriptMediaAssetStore.ts)
     storage and the ownership receipts commit as one batch. Authority loss,
     zero pages, partial output, or validation failure is a retryable fail-closed
     result; the provider never receives a silently stripped PDF.
@@ -1370,7 +1371,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     so there is no independent age-only temporary-media lifecycle left outside
     the deletion transaction.
   - The source-ahead remediation introduces the main-owned
-    [`MaintenanceCompactionRegistry.ts`](src/main/services/MaintenanceCompactionRegistry.ts).
+    [`MaintenanceCompactionRegistry.ts`](../src/main/services/MaintenanceCompactionRegistry.ts).
     Reservations precede provider work, a deletion hold synchronously blocks
     new native activity, and cancellation joins request completion separately
     from exact provider-child quiescence. Native quiescence is re-armed on every
@@ -1386,7 +1387,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   - Persistent Grok seats are now unconditionally disabled for new runs, and an
     environment variable cannot reopen them. The exact-exit residual is the
     ordinary one-shot ACP path in
-    [`GrokAcpClient.ts`](src/main/grok/GrokAcpClient.ts): callback-driven
+    [`GrokAcpClient.ts`](../src/main/grok/GrokAcpClient.ts): callback-driven
     `runGrokAcpTurn` starts the child while `runGrokProvider` returns, so the
     tracked adapter promise can settle before the child `close` event. History
     termination can kill and eagerly finish `RunManager`, then receipt before
@@ -1394,7 +1395,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     in-memory PID fails closed, but can remain wedged rather than falsely
     completing.
 - **2026-07-19 exact Grok-exit remediation update:**
-  - [`GrokAcpClient.ts`](src/main/grok/GrokAcpClient.ts) now returns a
+  - [`GrokAcpClient.ts`](../src/main/grok/GrokAcpClient.ts) now returns a
     provider-owned `closed` promise for ordinary one-shot ACP runs. It resolves
     only after the real child `close` event has fired and the caller's terminal
     projection/cleanup callback has returned; issuing a kill or finishing the
@@ -1402,21 +1403,21 @@ same-UID residual boundaries when reconciling the final clean tip.
   - Grok cancellation requests `SIGTERM` first. The shared ACP lifecycle sends
     the existing bounded `SIGKILL` backstop when the grace window expires, but
     the join remains pending until the child actually closes.
-  - [`index.ts`](src/main/index.ts) publishes that exact promise to
+  - [`index.ts`](../src/main/index.ts) publishes that exact promise to
     `ProviderOperationRegistry` and awaits the same promise in the outer
     provider-adapter invocation. History deletion therefore joins both the
     pre-publication setup window and the published transport operation without
     constructing a second, potentially divergent lifecycle receipt.
   - The deterministic provider-delete race in
-    [`GrokAcpClient.test.ts`](src/main/grok/GrokAcpClient.test.ts) proves the
+    [`GrokAcpClient.test.ts`](../src/main/grok/GrokAcpClient.test.ts) proves the
     deletion receipt stays pending after `SIGTERM`, after the `SIGKILL`
     backstop, and until explicit child close plus terminal cleanup. The static
     integration contract in
-    [`ProviderTransportHistoryIntegration.test.ts`](src/main/ProviderTransportHistoryIntegration.test.ts)
+    [`ProviderTransportHistoryIntegration.test.ts`](../src/main/ProviderTransportHistoryIntegration.test.ts)
     pins the authority-before-spawn, exact-promise publication, adapter join,
     and bounded deletion retry wiring.
 - **2026-07-19 provider and wakeup lifecycle remediation update:**
-  - [`ProviderOperationRegistry.ts`](src/main/run/ProviderOperationRegistry.ts)
+  - [`ProviderOperationRegistry.ts`](../src/main/run/ProviderOperationRegistry.ts)
     now carries exact per-run settlement authority. Claude CLI, Grok ACP, Kimi
     ACP, Codex exec fallback, and Codex app-server turns/native reviews remain
     registered through real child/turn terminal evidence and main-owned cleanup
@@ -1450,16 +1451,16 @@ same-UID residual boundaries when reconciling the final clean tip.
   remain hard-disabled; this evidence clears only the ordinary one-shot
   exact-close residual on the source-ahead candidate.
 - **2026-07-19 Grok legacy-fallback remediation update:**
-  [`grokGate.ts`](src/main/grokGate.ts) now normalizes the former opt-out values
+  [`grokGate.ts`](../src/main/grokGate.ts) now normalizes the former opt-out values
   (`0`, `false`, `no`, and `off`) as a fail-closed configuration rather than an
   emergency route to the unjoined headless CLI. `GROK_ACP_REQUIRED_MESSAGE`
   explains that exact joined ACP closure is required. `runGrokProvider` no
   longer imports or calls the headless process/argument builders: a disabled
   gate emits failed, setup-required, security-unavailable state before spawn;
   the admitted branch only awaits `runGrokAcpProvider`.
-  [`ProviderTransportHistoryIntegration.test.ts`](src/main/ProviderTransportHistoryIntegration.test.ts)
+  [`ProviderTransportHistoryIntegration.test.ts`](../src/main/ProviderTransportHistoryIntegration.test.ts)
   pins the absence of a headless launch branch, while
-  [`grokGate.test.ts`](src/main/grokGate.test.ts) covers the retired values and
+  [`grokGate.test.ts`](../src/main/grokGate.test.ts) covers the retired values and
   operator message. Focused verification passed 197/197 across seven files;
   Node typecheck, scoped ESLint, and diff check were green. An independent
   exact-close recheck passed 46/46. This clears the legacy fallback and makes
@@ -1503,7 +1504,7 @@ same-UID residual boundaries when reconciling the final clean tip.
   - *Exact host-command joins.* Both erasure paths were confirmed to await
     the registry cancellation completion before commit (broad quiesce and the
     per-chat mutation bundle inside the scoped coordinator's fenced begin).
-    Two identity gaps were closed: [`HostCommandOperationRegistry.ts`](src/main/run/HostCommandOperationRegistry.ts)
+    Two identity gaps were closed: [`HostCommandOperationRegistry.ts`](../src/main/run/HostCommandOperationRegistry.ts)
     now resolve()-normalizes workspace paths on registration and cancellation
     scopes (a raw stored `WorkspaceRecord.path` no longer misses its
     normalized identity twin), and the projection-scope factory accepts
@@ -1521,7 +1522,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     sibling mailbox writers already had. The Ensemble session-checkpoint
     store (`checkpoints/session-checkpoints.json` — round prompts, queued
     prompts, blackboard snapshots) was outside the transaction with no fence
-    and no purge: [`SessionCheckpoint.ts`](src/main/checkpoints/SessionCheckpoint.ts)
+    and no purge: [`SessionCheckpoint.ts`](../src/main/checkpoints/SessionCheckpoint.ts)
     now soft-skips writers (upsert/accept/dismiss) for chats inside a
     prepared erasure or whose record is gone, purges strictly under the
     frozen intent from both scoped commit callbacks and the broad commit
@@ -1539,9 +1540,9 @@ same-UID residual boundaries when reconciling the final clean tip.
     `ensureStarted` await could mint a provider-native rollout for the frozen
     scope: the adapter now re-checks history authority synchronously between
     `ensureStarted` and the RPC, and
-    [`ProviderTransportHistoryIntegration.test.ts`](src/main/ProviderTransportHistoryIntegration.test.ts)
+    [`ProviderTransportHistoryIntegration.test.ts`](../src/main/ProviderTransportHistoryIntegration.test.ts)
     pins that ordering. The stale-MCP daemon restart guard
-    ([`CodexRunRouting.ts`](src/main/CodexRunRouting.ts)) now also refuses to
+    ([`CodexRunRouting.ts`](../src/main/CodexRunRouting.ts)) now also refuses to
     dispose the shared daemon while any thread-admission lane is held or
     awaited — a manual compaction or native review owns no RunManager session
     and no startup lease, so the restart previously tore the daemon down
@@ -1553,7 +1554,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     `Promise.all`, but the store admits one durable intent at a time, so any
     multi-candidate reap self-collided (first deletion detached, rest
     rejected, renderer told the predicted rather than actual list).
-    [`chatHandlers.ts`](src/main/ipc/chatHandlers.ts) now deletes strictly
+    [`chatHandlers.ts`](../src/main/ipc/chatHandlers.ts) now deletes strictly
     sequentially, defers entirely while a durable erasure is pending (fail
     closed on an unreadable intent), stops mid-loop when one starts,
     re-validates every candidate against live records immediately before its
@@ -1569,8 +1570,8 @@ same-UID residual boundaries when reconciling the final clean tip.
     `reopenCollaborationRooms` re-opened their relay seats after restart;
     `human-collaboration-audit.json` retained bounded previews/hashes of
     chat contributions indefinitely.
-    [`HumanCollaborationStore.ts`](src/main/collaboration/HumanCollaborationStore.ts)
-    and [`HumanCollaborationAuditLog.ts`](src/main/collaboration/HumanCollaborationAuditLog.ts)
+    [`HumanCollaborationStore.ts`](../src/main/collaboration/HumanCollaborationStore.ts)
+    and [`HumanCollaborationAuditLog.ts`](../src/main/collaboration/HumanCollaborationAuditLog.ts)
     now purge share records and audit rows (by chat id and by share id, since
     admission/invite rows carry no chat id) under the frozen intent from both
     commit paths; the runtime already denies by absence and drops the live
@@ -1580,22 +1581,22 @@ same-UID residual boundaries when reconciling the final clean tip.
     recovery so a resumed transaction cannot hit their temporal dead zone.
   - *Regression evidence.* New deterministic coverage: prepared-window
     append/acknowledge fences and post-commit queue-insert refusal in
-    [`AppStoreRunEvents.test.ts`](src/main/AppStoreRunEvents.test.ts),
-    [`AppStoreSubThreadMailbox.test.ts`](src/main/AppStoreSubThreadMailbox.test.ts),
-    and [`AppStoreHistoryDeletionTransaction.test.ts`](src/main/AppStoreHistoryDeletionTransaction.test.ts);
+    [`AppStoreRunEvents.test.ts`](../src/main/AppStoreRunEvents.test.ts),
+    [`AppStoreSubThreadMailbox.test.ts`](../src/main/AppStoreSubThreadMailbox.test.ts),
+    and [`AppStoreHistoryDeletionTransaction.test.ts`](../src/main/AppStoreHistoryDeletionTransaction.test.ts);
     checkpoint purge/fence/orphan-sweep and strict-persist failure in
-    [`SessionCheckpoint.test.ts`](src/main/checkpoints/SessionCheckpoint.test.ts);
+    [`SessionCheckpoint.test.ts`](../src/main/checkpoints/SessionCheckpoint.test.ts);
     reaper sequencing, in-flight-erasure deferral, mid-loop stop,
     per-candidate revalidation, and honest partial reporting in
-    [`chatHandlers.test.ts`](src/main/ipc/chatHandlers.test.ts);
+    [`chatHandlers.test.ts`](../src/main/ipc/chatHandlers.test.ts);
     canonical-path scope matching in
-    [`HostCommandOperationRegistry.test.ts`](src/main/run/HostCommandOperationRegistry.test.ts);
+    [`HostCommandOperationRegistry.test.ts`](../src/main/run/HostCommandOperationRegistry.test.ts);
     admission-lane restart refusal in
-    [`CodexRunRouting.test.ts`](src/main/CodexRunRouting.test.ts) and
-    [`CodexThreadAdmission.test.ts`](src/main/codex/CodexThreadAdmission.test.ts);
+    [`CodexRunRouting.test.ts`](../src/main/CodexRunRouting.test.ts) and
+    [`CodexThreadAdmission.test.ts`](../src/main/codex/CodexThreadAdmission.test.ts);
     collaboration purge behavior in
-    [`HumanCollaborationStore.test.ts`](src/main/collaboration/HumanCollaborationStore.test.ts)
-    and [`HumanCollaborationAuditLog.test.ts`](src/main/collaboration/HumanCollaborationAuditLog.test.ts).
+    [`HumanCollaborationStore.test.ts`](../src/main/collaboration/HumanCollaborationStore.test.ts)
+    and [`HumanCollaborationAuditLog.test.ts`](../src/main/collaboration/HumanCollaborationAuditLog.test.ts).
     The consolidated lifecycle batch passed 361/361 across 28 files, the 20
     index-source contract suites passed 132/132, and Node plus web
     typechecks were green on the source-ahead candidate. The whole-tree
@@ -1696,7 +1697,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Provider canary and signed-release attestation
 - **Original evidence:**
   - `successfulReleaseAttestation` in
-    [`verify-provider-release-attestation.cjs`](scripts/verify-provider-release-attestation.cjs)
+    ``verify-provider-release-attestation.cjs`` (removed in `d06edb2f0`)
     measured freshness from a workflow run's mutable `updated_at` timestamp.
   - GitHub permits a partial job rerun without rerunning successful dependencies.
     The lightweight attestation-completion job could therefore be rerun later,
@@ -1717,10 +1718,10 @@ same-UID residual boundaries when reconciling the final clean tip.
     `status === 'completed'`, `conclusion === 'success'`, and
     `run_attempt === 1`. A newer failed or in-progress exact candidate blocks an
     older success instead of silently falling back to it.
-  - [`verify-provider-release-attestation.test.ts`](scripts/verify-provider-release-attestation.test.ts)
+  - ``verify-provider-release-attestation.test.ts`` (removed in `d06edb2f0`)
     covers partial-rerun timestamp refresh, malformed/future/stale creation
     times, rerun attempts, newer failures, exact SHA/branch/event identity, and
-    the publisher re-check call sites in [`ci.yml`](.github/workflows/ci.yml).
+    the publisher re-check call sites in [`ci.yml`](../.github/workflows/ci.yml).
 - **2026-07-19 verification update:** Independent re-review found the code
   remediation clean. The focused suite passed 27/27 with a clean diff check;
   all three CI queries include running/failed candidates, and both signed
@@ -1755,12 +1756,12 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Severity/status:** High / `Remediated` (source-ahead candidate; whole-tree verification pending)
 - **Owner:** TaskWraith maintainers — Usage privacy and data lifecycle
 - **Evidence at the initial reviewed source-ahead point:**
-  - `UsageRecord` in [`types.ts`](src/main/store/types.ts) always carries
+  - `UsageRecord` in [`types.ts`](../src/main/store/types.ts) always carries
     workspace, chat, and run identifiers. When the user enables prompt/response
     storage, the same record may also carry `promptText` and `responseText`;
     disabling the setting prevents those fields on new records but does not
     purge records already written.
-  - [`UsageJournalStore.ts`](src/main/store/UsageJournalStore.ts) serializes the
+  - [`UsageJournalStore.ts`](../src/main/store/UsageJournalStore.ts) serializes the
     record into the `usage.json` checkpoint, live `usage-journal.jsonl`, claimed
     journals, immutable spill journals, and `usage-archive.jsonl`. A malformed
     journal or checkpoint can additionally create a byte-preserving quarantine
@@ -1770,24 +1771,24 @@ same-UID residual boundaries when reconciling the final clean tip.
     retires claimed inputs last. The idempotency key prevents duplicate display,
     but it does not remove duplicate durable copies at intermediate crash
     boundaries.
-  - [`usageRotation.ts`](src/main/store/usageRotation.ts) explicitly moves old
+  - [`usageRotation.ts`](../src/main/store/usageRotation.ts) explicitly moves old
     rows to the append-only archive without deleting history. That archive is
     not served by the normal usage reader, but it remains TaskWraith-owned
     durable content.
   - The `HistoryDeletionIntent` and `HISTORY_DELETION_STEPS` in
-    [`index.ts`](src/main/store/index.ts) did not include the usage store, and
+    [`index.ts`](../src/main/store/index.ts) did not include the usage store, and
     `recordUsage` did not bind an append to the pending deletion scope. Chat,
     truncate, workspace, or global history deletion could therefore complete
     while matching usage rows or a late matching append could survive.
 - **2026-07-19 remediation in progress:**
-  - [`UsageJournalStore.ts`](src/main/store/UsageJournalStore.ts) now has a
+  - [`UsageJournalStore.ts`](../src/main/store/UsageJournalStore.ts) now has a
     durable operation-id-bound inner mutation intent, a synchronous hold,
     scope-aware append admission, compaction exclusion, strict atomic rewrites,
     residual verification, and idempotent recovery. Its scoped path covers the
     checkpoint, live/claimed/spill journals, archive, valid quarantine/corrupt
     copies, and managed temporary files; unparseable forensic bytes fail scoped
     deletion closed, while global deletion strictly removes every managed copy.
-  - [`UsageHistoryDeletionTarget.ts`](src/main/services/UsageHistoryDeletionTarget.ts)
+  - [`UsageHistoryDeletionTarget.ts`](../src/main/services/UsageHistoryDeletionTarget.ts)
     freezes the outer preparation scope, awaits strict purge before a receipt
     can be written, and releases the inner hold only after outer commit.
     `AppStore.recordUsage` also consults the general history-mutation gate, and
@@ -1849,7 +1850,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Original evidence:**
   - A `canvas_fill` approval carries the exact proposed text in
     `preview.params.value` so the human can review what the agent will type.
-    [`ApprovalOrchestration.ts`](src/main/run/ApprovalOrchestration.ts) projected
+    [`ApprovalOrchestration.ts`](../src/main/run/ApprovalOrchestration.ts) projected
     that same payload into both the durable run-event store and Approval Ledger.
   - The Canvas audit log itself retained only target metadata, and the tool
     catalogue told agents that the typed value was never recorded. The durable
@@ -1863,7 +1864,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     `canvasId`, target ref, and other non-secret audit metadata remain intact.
     The transient approval card still receives the exact value the human is
     being asked to approve.
-  - [`ApprovalOrchestration.test.ts`](src/main/run/ApprovalOrchestration.test.ts)
+  - [`ApprovalOrchestration.test.ts`](../src/main/run/ApprovalOrchestration.test.ts)
     asserts that neither durable sink contains the sentinel value, the redaction
     marker remains inspectable, target metadata survives, and the live prompt
     still shows the exact proposal.
@@ -1897,18 +1898,18 @@ same-UID residual boundaries when reconciling the final clean tip.
     scope. Persisted grants from older builds could also continue promoting the
     service.
 - **2026-07-26 remediation update:**
-  - [`PermissionService.ts`](src/main/PermissionService.ts),
-    [`RunManager.ts`](src/main/RunManager.ts), the native approval route, and
-    [`ApprovalService.ts`](src/main/services/ApprovalService.ts) now thread the
+  - [`PermissionService.ts`](../src/main/PermissionService.ts),
+    [`RunManager.ts`](../src/main/RunManager.ts), the native approval route, and
+    [`ApprovalService.ts`](../src/main/services/ApprovalService.ts) now thread the
     exact `surfaceId` through grant lookup and response-time grant creation.
     Both run-attached and fallback session keys include that identity.
   - Omitting the surface fails closed for `canvasInteraction`: it neither
     matches nor mints a session grant. Workspace grants for this service are
     refused at lookup and filtered from effective posture, so a legacy stored
     grant is inert rather than honoured.
-  - [`PermissionService.test.ts`](src/main/PermissionService.test.ts),
-    [`EffectiveRunPermissions.test.ts`](src/main/EffectiveRunPermissions.test.ts),
-    and [`ApprovalOrchestration.test.ts`](src/main/run/ApprovalOrchestration.test.ts)
+  - [`PermissionService.test.ts`](../src/main/PermissionService.test.ts),
+    [`EffectiveRunPermissions.test.ts`](../src/main/EffectiveRunPermissions.test.ts),
+    and [`ApprovalOrchestration.test.ts`](../src/main/run/ApprovalOrchestration.test.ts)
     cover cross-surface refusal, omission, run-scoped storage, legacy workspace
     state, and request/response identity propagation.
 - **Boundary of the fix:** A user may still grant repeated actions on one exact
@@ -1949,17 +1950,17 @@ same-UID residual boundaries when reconciling the final clean tip.
     or be pushed out of reach. The bounded exposure was consequential-control
     adjacency, not arbitrary CSS execution or invisible consent.
 - **2026-07-26 remediation update:**
-  - [`McpRouteGuards.ts`](src/main/mcp/McpRouteGuards.ts) now classifies
+  - [`McpRouteGuards.ts`](../src/main/mcp/McpRouteGuards.ts) now classifies
     `theme_tokens_set` as an every-call human prompt. Its `forcePrompt` path is
     evaluated ahead of standing grants, Trusted Session, and Boss/YOLO
     auto-approval. `theme_tokens_get` remains a read and does not inherit this
     mutation-only rule.
   - Consent decision rows now use literal spacing that the appearance channel
-    cannot alter. [`consentSurfaceTokens.test.ts`](src/renderer/src/styles/consentSurfaceTokens.test.ts)
+    cannot alter. [`consentSurfaceTokens.test.ts`](../src/renderer/src/styles/consentSurfaceTokens.test.ts)
     derives forbidden tokens from the actual agent-writable allowlist and finds
     consent control rows structurally across renderer CSS, so future token or
     surface additions cannot pass through a hand-maintained two-rule list.
-  - [`McpRouteGuards.test.ts`](src/main/mcp/McpRouteGuards.test.ts) pins the
+  - [`McpRouteGuards.test.ts`](../src/main/mcp/McpRouteGuards.test.ts) pins the
     every-call classification and its distinction from ordinary grantable MCP
     tools.
 - **Verification still required:** Run a real provider tool turn that first
@@ -1978,7 +1979,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — Data lifecycle, history erasure, and run
   admission
 - **Evidence:**
-  - [`ScopedHistoryDeletionCoordinator.ts`](src/main/ScopedHistoryDeletionCoordinator.ts)
+  - [`ScopedHistoryDeletionCoordinator.ts`](../src/main/ScopedHistoryDeletionCoordinator.ts)
     explicitly defines failed attempts as retaining their durable intent,
     Canvas/admission holds, and external-store holds for a resumable retry. Its
     release callbacks and `retainedByOperation.delete` run only after
@@ -2036,7 +2037,7 @@ same-UID residual boundaries when reconciling the final clean tip.
     Project-reference, and transcript-media state before committing. The
     production usage adapter now has an explicit completion-aware release path,
     so a reconciled timeout does not falsely claim the outer deletion committed.
-  - [`ScopedHistoryDeletionCoordinator.test.ts`](src/main/ScopedHistoryDeletionCoordinator.test.ts)
+  - [`ScopedHistoryDeletionCoordinator.test.ts`](../src/main/ScopedHistoryDeletionCoordinator.test.ts)
     crosses the deadline independently for background-process join, Ensemble
     cancellation, provider termination, maintenance compaction, Canvas close,
     execution-graph deletion, usage purge, Project-reference purge, and
@@ -2074,14 +2075,14 @@ same-UID residual boundaries when reconciling the final clean tip.
     required mitigation preserves Pi's existing native tool choices and only
     adds the requested coordination route.
 - **2026-07-27 remediation and regression evidence:**
-  - [`McpBridgeRuntime.ts`](src/main/mcp/McpBridgeRuntime.ts) binds the
+  - [`McpBridgeRuntime.ts`](../src/main/mcp/McpBridgeRuntime.ts) binds the
     credential to the exact Pi run before resolving request-supplied route or
     provider fields, then rejects every Pi-parent broker request except
     `ensemble_yield`, `ensemble_send`, `ensemble_fanout`,
     `ensemble_poll_response`, `scout_brief`, and the three blackboard tools.
     The route binding and allowlist are server-side, before the generic executor
     or capability gateway sees the request.
-  - [`PiEnsembleCoordination.ts`](src/main/pi/PiEnsembleCoordination.ts)
+  - [`PiEnsembleCoordination.ts`](../src/main/pi/PiEnsembleCoordination.ts)
     materializes a mode-checked owner-only extension in the already
     identity-bound isolated Pi home. It registers concrete schemas for only
     that list, emits a readiness marker only after registration, and never
@@ -2091,9 +2092,9 @@ same-UID residual boundaries when reconciling the final clean tip.
     receipt, a visible warning, and the host-side unique `@Role`/`@Model`
     fallback instead.
   - Focused regression coverage lives in
-    [`PiEnsembleCoordination.test.ts`](src/main/pi/PiEnsembleCoordination.test.ts),
-    [`PiCliArgs.test.ts`](src/main/pi/PiCliArgs.test.ts), and
-    [`McpBridgeRuntimeSafeWrite.test.ts`](src/main/mcp/McpBridgeRuntimeSafeWrite.test.ts).
+    [`PiEnsembleCoordination.test.ts`](../src/main/pi/PiEnsembleCoordination.test.ts),
+    [`PiCliArgs.test.ts`](../src/main/pi/PiCliArgs.test.ts), and
+    [`McpBridgeRuntimeSafeWrite.test.ts`](../src/main/mcp/McpBridgeRuntimeSafeWrite.test.ts).
     A local Pi 0.82.1 loader smoke run also proved that the extension loads
     under `--no-extensions` with the explicit `--extension`/`--tools` route,
     emits its marker, exits cleanly, and cleans its lease.
@@ -2109,7 +2110,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 - **Owner:** TaskWraith maintainers — macOS packaging and child-process
   environment boundaries
 - **Evidence and impact:**
-  - [`build/entitlements.mac.plist`](build/entitlements.mac.plist) grants
+  - [`build/entitlements.mac.plist`](../build/entitlements.mac.plist) grants
     `com.apple.security.cs.allow-dyld-environment-variables`, and the macOS
     packaging configuration inherits that entitlement into child code.
   - The AppDrive packaging acceptance review found no repository path that
@@ -2140,7 +2141,7 @@ same-UID residual boundaries when reconciling the final clean tip.
 
 The source-ahead combined-mode implementation has a tracked threat model and
 migration contract in
-[`docs/antigravity-gemini-api-threat-model-and-migration.md`](docs/antigravity-gemini-api-threat-model-and-migration.md).
+[`docs/antigravity-gemini-api-threat-model-and-migration.md`](./antigravity-gemini-api-threat-model-and-migration.md).
 It is the authoritative concise reference for the dedicated main-only
 purpose-bound safeStorage boundary, unsafe-backend fail-closed behavior,
 official `@google/genai` public transport, and the prohibition on OAuth,

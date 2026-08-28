@@ -25,13 +25,19 @@ out
 # Local-only planning/release material kept out of the public source tree
 .local-only/
 /website/
-/SECURITY_ENGINEERING_LEDGER.md
+# Unanchored on purpose: the root-anchored form silently stopped matching when
+# 298f9c2b0 moved this file into docs/, republishing what 758b47e14 had
+# deliberately made private. An ignore rule must survive a move.
+SECURITY_ENGINEERING_LEDGER.md
+# papercuts/README.md: "This directory is intentionally tracked." The former
+# per-file allowlist made every NEW papercut invisible to git until someone
+# hand-edited this file - and it would not appear in `git status` to remind
+# them. Local scratch notes belong in .local-only/papercuts/ instead.
 papercuts/*
-!papercuts/README.md
-!papercuts/2026-07-19-retro.md
-!papercuts/2026-08-25-ts6305-noemit-residual.md
-!papercuts/2026-08-27-tool-adapter-papercuts.md
-/PLAN-IMPORT-CODEX-BRIEF.md
+!papercuts/*.md
+# Measurement output. Was only in this checkout's private .git/info/exclude, so
+# every other clone saw it as untracked noise.
+perf-artifacts/
 docs/
 RELEASING.md
 scripts/publish-clean.sh
