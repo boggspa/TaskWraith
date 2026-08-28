@@ -105,6 +105,7 @@ import { WelcomeHeatmaps } from '../../components/WelcomeHeatmaps'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
 import { ThreadHomeWorkspace, type ThreadHomeWorkspaceHandle } from '../../components/ThreadHome'
+import { resolvePrimaryPaneIndex } from '../../lib/multiviewPrimaryPane'
 import { AuditRunCard } from '../../components/AuditRunCard'
 import { AuditRunNotice } from '../../components/AuditRunNotice'
 import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
@@ -1262,6 +1263,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   })
   const mainPaneActionPillRef = useRef<MainPaneActionPillHandle>(null)
   const mainThreadHomeWorkspaceRef = useRef<ThreadHomeWorkspaceHandle>(null)
+  const primaryPaneIndex = resolvePrimaryPaneIndex(multiview.panes, currentChatAppChatId)
+  const closePrimaryMultiviewPane =
+    isMultiviewSplit && primaryPaneIndex !== null
+      ? () => multiview.closePane(primaryPaneIndex)
+      : undefined
   const requestMainPaneWorkspaceStats = useCallback(
     () => mainPaneActionPillRef.current?.openWorkspaceStats(),
     []
@@ -2105,7 +2111,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onCloseThread={
                   currentChat
                     ? isMultiviewSplit
-                      ? () => multiview.closePane(multiview.focusedPaneIndex)
+                      ? closePrimaryMultiviewPane
                       : threadHomeOpen
                         ? () => mainThreadHomeWorkspaceRef.current?.closeCurrentPane()
                         : openThreadHome

@@ -260,6 +260,24 @@ describe('ThreadHome', () => {
     expect(css).not.toContain('thread-home-additions-region')
   })
 
+  it('gives a secondary Thread Home cell an opaque pane surface', () => {
+    const css = readFileSync(
+      new URL('../assets/css/44-thread-home-multiview.css', import.meta.url),
+      'utf8'
+    )
+    const paneStart = css.indexOf(
+      '.thread-home.thread-home--pane,\n.thread-home-surface.thread-home-surface--pane {'
+    )
+    const paneEnd = css.indexOf('}', paneStart)
+    const paneRule = css.slice(paneStart, paneEnd)
+
+    expect(paneRule).toContain(
+      'background-color: var(--main-pane-opacity-override-bg, var(--content-bg, #161616))'
+    )
+    expect(paneRule).toContain('background-image: none')
+    expect(paneRule).toContain('backdrop-filter: none')
+  })
+
   it('does not route through or mutate the right dock', () => {
     const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('activateRightDock')

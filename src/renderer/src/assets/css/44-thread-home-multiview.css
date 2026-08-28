@@ -1,0 +1,11 @@
+/* Empty Thread Home cells are real panes, not ambient glass. The split grid's
+ * cells intentionally stay transparent so chat transcripts can paint their
+ * own slabs; Thread Home has no `.app-transcript` child, so it must provide
+ * its own opaque reading surface when mounted in a secondary cell. */
+.thread-home.thread-home--pane,
+.thread-home-surface.thread-home-surface--pane {
+  background-color: var(--main-pane-opacity-override-bg, var(--content-bg, #161616));
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
