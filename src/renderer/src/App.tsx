@@ -25767,6 +25767,7 @@ function App(): React.JSX.Element {
   const welcomeHeatmapRefreshKey = usageRecords.length + externalUsageVersion
   const shouldBuildWelcomeUsageDashboardDataNow = shouldBuildWelcomeUsageDashboardData({
     isWelcomeChat,
+    isThreadHomeOpen: threadHomeOpen,
     isCurrentGlobalChat,
     usageInitialized,
     isMultiviewSplit
@@ -25830,8 +25831,9 @@ function App(): React.JSX.Element {
     settings?.welcomeHeatmapPrefs?.taskwraithActivityEnabled !== false
   const welcomeExternalHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.externalActivityEnabled !== false
+  const isWelcomeOrThreadHome = isWelcomeChat || threadHomeOpen
   const welcomeWorkspaceActivityPath =
-    isWelcomeChat && !isCurrentGlobalChat && welcomeWorkspaceHeatmapEnabled
+    isWelcomeOrThreadHome && !isCurrentGlobalChat && welcomeWorkspaceHeatmapEnabled
       ? resolveAppChatChromeWorkspacePath({
           currentWorkspacePath,
           chatWorkspacePath: currentChat?.workspacePath,
