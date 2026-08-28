@@ -109,7 +109,7 @@ it('projects an ensemble thread kind and its persisted seat roster without synth
             provider: 'claude',
             role: 'Captain',
             model: 'claude-opus-5',
-            stage: 'worker',
+            stageRole: 'worker',
             order: 0,
             enabled: true,
             status: 'running',

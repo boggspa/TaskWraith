@@ -9,6 +9,8 @@
 
 import {
   assertHostSnapshotFamilies,
+  createEmptyHostSnapshot,
+  decodeHostSnapshot,
   encodeHostParticipantEntityId,
   HOST_PROTOCOL_MAX_CHANNEL_MEMBERS,
   HOST_PROTOCOL_MAX_COLLECTION,
@@ -98,6 +100,12 @@ const REQUIRED_ARRAY_FAMILIES = [
 ] as const
 
 type RequiredArrayFamily = (typeof REQUIRED_ARRAY_FAMILIES)[number]
+type HostSnapshotArrayFamily = RequiredArrayFamily | 'channels'
+
+const FAMILY_ROW_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
+  generation: 0,
+  cursor: 0
+})
 
 /** Forbidden wire keys (case-insensitive) that must never appear on the snapshot. */
 const PRIVACY_KEY_SENTINELS = [
@@ -229,8 +237,6 @@ const DECISION_SOURCES = new Set<string>(['user', 'system'])
 
 const CHAT_KINDS = new Set<string>(['single', 'ensemble'])
 
-const PARTICIPANT_STAGES = new Set<string>(['scout', 'worker', 'reviewer', 'background', 'any'])
-
 const USAGE_CONFIDENCE = new Set<string>(['exact', 'derived', 'estimated', 'unknown'])
 
 const USAGE_BAND = new Set<string>(['low', 'medium', 'high', 'critical', 'unknown'])
@@ -243,10 +249,6 @@ function isNonNegativeInt(value: unknown): value is number {
   return (
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && Number.isFinite(value)
   )
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function isValidId(value: unknown): value is string {
@@ -815,42 +817,13 @@ function projectRound(
 
 function projectParticipant(
   raw: HostParticipantProjection,
-  index: number
+  _index: number
 ): HostDecodeResult<HostParticipantProjection> {
-  const label = `participants[${index}]`
-  if (!isValidId(raw.id)) return { ok: false, error: `${label}.id is invalid` }
-  if (!isValidId(raw.threadId)) return { ok: false, error: `${label}.threadId is invalid` }
-  const entityId = encodeHostParticipantEntityId(raw.threadId, raw.id)
-  if (!entityId.ok) return { ok: false, error: `${label} identity is invalid: ${entityId.error}` }
-  if (!isValidId(raw.providerId)) return { ok: false, error: `${label}.providerId is invalid` }
-  if (typeof raw.role !== 'string' || raw.role.length === 0) {
-    return { ok: false, error: `${label}.role is required` }
+  const out = { ...raw }
+  if (typeof raw.role === 'string') {
+    out.role = truncatePresentation(raw.role, HOST_PROTOCOL_MAX_SHORT).text
   }
-  if (!isOptionalId(raw.modelId)) return { ok: false, error: `${label}.modelId is invalid` }
-  if (raw.stage !== undefined && !PARTICIPANT_STAGES.has(raw.stage)) {
-    return { ok: false, error: `${label}.stage is invalid` }
-  }
-  if (!isFiniteNumber(raw.order) || !Number.isInteger(raw.order)) {
-    return { ok: false, error: `${label}.order is invalid` }
-  }
-  if (typeof raw.enabled !== 'boolean' || typeof raw.active !== 'boolean') {
-    return { ok: false, error: `${label}.enabled/active must be boolean` }
-  }
-  const out: HostParticipantProjection = {
-    id: raw.id,
-    threadId: raw.threadId,
-    providerId: raw.providerId,
-    role: truncatePresentation(raw.role, HOST_PROTOCOL_MAX_SHORT).text,
-    order: raw.order,
-    enabled: raw.enabled,
-    active: raw.active
-  }
-  if (raw.modelId !== undefined) out.modelId = raw.modelId
-  if (raw.stage !== undefined) out.stage = raw.stage
-  if (raw.status !== undefined) {
-    if (typeof raw.status !== 'string' || raw.status.length === 0) {
-      return { ok: false, error: `${label}.status is invalid` }
-    }
+  if (typeof raw.status === 'string') {
     out.status = truncatePresentation(raw.status, HOST_PROTOCOL_MAX_SHORT).text
   }
   return { ok: true, value: out }
@@ -1170,20 +1143,62 @@ function projectWarning(
   return { ok: true, value: out }
 }
 
+function decodeProjectedFamilyRow<T>(family: HostSnapshotArrayFamily, row: T): HostDecodeResult<T> {
+  const decoded = decodeHostSnapshot({
+    ...FAMILY_ROW_VALIDATION_SNAPSHOT,
+    [family]: [row]
+  })
+  if (!decoded.ok) return decoded
+  const familyRows = decoded.value[family]
+  if (!Array.isArray(familyRows) || familyRows.length !== 1) {
+    return { ok: false, error: `canonical decoder omitted ${family} row` }
+  }
+  return { ok: true, value: familyRows[0] as T }
+}
+
+function warnRowsOmitted(
+  family: HostSnapshotArrayFamily,
+  count: number,
+  warnings: HostWarningProjection[],
+  at: number
+): void {
+  if (count <= 0) return
+  warnings.push({
+    warningId: `projection_rows_omitted:${family}`,
+    severity: 'warning',
+    code: 'projection_rows_omitted',
+    message: truncatePresentation(
+      `family ${family} omitted ${count} decoder-invalid row${count === 1 ? '' : 's'}`,
+      HOST_PROTOCOL_MAX_WARNING
+    ).text,
+    at
+  })
+}
+
 function projectArrayFamily<TIn, TOut>(
   items: TIn[],
-  family: string,
+  family: HostSnapshotArrayFamily,
   projectOne: (item: TIn, index: number) => HostDecodeResult<TOut>,
   idOf: (item: TOut) => string,
   truncationWarnings: HostWarningProjection[],
   at: number
 ): HostDecodeResult<TOut[]> {
   const projected: TOut[] = []
+  let omitted = 0
   for (let i = 0; i < items.length; i += 1) {
     const one = projectOne(items[i]!, i)
-    if (!one.ok) return one
-    projected.push(one.value)
+    if (!one.ok) {
+      omitted += 1
+      continue
+    }
+    const decoded = decodeProjectedFamilyRow(family, one.value)
+    if (!decoded.ok) {
+      omitted += 1
+      continue
+    }
+    projected.push(decoded.value)
   }
+  warnRowsOmitted(family, omitted, truncationWarnings, at)
   const sorted = stableSortById(projected, idOf)
   return { ok: true, value: capCollection(family, sorted, truncationWarnings, at) }
 }
@@ -1195,7 +1210,8 @@ function projectArrayFamily<TIn, TOut>(
  * - Preserves injected generation/cursor/freshness exactly.
  * - Caps each collection at HOST_PROTOCOL_MAX_COLLECTION with deterministic order
  *   and explicit `projection_truncated` warnings.
- * - Rejects invalid identifiers; truncates presentation text only.
+ * - Quarantines decoder-invalid collection rows with bounded warnings.
+ * - Truncates presentation text only; identifiers are never rewritten.
  * - Strips unavailable usage tokens/cost; never publishes zero as unavailable.
  * - Privacy reject on forbidden keys/values; wire surface is typed fields only.
  */

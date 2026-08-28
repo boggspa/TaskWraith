@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertHostSnapshotFamilies,
+  decodeHostSnapshot,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_ID,
   HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
+  HOST_PROTOCOL_MAX_WARNING,
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   type HostWorkspaceProjection
@@ -429,87 +431,149 @@ describe('HostSnapshotProjector', () => {
     })
   })
 
-  it('rejects invalid identifiers without truncating them into a different identity', () => {
-    const emptyId = projectHostSnapshot(
+  it.each([
+    {
+      family: 'workspaces',
+      input: () =>
+        baseInput({
+          workspaces: [
+            baseInput().workspaces[0]!,
+            {
+              ...baseInput().workspaces[0]!,
+              id: ''
+            }
+          ]
+        })
+    },
+    {
+      family: 'threads',
+      input: () =>
+        baseInput({
+          threads: [
+            baseInput().threads[0]!,
+            {
+              ...baseInput().threads[0]!,
+              workspaceId: ''
+            }
+          ]
+        })
+    },
+    {
+      family: 'runs',
+      input: () =>
+        baseInput({
+          runs: [
+            baseInput().runs[0]!,
+            {
+              ...baseInput().runs[0]!,
+              runId: ''
+            }
+          ]
+        })
+    },
+    {
+      family: 'providers',
+      input: () =>
+        baseInput({
+          providers: [
+            baseInput().providers[0]!,
+            {
+              ...baseInput().providers[0]!,
+              available: 'yes' as never
+            }
+          ]
+        })
+    },
+    {
+      family: 'participants',
+      input: () =>
+        baseInput({
+          participants: [
+            baseInput().participants[0]!,
+            {
+              ...baseInput().participants[0]!,
+              threadId: 't'.repeat(300),
+              id: 'p'.repeat(300)
+            }
+          ]
+        })
+    }
+  ] as const)(
+    'quarantines one decoder-invalid $family row without losing the snapshot',
+    ({ family, input }) => {
+      const result = projectHostSnapshot(input())
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+
+      expect(result.value[family]).toHaveLength(1)
+      expect(result.value.questions).toHaveLength(1)
+      expect(result.value.approvals).toHaveLength(1)
+      expect(decodeHostSnapshot(result.value).ok).toBe(true)
+
+      const warning = result.value.warnings.find(
+        (candidate) => candidate.warningId === `projection_rows_omitted:${family}`
+      )
+      expect(warning).toMatchObject({
+        severity: 'warning',
+        code: 'projection_rows_omitted',
+        at: GENERATED_AT_MS
+      })
+      expect(warning?.message).toContain(`family ${family}`)
+      expect(warning?.message).toContain('omitted 1')
+      expect(
+        result.value.warnings.filter(
+          (candidate) => candidate.warningId === `projection_rows_omitted:${family}`
+        )
+      ).toHaveLength(1)
+    }
+  )
+
+  it('aggregates repeated row omissions into one bounded family warning', () => {
+    const invalidRuns = Array.from({ length: 50 }, () => ({
+      ...baseInput().runs[0]!,
+      runId: ''
+    }))
+    const result = projectHostSnapshot(
       baseInput({
-        workspaces: [
-          {
-            id: '',
-            name: 'x',
-            path: '/tmp',
-            pinned: false,
-            updatedAt: 1
-          }
-        ]
+        runs: [baseInput().runs[0]!, ...invalidRuns]
       })
     )
-    expect(emptyId).toMatchObject({ ok: false, error: 'workspaces[0].id is invalid' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
 
-    const overlongId = projectHostSnapshot(
+    const warnings = result.value.warnings.filter(
+      (candidate) => candidate.warningId === 'projection_rows_omitted:runs'
+    )
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.message).toContain('omitted 50')
+    expect(warnings[0]?.message.length).toBeLessThanOrEqual(HOST_PROTOCOL_MAX_WARNING)
+    expect(result.value.runs.map((run) => run.runId)).toEqual(['run-1'])
+    expect(decodeHostSnapshot(result.value).ok).toBe(true)
+  })
+
+  it('never truncates an invalid identifier into a different identity', () => {
+    const invalidId = 'r'.repeat(HOST_PROTOCOL_MAX_ID + 1)
+    const result = projectHostSnapshot(
       baseInput({
         runs: [
+          baseInput().runs[0]!,
           {
-            runId: 'r'.repeat(HOST_PROTOCOL_MAX_ID + 1),
-            threadId: 'thread-1',
-            providerId: 'codex',
-            providerOutcome: 'completed'
+            ...baseInput().runs[0]!,
+            runId: invalidId
           }
         ]
       })
     )
-    expect(overlongId).toMatchObject({ ok: false, error: 'runs[0].runId is invalid' })
-
-    const badThreadWorkspace = projectHostSnapshot(
-      baseInput({
-        threads: [
-          {
-            id: 'thread-x',
-            workspaceId: '',
-            title: 't',
-            chatKind: 'single',
-            archived: false,
-            pinned: false,
-            updatedAt: 1,
-            messageCount: 0
-          }
-        ]
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.runs.map((run) => run.runId)).toEqual(['run-1'])
+    expect(result.value.runs.some((run) => run.runId.startsWith('r'.repeat(100)))).toBe(false)
+    expect(result.value.warnings).toContainEqual(
+      expect.objectContaining({
+        warningId: 'projection_rows_omitted:runs',
+        code: 'projection_rows_omitted'
       })
     )
-    expect(badThreadWorkspace).toMatchObject({
-      ok: false,
-      error: 'threads[0].workspaceId is invalid'
-    })
-
-    const missingParticipantThread = projectHostSnapshot(
-      baseInput({
-        participants: [
-          {
-            ...baseInput().participants[0]!,
-            threadId: undefined
-          } as unknown as HostSnapshotProjectorInput['participants'][number]
-        ]
-      })
-    )
-    expect(missingParticipantThread).toMatchObject({
-      ok: false,
-      error: 'participants[0].threadId is invalid'
-    })
-
-    const overlongParticipantIdentity = projectHostSnapshot(
-      baseInput({
-        participants: [
-          {
-            ...baseInput().participants[0]!,
-            threadId: 't'.repeat(300),
-            id: 'p'.repeat(300)
-          }
-        ]
-      })
-    )
-    expect(overlongParticipantIdentity).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('participant composite entity id exceeds')
-    })
   })
 
   it('rejects privacy key sentinels in donor payloads', () => {
@@ -556,10 +620,11 @@ describe('HostSnapshotProjector', () => {
     expect(result.error).toMatch(/privacy value sentinel/i)
   })
 
-  it('rejects artifact body smuggling', () => {
+  it('quarantines artifact body smuggling without projecting it', () => {
     const result = projectHostSnapshot(
       baseInput({
         artifacts: [
+          baseInput().artifacts[0]!,
           {
             artifactId: 'art-bad',
             kind: 'blob',
@@ -570,10 +635,16 @@ describe('HostSnapshotProjector', () => {
         ]
       })
     )
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    // Privacy key scan may catch first, or artifact body check — either is fail-closed.
-    expect(result.error.length).toBeGreaterThan(0)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.artifacts.map((artifact) => artifact.artifactId)).toEqual(['art-1'])
+    expect(result.value.warnings).toContainEqual(
+      expect.objectContaining({
+        warningId: 'projection_rows_omitted:artifacts',
+        code: 'projection_rows_omitted'
+      })
+    )
+    expect(decodeHostSnapshot(result.value).ok).toBe(true)
   })
 
   it('rejects invalid position freshness/generation', () => {

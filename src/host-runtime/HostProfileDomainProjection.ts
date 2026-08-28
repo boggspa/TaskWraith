@@ -104,9 +104,11 @@ function decodeParticipantCandidate(
       : hasModel
         ? { modelId: participant.model }
         : {}),
-    ...(Object.prototype.hasOwnProperty.call(participant, 'stage')
-      ? { stage: participant.stage }
-      : {}),
+    ...(Object.prototype.hasOwnProperty.call(participant, 'stageRole')
+      ? { stage: participant.stageRole }
+      : Object.prototype.hasOwnProperty.call(participant, 'stage')
+        ? { stage: participant.stage }
+        : {}),
     order: participant.order,
     enabled: participant.enabled,
     ...(Object.prototype.hasOwnProperty.call(participant, 'status')
