@@ -179,6 +179,12 @@ function createClient(
     profilePath?: string
     nowMs?: () => number
     onPersisted?: (input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => void
+    recoverConflict?: (
+      input: HostThreadRecordPersistInput,
+      error: HostThreadRecordPersistError,
+      attempt: number
+    ) => HostThreadRecordPersistInput | null
+    maxConflictRetries?: number
   } = {}
 ): HostThreadRecordPersistClient {
   let id = 0
@@ -191,7 +197,11 @@ function createClient(
     pollIntervalMs: 25,
     timeoutMs: 100,
     ...(options.nowMs ? { nowMs: options.nowMs } : {}),
-    ...(options.onPersisted ? { onPersisted: options.onPersisted } : {})
+    ...(options.onPersisted ? { onPersisted: options.onPersisted } : {}),
+    ...(options.recoverConflict ? { recoverConflict: options.recoverConflict } : {}),
+    ...(options.maxConflictRetries !== undefined
+      ? { maxConflictRetries: options.maxConflictRetries }
+      : {})
   })
 }
 
@@ -443,7 +453,7 @@ describe('enqueue / drain durability barrier', () => {
     await expect(client.drain('chat-1')).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
-  it('coalesces latest-wins while an earlier entry is still queued', async () => {
+  it('coalesces only same-revision snapshots while an earlier entry is in flight', async () => {
     const deferred: { release: () => void } = { release: () => {} }
     const gate = new Promise<void>((resolve) => {
       deferred.release = resolve
@@ -471,6 +481,97 @@ describe('enqueue / drain durability barrier', () => {
 
     // Entry 1 was already in flight; B was superseded by C, so exactly two land.
     expect(slowBroker.commands).toHaveLength(2)
+  })
+
+  it('preserves a FIFO chain when queued snapshots depend on different revisions', async () => {
+    const deferred: { release: () => void } = { release: () => {} }
+    const gate = new Promise<void>((resolve) => {
+      deferred.release = resolve
+    })
+    let first = true
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const slowBroker: HostThreadRecordPersistBrokerPort & { commands: HostCommand[] } = {
+      commands: broker.commands,
+      submitCommand: async (command) => {
+        if (first) {
+          first = false
+          await gate
+        }
+        return broker.submitCommand(command)
+      },
+      lookupReceipt: (commandId) => broker.lookupReceipt(commandId)
+    }
+    const client = createClient(slowBroker)
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'A' }), expectedRevision: 0 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'B' }), expectedRevision: 1 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'C' }), expectedRevision: 2 })
+    deferred.release()
+    await client.drain('chat-1')
+
+    expect(slowBroker.commands.map((command) => command.arguments.expectedRevision)).toEqual([
+      0, 1, 2
+    ])
+  })
+
+  it('rebases a revision conflict inside the save lane before the barrier observes it', async () => {
+    let attempts = 0
+    const broker = scriptedBroker((command) =>
+      attempts++ === 0
+        ? [receiptFor(command, 'failed', { errorCode: 'thread_record_revision_conflict' })]
+        : [receiptFor(command, 'succeeded')]
+    )
+    const recoverConflict = vi.fn((input: HostThreadRecordPersistInput) => ({
+      ...input,
+      expectedRevision: 4,
+      record: chatRecord({ title: 'Rebased', persistenceRevision: 5 })
+    }))
+    const client = createClient(broker, { recoverConflict })
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 3 })
+    await expect(client.drain('chat-1')).resolves.toBeUndefined()
+
+    expect(recoverConflict).toHaveBeenCalledTimes(1)
+    expect(broker.commands.map((command) => command.arguments.expectedRevision)).toEqual([3, 4])
+  })
+
+  it('drops queued successors from the failed revision chain before immediate recovery', async () => {
+    let attempts = 0
+    const broker = scriptedBroker((command) =>
+      attempts++ === 0
+        ? [receiptFor(command, 'failed', { errorCode: 'thread_record_revision_conflict' })]
+        : [receiptFor(command, 'succeeded')]
+    )
+    const recoverConflict = vi.fn((input: HostThreadRecordPersistInput) => ({
+      ...input,
+      expectedRevision: 10,
+      record: chatRecord({ title: 'Accumulated latest intent', persistenceRevision: 11 })
+    }))
+    const client = createClient(broker, { recoverConflict })
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'A' }), expectedRevision: 0 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'B' }), expectedRevision: 1 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'C' }), expectedRevision: 2 })
+    await client.drain('chat-1')
+
+    expect(broker.commands.map((command) => command.arguments.expectedRevision)).toEqual([0, 10])
+  })
+
+  it('bounds immediate conflict recovery attempts inside the lane', async () => {
+    const broker = scriptedBroker((command) => [
+      receiptFor(command, 'failed', { errorCode: 'thread_record_revision_conflict' })
+    ])
+    const recoverConflict = vi.fn((input: HostThreadRecordPersistInput) => ({
+      ...input,
+      expectedRevision: input.expectedRevision + 1
+    }))
+    const client = createClient(broker, { recoverConflict, maxConflictRetries: 2 })
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    await expect(client.drain('chat-1')).rejects.toMatchObject({ code: 'revision_conflict' })
+
+    expect(recoverConflict).toHaveBeenCalledTimes(2)
+    expect(broker.commands).toHaveLength(3)
   })
 
   it('keeps separate chats independent, and drainAll surfaces a failure', async () => {

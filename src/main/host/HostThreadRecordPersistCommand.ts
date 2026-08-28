@@ -21,10 +21,11 @@
  * participants. `drain` rethrows the first typed failure rather than letting a
  * lost write pass silently.
  *
- * Per chat, work is serialized and coalesced latest-wins: every enqueued record
- * is a COMPLETE snapshot, so a newer one supersedes an older one that has not
- * started yet. That bounds queue growth under rapid saves and reduces revision
- * conflicts rather than manufacturing them.
+ * Per chat, work is serialized in revision order. Complete snapshots may
+ * coalesce only when they share the exact same expected Host revision; entries
+ * on different revisions form a FIFO CAS chain and can never be skipped.
+ * Revision conflicts are offered to one bounded, injected rebase callback
+ * inside the lane before a durability barrier can observe the failure.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -140,7 +141,7 @@ export interface HostThreadRecordPersistPort {
   drain(chatId: string): Promise<void>
   /** Barrier across every chat with outstanding work. */
   drainAll(): Promise<void>
-  /** Outstanding entries for a chat: 1 while queued or in flight, else 0. */
+  /** Outstanding queued/in-flight entries for a chat. */
   pending(chatId: string): number
 }
 
@@ -179,10 +180,17 @@ export interface HostThreadRecordPersistClientOptions {
   readonly timeoutMs?: number
   /** Non-authoritative local acknowledgement after the exact record lands. */
   readonly onPersisted?: (input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => void
+  /** Rebase one revision conflict against the latest Host-owned record. */
+  readonly recoverConflict?: (
+    input: HostThreadRecordPersistInput,
+    error: HostThreadRecordPersistError,
+    attempt: number
+  ) => HostThreadRecordPersistInput | null | Promise<HostThreadRecordPersistInput | null>
+  readonly maxConflictRetries?: number
 }
 
 interface PersistLane {
-  queued: HostThreadRecordPersistInput | null
+  queued: HostThreadRecordPersistInput[]
   running: boolean
   chain: Promise<void>
   error: HostThreadRecordPersistError | null
@@ -249,6 +257,8 @@ export class HostThreadRecordPersistClient
   private readonly pollIntervalMs: number
   private readonly timeoutMs: number
   private readonly onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
+  private readonly recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
+  private readonly maxConflictRetries: number
   private readonly lanes = new Map<string, PersistLane>()
 
   constructor(options: HostThreadRecordPersistClientOptions) {
@@ -272,6 +282,12 @@ export class HostThreadRecordPersistClient
     this.pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250)
     this.timeoutMs = Math.max(this.pollIntervalMs, options.timeoutMs ?? 30_000)
     this.onPersisted = typeof options.onPersisted === 'function' ? options.onPersisted : undefined
+    this.recoverConflict =
+      typeof options.recoverConflict === 'function' ? options.recoverConflict : undefined
+    this.maxConflictRetries =
+      Number.isSafeInteger(options.maxConflictRetries) && (options.maxConflictRetries ?? -1) >= 0
+        ? options.maxConflictRetries!
+        : 2
   }
 
   async persist(input: HostThreadRecordPersistInput): Promise<HostCommandReceipt> {
@@ -355,9 +371,13 @@ export class HostThreadRecordPersistClient
     // A delete owns this chat: the record is going away, so a save enqueued
     // before the delete settles must never be submitted.
     if (lane.superseded) return
-    // Latest wins: each record is a complete snapshot, so a newer one supersedes
-    // an older entry that has not started yet.
-    lane.queued = input
+    // A revision-bearing snapshot may replace only another snapshot based on
+    // the SAME Host revision. Dropping a different-revision predecessor leaves
+    // a CAS gap: the replacement expects a revision that was never written.
+    const tail = lane.queued[lane.queued.length - 1]
+    if (tail?.expectedRevision === input.expectedRevision)
+      lane.queued[lane.queued.length - 1] = input
+    else lane.queued.push(input)
     if (!lane.running) {
       lane.running = true
       lane.chain = this.runLane(input.chatId)
@@ -367,7 +387,7 @@ export class HostThreadRecordPersistClient
   async drain(chatId: string): Promise<void> {
     const lane = this.lanes.get(chatId)
     if (!lane) return
-    while (lane.running || lane.queued) {
+    while (lane.running || lane.queued.length > 0) {
       await lane.chain
     }
     const error = lane.error
@@ -396,7 +416,7 @@ export class HostThreadRecordPersistClient
   pending(chatId: string): number {
     const lane = this.lanes.get(chatId)
     if (!lane) return 0
-    return lane.running || lane.queued ? 1 : 0
+    return lane.queued.length + (lane.running ? 1 : 0)
   }
 
   /**
@@ -413,13 +433,13 @@ export class HostThreadRecordPersistClient
   async deleteRecord(input: HostThreadRecordDeleteInput): Promise<void> {
     this.assertDeleteInput(input)
     const lane = this.laneFor(input.chatId)
-    lane.queued = null
+    lane.queued = []
     lane.superseded = true
     try {
       while (lane.running) {
         await lane.chain
         // Anything that slipped in while awaiting is superseded by this delete.
-        lane.queued = null
+        lane.queued = []
       }
       // A superseded persist's failure is moot once the record is being removed.
       lane.error = null
@@ -464,7 +484,7 @@ export class HostThreadRecordPersistClient
     const existing = this.lanes.get(chatId)
     if (existing) return existing
     const created: PersistLane = {
-      queued: null,
+      queued: [],
       running: false,
       chain: Promise.resolve(),
       error: null,
@@ -477,10 +497,42 @@ export class HostThreadRecordPersistClient
   private async runLane(chatId: string): Promise<void> {
     const lane = this.laneFor(chatId)
     try {
-      while (lane.queued) {
-        const next = lane.queued
-        lane.queued = null
-        await this.persist(next)
+      while (lane.queued.length > 0) {
+        let next = lane.queued.shift()!
+        let conflictAttempt = 0
+        for (;;) {
+          try {
+            await this.persist(next)
+            break
+          } catch (error) {
+            if (
+              error instanceof HostThreadRecordPersistError &&
+              error.code === 'revision_conflict' &&
+              this.recoverConflict &&
+              conflictAttempt < this.maxConflictRetries
+            ) {
+              // Every queued successor was authored on the failed revision
+              // chain. AppStore's accumulated intent already subsumes them;
+              // discard those stale CAS entries and retry the one rebased
+              // snapshot returned by the authoritative callback.
+              lane.queued = []
+              const recovered = await this.recoverConflict(next, error, conflictAttempt)
+              conflictAttempt += 1
+              if (recovered) {
+                this.assertInput(recovered)
+                if (recovered.chatId !== chatId) {
+                  throw new HostThreadRecordPersistError(
+                    'invalid_input',
+                    'Conflict recovery changed the target chat.'
+                  )
+                }
+                next = recovered
+                continue
+              }
+            }
+            throw error
+          }
+        }
       }
     } catch (error) {
       lane.error =
@@ -491,7 +543,7 @@ export class HostThreadRecordPersistClient
               cause: error
             }))
       // A failed entry must not strand later work in a permanently queued state.
-      lane.queued = null
+      lane.queued = []
     } finally {
       lane.running = false
     }
@@ -588,6 +640,7 @@ export function createDesktopHostThreadRecordPersistClient(input: {
   userDataPath: string
   appVersion: string
   onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
+  recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
 }): HostThreadRecordPersistClient {
   const broker = createHostProjectionBroker({
     userDataPath: input.userDataPath,
@@ -606,6 +659,7 @@ export function createDesktopHostThreadRecordPersistClient(input: {
     broker,
     profilePath: input.userDataPath,
     actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
-    ...(input.onPersisted ? { onPersisted: input.onPersisted } : {})
+    ...(input.onPersisted ? { onPersisted: input.onPersisted } : {}),
+    ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {})
   })
 }

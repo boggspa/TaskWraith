@@ -196,6 +196,8 @@ describe('HostEnsemblePersistWiring', () => {
 
   it('rebases and retries a follow-up save after the Host advances the record', async () => {
     const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const recoveryListener = vi.fn()
+    AppStore.setHostPersistConflictRecoveryListener(recoveryListener)
     // importStoreWithHostOwnedGate resets the module graph; construct the
     // error with the same class instance imported by that fresh AppStore.
     const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
@@ -255,6 +257,7 @@ describe('HostEnsemblePersistWiring', () => {
       expect.objectContaining({ id: 'host-follow-up-message', content: 'Host-only update' })
     )
     expect(retry.record).toMatchObject({ hostOnlyField: { preserve: true } })
+    expect(recoveryListener).toHaveBeenCalledWith(retry.record)
   })
 
   it('bounds repeated Host revision conflicts instead of looping the round forever', async () => {
