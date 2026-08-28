@@ -935,6 +935,43 @@ describe('HostLocalServer', () => {
       expect(callCtx.actor.clientClass).toBe('test')
     })
 
+    it('snapshot.get preserves bounded snapshots above the ordinary RPC line budget', async () => {
+      const threads = Array.from({ length: 150 }, (_, index) => ({
+        id: `thread-${index}`,
+        workspaceId: null,
+        title: `Thread ${index}`,
+        chatKind: 'single' as const,
+        archived: false,
+        pinned: false,
+        updatedAt: 1_754_300_000_000 + index,
+        messageCount: 1,
+        latestPreview: 'x'.repeat(2_000)
+      }))
+      authority.snapshot.mockResolvedValue({
+        ok: true,
+        value: { ...makeEmptySnapshot(), threads }
+      })
+
+      const client = await authAndConnect()
+      client.writeLine(JSON.stringify(makeRequest('snapshot.get' as never, 'large-snapshot')))
+      const frame = await client.readFrame()
+
+      expect(Buffer.byteLength(JSON.stringify(frame), 'utf8')).toBeGreaterThan(256_000)
+      expect(frame).toMatchObject({
+        type: 'response',
+        ok: true,
+        result: {
+          kind: 'snapshot.get',
+          frame: {
+            snapshot: {
+              threads: expect.arrayContaining([expect.objectContaining({ id: 'thread-149' })])
+            }
+          }
+        }
+      })
+      client.close()
+    })
+
     it('deltas.since routes to authority.deltas with position params', async () => {
       const client = await authAndConnect()
       client.writeLine(

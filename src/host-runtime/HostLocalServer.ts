@@ -88,7 +88,12 @@ const HANDSHAKE_TIMEOUT_MS = 5_000
 const MAX_CLIENTS_DEFAULT = 6
 const SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT = 1_000
 const MAX_LINE_BYTES = 256_000
-const MAX_COMPACT_EXPORT_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
+// Snapshot collections are independently bounded by the Host protocol, but a
+// coherent snapshot can legitimately exceed the ordinary request/response
+// line ceiling once a profile contains hundreds of threads, runs, or Ensemble
+// participants. The projection client already accepts this same bounded large
+// response envelope for snapshots and compact exports.
+const MAX_LARGE_RESPONSE_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 
 // ---------------------------------------------------------------------------
 // Options
@@ -162,8 +167,10 @@ function socketWrite(
   let line = `${JSON.stringify(frame)}\n`
   let bytes = Buffer.byteLength(line, 'utf8')
   const lineBudget =
-    frame.type === 'response' && frame.ok && frame.result.kind === 'twmission.export'
-      ? MAX_COMPACT_EXPORT_LINE_BYTES
+    frame.type === 'response' &&
+    frame.ok &&
+    (frame.result.kind === 'snapshot.get' || frame.result.kind === 'twmission.export')
+      ? MAX_LARGE_RESPONSE_LINE_BYTES
       : MAX_LINE_BYTES
   if (bytes > lineBudget) {
     // Response too large for the transport.  Send a body-free error frame
