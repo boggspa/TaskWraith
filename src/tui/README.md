@@ -148,7 +148,8 @@ cold-start: provider picker → auth → offers → model/reasoning → solo thr
 A unique `/new claude` or `/provider kimi` skips the picker. Esc cancels a
 mid-flow `/new` and restores the previous thread. Hosts without `setup` +
 `provider-catalog` keep the old immediate-create fallback (`/new` with no
-id). `/seats` is rejected as solo-only.
+id). `/seats` opens a live seat lens on an ensemble thread (see Ensemble seat
+control below); it is no longer rejected.
 
 | Command                                         | Action                                                                                                                                     |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -161,7 +162,7 @@ id). `/seats` is rejected as solo-only.
 | `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                                  |
 | `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                                  |
 | `/git [status\|diff\|log] [path]`               | Read-only workspace git lens. `s`/`d`/`l` switch scope, `r` refreshes, Esc closes. On demand only — no watcher.                            |
-| `/seats`                                        | Rejected: standalone TUI is solo-only. Use `/new` or `/provider`.                                                                          |
+| `/seats`                                        | Seat lens for an ensemble thread. ↑/↓ select, Enter/Space toggle a seat, `r` refreshes, Esc closes. Round execution stays desktop-only.    |
 | `/help`                                         | Command cheat sheet.                                                                                                                       |
 | `/cancel`                                       | Cancel the active run.                                                                                                                     |
 | `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                           |
@@ -215,6 +216,35 @@ Known limit: ahead/behind counts are not carried on the wire, so the header
 shows the branch, a short head, and the staged/unstaged/untracked counts rather
 than a divergence figure.
 
+### Ensemble seat control (`/seats`)
+
+`/seats` opens a seat lens over an ensemble thread's persisted roster: each
+participant's id, provider, model, role, stage, order and enabled state, read
+from the Host snapshot rather than any local guess. ↑/↓ select, Enter/Space
+toggles the selected seat, `r` re-reads, Esc closes. A toggle is a real
+`ensemble.seat.toggle` mutation; the lens re-reads the authoritative snapshot
+afterwards rather than flipping optimistically, so what you see is what the Host
+stored.
+
+**Round execution is desktop-only, and that is deliberate.** Toggling seats does
+not make the standalone Host able to run a round. `composer.send` into an
+ensemble thread is refused outright with `standalone_ensemble_round_unavailable`
+so a single-provider run can never masquerade as an ensemble round. Sub-threads,
+goals, the blackboard and workflows remain absent from the standalone Host. If
+you need a round to actually run, use the desktop app.
+
+**The Host owns the refusals; the TUI does not pre-empt them.** A toggle that
+would disable the last enabled seat, or that arrives while a round is running,
+is denied by the Host (`standalone_ensemble_last_seat_required`,
+`standalone_ensemble_round_active`) and the lens surfaces that denial in plain
+language. The client does not second-guess those rules locally, so the Host
+stays the single authority on what is allowed.
+
+**A Host without seat control is a normal configuration, not an error.** The
+`ensemble` capability is advertised only when the Host can actually serve seat
+control, so a Host that cannot reports unavailable calmly — the same distinction
+`/git` draws between "not offered here" and "the read failed".
+
 ### Current boundary
 
 The Node Host owns private discovery/token/socket artifacts and the versioned
@@ -226,8 +256,9 @@ any other id. The operator-facing matrix lives in
 [`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts).
 
 The TUI is a **solo**, multi-provider client (Pi/OMP-shaped): `/new` and cold
-start create single-provider threads. It is not an ensemble authoring surface.
-Existing desktop ensemble threads may still open for inspection. The TUI
+start create single-provider threads. It is not an ensemble authoring surface —
+it cannot create an ensemble or run a round. Existing desktop ensemble threads
+open for inspection **and for seat control** (see Ensemble seat control). The TUI
 supports cold workspace registration, thread creation/configuration/archive,
 provider offers/auth metadata, bounded history, and receipt replay through that
 Host. It deliberately omits arbitrary AppStore writes, permission bodies,
