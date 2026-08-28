@@ -86,6 +86,7 @@ import {
   shouldSuppressMacAppPresentation
 } from './HelperProcessPresentation'
 import { TuiHeadlessHostSession } from './TuiHeadlessHostSession'
+import { createQuitPersistenceCoordinator } from './QuitPersistenceCoordinator'
 import {
   normalizeChatPopoutRoundExpansion,
   normalizeChatPopoutScrollState
@@ -52673,21 +52674,16 @@ if (isGeminiMcpBridgeProcess) {
       quit: () => app.quit()
     })
 
-    let hostPersistShutdownDrainAttempted = false
+    const quitPersistence = createQuitPersistenceCoordinator({
+      flush: () => AppStore.flushAllChatSaves(),
+      requestQuit: () => app.quit(),
+      onDrainError: (error) =>
+        console.error('Failed to flush pending chat saves on quit', error)
+    })
+    app.on('will-quit', quitPersistence.handle)
 
-    app.on('will-quit', (event) => {
-      if (!hostPersistShutdownDrainAttempted) {
-        hostPersistShutdownDrainAttempted = true
-        // The Host persist queue drains asynchronously. Hold quit once for a
-        // bounded drain, then re-enter with the attempt spent; a hung Host
-        // cannot hold the process open because the drain is time-bounded and
-        // reports (never silently drops) any unconfirmed records.
-        event.preventDefault()
-        void AppStore.flushAllChatSaves()
-          .catch((e) => console.error('Failed to flush pending chat saves on quit', e))
-          .finally(() => app.quit())
-        return
-      }
+    app.on('will-quit', () => {
+      if (!quitPersistence.beginTeardown()) return
       terminalSessionManagerRef?.killAll()
       gitSnapshotWorker.dispose()
       tuiHeadlessHostSession.dispose()
@@ -52701,18 +52697,7 @@ if (isGeminiMcpBridgeProcess) {
         clearInterval(nativeWindowExpirySweepTimer)
         nativeWindowExpirySweepTimer = null
       }
-      // T3a-1: flush every deferred chat save before the process exits.
-      // Unlike the advisory quota estimate below, this IS correctness: a
-      // coalesced write still pending at quit would lose that chat's newest
-      // transcript entirely.
-      try {
-        void AppStore.flushAllChatSaves().catch((e) =>
-          console.error('Failed to flush pending chat saves on quit', e)
-        )
-      } catch (e) {
-        console.error('Failed to flush pending chat saves on quit', e)
-      }
-      // Item 6: the flush above can enqueue barrier jobs onto the utility
+      // The persistence barrier can enqueue jobs onto the utility
       // writer; settle them on this thread before the channel dies. dispose()
       // alone kills the worker and would drop whatever is still queued.
       try {
