@@ -3863,6 +3863,9 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
     expect(humanizeOllamaModelId('qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+    expect(humanizeOllamaModelId('qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
     expect(humanizeOllamaModelId('gemma4:12b')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('ornith')).toBe('Ornith 1.0 (9B Param)')
@@ -3878,6 +3881,9 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('gpt-oss:latest')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
     expect(humanizeOllamaModelId('granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
+    expect(humanizeOllamaModelId('granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
+    expect(humanizeOllamaModelId('granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
+    expect(humanizeOllamaModelId('granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
     expect(humanizeOllamaModelId('nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
     expect(humanizeOllamaModelId('nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'
@@ -3891,6 +3897,12 @@ describe('normalizeOllamaModels', () => {
     )
     expect(humanizeOllamaModelId('muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
     expect(humanizeOllamaModelId('llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
+    expect(humanizeOllamaModelId('mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(humanizeOllamaModelId('mistral-medium-3.5:128b')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
     for (const [modelId, label] of [
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],

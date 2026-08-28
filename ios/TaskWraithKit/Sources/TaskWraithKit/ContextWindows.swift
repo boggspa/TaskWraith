@@ -165,6 +165,7 @@ public enum ContextWindows {
         "qwen3.6:35b-a3b": 262_144,
         // Official Ollama model config (`max_position_embeddings`), verified 2026-08-14.
         "qwen3.8:27b-mlx": 262_144,
+        "qwen3.8-flash-next:125b-mlx": 262_144,
         "gemma3:4b": 131_072,
         "gemma4:12b": 262_144,
         "gemma4:12b-it-qat": 262_144,
@@ -196,11 +197,18 @@ public enum ContextWindows {
         "granite4:3b": 131_072,
         "granite4.1:3b": 131_072,
         "granite4.1:30b": 131_072,
+        "granite4.2": 131_072,
+        "granite4.2:latest": 131_072,
+        "granite4.2:3b": 131_072,
+        "granite4.2:8b": 131_072,
+        "granite4.2:30b": 131_072,
         "nemotron-3-nano:4b": 262_144,
         "nemotron3:33b": 131_072,
         // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
         "nemotron-3.5-lightning:30b-mlx": 262_144,
         "devstral-small-2:24b": 393_216,
+        "mistral-medium-3.5:latest": 262_144,
+        "mistral-medium-3.5:128b": 262_144,
         "ministral-3:3b": 262_144,
         "ministral-3:14b": 262_144,
         // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.

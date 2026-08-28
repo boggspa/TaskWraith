@@ -980,6 +980,9 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'qwen3.8:27b-mlx' || key.startsWith('qwen3.8:27b-mlx-')) {
     return 'Qwen 3.8 (27B-MLX)'
   }
+  if (key === 'qwen3.8-flash-next:125b-mlx' || key.startsWith('qwen3.8-flash-next:125b-mlx-')) {
+    return 'Qwen 3.8 Flash Next (125B-MLX)'
+  }
   if (key === 'gemma3:4b' || key.startsWith('gemma3:4b-')) {
     return 'Gemma 3 (4B Param)'
   }
@@ -1032,6 +1035,20 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'granite4.1:30b' || key.startsWith('granite4.1:30b-')) {
     return 'Granite 4.1 (30B Param)'
   }
+  if (key === 'granite4.2:3b' || key.startsWith('granite4.2:3b-')) {
+    return 'Granite 4.2 (3B Param)'
+  }
+  if (
+    key === 'granite4.2' ||
+    key === 'granite4.2:latest' ||
+    key === 'granite4.2:8b' ||
+    key.startsWith('granite4.2:8b-')
+  ) {
+    return 'Granite 4.2 (8B Param)'
+  }
+  if (key === 'granite4.2:30b' || key.startsWith('granite4.2:30b-')) {
+    return 'Granite 4.2 (30B Param)'
+  }
   if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
     return 'Nemotron 3 Nano (4B Param)'
   }
@@ -1046,6 +1063,14 @@ export function humanizeOllamaModelId(model: string): string {
   }
   if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
+  }
+  if (
+    key === 'mistral-medium-3.5' ||
+    key === 'mistral-medium-3.5:latest' ||
+    key === 'mistral-medium-3.5:128b' ||
+    key.startsWith('mistral-medium-3.5:128b-')
+  ) {
+    return 'Mistral Medium 3.5 (128B Param)'
   }
   if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) {
     return 'Ministral 3 (3B Param)'

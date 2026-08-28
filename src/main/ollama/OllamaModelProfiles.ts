@@ -50,6 +50,12 @@ export function ollamaModelFamilyPromptLines(
         'Search before reading unfamiliar files, keep tool payloads focused, and preserve supplied thinking across turns.',
         'For release-critical edits, make verification gaps explicit before landing changes.'
       ]
+    case 'qwen3_8_flash_next_125b':
+      return [
+        'Model profile (Qwen 3.8 Flash Next 125B): sparse multimodal long-context agent model with native tools and configurable thinking.',
+        'Search before reading unfamiliar files, keep tool payloads focused, and preserve supplied thinking across turns.',
+        'For release-critical edits, make verification gaps explicit before landing changes.'
+      ]
     case 'qwen3_4b':
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
@@ -75,6 +81,12 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Devstral Small 2 24B): agentic coding model; search for the target, read it, then make a focused edit with explicit verification notes.',
         'Keep tool payloads compact and ground each call in what you actually need next.'
+      ]
+    case 'mistral_medium_3_5_128b':
+      return [
+        'Model profile (Mistral Medium 3.5 128B): flagship multimodal reasoning and coding model with native tools and configurable thinking.',
+        'Use its long context for grounded repository work, keep tool calls concrete, and preserve supplied thinking across turns.',
+        'For consequential edits, make verification gaps explicit before landing changes.'
       ]
     case 'ministral_3_3b':
       return [
@@ -192,6 +204,13 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Granite 4.1 30B): strong for local review, RAG-style search, and structured tool use.',
         'Read targeted files before editing and make any assumptions explicit.'
+      ]
+    case 'granite4_2_3b':
+    case 'granite4_2_8b':
+    case 'granite4_2_30b':
+      return [
+        'Model profile (Granite 4.2): local coding, retrieval, structured tool use, and configurable thinking.',
+        'Search/read the relevant files, keep each tool call concrete, and verify the changes the task needs.'
       ]
     case 'nemotron3_nano_4b':
       return [
@@ -515,6 +534,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'qwen3_5_9b' ||
     family === 'qwen3_6_35b' ||
     family === 'qwen3_8_27b' ||
+    family === 'qwen3_8_flash_next_125b' ||
     family === 'qwen3_4b' ||
     family === 'qwen3_5_2b' ||
     family === 'minicpm_v45_8b' ||
@@ -528,11 +548,15 @@ export function ollamaTierAwareWorkflowHint(
     family === 'granite4_3b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
+    family === 'granite4_2_3b' ||
+    family === 'granite4_2_8b' ||
+    family === 'granite4_2_30b' ||
     family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
     family === 'nemotron3_5_lightning_30b' ||
     family === 'qwen3_5_4b' ||
     family === 'devstral_small_2_24b' ||
+    family === 'mistral_medium_3_5_128b' ||
     family === 'ministral_3_3b' ||
     family === 'ministral_3_14b' ||
     family === 'muse_glimmer_30b' ||

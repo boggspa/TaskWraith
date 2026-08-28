@@ -240,6 +240,7 @@ describe('Ollama provider model defaults', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'qwen3.8:27b-mlx',
+      'qwen3.8-flash-next:125b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'gemma4:31b-mlx',
@@ -255,10 +256,14 @@ describe('Ollama provider model defaults', () => {
       'granite4:3b',
       'granite4.1:3b',
       'granite4.1:30b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
+      'mistral-medium-3.5:128b',
       'ministral-3:3b',
       'ministral-3:14b',
       'muse-glimmer:30b-mlx',
@@ -277,7 +282,7 @@ describe('Ollama provider model defaults', () => {
     const classifications = OLLAMA_DEFAULT_MODELS.filter((model) => model.id !== 'custom').map(
       (model) => [model.id, resolveOllamaReasoningSupport({ modelId: model.id }).kind] as const
     )
-    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(24)
+    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(29)
     expect(classifications.filter(([, kind]) => kind === 'levels')).toEqual([
       ['gpt-oss:20b', 'levels']
     ])

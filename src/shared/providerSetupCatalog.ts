@@ -107,6 +107,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     label: 'Qwen 3.8 (27B-MLX; Ollama 0.32.12+)',
     command: 'ollama run qwen3.8:27b-mlx'
   },
+  {
+    id: 'qwen3.8-flash-next:125b-mlx',
+    label: 'Qwen 3.8 Flash Next (125B-MLX)',
+    command: 'ollama run qwen3.8-flash-next:125b-mlx'
+  },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)', command: 'ollama run gemma3:4b' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
   { id: 'gemma4:31b-mlx', label: 'Gemma 4 (31B-MLX)', command: 'ollama run gemma4:31b-mlx' },
@@ -138,6 +143,9 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'granite4:3b', label: 'Granite 4.0 (3B Param)', command: 'ollama run granite4:3b' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)', command: 'ollama run granite4.1:3b' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)', command: 'ollama run granite4.1:30b' },
+  { id: 'granite4.2:3b', label: 'Granite 4.2 (3B Param)', command: 'ollama run granite4.2:3b' },
+  { id: 'granite4.2:8b', label: 'Granite 4.2 (8B Param)', command: 'ollama run granite4.2:8b' },
+  { id: 'granite4.2:30b', label: 'Granite 4.2 (30B Param)', command: 'ollama run granite4.2:30b' },
   {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
@@ -153,6 +161,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     command: 'ollama run devstral-small-2:24b'
+  },
+  {
+    id: 'mistral-medium-3.5:128b',
+    label: 'Mistral Medium 3.5 (128B Param)',
+    command: 'ollama run mistral-medium-3.5:128b'
   },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)', command: 'ollama run ministral-3:3b' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)', command: 'ollama run ministral-3:14b' },

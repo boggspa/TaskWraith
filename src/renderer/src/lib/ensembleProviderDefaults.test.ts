@@ -1053,6 +1053,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'qwen3.8:27b-mlx',
+      'qwen3.8-flash-next:125b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'gemma4:31b-mlx',
@@ -1068,10 +1069,14 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'granite4:3b',
       'granite4.1:3b',
       'granite4.1:30b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
+      'mistral-medium-3.5:128b',
       'ministral-3:3b',
       'ministral-3:14b',
       'muse-glimmer:30b-mlx',
@@ -1098,6 +1103,12 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high'
     ])
     expect(getEnsembleReasoningOptions('ollama', 'gemma3:4b')).toEqual([])
+    expect(
+      getEnsembleReasoningOptions('ollama', 'mistral-medium-3.5:128b').map((o) => o.value)
+    ).toEqual(['off', 'on'])
+    expect(
+      getEnsembleReasoningOptions('ollama', 'granite4.2:8b').map((o) => o.value)
+    ).toEqual(['off', 'on'])
     expect(
       getEnsembleReasoningOptions('ollama', 'custom-thinking:latest', {
         capabilities: ['completion', 'thinking']

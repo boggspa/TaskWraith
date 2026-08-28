@@ -6,7 +6,10 @@ describe('mergeOllamaModelCatalog', () => {
     const models = mergeOllamaModelCatalog([
       { id: 'glm-5.3-flash:cloud', label: 'glm-5.3-flash' },
       { id: 'glm-5.2:cloud', label: 'glm-5.2' },
-      { id: 'minimax-m3:cloud', label: 'minimax-m3' }
+      { id: 'minimax-m3:cloud', label: 'minimax-m3' },
+      { id: 'deepseek-v4-pro:cloud', label: 'deepseek-v4-pro' },
+      { id: 'deepseek-v4-flash:cloud', label: 'deepseek-v4-flash' },
+      { id: 'gemma4:cloud', label: 'gemma4' }
     ])
 
     expect(models.find((model) => model.id === 'glm-5.3-flash:cloud')).toMatchObject({
@@ -21,6 +24,33 @@ describe('mergeOllamaModelCatalog', () => {
       id: 'minimax-m3:cloud',
       label: 'MiniMax M3'
     })
+    expect(models.find((model) => model.id === 'deepseek-v4-pro:cloud')?.label).toBe(
+      'DeepSeek V4 Pro'
+    )
+    expect(models.find((model) => model.id === 'deepseek-v4-flash:cloud')?.label).toBe(
+      'DeepSeek V4 Flash'
+    )
+    expect(models.find((model) => model.id === 'gemma4:cloud')?.label).toBe('Gemma 4')
+  })
+
+  it('humanises and deduplicates the newest installed local tags', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'mistral-medium-3.5:latest', label: 'mistral-medium-3.5:latest' },
+      { id: 'granite4.2:latest', label: 'granite4.2:latest' },
+      { id: 'qwen3.8-flash-next:125b-mlx', label: 'qwen3.8-flash-next:125b-mlx' }
+    ])
+
+    expect(
+      models.filter(
+        (model) => ollamaModelCatalogKey(model.id) === 'mistral-medium-3.5:128b'
+      )
+    ).toHaveLength(1)
+    expect(
+      models.filter((model) => ollamaModelCatalogKey(model.id) === 'granite4.2:8b')
+    ).toHaveLength(1)
+    expect(models.find((model) => model.id === 'qwen3.8-flash-next:125b-mlx')?.label).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
   })
 
   it('keeps curated human labels when live Ollama returns raw model tags', () => {

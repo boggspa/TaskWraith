@@ -32,10 +32,13 @@ export function ollamaCloudModelId(modelId?: string | null): string {
 }
 
 const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  'deepseek-v4-flash': 'DeepSeek V4 Flash',
   'deepseek-v4-flash:0731': 'DeepSeek V4 Flash (0731)',
   'deepseek-v4-flash:preview': 'DeepSeek V4 Flash (Preview)',
+  'deepseek-v4-pro': 'DeepSeek V4 Pro',
   'deepseek-v4-pro:0813': 'DeepSeek V4 Pro (0813)',
   'deepseek-v4-pro:preview': 'DeepSeek V4 Pro (Preview)',
+  gemma4: 'Gemma 4',
   'gemma4:31b': 'Gemma 4 (31B Param)',
   'glm-5.3-flash': 'GLM 5.3 Flash',
   'glm-5.2': 'GLM 5.2',
@@ -54,6 +57,11 @@ const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   'nemotron-3-ultra': 'Nemotron 3 Ultra',
   'qwen3.5:397b': 'Qwen 3.5 (397B Param)'
 }
+
+const OLLAMA_MODEL_ALIAS_GROUPS: readonly (readonly string[])[] = [
+  ['mistral-medium-3.5', 'mistral-medium-3.5:latest', 'mistral-medium-3.5:128b'],
+  ['granite4.2', 'granite4.2:latest', 'granite4.2:8b']
+]
 
 /**
  * Resolve Cloud account model ids to product-facing names without changing the
@@ -112,6 +120,8 @@ export function ollamaModelIdAliases(modelId?: string | null): string[] {
     aliases.add('rnj-1:latest')
     aliases.add('rnj-1:8b')
   }
+  const curatedGroup = OLLAMA_MODEL_ALIAS_GROUPS.find((group) => group.includes(key))
+  for (const alias of curatedGroup || []) aliases.add(alias)
   return [...aliases]
 }
 

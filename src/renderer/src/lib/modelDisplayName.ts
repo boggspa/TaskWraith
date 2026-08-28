@@ -180,6 +180,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
   'qwen3.6:35b': 'Qwen 3.6 (35B-A3B)',
   'qwen3.8:27b-mlx': 'Qwen 3.8 (27B-MLX)',
+  'qwen3.8-flash-next:125b-mlx': 'Qwen 3.8 Flash Next (125B-MLX)',
   'gemma3:4b': 'Gemma 3 (4B Param)',
   'gemma4:12b': 'Gemma 4 (12B Param)',
   'gemma4:12b-it-qat': 'Gemma 4 (12B Param)',
@@ -209,12 +210,16 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'granite4:3b': 'Granite 4.0 (3B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
+  'granite4.2:3b': 'Granite 4.2 (3B Param)',
+  'granite4.2:8b': 'Granite 4.2 (8B Param)',
+  'granite4.2:30b': 'Granite 4.2 (30B Param)',
   'nemotron-3-nano:4b': 'Nemotron 3 Nano (4B Param)',
   'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
   'nemotron-3.5-lightning:30b-mlx': 'Nemotron 3.5 Lightning (30B-MLX)',
   // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
   // `devstral-small` row above — same brand, different runtime.
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
+  'mistral-medium-3.5:128b': 'Mistral Medium 3.5 (128B Param)',
   'ministral-3:3b': 'Ministral 3 (3B Param)',
   'ministral-3:14b': 'Ministral 3 (14B Param)',
   'muse-glimmer:30b-mlx': 'Muse Glimmer (30B-MLX)',
@@ -360,6 +365,12 @@ export function canonicalModelIdForProvider(
     if (key === 'qwen3.6:35b-a3b') {
       return 'qwen3.6:35b'
     }
+    if (key === 'mistral-medium-3.5' || key === 'mistral-medium-3.5:latest') {
+      return 'mistral-medium-3.5:128b'
+    }
+    if (key === 'granite4.2' || key === 'granite4.2:latest') {
+      return 'granite4.2:8b'
+    }
     if (key === 'ornith' || key === 'ornith:latest') {
       return 'ornith:9b'
     }
@@ -409,6 +420,9 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('qwen3.8:27b-mlx-')) {
     return 'Qwen 3.8 (27B-MLX)'
   }
+  if (provider === 'ollama' && key.startsWith('qwen3.8-flash-next:125b-mlx-')) {
+    return 'Qwen 3.8 Flash Next (125B-MLX)'
+  }
   if (provider === 'ollama' && key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'
   }
@@ -445,6 +459,15 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('granite4.1:30b-')) {
     return 'Granite 4.1 (30B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('granite4.2:3b-')) {
+    return 'Granite 4.2 (3B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4.2:8b-')) {
+    return 'Granite 4.2 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4.2:30b-')) {
+    return 'Granite 4.2 (30B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
   }
@@ -456,6 +479,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('mistral-medium-3.5:128b-')) {
+    return 'Mistral Medium 3.5 (128B Param)'
   }
   if (provider === 'ollama' && key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'

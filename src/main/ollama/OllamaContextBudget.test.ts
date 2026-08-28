@@ -20,6 +20,20 @@ describe('resolveOllamaContextBudget', () => {
     expect(resolveOllamaContextBudget('qwen3.8:27b-mlx').maxBlockChars).toBeGreaterThan(
       resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars
     )
+    expect(resolveOllamaContextBudget('qwen3.8-flash-next:125b-mlx').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars
+    )
+    expect(resolveOllamaContextBudget('mistral-medium-3.5:128b').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars
+    )
+    expect(resolveOllamaContextBudget('granite4.2:30b').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('granite4.2:8b').maxBlockChars
+    )
+    for (const modelId of ['granite4.2:3b', 'granite4.2:8b']) {
+      expect(resolveOllamaContextBudget(modelId).maxBlockChars).toBeGreaterThan(
+        resolveOllamaContextBudget('unknown-local:latest').maxBlockChars
+      )
+    }
     expect(resolveOllamaContextBudget('nemotron3:33b').maxBlockChars).toBeGreaterThan(
       resolveOllamaContextBudget('gpt-oss:20b').maxBlockChars
     )

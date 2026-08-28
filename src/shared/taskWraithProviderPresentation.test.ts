@@ -69,6 +69,13 @@ describe('TaskWraith TUI provider presentation', () => {
     }
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(taskWraithModelLabel('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+    expect(taskWraithModelLabel('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
+    expect(taskWraithModelLabel('ollama', 'mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(taskWraithModelLabel('ollama', 'granite4.2:8b')).toBe('Granite 4.2 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
     expect(resolveTaskWraithProviderPresentation('ollama', 'ornith-1.5:35b')).toMatchObject({
       displayProvider: 'Deep Reinforce',
@@ -95,6 +102,16 @@ describe('TaskWraith TUI provider presentation', () => {
       displayProvider: 'Z.ai',
       hueKey: 'zai',
       modelLabel: 'GLM 5.3 Flash'
+    })
+    expect(resolveTaskWraithProviderPresentation('ollama', 'deepseek-v4-pro:cloud')).toMatchObject({
+      displayProvider: 'DeepSeek',
+      hueKey: 'deepseek',
+      modelLabel: 'DeepSeek V4 Pro'
+    })
+    expect(resolveTaskWraithProviderPresentation('ollama', 'gemma4:cloud')).toMatchObject({
+      displayProvider: 'Google',
+      hueKey: 'google',
+      modelLabel: 'Gemma 4'
     })
     expect(taskWraithModelLabel('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'

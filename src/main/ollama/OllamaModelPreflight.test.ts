@@ -15,6 +15,9 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('qwen3.5:9b')).toBe('qwen3_5_9b')
     expect(resolveOllamaModelFamily('qwen3.6:35b')).toBe('qwen3_6_35b')
     expect(resolveOllamaModelFamily('qwen3.8:27b-mlx')).toBe('qwen3_8_27b')
+    expect(resolveOllamaModelFamily('qwen3.8-flash-next:125b-mlx')).toBe(
+      'qwen3_8_flash_next_125b'
+    )
     expect(resolveOllamaModelFamily('qwen3:4b-instruct')).toBe('qwen3_4b')
     expect(resolveOllamaModelFamily('minicpm-v4.5:8b')).toBe('minicpm_v45_8b')
     expect(resolveOllamaModelFamily('gemma4:12b-it-q4_K_M')).toBe('gemma4_12b')
@@ -32,6 +35,9 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('lfm2.5:8b-q4_K_M')).toBe('lfm2_5_8b')
     expect(resolveOllamaModelFamily('granite4.1:3b')).toBe('granite4_1_3b')
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
+    expect(resolveOllamaModelFamily('granite4.2:3b')).toBe('granite4_2_3b')
+    expect(resolveOllamaModelFamily('granite4.2:latest')).toBe('granite4_2_8b')
+    expect(resolveOllamaModelFamily('granite4.2:30b')).toBe('granite4_2_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
     expect(resolveOllamaModelFamily('nemotron-3.5-lightning:30b-mlx')).toBe(
       'nemotron3_5_lightning_30b'
@@ -39,6 +45,12 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('gpt-oss:latest')).toBe('gpt_oss_20b')
     expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
     expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
+    expect(resolveOllamaModelFamily('mistral-medium-3.5:latest')).toBe(
+      'mistral_medium_3_5_128b'
+    )
+    expect(resolveOllamaModelFamily('mistral-medium-3.5:128b')).toBe(
+      'mistral_medium_3_5_128b'
+    )
     expect(resolveOllamaModelFamily('ministral-3:14b')).toBe('ministral_3_14b')
     expect(resolveOllamaModelFamily('muse-glimmer:30b-mlx')).toBe('muse_glimmer_30b')
     expect(resolveOllamaModelFamily('llama3.1:8b')).toBe('llama3_1_8b')
@@ -147,6 +159,14 @@ describe('resolveOllamaModelFamily', () => {
         id: 'local-custom:latest',
         label: 'Local Custom',
         family: 'mistral3',
+        parameterSize: '128B'
+      })
+    ).toBe('mistral_medium_3_5_128b')
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'mistral3',
         parameterSize: '24.0B'
       })
     ).toBe('devstral_small_2_24b')
@@ -215,6 +235,25 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '36.0B'
       })
     ).toBe('qwen3_6_35b')
+  })
+
+  it('splits the new large Qwen and Granite architectures by parameter size', () => {
+    expect(
+      resolveOllamaModelFamily('retagged-qwen:latest', {
+        id: 'retagged-qwen:latest',
+        label: 'Retagged Qwen',
+        family: 'qwen3.8',
+        parameterSize: '125B'
+      })
+    ).toBe('qwen3_8_flash_next_125b')
+    expect(
+      resolveOllamaModelFamily('retagged-granite:latest', {
+        id: 'retagged-granite:latest',
+        label: 'Retagged Granite',
+        family: 'granite4.2',
+        parameterSize: '8B'
+      })
+    ).toBe('granite4_2_8b')
   })
 
   it('splits small DeepSeek and Nemotron metadata from their larger siblings', () => {

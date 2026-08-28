@@ -129,6 +129,18 @@ describe('HostProviderCatalog', () => {
     expect(hostProviderCatalogEntry('ollama')?.authFlows).toEqual([])
   })
 
+  it('offers the newest curated local Ollama families', () => {
+    expect(hostProviderCatalogEntry('ollama')?.models.map((model) => model.modelId)).toEqual(
+      expect.arrayContaining([
+        'mistral-medium-3.5:128b',
+        'qwen3.8-flash-next:125b-mlx',
+        'granite4.2:3b',
+        'granite4.2:8b',
+        'granite4.2:30b'
+      ])
+    )
+  })
+
   it('marks providers with manual login flows', () => {
     for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'mistral', 'muse']) {
       const flows = hostProviderAuthFlows(id)

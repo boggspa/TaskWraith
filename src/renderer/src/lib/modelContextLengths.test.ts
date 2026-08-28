@@ -220,6 +220,17 @@ describe('buildModelContextLengthGroups', () => {
       label: 'Qwen 3.8 (27B-MLX)',
       contextWindow: 262_144
     })
+    expect(byId.get('qwen3.8-flash-next:125b-mlx')).toMatchObject({
+      label: 'Qwen 3.8 Flash Next (125B-MLX)',
+      contextWindow: 262_144
+    })
+    expect(byId.get('mistral-medium-3.5:128b')).toMatchObject({
+      label: 'Mistral Medium 3.5 (128B Param)',
+      contextWindow: 262_144
+    })
+    expect(byId.get('granite4.2:3b')).toMatchObject({ contextWindow: 131_072 })
+    expect(byId.get('granite4.2:8b')).toMatchObject({ contextWindow: 131_072 })
+    expect(byId.get('granite4.2:30b')).toMatchObject({ contextWindow: 131_072 })
     expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
   })
 

@@ -457,6 +457,15 @@ struct ModelContextLengthsTests {
         #expect(row("nemotron-3.5-lightning:30b-mlx")?.contextWindow == 262_144)
         #expect(row("qwen3.8:27b-mlx")?.label == "Qwen 3.8 (27B-MLX)")
         #expect(row("qwen3.8:27b-mlx")?.contextWindow == 262_144)
+        #expect(
+            row("qwen3.8-flash-next:125b-mlx")?.label == "Qwen 3.8 Flash Next (125B-MLX)")
+        #expect(row("qwen3.8-flash-next:125b-mlx")?.contextWindow == 262_144)
+        #expect(
+            row("mistral-medium-3.5:128b")?.label == "Mistral Medium 3.5 (128B Param)")
+        #expect(row("mistral-medium-3.5:128b")?.contextWindow == 262_144)
+        #expect(row("granite4.2:3b")?.contextWindow == 131_072)
+        #expect(row("granite4.2:8b")?.contextWindow == 131_072)
+        #expect(row("granite4.2:30b")?.contextWindow == 131_072)
         #expect(row("muse-glimmer:30b-mlx")?.label == "Muse Glimmer (30B-MLX)")
         #expect(row("muse-glimmer:30b-mlx")?.contextWindow == 131_072)
         #expect(row("llama3.2:3b")?.contextWindow == 131_072)

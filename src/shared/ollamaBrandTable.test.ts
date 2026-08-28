@@ -13,6 +13,17 @@ describe('resolveHealthEntryPresentation', () => {
       displayHueClass: 'alibaba'
     })
     expect(
+      resolveHealthEntryPresentation('ollama', 'qwen3.8-flash-next:125b-mlx', 'Ollama')
+    ).toEqual({ displayProviderLabel: 'Alibaba', displayHueClass: 'alibaba' })
+    expect(resolveHealthEntryPresentation('ollama', 'granite4.2:8b', 'Ollama')).toEqual({
+      displayProviderLabel: 'IBM',
+      displayHueClass: 'ibm'
+    })
+    expect(resolveHealthEntryPresentation('ollama', 'mistral-medium-3.5:128b', 'Ollama')).toEqual({
+      displayProviderLabel: 'Mistral',
+      displayHueClass: 'mistral'
+    })
+    expect(
       resolveHealthEntryPresentation('ollama', 'nemotron-3.5-lightning:30b-mlx', 'Ollama')
     ).toEqual({
       displayProviderLabel: 'NVIDIA',
@@ -63,6 +74,12 @@ describe('matchOllamaBrand', () => {
       providerLabel: 'DeepSeek',
       providerClass: 'deepseek'
     })
+  })
+
+  it('keeps bare Cloud tidy-ups on their existing maker accents', () => {
+    expect(matchOllamaBrand('deepseek-v4-pro:cloud')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('deepseek-v4-flash:cloud')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('gemma4:cloud')?.providerClass).toBe('google')
   })
 
   it('uses a display label only when the wire model id has no known brand', () => {

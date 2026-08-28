@@ -9,6 +9,7 @@ export type OllamaModelFamily =
   | 'qwen3_5_9b'
   | 'qwen3_6_35b'
   | 'qwen3_8_27b'
+  | 'qwen3_8_flash_next_125b'
   | 'gemma3_4b'
   | 'gemma4_12b'
   | 'gemma4_31b'
@@ -22,10 +23,14 @@ export type OllamaModelFamily =
   | 'granite4_3b'
   | 'granite4_1_3b'
   | 'granite4_1_30b'
+  | 'granite4_2_3b'
+  | 'granite4_2_8b'
+  | 'granite4_2_30b'
   | 'nemotron3_nano_4b'
   | 'nemotron3_33b'
   | 'nemotron3_5_lightning_30b'
   | 'devstral_small_2_24b'
+  | 'mistral_medium_3_5_128b'
   | 'ministral_3_3b'
   | 'ministral_3_14b'
   | 'muse_glimmer_30b'
@@ -109,12 +114,30 @@ export function resolveOllamaModelFamily(
     return 'north_mini_code_1_0'
   }
   if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) return 'llama3_2_3b'
+  if (
+    key === 'qwen3.8-flash-next:125b-mlx' ||
+    key.startsWith('qwen3.8-flash-next:125b-mlx-')
+  ) {
+    return 'qwen3_8_flash_next_125b'
+  }
   if (key === 'qwen3.8:27b-mlx' || key.startsWith('qwen3.8:27b-mlx-')) return 'qwen3_8_27b'
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) return 'qwen3_6_35b'
   if (key === 'minicpm-v4.5:8b' || key.startsWith('minicpm-v4.5:8b-')) return 'minicpm_v45_8b'
   if (key === 'granite4:3b' || key.startsWith('granite4:3b-')) return 'granite4_3b'
   if (key === 'granite4.1:3b' || key.startsWith('granite4.1:3b-')) return 'granite4_1_3b'
   if (key === 'granite4.1:30b' || key.startsWith('granite4.1:30b-')) return 'granite4_1_30b'
+  if (key === 'granite4.2:3b' || key.startsWith('granite4.2:3b-')) return 'granite4_2_3b'
+  if (
+    key === 'granite4.2' ||
+    key === 'granite4.2:latest' ||
+    key === 'granite4.2:8b' ||
+    key.startsWith('granite4.2:8b-')
+  ) {
+    return 'granite4_2_8b'
+  }
+  if (key === 'granite4.2:30b' || key.startsWith('granite4.2:30b-')) {
+    return 'granite4_2_30b'
+  }
   if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
     return 'nemotron3_nano_4b'
   }
@@ -133,6 +156,14 @@ export function resolveOllamaModelFamily(
   if (key === 'qwen3.5:9b' || key.startsWith('qwen3.5:9b')) return 'qwen3_5_9b'
   if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
     return 'devstral_small_2_24b'
+  }
+  if (
+    key === 'mistral-medium-3.5' ||
+    key === 'mistral-medium-3.5:latest' ||
+    key === 'mistral-medium-3.5:128b' ||
+    key.startsWith('mistral-medium-3.5:128b-')
+  ) {
+    return 'mistral_medium_3_5_128b'
   }
   if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) return 'ministral_3_3b'
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) return 'ministral_3_14b'
@@ -224,6 +255,7 @@ export function resolveOllamaModelFamily(
   if (meta.includes('mistral3') || meta.includes('devstral') || meta.includes('ministral')) {
     if (meta.includes('devstral')) return 'devstral_small_2_24b'
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    if (billions != null && billions >= 100) return 'mistral_medium_3_5_128b'
     if (meta.includes('ministral') && billions != null && billions < 6) return 'ministral_3_3b'
     if (meta.includes('ministral')) return 'ministral_3_14b'
     if (billions != null && billions < 6) return 'ministral_3_3b'
@@ -236,7 +268,10 @@ export function resolveOllamaModelFamily(
   ) {
     return 'muse_glimmer_30b'
   }
-  if (meta.includes('qwen3.8') || meta.includes('qwen38')) return 'qwen3_8_27b'
+  if (meta.includes('qwen3.8') || meta.includes('qwen38')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions >= 100 ? 'qwen3_8_flash_next_125b' : 'qwen3_8_27b'
+  }
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
   // `qwen35` covers all three dense 3.5 sizes (the 35B MoE tags report
   // `qwen35moe` and are caught above), so the family splits on parameter size.
@@ -258,6 +293,11 @@ export function resolveOllamaModelFamily(
   if (meta.includes('nemotron')) {
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
     return billions != null && billions < 10 ? 'nemotron3_nano_4b' : 'nemotron3_33b'
+  }
+  if (meta.includes('granite4.2') || meta.includes('granite 4.2')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    if (billions != null && billions < 6) return 'granite4_2_3b'
+    return billions != null && billions < 20 ? 'granite4_2_8b' : 'granite4_2_30b'
   }
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
     return 'granite4_1_3b'
@@ -309,6 +349,24 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('rnj-1')
     aliases.add('rnj-1:latest')
     aliases.add('rnj-1:8b')
+  }
+  if (
+    lower === 'mistral-medium-3.5' ||
+    lower === 'mistral-medium-3.5:latest' ||
+    lower === 'mistral-medium-3.5:128b'
+  ) {
+    aliases.add('mistral-medium-3.5')
+    aliases.add('mistral-medium-3.5:latest')
+    aliases.add('mistral-medium-3.5:128b')
+  }
+  if (
+    lower === 'granite4.2' ||
+    lower === 'granite4.2:latest' ||
+    lower === 'granite4.2:8b'
+  ) {
+    aliases.add('granite4.2')
+    aliases.add('granite4.2:latest')
+    aliases.add('granite4.2:8b')
   }
   return [...aliases]
 }
@@ -382,6 +440,26 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a multimodal long-context agent model with native tools and configurable thinking.`,
         delegateHint:
           'Use it for scoped tool-driven work, preserve supplied thinking across turns, and close release-sensitive changes with explicit verification. This registry build requires Ollama 0.32.12 or newer.'
+      }
+    case 'qwen3_8_flash_next_125b':
+      return {
+        guidance: `${modelLabel} is a sparse multimodal long-context agent model with native tools and configurable thinking.`,
+        delegateHint:
+          'Use its larger local profile for scoped tool-driven work, keep tool payloads focused, and close release-sensitive changes with explicit verification.'
+      }
+    case 'mistral_medium_3_5_128b':
+      return {
+        guidance: `${modelLabel} is a flagship multimodal local model for instruction following, reasoning, coding, and native tool use.`,
+        delegateHint:
+          'Use its 262K context for grounded implementation work and make verification gaps explicit before landing consequential changes.'
+      }
+    case 'granite4_2_3b':
+    case 'granite4_2_8b':
+    case 'granite4_2_30b':
+      return {
+        guidance: `${modelLabel} supports local coding, retrieval, structured tool use, and configurable thinking.`,
+        delegateHint:
+          'Keep tool calls concrete and pair release-sensitive edits with an explicit verification pass.'
       }
     case 'qwen3_4b':
       return {
@@ -584,6 +662,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 36
     case 'qwen3_8_27b':
       return 27
+    case 'qwen3_8_flash_next_125b':
+      return 125
     case 'minicpm_v45_8b':
       return 8
     case 'gemma3_4b':
@@ -608,6 +688,12 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 3
     case 'granite4_1_30b':
       return 30
+    case 'granite4_2_3b':
+      return 3
+    case 'granite4_2_8b':
+      return 8
+    case 'granite4_2_30b':
+      return 30
     case 'nemotron3_nano_4b':
       return 4
     case 'nemotron3_33b':
@@ -616,6 +702,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 30
     case 'devstral_small_2_24b':
       return 24
+    case 'mistral_medium_3_5_128b':
+      return 128
     case 'ministral_3_3b':
       return 3
     case 'ministral_3_14b':

@@ -156,6 +156,13 @@ describe('shortModelName', () => {
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
     expect(shortModelName('ollama', '', 'cli-default')).toBe('Qwen 3 (4B Param)')
+    expect(shortModelName('ollama', '', 'qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
+    expect(shortModelName('ollama', '', 'mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(shortModelName('ollama', '', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
   })
 })
 

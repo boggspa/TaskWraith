@@ -475,6 +475,12 @@ const OLLAMA_DEFAULT_MODEL_ROWS = [
     description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking'
   },
   {
+    id: 'qwen3.8-flash-next:125b-mlx',
+    label: 'Qwen 3.8 Flash Next (125B-MLX)',
+    description:
+      'Alibaba Qwen 3.8 Flash Next 125B-MLX (6B active) via Ollama · 262k context · vision/tools/thinking'
+  },
+  {
     id: 'gemma3:4b',
     label: 'Gemma 3 (4B Param)',
     description: 'Google Gemma 3 4B via Ollama · 131k context · vision'
@@ -550,6 +556,21 @@ const OLLAMA_DEFAULT_MODEL_ROWS = [
     description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools'
   },
   {
+    id: 'granite4.2:3b',
+    label: 'Granite 4.2 (3B Param)',
+    description: 'IBM Granite 4.2 3B via Ollama · 131k context · tools/thinking'
+  },
+  {
+    id: 'granite4.2:8b',
+    label: 'Granite 4.2 (8B Param)',
+    description: 'IBM Granite 4.2 8B via Ollama · 131k context · tools/thinking'
+  },
+  {
+    id: 'granite4.2:30b',
+    label: 'Granite 4.2 (30B Param)',
+    description: 'IBM Granite 4.2 30B via Ollama · 131k context · tools/thinking'
+  },
+  {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
     description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'
@@ -570,6 +591,12 @@ const OLLAMA_DEFAULT_MODEL_ROWS = [
     label: 'Devstral Small 2 (24B Param)',
     description:
       'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
+  },
+  {
+    id: 'mistral-medium-3.5:128b',
+    label: 'Mistral Medium 3.5 (128B Param)',
+    description:
+      'Mistral Medium 3.5 128B via Ollama · 262k context · vision/tools/thinking · agentic coding'
   },
   {
     id: 'ministral-3:3b',

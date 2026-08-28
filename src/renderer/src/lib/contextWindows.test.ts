@@ -46,6 +46,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'qwen3.6:35b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.6:35b-a3b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.8:27b-mlx')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b-it-q4_K_M')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:31b-mlx')).toBe(262_144)
@@ -60,6 +61,9 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'minicpm-v4.5:8b')).toBe(40_960)
     expect(resolveContextWindow('ollama', 'granite4.1:3b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'granite4.1:30b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:3b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:8b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:30b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron3:33b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.5:4b')).toBe(262_144)
@@ -71,6 +75,8 @@ describe('resolveContextWindow', () => {
     // Both read off the live daemon's `mistral3.context_length`, not the
     // upstream Mistral API tier — Devstral Small 2 is 384k locally.
     expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(393_216)
+    expect(resolveContextWindow('ollama', 'mistral-medium-3.5:latest')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'mistral-medium-3.5:128b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ministral-3:3b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'muse-glimmer:30b-mlx')).toBe(131_072)

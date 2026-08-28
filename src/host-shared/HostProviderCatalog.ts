@@ -205,6 +205,7 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('qwen3.5:9b', 'Qwen 3.5 (9B Param)', STANDARD_REASONING),
         model('qwen3.6:35b', 'Qwen 3.6 (35B-A3B)', STANDARD_REASONING),
         model('qwen3.8:27b-mlx', 'Qwen 3.8 (27B-MLX)', STANDARD_REASONING),
+        model('qwen3.8-flash-next:125b-mlx', 'Qwen 3.8 Flash Next (125B-MLX)', STANDARD_REASONING),
         model('gemma3:4b', 'Gemma 3 (4B Param)', STANDARD_REASONING),
         model('gemma4:12b', 'Gemma 4 (12B Param)', STANDARD_REASONING),
         model('gemma4:31b-mlx', 'Gemma 4 (31B-MLX)', STANDARD_REASONING),
@@ -219,7 +220,11 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)', STANDARD_REASONING),
         model('granite4:3b', 'Granite 4.0 (3B Param)', STANDARD_REASONING),
         model('granite4.1:3b', 'Granite 4.1 (3B Param)', STANDARD_REASONING),
-        model('granite4.1:30b', 'Granite 4.1 (30B Param)', STANDARD_REASONING)
+        model('granite4.1:30b', 'Granite 4.1 (30B Param)', STANDARD_REASONING),
+        model('granite4.2:3b', 'Granite 4.2 (3B Param)', STANDARD_REASONING),
+        model('granite4.2:8b', 'Granite 4.2 (8B Param)', STANDARD_REASONING),
+        model('granite4.2:30b', 'Granite 4.2 (30B Param)', STANDARD_REASONING),
+        model('mistral-medium-3.5:128b', 'Mistral Medium 3.5 (128B Param)', STANDARD_REASONING)
       ],
       authFlows: []
     },

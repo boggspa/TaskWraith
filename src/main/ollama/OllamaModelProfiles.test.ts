@@ -14,6 +14,20 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('multi-file')
   })
 
+  it('adds agentic profiles for the newest large local models', () => {
+    const qwen = ollamaModelFamilyPromptLines('qwen3.8-flash-next:125b-mlx').join(' ')
+    expect(qwen).toContain('Qwen 3.8 Flash Next 125B')
+    expect(qwen).toContain('native tools')
+
+    const mistral = ollamaModelFamilyPromptLines('mistral-medium-3.5:128b').join(' ')
+    expect(mistral).toContain('Mistral Medium 3.5 128B')
+    expect(mistral).toContain('multimodal')
+
+    const granite = ollamaModelFamilyPromptLines('granite4.2:8b').join(' ')
+    expect(granite).toContain('Granite 4.2')
+    expect(granite).toContain('configurable thinking')
+  })
+
   it('states the real permission on read-only and never hedges on edit tiers', () => {
     const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
     // Read-only text describes the tier's actual permission, which is honest.

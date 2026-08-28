@@ -20,6 +20,15 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "ollama", model: "qwen3.5:4b") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "qwen3.8:27b-mlx") == 262_144)
         #expect(
+            ContextWindows.resolve(provider: "ollama", model: "qwen3.8-flash-next:125b-mlx")
+                == 262_144)
+        #expect(
+            ContextWindows.resolve(provider: "ollama", model: "mistral-medium-3.5:latest")
+                == 262_144)
+        #expect(
+            ContextWindows.resolve(provider: "ollama", model: "mistral-medium-3.5:128b")
+                == 262_144)
+        #expect(
             ContextWindows.resolve(provider: "ollama", model: "devstral-small-2:24b") == 393_216)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ministral-3:14b") == 262_144)
         #expect(
@@ -38,6 +47,9 @@ struct ContextWindowsTests {
             ContextWindows.resolve(
                 provider: "ollama", model: "nemotron-3.5-lightning:30b-mlx") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.2:3b") == 131_072)
+        for modelId in ["granite4.2:3b", "granite4.2:8b", "granite4.2:30b"] {
+            #expect(ContextWindows.resolve(provider: "ollama", model: modelId) == 131_072)
+        }
         let lightweightWindows = [
             "ministral-3:3b": 262_144,
             "granite4:3b": 131_072,

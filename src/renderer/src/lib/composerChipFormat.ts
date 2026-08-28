@@ -199,6 +199,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'qwen3.8:27b-mlx' || id.startsWith('qwen3.8:27b-mlx-')) {
       return 'Qwen 3.8 (27B-MLX)'
     }
+    if (id === 'qwen3.8-flash-next:125b-mlx' || id.startsWith('qwen3.8-flash-next:125b-mlx-')) {
+      return 'Qwen 3.8 Flash Next (125B-MLX)'
+    }
     if (id === 'gemma3:4b' || id.startsWith('gemma3:4b-')) {
       return 'Gemma 3 (4B Param)'
     }
@@ -259,6 +262,20 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'granite4.1:30b' || id.startsWith('granite4.1:30b-')) {
       return 'Granite 4.1 (30B Param)'
     }
+    if (id === 'granite4.2:3b' || id.startsWith('granite4.2:3b-')) {
+      return 'Granite 4.2 (3B Param)'
+    }
+    if (
+      id === 'granite4.2' ||
+      id === 'granite4.2:latest' ||
+      id === 'granite4.2:8b' ||
+      id.startsWith('granite4.2:8b-')
+    ) {
+      return 'Granite 4.2 (8B Param)'
+    }
+    if (id === 'granite4.2:30b' || id.startsWith('granite4.2:30b-')) {
+      return 'Granite 4.2 (30B Param)'
+    }
     if (id === 'nemotron-3-nano:4b' || id.startsWith('nemotron-3-nano:4b-')) {
       return 'Nemotron 3 Nano (4B Param)'
     }
@@ -273,6 +290,14 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     }
     if (id === 'devstral-small-2:24b' || id.startsWith('devstral-small-2:24b-')) {
       return 'Devstral Small 2 (24B Param)'
+    }
+    if (
+      id === 'mistral-medium-3.5' ||
+      id === 'mistral-medium-3.5:latest' ||
+      id === 'mistral-medium-3.5:128b' ||
+      id.startsWith('mistral-medium-3.5:128b-')
+    ) {
+      return 'Mistral Medium 3.5 (128B Param)'
     }
     if (id === 'ministral-3:3b' || id.startsWith('ministral-3:3b-')) {
       return 'Ministral 3 (3B Param)'

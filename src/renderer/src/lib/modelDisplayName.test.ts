@@ -222,6 +222,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+      expect(humaniseModelId('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(
+        'Qwen 3.8 Flash Next (125B-MLX)'
+      )
       expect(humaniseModelId('ollama', 'gemma4:12b')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'gemma4:31b-mlx')).toBe('Gemma 4 (31B-MLX)')
@@ -242,6 +245,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:3b')).toBe('Granite 4.1 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
       expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
       expect(humaniseModelId('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
         'Nemotron 3.5 Lightning (30B-MLX)'
@@ -249,6 +255,12 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.5:4b')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')
+      expect(humaniseModelId('ollama', 'mistral-medium-3.5:latest')).toBe(
+        'Mistral Medium 3.5 (128B Param)'
+      )
+      expect(humaniseModelId('ollama', 'mistral-medium-3.5:128b')).toBe(
+        'Mistral Medium 3.5 (128B Param)'
+      )
       expect(humaniseModelId('ollama', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
       expect(humaniseModelId('ollama', 'muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
       expect(humaniseModelId('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')

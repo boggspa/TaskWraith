@@ -13,6 +13,16 @@ describe('resolveOllamaReasoningSupport', () => {
       defaultEffort: 'on'
     })
     expect(resolveOllamaReasoningSupport({ modelId: 'gemma4:31b-mlx' }).kind).toBe('toggle')
+    for (const modelId of [
+      'mistral-medium-3.5:latest',
+      'mistral-medium-3.5:128b',
+      'qwen3.8-flash-next:125b-mlx',
+      'granite4.2:3b',
+      'granite4.2:latest',
+      'granite4.2:30b'
+    ]) {
+      expect(resolveOllamaReasoningSupport({ modelId }).kind, modelId).toBe('toggle')
+    }
     expect(resolveOllamaReasoningSupport({ modelId: 'gemma3:4b' }).kind).toBe('unsupported')
     expect(resolveOllamaReasoningSupport({ modelId: 'future-local:latest' }).kind).toBe('unknown')
   })

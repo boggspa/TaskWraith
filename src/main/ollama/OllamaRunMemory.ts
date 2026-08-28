@@ -147,6 +147,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'lfm2_5_thinking_1_2b':
     case 'granite4_3b':
     case 'granite4_1_3b':
+    case 'granite4_2_3b':
     case 'nemotron3_nano_4b':
     case 'ministral_3_3b':
     case 'deepseek_r1_1_5b':
@@ -168,6 +169,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'lfm2_5_8b':
     case 'gpt_oss_20b':
     case 'granite4_1_30b':
+    case 'granite4_2_8b':
     case 'ministral_3_14b':
     case 'llama3_1_8b':
     case 'deepseek_r1_8b':
@@ -179,11 +181,14 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
       })
     case 'qwen3_6_35b':
     case 'qwen3_8_27b':
+    case 'qwen3_8_flash_next_125b':
     case 'ornith_35b':
     case 'laguna_xs_2_1':
     case 'nemotron3_33b':
     case 'nemotron3_5_lightning_30b':
     case 'devstral_small_2_24b':
+    case 'mistral_medium_3_5_128b':
+    case 'granite4_2_30b':
     case 'glm_4_7_flash':
     case 'north_mini_code_1_0':
     case 'muse_glimmer_30b':

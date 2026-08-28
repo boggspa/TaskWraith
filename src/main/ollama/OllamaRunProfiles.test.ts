@@ -44,6 +44,15 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('qwen3.8:27b-mlx', 'provider_parity').contextCapTokens).toBe(
       262_144
     )
+    expect(
+      resolveOllamaRunProfile('qwen3.8-flash-next:125b-mlx', 'provider_parity').contextCapTokens
+    ).toBe(262_144)
+    expect(
+      resolveOllamaRunProfile('mistral-medium-3.5:128b', 'provider_parity').contextCapTokens
+    ).toBe(262_144)
+    expect(resolveOllamaRunProfile('granite4.2:8b', 'provider_parity').contextCapTokens).toBe(
+      131_072
+    )
     // 2026-07-30: the working profiles' ceiling rose 131_072 -> 262_144, so a
     // 262K model is capped by ITS OWN window rather than by the profile.
     expect(resolveOllamaRunProfile('ornith:35b', 'verify_with_shell').contextCapTokens).toBe(262_144)
@@ -132,6 +141,15 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('ornith-1.5:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe(true)
+    expect(
+      resolveOllamaThinkingLevel(
+        'mistral-medium-3.5:128b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity
+      )
+    ).toBe(true)
+    expect(
+      resolveOllamaThinkingLevel('granite4.2:8b', OLLAMA_RUN_PROFILE_PRESETS.provider_parity)
     ).toBe(true)
     expect(
       resolveOllamaThinkingLevel(

@@ -18,6 +18,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerClass: 'alibaba',
       modelLabel: 'Qwen 3.8 (27B-MLX)'
     })
+    expect(resolveOllamaDisplayBrand('qwen3.8-flash-next:125b-mlx')).toMatchObject({
+      providerLabel: 'Alibaba',
+      providerClass: 'alibaba',
+      modelLabel: 'Qwen 3.8 Flash Next (125B-MLX)'
+    })
     expect(resolveOllamaDisplayBrand('ornith:35b', 'Ornith 1.0 (35B Param)')).toMatchObject({
       providerLabel: 'Deep Reinforce',
       providerClass: 'deep-reinforce'
@@ -38,6 +43,11 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('granite4.1:30b', 'Granite 4.1 (30B Param)')).toMatchObject({
       providerLabel: 'IBM',
       providerClass: 'ibm'
+    })
+    expect(resolveOllamaDisplayBrand('granite4.2:8b')).toMatchObject({
+      providerLabel: 'IBM',
+      providerClass: 'ibm',
+      modelLabel: 'Granite 4.2 (8B Param)'
     })
     expect(resolveOllamaDisplayBrand('lfm2.5:8b', 'LFM 2.5 (8B-A1B)')).toMatchObject({
       providerLabel: 'Liquid',
@@ -71,6 +81,11 @@ describe('resolveOllamaDisplayBrand', () => {
     ).toMatchObject({
       providerLabel: 'Mistral',
       providerClass: 'mistral'
+    })
+    expect(resolveOllamaDisplayBrand('mistral-medium-3.5:128b')).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral',
+      modelLabel: 'Mistral Medium 3.5 (128B Param)'
     })
     expect(resolveOllamaDisplayBrand('ministral-3:14b', 'Ministral 3 (14B Param)')).toMatchObject({
       providerLabel: 'Mistral',
@@ -109,6 +124,21 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Kimi',
       providerClass: 'kimi',
       modelLabel: 'Kimi K2.7 Code'
+    })
+    expect(resolveOllamaDisplayBrand('deepseek-v4-pro:cloud')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelLabel: 'DeepSeek V4 Pro'
+    })
+    expect(resolveOllamaDisplayBrand('deepseek-v4-flash:cloud')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelLabel: 'DeepSeek V4 Flash'
+    })
+    expect(resolveOllamaDisplayBrand('gemma4:cloud')).toMatchObject({
+      providerLabel: 'Google',
+      providerClass: 'google',
+      modelLabel: 'Gemma 4'
     })
   })
 

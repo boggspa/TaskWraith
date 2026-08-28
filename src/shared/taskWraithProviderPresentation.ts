@@ -160,6 +160,7 @@ function ollamaModelLabel(model: string): string | undefined {
   if (cloudLabel) return cloudLabel
   const key = model.trim().toLowerCase()
   const known: Array<[RegExp, string]> = [
+    [/^qwen3\.8-flash-next:125b-mlx(?:-|$)/, 'Qwen 3.8 Flash Next (125B-MLX)'],
     [/^qwen3\.8:27b-mlx(?:-|$)/, 'Qwen 3.8 (27B-MLX)'],
     [/^qwen3\.6:35b(?:-|$)/, 'Qwen 3.6 (35B-A3B)'],
     [/^qwen3\.5:9b(?:-|$)/, 'Qwen 3.5 (9B Param)'],
@@ -178,12 +179,16 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^minicpm-v4\.5:8b(?:-|$)/, 'MiniCPM-V 4.5 (8B Param)'],
     [/^granite4\.1:3b(?:-|$)/, 'Granite 4.1 (3B Param)'],
     [/^granite4\.1:30b(?:-|$)/, 'Granite 4.1 (30B Param)'],
+    [/^granite4\.2:3b(?:-|$)/, 'Granite 4.2 (3B Param)'],
+    [/^granite4\.2(?::(?:latest|8b))?(?:-|$)/, 'Granite 4.2 (8B Param)'],
+    [/^granite4\.2:30b(?:-|$)/, 'Granite 4.2 (30B Param)'],
     [/^granite4:3b(?:-|$)/, 'Granite 4.0 (3B Param)'],
     [/^nemotron-3-nano:4b(?:-|$)/, 'Nemotron 3 Nano (4B Param)'],
     [/^nemotron3:33b(?:-|$)/, 'Nemotron 3 Nano Omni (33B Param)'],
     [/^nemotron-3\.5-lightning:30b-mlx(?:-|$)/, 'Nemotron 3.5 Lightning (30B-MLX)'],
     [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)'],
     [/^devstral-small-2:24b(?:-|$)/, 'Devstral Small 2 (24B Param)'],
+    [/^mistral-medium-3\.5(?::(?:latest|128b))?(?:-|$)/, 'Mistral Medium 3.5 (128B Param)'],
     [/^ministral-3:3b(?:-|$)/, 'Ministral 3 (3B Param)'],
     [/^ministral-3:14b(?:-|$)/, 'Ministral 3 (14B Param)'],
     [/^muse-glimmer:30b-mlx(?:-|$)/, 'Muse Glimmer (30B-MLX)'],
