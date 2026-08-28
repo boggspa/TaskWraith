@@ -18,7 +18,7 @@
 > [`README.md`](./README.md) Current boundary,
 > [`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts),
 > and [`DESIGN.md`](./DESIGN.md). Arc status:
-> [`docs/HOST_ARC_STATUS.md`](../../docs/HOST_ARC_STATUS.md).
+> [`docs/host-arc/HOST_ARC_STATUS.md`](../../docs/host-arc/HOST_ARC_STATUS.md).
 >
 > App-side posture handling still exists
 > ([`TuiHeadlessHostSession`](../main/TuiHeadlessHostSession.ts), wired

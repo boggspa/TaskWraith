@@ -41,7 +41,10 @@ id only as a transport-neutral delivery target.
 Muse workspace-write posture requires an explicit, persisted consent bit before
 the Host accepts configuration. Muse currently emits no deferred
 approval/question continuation events, so the standalone Host does not
-advertise those capabilities. It must not manufacture approval cards for a
+advertise those capabilities _for Muse_. Other providers can and do: Codex,
+Kimi, Grok and Mistral advertise approvals, and Codex has advertised questions
+since `d54d757cd` (2026-08-27). The registry ORs each flag across the
+constructed factories. It must not manufacture approval cards for a
 provider that cannot resume them safely.
 
 An interactively started `taskwraith-host serve` can hand a provider CLI login
@@ -157,6 +160,7 @@ id). `/seats` is rejected as solo-only.
 | `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                             |
 | `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                                  |
 | `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                                  |
+| `/git [status\|diff\|log] [path]`               | Read-only workspace git lens. `s`/`d`/`l` switch scope, `r` refreshes, Esc closes. On demand only — no watcher.                            |
 | `/seats`                                        | Rejected: standalone TUI is solo-only. Use `/new` or `/provider`.                                                                          |
 | `/help`                                         | Command cheat sheet.                                                                                                                       |
 | `/cancel`                                       | Cancel the active run.                                                                                                                     |
@@ -168,6 +172,48 @@ command with capability, actor, offer, and receipt validation.
 Approval/question actions are available only when the connected Host actually
 negotiates those capabilities. Muse standalone production currently does not
 advertise them (see Current boundary).
+
+### Workspace git (`/git`)
+
+`/git [status|diff|log] [path]` opens a read-only git lens over the thread's
+registered workspace. With no scope argument it reuses the last scope, falling
+back to `status`. Inside the overlay `s`/`d`/`l` switch scope, `r` re-reads, and
+Esc closes. Switching scope **clears the `path` filter**; pass `/git diff
+src/foo.ts` again to re-apply one.
+
+**On demand only.** There is no watcher and no live update — the overlay shows
+the result of the read you asked for, and nothing refreshes it until you press
+`r` or reopen. This is deliberate, not a missing feature.
+
+**Read-only, and narrow.** The Host runs only `status`, `diff`, `log`, `branch
+--show-current` and `rev-parse HEAD`. `show` and `blame` are deliberately
+excluded, mirroring the existing product decision that gates those two while
+auto-allowing status/diff/log. Nothing in this surface writes to a repository.
+
+**Truncation is explicit.** The Host caps a serialized git result at 128 KiB
+and marks a clipped payload as truncated; the overlay banners it at the top of
+the body. A truncated diff — or a truncated status file list — is never
+presented as complete.
+
+**A Host without git is a normal configuration, not an error.** The Host
+advertises the `workspace-git` capability only when a git binary actually
+resolves, so on a git-less Host `/git` reports that it is unavailable and says
+so calmly. That is distinct from a read that genuinely failed, which surfaces
+as an error; the two are kept apart deliberately.
+
+**Local only.** Paired/remote peers are explicitly refused `workspace.git.read`
+([`PairedHostProjectionGateway`](../main/remote/PairedHostProjectionGateway.ts)),
+and the capability is never negotiated for them, because diff and log output can
+carry secrets. Do not assume the remote surface has this.
+
+**Scope containment.** Reads are pinned to the registered workspace path. A
+repository whose toplevel resolves outside that workspace is refused, including
+`.git`-file redirection (linked worktrees and submodules) — the read is not
+widened to an ancestor checkout.
+
+Known limit: ahead/behind counts are not carried on the wire, so the header
+shows the branch, a short head, and the staged/unstaged/untracked counts rather
+than a divergence figure.
 
 ### Current boundary
 
@@ -215,12 +261,23 @@ The standalone TUI path does **not** require the desktop app. `tw` reuses or
 auto-starts the pure-Node Host (`taskwraith-host serve --mode production
 --profile <path>`); `tw --no-start-host` is connect-only.
 
-Desktop is **not** cut over to that Host. The app still composes its own Host
-inside Electron main by default. An external-host path exists
-([`HostExternalSupervisor`](../main/host/HostExternalSupervisor.ts)) but is
-gated off unless `TASKWRAITH_DESKTOP_EXTERNAL_HOST=1`
-([`bootstrap.ts`](../main/bootstrap.ts)). Landed as `7e633fa7e`. Without that
-flag, Desktop and TUI **coexist as two hosts over one profile** (`e8622883d`),
-both writing `<profile>/chats/<id>.json` and `workspaces.json`.
-`LegacyStoreWriterGate` is the unfinished cross-process single-writer fence.
-The standalone TUI path remains independent either way.
+Desktop now **defaults onto** that Host: `prepareMainProcess`
+([`bootstrap.ts`](../main/bootstrap.ts)) connects to the external Host
+([`HostExternalSupervisor`](../main/host/HostExternalSupervisor.ts)) unless
+`TASKWRAITH_DESKTOP_EXTERNAL_HOST=0` opts back into composing its own
+in-process Host. Landed as `30b092586`. When the external Host is unavailable,
+or that opt-out is set, Desktop still composes its own in-process Host
+(`e8622883d`).
+
+Both profile families the two processes used to contend over are now written
+through the Host rather than directly. Chat records go through
+`thread.record.persist` / `thread.record.delete`, and workspace records through
+`workspace.record.upsert` / `workspace.record.remove` /
+`workspace.records.clear` (`379e2dd2e`); Desktop submits them as an outbound
+client instead of writing `<profile>/chats/<id>.json` and `workspaces.json`
+itself. All five are restricted to the exact authenticated Desktop actor — a
+local-control client cannot reach them. The cross-process single-writer fence
+([`HostProfileWriterFence`](../host-runtime/HostProfileWriterFence.ts)) is
+consumed on both sides of the process boundary, and `bootstrap.ts` handles
+`ProfileWriterLivePeerError` on fallback (`bbda6a371`, `f4081926b`). The
+standalone TUI path remains independent either way.
