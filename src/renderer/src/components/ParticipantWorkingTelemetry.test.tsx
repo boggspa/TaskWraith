@@ -20,6 +20,12 @@ describe('ParticipantWorkingTelemetry', () => {
     expect(
       formatParticipantWorkingElapsed(
         '2026-07-11T18:00:00.000Z',
+        Date.parse('2026-07-11T19:23:45.000Z')
+      )
+    ).toBe('1h 23m 45s')
+    expect(
+      formatParticipantWorkingElapsed(
+        '2026-07-11T18:00:00.000Z',
         Date.parse('2026-07-11T20:01:02.000Z')
       )
     ).toBe('2h 1m 2s')

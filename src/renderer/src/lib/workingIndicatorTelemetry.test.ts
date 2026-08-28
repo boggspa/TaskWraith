@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRun, ProviderId, ToolActivity } from '../../../ma
 import { withContextUsageSnapshot } from '../../../shared/contextUsage'
 import {
   buildWorkingIndicatorTokenTargets,
+  workingIndicatorTokenTargetKey,
   workingIndicatorTokenSnapshotBucket
 } from './workingIndicatorTelemetry'
 
@@ -153,6 +154,50 @@ describe('buildWorkingIndicatorTokenTargets', () => {
       targetTokens: 14_004,
       estimatedCurrentTurnTokens: 4
     })
+  })
+
+  it('keeps simultaneous pre-run fan-out baselines isolated by participant id', () => {
+    const claudeInput = {
+      runId: null,
+      participantId: 'claude-seat',
+      provider: 'claude' as const,
+      modelId: 'claude-opus-4-6'
+    }
+    const cursorInput = {
+      runId: null,
+      participantId: 'cursor-seat',
+      provider: 'cursor' as const,
+      modelId: 'composer-1.5'
+    }
+    const targets = buildWorkingIndicatorTokenTargets(
+      [
+        run(
+          'claude-previous',
+          { total_tokens: 28_500 },
+          {
+            status: 'completed',
+            ensembleParticipantId: 'claude-seat',
+            provider: 'claude',
+            actualModel: 'claude-opus-4-6'
+          }
+        ),
+        run(
+          'cursor-previous',
+          { total_tokens: 14_000 },
+          {
+            status: 'completed',
+            ensembleParticipantId: 'cursor-seat',
+            provider: 'cursor',
+            actualModel: 'composer-1.5'
+          }
+        )
+      ],
+      [],
+      [claudeInput, cursorInput]
+    )
+
+    expect(targets.get(workingIndicatorTokenTargetKey(claudeInput))?.targetTokens).toBe(28_500)
+    expect(targets.get(workingIndicatorTokenTargetKey(cursorInput))?.targetTokens).toBe(14_000)
   })
 
   it('uses current invocation context instead of adding it to the prior context', () => {

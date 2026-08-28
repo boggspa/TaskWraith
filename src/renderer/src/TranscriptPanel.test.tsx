@@ -452,7 +452,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Model: K3 Max')
   })
 
-  it('renders the active Ensemble participant role in the working indicator', () => {
+  it('renders one unified Working signal with the active Ensemble seat and telemetry', () => {
     const chat = activeEnsembleChat(
       ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
     )
@@ -485,14 +485,129 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('Codex')
-    expect(html).toContain('Role: Builder')
-    expect(html).toContain('Builder')
-    expect(html).toContain('5.5 Extra High')
-    expect(html).toContain('provider-codex')
+    expect(html).toContain('message-working-unified')
+    expect(html).toContain('message-working-seat-grid')
+    expect(html).toContain('data-label="#1 Builder"')
+    expect(html).toContain('--message-working-accent:var(--provider-codex-color, var(--accent))')
     expect(html).toContain('message-working-telemetry')
     expect(html).toContain('digit-odometer')
+    expect(html).not.toContain('Role: Builder')
+    expect(html).not.toContain('5.5 Extra High')
     expect(html).not.toContain('message-working-sparkles')
+  })
+
+  it('renders six concurrent seats under one Working ghost in roster order', () => {
+    const participants = [
+      ensembleParticipant({ id: 'general', role: 'General', order: 1 }),
+      ensembleParticipant({ id: 'specialist-a', role: 'Specialist', order: 2 }),
+      ensembleParticipant({ id: 'reviewer', role: 'Reviewer', order: 3 }),
+      ensembleParticipant({ id: 'specialist-b', role: 'Specialist', order: 4 }),
+      ensembleParticipant({ id: 'researcher', role: 'Researcher', order: 5 }),
+      ensembleParticipant({ id: 'specialist-c', role: 'Specialist', order: 6 })
+    ]
+    const chat = activeEnsembleChat(participants[0])
+    chat.ensemble!.maxParticipants = participants.length
+    chat.ensemble!.participants = participants
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      concurrentMode: true,
+      fanoutPolicy: 'read_only',
+      activeParticipantId: participants[0].id,
+      participants: participants.map((participant) => ({
+        participantId: participant.id,
+        provider: participant.provider,
+        role: participant.role,
+        order: participant.order,
+        model: participant.model,
+        status: 'running' as const
+      })),
+      lanes: Object.fromEntries(
+        participants.map((participant, index) => [
+          `lane-${index + 1}`,
+          {
+            laneId: `lane-${index + 1}`,
+            participantId: participant.id,
+            provider: participant.provider,
+            status: 'running' as const,
+            intent: 'read' as const,
+            startedAt: `2026-07-01T00:00:0${index + 1}.000Z`
+          }
+        ])
+      )
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html.match(/class="message-working-ghost"/g) || []).toHaveLength(1)
+    expect(html.match(/message-working-seat-label/g) || []).toHaveLength(6)
+    expect(html).toContain('data-label="#1 General"')
+    expect(html).toContain('data-label="#4 Specialist"')
+    expect(html).toContain('data-label="#6 Specialist"')
+    expect(html).not.toContain('message-meta-role-badge')
+  })
+
+  it('keeps the roster seat number when a legacy zero-based partial round omits seat one', () => {
+    const general = ensembleParticipant({ id: 'general', role: 'General', order: 0 })
+    const reviewer = ensembleParticipant({ id: 'reviewer', role: 'Reviewer', order: 1 })
+    const chat = activeEnsembleChat(general)
+    chat.ensemble!.participants = [general, reviewer]
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      concurrentMode: true,
+      fanoutPolicy: 'read_only',
+      activeParticipantId: reviewer.id,
+      participants: [
+        {
+          participantId: reviewer.id,
+          provider: reviewer.provider,
+          role: reviewer.role,
+          order: reviewer.order,
+          model: reviewer.model,
+          status: 'running'
+        }
+      ],
+      lanes: {
+        reviewer: {
+          laneId: 'reviewer',
+          participantId: reviewer.id,
+          provider: reviewer.provider,
+          status: 'running',
+          intent: 'read',
+          startedAt: '2026-07-01T00:00:02.000Z'
+        }
+      }
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('data-label="#2 Reviewer"')
+    expect(html).not.toContain('data-label="#1 Reviewer"')
   })
 
   it('renders a neutral handoff status without claiming that either seat is working', () => {
@@ -641,7 +756,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('--message-working-accent:var(--provider-ensemble-color, var(--accent))')
   })
 
-  it('uses Ollama display-brand label and hue for an active Ensemble local model', () => {
+  it('uses the Ollama display-brand hue while keeping the active seat role-only', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -664,13 +779,13 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('Alibaba')
-    expect(html).toContain('Role: Scout')
-    expect(html).toContain('Qwen 3.5 (9B Param)')
-    expect(html).toContain('provider-alibaba')
+    expect(html).toContain('data-label="#1 Scout"')
+    expect(html).toContain('--message-working-accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).not.toContain('Role: Scout')
+    expect(html).not.toContain('Qwen 3.5 (9B Param)')
   })
 
-  it('uses the Pi upstream brand, hue, and human model name for an active Ensemble working indicator', () => {
+  it('uses the Pi upstream hue while keeping the active seat role-only', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -693,10 +808,9 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('data-label="#1 Scout"')
     expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
-    expect(html).toContain('DeepSeek')
-    expect(html).toContain('DeepSeek V4 Flash')
+    expect(html).not.toContain('DeepSeek V4 Flash')
   })
 
   it('scopes a settled solo tool stack to its Pi upstream brand hue', () => {

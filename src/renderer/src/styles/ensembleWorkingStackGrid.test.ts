@@ -7,19 +7,30 @@ const css = readFileSync(
   'utf8'
 )
 
-describe('ensemble working stack grid', () => {
-  it('keeps multi-participant working rows in two columns', () => {
-    expect(css).toContain('.message-working-stack {')
-    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));')
-    expect(css).toContain('column-gap: clamp(var(--space-md), 3vw, var(--space-xl));')
-    expect(css).toContain('row-gap: var(--space-md);')
-    expect(css).toContain('.message-working-stack-row .message-meta {')
-    expect(css).toContain('flex-wrap: wrap;')
+describe('unified Ensemble working seat grid', () => {
+  it('uses four bare close-out-style seat columns below one Working signal', () => {
+    expect(css).toContain('.message-working-unified {')
+    expect(css).toContain('container: working-indicator / inline-size;')
+    expect(css).toContain('padding: var(--space-xs) 0;')
+    expect(css).toContain('.message-working-seat-grid {')
+    expect(css).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));')
+    expect(css).toContain('padding-inline-start: 34px;')
+    expect(css).toContain('.message-working-seat {')
+    expect(css).toContain('border: 0;')
+    expect(css).toContain('background: none;')
+    expect(css).toContain('font-size: calc(var(--font-size-xs) + 1px);')
+    expect(css).toContain('font-weight: 500;')
   })
 
-  it('returns to one column on narrow transcript panes', () => {
-    const mobileRules = css.slice(css.indexOf('@media (max-width: 620px)'))
-    expect(mobileRules).toContain('.message-working-stack {')
+  it('returns to two columns and then one on narrow transcript panes', () => {
+    const tabletRules = css.slice(
+      css.indexOf('@container working-indicator (max-width: 720px)'),
+      css.indexOf('@container working-indicator (max-width: 420px)')
+    )
+    const mobileRules = css.slice(css.indexOf('@container working-indicator (max-width: 420px)'))
+    expect(tabletRules).toContain('.message-working-seat-grid {')
+    expect(tabletRules).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));')
+    expect(mobileRules).toContain('.message-working-seat-grid {')
     expect(mobileRules).toContain('grid-template-columns: minmax(0, 1fr);')
   })
 })

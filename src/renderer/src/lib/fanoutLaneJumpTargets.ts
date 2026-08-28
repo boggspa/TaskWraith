@@ -19,8 +19,9 @@
  * an older round's card would land the reader on finished output and read as a
  * broken link.
  */
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ConcurrentLane } from '../../../main/store/types'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
+import { LIVE_ENSEMBLE_LANE_STATUSES } from '../../../shared/ensembleRoundLifecycle'
 import { ensembleFanoutParticipantId } from '../components/EnsembleFanoutResultCardModel'
 
 export type FanoutLaneJumpTarget = {
@@ -37,18 +38,47 @@ export type FanoutLaneJumpTarget = {
  *
  * Keyed by `metadata.ensembleParticipantId` — the same key the working row
  * carries as `WorkingIndicatorPresentation.participantId`. Seats with no lane
- * card are absent, which is what gates the affordance: no entry, no jump.
+ * card are absent, which is what gates the affordance: no entry, no jump. When
+ * the caller supplies current lanes, a card must match the exact live lane/run;
+ * a historical card from the same participant can never become a false target
+ * while a replacement lane is still waiting for its first output.
  */
 export function buildFanoutLaneJumpTargets(
-  messages: readonly ChatMessage[]
+  messages: readonly ChatMessage[],
+  currentLanes?: readonly ConcurrentLane[]
 ): ReadonlyMap<string, FanoutLaneJumpTarget> {
   const targets = new Map<string, FanoutLaneJumpTarget>()
   if (!Array.isArray(messages)) return targets
+  const currentLaneByParticipant = currentLanes
+    ? currentLanes.reduce<Map<string, ConcurrentLane>>((byParticipant, lane) => {
+        if (!LIVE_ENSEMBLE_LANE_STATUSES.has(lane.status)) return byParticipant
+        const previous = byParticipant.get(lane.participantId)
+        const previousStartedAt = Date.parse(previous?.startedAt || '')
+        const laneStartedAt = Date.parse(lane.startedAt || '')
+        if (
+          !previous ||
+          (Number.isFinite(laneStartedAt) &&
+            (!Number.isFinite(previousStartedAt) || laneStartedAt > previousStartedAt))
+        ) {
+          byParticipant.set(lane.participantId, lane)
+        }
+        return byParticipant
+      }, new Map())
+    : null
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]
     if (!message || !isEnsembleFanoutResultMessage(message)) continue
     const participantId = ensembleFanoutParticipantId(message)
     if (!participantId) continue
+    if (currentLaneByParticipant) {
+      const currentLane = currentLaneByParticipant.get(participantId)
+      const matchesCurrentLane = Boolean(
+        currentLane &&
+          message.metadata?.ensembleLaneId === currentLane.laneId &&
+          (!currentLane.runId || !message.runId || message.runId === currentLane.runId)
+      )
+      if (!matchesCurrentLane) continue
+    }
     // Plain overwrite, walking forward: the last card for a seat is the live one.
     targets.set(participantId, {
       messageId: message.id,

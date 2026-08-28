@@ -94,7 +94,11 @@ import {
   deriveActiveEnsembleWorkingPresentations,
   type WorkingIndicatorPresentation
 } from '../lib/workingIndicatorPresentation'
-import { buildWorkingIndicatorTokenTargets } from '../lib/workingIndicatorTelemetry'
+import {
+  buildWorkingIndicatorTokenTargets,
+  workingIndicatorTokenTargetKey,
+  type WorkingIndicatorTokenTarget
+} from '../lib/workingIndicatorTelemetry'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
@@ -285,6 +289,7 @@ import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { ThinkingIndicator } from './AppChromeSymbols'
 import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
+import { UnifiedWorkingIndicator } from './UnifiedWorkingIndicator'
 import {
   humanCollaboratorMetadata,
   isDeliveredExternalContribution,
@@ -1442,6 +1447,81 @@ function workingAccentStyle(presentation: WorkingIndicatorPresentation): CSSProp
   return {
     '--message-working-accent': `var(--provider-${providerClass}-color, var(--accent))`
   } as CSSProperties
+}
+
+function workingSeatNumber(
+  chat: ChatRecord | null | undefined,
+  participantId: string | null
+): number | null {
+  if (!participantId) return null
+  const rosterSeats = chat?.ensemble?.participants || []
+  const rosterIndex = rosterSeats.findIndex((seat) => seat.id === participantId)
+  const roundSeats = chat?.ensemble?.activeRound?.participants || []
+  const roundIndex = roundSeats.findIndex((seat) => seat.participantId === participantId)
+  const rosterUsesLegacyZeroBasedOrder = rosterSeats.some((seat) => seat.order === 0)
+  if (roundIndex >= 0) {
+    if (rosterIndex >= 0 && rosterUsesLegacyZeroBasedOrder) return rosterIndex + 1
+    const roundOrder = roundSeats[roundIndex]?.order
+    if (typeof roundOrder === 'number' && roundOrder > 0) return roundOrder
+  }
+  if (rosterIndex >= 0) {
+    const rosterOrder = rosterSeats[rosterIndex]?.order
+    return typeof rosterOrder === 'number' && rosterOrder > 0 ? rosterOrder : rosterIndex + 1
+  }
+  return roundIndex >= 0 ? roundIndex + 1 : null
+}
+
+function formatWorkingSeatLabel({
+  seatNumber,
+  roleLabel,
+  providerLabel
+}: {
+  seatNumber: number | null
+  roleLabel: string | null
+  providerLabel: string
+}): string {
+  const role = roleLabel?.trim() || providerLabel.trim() || 'Agent'
+  return seatNumber && seatNumber > 0 ? `#${seatNumber} ${role}` : role
+}
+
+function WorkingIndicatorTelemetryReadout({
+  presentation,
+  tokenTarget,
+  index
+}: {
+  presentation: WorkingIndicatorPresentation
+  tokenTarget: WorkingIndicatorTokenTarget | undefined
+  index: number
+}): ReactElement | null {
+  if (presentation.activity === 'transitioning') return null
+  return (
+    <MemoizedParticipantWorkingTelemetry
+      runId={presentation.runId}
+      startedAt={presentation.startedAt}
+      provider={presentation.provider}
+      tokenEpochKey={
+        tokenTarget?.tokenEpochKey ||
+        JSON.stringify([
+          presentation.participantId || 'solo',
+          presentation.provider || 'unknown-provider',
+          presentation.modelId || 'unknown-model'
+        ])
+      }
+      tokenEpochObservedAt={tokenTarget?.tokenEpochObservedAt ?? null}
+      contextBaselineTokens={tokenTarget?.contextBaselineTokens ?? 0}
+      contextBaselineAvailable={tokenTarget?.contextBaselineAvailable ?? false}
+      contextState={tokenTarget?.contextState ?? 'unavailable'}
+      fallbackTargetTokens={tokenTarget?.targetTokens ?? 0}
+      estimatedCurrentTurnTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
+      estimatedToolResultTokens={tokenTarget?.estimatedToolResultTokens ?? 0}
+      key={
+        presentation.runId ||
+        presentation.startedAt ||
+        presentation.participantId ||
+        `working-${index}`
+      }
+    />
+  )
 }
 
 function fileChangeOwnerLabel(owner: DiffFileSummaryOwner): string {
@@ -2752,6 +2832,9 @@ export const TranscriptPanel = memo(
         workingRoleLabel
       ]
     )
+    const hasUnifiedEnsembleWorkingSeats =
+      currentChat?.chatKind === 'ensemble' &&
+      workingPresentations.some((presentation) => Boolean(presentation.participantId))
     const resolvedRuns = storeReady ? storeTranscript.runs : currentChat?.runs || []
     const workingTokenTargets = useMemo(
       () =>
@@ -2767,14 +2850,15 @@ export const TranscriptPanel = memo(
         ),
       [resolvedMessages, resolvedRuns, workingPresentations]
     )
-    // Seats whose "working…" row is live right now, so each fan-out lane card
-    // can shimmer its rim while its own seat is busy — the point being that a
-    // straggler is findable at a glance when several lanes run at once.
+    // Seats whose entry in the unified Working grid is live right now, so each
+    // fan-out lane card can shimmer its rim while its own seat is busy — the
+    // point being that a straggler is findable at a glance when several lanes
+    // run at once.
     //
     // Gated on the SAME condition as the working row below
     // (`isThinking || hasLiveContextCompactionProgress`) and read from the SAME
-    // presentations, so a card's shimmer starts and stops with that seat's row
-    // rather than tracking a second, subtly different idea of "live". A
+    // presentations, so a card's shimmer starts and stops with that seat's grid
+    // entry rather than tracking a second, subtly different idea of "live". A
     // presentation with no participantId is the non-Ensemble fallback row and
     // belongs to no lane, so it lights nothing.
     const workingLaneParticipantIds = useMemo<ReadonlySet<string>>(() => {
@@ -3739,13 +3823,18 @@ export const TranscriptPanel = memo(
     )
     // The same seat↔lane correspondence as `workingLaneParticipantIds`, read the
     // other way: from a working seat back to the lane card it is filling, so its
-    // "working…" row can carry the reader there. Derived from the message list
-    // rather than from the presentations, because the target has to exist as a
-    // ROW — a seat that is busy but has not written a card yet simply has no
-    // entry, and offers no affordance.
+    // grid entry can carry the reader there. The current lane scope prevents a
+    // previous round's card becoming a false target before the new lane writes
+    // its first row.
     const fanoutLaneJumpTargets = useMemo(
-      () => buildFanoutLaneJumpTargets(displayMessages),
-      [displayMessages]
+      () =>
+        buildFanoutLaneJumpTargets(
+          displayMessages,
+          currentChat?.ensemble?.activeRound
+            ? Object.values(currentChat.ensemble.activeRound.lanes || {})
+            : undefined
+        ),
+      [currentChat?.ensemble?.activeRound?.lanes, displayMessages]
     )
     const projectedRows = useProjectedTranscriptRows(
       displayMessages,
@@ -6657,7 +6746,13 @@ export const TranscriptPanel = memo(
           {(isThinking || hasLiveContextCompactionProgress) && (
             <div
               key="thinking-indicator"
-              className={`message-group${workingPresentations.length > 1 ? ' message-working-stack' : ''}`}
+              className={`message-group${
+                hasUnifiedEnsembleWorkingSeats
+                  ? ' message-working-unified-group'
+                  : workingPresentations.length > 1
+                    ? ' message-working-stack'
+                    : ''
+              }`}
               role="status"
               aria-live="polite"
               aria-atomic="true"
@@ -6665,118 +6760,151 @@ export const TranscriptPanel = memo(
               <span className="sr-only">
                 {workingPresentations.map(workingStatusLabel).join('; ')}
               </span>
-              {workingPresentations.map((presentation, index) => {
-                const providerClass = presentation.providerClass || presentation.provider
-                const tokenTarget = workingTokenTargets.get(presentation.runId)
-                // Only a seat that owns a lane card gets the jump. A solo turn,
-                // or a lane still before its first byte, has no destination and
-                // stays an ordinary status bubble.
-                const laneJump = presentation.participantId
-                  ? fanoutLaneJumpTargets.get(presentation.participantId)
-                  : undefined
-                return (
-                  <div
-                    key={workingIndicatorKey(presentation, index)}
-                    className="message-working-stack-row"
-                    style={workingAccentStyle(presentation)}
-                  >
+              {hasUnifiedEnsembleWorkingSeats ? (
+                <UnifiedWorkingIndicator
+                  label={
+                    workingPresentations.every(
+                      (presentation) => presentation.activity === 'compacting'
+                    )
+                      ? 'Compacting'
+                      : 'Working'
+                  }
+                  ariaLabel={workingPresentations.map(workingStatusLabel).join('; ')}
+                  seats={workingPresentations.map((presentation, index) => {
+                    const tokenTarget = workingTokenTargets.get(
+                      workingIndicatorTokenTargetKey(presentation)
+                    )
+                    const laneJump = presentation.participantId
+                      ? fanoutLaneJumpTargets.get(presentation.participantId)
+                      : undefined
+                    const accentStyle = workingAccentStyle(presentation)
+                    const label = formatWorkingSeatLabel({
+                      seatNumber: workingSeatNumber(currentChat, presentation.participantId),
+                      roleLabel: presentation.roleLabel,
+                      providerLabel: presentation.providerLabel || currentProviderLabel
+                    })
+                    return {
+                      // Participant identity keeps healthy seat telemetry
+                      // mounted when a lower-order peer starts or stops. The
+                      // telemetry leaf's own run key still resets a new turn.
+                      id:
+                        presentation.participantId || workingIndicatorKey(presentation, index),
+                      label,
+                      statusLabel: workingStatusLabel(presentation),
+                      ...(accentStyle ? { accentStyle } : {}),
+                      telemetry: (
+                        <WorkingIndicatorTelemetryReadout
+                          presentation={presentation}
+                          tokenTarget={tokenTarget}
+                          index={index}
+                        />
+                      ),
+                      contextHint:
+                        presentation.activity === 'working' ? (
+                          <WorkingContextPressureHint
+                            percent={
+                              presentation.participantId
+                                ? workingContextPressure.byParticipant.get(
+                                    presentation.participantId
+                                  ) ?? 0
+                                : workingContextPressure.solo
+                            }
+                            estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
+                          />
+                        ) : null,
+                      ...(laneJump
+                        ? {
+                            onJump: () =>
+                              scrollToMessage(laneJump.messageId, laneJump.rowKey),
+                            jumpTitle: `Go to ${label}'s fan-out lane`
+                          }
+                        : {})
+                    }
+                  })}
+                />
+              ) : (
+                workingPresentations.map((presentation, index) => {
+                  const providerClass = presentation.providerClass || presentation.provider
+                  const tokenTarget = workingTokenTargets.get(
+                    workingIndicatorTokenTargetKey(presentation)
+                  )
+                  // Only a seat that owns a lane card gets the jump. A solo turn,
+                  // or a lane still before its first byte, has no destination and
+                  // stays an ordinary status bubble.
+                  const laneJump = presentation.participantId
+                    ? fanoutLaneJumpTargets.get(presentation.participantId)
+                    : undefined
+                  return (
                     <div
-                      className={`message-meta${
-                        providerClass ? ` provider-${providerClass}` : ''
-                      }`}
+                      key={workingIndicatorKey(presentation, index)}
+                      className="message-working-stack-row"
+                      style={workingAccentStyle(presentation)}
                     >
-                      <span className="message-meta-label">
-                        {presentation.providerLabel || currentProviderLabel}
-                      </span>
-                      {presentation.roleLabel && (
-                        <span
-                          className="message-meta-model-badge message-meta-role-badge"
-                          title={`Role: ${presentation.roleLabel}`}
-                          aria-label={`Role ${presentation.roleLabel}`}
-                        >
-                          {presentation.roleLabel}
+                      <div
+                        className={`message-meta${
+                          providerClass ? ` provider-${providerClass}` : ''
+                        }`}
+                      >
+                        <span className="message-meta-label">
+                          {presentation.providerLabel || currentProviderLabel}
                         </span>
-                      )}
-                      {presentation.modelBadge && (
-                        <span
-                          className="message-meta-model-badge"
-                          title={`Model: ${presentation.modelBadge}`}
-                          aria-label={`Model ${presentation.modelBadge}`}
-                        >
-                          {presentation.modelBadge}
-                        </span>
+                        {presentation.roleLabel && (
+                          <span
+                            className="message-meta-model-badge message-meta-role-badge"
+                            title={`Role: ${presentation.roleLabel}`}
+                            aria-label={`Role ${presentation.roleLabel}`}
+                          >
+                            {presentation.roleLabel}
+                          </span>
+                        )}
+                        {presentation.modelBadge && (
+                          <span
+                            className="message-meta-model-badge"
+                            title={`Model: ${presentation.modelBadge}`}
+                            aria-label={`Model ${presentation.modelBadge}`}
+                          >
+                            {presentation.modelBadge}
+                          </span>
+                        )}
+                      </div>
+                      <ThinkingIndicator
+                        label={workingIndicatorLabel(presentation)}
+                        ariaLabel={workingStatusLabel(presentation)}
+                        onJump={
+                          laneJump
+                            ? () => scrollToMessage(laneJump.messageId, laneJump.rowKey)
+                            : undefined
+                        }
+                        jumpTitle={
+                          laneJump
+                            ? `Go to ${presentation.roleLabel || presentation.providerLabel}'s fan-out lane`
+                            : undefined
+                        }
+                        telemetry={
+                          <WorkingIndicatorTelemetryReadout
+                            presentation={presentation}
+                            tokenTarget={tokenTarget}
+                            index={index}
+                          />
+                        }
+                      />
+                      {presentation.activity === 'working' && (
+                        <WorkingContextPressureHint
+                          key={`pressure-${presentation.participantId || presentation.runId || index}`}
+                          percent={
+                            presentation.participantId
+                              ? workingContextPressure.byParticipant.get(
+                                  presentation.participantId
+                                ) ?? 0
+                              : workingContextPressure.solo
+                          }
+                          estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
+                        />
                       )}
                     </div>
-                    <ThinkingIndicator
-                      label={workingIndicatorLabel(presentation)}
-                      ariaLabel={workingStatusLabel(presentation)}
-                      onJump={
-                        laneJump
-                          ? () => scrollToMessage(laneJump.messageId, laneJump.rowKey)
-                          : undefined
-                      }
-                      jumpTitle={
-                        laneJump
-                          ? `Go to ${presentation.roleLabel || presentation.providerLabel}'s fan-out lane`
-                          : undefined
-                      }
-                      telemetry={
-                        presentation.activity === 'transitioning' ? undefined : (
-                          <MemoizedParticipantWorkingTelemetry
-                            key={
-                              presentation.runId ||
-                              presentation.startedAt ||
-                              presentation.participantId ||
-                              `working-${index}`
-                            }
-                            runId={presentation.runId}
-                            startedAt={presentation.startedAt}
-                            provider={presentation.provider}
-                            tokenEpochKey={
-                              tokenTarget?.tokenEpochKey ||
-                              JSON.stringify([
-                                presentation.participantId || 'solo',
-                                presentation.provider || 'unknown-provider',
-                                presentation.modelId || 'unknown-model'
-                              ])
-                            }
-                            tokenEpochObservedAt={
-                              tokenTarget?.tokenEpochObservedAt ?? null
-                            }
-                            contextBaselineTokens={tokenTarget?.contextBaselineTokens ?? 0}
-                            contextBaselineAvailable={
-                              tokenTarget?.contextBaselineAvailable ?? false
-                            }
-                            contextState={tokenTarget?.contextState ?? 'unavailable'}
-                            fallbackTargetTokens={
-                              tokenTarget?.targetTokens ?? 0
-                            }
-                            estimatedCurrentTurnTokens={
-                              tokenTarget?.estimatedCurrentTurnTokens ?? 0
-                            }
-                            estimatedToolResultTokens={
-                              tokenTarget?.estimatedToolResultTokens ?? 0
-                            }
-                          />
-                        )
-                      }
-                    />
-                    {presentation.activity === 'working' && (
-                      <WorkingContextPressureHint
-                        key={`pressure-${presentation.participantId || presentation.runId || index}`}
-                        percent={
-                          presentation.participantId
-                            ? workingContextPressure.byParticipant.get(
-                                presentation.participantId
-                              ) ?? 0
-                            : workingContextPressure.solo
-                        }
-                        estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
-                      />
-                    )}
-                  </div>
-                )
-              })}
+                  )
+                })
+              )}
             </div>
           )}
           {/* When the latest close-out already hosts a Task Complete card with

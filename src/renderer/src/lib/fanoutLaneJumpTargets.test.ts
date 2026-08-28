@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ConcurrentLane } from '../../../main/store/types'
 import { buildFanoutLaneJumpTargets } from './fanoutLaneJumpTargets'
 
 function lane(id: string, participantId: string): ChatMessage {
@@ -36,6 +36,37 @@ describe('buildFanoutLaneJumpTargets', () => {
       lane('round2', 'seat-a')
     ])
     expect(targets.get('seat-a')).toEqual({ messageId: 'round2', rowKey: 'round2#2' })
+  })
+
+  it('does not reuse a historical card while the current lane awaits first output', () => {
+    const currentLane = {
+      laneId: 'lane-current',
+      participantId: 'seat-a',
+      provider: 'codex',
+      status: 'running',
+      intent: 'read',
+      startedAt: '2026-08-28T16:01:00.000Z'
+    } as ConcurrentLane
+    const previousLane = {
+      ...currentLane,
+      laneId: 'lane-previous',
+      startedAt: '2026-08-28T16:00:00.000Z'
+    }
+
+    expect(buildFanoutLaneJumpTargets([lane('previous', 'seat-a')], []).size).toBe(0)
+    expect(buildFanoutLaneJumpTargets([lane('previous', 'seat-a')], [currentLane]).size).toBe(0)
+    expect(
+      buildFanoutLaneJumpTargets(
+        [lane('previous', 'seat-a'), lane('current', 'seat-a')],
+        [currentLane]
+      ).get('seat-a')
+    ).toEqual({ messageId: 'current', rowKey: 'current#1' })
+    expect(
+      buildFanoutLaneJumpTargets(
+        [lane('current', 'seat-a'), lane('previous', 'seat-a')],
+        [previousLane, currentLane]
+      ).get('seat-a')
+    ).toEqual({ messageId: 'current', rowKey: 'current#0' })
   })
 
   it('keeps each seat on its own card', () => {
