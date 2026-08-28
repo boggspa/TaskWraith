@@ -18,7 +18,16 @@ export interface WorkspaceHandlerDeps {
     | 'removeWorkspace'
     | 'clearWorkspaces'
     | 'selectWorkspace'
-  >
+  > &
+    Partial<
+      Pick<
+        WorkspaceService,
+        | 'addOrUpdateWorkspaceViaHost'
+        | 'removeWorkspaceViaHost'
+        | 'clearWorkspacesViaHost'
+        | 'legacyStoreWritesOpen'
+      >
+    >
   probeExternalPath: (path: string) => Promise<WorkspaceProbeResult | null>
   broadcastWorkspaceUpdate: (workspaceId: string | undefined) => void
   broadcastWorkspaceList: () => void
@@ -58,9 +67,18 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
       let touched = false
       for (const entry of probed) {
         if (entry.branch) {
-          deps.workspaceService.addOrUpdateWorkspace(entry.path, {
-            branch: entry.branch
-          })
+          if (
+            (deps.workspaceService.legacyStoreWritesOpen?.() ?? true) ||
+            !deps.workspaceService.addOrUpdateWorkspaceViaHost
+          ) {
+            deps.workspaceService.addOrUpdateWorkspace(entry.path, {
+              branch: entry.branch
+            })
+          } else {
+            await deps.workspaceService.addOrUpdateWorkspaceViaHost(entry.path, {
+              branch: entry.branch
+            })
+          }
           touched = true
         }
       }
@@ -85,22 +103,46 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
           /* keep partial as-is */
         }
       }
-      const workspace = deps.workspaceService.addOrUpdateWorkspace(path, resolvedPartial)
+      const workspace =
+        (deps.workspaceService.legacyStoreWritesOpen?.() ?? true) ||
+        !deps.workspaceService.addOrUpdateWorkspaceViaHost
+          ? deps.workspaceService.addOrUpdateWorkspace(path, resolvedPartial)
+          : await deps.workspaceService.addOrUpdateWorkspaceViaHost(path, resolvedPartial)
       deps.broadcastWorkspaceUpdate(workspace?.id)
       return workspace
     }
   )
 
   ipcMain.handle('remove-workspace', (event, id: string) => {
+    // Auth rejection stays a SYNCHRONOUS throw (the renderer/test contract);
+    // only the Host-routed write returns a promise.
     deps.assertSenderCanManageWorkspaces(event)
-    deps.workspaceService.removeWorkspace(id)
-    deps.broadcastWorkspaceList()
+    if (
+      (deps.workspaceService.legacyStoreWritesOpen?.() ?? true) ||
+      !deps.workspaceService.removeWorkspaceViaHost
+    ) {
+      deps.workspaceService.removeWorkspace(id)
+      deps.broadcastWorkspaceList()
+      return
+    }
+    return deps.workspaceService
+      .removeWorkspaceViaHost(id)
+      .then(() => deps.broadcastWorkspaceList())
   })
 
   ipcMain.handle('clear-workspaces', (event) => {
     deps.assertSenderCanManageWorkspaces(event)
-    deps.workspaceService.clearWorkspaces()
-    deps.broadcastWorkspaceList()
+    if (
+      (deps.workspaceService.legacyStoreWritesOpen?.() ?? true) ||
+      !deps.workspaceService.clearWorkspacesViaHost
+    ) {
+      deps.workspaceService.clearWorkspaces()
+      deps.broadcastWorkspaceList()
+      return
+    }
+    return deps.workspaceService
+      .clearWorkspacesViaHost()
+      .then(() => deps.broadcastWorkspaceList())
   })
 
   ipcMain.handle('select-workspace', async (event) => {

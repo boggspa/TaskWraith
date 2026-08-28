@@ -46069,7 +46069,11 @@ if (isGeminiMcpBridgeProcess) {
               reason: `Workspace id "${action.workspaceId}" is not registered`
             }
           }
-          AppStore.addOrUpdateWorkspace(workspaceRecord.path, { pinned: action.pinned })
+          if (AppStore.legacyStoreWritesOpen()) {
+            AppStore.addOrUpdateWorkspace(workspaceRecord.path, { pinned: action.pinned })
+          } else {
+            await AppStore.addOrUpdateWorkspaceViaHost(workspaceRecord.path, { pinned: action.pinned })
+          }
           broadcastWorkspaceUpdate(action.workspaceId)
           broadcastWorkspaceList()
           return { pinned: action.pinned }

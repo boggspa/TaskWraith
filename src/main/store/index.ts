@@ -70,6 +70,10 @@ import {
   createDesktopHostThreadRecordPersistClient,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
+import {
+  createDesktopHostWorkspaceRecordClient,
+  type HostWorkspaceRecordPort
+} from '../host/HostWorkspaceRecordCommand'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
 export type {
@@ -536,6 +540,22 @@ const hostThreadRecordErasure = (): HostThreadRecordErasurePort => {
     throw new Error('Host thread-record erasure is unavailable in this build.')
   }
   return { deleteRecord: (input) => deleteRecord.call(client, input) }
+}
+
+/**
+ * Desktop -> Host workspace-record client (workspaces.json — the second file
+ * the cutover moved). Constructed lazily so a test can inject a fake port
+ * before the first ViaHost call.
+ */
+let hostWorkspaceRecordPort: HostWorkspaceRecordPort | null = null
+const hostWorkspaceRecord = (): HostWorkspaceRecordPort => {
+  if (!hostWorkspaceRecordPort) {
+    hostWorkspaceRecordPort = createDesktopHostWorkspaceRecordClient({
+      userDataPath,
+      appVersion: storeRuntime.appVersion || 'unknown'
+    })
+  }
+  return hostWorkspaceRecordPort
 }
 
 async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promise<void> {
@@ -5587,6 +5607,94 @@ export class AppStore {
 
   static clearWorkspaces() {
     writeJson(workspacesPath, [])
+  }
+
+  /**
+   * Host-owned-gate add/update: the record travels via workspace.record.upsert
+   * and the Host's canonical realPath is ADOPTED via read-back — the wire
+   * forbids a caller-asserted realPath and the Host canonicalizes the selected
+   * path itself (on macOS /var -> /private/var), so the returned record comes
+   * from the file the Host just wrote, never from a locally synthesized one.
+   * Callers select this via legacyStoreWritesOpen() so the legacy entry keeps
+   * its synchronous signature and merge semantics exactly.
+   */
+  static async addOrUpdateWorkspaceViaHost(
+    workspacePath: string,
+    partial: Partial<WorkspaceRecord> = {}
+  ): Promise<WorkspaceRecord> {
+    const workspaces = this.getWorkspaces()
+    const existing = workspaces.find((workspace) => workspace.path === workspacePath)
+    const workspaceId = existing?.id ?? randomUUID()
+    const {
+      // Never caller-asserted: the wire forbids it and the Host canonicalizes.
+      realPath: _dropCallerRealPath,
+      ...safePartial
+    } = partial
+    await hostWorkspaceRecord().upsertWorkspaceRecord({
+      workspaceId,
+      path: workspacePath,
+      displayName:
+        safePartial.displayName ??
+        existing?.displayName ??
+        (path.basename(workspacePath) || workspacePath),
+      createdAt: existing?.createdAt ?? Date.now(),
+      lastOpenedAt: Date.now(),
+      pinned: safePartial.pinned ?? existing?.pinned ?? false,
+      ...(safePartial.branch !== undefined ? { branch: safePartial.branch } : {}),
+      ...(safePartial.geminiWorktree !== undefined
+        ? { geminiWorktree: safePartial.geminiWorktree }
+        : {})
+    })
+    const adopted = this.getWorkspaces().find((workspace) => workspace.id === workspaceId)
+    if (!adopted) throw new Error('Host workspace upsert did not produce a record')
+    return adopted
+  }
+
+  /**
+   * Host-owned-gate compare-and-set pin: only a record matching id+path with
+   * no realPath is pinned, preserving the immutable-once-set contract. The CAS
+   * pre-check reads the Host-written file (single desktop writer + Host only
+   * writes on command), then the upsert lets the Host compute the canonical
+   * realPath itself; the returned record is the read-back of that write.
+   */
+  static async pinWorkspaceRealPathViaHost(
+    workspaceId: string,
+    expectedPath: string,
+    realPath: string
+  ): Promise<WorkspaceRecord | null> {
+    const workspaces = this.getWorkspaces()
+    const existing = workspaces.find(
+      (workspace) => workspace.id === workspaceId && workspace.path === expectedPath
+    )
+    if (!existing || existing.realPath) return null
+    await hostWorkspaceRecord().upsertWorkspaceRecord({
+      workspaceId: existing.id,
+      path: existing.path,
+      displayName: existing.displayName,
+      createdAt: existing.createdAt,
+      lastOpenedAt: existing.lastOpenedAt,
+      pinned: existing.pinned,
+      ...(typeof existing.branch === 'string' ? { branch: existing.branch } : {}),
+      ...(existing.geminiWorktree ? { geminiWorktree: existing.geminiWorktree } : {})
+    })
+    void realPath // the Host canonicalizes; the arg documents the expected target
+    const adopted = this.getWorkspaces().find((workspace) => workspace.id === workspaceId)
+    return adopted ?? null
+  }
+
+  /** Host-owned-gate remove via workspace.record.remove (idempotent). */
+  static async removeWorkspaceViaHost(workspaceId: string): Promise<void> {
+    await hostWorkspaceRecord().removeWorkspaceRecord(workspaceId)
+  }
+
+  /** Host-owned-gate clear via workspace.records.clear. */
+  static async clearWorkspacesViaHost(): Promise<void> {
+    await hostWorkspaceRecord().clearWorkspaceRecords()
+  }
+
+  /** Test seam: swap the Host workspace-record port. */
+  static setHostWorkspaceRecordPortForTests(port: HostWorkspaceRecordPort | null): void {
+    hostWorkspaceRecordPort = port
   }
 
   // Projects (Work surface). Thin delegation to the ProjectRegistry singleton;

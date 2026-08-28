@@ -15,13 +15,25 @@ export interface WorkspaceServiceStore {
     workspacePath: string,
     partial?: Partial<WorkspaceRecord>
   ) => WorkspaceRecord
+  addOrUpdateWorkspaceViaHost?: (
+    workspacePath: string,
+    partial?: Partial<WorkspaceRecord>
+  ) => Promise<WorkspaceRecord>
   pinWorkspaceRealPath: (
     workspaceId: string,
     expectedPath: string,
     realPath: string
   ) => WorkspaceRecord | null
+  pinWorkspaceRealPathViaHost?: (
+    workspaceId: string,
+    expectedPath: string,
+    realPath: string
+  ) => Promise<WorkspaceRecord | null>
   removeWorkspace: (id: string) => void
+  removeWorkspaceViaHost?: (id: string) => Promise<void>
   clearWorkspaces: () => void
+  clearWorkspacesViaHost?: () => Promise<void>
+  legacyStoreWritesOpen?: () => boolean
 }
 
 export interface WorkspaceAllowlistStore {
@@ -70,12 +82,44 @@ export class WorkspaceService {
     )
   }
 
+  addOrUpdateWorkspaceViaHost(
+    path: string,
+    partial: Partial<WorkspaceRecord> = {}
+  ): Promise<WorkspaceRecord> {
+    const workspacePath = this.requireRegisteredWorkspace(path)
+    if (!this.deps.appStore.addOrUpdateWorkspaceViaHost) {
+      throw new Error('Host-routed workspace upsert is unavailable.')
+    }
+    return this.deps.appStore.addOrUpdateWorkspaceViaHost(
+      workspacePath,
+      this.safeWorkspacePartial(partial)
+    )
+  }
+
+  legacyStoreWritesOpen(): boolean {
+    return this.deps.appStore.legacyStoreWritesOpen?.() ?? true
+  }
+
   removeWorkspace(id: string): void {
     this.deps.appStore.removeWorkspace(id)
   }
 
+  removeWorkspaceViaHost(id: string): Promise<void> {
+    if (!this.deps.appStore.removeWorkspaceViaHost) {
+      throw new Error('Host-routed workspace removal is unavailable.')
+    }
+    return this.deps.appStore.removeWorkspaceViaHost(id)
+  }
+
   clearWorkspaces(): void {
     this.deps.appStore.clearWorkspaces()
+  }
+
+  clearWorkspacesViaHost(): Promise<void> {
+    if (!this.deps.appStore.clearWorkspacesViaHost) {
+      throw new Error('Host-routed workspace clear is unavailable.')
+    }
+    return this.deps.appStore.clearWorkspacesViaHost()
   }
 
   async selectWorkspace(): Promise<WorkspaceRecord | null> {
@@ -109,35 +153,63 @@ export class WorkspaceService {
 
     // Preserve an existing record's stable id/path while pinning its verified
     // canonical realpath. A newly selected directory is stored by realpath.
-    return this.deps.appStore.addOrUpdateWorkspace(existing?.path || realPath, partial)
+    if (this.legacyStoreWritesOpen()) {
+      return this.deps.appStore.addOrUpdateWorkspace(existing?.path || realPath, partial)
+    }
+    if (!this.deps.appStore.addOrUpdateWorkspaceViaHost) {
+      throw new Error('Host-routed workspace upsert is unavailable.')
+    }
+    return this.deps.appStore.addOrUpdateWorkspaceViaHost(existing?.path || realPath, partial)
   }
 
   /**
    * Conservatively pins legacy workspace records at startup. Only a direct
    * lexical path whose canonical spelling already equals its filesystem
    * realpath is adopted. Existing pins are never repaired or rotated here.
+   *
+   * Error honesty: missing/unreadable/unsafe legacy paths stay silently
+   * unpinned (they were never writable to begin with), but a REFUSED write —
+   * the Host-owned gate, or the Host itself failing — is made visible once per
+   * launch rather than swallowed, and never fails startup: reconciliation
+   * simply retries next launch.
    */
   async reconcileWorkspaceRealPaths(log?: (line: string) => void): Promise<number> {
     let pinned = 0
+    const refusals: Array<{ workspaceId: string; error: unknown }> = []
     for (const workspace of this.deps.appStore.getWorkspaces()) {
       if (workspace.realPath) continue
+      let realPath: string
       try {
         const lexicalPath = this.deps.canonicalPath(workspace.path)
         this.assertSafeWorkspaceRoot(lexicalPath)
-        const realPath = await this.resolveRealDirectory(lexicalPath)
+        realPath = await this.resolveRealDirectory(lexicalPath)
         if (this.deps.canonicalPath(realPath) !== lexicalPath) continue
-        const updated = this.deps.appStore.pinWorkspaceRealPath(
-          workspace.id,
-          workspace.path,
-          realPath
-        )
-        if (!updated) continue
-        pinned++
-        log?.(`[workspace-target] pinned ${workspace.id} (${workspace.path})`)
       } catch {
         // Missing, unreadable, non-directory, and otherwise unsafe legacy
         // paths remain unpinned until the user selects them again.
+        continue
       }
+      try {
+        const updated = this.legacyStoreWritesOpen()
+          ? this.deps.appStore.pinWorkspaceRealPath(workspace.id, workspace.path, realPath)
+          : await this.deps.appStore.pinWorkspaceRealPathViaHost?.(
+              workspace.id,
+              workspace.path,
+              realPath
+            )
+        if (!updated) continue
+        pinned++
+        log?.(`[workspace-target] pinned ${workspace.id} (${workspace.path})`)
+      } catch (error) {
+        refusals.push({ workspaceId: workspace.id, error })
+      }
+    }
+    if (refusals.length > 0) {
+      console.warn(
+        `[workspace-target] realpath pinning was refused for ${refusals.length} workspace(s) ` +
+          `(${refusals.map((refusal) => refusal.workspaceId).join(', ')}); startup continues and the pin retries next launch:`,
+        refusals[0].error
+      )
     }
     return pinned
   }
