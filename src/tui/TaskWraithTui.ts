@@ -65,6 +65,7 @@ import {
 } from './hostProjectionMap'
 import {
   createTaskWraithTuiDemoState,
+  tuiSeatsRoster,
   type TaskWraithTuiState,
   type TuiOverlay,
   type TuiPendingHostMutation
@@ -113,6 +114,33 @@ const HOST_REVIVE_FAILURE_THRESHOLD = 5
 const ANIMATION_INTERVAL_MS = 120
 const TRANSCRIPT_PAGE_ROWS = 8
 const HOST_FULL_REFRESH_MS = 5_000
+
+/**
+ * The Host's typed seat-toggle refusal in plain language. The authority
+ * reason (or the receipt's error code) is the typed truth; unknown codes
+ * fall back to the receipt's own message — the Host's words, never invented
+ * ones. The Host remains the authority: the lens never pre-empts these
+ * refusals with client-side mirrors that could drift from the server's.
+ */
+function describeSeatToggleRefusal(receipt: HostCommandReceipt): string {
+  const code = receipt.authority.reason ?? receipt.errorCode ?? ''
+  if (code.includes('last_seat_required')) {
+    return 'Host refused · an ensemble thread keeps at least one enabled seat'
+  }
+  if (code.includes('round_active')) {
+    return 'Host refused · seats cannot change while a round is running'
+  }
+  if (code.includes('participant_not_found')) {
+    return 'Host refused · that participant is no longer on this thread'
+  }
+  if (code.includes('thread_required') || code.includes('thread_not_found')) {
+    return 'Host refused · the Host no longer treats this as an ensemble thread'
+  }
+  if (code.includes('revision_conflict')) {
+    return 'Host conflict · the roster changed mid-toggle — refresh and try again'
+  }
+  return receipt.errorMessage?.trim() || describeHostReceipt(receipt).text
+}
 
 function emptyState(): TaskWraithTuiState {
   return {
@@ -210,6 +238,8 @@ export class TaskWraithTui {
   private clientId = `tui-${randomUUID()}`
   /** Monotonic workspace-git read generation — the staleness guard's backbone. */
   private gitReadGeneration = 0
+  /** Monotonic seat-lens read/toggle generation — the staleness guard's backbone. */
+  private seatsReadGeneration = 0
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -246,7 +276,8 @@ export class TaskWraithTui {
             'provider-auth',
             'history',
             'setup',
-            'workspace-git'
+            'workspace-git',
+            'ensemble'
           ],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
@@ -564,6 +595,8 @@ export class TaskWraithTui {
     if (!this.client) {
       this.state.selectedThreadId = threadId
       this.state.overlay = 'none'
+      // The seat lens is keyed to the thread it was opened for.
+      this.state.seats = undefined
       this.state.scrollOffset = 0
       this.render()
       return
@@ -610,6 +643,8 @@ export class TaskWraithTui {
     this.state.selectedThreadId = threadId
     this.state.thread = detail.thread
     this.state.overlay = 'none'
+    // The seat lens is keyed to the thread it was opened for.
+    this.state.seats = undefined
     this.state.scrollOffset = 0
     if (!this.client?.supports('history')) {
       this.state.history = {
@@ -896,6 +931,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'git') {
       this.handleGitKey(key)
+      return
+    }
+    if (this.state.overlay === 'seats') {
+      this.handleSeatsKey(key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -1673,12 +1712,12 @@ export class TaskWraithTui {
       return
     }
     if (command === '/seats') {
-      this.setNotice(
-        'The standalone TUI is solo-only. Use /new or /provider for a fresh thread.',
-        'warning',
-        3_000
-      )
-      this.render()
+      if (arguments_.length) {
+        this.setNotice('/seats takes no arguments.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.openSeatsOverlay()
       return
     }
     if (command === '/git') {
@@ -1810,6 +1849,146 @@ export class TaskWraithTui {
     this.state.git = { scope, loading: true }
     this.render()
     void this.loadGitRead(scope)
+  }
+
+  /**
+   * `/seats` — the ensemble seat lens: a capability-gated roster read plus
+   * seat toggles through `ensemble.seat.toggle`. A Host without the
+   * 'ensemble' capability is a first-class calm state, exactly like /git's
+   * git-less Host — never an error. The roster always renders from the
+   * coherent projection; round execution stays desktop-only and the
+   * renderer says so. Interactive only: demo mode shows a notice and never
+   * fabricates a roster.
+   */
+  private async openSeatsOverlay(): Promise<void> {
+    this.state.overlay = 'seats'
+    this.state.overlayIndex = 0
+    const threadId = this.state.selectedThreadId
+    this.state.seats = threadId ? { threadId, loading: true } : undefined
+    this.render()
+    await this.loadSeatsRoster()
+  }
+
+  private async loadSeatsRoster(): Promise<void> {
+    if (!this.client) return // demo mode: the renderer shows the notice.
+    const threadId = this.state.seats?.threadId
+    if (!threadId) return
+    if (!this.client.welcome?.capabilities.includes('ensemble')) {
+      this.state.seats = {
+        threadId,
+        unavailable: 'seat control is unavailable on this Host'
+      }
+      this.render()
+      return
+    }
+    const generation = ++this.seatsReadGeneration
+    try {
+      // The roster has no dedicated read: it rides the coherent snapshot.
+      await this.refreshHostSnapshot()
+      if (!this.seatsReadIsCurrent(generation, threadId)) return
+      this.state.seats = { threadId }
+      this.render()
+    } catch (error) {
+      if (!this.seatsReadIsCurrent(generation, threadId)) return
+      this.state.seats = {
+        threadId,
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.render()
+    }
+  }
+
+  /**
+   * Staleness guard for seat-lens reads and toggle outcomes. COVERED: a
+   * roster read or toggle outcome lands only if it is still the newest
+   * dispatch (monotonic generation) AND the lens is still open on the same
+   * selected thread — a late answer after a thread switch can never repoint
+   * the lens at another thread's roster, even transiently, which would
+   * invite toggling the WRONG participant (the Host would faithfully obey a
+   * well-formed command). openThread/applyLocalThread close the lens and
+   * clear this state on a switch; the overlay and selectedThreadId checks
+   * here are the double-check. NOT covered, by design (decision 5 — no
+   * watcher): the roster renders from the coherent projection, so a thread
+   * rebound with no new read keeps showing the last projected roster until
+   * the lens is reopened or refreshed (r); live deltas update it freely.
+   */
+  private seatsReadIsCurrent(generation: number, threadId: string): boolean {
+    return (
+      generation === this.seatsReadGeneration &&
+      this.state.overlay === 'seats' &&
+      this.state.seats?.threadId === threadId &&
+      this.state.selectedThreadId === threadId
+    )
+  }
+
+  private handleSeatsKey(key: Keypress): void {
+    const seats = this.state.seats
+    if (!seats) return
+    if (key.name === 'r') {
+      this.state.seats = { threadId: seats.threadId, loading: true }
+      this.render()
+      void this.loadSeatsRoster()
+      return
+    }
+    const roster = tuiSeatsRoster(this.state)
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(
+        Math.max(0, roster.length - 1),
+        this.state.overlayIndex + 1
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'return' || key.name === 'enter' || key.name === 'space') {
+      this.toggleSelectedSeat()
+      return
+    }
+  }
+
+  /**
+   * Toggle the highlighted seat. The Host is the authority: the toggle is
+   * ATTEMPTED and the Host's typed refusal rendered in plain language
+   * (last-seat, active-round, …), never pre-empted by a client-side mirror
+   * that could drift from the server's rules. The row never flips
+   * optimistically — a succeeded toggle re-reads the authoritative snapshot
+   * and the lens renders what the Host actually holds.
+   */
+  private toggleSelectedSeat(): void {
+    const seats = this.state.seats
+    if (!seats || seats.loading || seats.unavailable || seats.error) return
+    const threadId = seats.threadId
+    if (this.state.selectedThreadId !== threadId) return
+    const roster = tuiSeatsRoster(this.state)
+    const participant = roster[Math.min(this.state.overlayIndex, roster.length - 1)]
+    if (!participant) return
+    const command = this.buildMutation(
+      'ensemble.seat.toggle',
+      { threadId },
+      {
+        participantId: participant.id,
+        enabled: !participant.enabled
+      }
+    )
+    if (!command) return
+    const generation = this.seatsReadGeneration
+    void this.runHostMutation(command, {
+      onTerminalReceipt: (receipt) => {
+        if (receipt.status === 'succeeded') return
+        if (!this.seatsReadIsCurrent(generation, threadId)) return
+        this.state.seats = { threadId, actionError: describeSeatToggleRefusal(receipt) }
+      },
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (!this.seatsReadIsCurrent(generation, threadId)) return
+        this.state.seats = { threadId }
+        this.render()
+      }
+    })
   }
 
   private async commandOffers(): Promise<TaskWraithControlThreadOffers | undefined> {

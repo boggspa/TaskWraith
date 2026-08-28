@@ -1,6 +1,7 @@
 import {
   createEmptyHostSnapshot,
   type HostCommandName,
+  type HostParticipantProjection,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import type { HostHistoryCursor } from '../shared/hostHistoryProtocol'
@@ -33,6 +34,7 @@ export type TuiOverlay =
   | 'tune'
   | 'setup'
   | 'git'
+  | 'seats'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'
@@ -90,6 +92,38 @@ export interface TuiGitState {
   error?: string
 }
 
+/**
+ * The /seats lens state. The roster itself is NEVER stored here — it always
+ * renders from the coherent Host projection (`hostProjection.participants`),
+ * so a live delta or the post-toggle refresh is the single source of truth
+ * and an optimistic flip is impossible. This state only keys the lens to the
+ * thread it was opened for and carries the async-read and toggle outcomes:
+ * `unavailable` is a calm capability state (the Host does not advertise
+ * 'ensemble'), `error` a genuine read failure, `actionError` the Host's
+ * typed toggle refusal in plain language — three distinct render paths.
+ */
+export interface TuiSeatsState {
+  /** The thread the lens was opened for; toggles target this thread only. */
+  threadId: string
+  loading?: boolean
+  unavailable?: string
+  error?: string
+  actionError?: string
+}
+
+/**
+ * The lens roster: the thread's participants from the coherent projection,
+ * in roster order. Shared by the renderer and the key handler so both act on
+ * the same rows.
+ */
+export function tuiSeatsRoster(state: TaskWraithTuiState): HostParticipantProjection[] {
+  const seats = state.seats
+  if (!seats) return []
+  return (state.hostProjection?.participants ?? [])
+    .filter((participant) => participant.threadId === seats.threadId)
+    .sort((left, right) => left.order - right.order)
+}
+
 export interface TaskWraithTuiState {
   connection: TuiConnectionState
   hostVersion?: string
@@ -132,6 +166,8 @@ export interface TaskWraithTuiState {
   history?: TuiHistoryState
   /** The /git overlay's current workspace-git read. */
   git?: TuiGitState
+  /** The /seats lens state (ensemble seat control on the selected thread). */
+  seats?: TuiSeatsState
 }
 
 function row(

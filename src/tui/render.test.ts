@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { HostParticipantProjection } from '../shared/hostProtocol'
 import { Ansi, stripAnsi, visibleWidth } from './ansi'
 import {
   GHOST_BANNER_COLUMNS,
@@ -48,7 +49,16 @@ function renderedHome(
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' | 'setup' | 'git' = 'none',
+  overlay:
+    | 'none'
+    | 'context'
+    | 'threads'
+    | 'missions'
+    | 'help'
+    | 'tune'
+    | 'setup'
+    | 'git'
+    | 'seats' = 'none',
   git?: TaskWraithTuiState['git']
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
@@ -606,6 +616,7 @@ describe('TaskWraith TUI renderer', () => {
       '/threads',
       '/tune',
       '/missions',
+      '/seats',
       '/cancel',
       '/quit'
     ]) {
@@ -614,7 +625,6 @@ describe('TaskWraith TUI renderer', () => {
     // The overlay must stay inside the canvas: a clipped bottom border reads as
     // a broken frame, and the two-row footer leaves the least room.
     expect(output).toContain('the TaskWraith Host owns thread state')
-    expect(output).not.toContain('/seats')
     expect(lines.some((line) => line.startsWith('└'))).toBe(true)
     expect(output).not.toContain('Electron')
     expect(output).not.toContain('sidecar')
@@ -753,5 +763,185 @@ describe('TaskWraith TUI renderer', () => {
     })
     expect(ascii).not.toContain(TUI_GLYPHS_UNICODE.gitBranch)
     expect(ascii).toContain(TUI_GLYPHS_ASCII.gitBranch)
+  })
+
+  /**
+   * The /seats lens rendered from an injected coherent projection. The demo
+   * state's providers family carries claude/grok, so provider display names
+   * resolve exactly as they do for the live lens.
+   */
+  function renderedSeatsLens(
+    width: number,
+    height: number,
+    seats: TaskWraithTuiState['seats'],
+    options: {
+      ascii?: boolean
+      chatKind?: 'single' | 'ensemble'
+      participants?: HostParticipantProjection[]
+    } = {}
+  ): string[] {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.overlay = 'seats'
+    state.selectedThreadId = 'ens-thread'
+    const projection = state.hostProjection
+    if (!projection) throw new Error('demo state must carry a host projection')
+    projection.threads = [
+      {
+        id: 'ens-thread',
+        workspaceId: 'demo-workspace',
+        title: 'Ensemble thread',
+        chatKind: options.chatKind ?? 'ensemble',
+        archived: false,
+        pinned: false,
+        updatedAt: now,
+        messageCount: 3,
+        providerId: 'claude'
+      }
+    ]
+    projection.participants = options.participants ?? []
+    state.seats = seats
+    return renderTaskWraithTui(state, {
+      width,
+      height,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false,
+      glyphs: options.ascii ? TUI_GLYPHS_ASCII : TUI_GLYPHS_UNICODE
+    }).split('\n')
+  }
+
+  function lensParticipant(
+    id: string,
+    order: number,
+    enabled: boolean,
+    overrides: Partial<HostParticipantProjection> = {}
+  ): HostParticipantProjection {
+    return {
+      id,
+      threadId: 'ens-thread',
+      providerId: order % 2 === 0 ? 'claude' : 'grok',
+      role: order % 2 === 0 ? 'Captain' : 'Reviewer',
+      order,
+      enabled,
+      active: false,
+      ...overrides
+    }
+  }
+
+  it('renders the seats lens rows, seat glyphs and the desktop-only label within 80 columns', () => {
+    const lines = renderedSeatsLens(
+      80,
+      24,
+      { threadId: 'ens-thread' },
+      {
+        participants: [
+          lensParticipant('p1', 0, true, {
+            modelId: 'claude-opus-5',
+            stage: 'worker'
+          }),
+          lensParticipant('p2', 1, false, {
+            modelId: 'grok-4.6',
+            stage: 'reviewer'
+          })
+        ]
+      }
+    )
+    const output = lines.join('\n')
+    expect(output).toContain('Seats')
+    expect(output).toContain('Ensemble thread')
+    expect(output).toContain('Captain')
+    expect(output).toContain('Claude')
+    expect(output).toContain('claude-opus-5')
+    expect(output).toContain('worker')
+    expect(output).toContain('Grok')
+    expect(output).toContain('reviewer')
+    expect(output).toContain('enabled')
+    expect(output).toContain('disabled')
+    expect(output).toContain(TUI_GLYPHS_UNICODE.seatEnabled)
+    expect(output).toContain(TUI_GLYPHS_UNICODE.seatDisabled)
+    expect(output).toContain('2 seats')
+    // Round execution stays desktop-only; the lens says so where a
+    // seat-toggling user would look.
+    expect(output).toContain('rounds run in the desktop app')
+    expect(output).toContain('Enter/Space toggle')
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
+  })
+
+  it('degrades the seats lens to ASCII glyphs and carries no color codes under NO_COLOR', () => {
+    const lines = renderedSeatsLens(
+      80,
+      24,
+      { threadId: 'ens-thread' },
+      {
+        ascii: true,
+        participants: [lensParticipant('p1', 0, true), lensParticipant('p2', 1, false)]
+      }
+    )
+    const output = lines.join('\n')
+    expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatEnabled)
+    expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatDisabled)
+    // NO_COLOR: the renderer was given Ansi('none'), so no escape may appear.
+    expect(output).not.toContain('')
+    // The overlay region (box-bordered lines at column 0) is pure ASCII:
+    // every separator and glyph came from the ASCII ladder.
+    const overlayLines = lines.filter((line) => line.startsWith('+') || line.startsWith('|'))
+    expect(overlayLines.length).toBeGreaterThan(2)
+    for (const line of overlayLines) {
+      const nonAscii = [...line].filter((character) => {
+        const codePoint = character.codePointAt(0) ?? 0
+        return codePoint < 32 || codePoint > 126
+      })
+      expect(nonAscii).toEqual([])
+    }
+  })
+
+  it('renders capability-unavailable and solo-thread states calmly, never as failures', () => {
+    const unavailable = renderedSeatsLens(80, 24, {
+      threadId: 'ens-thread',
+      unavailable: 'seat control is unavailable on this Host'
+    }).join('\n')
+    expect(unavailable).toContain('seat control is unavailable on this Host')
+    expect(unavailable).toContain('does not advertise the ensemble capability')
+    expect(unavailable).not.toContain('failed')
+
+    const solo = renderedSeatsLens(80, 24, { threadId: 'ens-thread' }, { chatKind: 'single' }).join(
+      '\n'
+    )
+    expect(solo).toContain('seats exist on ensemble threads')
+    expect(solo).not.toContain('failed')
+    expect(solo).not.toContain('rounds run in the desktop app')
+  })
+
+  it('renders the Host refusal in the lens, not only as a fading notice', () => {
+    const output = renderedSeatsLens(
+      80,
+      24,
+      {
+        threadId: 'ens-thread',
+        actionError: 'Host refused · an ensemble thread keeps at least one enabled seat'
+      },
+      { participants: [lensParticipant('p1', 0, true)] }
+    ).join('\n')
+    expect(output).toContain('at least one enabled seat')
+    // A refused seat shows its pre-toggle state: still enabled.
+    expect(output).toContain('enabled')
+  })
+
+  it('windows a long roster and banners the hidden seats', () => {
+    const participants = Array.from({ length: 30 }, (_, index) =>
+      lensParticipant(`p${index}`, index, index % 3 !== 0)
+    )
+    const lines = renderedSeatsLens(80, 24, { threadId: 'ens-thread' }, { participants })
+    const output = lines.join('\n')
+    expect(output).toContain('more')
+    expect(output).toContain('30 seats')
+    expect(lines.length).toBeLessThanOrEqual(24)
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
   })
 })

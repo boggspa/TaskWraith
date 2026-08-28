@@ -16,7 +16,7 @@ import {
   wrapPlainText
 } from './ansi'
 import { resolveGhostBanner } from './ghostBanner'
-import type { TaskWraithTuiState } from './state'
+import { tuiSeatsRoster, type TaskWraithTuiState } from './state'
 import {
   TUI_GLYPHS_UNICODE,
   TUI_LAYOUT,
@@ -871,7 +871,7 @@ function renderHelpOverlay(
     overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
     overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
     overlayValue('Ctrl+R', 'live and historical missions', width, ansi, glyphs),
-    overlayValue('Ctrl+G', `tune lens${sep}model/reasoning`, width, ansi, glyphs),
+    overlayValue('Ctrl+G · /tune', `tune lens${sep}model/reasoning`, width, ansi, glyphs),
     overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
     overlayValue('Enter', 'send prompt / choose item', width, ansi, glyphs),
     overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
@@ -906,6 +906,7 @@ function renderHelpOverlay(
       ansi,
       glyphs
     ),
+    overlayValue('/seats', `ensemble seat lens${sep}Enter toggles a seat`, width, ansi, glyphs),
     overlayValue(
       '/threads',
       `switch thread${sep}/context for workspace detail`,
@@ -913,7 +914,6 @@ function renderHelpOverlay(
       ansi,
       glyphs
     ),
-    overlayValue('/tune', 'model and reasoning lens', width, ansi, glyphs),
     overlayValue(
       '/missions',
       `mission control${sep}/history for completed runs`,
@@ -1200,6 +1200,171 @@ function renderGitOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+/**
+ * The /seats lens: ensemble seat control on the selected thread. The roster
+ * renders from the coherent Host projection (never a captured copy), the
+ * Host's typed toggle refusal renders in plain language, and the desktop-only
+ * round boundary is stated where a seat-toggling user would look. Calm states
+ * (no capability, solo thread, no projected roster) are not errors.
+ */
+function renderSeatsOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const sep = ` ${glyphs.separator} `
+  const lines = [borderTitle('Seats', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const seats = state.seats
+  const footer = borderedLine(
+    ansi.dim(`up/down seat${sep}Enter/Space toggle${sep}r refresh${sep}Esc close`),
+    width,
+    ansi,
+    glyphs
+  )
+  const finish = (body: string[]): string[] => {
+    for (const line of body.slice(0, capacity)) lines.push(line)
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  // Demo mode: show a notice; never fabricate a plausible roster.
+  if (state.connection === 'demo') {
+    return finish([
+      borderedLine(
+        ansi.dim(`seat control needs a live Host${sep}this demo session has none`),
+        width,
+        ansi,
+        glyphs
+      )
+    ])
+  }
+
+  if (!seats) {
+    return finish([borderedLine(ansi.dim('No seat lens is open.'), width, ansi, glyphs)])
+  }
+
+  const thread = state.hostProjection?.threads.find((candidate) => candidate.id === seats.threadId)
+  const roster = tuiSeatsRoster(state)
+  if (thread) {
+    lines.push(
+      borderedLine(
+        joinLeftRight(
+          truncateAnsi(terminalLabel(thread.title), Math.max(8, width - 14)),
+          ansi.dim(`${roster.length} seat${roster.length === 1 ? '' : 's'}`),
+          // borderedLine's content area is the canvas minus its two borders.
+          width - 4
+        ),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  }
+
+  const body: string[] = []
+  if (seats.unavailable) {
+    body.push(borderedLine(ansi.dim(seats.unavailable), width, ansi, glyphs))
+    body.push(
+      borderedLine(
+        ansi.dim('the connected Host does not advertise the ensemble capability'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (seats.loading) {
+    body.push(borderedLine(ansi.dim(`reading seats${glyphs.ellipsis}`), width, ansi, glyphs))
+  } else if (seats.error) {
+    body.push(
+      borderedLine(
+        tone(ansi, terminalLabel(`seat read failed${sep}${seats.error}`), 'error'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!thread) {
+    body.push(borderedLine(ansi.dim('the Host does not project this thread'), width, ansi, glyphs))
+  } else if (thread.chatKind !== 'ensemble') {
+    body.push(
+      borderedLine(
+        ansi.dim(`this thread is solo${sep}seats exist on ensemble threads`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!roster.length) {
+    body.push(
+      borderedLine(
+        ansi.dim('the Host projects no participants for this thread'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else {
+    // Seat control is real here; round execution is not. Someone who can
+    // toggle seats will reasonably assume they can start a round — say so.
+    body.push(
+      borderedLine(
+        ansi.dim(`rounds run in the desktop app${sep}sending a prompt here is refused`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    const safeIndex = Math.max(0, Math.min(state.overlayIndex, roster.length - 1))
+    const rowCapacity = Math.max(1, capacity - 3)
+    const windowStart = Math.max(0, safeIndex - Math.floor(rowCapacity / 2))
+    for (
+      let index = windowStart;
+      index < Math.min(roster.length, windowStart + rowCapacity);
+      index += 1
+    ) {
+      const participant = roster[index]!
+      const selected = index === safeIndex
+      const provider = state.hostProjection?.providers.find(
+        (candidate) => candidate.providerId === participant.providerId
+      )
+      const identity = [
+        participant.role,
+        provider?.displayProvider || participant.providerId,
+        participant.modelId
+      ]
+        .filter(Boolean)
+        .join(' ')
+      const details = [
+        ...(participant.stage && participant.stage !== 'any' ? [participant.stage] : []),
+        participant.enabled ? 'enabled' : 'disabled',
+        ...(participant.active ? ['active'] : []),
+        ...(participant.status ? [participant.status] : [])
+      ].join(sep)
+      const seatGlyph = participant.enabled ? glyphs.seatEnabled : glyphs.seatDisabled
+      const row = `${selected ? glyphs.selection : ' '} ${seatGlyph} ${truncateAnsi(
+        terminalLabel(identity),
+        Math.max(8, width - 24)
+      )} ${ansi.dim(terminalLabel(details))}`
+      body.push(borderedLine(selected ? ansi.inverse(row) : row, width, ansi, glyphs))
+    }
+    if (roster.length > windowStart + rowCapacity || windowStart > 0) {
+      const hidden = roster.length - Math.min(roster.length, windowStart + rowCapacity)
+      body.push(borderedLine(ansi.dim(`${glyphs.ellipsis} ${hidden} more`), width, ansi, glyphs))
+    }
+  }
+  // The Host's typed refusal survives as lens state, not a fading notice.
+  if (seats.actionError) {
+    body.push(
+      borderedLine(tone(ansi, terminalLabel(seats.actionError), 'warning'), width, ansi, glyphs)
+    )
+  }
+  return finish(body)
+}
+
 function renderOverlay(
   state: TaskWraithTuiState,
   width: number,
@@ -1224,6 +1389,9 @@ function renderOverlay(
   }
   if (state.overlay === 'git') {
     return renderGitOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'seats') {
+    return renderSeatsOverlay(state, width, height, ansi, glyphs)
   }
   return renderHelpOverlay(width, height, ansi, glyphs)
 }

@@ -19,6 +19,7 @@ import {
   type HostDeltaFamily,
   type HostDeltaKind,
   type HostDeltasSinceResult,
+  type HostParticipantProjection,
   type HostResultRef,
   type HostSnapshot
 } from '../shared/hostProtocol'
@@ -111,7 +112,7 @@ async function waitFor(
 type MutationMode = 'allow' | 'defer'
 
 interface FakeHostHandlers {
-  snapshot: () => HostSnapshot
+  snapshot: () => HostSnapshot | Promise<HostSnapshot>
   offers?: (threadId: string) => TaskWraithControlThreadOffers
   capabilities?: readonly HostCapability[]
   providerStatuses?: () => readonly HostProviderStatusProjection[]
@@ -123,6 +124,12 @@ interface FakeHostHandlers {
   workspaceGitRead?: (
     params: HostWorkspaceGitReadParams
   ) => HostWorkspaceGitReadResult | Promise<HostWorkspaceGitReadResult>
+  /** Opt-in ensemble.seat.toggle interception; absent = generic mutationMode. */
+  seatToggle?: (input: {
+    threadId: string
+    participantId: string
+    enabled: boolean
+  }) => { kind: 'succeeded' } | { kind: 'denied'; reason: string }
   resultRef?: (command: HostCommand) => HostResultRef | undefined
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
@@ -334,34 +341,50 @@ class FakeHostV2 {
     const kind = String(message.kind)
     if (kind === 'snapshot.get') {
       this.snapshotRequests += 1
-      const base = this.handlers.snapshot()
-      const snapshot: HostSnapshot = {
-        ...base,
-        questions: base.questions.filter(
-          (question) => !this.answeredProjectionQuestions.has(question.questionId)
-        ),
-        approvals: [
-          ...base.approvals.filter(
-            (approval) => !this.decidedProjectionApprovals.has(approval.approvalId)
+      const respond = (base: HostSnapshot): void => {
+        const snapshot: HostSnapshot = {
+          ...base,
+          questions: base.questions.filter(
+            (question) => !this.answeredProjectionQuestions.has(question.questionId)
           ),
-          ...this.approvals.values()
-        ],
-        cursor: this.cursor
-      }
-      this.write(socket, {
-        type: 'response',
-        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
-        id,
-        ok: true,
-        result: {
-          kind: 'snapshot.get',
-          frame: {
-            type: 'host.snapshot',
-            protocolVersion: HOST_PROTOCOL_VERSION,
-            snapshot
-          }
+          approvals: [
+            ...base.approvals.filter(
+              (approval) => !this.decidedProjectionApprovals.has(approval.approvalId)
+            ),
+            ...this.approvals.values()
+          ],
+          cursor: this.cursor
         }
-      })
+        this.write(socket, {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id,
+          ok: true,
+          result: {
+            kind: 'snapshot.get',
+            frame: {
+              type: 'host.snapshot',
+              protocolVersion: HOST_PROTOCOL_VERSION,
+              snapshot
+            }
+          }
+        })
+      }
+      // The handler may answer asynchronously (a deferred snapshot for
+      // staleness tests); the client awaits the response over the socket
+      // either way. A throwing handler becomes a wire error, matching the
+      // real Host's error frame — never an uncaught socket exception.
+      void Promise.resolve()
+        .then(() => this.handlers.snapshot())
+        .then(respond, () => {
+          this.write(socket, {
+            type: 'response',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id,
+            ok: false,
+            error: { code: 'host_unavailable' }
+          })
+        })
       return
     }
     if (kind === 'command.submit') {
@@ -518,6 +541,24 @@ class FakeHostV2 {
     this.commands.push(command)
     if (command.name === 'approval.decide') {
       return this.handleApprovalDecide(command)
+    }
+    if (command.name === 'ensemble.seat.toggle' && this.handlers.seatToggle) {
+      const outcome = this.handlers.seatToggle({
+        threadId: command.target.threadId,
+        participantId: String(command.arguments.participantId ?? ''),
+        enabled: command.arguments.enabled === true
+      })
+      const receipt =
+        outcome.kind === 'denied'
+          ? this.makeReceipt(command, {
+              status: 'denied',
+              authority: { decision: 'deny', reason: outcome.reason },
+              errorMessage: outcome.reason
+            })
+          : this.makeReceipt(command, { status: 'succeeded', authority: { decision: 'allow' } })
+      this.receipts.set(receipt.commandId, receipt)
+      this.cursor += 1
+      return receipt
     }
     if (command.name === 'question.answer' && command.target.questionId) {
       this.answeredProjectionQuestions.add(command.target.questionId)
@@ -1242,11 +1283,15 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(output.lastFrame).toContain('Ask TaskWraith')
     expect(host.commands.some((command) => command.name === 'thread.create')).toBe(false)
 
+    // /seats is no longer rejected as solo-only: it opens the seat lens,
+    // which renders the calm capability-unavailable state on a Host that does
+    // not advertise 'ensemble' (this fake does not).
     feed(input, '/seats\r')
     await waitFor(
-      () => output.lastFrame.includes('The standalone TUI is solo-only'),
-      'seats command rejected'
+      () => output.lastFrame.includes('seat control is unavailable on this Host'),
+      'seat lens renders the calm capability-unavailable state'
     )
+    expect(output.lastFrame).not.toContain('solo-only')
   }, 12_000)
 
   it('surfaces deferred Host asks and never treats pending as success until y accepts', async () => {
@@ -2284,5 +2329,417 @@ describe('TaskWraithTui reconnect revival', () => {
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
     feed(input, '/git\r')
     await waitFor(() => output.lastFrame.includes('truncated'), 'status truncation banner')
+  })
+})
+
+/* -------------------------------------------------------------------------
+ * Seat lens (/seats) — ensemble seat control over the Host command wire
+ * ---------------------------------------------------------------------- */
+
+describe('seat lens (/seats)', () => {
+  const ENSEMBLE_CAPABILITIES: readonly HostCapability[] = [...SETUP_HOST_CAPABILITIES, 'ensemble']
+
+  function seat(
+    threadId: string,
+    id: string,
+    providerId: string,
+    role: string,
+    order: number,
+    enabled: boolean,
+    modelId?: string
+  ): HostParticipantProjection {
+    return {
+      id,
+      threadId,
+      providerId,
+      role,
+      ...(modelId ? { modelId } : {}),
+      order,
+      enabled,
+      active: false
+    }
+  }
+
+  function makeEnsembleSnapshot(participants: HostParticipantProjection[]): HostSnapshot {
+    return makeHostSnapshot({
+      threads: [
+        {
+          id: 'thread-ens',
+          workspaceId: 'ws-1',
+          title: 'Ensemble thread',
+          chatKind: 'ensemble',
+          archived: false,
+          pinned: false,
+          updatedAt: 20,
+          messageCount: 3,
+          providerId: 'claude',
+          latestPreview: 'Ensemble preview',
+          previewTruncated: false
+        },
+        {
+          id: 'thread-solo',
+          workspaceId: 'ws-1',
+          title: 'Solo thread',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 10,
+          messageCount: 1,
+          providerId: 'claude',
+          latestPreview: 'Hello TaskWraith',
+          previewTruncated: false
+        }
+      ],
+      providers: [
+        {
+          providerId: 'claude',
+          displayProvider: 'Claude',
+          modelId: 'claude-opus-5',
+          modelLabel: 'Opus 5',
+          shortCode: 'CLD',
+          hueKey: 'claude',
+          available: true
+        },
+        {
+          providerId: 'grok',
+          displayProvider: 'Grok',
+          modelId: 'grok-4.6',
+          modelLabel: 'Grok 4.6',
+          shortCode: 'GRK',
+          hueKey: 'grok',
+          available: true
+        }
+      ],
+      participants
+    })
+  }
+
+  it('opens the seat lens on an ensemble thread and toggles a seat through the Host', async () => {
+    const participants = [
+      seat('thread-ens', 'p-grok', 'grok', 'Reviewer', 0, false, 'grok-4.6'),
+      seat('thread-ens', 'p-claude', 'claude', 'Captain', 1, true, 'claude-opus-5')
+    ]
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-toggle-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeEnsembleSnapshot(participants),
+      capabilities: ENSEMBLE_CAPABILITIES,
+      seatToggle: (input) => {
+        const participant = participants.find((candidate) => candidate.id === input.participantId)
+        if (!participant || participant.threadId !== input.threadId) {
+          return { kind: 'denied', reason: 'standalone_ensemble_participant_not_found' }
+        }
+        participant.enabled = input.enabled
+        return { kind: 'succeeded' }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    // The TUI must ASK for the ensemble capability: the fake intersects the
+    // hello request with its own offer, so the welcome only carries 'ensemble'
+    // when the client requested it.
+    expect(host.helloCapabilities).toContain('ensemble')
+
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('grok-4.6'), 'roster rendered')
+    expect(output.lastFrame).toContain('claude-opus-5')
+    expect(output.lastFrame).toContain('Reviewer')
+    expect(output.lastFrame).toContain('Captain')
+    expect(output.lastFrame).toContain('disabled')
+    expect(output.lastFrame).toContain('enabled')
+    // Round execution stays desktop-only; the lens must say so where a user
+    // who can toggle seats would look.
+    expect(output.lastFrame).toContain('rounds run in the desktop app')
+
+    // Row 0 is the disabled Grok seat; Enter toggles it. The lens must show
+    // the new state only from the authoritative post-mutation snapshot —
+    // never an optimistic flip.
+    feed(input, '\r')
+    await waitFor(() => !output.lastFrame.includes('disabled'), 'seat enabled after refresh')
+    const toggle = host.commands.find((command) => command.name === 'ensemble.seat.toggle')
+    expect(toggle?.target.threadId).toBe('thread-ens')
+    expect(toggle?.arguments).toMatchObject({ participantId: 'p-grok', enabled: true })
+    expect(participants.find((candidate) => candidate.id === 'p-grok')?.enabled).toBe(true)
+  })
+
+  it('renders a calm unavailable state when the Host does not advertise ensemble', async () => {
+    const participants = [seat('thread-ens', 'p-claude', 'claude', 'Captain', 0, true)]
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-unavailable-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeEnsembleSnapshot(participants),
+      capabilities: SETUP_HOST_CAPABILITIES
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    // Unavailable is not an error: no failure copy, no toggle dispatched.
+    feed(input, '/seats\r')
+    await waitFor(
+      () => output.lastFrame.includes('seat control is unavailable on this Host'),
+      'calm capability-unavailable state'
+    )
+    expect(output.lastFrame).not.toContain('failed')
+    expect(output.lastFrame).not.toContain('solo-only')
+    // The TUI asked for the capability; this Host simply does not serve it.
+    expect(host.helloCapabilities).toContain('ensemble')
+    expect(host.commands.find((command) => command.name === 'ensemble.seat.toggle')).toBeUndefined()
+  })
+
+  it('renders a genuine read failure as an error, distinct from unavailable', async () => {
+    const participants = [seat('thread-ens', 'p-claude', 'claude', 'Captain', 0, true)]
+    let failNext = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-error-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => {
+        if (failNext) {
+          failNext = false
+          throw new Error('snapshot store unavailable')
+        }
+        return makeEnsembleSnapshot(participants)
+      },
+      capabilities: ENSEMBLE_CAPABILITIES
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    failNext = true
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('seat read failed'), 'error path rendered')
+    expect(output.lastFrame).not.toContain('unavailable on this Host')
+  })
+
+  it('surfaces the Host last-seat refusal in plain language and never flips the row', async () => {
+    const participants = [
+      seat('thread-ens', 'p-claude', 'claude', 'Captain', 0, true, 'claude-opus-5'),
+      seat('thread-ens', 'p-grok', 'grok', 'Reviewer', 1, false, 'grok-4.6')
+    ]
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-last-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeEnsembleSnapshot(participants),
+      capabilities: ENSEMBLE_CAPABILITIES,
+      // The Host is the authority: it refuses to disable the last enabled
+      // seat. The lens must surface that refusal, not mirror or pre-empt it.
+      seatToggle: () => ({ kind: 'denied', reason: 'standalone_ensemble_last_seat_required' })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('claude-opus-5'), 'roster rendered')
+
+    feed(input, '\r')
+    await waitFor(
+      () => output.lastFrame.includes('at least one enabled seat'),
+      'plain-language last-seat refusal'
+    )
+    // No optimistic flip: Claude's seat still renders enabled, Grok's
+    // disabled, and the fake's authoritative roster is unchanged.
+    expect(output.lastFrame).toContain('disabled')
+    const toggle = host.commands.find((command) => command.name === 'ensemble.seat.toggle')
+    expect(toggle?.arguments).toMatchObject({ participantId: 'p-claude', enabled: false })
+    expect(participants.find((candidate) => candidate.id === 'p-claude')?.enabled).toBe(true)
+  })
+
+  it('surfaces the Host active-round refusal in plain language', async () => {
+    const participants = [
+      seat('thread-ens', 'p-claude', 'claude', 'Captain', 0, true, 'claude-opus-5'),
+      seat('thread-ens', 'p-grok', 'grok', 'Reviewer', 1, true, 'grok-4.6')
+    ]
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-round-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeEnsembleSnapshot(participants),
+      capabilities: ENSEMBLE_CAPABILITIES,
+      seatToggle: () => ({ kind: 'denied', reason: 'standalone_ensemble_round_active' })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('grok-4.6'), 'roster rendered')
+
+    // Row 0 is Claude (enabled); disabling during a running round is refused.
+    feed(input, '\r')
+    await waitFor(
+      () => output.lastFrame.includes('while a round is running'),
+      'plain-language active-round refusal'
+    )
+    expect(participants.find((candidate) => candidate.id === 'p-claude')?.enabled).toBe(true)
+  })
+
+  it('never renders a roster read dispatched for another thread, even transiently', async () => {
+    // A /seats read for thread A stays in flight; the user switches to thread
+    // B and reopens the lens. A's late answer must never repoint B's lens at
+    // A's roster — that invites toggling the WRONG participant, which the
+    // Host would faithfully execute. The projection queue serializes the
+    // reads, so the corruption without the guard is a TRANSIENT frame: scan
+    // every frame, not just the last.
+    const participants = [
+      seat('thread-ensa', 'p-a', 'claude', 'Captain', 0, true, 'model-a-marker'),
+      seat('thread-ensb', 'p-b', 'grok', 'Reviewer', 0, true, 'model-b-marker')
+    ]
+    const twoEnsembleSnapshot = (): HostSnapshot =>
+      makeHostSnapshot({
+        threads: [
+          {
+            id: 'thread-ensa',
+            workspaceId: 'ws-1',
+            title: 'Ensemble thread A',
+            chatKind: 'ensemble',
+            archived: false,
+            pinned: false,
+            updatedAt: 20,
+            messageCount: 1,
+            providerId: 'claude',
+            latestPreview: 'Thread A preview',
+            previewTruncated: false
+          },
+          {
+            id: 'thread-ensb',
+            workspaceId: 'ws-1',
+            title: 'Ensemble thread B',
+            chatKind: 'ensemble',
+            archived: false,
+            pinned: false,
+            updatedAt: 10,
+            messageCount: 1,
+            providerId: 'grok',
+            latestPreview: 'Thread B preview',
+            previewTruncated: false
+          }
+        ],
+        providers: [
+          {
+            providerId: 'claude',
+            displayProvider: 'Claude',
+            modelId: 'model-a-marker',
+            modelLabel: 'Model A',
+            shortCode: 'CLD',
+            hueKey: 'claude',
+            available: true
+          },
+          {
+            providerId: 'grok',
+            displayProvider: 'Grok',
+            modelId: 'model-b-marker',
+            modelLabel: 'Model B',
+            shortCode: 'GRK',
+            hueKey: 'grok',
+            available: true
+          }
+        ],
+        participants
+      })
+    let deferNext = false
+    const deferred: Array<(snapshot: HostSnapshot) => void> = []
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-stale-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => {
+        if (deferNext) {
+          deferNext = false
+          return new Promise<HostSnapshot>((resolve) => deferred.push(resolve))
+        }
+        return twoEnsembleSnapshot()
+      },
+      capabilities: ENSEMBLE_CAPABILITIES
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread A'), 'thread A selected')
+
+    deferNext = true
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('reading seats'), 'lens loading on A')
+    // The loading frame renders synchronously, before the read reaches the
+    // fake — wait until the fake actually holds the deferred answer.
+    await waitFor(() => deferred.length > 0, 'A roster read deferred')
+    // Switch to B through the TUI's real local thread application (it closes
+    // the overlay), then reopen the lens there. The fake TTY's lone ESC is a
+    // no-op keypress in this harness, so the switch goes through the method.
+    ;(tui as unknown as { applyLocalThread: (threadId: string) => void }).applyLocalThread(
+      'thread-ensb'
+    )
+    feed(input, '/seats\r')
+    // B's read is queued behind A's deferred one on the serial projection
+    // queue, so resolve A's late answer now: its post-await write must be
+    // dropped by the guard, then B's read lands.
+    deferred.shift()?.(twoEnsembleSnapshot())
+    await waitFor(() => output.lastFrame.includes('model-b-marker'), 'B roster landed')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(output.lastFrame).toContain('model-b-marker')
+    expect(output.frames.some((frame) => stripAnsi(frame).includes('model-a-marker'))).toBe(false)
+  })
+
+  it('renders a calm solo-thread state when the selected thread is not an ensemble', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-solo-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: ENSEMBLE_CAPABILITIES
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'solo thread selected')
+    feed(input, '/seats\r')
+    await waitFor(
+      () => output.lastFrame.includes('seats exist on ensemble threads'),
+      'calm solo-thread state'
+    )
+    expect(output.lastFrame).not.toContain('failed')
+    expect(host.commands.find((command) => command.name === 'ensemble.seat.toggle')).toBeUndefined()
+  })
+
+  it('shows a notice in demo mode and never fabricates a roster', async () => {
+    const { input, output, tui } = startTui(join(tmpdir(), 'taskwraith-tui-seats-demo-'), {
+      demo: true
+    })
+    await tui.start()
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('demo session has none'), 'demo notice rendered')
+    expect(output.lastFrame).not.toContain('Unknown command')
+  })
+
+  it('moves the seat selection with up/down, clamped to the roster', async () => {
+    const participants = [
+      seat('thread-ens', 'p-grok', 'grok', 'Reviewer', 0, false, 'grok-4.6'),
+      seat('thread-ens', 'p-claude', 'claude', 'Captain', 1, true, 'claude-opus-5')
+    ]
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-nav-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeEnsembleSnapshot(participants),
+      capabilities: ENSEMBLE_CAPABILITIES
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Ensemble thread'), 'ensemble thread selected')
+    feed(input, '/seats\r')
+    await waitFor(() => output.lastFrame.includes('grok-4.6'), 'roster rendered')
+    // The fake TTY's arrow sequences are unreliable in this harness, so drive
+    // the overlay's real key handler directly.
+    const seatsTui = tui as unknown as {
+      handleSeatsKey: (key: { name?: string }) => void
+      state: { overlayIndex: number }
+    }
+    expect(seatsTui.state.overlayIndex).toBe(0)
+    seatsTui.handleSeatsKey({ name: 'down' })
+    expect(seatsTui.state.overlayIndex).toBe(1)
+    seatsTui.handleSeatsKey({ name: 'down' })
+    expect(seatsTui.state.overlayIndex).toBe(1)
+    seatsTui.handleSeatsKey({ name: 'up' })
+    expect(seatsTui.state.overlayIndex).toBe(0)
   })
 })
