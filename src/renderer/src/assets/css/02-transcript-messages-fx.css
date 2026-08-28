@@ -5523,7 +5523,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .message-bubble.user {
-  --user-bubble-padding: 9px 17px;
+  --user-bubble-padding: 7px 17px;
   background: var(--app-bg-elevated);
   border: 1px solid var(--sidebar-border);
   align-self: flex-end;

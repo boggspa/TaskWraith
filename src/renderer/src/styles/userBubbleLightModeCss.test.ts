@@ -48,7 +48,7 @@ describe('light-mode user bubble CSS', () => {
     const css = readCss('02-transcript-messages-fx.css')
     const sharedBubble = cssBlockStartingAt(css, '\n.message-bubble.user {')
 
-    expect(sharedBubble).toContain('--user-bubble-padding: 9px 17px')
+    expect(sharedBubble).toContain('--user-bubble-padding: 7px 17px')
     expect(sharedBubble).toContain('padding: var(--user-bubble-padding)')
 
     for (const provider of ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {
