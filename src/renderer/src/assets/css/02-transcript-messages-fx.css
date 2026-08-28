@@ -4106,10 +4106,12 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-.usage-heatmap--workspace-activity .workspace-activity-heatmap-cell:not([data-empty="true"]) {
+.usage-heatmap--workspace-activity .workspace-activity-heatmap-cell:not([data-empty='true']) {
   box-shadow:
-    inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 42%, transparent),
-    0 0 8px color-mix(in srgb, var(--accent) 16%, transparent);
+    inset 0 0 0 0.5px
+      color-mix(in srgb, var(--usage-heatmap-cell-color, #39d353) 42%, transparent),
+    0 0 8px
+      color-mix(in srgb, var(--usage-heatmap-cell-color, #39d353) 16%, transparent);
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-title {

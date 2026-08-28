@@ -9,6 +9,7 @@ import {
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20']
 const WORKSPACE_ACTIVITY_IPC_DEADLINE_MS = 1_000
+const WORKSPACE_ACTIVITY_HEATMAP_GREEN = '#39d353'
 
 type IdleWindow = Window & {
   requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number
@@ -75,7 +76,7 @@ function WorkspaceActivityCellTile({ cell }: { cell: WorkspaceActivityHeatmapCel
   const intensityPercent = `${Math.round(cell.intensity * 100)}%`
   const style = cell.active
     ? ({
-        '--usage-heatmap-cell-color': 'var(--accent)',
+        '--usage-heatmap-cell-color': WORKSPACE_ACTIVITY_HEATMAP_GREEN,
         '--usage-heatmap-cell-opacity': cell.intensity,
         '--usage-heatmap-cell-strength': intensityPercent,
         '--usage-heatmap-cell-rim': `${Math.round(24 + cell.intensity * 64)}%`,
