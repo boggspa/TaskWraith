@@ -343,6 +343,9 @@ describe('projectHostSnapshot · mission control', () => {
             providerId: 'codex',
             role: 'Reviewer',
             modelId: 'gpt-5',
+            reasoningEffort: 'xhigh',
+            thinkingEnabled: false,
+            permissionPresetId: 'workspace_write',
             stage: 'reviewer',
             order: 0,
             enabled: true,
@@ -383,6 +386,9 @@ describe('projectHostSnapshot · mission control', () => {
     expect(projected.participants[0]).toMatchObject({
       id: 'seat-1',
       role: 'Reviewer',
+      reasoningEffort: 'xhigh',
+      thinkingEnabled: false,
+      permissionPresetId: 'workspace_write',
       enabled: true,
       active: true
     })

@@ -19,6 +19,9 @@ function entry(overrides: Partial<HostParticipantShadowEntry> = {}): HostPartici
     enabled: true,
     active: false,
     modelId: 'gpt-5.6',
+    reasoningEffort: 'xhigh',
+    thinkingEnabled: false,
+    permissionPresetId: 'workspace_write',
     stage: 'worker',
     status: 'idle',
     ...overrides
@@ -49,7 +52,7 @@ describe('mapParticipantShadowsToHostParticipants', () => {
     ])
   })
 
-  it('carries required role/order/enabled/active and optional model/stage/status', () => {
+  it('carries required identity plus display-safe model, reasoning, tier, stage, and status', () => {
     const rows = mapParticipantShadowsToHostParticipants([entry({ active: true })])
     expect(rows[0]).toMatchObject({
       role: 'Worker',
@@ -57,16 +60,29 @@ describe('mapParticipantShadowsToHostParticipants', () => {
       enabled: true,
       active: true,
       modelId: 'gpt-5.6',
+      reasoningEffort: 'xhigh',
+      thinkingEnabled: false,
+      permissionPresetId: 'workspace_write',
       stage: 'worker',
       status: 'idle'
     })
   })
 
-  it('omits optional model/stage/status when absent', () => {
+  it('omits optional display posture when absent', () => {
     const rows = mapParticipantShadowsToHostParticipants([
-      entry({ modelId: undefined, stage: undefined, status: undefined })
+      entry({
+        modelId: undefined,
+        reasoningEffort: undefined,
+        thinkingEnabled: undefined,
+        permissionPresetId: undefined,
+        stage: undefined,
+        status: undefined
+      })
     ])
     expect('modelId' in rows[0]).toBe(false)
+    expect('reasoningEffort' in rows[0]).toBe(false)
+    expect('thinkingEnabled' in rows[0]).toBe(false)
+    expect('permissionPresetId' in rows[0]).toBe(false)
     expect('stage' in rows[0]).toBe(false)
     expect('status' in rows[0]).toBe(false)
   })
@@ -120,8 +136,11 @@ describe('mapParticipantShadowsToHostParticipants', () => {
     const smuggled = {
       ...entry(),
       instructions: 'DO NOT LEAK',
-      permissionPresetId: 'full-access'
-    } as HostParticipantShadowEntry & { instructions: string; permissionPresetId: string }
+      permissionOverrides: { approvalMode: 'never' }
+    } as HostParticipantShadowEntry & {
+      instructions: string
+      permissionOverrides: { approvalMode: string }
+    }
     const rows = mapParticipantShadowsToHostParticipants([smuggled])
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
@@ -130,15 +149,18 @@ describe('mapParticipantShadowsToHostParticipants', () => {
         'id',
         'modelId',
         'order',
+        'permissionPresetId',
         'providerId',
+        'reasoningEffort',
         'role',
         'stage',
         'status',
+        'thinkingEnabled',
         'threadId'
       ].sort()
     )
     expect(JSON.stringify(rows[0])).not.toContain('DO NOT LEAK')
-    expect(JSON.stringify(rows[0])).not.toContain('full-access')
+    expect(JSON.stringify(rows[0])).not.toContain('approvalMode')
   })
 })
 

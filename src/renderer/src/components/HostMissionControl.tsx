@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type {
   HostCommandController,
@@ -14,6 +15,9 @@ import type {
   HostProjectedRound,
   HostProjectedRun
 } from '../lib/host/hostSnapshotProjection'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
+import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 
 export interface HostMissionControlParticipantGroup {
   readonly threadId: string
@@ -151,10 +155,36 @@ function participantDetail(participant: HostProjectedParticipant): string {
     .join(' · ')
 }
 
-function participantIdentity(participant: HostProjectedParticipant): string {
-  return [participant.providerId, participant.modelId]
-    .filter((value): value is string => Boolean(value))
-    .join(' · ')
+function participantSeatState(participant: HostProjectedParticipant): SeatChangeSeatState {
+  return {
+    provider: participant.providerId,
+    model: participant.modelId || '',
+    role: participant.role,
+    seatNumber: participant.order + 1,
+    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    ...(participant.thinkingEnabled !== undefined
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(participant.permissionPresetId
+      ? { permissionPresetId: participant.permissionPresetId }
+      : {}),
+    ...(participant.stage && participant.stage !== 'any' ? { stageRole: participant.stage } : {})
+  }
+}
+
+function participantStatus(participant: HostProjectedParticipant): {
+  key: string
+  label: string
+} {
+  const key = participant.active ? 'running' : participant.status || 'idle'
+  return {
+    key,
+    label: participant.enabled
+      ? participant.active
+        ? 'Active'
+        : participant.status || 'Idle'
+      : 'Disabled'
+  }
 }
 
 function roundProviderOutcomes(
@@ -239,6 +269,10 @@ export function HostMissionControl({
     ? orderedParticipantGroups
     : orderedParticipantGroups.slice(0, HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT)
   const hiddenRosterCount = orderedParticipantGroups.length - visibleParticipantGroups.length
+  const positionDetail =
+    model.generation !== undefined && model.cursor !== undefined
+      ? `Generation ${model.generation} · Cursor ${model.cursor}`
+      : 'Waiting for a Host snapshot'
 
   const submitRunCancel = (threadId: string): void => {
     if (!commands || !canMutate) return
@@ -278,19 +312,20 @@ export function HostMissionControl({
           presentation === 'pane' ? ' host-mission-control-body--pane' : ''
         }`}
       >
-        <div className="host-mission-control-position" role="status" aria-live="polite">
+        <div
+          className="host-mission-control-position"
+          role="status"
+          aria-live="polite"
+          title={presentation === 'pane' ? positionDetail : undefined}
+        >
           <span
             className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
             aria-hidden
           />
           <span>{model.phase}</span>
-          {model.generation !== undefined && model.cursor !== undefined ? (
-            <span className="host-mission-control-cursor">
-              Generation {model.generation} · Cursor {model.cursor}
-            </span>
-          ) : (
-            <span className="host-mission-control-cursor">Waiting for a Host snapshot</span>
-          )}
+          {presentation !== 'pane' ? (
+            <span className="host-mission-control-cursor">{positionDetail}</span>
+          ) : null}
         </div>
 
         {presentation === 'pane' && state.projection ? (
@@ -609,42 +644,92 @@ export function HostMissionControl({
                             ›
                           </span>
                         </summary>
-                        <div className="host-mission-control-participants" role="list">
-                          {group.participants.map((participant) => (
-                            <div
-                              className={`host-mission-control-participant${
-                                participant.enabled ? '' : ' is-disabled'
-                              }`}
-                              key={`${participant.threadId}:${participant.id}`}
-                              role="listitem"
-                              aria-label={`${participant.role}, ${participant.providerId}, ${
-                                participant.active ? 'active' : (participant.status ?? 'idle')
-                              }, ${participant.enabled ? 'enabled' : 'disabled'}`}
-                            >
-                              <span
-                                className={`host-mission-control-dot is-${
-                                  participant.active ? 'running' : 'muted'
+                        <div
+                          className="host-mission-control-seat-table run-complete-epic-list"
+                          role="table"
+                          aria-label={`${group.title} participants`}
+                        >
+                          <div
+                            className="run-complete-epic-row is-header host-mission-control-seat-row"
+                            role="row"
+                          >
+                            <span role="columnheader">Seat</span>
+                            <span className="run-complete-epic-work" role="columnheader">
+                              State &amp; control
+                            </span>
+                          </div>
+                          {group.participants.map((participant) => {
+                            const seat = participantSeatState(participant)
+                            const status = participantStatus(participant)
+                            const statusClassName = status.key
+                              .toLowerCase()
+                              .replace(/[^a-z0-9]+/g, '-')
+                            return (
+                              <div
+                                className={`run-complete-epic-row host-mission-control-seat-row${
+                                  participant.enabled ? '' : ' is-disabled'
                                 }`}
-                                aria-hidden
-                              />
-                              <span className="host-mission-control-row-copy">
-                                <strong title={participant.role}>{participant.role}</strong>
-                                <span title={participantDetail(participant)}>
-                                  {participantIdentity(participant)}
-                                </span>
-                              </span>
-                              {commands ? (
-                                <button
-                                  type="button"
-                                  className="host-mission-control-seat-toggle"
-                                  disabled={!canMutate || commandState.busy}
-                                  onClick={() => submitSeatToggle(participant)}
+                                key={`${participant.threadId}:${participant.id}`}
+                                role="row"
+                                aria-label={`${participant.role}, ${participant.providerId}, ${
+                                  participant.active ? 'active' : (participant.status ?? 'idle')
+                                }, ${participant.enabled ? 'enabled' : 'disabled'}`}
+                              >
+                                <span
+                                  className="run-complete-epic-seat host-mission-control-seat-identity"
+                                  role="cell"
+                                  title={participantDetail(participant)}
                                 >
-                                  {participant.enabled ? 'Disable' : 'Enable'}
-                                </button>
-                              ) : null}
-                            </div>
-                          ))}
+                                  <span
+                                    className="host-mission-control-seat-role"
+                                    style={{ color: seatAccentVar(seat) }}
+                                    title={
+                                      participantRoleIconTitle(undefined, seat.stageRole) ||
+                                      participant.role
+                                    }
+                                  >
+                                    <ParticipantRoleIcon
+                                      stageRole={seat.stageRole}
+                                      className="host-mission-control-seat-role-icon"
+                                    />
+                                    <strong>
+                                      #{participant.order + 1} {participant.role}
+                                    </strong>
+                                  </span>
+                                  <SeatStateChips
+                                    seat={seat}
+                                    className="host-mission-control-seat-chips"
+                                  />
+                                </span>
+                                <span
+                                  className="run-complete-epic-work host-mission-control-seat-state"
+                                  role="cell"
+                                >
+                                  <span
+                                    className={`ensemble-above-chip-status status-${statusClassName} host-mission-control-seat-status-icon`}
+                                    role="img"
+                                    aria-label={status.label}
+                                    title={status.label}
+                                  >
+                                    <ParticipantStatusIcon status={status.key} />
+                                  </span>
+                                  <span className="host-mission-control-seat-status-label">
+                                    {status.label}
+                                  </span>
+                                  {commands ? (
+                                    <button
+                                      type="button"
+                                      className="host-mission-control-seat-toggle"
+                                      disabled={!canMutate || commandState.busy}
+                                      onClick={() => submitSeatToggle(participant)}
+                                    >
+                                      {participant.enabled ? 'Disable' : 'Enable'}
+                                    </button>
+                                  ) : null}
+                                </span>
+                              </div>
+                            )
+                          })}
                         </div>
                       </details>
                     )

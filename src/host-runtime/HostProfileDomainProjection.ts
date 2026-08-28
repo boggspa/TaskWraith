@@ -105,6 +105,15 @@ function decodeParticipantCandidate(
       : hasModel
         ? { modelId: participant.model }
         : {}),
+    ...(Object.prototype.hasOwnProperty.call(participant, 'reasoningEffort')
+      ? { reasoningEffort: participant.reasoningEffort }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(participant, 'thinkingEnabled')
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(participant, 'permissionPresetId')
+      ? { permissionPresetId: participant.permissionPresetId }
+      : {}),
     ...(Object.prototype.hasOwnProperty.call(participant, 'stageRole')
       ? { stage: participant.stageRole }
       : Object.prototype.hasOwnProperty.call(participant, 'stage')

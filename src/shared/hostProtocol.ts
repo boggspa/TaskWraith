@@ -208,6 +208,12 @@ export interface HostParticipantProjection {
   providerId: string
   role: string
   modelId?: string
+  /** Display-only reasoning posture for Mission Control / paired clients. */
+  reasoningEffort?: string
+  /** Kimi-style thinking toggle when the seat exposes one. */
+  thinkingEnabled?: boolean
+  /** Display-only approval tier id; never an authority grant or override. */
+  permissionPresetId?: string
   stage?: 'scout' | 'worker' | 'reviewer' | 'background' | 'any'
   order: number
   enabled: boolean
@@ -2553,6 +2559,18 @@ function decodeHostParticipantProjection(
   if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.modelId is invalid` }
   }
+  const reasoningEffort = value.reasoningEffort
+  if (!isOptionalString(reasoningEffort, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.reasoningEffort is invalid` }
+  }
+  const thinkingEnabled = value.thinkingEnabled
+  if (thinkingEnabled !== undefined && typeof thinkingEnabled !== 'boolean') {
+    return { ok: false, error: `${label}.thinkingEnabled is invalid` }
+  }
+  const permissionPresetId = value.permissionPresetId
+  if (!isOptionalString(permissionPresetId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.permissionPresetId is invalid` }
+  }
   if (!isOptionalString(value.status, HOST_PROTOCOL_MAX_SHORT)) {
     return { ok: false, error: `${label}.status is invalid` }
   }
@@ -2572,6 +2590,15 @@ function decodeHostParticipantProjection(
     active: value.active
   }
   if (value.modelId !== undefined) participant.modelId = value.modelId
+  if (reasoningEffort !== undefined) {
+    participant.reasoningEffort = reasoningEffort
+  }
+  if (thinkingEnabled !== undefined) {
+    participant.thinkingEnabled = thinkingEnabled
+  }
+  if (permissionPresetId !== undefined) {
+    participant.permissionPresetId = permissionPresetId
+  }
   if (value.stage !== undefined) {
     participant.stage = value.stage as NonNullable<HostParticipantProjection['stage']>
   }

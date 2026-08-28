@@ -137,6 +137,9 @@ function missionFixture(): HostSnapshot {
         threadId: firstGroup ? 'thread-z' : 'thread-a',
         providerId: index % 2 === 0 ? 'codex' : 'claude',
         role: `Seat ${index}`,
+        modelId: index % 2 === 0 ? 'gpt-5.6-sol' : 'claude-opus-5',
+        reasoningEffort: index % 2 === 0 ? 'xhigh' : 'high',
+        permissionPresetId: index % 2 === 0 ? 'workspace_write' : 'full_access',
         stage: index % 3 === 0 ? ('reviewer' as const) : ('worker' as const),
         order: firstGroup ? index : index - 15,
         enabled: index !== 29,
@@ -219,6 +222,7 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('host-mission-control--pane')
     expect(markup).toContain('aria-label="Mission Control, 1 active · 30 participants"')
     expect(markup).toContain('aria-label="Mission Control overview"')
+    expect(markup).not.toContain('<span class="host-mission-control-cursor">')
     expect(markup).toContain('<span>Active missions</span>')
     expect(markup).toContain('<span>Running rounds</span>')
     expect(markup).toContain('<span>Active seats</span>')
@@ -227,11 +231,15 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('2 threads · 30 seats')
     expect(markup).toContain('aria-label="Alpha thread roster, 15 seats, 0 active"')
     expect(markup).toContain('aria-label="Zeta thread roster, 15 seats, 1 active"')
+    expect(markup).toContain('State &amp; control')
+    expect(markup).toContain('Extra High')
+    expect(markup).toContain('Full WS Access')
+    expect(markup).toContain('Full Access')
     expect(markup).toContain('open=""><summary aria-label="Zeta thread roster, 15 seats, 1 active"')
     expect(markup).not.toContain(
       'open=""><summary aria-label="Alpha thread roster, 15 seats, 0 active"'
     )
-    expect(markup).toMatch(/^<section class="host-mission-control host-mission-control--pane"/)
+    expect(markup).toContain('<section class="host-mission-control host-mission-control--pane"')
     expect(markup).not.toContain(
       '<summary aria-label="Mission Control, 1 active · 30 participants"'
     )

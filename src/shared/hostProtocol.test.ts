@@ -1086,6 +1086,9 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       providerId: 'cursor',
       role: 'CursorWork3',
       modelId: 'grok-4.5',
+      reasoningEffort: 'xhigh',
+      thinkingEnabled: false,
+      permissionPresetId: 'workspace_write',
       stage: 'worker',
       order: 4,
       enabled: true,
@@ -1165,6 +1168,13 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     expect(decodeHostSnapshot(missingParticipantThread)).toMatchObject({
       ok: false,
       error: expect.stringContaining('participants[0].threadId is required')
+    })
+
+    const invalidParticipantPosture = JSON.parse(JSON.stringify(populated))
+    invalidParticipantPosture.participants[0].thinkingEnabled = 'yes'
+    expect(decodeHostSnapshot(invalidParticipantPosture)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('participants[0].thinkingEnabled is invalid')
     })
   })
 

@@ -208,6 +208,9 @@ export interface HostProjectedParticipant {
   readonly providerId: string
   readonly role: string
   readonly modelId?: string
+  readonly reasoningEffort?: string
+  readonly thinkingEnabled?: boolean
+  readonly permissionPresetId?: string
   readonly stage?: HostParticipantProjection['stage']
   readonly order: number
   readonly enabled: boolean
@@ -492,6 +495,13 @@ function projectParticipant(participant: HostParticipantProjection): HostProject
     providerId: participant.providerId,
     role: participant.role,
     ...(participant.modelId ? { modelId: participant.modelId } : {}),
+    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    ...(participant.thinkingEnabled !== undefined
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(participant.permissionPresetId
+      ? { permissionPresetId: participant.permissionPresetId }
+      : {}),
     ...(participant.stage ? { stage: participant.stage } : {}),
     order: participant.order,
     enabled: participant.enabled,

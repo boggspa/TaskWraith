@@ -52577,6 +52577,17 @@ if (isGeminiMcpBridgeProcess) {
                   ...(typeof participant.model === 'string' && participant.model.length > 0
                     ? { modelId: participant.model }
                     : {}),
+                  ...(typeof participant.reasoningEffort === 'string' &&
+                    participant.reasoningEffort.length > 0
+                    ? { reasoningEffort: participant.reasoningEffort }
+                    : {}),
+                  ...(typeof participant.thinkingEnabled === 'boolean'
+                    ? { thinkingEnabled: participant.thinkingEnabled }
+                    : {}),
+                  ...(typeof participant.permissionPresetId === 'string' &&
+                    participant.permissionPresetId.length > 0
+                    ? { permissionPresetId: participant.permissionPresetId }
+                    : {}),
                   ...(typeof participant.stageRole === 'string'
                     ? { stage: participant.stageRole }
                     : {}),

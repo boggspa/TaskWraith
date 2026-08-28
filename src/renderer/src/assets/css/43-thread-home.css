@@ -687,10 +687,9 @@
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 13px 15px;
-  border: 1px solid color-mix(in srgb, var(--surface-border) 68%, transparent);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  padding: 7px 3px;
+  border: 0;
+  background: transparent;
 }
 
 .host-mission-control-overview-metrics strong {
@@ -882,41 +881,84 @@
   outline-offset: 2px;
 }
 
-.host-mission-control--pane .host-mission-control-participants {
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 8px;
-  padding: 10px;
-}
-
-.host-mission-control--pane .host-mission-control-participant {
-  min-height: 58px;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, var(--surface-border) 48%, transparent);
-  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
-}
-
-.host-mission-control--pane .host-mission-control-participant .host-mission-control-row-copy {
+.host-mission-control-seat-table {
+  min-width: 0;
   overflow: hidden;
 }
 
-.host-mission-control--pane
-  .host-mission-control-participant
-  .host-mission-control-row-copy
-  :is(strong, span) {
+.host-mission-control--pane .host-mission-control-seat-row {
+  grid-template-columns: minmax(0, 2fr) minmax(11rem, 0.72fr);
+  min-height: 43px;
+  padding-inline: 12px;
+}
+
+.host-mission-control-seat-row.is-disabled {
+  opacity: 0.52;
+}
+
+.host-mission-control-seat-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.host-mission-control-seat-role {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 12rem;
+  align-items: center;
+  gap: 5px;
+}
+
+.host-mission-control-seat-role strong {
   overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.host-mission-control-seat-role-icon {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+}
+
+.host-mission-control-seat-chips {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.host-mission-control-seat-chips > .seat-change-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.host-mission-control-seat-state {
+  gap: 7px;
+}
+
+.host-mission-control-seat-status-icon {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.host-mission-control-seat-status-label {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+}
+
 .host-mission-control--pane .host-mission-control-seat-toggle {
-  align-self: flex-start;
+  flex: 0 0 auto;
   padding: 3px 6px;
   opacity: 0.68;
 }
 
-.host-mission-control--pane
-  .host-mission-control-participant:hover
-  .host-mission-control-seat-toggle,
+.host-mission-control--pane .host-mission-control-seat-row:hover .host-mission-control-seat-toggle,
 .host-mission-control--pane .host-mission-control-seat-toggle:focus-visible {
   opacity: 1;
 }

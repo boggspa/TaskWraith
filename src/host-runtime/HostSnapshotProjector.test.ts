@@ -117,6 +117,9 @@ function baseInput(
         providerId: 'codex',
         role: 'Boss',
         modelId: 'gpt-5.6',
+        reasoningEffort: 'xhigh',
+        thinkingEnabled: false,
+        permissionPresetId: 'full_access',
         stage: 'any',
         order: 1,
         enabled: true,
@@ -248,6 +251,11 @@ describe('HostSnapshotProjector', () => {
     expect(snapshot.missions).toHaveLength(1)
     expect(snapshot.rounds).toHaveLength(1)
     expect(snapshot.participants).toHaveLength(1)
+    expect(snapshot.participants[0]).toMatchObject({
+      reasoningEffort: 'xhigh',
+      thinkingEnabled: false,
+      permissionPresetId: 'full_access'
+    })
     expect(snapshot.providers).toHaveLength(1)
     expect(snapshot.questions).toHaveLength(1)
     expect(snapshot.approvals).toHaveLength(1)
