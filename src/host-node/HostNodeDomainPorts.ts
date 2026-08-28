@@ -51,10 +51,9 @@ import {
   type HostProfileThread
 } from '../host-runtime/HostProfileDomainStore'
 import {
-  consumeHostThreadRecordTransfer,
-  HostThreadRecordTransferIntegrityError,
-  HostThreadRecordTransferMissingError
-} from '../host-runtime/HostThreadRecordTransfer'
+  HostProfileRecordCommandExecutor,
+  isHostProfileRecordMutationName
+} from '../host-runtime/HostProfileRecordCommandExecutor'
 import { HostSetupCommandExecutor } from '../host-runtime/HostSetupCommandExecutor'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import {
@@ -66,14 +65,6 @@ import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
-const DESKTOP_RECORD_MUTATION_NAMES = new Set<HostCommand['name']>([
-  'thread.record.persist',
-  'thread.record.delete',
-  'workspace.record.upsert',
-  'workspace.record.remove',
-  'workspace.records.clear'
-])
-
 export interface HostNodeDomainPortsOptions {
   /** Canonical profile directory used only for owner-bound large-record transfer artifacts. */
   readonly profilePath?: string
@@ -310,6 +301,7 @@ export class HostNodeDomainPorts {
   readonly registry: HostNodeProviderRegistry
   readonly interactions: HostNodeInteractionRegistry
   readonly setupExecutor: HostSetupCommandExecutor
+  private readonly profileRecordExecutor: HostProfileRecordCommandExecutor
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
   private readonly now: () => number
@@ -321,6 +313,10 @@ export class HostNodeDomainPorts {
 
   constructor(private readonly options: HostNodeDomainPortsOptions) {
     this.now = options.now ?? (() => Date.now())
+    this.profileRecordExecutor = new HostProfileRecordCommandExecutor({
+      ...(options.profilePath ? { profilePath: options.profilePath } : {}),
+      store: options.store
+    })
     this.runPort = new HostNodeProfileRunPort({ store: options.store, events: options.events })
     this.interactions = new HostNodeInteractionRegistry({
       timeoutMs: options.interactionTimeoutMs,
@@ -498,7 +494,7 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return { decision: 'deny', reason: 'invalid_command' }
 
-    if (DESKTOP_RECORD_MUTATION_NAMES.has(command.name)) {
+    if (isHostProfileRecordMutationName(command.name)) {
       if (!exactDesktopRecordMutationContext(context, command)) {
         return { decision: 'deny', reason: 'standalone_desktop_actor_required' }
       }
@@ -627,22 +623,8 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return failed('command_invalid')
 
-    if (command.name === 'workspace.record.upsert') {
-      return this.upsertWorkspaceRecord(decoded.value)
-    }
-    if (command.name === 'workspace.record.remove') {
-      return this.removeWorkspaceRecord(decoded.value)
-    }
-    if (command.name === 'workspace.records.clear') {
-      return this.clearWorkspaceRecords()
-    }
-
-    if (command.name === 'thread.record.delete') {
-      return this.deleteThreadRecord(decoded.value)
-    }
-
-    if (command.name === 'thread.record.persist') {
-      return this.persistTransferredThreadRecord(decoded.value)
+    if (isHostProfileRecordMutationName(command.name)) {
+      return this.profileRecordExecutor.execute(decoded.value)
     }
 
     if (command.name === 'run.cancel') {
@@ -775,115 +757,6 @@ export class HostNodeDomainPorts {
         return failed('ensemble_seat_revision_conflict')
       }
       return failed('ensemble_seat_toggle_failed')
-    }
-  }
-
-  private upsertWorkspaceRecord(command: HostCommand): HostCommandExecutionResult {
-    try {
-      this.options.store.upsertWorkspaceRecord({
-        workspaceId: command.target.workspaceId,
-        record: command.arguments as {
-          path: string
-          displayName: string
-          createdAt: number
-          lastOpenedAt: number
-          pinned: boolean
-          branch?: string
-          geminiWorktree?: { enabled: boolean; name?: string }
-        }
-      })
-      return { status: 'succeeded', resultSummary: 'workspace_record_upserted' }
-    } catch {
-      return failed('workspace_record_upsert_failed')
-    }
-  }
-
-  private removeWorkspaceRecord(command: HostCommand): HostCommandExecutionResult {
-    try {
-      const removed = this.options.store.removeWorkspaceRecord(command.target.workspaceId)
-      return {
-        status: 'succeeded',
-        resultSummary: removed ? 'workspace_record_removed' : 'workspace_record_already_absent'
-      }
-    } catch {
-      return failed('workspace_record_remove_failed')
-    }
-  }
-
-  private clearWorkspaceRecords(): HostCommandExecutionResult {
-    try {
-      const cleared = this.options.store.clearWorkspaceRecords()
-      return {
-        status: 'succeeded',
-        resultSummary: cleared > 0 ? 'workspace_records_cleared' : 'workspace_records_already_empty'
-      }
-    } catch {
-      return failed('workspace_records_clear_failed')
-    }
-  }
-
-  private deleteThreadRecord(command: HostCommand): HostCommandExecutionResult {
-    try {
-      const deleted = this.options.store.deleteThreadRecord({
-        threadId: command.target.threadId,
-        expectedRevision: command.arguments.expectedRevision as number
-      })
-      return {
-        status: 'succeeded',
-        resultSummary: deleted ? 'thread_record_deleted' : 'thread_record_already_absent'
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : ''
-      if (message === 'Thread persistence revision mismatch') {
-        return failed('thread_record_revision_conflict')
-      }
-      if (message === 'Thread is active') return failed('thread_record_active')
-      if (message.startsWith('Invalid ')) return failed('thread_record_invalid')
-      return failed('thread_record_delete_failed')
-    }
-  }
-
-  private persistTransferredThreadRecord(command: HostCommand): HostCommandExecutionResult {
-    const profilePath = this.options.profilePath
-    if (!profilePath) return failed('thread_record_transfer_unavailable')
-
-    let record: Record<string, unknown>
-    try {
-      record = consumeHostThreadRecordTransfer({
-        profilePath,
-        descriptor: {
-          transferId: command.arguments.transferId as string,
-          sha256: command.arguments.sha256 as string,
-          byteLength: command.arguments.byteLength as number
-        }
-      }).record
-    } catch (error) {
-      if (error instanceof HostThreadRecordTransferMissingError) {
-        return failed('thread_record_transfer_missing')
-      }
-      if (error instanceof HostThreadRecordTransferIntegrityError) {
-        return failed('thread_record_transfer_integrity')
-      }
-      return failed('thread_record_transfer_failed')
-    }
-
-    try {
-      this.options.store.persistThreadRecord({
-        threadId: command.target.threadId,
-        record,
-        expectedRevision: command.arguments.expectedRevision as number
-      })
-      return { status: 'succeeded', resultSummary: 'thread_record_persisted' }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : ''
-      if (message === 'Thread persistence revision mismatch' || message === 'Thread is not found') {
-        return failed('thread_record_revision_conflict')
-      }
-      if (message === 'Thread identity mismatch') {
-        return failed('thread_record_identity_mismatch')
-      }
-      if (message.startsWith('Invalid ')) return failed('thread_record_invalid')
-      return failed('thread_record_persist_failed')
     }
   }
 
