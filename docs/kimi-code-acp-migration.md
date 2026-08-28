@@ -3,8 +3,8 @@
 Developer reference for TaskWraith's source-ahead Kimi runtime after the
 `kimi-cli` to Kimi Code migration.
 
-> **Version boundary:** v1.9.5 is the released baseline. This document describes
-> the current source-ahead checkout and must not be read as a v1.8.5 guarantee.
+> **Version boundary:** v1.9.6 is the released baseline. This document describes
+> the current source-ahead checkout and must not be read as a v1.9.6 guarantee.
 > The next release notes decide when this posture becomes shipped behavior.
 
 ## Current status
@@ -197,7 +197,10 @@ and native compaction all use the same fail-closed lifecycle.
 
 ## Release qualification
 
-The protected provider canary runs on a fresh GitHub-hosted `macos-15` worker.
+The protected provider canary is a local live entry point,
+`verify:provider-permissions:live` (`package.json`), not a hosted CI job —
+the hosted release-attestation apparatus was removed by `d06edb2f0` ("ci:
+remove the hosted release-attestation apparatus (user decision)").
 Its reviewed Kimi scope is `acp-synthetic-cwd-gateway-v1`, and its sole
 allowlisted suite is `KimiProductionContainment.live.test.ts` with 16 exact
 assertion names. The suite proves private process/session cwd, no ACP client fs,

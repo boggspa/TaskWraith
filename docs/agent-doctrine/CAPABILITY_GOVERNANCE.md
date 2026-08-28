@@ -62,8 +62,9 @@ Rules, in priority order:
    retired. Missing broker mediation, launch-seal evidence, provenance, or
    another stronger management layer must produce an honest per-run
    warning/receipt and the safest compatible mode; it must not hide, retire,
-   disable, or otherwise punish the provider. Keep improving toward 9/9 without
-   deriving `LIVE_SELECTABLE_PROVIDER_IDS` from management maturity.
+   disable, or otherwise punish the provider. Keep improving toward 11/11 —
+   full coverage of that eleven-identity set — without deriving
+   `LIVE_SELECTABLE_PROVIDER_IDS` from management maturity.
 6. **Doctrine is executable.** Future sessions obey what this file, the
    README, the ledger, and the positioning docs assert. Never write "X is
    blocked/unavailable" unless the code enforces it _and_ the user approved

@@ -26,12 +26,13 @@ rather than embedding or re-encoding them.
 - Label requested derivatives explicitly and retain their source relationship,
   transform, hash, and alpha verification in the manifest.
 - Keep official light/dark variants when supplied.
-- Track all ten stable provider identities. The eight static-live providers are
-  Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, and Mistral; AntiGravity is
-  conditionally offered, and Gemini is labelled historical because it is
-  retained for old chats but retired for new runs. Cursor's live membership is
-  a user-approved product decision; Path-B containment is separate runtime
-  assurance. Canonical identity still does not imply runtime admission:
+- Track all eleven stable provider identities. The nine static-live providers
+  are Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, Mistral, and Muse;
+  AntiGravity is conditionally offered, and Gemini is labelled historical
+  because it is retained for old chats but retired for new runs. Cursor's
+  live membership is a user-approved product decision; Path-B containment
+  is separate runtime assurance. Canonical identity still does not imply
+  runtime admission:
   structurally admitted Kimi runs without a reviewed roster tuple are labelled
   `unattested-development`.
 - Supplemental upstream-brand files may sit alongside the canonical provider

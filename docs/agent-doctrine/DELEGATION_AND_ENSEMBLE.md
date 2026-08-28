@@ -117,11 +117,11 @@ do not loop or retry; continue the parent turn and tell the user what was
 declined.
 
 This MCP route is available only to tool-capable parent seats (Codex, Claude,
-Kimi, Cursor, Grok, Ollama when admitted). A Path-B Cursor turn receives the
-gateway when its TaskWraith-owned broker starts successfully and can then call
-`delegate_to_subthread`; if broker setup fails, TaskWraith posts a visible
-warning and that turn degrades to native-only operation. Any tool-capable parent
-can still spawn or recall a Cursor child sub-thread.
+Kimi, Cursor, Grok, Mistral Vibe, Muse, Ollama when admitted). A Path-B Cursor
+turn receives the gateway when its TaskWraith-owned broker starts successfully
+and can then call `delegate_to_subthread`; if broker setup fails, TaskWraith
+posts a visible warning and that turn degrades to native-only operation. Any
+tool-capable parent can still spawn or recall a Cursor child sub-thread.
 
 `model`, `reasoningEffort`, and `kimiThinking` configure a **fresh** delegated
 seat. They are spawn-only: recalls inherit the existing seat controls and reject
@@ -220,7 +220,7 @@ hand-typed provider/role/model alias that matches multiple seats is rejected
 rather than selecting whichever participant happens to appear first. The
 renderer may send an advisory participant id for explicit UI gestures, but it
 cannot override a prompt routing signal. This main-authoritative change shipped
-in v1.9.0 and is part of the current v1.9.5 release baseline described under
+in v1.9.0, so it is part of every release baseline described under
 [Versioning](INTROSPECTION_AND_RELEASE_STATE.md#versioning).
 
 ### Stage roles and background lanes
@@ -234,8 +234,9 @@ runs only when explicitly delegated.
   participant in a detached lane while foreground rotation continues.
   Concurrent lanes must be enabled, the seat must not already be active, and
   admission/budget checks must pass.
-- **`@BG` is no longer one of those — it is a roster GROUP token** (source-ahead
-  of v1.9.5). `src/shared/ensembleGroupMention.ts` defines five provider-neutral
+- **`@BG` is no longer one of those — it is a roster GROUP token** (shipped in
+  v1.9.6; it was source-ahead of v1.9.5).
+  `src/shared/ensembleGroupMention.ts` defines five provider-neutral
   group tokens that address a whole stage at once: `@All` (every enabled
   participant), `@Scouts`, `@Workers`, `@Reviewers`, and `@BG` (every enabled
   background seat). `findAllMentions` tests the first word against the group
@@ -278,7 +279,9 @@ Each ensemble has a `orchestrationMode`:
   user cancellation, goal completion/block/pause, a queued user prompt or seat
   change, no progress/administrative deadlock, or budget exhaustion.
 - **A bounded final synthesis turn may be inserted immediately before the loop
-  actually stops** (source-ahead of v1.9.5). When a synthesizer is elected —
+  actually stops** (still source-ahead — absent from every tag through v1.9.6;
+  `git cat-file -e <tag>:` plus the source path named at the end of this bullet
+  is the test before calling it shipped). When a synthesizer is elected —
   configured seat, else Boss, else Captain, else the last enabled foreground
   participant — and two or more participants answered or yielded without a
   structured convergence summary being captured, the orchestrator dispatches one

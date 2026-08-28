@@ -76,9 +76,9 @@ User-facing detail: [`SESSION_AND_WORKSPACE.md`](../SESSION_AND_WORKSPACE.md).
 
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
 support brokered tools. Current tool-capable run providers are Codex, Claude,
-Kimi, Cursor, Grok, Mistral Vibe, and local Ollama when their runtime-specific
-admission and broker setup succeeds. The conditional AntiGravity Gemini API-key
-lane advertises the TaskWraith tool catalog as Gemini function declarations and
+Kimi, Cursor, Grok, Mistral Vibe, Muse, and local Ollama when their
+runtime-specific admission and broker setup succeeds. The conditional
+AntiGravity Gemini API-key lane advertises the TaskWraith tool catalog as Gemini function declarations and
 executes those calls in-process; the official agy print-mode lane attaches no
 MCP server, plugin, or **user** hook. Separately, TaskWraith may install a
 temporary host-owned PreToolUse approval bridge for that print-mode lane so
@@ -104,7 +104,9 @@ Cursor tools under the OS sandbox and also registers a TaskWraith-owned gateway
 broker. Brokered calls use TaskWraith policy, approval cards, and workspace
 grants; native actions remain provider-owned. If registration/approval fails,
 TaskWraith visibly warns and runs that turn native-only. The canonical MCP list lives in
-`src/main/TaskWraithMcpTools.ts` (`TASKWRAITH_MCP_TOOLS`); the most
+`src/shared/taskWraithMcpCatalog.ts` (`TASKWRAITH_MCP_TOOLS`);
+`src/main/TaskWraithMcpTools.ts` is only a re-export shim kept so existing
+`src/main` and `src/renderer` importers keep working. The most
 relevant tools an agent reaches for during day-to-day work:
 
 **Workspace I/O (workspace-scoped, approval-gated when policy
@@ -300,7 +302,7 @@ demands):**
 - Web, ensemble, goals, todos, recall, and shared-memory tools include
   `web_search`, `web_fetch`, `ensemble_send`, `ensemble_fanout`,
   `list_ensemble_participants`, goal/todo tools, blackboard tools, wakeups,
-  scout briefs, and `tw_recall_*`. Check `src/main/TaskWraithMcpTools.ts`
+  scout briefs, and `tw_recall_*`. Check `src/shared/taskWraithMcpCatalog.ts`
   before assuming the list is complete.
 
 - `attached_window_capture`, `attached_window_status`,

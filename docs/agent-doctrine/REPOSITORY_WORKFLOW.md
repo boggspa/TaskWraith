@@ -9,14 +9,18 @@ purpose: concurrent sessions often have unrelated uncommitted work in the
 same tree, so formatting the whole working tree would rewrite another
 session's in-flight files. `--working-tree` opts into unstaged and
 untracked files when you know you are the only session in the tree.
-`npm run format:check` is the verifying form, suitable for a CI gate.
+`npm run format:check` is the verifying form for your own staged changes. It
+is **not** the CI gate — it scopes to `--cached`, so a CI checkout with nothing
+staged passes vacuously; `format:ratchet` is what CI actually runs.
 
 Do not run `npm run format:all`, `prettier --write .`, or any repo-wide
-Prettier glob. The baseline is ~27% unformatted — 1183 of 4457 considered
-files, per `scripts/format-baseline.json` — so a repo-wide write is not a
-tidy-up: it is a ~30,000-line mass reformat that rewrites `git blame` for
-a thousand files and conflicts with every open branch and fan-out
-worktree.
+Prettier glob. Roughly a quarter of the considered files are unformatted —
+read the current `unformattedFiles` / `consideredFiles` pair straight from
+[`scripts/format-baseline.json`](../../scripts/format-baseline.json) rather than
+trusting a number restated in prose, because both move every cycle. At that
+share a repo-wide write is not a tidy-up: it is a mass reformat measured in tens
+of thousands of lines that rewrites `git blame` for a thousand files and
+conflicts with every open branch and fan-out worktree.
 
 Three files remain in `.prettierignore` because formatting them was proven to
 be corruption, not cleanup: `AGENTS.md`,
@@ -340,7 +344,10 @@ explicitly out of the current release, a worktree is the answer, not a marker.
   `git add -p`.** Staging a monolith wholesale takes _every_ change in it,
   including hunks another session left there mid-edit; you then commit their
   half-written work under your message and they lose it on their next checkout.
-  `index.ts` is ~49k lines and `App.tsx` ~30k: assume someone else is in there.
+  `index.ts` and `App.tsx` are the two measured monoliths — line counts and
+  their measurement date live once, under
+  [Formatting policy for agents](#formatting-policy-for-agents) — and at that
+  size, assume someone else is in there.
 
   `git add -p` looks like the answer and is not, because neither completion is
   safe. A **pathspec** commit runs in `--only` mode and rebuilds the tree from
@@ -411,12 +418,12 @@ nothing.
 it rather than deleting someone's marker.
 
 `TW_ALLOW_IGNORED_ADD=1 git commit …` overrides the gitignored-add block. This
-is not exotic: `docs/` is ignore-by-default with ~187 files force-tracked
-individually, so a plain `git mv` of an already-tracked doc trips it — the
-destination reads as a brand-new ignored path. Before overriding, prove you
-are not publishing anything new (`git show HEAD:<oldpath>` should match the
-new file, and the old path should already be tracked). The hook logs an
-`override:` line either way.
+is not exotic: `docs/` is ignore-by-default with 212 paths force-tracked
+individually, 147 of them `.md` (`git ls-files -- docs` counts both), so a plain
+`git mv` of an already-tracked doc trips it — the destination reads as a
+brand-new ignored path. Before overriding, prove you are not publishing
+anything new (`git show HEAD:<oldpath>` should match the new file, and the old
+path should already be tracked). The hook logs an `override:` line either way.
 
 Hooks are not cloned by a fresh checkout and only fire at commit time, so this
 is a backstop, not a guarantee — the rules above still stand on their own.

@@ -51,7 +51,7 @@ before creation and upload).
 
 ## Fingerprint review
 
-The qualification fingerprint manifest is intentionally empty until live reports
+The Kimi qualification fingerprint list is intentionally empty until live reports
 have been reviewed. Each accepted entry must match all of the following exactly:
 
 - qualification scope (`acp-synthetic-cwd-gateway-v1` for Kimi;

@@ -50,10 +50,21 @@ pipeline.
 
 ## Versioning
 
-This document uses **v1.9.5** as its released baseline — tagged and pushed to
-public `master` on 2026-08-12 — and also describes the source-ahead checkout
-past that tag. Treat behavior newer than the tagged baseline as unshipped until
-it appears in the next release notes:
+This document's released baseline is whatever tag is currently on public
+`master` — read it with `git describe --tags --abbrev=0 origin/master` and
+cross-check `package.json`. The number is deliberately **not** restated here.
+A pinned version becomes a false claim the moment the next tag lands, and this
+paragraph proved it: it read v1.9.5 while v1.9.6 was already tagged, pushed, and
+in `package.json`. `docs/POSITIONING.md` reached the same conclusion after its
+own line sat at v1.8.8 two releases running.
+
+This checkout is also source-ahead of that tag. Treat behavior newer than the
+tag as unshipped, and note what does **not** discharge that: there is no
+per-release notes file to wait for. The `docs/CHANGELOG-*.md` series stops at
+1.5.2, so "it appears in the next release notes" is not a test anything can
+pass. The evidence that actually counts is a tag containing the code —
+`git cat-file -e <tag>:<path>` — plus the matching root `CHANGELOG.md` section
+moving out of `Unreleased`, plus published artifacts.
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
@@ -66,7 +77,8 @@ it appears in the next release notes:
 - Approval flow + timeout policy (Phase E1)
 - Approval ledger UX (Phase E2)
 - **MCP tool surface** — full canonical list in
-  `src/main/TaskWraithMcpTools.ts`; key tools documented in [Runtime and tool doctrine](RUNTIME_AND_TOOLS.md#mcp).
+  `src/shared/taskWraithMcpCatalog.ts` (`src/main/TaskWraithMcpTools.ts` is a
+  re-export shim); key tools documented in [Runtime and tool doctrine](RUNTIME_AND_TOOLS.md#mcp).
 - **Thread Introspection** — memory promotion layer (proposal packs, review
   gates); see `THREAD_INTROSPECTION.md`.
 - Fresh tool-capable seats default to the progressive TaskWraith gateway;
