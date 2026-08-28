@@ -68,9 +68,9 @@ export type BackgroundDispatchPosture =
  * the user-origin round path — composer @mention or DM chip target; every
  * beginRound prompt is user-authored by construction. Peer mentions and yield
  * routes never set it, so they always take the silent read-only clamp. The
- * User-directed lanes preserve the seat's permission posture, but remain
- * reader-intent because this mention surface carries no explicit writeScopes.
- * Parallel background mutation must use locked_writers like every other lane.
+ * User-directed lanes preserve the seat's permission posture and derive lane
+ * intent from it; the write-lane kill switch remains the explicit user-side
+ * gate. Peer mentions and yields never receive that own-posture authority.
  */
 export function resolveBackgroundDispatchPosture(input: {
   honorSeatPosture: boolean
@@ -89,6 +89,6 @@ export function resolveBackgroundDispatchPosture(input: {
   }
   return {
     mode: 'own_permissions',
-    statusLine: `Background: launching ${input.laneCount} reader-intent lane(s) under their own permission posture (user-directed). Parallel writes require ensemble_fanout mode="locked_writers" with explicit writeScopes.`
+    statusLine: `Background: launching ${input.laneCount} lane(s) under their own permission posture (user-directed). Write-capable seats receive writer intent; no permission tier is inferred or widened.`
   }
 }

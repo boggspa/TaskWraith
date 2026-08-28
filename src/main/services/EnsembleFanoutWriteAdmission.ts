@@ -5,6 +5,27 @@ export interface EnsembleFanoutLaneAdmissionCandidate {
   approvedWriteScopeCount: number
 }
 
+export interface EnsembleFanoutLaneIntentInput {
+  mode: 'read_only' | 'locked_writers'
+  permissionReadOnly: boolean
+  deriveLaneIntentFromPermissions?: boolean
+}
+
+/**
+ * Permission posture controls which tools can run without redundant prompts;
+ * fan-out mode controls what the lane is assigned to do. Only an explicitly
+ * authorized own-posture route may derive write intent from a writable seat
+ * during a read-only pass.
+ */
+export function resolveEnsembleFanoutLaneIntent({
+  mode,
+  permissionReadOnly,
+  deriveLaneIntentFromPermissions = false
+}: EnsembleFanoutLaneIntentInput): 'read' | 'write' {
+  if (permissionReadOnly) return 'read'
+  return mode === 'read_only' && !deriveLaneIntentFromPermissions ? 'read' : 'write'
+}
+
 export type EnsembleFanoutWriteAdmission =
   | { ok: true }
   | {

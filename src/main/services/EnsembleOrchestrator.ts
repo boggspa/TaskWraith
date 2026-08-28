@@ -314,7 +314,10 @@ import {
   mergeToolResultParameters,
   presentToolInvocation
 } from '../../shared/toolInvocationPresentation'
-import { evaluateEnsembleFanoutWriteAdmission } from './EnsembleFanoutWriteAdmission'
+import {
+  evaluateEnsembleFanoutWriteAdmission,
+  resolveEnsembleFanoutLaneIntent
+} from './EnsembleFanoutWriteAdmission'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -1200,8 +1203,8 @@ export interface EnsembleFanoutInput {
 }
 
 /** `ensemble_fanout_all` — the Boss/Captain "everyone, now" reader sibling of
- * `ensemble_fanout`. It has no writeScopes surface, so a roster containing a
- * write-intent target fails closed and points the caller to locked_writers. */
+ * `ensemble_fanout`. It has no writeScopes surface, so every selected seat is
+ * assigned reader intent even when its normal permission posture is writable. */
 export interface EnsembleFanoutAllInput {
   targets?: unknown
   prompt?: string
@@ -1226,7 +1229,6 @@ export interface EnsembleFanoutAllResult {
     | 'invalid_target'
     | 'invalid_isolation'
     | 'no_eligible_targets'
-    | 'missing_write_scope'
     | 'not_authorized'
     | 'explicit_targets_required'
     | 'budget_exhausted'
@@ -13187,10 +13189,10 @@ export class EnsembleOrchestrator {
    * Differences from `ensemble_fanout`: the round's fan-out policy, stage
    * filters (`targetStage`), and per-seat permission ELIGIBILITY filtering
    * are ignored for target resolution. Every lane keeps the participant's
-   * normal-turn permission posture, but this scope-less tool fails before
-   * dispatch when that posture would produce write intent; the caller must
-   * use `ensemble_fanout(mode=locked_writers, writeScopes=...)` instead. What
-   * it deliberately does NOT bypass: caller authority (must be
+   * normal-turn permission posture while receiving reader task intent; this
+   * scope-less route cannot authorize mutations. Callers must use
+   * `ensemble_fanout(mode=locked_writers, writeScopes=...)` for writer work.
+   * What it deliberately does NOT bypass: caller authority (must be
    * the configured Boss or Captain), the composer-directed
    * one-seat round boundary (user intent), the Boss budget, the roster cap,
    * and every posture clamp inside resolveParticipantPermissions (the
@@ -13373,7 +13375,7 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         run.chatId,
         run.roundId,
-        `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} lane(s) under their own permissions.${input.reason ? ` ${input.reason}` : ''}`
+        `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} reader lane(s) under their own permission postures.${input.reason ? ` ${input.reason}` : ''}`
       )
       if (!runtime.fanoutReservedParticipantIds) runtime.fanoutReservedParticipantIds = new Set()
       for (const participant of resolvedTargets.targets) {
@@ -13385,7 +13387,6 @@ export class EnsembleOrchestrator {
         reason: input.reason,
         sourceRunId: runId,
         label,
-        deriveLaneIntentFromPermissions: true,
         ...(isolation ? { isolation } : {}),
         acceptedRuns,
         waitForCompletion: false,
@@ -13432,7 +13433,7 @@ export class EnsembleOrchestrator {
         status: 'dispatched',
         laneIds,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) started under each participant's own permissions.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+        message: `${label} dispatched: ${laneIds.length} reader lane(s) started under each participant's own permission posture.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -19172,6 +19173,7 @@ export class EnsembleOrchestrator {
         label: 'User Fan-Out',
         promptAuthority: 'user',
         userPromptSourceMessageId: sourceMessageId,
+        deriveLaneIntentFromPermissions: true,
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: 'background'
@@ -19331,7 +19333,10 @@ export class EnsembleOrchestrator {
         sourceRunId: options.sourceRunId,
         label: 'Background',
         ...(posture.mode === 'own_permissions'
-          ? { mode: 'read_only' as const }
+          ? {
+              mode: 'read_only' as const,
+              deriveLaneIntentFromPermissions: true
+            }
           : { mode: 'read_only' as const, forceReadOnlyDispatch: true }),
         acceptedRuns,
         waitForCompletion: false,
@@ -19439,10 +19444,10 @@ export class EnsembleOrchestrator {
        * peer-delegated background work. Ordinary read_only fan-out must not set
        * this: read_only is task intent and preserves the seat's posture. */
       forceReadOnlyDispatch?: boolean
-      /** ensemble_fanout_all and user-authorized own-posture routes derive the
-       * lane's work intent from the participant's normal-turn posture instead
-       * of treating mode=read_only as a reader assignment. Permission posture
-       * itself is preserved for every ordinary lane regardless of this flag. */
+      /** User-authorized own-posture routes derive the lane's work intent from
+       * the participant's normal-turn posture instead of treating
+       * mode=read_only as a reader assignment. Permission posture itself is
+       * preserved for every ordinary lane regardless of this flag. */
       deriveLaneIntentFromPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       /** Per-call choice, honored only while the chat Isolate policy is
@@ -19520,7 +19525,11 @@ export class EnsembleOrchestrator {
           `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${currentParticipant.id}.`
         )
       }
-      const laneIntent: 'read' | 'write' = permissions.readOnly ? 'read' : 'write'
+      const laneIntent = resolveEnsembleFanoutLaneIntent({
+        mode,
+        permissionReadOnly: permissions.readOnly,
+        deriveLaneIntentFromPermissions: options.deriveLaneIntentFromPermissions
+      })
       return {
         participant: currentParticipant,
         laneIntent,
