@@ -177,7 +177,20 @@ function harness(
     pairedCounts,
     registrations,
     sendFromIphone: (m: string, p?: unknown) => iphone!.sendApp(m, p),
-    getSink: () => capturedSink
+    getSink: () => capturedSink,
+    establishedClient: () => {
+      const devices = (
+        runtime as unknown as {
+          established: Map<string, { client: unknown }>
+        }
+      ).established
+      return devices.values().next().value?.client as
+        | {
+            setConnected: (connected: boolean) => void
+            onPong: () => void
+          }
+        | undefined
+    }
   }
 }
 
@@ -442,6 +455,23 @@ describe('RemoteBridgeRuntime established channel', () => {
       method: 'bridge.hostState',
       params: { phase: 'live' }
     })
+  })
+
+  it('reattaches Host v2 when a pong revives a watchdog-marked same-session link', async () => {
+    const host = hostGatewayHarness()
+    const h = harness({ hostProjectionGateway: host.gateway })
+    await establish(h)
+    const deviceKey = b64.encode(exportRawEd25519PublicKey(h.iphoneId.publicKey))
+    const client = h.establishedClient()
+    expect(client).toBeDefined()
+
+    client!.setConnected(false)
+    expect(host.gateway.detach).toHaveBeenCalledWith(deviceKey)
+
+    client!.onPong()
+    await settle()
+    expect(host.gateway.attach).toHaveBeenCalledTimes(2)
+    expect(host.attachments[1]).toMatchObject({ deviceKey })
   })
 
   it('routes exact Host requests without accepting a client-supplied device identity', async () => {

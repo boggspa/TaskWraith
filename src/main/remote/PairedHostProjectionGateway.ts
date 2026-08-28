@@ -219,6 +219,15 @@ export class PairedHostProjectionGateway {
       }
       existing.send = attachment.send
       existing.displayName = attachment.displayName
+      // `attach` is scoped to the phone's current E2EE delivery epoch, while
+      // `seeded` used to describe only the longer-lived local Host client. A
+      // phone can re-handshake without the Mac↔relay socket or Host client ever
+      // disconnecting; in that case the old `connected && seeded` fast path
+      // returned here and the new phone epoch received no welcome, snapshot, or
+      // live state. Re-seed every authenticated reattachment. The Host client
+      // remains connected, so this is one bounded snapshot read, not a restart.
+      existing.seeded = false
+      this.sendState(existing, { phase: 'connecting' })
       await this.connectAndSeed(existing)
       return
     }

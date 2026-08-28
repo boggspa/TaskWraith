@@ -190,6 +190,33 @@ describe('PairedHostProjectionGateway', () => {
     expect(h.sent.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 4 })
   })
 
+  it('re-seeds a reattached phone epoch without reconnecting the local Host client', async () => {
+    const h = harness()
+    await h.attach()
+    h.sent.length = 0
+    const reseeded: Array<{ method: string; params: unknown }> = []
+
+    await h.gateway.attach({
+      deviceKey: DEVICE_KEY,
+      clientId: CLIENT_ID,
+      displayName: 'My iPhone',
+      send: (method, params) => reseeded.push({ method, params })
+    })
+
+    expect(h.createClient).toHaveBeenCalledOnce()
+    expect(h.fake.connect).toHaveBeenCalledOnce()
+    expect(h.fake.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(h.sent).toEqual([])
+    expect(reseeded.map((entry) => entry.method)).toEqual([
+      PAIRED_HOST_PROJECTION_METHODS.state,
+      PAIRED_HOST_PROJECTION_METHODS.welcome,
+      PAIRED_HOST_PROJECTION_METHODS.snapshot,
+      PAIRED_HOST_PROJECTION_METHODS.state
+    ])
+    expect(reseeded[0]?.params).toEqual({ phase: 'connecting' })
+    expect(reseeded.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 4 })
+  })
+
   it('forwards Host delta and health events only through the attached device callback', async () => {
     const h = harness()
     await h.attach()

@@ -145,6 +145,7 @@ describe('RemoteTransportClient liveness watchdog (RC6)', () => {
     let dropOutbound = false
     let closeCalls = 0
     const connectionChanges: boolean[] = []
+    let recoveryCount = 0
     let clientHandlers: TransportSocketHandlers | null = null
     // eslint-disable-next-line prefer-const
     let iphone: E2eeSession
@@ -172,7 +173,10 @@ describe('RemoteTransportClient liveness watchdog (RC6)', () => {
       now: () => clock,
       pingIntervalMs: 5,
       pingTimeoutMs: 40,
-      onConnectionChange: (c) => connectionChanges.push(c)
+      onConnectionChange: (c) => connectionChanges.push(c),
+      onRecovered: () => {
+        recoveryCount += 1
+      }
     })
     iphone = new E2eeSession({
       role: 'iphone',
@@ -201,6 +205,7 @@ describe('RemoteTransportClient liveness watchdog (RC6)', () => {
         dropOutbound = v
       },
       connectionChanges,
+      recoveryCount: () => recoveryCount,
       closeCalls: () => closeCalls,
       isEstablished: () =>
         (client as unknown as { session?: { isEstablished: boolean } }).session?.isEstablished ===
@@ -249,5 +254,11 @@ describe('RemoteTransportClient liveness watchdog (RC6)', () => {
     h.tick() // this ping now reaches the phone, which pongs back
     await settle()
     expect(h.client.isConnected).toBe(true)
+    expect(h.recoveryCount()).toBe(1)
+
+    // Further healthy pongs are ordinary keepalives, not repeated recoveries.
+    h.tick()
+    await settle()
+    expect(h.recoveryCount()).toBe(1)
   })
 })

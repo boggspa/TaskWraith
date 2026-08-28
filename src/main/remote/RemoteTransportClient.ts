@@ -49,6 +49,9 @@ export interface RemoteTransportClientOptions {
   onMessage?: (method: string, params: unknown) => void
   onEstablished?: (sessionId: string) => void
   onConnectionChange?: (connected: boolean) => void
+  /** A decrypted pong restored a same-session link after the liveness watchdog
+   * marked it down. Consumers that detached per-device state must reattach it. */
+  onRecovered?: () => void
   /** RC5: a same-epoch resume detected an unfillable replay-buffer gap on the
    * live session — the caller should push a full snapshot to this device. */
   onReplayGap?: () => void
@@ -232,7 +235,11 @@ export class RemoteTransportClient {
    * no re-handshake. */
   private onPong(): void {
     this.lastPongAt = this.now()
-    if (this.session?.isEstablished) this.setConnected(true)
+    if (this.session?.isEstablished) {
+      const wasConnected = this.connected
+      this.setConnected(true)
+      if (!wasConnected) this.opts.onRecovered?.()
+    }
   }
 
   /** RC6: fired every ping interval. Send the keepalive ping AND, if too long has
