@@ -1099,6 +1099,18 @@ function renderGitOverlay(
     body.push(borderedLine(ansi.dim('git is unavailable on this Host'), width, ansi, glyphs))
   } else if (git.outcome.result.scope === 'status') {
     const status = git.outcome.result
+    // A truncated status must be bannered exactly like a truncated diff: a
+    // clean-looking partial file list must never read as the whole tree.
+    if (status.truncated) {
+      body.push(
+        borderedLine(
+          tone(ansi, 'truncated by the Host (128 KiB cap) — showing a partial view', 'warning'),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
     const staged = status.files.filter((file) => file.staged).length
     const unstaged = status.files.filter((file) => file.unstaged).length
     const untracked = status.files.filter((file) => file.kind === 'untracked').length

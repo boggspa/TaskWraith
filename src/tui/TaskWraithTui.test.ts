@@ -120,7 +120,9 @@ interface FakeHostHandlers {
   providerAuthStatus?: (providerId: string) => HostProviderAuthStatusProjection
   threadHistory?: (request: HostThreadHistoryRequest) => HostThreadHistoryPage
   historySince?: (request: HostHistorySinceRequest) => HostHistorySinceResult
-  workspaceGitRead?: (params: HostWorkspaceGitReadParams) => HostWorkspaceGitReadResult
+  workspaceGitRead?: (
+    params: HostWorkspaceGitReadParams
+  ) => HostWorkspaceGitReadResult | Promise<HostWorkspaceGitReadResult>
   resultRef?: (command: HostCommand) => HostResultRef | undefined
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
@@ -461,15 +463,21 @@ class FakeHostV2 {
       return
     }
     if (kind === 'workspace.git.read' && this.handlers.workspaceGitRead) {
-      this.write(socket, {
-        type: 'response',
-        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
-        id,
-        ok: true,
-        result: {
-          kind: 'workspace.git.read',
-          result: this.handlers.workspaceGitRead(message.params as HostWorkspaceGitReadParams)
-        }
+      // The handler may answer asynchronously (deferred reads for staleness
+      // tests); the client awaits the response over the socket either way.
+      void Promise.resolve(
+        this.handlers.workspaceGitRead(message.params as HostWorkspaceGitReadParams)
+      ).then((result) => {
+        this.write(socket, {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id,
+          ok: true,
+          result: {
+            kind: 'workspace.git.read',
+            result
+          }
+        })
       })
       return
     }
@@ -2027,5 +2035,254 @@ describe('TaskWraithTui reconnect revival', () => {
     await waitFor(() => output.lastFrame.includes('demo'), 'demo notice rendered')
     expect(output.lastFrame).not.toContain('main')
     expect(output.lastFrame).not.toContain('Unknown command')
+  })
+
+  it('drops a late git read dispatched for a different workspace after a thread switch', async () => {
+    // A read dispatched for thread A/ws-1, then the user switches to thread B
+    // (ws-2) and reopens /git; A's answer arriving LATE must never render
+    // under B's header — that is another repository's diff. The pre-fix guard
+    // checked only overlay+scope, so this lands A's data at HEAD.
+    const late: { resolve?: (result: HostWorkspaceGitReadResult) => void } = {}
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-stale-thread-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces: [
+            { id: 'ws-1', name: 'AGBench', path: '/tmp/agbench', pinned: true, updatedAt: 0 },
+            { id: 'ws-2', name: 'Other repo', path: '/tmp/other', pinned: false, updatedAt: 1 }
+          ],
+          threads: [
+            {
+              id: 'thread-1',
+              workspaceId: 'ws-1',
+              title: 'Solo thread A',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 20,
+              messageCount: 1,
+              providerId: 'claude',
+              latestPreview: 'Hello TaskWraith',
+              previewTruncated: false
+            },
+            {
+              id: 'thread-2',
+              workspaceId: 'ws-2',
+              title: 'Solo thread B',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 10,
+              messageCount: 1,
+              providerId: 'claude',
+              latestPreview: 'Other repo thread',
+              previewTruncated: false
+            }
+          ]
+        }),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: (params) => {
+        if (params.workspaceId === 'ws-1') {
+          return new Promise<HostWorkspaceGitReadResult>((resolve) => {
+            late.resolve = resolve
+          })
+        }
+        return {
+          scope: 'status',
+          branch: 'b-branch',
+          head: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          truncated: false,
+          files: [
+            {
+              path: 'b-repo-file.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread A'), 'thread A selected')
+    feed(input, '/git\r')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(late.resolve).toBeTruthy()
+    // Switch to thread B through the TUI's real openThread (it closes the
+    // overlay), then reopen /git there — the composer is free once the
+    // overlay is closed.
+    await (tui as unknown as { openThread: (threadId: string) => Promise<void> }).openThread(
+      'thread-2'
+    )
+    await waitFor(() => output.lastFrame.includes('Solo thread B'), 'thread B open')
+    feed(input, '/git\r')
+    await waitFor(() => output.lastFrame.includes('b-repo-file.ts'), 'B read landed')
+    // Now A's answer arrives late — it must be dropped, never rendered.
+    late.resolve?.({
+      scope: 'status',
+      branch: 'a-branch',
+      head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      truncated: false,
+      files: [
+        {
+          path: 'a-repo-file.ts',
+          index: 'M',
+          workingTree: 'M',
+          kind: 'modified',
+          staged: false,
+          unstaged: true
+        }
+      ]
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(output.lastFrame).not.toContain('a-repo-file.ts')
+    expect(output.lastFrame).not.toContain('a-branch')
+    expect(output.lastFrame).toContain('b-repo-file.ts')
+  })
+
+  it('drops an out-of-order same-scope read when the path changed', async () => {
+    // `/git diff a.ts` then `/git diff b.ts`: the older answer must not land
+    // over the newer — same scope, different path. The second dispatch goes
+    // through the TUI's real openGitOverlay — the same method the command
+    // chain calls (the fake TTY's lone ESC is a no-op keypress: readline holds
+    // it awaiting a sequence continuation, so it cannot close the overlay
+    // here). At HEAD the guard checks only overlay+scope, so the stale a.ts
+    // diff lands over b.ts.
+    const late: { resolve?: (result: HostWorkspaceGitReadResult) => void } = {}
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-stale-path-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: (params) => {
+        if (params.path === 'a.ts') {
+          return new Promise<HostWorkspaceGitReadResult>((resolve) => {
+            late.resolve = resolve
+          })
+        }
+        return {
+          scope: 'diff',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          text: 'diff --git a/b.ts b/b.ts\n@@ -1 +1 @@\n+b-diff-data'
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
+    feed(input, '/git diff a.ts\r')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(late.resolve).toBeTruthy()
+    await (
+      tui as unknown as {
+        openGitOverlay: (scope: 'status' | 'diff' | 'log', path?: string) => Promise<void>
+      }
+    ).openGitOverlay('diff', 'b.ts')
+    await waitFor(() => output.lastFrame.includes('b-diff-data'), 'b diff landed')
+    late.resolve?.({
+      scope: 'diff',
+      branch: 'main',
+      head: '0123456789abcdef0123456789abcdef01234567',
+      truncated: false,
+      text: 'diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n+a-diff-data'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(output.lastFrame).not.toContain('a-diff-data')
+    expect(output.lastFrame).toContain('b-diff-data')
+  })
+
+  it('lands only the newest of two overlapping refreshes', async () => {
+    // `r` then `r` again quickly: two identical dispatches race, and the SLOWER
+    // older one must not overwrite the newer — a refresh exists to see new
+    // state, and landing the older snapshot defeats it.
+    const pending: Array<() => void> = []
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-stale-refresh-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: () => {
+        // The marker is captured at DISPATCH time — computing it at resolve
+        // time would let a late answer impersonate the newer read.
+        const marker = `refresh-${pending.length + 1}.ts`
+        return new Promise<HostWorkspaceGitReadResult>((resolve) => {
+          pending.push(() =>
+            resolve({
+              scope: 'status',
+              branch: 'main',
+              head: '0123456789abcdef0123456789abcdef01234567',
+              truncated: false,
+              files: [
+                {
+                  path: marker,
+                  index: 'M',
+                  workingTree: 'M',
+                  kind: 'modified',
+                  staged: false,
+                  unstaged: true
+                }
+              ]
+            })
+          )
+        })
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
+    feed(input, '/git\r')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    feed(input, 'r')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(pending).toHaveLength(2)
+    // Resolve the NEWER refresh first, then the older one late.
+    pending[1]()
+    await waitFor(() => output.lastFrame.includes('refresh-2.ts'), 'newer refresh landed')
+    pending[0]()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(output.lastFrame).not.toContain('refresh-1.ts')
+    expect(output.lastFrame).toContain('refresh-2.ts')
+  })
+
+  it('banners a truncated status result too, not only diff/log', async () => {
+    // The banner previously lived only in the diff/log branch — a truncated
+    // status rendered as if it were the complete working tree.
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-git-truncated-status-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [...SETUP_HOST_CAPABILITIES, 'workspace-git'],
+      workspaceGitRead: () => ({
+        scope: 'status',
+        branch: 'main',
+        head: '0123456789abcdef0123456789abcdef01234567',
+        truncated: true,
+        files: [
+          {
+            path: 'src/tui/render.ts',
+            index: 'M',
+            workingTree: 'M',
+            kind: 'modified',
+            staged: false,
+            unstaged: true
+          }
+        ]
+      })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
+    feed(input, '/git\r')
+    await waitFor(() => output.lastFrame.includes('truncated'), 'status truncation banner')
   })
 })

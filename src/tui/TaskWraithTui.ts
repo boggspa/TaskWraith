@@ -208,6 +208,8 @@ export class TaskWraithTui {
   /** Consecutive failed connect attempts since the last successful welcome. */
   private reconnectAttempts = 0
   private clientId = `tui-${randomUUID()}`
+  /** Monotonic workspace-git read generation — the staleness guard's backbone. */
+  private gitReadGeneration = 0
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -1735,19 +1737,18 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    const generation = ++this.gitReadGeneration
     try {
       const outcome = await this.client.getWorkspaceGitRead({
         workspaceId: threadWorkspaceId,
         scope,
         ...(path ? { path } : {})
       })
-      // Staleness guard: a scope switch or overlay close during the round trip
-      // must not land an older answer over a newer one.
-      if (this.state.overlay !== 'git' || this.state.git?.scope !== scope) return
+      if (!this.gitReadIsCurrent(generation, scope, threadId, threadWorkspaceId, path)) return
       this.state.git = { scope, ...(path ? { path } : {}), outcome }
       this.render()
     } catch (error) {
-      if (this.state.overlay !== 'git') return
+      if (!this.gitReadIsCurrent(generation, scope, threadId, threadWorkspaceId, path)) return
       this.state.git = {
         scope,
         ...(path ? { path } : {}),
@@ -1755,6 +1756,37 @@ export class TaskWraithTui {
       }
       this.render()
     }
+  }
+
+  /**
+   * Staleness guard for workspace-git reads. COVERED: a result is dropped
+   * unless it is still the newest dispatch (monotonic generation) AND its
+   * thread, workspace, scope, and path all still match the overlay's current
+   * request — an older answer can never land under a newer header, including
+   * another repository's diff after a thread switch, a path change on the
+   * same scope, or an out-of-order refresh. NOT covered, by design (decision
+   * 5 — no watcher): a workspace rebound while the overlay sits open with no
+   * new dispatch stays stale until the overlay is reopened or refreshed (r);
+   * and a thread switch closes the overlay entirely (openThread), which this
+   * guard also double-checks.
+   */
+  private gitReadIsCurrent(
+    generation: number,
+    scope: 'status' | 'diff' | 'log',
+    threadId: string,
+    workspaceId: string,
+    path?: string
+  ): boolean {
+    return (
+      generation === this.gitReadGeneration &&
+      this.state.overlay === 'git' &&
+      this.state.git?.scope === scope &&
+      this.state.selectedThreadId === threadId &&
+      (this.state.thread?.thread.workspaceId ??
+        this.state.snapshot?.threads.find((thread) => thread.id === this.state.selectedThreadId)
+          ?.workspaceId) === workspaceId &&
+      (this.state.git?.path ?? undefined) === path
+    )
   }
 
   private handleGitKey(key: Keypress): void {

@@ -689,6 +689,35 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('partial view')
   })
 
+  it('banners a truncated status result too — a partial tree must never read as complete', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: true,
+          files: [
+            {
+              path: 'src/tui/render.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            }
+          ]
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('truncated')
+    expect(output).toContain('partial view')
+    expect(output).toContain('src/tui/render.ts')
+  })
+
   it('renders capability-unavailable calmly, and degrades to ASCII without the unicode branch glyph', () => {
     const unavailable = renderedLines(80, 24, 'git', {
       scope: 'status',
