@@ -186,6 +186,25 @@ describe('HostDeferredCommandBridge', () => {
     expect(created.record.commandName).toBe('thread.record.delete')
   })
 
+  it.each([
+    'workspace.record.upsert',
+    'workspace.record.remove',
+    'workspace.records.clear'
+  ] as const)('persists %s in the deferred-command registry', (commandName) => {
+    const bridge = open()
+    const created = bridge.register(
+      baseRegister({
+        deferredId: `def-${commandName}`,
+        commandId: `cmd-${commandName}`,
+        idempotencyKey: `desktop:client-desktop-1:${fingerprint(commandName).slice(0, 36)}`,
+        commandFingerprint: fingerprint(commandName),
+        commandName,
+        challengeId: `approval-${commandName}`
+      })
+    )
+    expect(created.kind).toBe('created')
+  })
+
   it('fails closed on actor / challenge / command mismatches at register', () => {
     const bridge = open()
     expect(bridge.register(baseRegister()).kind).toBe('created')

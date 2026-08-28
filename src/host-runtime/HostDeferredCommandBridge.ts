@@ -69,6 +69,9 @@ const HOST_COMMAND_NAME_SET = new Set<string>([
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear',
   'ping'
 ])
 

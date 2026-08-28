@@ -18,6 +18,9 @@ const names: readonly HostCommandName[] = [
   'channel.close',
   'thread.select',
   'workspace.register',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear',
   'thread.create',
   'thread.configure',
   'thread.archive',
@@ -70,6 +73,9 @@ function targetFor(name: HostCommandName): Record<string, string> {
     case 'thread.configure':
     case 'thread.archive':
       return { threadId: 'thread-id' }
+    case 'workspace.record.upsert':
+    case 'workspace.record.remove':
+      return { workspaceId: 'workspace-id' }
     case 'provider.auth.begin':
       return { providerId: 'provider-id' }
     case 'provider.auth.cancel':

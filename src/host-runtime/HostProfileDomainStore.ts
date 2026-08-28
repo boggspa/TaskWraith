@@ -633,6 +633,108 @@ export class HostProfileDomainStore {
     return next
   }
 
+  upsertWorkspaceRecord(input: {
+    workspaceId: string
+    record: {
+      path: string
+      displayName: string
+      createdAt: number
+      lastOpenedAt: number
+      pinned: boolean
+      branch?: string
+      geminiWorktree?: { enabled: boolean; name?: string }
+    }
+  }): HostProfileWorkspace {
+    this.assertAuthority()
+    this.requireId(input.workspaceId)
+    const path = this.requireText(input.record.path, MAX_TEXT)
+    const realPath = this.assertWorkspaceDirectory(path)
+    const displayName = this.requireText(input.record.displayName, 200)
+    if (
+      !Number.isSafeInteger(input.record.createdAt) ||
+      input.record.createdAt < 0 ||
+      !Number.isSafeInteger(input.record.lastOpenedAt) ||
+      input.record.lastOpenedAt < 0 ||
+      typeof input.record.pinned !== 'boolean'
+    ) {
+      throw new Error('Invalid workspace record')
+    }
+    const branch =
+      input.record.branch === undefined ? undefined : this.requireText(input.record.branch, 512)
+    let geminiWorktree: Record<string, unknown> | undefined
+    if (input.record.geminiWorktree !== undefined) {
+      if (typeof input.record.geminiWorktree.enabled !== 'boolean') {
+        throw new Error('Invalid workspace record')
+      }
+      geminiWorktree = { enabled: input.record.geminiWorktree.enabled }
+      if (input.record.geminiWorktree.name !== undefined) {
+        geminiWorktree.name = this.requireText(input.record.geminiWorktree.name, 200)
+      }
+    }
+    const current = [...this.listWorkspaces()]
+    const existing = current.find((workspace) => workspace.id === input.workspaceId)
+    if (
+      current.some(
+        (workspace) => workspace.id !== input.workspaceId && workspace.realPath === realPath
+      )
+    ) {
+      throw new Error('Workspace path is already registered')
+    }
+    const next: HostProfileWorkspace = {
+      ...(existing ?? {}),
+      id: input.workspaceId,
+      path,
+      realPath,
+      displayName,
+      createdAt: input.record.createdAt,
+      lastOpenedAt: input.record.lastOpenedAt,
+      pinned: input.record.pinned,
+      updatedAt: this.now()
+    }
+    const mutableNext = next as Record<string, unknown>
+    if (branch !== undefined) mutableNext.branch = branch
+    if (geminiWorktree !== undefined) {
+      mutableNext.geminiWorktree = geminiWorktree
+    }
+    const records = existing
+      ? current.map((workspace) => (workspace.id === input.workspaceId ? next : workspace))
+      : [...current, next]
+    atomicJson(
+      join(this.profilePath, HOST_PROFILE_WORKSPACES_FILENAME),
+      records,
+      MAX_WORKSPACES_BYTES,
+      this.beforeAtomicPublish
+    )
+    return next
+  }
+
+  removeWorkspaceRecord(workspaceId: string): boolean {
+    this.assertAuthority()
+    this.requireId(workspaceId)
+    const current = [...this.listWorkspaces()]
+    if (!current.some((workspace) => workspace.id === workspaceId)) return false
+    atomicJson(
+      join(this.profilePath, HOST_PROFILE_WORKSPACES_FILENAME),
+      current.filter((workspace) => workspace.id !== workspaceId),
+      MAX_WORKSPACES_BYTES,
+      this.beforeAtomicPublish
+    )
+    return true
+  }
+
+  clearWorkspaceRecords(): number {
+    this.assertAuthority()
+    const count = this.listWorkspaces().length
+    if (count === 0) return 0
+    atomicJson(
+      join(this.profilePath, HOST_PROFILE_WORKSPACES_FILENAME),
+      [],
+      MAX_WORKSPACES_BYTES,
+      this.beforeAtomicPublish
+    )
+    return count
+  }
+
   createThread(input: {
     scope: 'global' | 'workspace'
     workspaceId?: string

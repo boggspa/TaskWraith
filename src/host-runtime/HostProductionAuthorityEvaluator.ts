@@ -107,7 +107,10 @@ const RESPONSE_COMMANDS: ReadonlySet<HostCommandName> = new Set([
  */
 const DESKTOP_INTERNAL_COMMANDS: ReadonlySet<HostCommandName> = new Set([
   'thread.record.persist',
-  'thread.record.delete'
+  'thread.record.delete',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear'
 ])
 
 /**

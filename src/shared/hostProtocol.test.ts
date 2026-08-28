@@ -688,6 +688,59 @@ describe('Host protocol Wave 2A contract', () => {
     ).toMatchObject({ ok: false, error: 'thread.record.delete has unknown argument keys' })
   })
 
+  it('accepts bounded Desktop workspace record commands without caller-asserted realPath', () => {
+    const upsert = decodeHostCommand(
+      sampleCommand({
+        name: 'workspace.record.upsert',
+        target: { workspaceId: 'workspace-1' },
+        arguments: {
+          path: '/workspace',
+          displayName: 'Workspace',
+          createdAt: 10,
+          lastOpenedAt: 20,
+          pinned: false,
+          branch: 'main',
+          geminiWorktree: { enabled: true, name: 'agy' }
+        }
+      })
+    )
+    expect(upsert.ok).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.record.upsert',
+          target: { workspaceId: 'workspace-1' },
+          arguments: {
+            path: '/workspace',
+            realPath: '/caller-asserted',
+            displayName: 'Workspace',
+            createdAt: 10,
+            lastOpenedAt: 20,
+            pinned: false
+          }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'workspace.record.upsert has unknown argument keys' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.record.remove',
+          target: { workspaceId: 'workspace-1' },
+          arguments: {}
+        })
+      ).ok
+    ).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.records.clear',
+          target: {},
+          arguments: {}
+        })
+      ).ok
+    ).toBe(true)
+  })
+
   it('requires typed question.answer and approval.decide arguments', () => {
     const answered = decodeHostCommand(
       sampleCommand({

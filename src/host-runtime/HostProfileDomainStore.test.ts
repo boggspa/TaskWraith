@@ -1,4 +1,12 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -40,6 +48,62 @@ describe('HostProfileDomainStore', () => {
     expect(second.realPath).toBe(first.realPath)
     expect(store.listWorkspaces()).toHaveLength(1)
     expect(authority.assertProfileAuthority).toHaveBeenCalled()
+  })
+
+  it('upserts, removes, and clears Desktop workspace records through Host-owned semantics', () => {
+    const { store, workspace } = open()
+    const created = store.upsertWorkspaceRecord({
+      workspaceId: 'workspace-desktop-1',
+      record: {
+        path: workspace,
+        displayName: 'Desktop workspace',
+        createdAt: 10,
+        lastOpenedAt: 20,
+        pinned: false,
+        branch: 'main',
+        geminiWorktree: { enabled: true, name: 'agy' }
+      }
+    })
+    expect(created).toMatchObject({
+      id: 'workspace-desktop-1',
+      path: workspace,
+      realPath: realpathSync(workspace),
+      pinned: false,
+      branch: 'main',
+      geminiWorktree: { enabled: true, name: 'agy' }
+    })
+    const updated = store.upsertWorkspaceRecord({
+      workspaceId: created.id,
+      record: {
+        path: workspace,
+        displayName: 'Desktop workspace',
+        createdAt: 10,
+        lastOpenedAt: 30,
+        pinned: true,
+        branch: 'feature'
+      }
+    })
+    expect(updated).toMatchObject({
+      pinned: true,
+      branch: 'feature',
+      lastOpenedAt: 30,
+      geminiWorktree: { enabled: true, name: 'agy' }
+    })
+    expect(store.removeWorkspaceRecord(created.id)).toBe(true)
+    expect(store.removeWorkspaceRecord(created.id)).toBe(false)
+
+    store.upsertWorkspaceRecord({
+      workspaceId: 'workspace-desktop-2',
+      record: {
+        path: workspace,
+        displayName: 'Second',
+        createdAt: 40,
+        lastOpenedAt: 50,
+        pinned: false
+      }
+    })
+    expect(store.clearWorkspaceRecords()).toBe(1)
+    expect(store.listWorkspaces()).toEqual([])
   })
 
   it('preserves unknown workspace/chat fields across narrow updates and restart', () => {

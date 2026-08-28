@@ -199,6 +199,56 @@ afterEach(() => {
 })
 
 describe('HostNodeDomainPorts', () => {
+  it('allows only the exact Desktop Host actor to mutate workspace records', async () => {
+    const { domain, store, workspace } = open()
+    const upsert = desktopCommand(
+      'workspace.record.upsert',
+      'cmd-workspace-upsert',
+      { workspaceId: 'workspace-desktop-1' },
+      {
+        path: workspace,
+        displayName: 'Desktop workspace',
+        createdAt: 10,
+        lastOpenedAt: 20,
+        pinned: false,
+        branch: 'main'
+      }
+    )
+    expect(domain.evaluateAuthority(desktopContext, upsert)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, upsert, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_record_upserted' })
+    expect(store.listWorkspaces()).toEqual([
+      expect.objectContaining({ id: 'workspace-desktop-1', branch: 'main' })
+    ])
+
+    const tuiRemove = command(
+      'workspace.record.remove',
+      'cmd-workspace-remove-tui',
+      { workspaceId: 'workspace-desktop-1' },
+      {}
+    )
+    expect(domain.evaluateAuthority(context, tuiRemove)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+
+    const remove = desktopCommand(
+      'workspace.record.remove',
+      'cmd-workspace-remove',
+      { workspaceId: 'workspace-desktop-1' },
+      {}
+    )
+    await expect(
+      domain.executeCommand(desktopContext, remove, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_record_removed' })
+
+    const clear = desktopCommand('workspace.records.clear', 'cmd-workspaces-clear', {}, {})
+    await expect(
+      domain.executeCommand(desktopContext, clear, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_records_already_empty' })
+  })
+
   it('executes chat-kind configuration against the standalone Host-owned thread store', async () => {
     const { domain, store, workspace } = open()
     const registered = store.registerWorkspace({ path: workspace })

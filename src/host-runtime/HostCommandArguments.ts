@@ -475,6 +475,85 @@ function validateWorkspaceRegister(command: HostCommand): HostDecodeResult<Canon
   return { ok: true, value: { target: target.value, arguments: output } }
 }
 
+function validateWorkspaceRecordUpsert(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'workspaceId', 'workspace.record.upsert')
+  if (!target.ok) return target
+  const args = command.arguments
+  const allowed = [
+    'path',
+    'displayName',
+    'createdAt',
+    'lastOpenedAt',
+    'pinned',
+    'branch',
+    'geminiWorktree'
+  ] as const
+  for (const key of Object.keys(args)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return fail('workspace.record.upsert has unknown argument keys')
+    }
+  }
+  if (
+    !isNonEmptyString(args.path, HOST_PROTOCOL_MAX_STRING) ||
+    !isNonEmptyString(args.displayName, HOST_PROTOCOL_MAX_SHORT) ||
+    !isNonNegativeInt(args.createdAt) ||
+    !isNonNegativeInt(args.lastOpenedAt) ||
+    typeof args.pinned !== 'boolean'
+  ) {
+    return fail('workspace.record.upsert arguments are invalid')
+  }
+  if (args.branch !== undefined && !isNonEmptyString(args.branch, HOST_PROTOCOL_MAX_SHORT)) {
+    return fail('workspace.record.upsert branch is invalid')
+  }
+  let geminiWorktree: Record<string, unknown> | undefined
+  if (args.geminiWorktree !== undefined) {
+    if (!isRecord(args.geminiWorktree)) {
+      return fail('workspace.record.upsert geminiWorktree is invalid')
+    }
+    const keys = Object.keys(args.geminiWorktree)
+    if (keys.some((key) => key !== 'enabled' && key !== 'name')) {
+      return fail('workspace.record.upsert geminiWorktree has unknown keys')
+    }
+    if (typeof args.geminiWorktree.enabled !== 'boolean') {
+      return fail('workspace.record.upsert geminiWorktree is invalid')
+    }
+    if (
+      args.geminiWorktree.name !== undefined &&
+      !isNonEmptyString(args.geminiWorktree.name, HOST_PROTOCOL_MAX_SHORT)
+    ) {
+      return fail('workspace.record.upsert geminiWorktree name is invalid')
+    }
+    geminiWorktree = { enabled: args.geminiWorktree.enabled }
+    if (args.geminiWorktree.name !== undefined) geminiWorktree.name = args.geminiWorktree.name
+  }
+  const output: Record<string, unknown> = {
+    path: args.path,
+    displayName: args.displayName,
+    createdAt: args.createdAt,
+    lastOpenedAt: args.lastOpenedAt,
+    pinned: args.pinned
+  }
+  if (args.branch !== undefined) output.branch = args.branch
+  if (geminiWorktree !== undefined) output.geminiWorktree = geminiWorktree
+  return { ok: true, value: { target: target.value, arguments: output } }
+}
+
+function validateWorkspaceRecordRemove(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'workspaceId', 'workspace.record.remove')
+  if (!target.ok) return target
+  const args = emptyArguments(command.arguments, 'workspace.record.remove')
+  if (!args.ok) return args
+  return { ok: true, value: { target: target.value, arguments: args.value } }
+}
+
+function validateWorkspaceRecordsClear(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = emptyTarget(command.target, 'workspace.records.clear')
+  if (!target.ok) return target
+  const args = emptyArguments(command.arguments, 'workspace.records.clear')
+  if (!args.ok) return args
+  return { ok: true, value: { target: target.value, arguments: args.value } }
+}
+
 function validateThreadCreate(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const target = emptyTarget(command.target, 'thread.create')
   if (!target.ok) return target
@@ -651,6 +730,9 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'channel.close': validateChannelClose,
   'thread.select': (command) => validateThreadOnlyEmptyArgs(command, 'thread.select'),
   'workspace.register': validateWorkspaceRegister,
+  'workspace.record.upsert': validateWorkspaceRecordUpsert,
+  'workspace.record.remove': validateWorkspaceRecordRemove,
+  'workspace.records.clear': validateWorkspaceRecordsClear,
   'thread.create': validateThreadCreate,
   'thread.configure': validateThreadConfigure,
   'thread.archive': validateThreadArchive,

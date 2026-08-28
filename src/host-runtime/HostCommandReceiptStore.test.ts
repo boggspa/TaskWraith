@@ -180,6 +180,24 @@ describe('HostCommandReceiptStore', () => {
     expect(begun.receipt.commandName).toBe('thread.record.delete')
   })
 
+  it.each([
+    'workspace.record.upsert',
+    'workspace.record.remove',
+    'workspace.records.clear'
+  ] as const)('persists %s as a durable Desktop workspace command name', (commandName) => {
+    const store = openStore()
+    const begun = store.begin(
+      baseInput({
+        commandId: 'workspace-command-1',
+        idempotencyKey: 'workspace-command-key-1',
+        commandName,
+        target: { kind: 'workspace', id: 'workspace-1' }
+      })
+    )
+    expect(begun.kind).toBe('created')
+    if (begun.kind === 'created') expect(begun.receipt.commandName).toBe(commandName)
+  })
+
   it('refreshes position at terminal completion and preserves it through reopen/compaction', () => {
     position = { generation: 3, cursor: 7 }
     const store = openStore()

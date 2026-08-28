@@ -28,6 +28,9 @@ const names: readonly HostCommandName[] = [
   'channel.close',
   'thread.select',
   'workspace.register',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear',
   'thread.create',
   'thread.configure',
   'thread.archive',
@@ -115,6 +118,23 @@ function validShape(name: HostCommandName): {
       }
     case 'workspace.register':
       return { target: {}, args: { path: '/workspace' } }
+    case 'workspace.record.upsert':
+      return {
+        target: { workspaceId: 'workspace-id' },
+        args: {
+          path: '/workspace',
+          displayName: 'Workspace',
+          createdAt: 10,
+          lastOpenedAt: 20,
+          pinned: false,
+          branch: 'main',
+          geminiWorktree: { enabled: true, name: 'agy' }
+        }
+      }
+    case 'workspace.record.remove':
+      return { target: { workspaceId: 'workspace-id' }, args: {} }
+    case 'workspace.records.clear':
+      return { target: {}, args: {} }
     case 'thread.create':
       return { target: {}, args: { scope: 'global', title: 'New thread' } }
     case 'thread.configure':

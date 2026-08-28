@@ -659,6 +659,9 @@ export type HostCommandName =
   | 'channel.close'
   | 'thread.select'
   | 'workspace.register'
+  | 'workspace.record.upsert'
+  | 'workspace.record.remove'
+  | 'workspace.records.clear'
   | 'thread.create'
   | 'thread.configure'
   | 'thread.record.persist'
@@ -944,6 +947,9 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'channel.close',
   'thread.select',
   'workspace.register',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear',
   'thread.create',
   'thread.configure',
   'thread.record.persist',
@@ -1283,6 +1289,70 @@ function decodeThreadRecordDeleteArguments(
   return { ok: true, value: { expectedRevision: value.expectedRevision } }
 }
 
+function decodeWorkspaceRecordUpsertArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const allowed = [
+    'path',
+    'displayName',
+    'createdAt',
+    'lastOpenedAt',
+    'pinned',
+    'branch',
+    'geminiWorktree'
+  ] as const
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return { ok: false, error: 'workspace.record.upsert has unknown argument keys' }
+    }
+  }
+  if (
+    !isNonEmptyString(value.path, HOST_PROTOCOL_MAX_STRING) ||
+    !isNonEmptyString(value.displayName, HOST_PROTOCOL_MAX_SHORT) ||
+    !isNonNegativeInt(value.createdAt) ||
+    !isNonNegativeInt(value.lastOpenedAt) ||
+    typeof value.pinned !== 'boolean'
+  ) {
+    return { ok: false, error: 'workspace.record.upsert arguments are invalid' }
+  }
+  if (value.branch !== undefined && !isNonEmptyString(value.branch, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: 'workspace.record.upsert branch is invalid' }
+  }
+  let geminiWorktree: Record<string, unknown> | undefined
+  if (value.geminiWorktree !== undefined) {
+    if (!isRecord(value.geminiWorktree)) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree is invalid' }
+    }
+    const keys = Object.keys(value.geminiWorktree)
+    if (keys.some((key) => key !== 'enabled' && key !== 'name')) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree has unknown keys' }
+    }
+    if (typeof value.geminiWorktree.enabled !== 'boolean') {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree is invalid' }
+    }
+    if (
+      value.geminiWorktree.name !== undefined &&
+      !isNonEmptyString(value.geminiWorktree.name, HOST_PROTOCOL_MAX_SHORT)
+    ) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree name is invalid' }
+    }
+    geminiWorktree = { enabled: value.geminiWorktree.enabled }
+    if (value.geminiWorktree.name !== undefined) {
+      geminiWorktree.name = value.geminiWorktree.name
+    }
+  }
+  const output: Record<string, unknown> = {
+    path: value.path,
+    displayName: value.displayName,
+    createdAt: value.createdAt,
+    lastOpenedAt: value.lastOpenedAt,
+    pinned: value.pinned
+  }
+  if (value.branch !== undefined) output.branch = value.branch
+  if (geminiWorktree !== undefined) output.geminiWorktree = geminiWorktree
+  return { ok: true, value: output }
+}
+
 /**
  * Deterministic capability intersection: host offer ∩ client request.
  * Preserves host offer order, dedupes, and never invents capabilities.
@@ -1570,6 +1640,12 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     return { ok: false, error: 'target.threadId is required' }
   }
   if (
+    (value.name === 'workspace.record.upsert' || value.name === 'workspace.record.remove') &&
+    !isNonEmptyString(target.value.workspaceId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return { ok: false, error: 'target.workspaceId is required' }
+  }
+  if (
     value.name === 'question.answer' &&
     !isNonEmptyString(target.value.questionId, HOST_PROTOCOL_MAX_ID)
   ) {
@@ -1600,6 +1676,22 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     const deleteArgs = decodeThreadRecordDeleteArguments(args.value)
     if (!deleteArgs.ok) return deleteArgs
     args = { ok: true, value: deleteArgs.value }
+  }
+  if (value.name === 'workspace.record.upsert') {
+    const workspaceArgs = decodeWorkspaceRecordUpsertArguments(args.value)
+    if (!workspaceArgs.ok) return workspaceArgs
+    args = { ok: true, value: workspaceArgs.value }
+  }
+  if (value.name === 'workspace.record.remove' && Object.keys(args.value).length !== 0) {
+    return { ok: false, error: 'workspace.record.remove arguments must be empty' }
+  }
+  if (value.name === 'workspace.records.clear') {
+    if (Object.keys(target.value).length !== 0) {
+      return { ok: false, error: 'workspace.records.clear target must be empty' }
+    }
+    if (Object.keys(args.value).length !== 0) {
+      return { ok: false, error: 'workspace.records.clear arguments must be empty' }
+    }
   }
   if (
     (value.name === 'channel.member.revoke' || value.name === 'channel.close') &&

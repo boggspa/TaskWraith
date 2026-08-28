@@ -53,6 +53,13 @@ import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
+const DESKTOP_RECORD_MUTATION_NAMES = new Set<HostCommand['name']>([
+  'thread.record.persist',
+  'thread.record.delete',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear'
+])
 
 export interface HostNodeDomainPortsOptions {
   /** Canonical profile directory used only for owner-bound large-record transfer artifacts. */
@@ -278,7 +285,7 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return { decision: 'deny', reason: 'invalid_command' }
 
-    if (command.name === 'thread.record.persist' || command.name === 'thread.record.delete') {
+    if (DESKTOP_RECORD_MUTATION_NAMES.has(command.name)) {
       if (!exactDesktopRecordMutationContext(context, command)) {
         return { decision: 'deny', reason: 'standalone_desktop_actor_required' }
       }
@@ -371,6 +378,16 @@ export class HostNodeDomainPorts {
     const decoded = validateHostCommandArguments(command)
     if (!decoded.ok) return failed('command_invalid')
 
+    if (command.name === 'workspace.record.upsert') {
+      return this.upsertWorkspaceRecord(decoded.value)
+    }
+    if (command.name === 'workspace.record.remove') {
+      return this.removeWorkspaceRecord(decoded.value)
+    }
+    if (command.name === 'workspace.records.clear') {
+      return this.clearWorkspaceRecords()
+    }
+
     if (command.name === 'thread.record.delete') {
       return this.deleteThreadRecord(decoded.value)
     }
@@ -452,6 +469,50 @@ export class HostNodeDomainPorts {
       return failed('run_not_started')
     }
     return { status: 'succeeded', resultSummary: 'run_started' }
+  }
+
+  private upsertWorkspaceRecord(command: HostCommand): HostCommandExecutionResult {
+    try {
+      this.options.store.upsertWorkspaceRecord({
+        workspaceId: command.target.workspaceId,
+        record: command.arguments as {
+          path: string
+          displayName: string
+          createdAt: number
+          lastOpenedAt: number
+          pinned: boolean
+          branch?: string
+          geminiWorktree?: { enabled: boolean; name?: string }
+        }
+      })
+      return { status: 'succeeded', resultSummary: 'workspace_record_upserted' }
+    } catch {
+      return failed('workspace_record_upsert_failed')
+    }
+  }
+
+  private removeWorkspaceRecord(command: HostCommand): HostCommandExecutionResult {
+    try {
+      const removed = this.options.store.removeWorkspaceRecord(command.target.workspaceId)
+      return {
+        status: 'succeeded',
+        resultSummary: removed ? 'workspace_record_removed' : 'workspace_record_already_absent'
+      }
+    } catch {
+      return failed('workspace_record_remove_failed')
+    }
+  }
+
+  private clearWorkspaceRecords(): HostCommandExecutionResult {
+    try {
+      const cleared = this.options.store.clearWorkspaceRecords()
+      return {
+        status: 'succeeded',
+        resultSummary: cleared > 0 ? 'workspace_records_cleared' : 'workspace_records_already_empty'
+      }
+    } catch {
+      return failed('workspace_records_clear_failed')
+    }
   }
 
   private deleteThreadRecord(command: HostCommand): HostCommandExecutionResult {
