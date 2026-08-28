@@ -162,7 +162,13 @@ export function TerminalWorkbench({
   )
 }
 
-function TerminalPane({ sessionId, workspacePath, onClose }: { sessionId: string, workspacePath: string, onClose: () => void }) {
+export interface TerminalPaneProps {
+  sessionId: string
+  workspacePath: string
+  onClose: () => void
+}
+
+export function TerminalPane({ sessionId, workspacePath, onClose }: TerminalPaneProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)

@@ -38,6 +38,7 @@ export interface HostMissionControlModel {
 export interface HostMissionControlProps {
   readonly state: HostProjectionState
   readonly commands?: HostCommandController | null
+  readonly presentation?: 'disclosure' | 'pane'
 }
 
 function missionPriority(status: HostProjectedMission['status']): number {
@@ -130,6 +131,12 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
   }
 }
 
+export function formatHostMissionControlSummary(model: HostMissionControlModel): string {
+  return `${model.activeMissionCount} active · ${model.participantCount} participant${
+    model.participantCount === 1 ? '' : 's'
+  }${model.channels ? ` · ${model.channels.length} channel${model.channels.length === 1 ? '' : 's'}` : ''}`
+}
+
 function statusClass(status: string): string {
   if (status === 'active' || status === 'running' || status === 'completed') return status
   if (status === 'blocked' || status === 'failed') return status
@@ -160,7 +167,11 @@ function commandStateFor(commands: HostCommandController | null | undefined) {
   )
 }
 
-export function HostMissionControl({ state, commands }: HostMissionControlProps) {
+export function HostMissionControl({
+  state,
+  commands,
+  presentation = 'disclosure'
+}: HostMissionControlProps) {
   const [commandState, setCommandState] = useState<HostCommandControllerState>(() =>
     commandStateFor(commands)
   )
@@ -170,9 +181,7 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
   }, [commands])
 
   const model = projectHostMissionControl(state)
-  const summary = `${model.activeMissionCount} active · ${model.participantCount} participant${
-    model.participantCount === 1 ? '' : 's'
-  }${model.channels ? ` · ${model.channels.length} channel${model.channels.length === 1 ? '' : 's'}` : ''}`
+  const summary = formatHostMissionControlSummary(model)
   const runById = new Map(model.runs.map((run) => [run.runId, run]))
   const activeRunThreadIds = [
     ...new Set(
@@ -214,18 +223,8 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
     })
   }
 
-  return (
-    <details className="host-mission-control" aria-label="Mission Control">
-      <summary aria-label={`Mission Control, ${summary}`}>
-        <span className="host-mission-control-summary-copy">
-          <span className="host-mission-control-title">Mission Control</span>
-          <span className="host-mission-control-summary">{summary}</span>
-        </span>
-        <span className="host-mission-control-chevron" aria-hidden>
-          ›
-        </span>
-      </summary>
-
+  const body = (
+    <>
       <div className="host-mission-control-body">
         <div className="host-mission-control-position" role="status" aria-live="polite">
           <span
@@ -535,6 +534,32 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
           </>
         )}
       </div>
+    </>
+  )
+
+  if (presentation === 'pane') {
+    return (
+      <section
+        className="host-mission-control host-mission-control--pane"
+        aria-label={`Mission Control, ${summary}`}
+      >
+        {body}
+      </section>
+    )
+  }
+
+  return (
+    <details className="host-mission-control" aria-label="Mission Control">
+      <summary aria-label={`Mission Control, ${summary}`}>
+        <span className="host-mission-control-summary-copy">
+          <span className="host-mission-control-title">Mission Control</span>
+          <span className="host-mission-control-summary">{summary}</span>
+        </span>
+        <span className="host-mission-control-chevron" aria-hidden>
+          ›
+        </span>
+      </summary>
+      {body}
     </details>
   )
 }

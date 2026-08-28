@@ -225,7 +225,7 @@ describe('HostStatusRow · rendered output', () => {
     expect(markup).toContain('TaskWraith Host')
   })
 
-  it('keeps Desktop Mission Control on the same authoritative Host projection', async () => {
+  it('keeps Mission Control out of the compact approvals popover', async () => {
     const store = new HostProjectionStore({
       fetchSnapshot: async () =>
         snapshot({
@@ -242,9 +242,10 @@ describe('HostStatusRow · rendered output', () => {
     await store.refresh()
 
     const markup = renderRow(store)
-    expect(markup).toContain('Mission Control')
-    expect(markup).toContain('Desktop parity')
-    expect(markup).toContain('Generation 3 · Cursor 42')
+    expect(markup).not.toContain('Mission Control')
+    expect(markup).not.toContain('Desktop parity')
+    expect(markup).not.toContain('Generation 3 · Cursor 42')
+    expect(markup).toContain('TaskWraith Host')
   })
 
   it('shows Connected with a lit LED when Host answered', async () => {

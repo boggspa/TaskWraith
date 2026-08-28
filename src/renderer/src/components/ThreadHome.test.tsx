@@ -1,14 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { ChatRecord } from '../../../main/store/types'
+import type { ChatRecord, WorkspaceRecord } from '../../../main/store/types'
 import {
   THREAD_HOME_RECENT_LIMIT,
   THREAD_HOME_SURFACES,
   ThreadHome,
+  ThreadHomeTerminalWorkspacePicker,
   buildThreadHomeRecentThreadOptions,
   buildThreadHomeThreadOptions,
   settleThreadHomeCanvasOpen,
+  settleThreadHomeTerminalOpen,
   type ThreadHomeCanvasOpenResult
 } from './ThreadHome'
 
@@ -23,6 +25,20 @@ const chat = (id: string, title: string, provider: ChatRecord['provider'] = 'cod
     updatedAt: 1,
     messages: []
   }) as unknown as ChatRecord
+
+const missionControl = {
+  phase: 'Live' as const,
+  summary: '3 active · 12 participants · 2 channels'
+}
+
+const workspace = (id: string, displayName: string, path: string): WorkspaceRecord => ({
+  id,
+  displayName,
+  path,
+  lastOpenedAt: 1,
+  createdAt: 1,
+  pinned: false
+})
 
 describe('buildThreadHomeThreadOptions', () => {
   it('shows only running threads in live order and uses panes only as annotations', () => {
@@ -106,18 +122,24 @@ describe('ThreadHome', () => {
             running: false
           }
         ]}
+        missionControl={missionControl}
         authorityChatId="a"
         mediaCount={4}
         onNewChat={vi.fn()}
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
+        onOpenMissionControl={vi.fn()}
+        onOpenTerminal={vi.fn()}
         onClosePane={vi.fn()}
         onActivate={vi.fn()}
       />
     )
 
     expect(html).toContain('aria-label="Thread Home"')
-    expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Alpha'))
+    expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Mission Control'))
+    expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Open Terminal'))
+    expect(html.indexOf('Open Terminal')).toBeLessThan(html.indexOf('>Active</div>'))
+    expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Alpha'))
     expect(html.indexOf('>Active</div>')).toBeLessThan(html.indexOf('Alpha'))
     expect(html.indexOf('Alpha')).toBeLessThan(html.indexOf('>Recents</div>'))
     expect(html.indexOf('Recents')).toBeLessThan(html.indexOf('Beta'))
@@ -144,6 +166,35 @@ describe('ThreadHome', () => {
       expect(html).toContain(surface.description)
     }
     expect(html).toContain('aria-label="4 media items"')
+    expect(html).toContain(
+      'aria-label="Open Mission Control. 3 active · 12 participants · 2 channels. Live"'
+    )
+    expect(html).toContain('thread-home-mission-control-card')
+    expect(html).toContain('aria-label="Open Terminal. Choose a workspace."')
+  })
+
+  it('asks which added workspace should become the terminal cwd', () => {
+    const onSelect = vi.fn()
+    const workspaces = [
+      workspace('alpha', 'Alpha repo', '/work/alpha'),
+      workspace('beta', 'Beta repo', '/work/beta')
+    ]
+    const html = renderToStaticMarkup(
+      <ThreadHomeTerminalWorkspacePicker workspaces={workspaces} onSelect={onSelect} />
+    )
+
+    expect(html).toContain('aria-label="Choose a terminal workspace"')
+    expect(html).toContain('The terminal starts with that workspace as its current directory.')
+    expect(html).toContain('Alpha repo')
+    expect(html).toContain('/work/alpha')
+    expect(html).toContain('Beta repo')
+    expect(html).toContain('/work/beta')
+    expect(html).toContain('aria-label="Open terminal in Alpha repo, /work/alpha"')
+
+    const empty = renderToStaticMarkup(
+      <ThreadHomeTerminalWorkspacePicker workspaces={[]} onSelect={onSelect} />
+    )
+    expect(empty).toContain('Add a workspace in the sidebar before opening a terminal.')
   })
 
   it('keeps presets visible but disabled without thread authority', () => {
@@ -152,9 +203,12 @@ describe('ThreadHome', () => {
         variant="main"
         threads={[]}
         recentThreads={[]}
+        missionControl={missionControl}
         onNewChat={vi.fn()}
         onSelectThread={vi.fn()}
         onSelectSurface={vi.fn()}
+        onOpenMissionControl={vi.fn()}
+        onOpenTerminal={vi.fn()}
       />
     )
     expect(html).toContain('aria-label="New Chat"')
@@ -172,12 +226,15 @@ describe('ThreadHome', () => {
           variant={variant}
           threads={[]}
           recentThreads={[]}
+          missionControl={missionControl}
           overviewSections={{
             heatmaps: <div>Heatmap content</div>
           }}
           onNewChat={vi.fn()}
           onSelectThread={vi.fn()}
           onSelectSurface={vi.fn()}
+          onOpenMissionControl={vi.fn()}
+          onOpenTerminal={vi.fn()}
         />
       )
 
@@ -237,8 +294,18 @@ describe('ThreadHome', () => {
     expect(rowRule).toContain('box-shadow: none')
     expect(rowRule).toContain('backdrop-filter: none')
     expect(css).toContain(
-      '.thread-home-surface-card:hover:not(:disabled),\n.thread-home-thread-row:hover {'
+      '.thread-home-surface-card:hover:not(:disabled),\n.thread-home-mission-control-card:hover,\n.thread-home-thread-row:hover {'
     )
+    const missionStart = css.indexOf('.thread-home-mission-control-card {')
+    const missionEnd = css.indexOf('}', missionStart)
+    const missionRule = css.slice(missionStart, missionEnd)
+    expect(missionRule).toContain('border: 1px solid transparent')
+    expect(missionRule).toContain('background: transparent')
+    const missionCardStart = css.indexOf('.thread-home-mission-control-card {', missionEnd)
+    const missionCardEnd = css.indexOf('}', missionCardStart)
+    const missionCardRule = css.slice(missionCardStart, missionCardEnd)
+    expect(missionCardRule).toContain('min-height: 74px')
+    expect(missionCardRule).not.toContain('min-height: 148px')
     expect(css).toContain("[data-reduce-motion='true'] .thread-home-thread-row:hover")
     expect(css).not.toContain('color-mix(in srgb, var(--accent) 9%, var(--surface-2))')
     const headingStart = css.indexOf('.thread-home-list-heading {')
@@ -278,6 +345,33 @@ describe('ThreadHome', () => {
     await settling
 
     expect(onDiscarded).toHaveBeenCalledWith('late-canvas')
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(onRejected).not.toHaveBeenCalled()
+  })
+
+  it('kills a terminal session that finishes opening after Thread Home moved on', async () => {
+    let resolveRequest: () => void = () => undefined
+    const request = new Promise<void>((resolve) => {
+      resolveRequest = resolve
+    })
+    let current = true
+    const onAccepted = vi.fn()
+    const onRejected = vi.fn()
+    const onDiscarded = vi.fn()
+    const settling = settleThreadHomeTerminalOpen({
+      request,
+      sessionId: 'late-terminal',
+      isCurrent: () => current,
+      onAccepted,
+      onRejected,
+      onDiscarded
+    })
+
+    current = false
+    resolveRequest()
+    await settling
+
+    expect(onDiscarded).toHaveBeenCalledWith('late-terminal')
     expect(onAccepted).not.toHaveBeenCalled()
     expect(onRejected).not.toHaveBeenCalled()
   })

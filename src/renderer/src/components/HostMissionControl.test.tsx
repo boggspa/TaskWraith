@@ -10,7 +10,11 @@ import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { HostCommandController } from '../lib/host/HostCommandController'
 import type { HostCommandRunOutcome } from '../lib/host/HostCommandClient'
 import { projectHostSnapshot } from '../lib/host/hostSnapshotProjection'
-import { HostMissionControl, projectHostMissionControl } from './HostMissionControl'
+import {
+  formatHostMissionControlSummary,
+  HostMissionControl,
+  projectHostMissionControl
+} from './HostMissionControl'
 
 function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
@@ -205,6 +209,19 @@ describe('projectHostMissionControl', () => {
 })
 
 describe('HostMissionControl', () => {
+  it('renders the current control layout as an always-open Thread Home pane', () => {
+    const state = stateFromSnapshot(missionFixture())
+    const model = projectHostMissionControl(state)
+    const markup = renderToStaticMarkup(<HostMissionControl state={state} presentation="pane" />)
+
+    expect(formatHostMissionControlSummary(model)).toBe('1 active · 30 participants')
+    expect(markup).toContain('host-mission-control--pane')
+    expect(markup).toContain('aria-label="Mission Control, 1 active · 30 participants"')
+    expect(markup).toContain('Mission timeline')
+    expect(markup).not.toContain('<details')
+    expect(markup).not.toContain('<summary')
+  })
+
   it('renders generation/cursor, mission and round timelines, outcomes, and every seat', () => {
     const markup = renderToStaticMarkup(
       <HostMissionControl state={stateFromSnapshot(missionFixture())} />

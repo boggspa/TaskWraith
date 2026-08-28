@@ -1917,6 +1917,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     key={multiview.panes[emptyPaneIndex]?.id || `empty-${emptyPaneIndex}`}
                     variant="pane"
                     chats={chats}
+                    workspaces={workspaces}
                     runningChatIds={runningChatIdsArray}
                     paneChatIds={multiview.paneChatIds}
                     authorityChat={currentChat}
@@ -2282,6 +2283,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               key={currentChatAppChatId || 'thread-home'}
               variant="main"
               chats={chats}
+              workspaces={workspaces}
               runningChatIds={runningChatIdsArray}
               paneChatIds={[currentChatAppChatId]}
               authorityChat={currentChat}

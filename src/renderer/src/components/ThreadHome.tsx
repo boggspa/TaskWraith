@@ -9,11 +9,13 @@ import {
   type ForwardedRef,
   type ReactNode
 } from 'react'
-import type { ChatRecord, ProviderId } from '../../../main/store/types'
+import type { ChatRecord, ProviderId, WorkspaceRecord } from '../../../main/store/types'
+import type { HostLifecycleSnapshot } from '../../../shared/hostLifecycle'
 import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
 import { ChatMediaDockPanel, type ChatMediaRef } from './ChatMediaPanel'
 import {
+  AppleTerminalIcon,
   ChatMediaIcon,
   GitCommitSymbolIcon,
   PlusSymbolIcon,
@@ -25,13 +27,33 @@ import { MeshCanvasPanel, type MeshCanvasPanelHandle } from './MeshCanvasPanel'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
+import { TerminalPane } from './TerminalWorkbench'
+import { useHostProjection } from '../hooks/useHostProjection'
 import { isSubThreadChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { selectRecentChats } from '../lib/recentChatsList'
 import { threadHomeRunStats, type ThreadHomeRunStats } from '../lib/threadHomeActivityStats'
+import { terminalSidebarStore } from '../lib/TerminalSidebarStore'
 import { isHideableUnstartedDraft } from '../lib/unstartedDraftFilter'
+import {
+  formatHostMissionControlSummary,
+  HostMissionControl,
+  projectHostMissionControl,
+  type HostMissionControlModel
+} from './HostMissionControl'
+import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
+import { applyHostLifecycleToProjectionState } from './HostStatusRow'
+import { HostLifecycleIpcClient } from '../lib/host/hostLifecycleIpcClient'
 
-export type ThreadHomeSurface = 'charts' | 'browser' | 'mesh' | 'sketch' | 'media' | 'simulator'
+export type ThreadHomeSurface =
+  | 'charts'
+  | 'browser'
+  | 'mesh'
+  | 'sketch'
+  | 'media'
+  | 'simulator'
+  | 'terminal'
+  | 'mission-control'
 
 export interface ThreadHomeSurfaceOption {
   id: ThreadHomeSurface
@@ -56,6 +78,11 @@ export interface ThreadHomeThreadOption {
   running: boolean
   stats?: ThreadHomeRunStats
   paneIndex?: number
+}
+
+export interface ThreadHomeMissionControlSummary {
+  phase: HostMissionControlModel['phase']
+  summary: string
 }
 
 /** Existing home-screen surfaces composed into the full Thread Home. */
@@ -164,10 +191,78 @@ function ThreadHomeSurfaceGlyph({ surface }: { surface: ThreadHomeSurface }): Re
   )
 }
 
+function ThreadHomeMissionControlGlyph(): ReactNode {
+  return (
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden>
+      <rect x="5" y="5" width="22" height="22" rx="6" />
+      <path d="M10 20.5v-5m6 5v-10m6 10v-7" />
+      <path d="M9.5 24h13" />
+      <circle cx="10" cy="12" r="1.2" />
+      <circle cx="22" cy="10" r="1.2" />
+    </svg>
+  )
+}
+
+export interface ThreadHomeTerminalWorkspacePickerProps {
+  workspaces: readonly WorkspaceRecord[]
+  busyWorkspacePath?: string | null
+  onSelect: (workspace: WorkspaceRecord) => void
+}
+
+export function ThreadHomeTerminalWorkspacePicker({
+  workspaces,
+  busyWorkspacePath,
+  onSelect
+}: ThreadHomeTerminalWorkspacePickerProps) {
+  return (
+    <section className="thread-home-terminal-picker" aria-label="Choose a terminal workspace">
+      <div className="thread-home-terminal-picker-heading">
+        <AppleTerminalIcon />
+        <span>
+          <strong>Choose a workspace</strong>
+          <small>The terminal starts with that workspace as its current directory.</small>
+        </span>
+      </div>
+      {workspaces.length === 0 ? (
+        <div className="thread-home-surface-empty">
+          Add a workspace in the sidebar before opening a terminal.
+        </div>
+      ) : (
+        <div className="thread-home-terminal-workspace-list">
+          {workspaces.map((workspace) => {
+            const busy = busyWorkspacePath === workspace.path
+            return (
+              <button
+                type="button"
+                key={workspace.id}
+                disabled={Boolean(busyWorkspacePath)}
+                onClick={() => onSelect(workspace)}
+                aria-label={`Open terminal in ${workspace.displayName}, ${workspace.path}`}
+              >
+                <span className="thread-home-terminal-workspace-copy">
+                  <strong>{workspace.displayName}</strong>
+                  <small>{workspace.path}</small>
+                </span>
+                <span>{busy ? 'Opening…' : 'Open'}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function createThreadHomeTerminalSessionId(): string {
+  const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+  return `thread-home-${suffix}`
+}
+
 export interface ThreadHomeProps {
   variant: 'main' | 'pane'
   threads: readonly ThreadHomeThreadOption[]
   recentThreads: readonly ThreadHomeThreadOption[]
+  missionControl: ThreadHomeMissionControlSummary
   authorityChatId?: string | null
   mediaCount?: number
   busySurface?: ThreadHomeSurface | null
@@ -176,6 +271,8 @@ export interface ThreadHomeProps {
   onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onSelectSurface: (surface: ThreadHomeSurface) => void
+  onOpenMissionControl: () => void
+  onOpenTerminal: () => void
   onClosePane?: () => void
   onActivate?: () => void
 }
@@ -185,6 +282,7 @@ export function ThreadHome({
   variant,
   threads,
   recentThreads,
+  missionControl,
   authorityChatId,
   mediaCount = 0,
   busySurface,
@@ -193,6 +291,8 @@ export function ThreadHome({
   onNewChat,
   onSelectThread,
   onSelectSurface,
+  onOpenMissionControl,
+  onOpenTerminal,
   onClosePane,
   onActivate
 }: ThreadHomeProps) {
@@ -256,7 +356,7 @@ export function ThreadHome({
           <div className="thread-home-thread-list">
             <button
               type="button"
-              className="thread-home-thread-row thread-home-new-chat-row"
+              className="thread-home-thread-row thread-home-primary-action-row thread-home-new-chat-row"
               onClick={onNewChat}
               aria-label="New Chat"
             >
@@ -268,6 +368,47 @@ export function ThreadHome({
                 <small>Start a new thread</small>
               </span>
               <span className="thread-home-thread-provider-label">New</span>
+            </button>
+            <button
+              type="button"
+              className="thread-home-mission-control-card"
+              onClick={onOpenMissionControl}
+              aria-label={`Open Mission Control. ${missionControl.summary}. ${missionControl.phase}`}
+            >
+              <span className="thread-home-mission-control-icon">
+                <ThreadHomeMissionControlGlyph />
+              </span>
+              <span className="thread-home-mission-control-copy">
+                <strong>Mission Control</strong>
+                <span>{missionControl.summary}</span>
+              </span>
+              <span className="thread-home-mission-control-status">
+                <i
+                  className={`host-mission-control-dot is-${
+                    missionControl.phase === 'Live' ? 'live' : 'stale'
+                  }`}
+                  aria-hidden
+                />
+                {missionControl.phase}
+              </span>
+              <span className="thread-home-mission-control-chevron" aria-hidden>
+                ›
+              </span>
+            </button>
+            <button
+              type="button"
+              className="thread-home-thread-row thread-home-primary-action-row thread-home-terminal-card"
+              onClick={onOpenTerminal}
+              aria-label="Open Terminal. Choose a workspace."
+            >
+              <span className="thread-home-thread-provider" aria-hidden>
+                <AppleTerminalIcon />
+              </span>
+              <span className="thread-home-thread-copy">
+                <strong>Terminal</strong>
+                <small>Choose a workspace</small>
+              </span>
+              <span className="thread-home-thread-provider-label">Open</span>
             </button>
             <div className="thread-home-list-heading" role="heading" aria-level={3}>
               Active
@@ -454,6 +595,7 @@ export function ThreadHomeCharts({ chatId }: { chatId: string }) {
 export interface ThreadHomeWorkspaceProps {
   variant: 'main' | 'pane'
   chats: readonly ChatRecord[]
+  workspaces: readonly WorkspaceRecord[]
   runningChatIds: readonly string[]
   paneChatIds: readonly (string | null)[]
   authorityChat: ChatRecord | null
@@ -482,6 +624,32 @@ export type ThreadHomeCanvasOpenResult =
   | ThreadHomeCanvasOpenSuccess
   | { ok: false; error?: string }
   | undefined
+
+export async function settleThreadHomeTerminalOpen(input: {
+  request: Promise<unknown>
+  sessionId: string
+  isCurrent: () => boolean
+  onAccepted: () => void
+  onRejected: (message: string) => void
+  onDiscarded: (sessionId: string) => void | Promise<unknown>
+}): Promise<void> {
+  try {
+    await input.request
+    if (!input.isCurrent()) {
+      try {
+        await input.onDiscarded(input.sessionId)
+      } catch {
+        // Best-effort cleanup: the terminal may already have exited.
+      }
+      return
+    }
+    input.onAccepted()
+  } catch (error) {
+    if (input.isCurrent()) {
+      input.onRejected(error instanceof Error ? error.message : 'Could not open Terminal.')
+    }
+  }
+}
 
 /** Settle one embedded-canvas request without leaking a late successful view. */
 export async function settleThreadHomeCanvasOpen(input: {
@@ -519,6 +687,7 @@ function ThreadHomeWorkspaceInner(
   {
     variant,
     chats,
+    workspaces,
     runningChatIds,
     paneChatIds,
     authorityChat,
@@ -533,6 +702,41 @@ function ThreadHomeWorkspaceInner(
   }: ThreadHomeWorkspaceProps,
   ref: ForwardedRef<ThreadHomeWorkspaceHandle>
 ) {
+  const hostProjectionStore = useHostProjectionStore()
+  const hostCommandController = useHostCommandController()
+  const hostProjectionSourceState = useHostProjection(hostProjectionStore)
+  const [hostLifecycleClient] = useState(() => new HostLifecycleIpcClient())
+  const [hostLifecycle, setHostLifecycle] = useState<HostLifecycleSnapshot | null>(null)
+  useEffect(() => {
+    let active = true
+    const adopt = (next: HostLifecycleSnapshot): void => {
+      if (!active) return
+      setHostLifecycle((current) =>
+        !current || next.revision >= current.revision ? next : current
+      )
+    }
+    const unsubscribe = hostLifecycleClient.subscribe(adopt)
+    void hostLifecycleClient.status().then(adopt, () => undefined)
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [hostLifecycleClient])
+  const hostProjectionState = applyHostLifecycleToProjectionState(
+    hostProjectionSourceState,
+    hostLifecycle
+  )
+  const hostMissionControlModel = useMemo(
+    () => projectHostMissionControl(hostProjectionState),
+    [hostProjectionState]
+  )
+  const missionControl = useMemo<ThreadHomeMissionControlSummary>(
+    () => ({
+      phase: hostMissionControlModel.phase,
+      summary: formatHostMissionControlSummary(hostMissionControlModel)
+    }),
+    [hostMissionControlModel]
+  )
   const [surface, setSurface] = useState<ThreadHomeSurface | null>(null)
   const [busySurface, setBusySurface] = useState<ThreadHomeSurface | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
@@ -542,20 +746,43 @@ function ThreadHomeWorkspaceInner(
     url: string
     title: string
   } | null>(null)
+  const [terminalSession, setTerminalSession] = useState<{
+    sessionId: string
+    workspacePath: string
+  } | null>(null)
+  const [busyTerminalWorkspacePath, setBusyTerminalWorkspacePath] = useState<string | null>(null)
   const canvasIdRef = useRef<string | null>(null)
+  const terminalSessionRef = useRef(terminalSession)
   const meshCanvasPanelRef = useRef<MeshCanvasPanelHandle>(null)
   const mountedRef = useRef(false)
   const canvasOpenGenerationRef = useRef(0)
+  const terminalOpenGenerationRef = useRef(0)
   canvasIdRef.current = canvas?.canvasId ?? null
+  terminalSessionRef.current = terminalSession
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
       canvasOpenGenerationRef.current += 1
+      terminalOpenGenerationRef.current += 1
       const canvasId = canvasIdRef.current
+      const terminalSessionId = terminalSessionRef.current?.sessionId
       if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
+      if (terminalSessionId) {
+        void window.api.terminal.kill(terminalSessionId).catch(() => undefined)
+      }
     }
   }, [])
+  useEffect(
+    () =>
+      window.api.terminal.onExit((sessionId, exitCode) => {
+        if (terminalSessionRef.current?.sessionId !== sessionId) return
+        terminalSessionRef.current = null
+        setTerminalSession(null)
+        setIssue(`Terminal exited with code ${exitCode}.`)
+      }),
+    []
+  )
 
   const authorityChatId = authorityChat?.appChatId ?? null
   const { threads, recentThreads } = useMemo(
@@ -576,13 +803,21 @@ function ThreadHomeWorkspaceInner(
 
   const closeSurface = useCallback((): void => {
     canvasOpenGenerationRef.current += 1
+    terminalOpenGenerationRef.current += 1
     const canvasId = canvasIdRef.current
+    const terminalSessionId = terminalSessionRef.current?.sessionId
     canvasIdRef.current = null
+    terminalSessionRef.current = null
     setCanvas(null)
+    setTerminalSession(null)
     setSurface(null)
     setBusySurface(null)
+    setBusyTerminalWorkspacePath(null)
     setIssue(null)
     if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
+    if (terminalSessionId) {
+      void window.api.terminal.kill(terminalSessionId).catch(() => undefined)
+    }
   }, [])
 
   const closeCurrentSurface = useCallback((): void => {
@@ -612,6 +847,17 @@ function ThreadHomeWorkspaceInner(
   )
 
   const openSurface = async (next: ThreadHomeSurface): Promise<void> => {
+    if (next === 'mission-control' || next === 'terminal') {
+      canvasOpenGenerationRef.current += 1
+      setIssue(null)
+      setBusySurface(null)
+      if (next === 'terminal') {
+        setBusyTerminalWorkspacePath(null)
+        setTerminalSession(null)
+      }
+      setSurface(next)
+      return
+    }
     if (!authorityChatId) return
     setIssue(null)
     if (next !== 'browser' && next !== 'sketch') {
@@ -659,12 +905,42 @@ function ThreadHomeWorkspaceInner(
     if (isCurrent()) setBusySurface(null)
   }
 
-  if (!surface || !authorityChatId || !authorityChat) {
+  const openTerminalWorkspace = async (workspace: WorkspaceRecord): Promise<void> => {
+    const generation = terminalOpenGenerationRef.current + 1
+    terminalOpenGenerationRef.current = generation
+    const sessionId = createThreadHomeTerminalSessionId()
+    setIssue(null)
+    setBusyTerminalWorkspacePath(workspace.path)
+    const isCurrent = (): boolean =>
+      mountedRef.current && terminalOpenGenerationRef.current === generation
+    await settleThreadHomeTerminalOpen({
+      request: window.api.terminal.create(workspace.path, sessionId),
+      sessionId,
+      isCurrent,
+      onAccepted: () => {
+        const nextSession = { sessionId, workspacePath: workspace.path }
+        terminalSessionRef.current = nextSession
+        setTerminalSession(nextSession)
+        terminalSidebarStore.recordRecipe(workspace.path)
+      },
+      onRejected: setIssue,
+      onDiscarded: (discardedSessionId) => window.api.terminal.kill(discardedSessionId)
+    })
+    if (isCurrent()) setBusyTerminalWorkspacePath(null)
+  }
+
+  if (
+    !surface ||
+    (surface !== 'mission-control' &&
+      surface !== 'terminal' &&
+      (!authorityChatId || !authorityChat))
+  ) {
     return (
       <ThreadHome
         variant={variant}
         threads={threads}
         recentThreads={recentThreads}
+        missionControl={missionControl}
         authorityChatId={authorityChatId}
         mediaCount={mediaRefs.length}
         busySurface={busySurface}
@@ -673,6 +949,8 @@ function ThreadHomeWorkspaceInner(
         onNewChat={onNewChat}
         onSelectThread={onSelectThread}
         onSelectSurface={(next) => void openSurface(next)}
+        onOpenMissionControl={() => void openSurface('mission-control')}
+        onOpenTerminal={() => void openSurface('terminal')}
         onClosePane={onClosePane}
         onActivate={onActivate}
       />
@@ -680,7 +958,15 @@ function ThreadHomeWorkspaceInner(
   }
 
   const surfaceLabel =
-    THREAD_HOME_SURFACES.find((option) => option.id === surface)?.label || surface
+    surface === 'mission-control'
+      ? 'Mission Control'
+      : surface === 'terminal'
+        ? 'Terminal'
+        : THREAD_HOME_SURFACES.find((option) => option.id === surface)?.label || surface
+  const surfaceAuthorityChatId = authorityChatId ?? ''
+  const terminalWorkspace = terminalSession
+    ? workspaces.find((workspace) => workspace.path === terminalSession.workspacePath)
+    : null
   return (
     <section
       className={`thread-home-surface thread-home-surface--${variant}`}
@@ -691,14 +977,49 @@ function ThreadHomeWorkspaceInner(
           ‹
         </button>
         <strong>{surfaceLabel}</strong>
-        <span>{authorityChat.title || 'Untitled thread'}</span>
+        <span>
+          {surface === 'mission-control'
+            ? missionControl.summary
+            : surface === 'terminal'
+              ? terminalWorkspace?.displayName || 'Choose a workspace'
+              : authorityChat?.title || 'Untitled thread'}
+        </span>
       </header>
-      <div className="thread-home-surface-body">
-        {surface === 'charts' && <ThreadHomeCharts chatId={authorityChatId} />}
+      <div
+        className={`thread-home-surface-body${
+          surface === 'mission-control'
+            ? ' thread-home-surface-body--mission-control'
+            : surface === 'terminal'
+              ? ' thread-home-surface-body--terminal'
+              : ''
+        }`}
+      >
+        {surface === 'mission-control' && (
+          <HostMissionControl
+            state={hostProjectionState}
+            commands={hostCommandController}
+            presentation="pane"
+          />
+        )}
+        {surface === 'terminal' &&
+          (terminalSession ? (
+            <TerminalPane
+              sessionId={terminalSession.sessionId}
+              workspacePath={terminalSession.workspacePath}
+              onClose={closeSurface}
+            />
+          ) : (
+            <ThreadHomeTerminalWorkspacePicker
+              workspaces={workspaces}
+              busyWorkspacePath={busyTerminalWorkspacePath}
+              onSelect={(workspace) => void openTerminalWorkspace(workspace)}
+            />
+          ))}
+        {surface === 'charts' && <ThreadHomeCharts chatId={surfaceAuthorityChatId} />}
         {surface === 'media' && (
           <ChatMediaDockPanel
             refs={mediaRefs}
-            workspacePath={authorityChat.workspacePath}
+            workspacePath={authorityChat?.workspacePath}
             onClose={closeSurface}
             onPreviewImage={onPreviewImage}
             onDetachToPane={onDetachToPane}
@@ -707,11 +1028,11 @@ function ThreadHomeWorkspaceInner(
         {surface === 'mesh' && (
           <MeshCanvasPanel
             ref={meshCanvasPanelRef}
-            chatId={authorityChatId}
+            chatId={surfaceAuthorityChatId}
             onDismiss={closeSurface}
           />
         )}
-        {surface === 'simulator' && <SimulatorCanvasPanel chatId={authorityChatId} />}
+        {surface === 'simulator' && <SimulatorCanvasPanel chatId={surfaceAuthorityChatId} />}
         {(surface === 'browser' || surface === 'sketch') && canvas && (
           <CanvasPane
             canvasId={canvas.canvasId}
@@ -721,7 +1042,7 @@ function ThreadHomeWorkspaceInner(
             chrome={
               surface === 'browser' ? (
                 <CanvasBrowserChrome
-                  chatId={authorityChatId}
+                  chatId={surfaceAuthorityChatId}
                   canvasId={canvas.canvasId}
                   initialState={{
                     url: canvas.url,
