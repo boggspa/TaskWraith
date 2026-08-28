@@ -26,11 +26,11 @@ describe('RightDockSurfaceSwitcher', () => {
             hint: 'All sidebar destinations'
           },
           {
-            id: 'run',
-            label: 'Run',
-            icon: <span>R</span>,
+            id: 'files',
+            label: 'Files',
+            icon: <span>F</span>,
             enabled: true,
-            group: 'session'
+            group: 'work'
           }
         ]}
         activeTab="home"

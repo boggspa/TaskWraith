@@ -44,7 +44,6 @@ import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
 import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader'
 import { resolveMuseMonthlySpendCapUsd } from '../../../../shared/museSpendBudget'
-import { RunRailPanel } from '../../components/RunRailPanel'
 import { ProjectHomeHeader } from '../../components/ProjectHomeHeader'
 import { TranscriptJumpToLatestPill } from '../../components/TranscriptJumpToLatestPill'
 import { Sidebar } from '../../components/Sidebar'
@@ -82,8 +81,6 @@ import {
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { CanvasDockPanel } from '../../components/CanvasDockPanel'
 import { AppDriveDockPanel } from '../../components/AppDriveDockPanel'
-import { FanoutCandidatesPanel } from '../../components/FanoutCandidatesPanel'
-import { ThreadMessageDockPanel } from '../../components/ThreadMessageDockPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
 import {
   isOfficeDocumentPath,
@@ -158,7 +155,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   appTranscriptRef,
   appVersion,
   appearance,
-  approvalMode,
   approvalTimeouts,
   auraProviderKey,
   autoFollowRef,
@@ -187,10 +183,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   closeRightDockPanel,
   closeThreadSearch,
   codexMcpStatus,
-  codexModels,
   codexSandboxFallback,
   codexStatus,
-  codexThreads,
   collaboratingChatIds,
   composerCtx,
   composerSurfaceBase,
@@ -204,8 +198,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSaveExecutionGraph,
   copiedId,
   copy,
-  currentAgentMcpStatus,
-  currentAgentStatus,
   currentBlackboardEntries,
   currentChat,
   currentChatIdRef,
@@ -220,7 +212,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentProvider,
   currentProviderCapabilities,
   currentProviderLabel,
-  currentProviderModelOptions,
   currentRun,
   currentWorkspace,
   cursorProviderAvailable,
@@ -237,7 +228,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   exportProductDiagnostics,
   exportProductAuditBundle,
   verifyProductAuditBundle,
-  externalPathGrants,
   fileChangeDisplayAdds,
   fileChangeDisplayDels,
   fileChangeShouldShowStats,
@@ -247,11 +237,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   focusedPaneSkyEnabled,
   geminiCheckpointingEnabled,
   geminiMcpBridgeEnabled,
-  geminiMcpBridgeStatus,
   geminiTerminalEndRef,
   geminiTerminalInput,
   geminiTerminalStatusLabel,
-  geminiVersion,
   getDefaultModelForProvider,
   grokProviderAvailable,
   handleAddChatToWorkspaceBoard,
@@ -259,22 +247,20 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleAddPinnedMessageToWorkspaceBoard,
   handleActiveSidebarTabChange,
   handleAddRunQueueJobToWorkspaceBoard,
+  geminiVersion,
   handleAddTranscriptMessageToPrompt,
   handleAddWorkflowToWorkspaceBoard,
   handleAddWorkspaceBoardCard,
   handleAgentApprovalAction,
   handleAgentQuestionDismiss,
   handleAgentQuestionSubmit,
-  handleArchiveHandoff,
   handleArchiveWorkspaceBoard,
   handleCancelAuditRun,
-  handleCancelRunLane,
   handleCancelWorkflowExecution,
   handleClearClaudeApiKey,
   handleClearCodexUsageCredential,
   handleClearKimiApiKey,
   handleCopyMessage,
-  handleCreateHandoffFromLane,
   handleCreateWorkspaceBoard,
   handleDeleteAllChatHistory,
   handleDeleteChat,
@@ -286,8 +272,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleDismissAuditRun,
   handleDismissAuditRunNotice,
   handleDismissOnboardingHint,
-  handleDispatchHandoff,
-  handleDuplicateRunLane,
   handleDuplicateWorkspaceBoard,
   handleEditQueuedMessage,
   handleEditWorkflowInterval,
@@ -295,8 +279,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleEndCurrentLinkedMainChat,
   handleEndSidePanelChat,
   handleToggleSideChatAuthorityReturn,
-  handleForkCodexThread,
-  handleForkAgentThread,
   handleGeminiTerminalSubmit,
   handleImportCodexUsageCredential,
   handleJumpToLatest,
@@ -319,7 +301,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workProjectHeader,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
-  handlePersistRunAnalysis,
   handlePlanChoiceSubmit,
   handlePromoteCollaboratorComment,
   handleProposedPlanApprove,
@@ -330,11 +311,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleRenameChat,
   handleRenameWorkspaceBoard,
   handleReorderQueuedMessages,
-  handleResumeCodexThread,
-  handleRetryRunLane,
   handleReturnToSideChatParent,
   handleRightPanelResizeKeyDown,
-  handleRollbackCodexThread,
   handleRunWorkflowNow,
   handleSelectChat,
   handleSelectSideChatTypeOption,
@@ -372,15 +350,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleProviderLogin,
   handleUpgradeProviderCli,
   handleWorkspaceSidebarResizeKeyDown,
-  handoffCards,
   hasCurrentHandoffDraft,
   hasWorkspaceContext,
   hideSideChatPane,
   hostWeather,
-  inspectingRunId,
   installGeminiMcpBridge,
   isAdvancedFxActive,
   isChatExpanded,
+  isOldVersion,
   isChatMediaPanelOpen,
   isChatPopoutWindow,
   isCurrentEnsembleChat,
@@ -389,7 +366,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isFxEnabled,
   isLinkedChatPopout,
   isMultiviewSplit,
-  isOldVersion,
   isPinnedMessagesPanelOpen,
   isProjectReferencesPanelOpen,
   isWorkRouteReferencesPinned,
@@ -440,7 +416,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   rawLogs,
   rawLogsEndRef,
   refractionEnabled,
-  refreshCodexThreads,
   refreshDiff,
   refreshGeminiMcpBridgeStatus,
   refreshProductOperationsStatus,
@@ -459,7 +434,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   runCompleteDurationText,
   runDiff,
   runFxStatus,
-  runLanes,
   runPreviewTargetAction,
   runQueueJobs,
   runningChatIds,
@@ -467,16 +441,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   scheduledTasks,
   selectThreadSearchMatch,
   selectedSideChatTypeOption,
-  sessionTrust,
   setChatMediaPanelOpenPreservingTranscript,
   setDiffView,
   setGeminiTerminalInput,
-  setInspectingRunId,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
   setPreviewMenuTarget,
   setRawFilter,
-  setSessionTrust,
   setSettingsActiveTab,
   setShowBugReportSheet,
   setShowFirstLaunchSheet,
@@ -484,7 +455,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setShowGhostCompanion,
   setShowSettings,
   setShowSkyVisualFx,
-  setShowTerminal,
   setShowWorkspaceSidebar,
   setSubThreadCreatorParent,
   setThreadRawLogs,
@@ -506,12 +476,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleAppDriveResume,
   handleAppDriveTakeOver,
   handleAppDriveStop,
-  isFanoutCandidatesPanelOpen,
-  isThreadMessagePanelOpen,
-  threadMessageInbox,
   threadHomeOpen,
   openThreadHome,
-  onThreadMessageSent,
   officeOpenRequest,
   onOpenOfficeDocument,
   onRequestOfficeExternalAccess,
@@ -524,7 +490,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showWorkspaceBoardCreatorSheet,
   showRunDataVizFx,
   showSettings,
-  showTerminal,
   showWorkspaceSidebar,
   sideAutoFollowRef,
   sideChat,
@@ -598,7 +563,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   transcriptMessages,
   transcriptScrollRef,
   transcriptStyle,
-  trustResult,
   unreadFromBottomCount,
   updateChannel,
   updatePinnedNotesForChat,
@@ -675,13 +639,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     },
     [currentWorkspace?.path, refreshProviderMetadata]
   )
-  const handleTranscriptInspectRun = useCallback(
-    (runId: string) => {
-      setInspectingRunId(runId)
-      activateRightDockTab('run')
-    },
-    [activateRightDockTab, setInspectingRunId]
-  )
   const handleTranscriptAddMessageToPrompt = useCallback(
     (_messageId: string, content: string) => {
       if (!currentChatAppChatId) return
@@ -706,16 +663,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       handlePromoteCollaboratorComment(currentChatAppChatId, messageId)
     },
     [currentChatAppChatId, handlePromoteCollaboratorComment]
-  )
-  const handleSideTranscriptInspectRun = useCallback(
-    (runId: string) => {
-      if (!sideChat) return
-      void openLinkedChatAsMain(sideChat).then(() => {
-        setInspectingRunId(runId)
-        activateRightDockTab('run')
-      })
-    },
-    [activateRightDockTab, openLinkedChatAsMain, setInspectingRunId, sideChat]
   )
   const handleSideTranscriptAddMessageToPrompt = useCallback(
     (_messageId: string, content: string) => {
@@ -1536,18 +1483,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onCancelWorkflowExecution={handleCancelWorkflowExecution}
                 onDeleteWorkflow={handleDeleteWorkflow}
                 onSetWorkflowUnattended={handleSetWorkflowUnattended}
-                onInspectRun={(runId, chatId) => {
-                  // Navigate to the chat first (handleSelectChat fires via
-                  // ActiveRunsSection.onSelectChat above), then open the
-                  // Inspector. The chat-switch reset effect won't clobber
-                  // this because it's gated on "does the new chat own this
-                  // runId?" — see effect below.
-                  if (chatId) {
-                    const chat = chats.find((c) => c.appChatId === chatId)
-                    if (chat) handleSelectChat(chat)
-                  }
-                  setInspectingRunId(runId)
-                }}
                 onOpenSettingsTab={(tab) => {
                   setSettingsActiveTab(tab)
                   setShowSettings(true)
@@ -1786,9 +1721,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             onOpenWorkflow={(workflow) => {
               const workflowChat = chats.find((chat) => chat.appChatId === workflow.template.chatId)
               if (workflowChat) void handleSelectChat(workflowChat)
-            }}
-            onInspectRun={(runId) => {
-              setInspectingRunId(runId)
             }}
           />
         )}
@@ -2365,7 +2297,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onOpenSubThread={handleOpenCockpitThread}
                 onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
                 onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
-                onInspectRun={handleTranscriptInspectRun}
                 onOpenSideChatFromRun={
                   canCreateSideChatFromCurrent ? handleOpenSideChatFromRunResult : undefined
                 }
@@ -2545,7 +2476,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <RightDockHome
                     mediaCount={currentChatMediaRefs.length}
                     pinnedCount={currentPinnedMessages.length}
-                    threadMessageCount={threadMessageInbox.summary.pendingCount}
                     hasCurrentChat={Boolean(currentChat)}
                     hasWorkspaceContext={hasWorkspaceContext}
                     onOpenSurface={(surface) => {
@@ -2748,7 +2678,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onProposedPlanCustom={NOOP_PROPOSED_PLAN_CUSTOM}
               onOpenSubThread={handleOpenCockpitThread}
               onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
-              onInspectRun={handleSideTranscriptInspectRun}
               compactDensity={appearance.compactDensity}
               liveActivityViewport={appearance.liveActivityViewport}
               fanoutLaneLayout={appearance.fanoutLaneLayout}
@@ -2779,26 +2708,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             {sideComposerCtx && <Composer {...sideComposerCtx} />}
               </aside>
                   </div>
-                )}
-
-                {activeRightDockTab === 'run' && (
-                  <RunRailPanel
-                    lanes={runLanes}
-                    handoffCards={handoffCards}
-                    chats={chats}
-                    currentChat={currentChat}
-                    currentRun={currentRun}
-                    selectedRunId={inspectingRunId}
-                    onSelectRun={setInspectingRunId}
-                    onOpenThread={handleOpenCockpitThread}
-                    onCancelRun={handleCancelRunLane}
-                    onRetryRun={handleRetryRunLane}
-                    onDuplicateRun={handleDuplicateRunLane}
-                    onCreateHandoff={handleCreateHandoffFromLane}
-                    onDispatchHandoff={handleDispatchHandoff}
-                    onArchiveHandoff={handleArchiveHandoff}
-                    onPersistAnalysis={handlePersistRunAnalysis}
-                  />
                 )}
 
                 {activeRightDockTab === 'files' && showFileEditor && hasWorkspaceContext && (
@@ -2833,25 +2742,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
 
                 {activeRightDockTab === 'canvas' && isCanvasDockPanelOpen && currentChat && (
                   <CanvasDockPanel chatId={currentChat.appChatId} />
-                )}
-
-                {activeRightDockTab === 'candidates' &&
-                  isFanoutCandidatesPanelOpen &&
-                  currentChat && (
-                    <FanoutCandidatesPanel
-                      key={currentChat.appChatId}
-                      chatId={currentChat.appChatId}
-                      workspacePath={currentWorkspace?.path}
-                    />
-                  )}
-
-                {activeRightDockTab === 'peers' && isThreadMessagePanelOpen && currentChat && (
-                  <ThreadMessageDockPanel
-                    key={currentChat.appChatId}
-                    chatId={currentChat.appChatId}
-                    snapshot={threadMessageInbox}
-                    onSent={onThreadMessageSent}
-                  />
                 )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (
@@ -3007,13 +2897,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 )
               }
               rawLogsEndRef={rawLogsEndRef}
-              geminiVersion={geminiVersion}
-              isOldVersion={isOldVersion}
-              trustResult={trustResult}
-              sessionTrust={sessionTrust}
-              setSessionTrust={setSessionTrust}
-              showTerminal={showTerminal}
-              setShowTerminal={setShowTerminal}
               workspacePath={
                 rightTab === 'commits'
                   ? commitsInspectorWorkspacePath ||
@@ -3025,42 +2908,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     currentWorkspace?.path
               }
               provider={currentProvider}
-              approvalMode={approvalMode}
-              codexStatus={currentAgentStatus}
-              codexModels={currentProvider === 'codex' ? codexModels : currentProviderModelOptions}
-              codexMcpStatus={currentAgentMcpStatus}
-              providerCapabilities={currentProviderCapabilities}
-              providerCapabilitiesByProvider={providerCapabilitiesByProvider}
-              codexThreads={codexThreads}
-              externalPathGrants={externalPathGrants}
-              geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
-              geminiMcpBridgeStatus={geminiMcpBridgeStatus}
-              onRefreshCodexThreads={refreshCodexThreads}
-              onResumeCodexThread={handleResumeCodexThread}
-              onForkCodexThread={handleForkCodexThread}
-              onForkAgentThread={handleForkAgentThread}
-              onRollbackCodexThread={handleRollbackCodexThread}
-              onImportCodexUsageCredential={handleImportCodexUsageCredential}
-              onClearCodexUsageCredential={handleClearCodexUsageCredential}
-              onCodexLogin={() => {
-                void window.api.openProviderLoginTerminal('codex').then((result) => {
-                  if (!result?.ok) {
-                    console.warn(
-                      '[provider sign-in] could not open TaskWraith Codex sign-in:',
-                      result?.error
-                    )
-                  }
-                })
-              }}
-              onRefreshCodexStatus={() =>
-                void refreshProviderAuthStatus('codex')
-              }
-              onInstallGeminiMcpBridge={() => void installGeminiMcpBridge()}
-              onRefreshGeminiMcpBridgeStatus={() => void refreshGeminiMcpBridgeStatus()}
               currentChat={currentChat}
               chats={chats}
-              runningChatIds={runningChatIdsArray}
-              onOpenSubThread={handleOpenCockpitThread}
             />
                 )}
               </div>

@@ -11,19 +11,16 @@ import {
 
 const allClosed: RightDockTabAvailabilityInput = {
   showHome: false,
-  showCockpit: false,
   hasSideChat: false,
   isSideChatDockPanelOpen: false,
   showInspector: false,
   showFileEditor: false,
   showOfficeSuite: false,
   isCanvasDockPanelOpen: false,
-  isFanoutCandidatesPanelOpen: false,
   hasWorkspaceContext: false,
   isChatMediaPanelOpen: false,
   isProjectReferencesPanelOpen: false,
   isPinnedMessagesPanelOpen: false,
-  isThreadMessagePanelOpen: false,
   isTerminalDockAvailable: false
 }
 
@@ -33,7 +30,6 @@ describe('rightDockState', () => {
       expect(
         buildRightDockTabs({
           showHome: true,
-          showCockpit: true,
           hasSideChat: true,
           isSideChatDockPanelOpen: true,
           showInspector: true,
@@ -41,28 +37,23 @@ describe('rightDockState', () => {
           showOfficeSuite: true,
           isCanvasDockPanelOpen: true,
           isAppDriveDockPanelOpen: true,
-          isFanoutCandidatesPanelOpen: true,
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
           isProjectReferencesPanelOpen: true,
           isPinnedMessagesPanelOpen: true,
-          isThreadMessagePanelOpen: true,
           isTerminalDockAvailable: true
         })
       ).toEqual([
         { id: 'home', label: 'Home' },
-        { id: 'run', label: 'Run' },
         { id: 'chat', label: 'Chat' },
         { id: 'inspector', label: 'Inspect' },
         { id: 'files', label: 'Files' },
         { id: 'office', label: 'Office' },
         { id: 'canvas', label: 'Canvas' },
         { id: 'appdrive', label: 'Drive' },
-        { id: 'candidates', label: 'Compare' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
         { id: 'pins', label: 'Notes' },
-        { id: 'peers', label: 'Peers' },
         { id: 'terminal', label: 'Term' }
       ])
     })
@@ -128,13 +119,15 @@ describe('rightDockState', () => {
   describe('resolveActiveRightDockTab', () => {
     it('uses the selected tab when available and otherwise falls back to the first tab', () => {
       const availableTabs = [
-        { id: 'run' as const, label: 'Run' },
+        { id: 'files' as const, label: 'Files' },
         { id: 'pins' as const, label: 'Notes' }
       ]
 
       expect(resolveActiveRightDockTab(availableTabs, 'pins')).toBe('pins')
-      expect(resolveActiveRightDockTab(availableTabs, 'media')).toBe('run')
-      expect(resolveActiveRightDockTab([], 'media')).toBe('run')
+      expect(resolveActiveRightDockTab(availableTabs, 'media')).toBe('files')
+      // Home is the floor: with nothing available there is no other surface
+      // that is guaranteed to render.
+      expect(resolveActiveRightDockTab([], 'media')).toBe('home')
       expect(resolveActiveRightDockTab([{ id: 'home' }], 'home')).toBe('home')
     })
   })
@@ -144,8 +137,8 @@ describe('rightDockState', () => {
       expect(
         resolveRightDockRestore({
           savedTab: 'home',
-          selectedTab: 'run',
-          enabledTabs: ['home', 'run', 'inspector'],
+          selectedTab: 'files',
+          enabledTabs: ['home', 'files', 'inspector'],
           dockIsOpen: false
         })
       ).toEqual({ tab: 'home', shouldOpen: false })
@@ -156,7 +149,7 @@ describe('rightDockState', () => {
         resolveRightDockRestore({
           savedTab: 'inspector',
           selectedTab: 'home',
-          enabledTabs: ['home', 'run', 'inspector'],
+          enabledTabs: ['home', 'files', 'inspector'],
           dockIsOpen: true
         })
       ).toEqual({ tab: 'inspector', shouldOpen: true })
@@ -164,13 +157,13 @@ describe('rightDockState', () => {
 
     it('ignores missing, current, or disabled destinations', () => {
       const base = {
-        selectedTab: 'run' as const,
-        enabledTabs: ['home', 'run'] as const,
+        selectedTab: 'files' as const,
+        enabledTabs: ['home', 'files'] as const,
         dockIsOpen: false
       }
 
       expect(resolveRightDockRestore({ ...base, savedTab: null })).toBeNull()
-      expect(resolveRightDockRestore({ ...base, savedTab: 'run' })).toBeNull()
+      expect(resolveRightDockRestore({ ...base, savedTab: 'files' })).toBeNull()
       expect(resolveRightDockRestore({ ...base, savedTab: 'inspector' })).toBeNull()
     })
   })
@@ -180,7 +173,6 @@ describe('rightDockState', () => {
       expect(RIGHT_DOCK_PANEL_IDS).toEqual([
         'home',
         'chat',
-        'run',
         'media',
         'references',
         'pins',
@@ -188,8 +180,6 @@ describe('rightDockState', () => {
         'office',
         'canvas',
         'appdrive',
-        'candidates',
-        'peers',
         'inspector',
         'terminal'
       ])
@@ -206,28 +196,22 @@ describe('rightDockState', () => {
     })
   })
 
-  describe('peers surface availability', () => {
-    // Deliberately NOT gated on a workspace or on having mail: sending to another
-    // thread is a first-class action, so the surface has to be reachable from an
-    // empty inbox. Only the open flag decides.
-    it('shows Peers on the open flag alone', () => {
-      expect(buildRightDockTabs({ ...allClosed, isThreadMessagePanelOpen: true })).toEqual([
-        { id: 'peers', label: 'Peers' }
-      ])
-      expect(buildRightDockTabs({ ...allClosed, hasWorkspaceContext: true })).toEqual([])
-    })
-  })
+  describe('retired surfaces', () => {
+    // Run (live lanes), Peers (thread messages) and Compare (fan-out
+    // candidates) were removed from the dock. Fan-out candidates remain
+    // reachable from the transcript; thread messaging keeps its own feature
+    // surfaces. Nothing here should be able to name them again.
+    it('offers no tab for a retired surface, whatever the caller passes', () => {
+      const retired = ['run', 'peers', 'candidates']
+      const tabs = buildRightDockTabs({
+        ...allClosed,
+        showHome: true,
+        hasWorkspaceContext: true,
+        isAppDriveDockPanelOpen: true
+      })
 
-  describe('candidates surface availability', () => {
-    it('shows Compare only when the panel is open AND a workspace exists', () => {
-      expect(buildRightDockTabs({ ...allClosed, isFanoutCandidatesPanelOpen: true })).toEqual([])
-      expect(
-        buildRightDockTabs({
-          ...allClosed,
-          isFanoutCandidatesPanelOpen: true,
-          hasWorkspaceContext: true
-        })
-      ).toEqual([{ id: 'candidates', label: 'Compare' }])
+      expect(tabs.map((tab) => tab.id).filter((id) => retired.includes(id))).toEqual([])
+      expect(RIGHT_DOCK_PANEL_IDS.filter((id) => retired.includes(id))).toEqual([])
     })
   })
 })

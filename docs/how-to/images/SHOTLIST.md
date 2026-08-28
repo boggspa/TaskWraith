@@ -163,7 +163,6 @@ The current refresh uses latest-source development apps, not an installed releas
 | `transcript-and-search__proposed-plan-cards.png` | Electron | Proposed plan card in the transcript | Appears automatically in the **transcript**, attached to the assistant message that contains the plan, whenever the active permission preset is **Plan** (set via the composer's permissions chip) and the agent's reply is plan-shaped — either an explicit plan block, or (while in plan mode) a substantive turn with real structure. |
 | `transcript-and-search__queued-messages-row.png` | Electron | Queued messages row above the composer input | Above the composer input, in the same stack that holds the ensemble participant chips and the Create-PR row. |
 | `transcript-and-search__right-dock-rim.png` | Electron | Right dock rim tabs in the chat corner | It appears at the top of the right dock whenever the dock is open. |
-| `transcript-and-search__run-cockpit-panel.png` | Electron | Run cockpit panel in the right dock | Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) to open it for the current pane. |
 | `transcript-and-search__transcript-message-stream.png` | Electron | Main chat transcript showing a multi-message conversation thread | It fills the center stage whenever a chat is open. |
 
 ### workflows-and-boards

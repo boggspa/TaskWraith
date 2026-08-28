@@ -75,20 +75,12 @@
       "to": "src/main/TodoList"
     },
     {
-      "from": "src/renderer/src/components/ToolClassBreakdown.tsx",
-      "to": "src/main/ToolClassTaxonomy"
-    },
-    {
       "from": "src/renderer/src/components/TranscriptPanel.tsx",
       "to": "src/main/collaboration/HumanCollaboratorMessages"
     },
     {
       "from": "src/renderer/src/lib/ComposerMentionTrigger.ts",
       "to": "src/main/services/EnsembleMentionAlias"
-    },
-    {
-      "from": "src/renderer/src/lib/HandoffPrompt.ts",
-      "to": "src/main/MarkdownFenceSerializer"
     },
     {
       "from": "src/renderer/src/lib/TranscriptVirtualWindow.ts",

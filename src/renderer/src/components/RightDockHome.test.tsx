@@ -13,23 +13,15 @@ describe('RightDockHome', () => {
         destination.target.surface === 'inspector' ? destination.target.inspectorTab : undefined
       ])
     ).toEqual([
-      ['run', 'Live Lanes', 'run', undefined],
       ['chat', 'Side Chats', 'chat', undefined],
       ['media', 'Media Attachments', 'media', undefined],
       ['pins', 'Pinned Messages', 'pins', undefined],
       ['files', 'File Editor', 'files', undefined],
       ['office', 'Office Suite', 'office', undefined],
       ['canvas', 'Canvas', 'canvas', undefined],
-      ['peers', 'Thread Messages', 'peers', undefined],
       ['diff', 'Diff Studio', 'inspector', 'diff'],
       ['commits', 'Commits', 'inspector', 'commits'],
-      ['candidates', 'Fan-out Candidates', 'candidates', undefined],
-      ['raw', 'Raw Events', 'inspector', 'raw'],
-      ['invocations', 'Invocations', 'inspector', 'delegation'],
-      ['timeline', 'Invocation Timeline', 'inspector', 'timeline'],
-      ['live', 'Live Invocations', 'inspector', 'background-tasks'],
-      ['safety', 'Safety', 'inspector', 'safety'],
-      ['capabilities', 'Capabilities', 'inspector', 'capabilities']
+      ['raw', 'Raw Events', 'inspector', 'raw']
     ])
   })
 
@@ -52,15 +44,38 @@ describe('RightDockHome', () => {
     expect(html).toContain('<nav')
     expect(html).toContain('aria-labelledby="right-dock-home-title"')
     expect(destinationIds).toEqual(RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id))
-    expect(html.match(/<button/g)).toHaveLength(17)
-    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(17)
-    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(17)
+    expect(html.match(/<button/g)).toHaveLength(9)
+    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(9)
+    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(9)
     expect(html).toContain('class="right-dock-home-content"')
-    expect(html.match(/ disabled=""/g)).toHaveLength(8)
+    expect(html.match(/ disabled=""/g)).toHaveLength(6)
     expect(html).toMatch(/data-right-dock-home-destination="chat"[^>]*disabled=""/)
     expect(html).toContain('Side Chats. Linked branches and focused follow-ups')
     expect(html).toContain('Media Attachments. Images, audio, video, and paths. 3 items')
     expect(html).toContain('Pinned Messages. Notes and saved transcript items. 2 items')
+  })
+
+  it('offers no card for a retired destination', () => {
+    // Live Lanes, Thread Messages, Fan-out Candidates and the whole
+    // Invocations/Governance groups were removed from the sidebar. Fan-out
+    // candidates stay reachable from the transcript; Safety and Capabilities
+    // live in Settings.
+    const ids = RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id)
+    const groups = new Set(RIGHT_DOCK_HOME_DESTINATIONS.map(({ group }) => group))
+
+    for (const retired of [
+      'run',
+      'peers',
+      'candidates',
+      'invocations',
+      'timeline',
+      'live',
+      'safety',
+      'capabilities'
+    ]) {
+      expect(ids).not.toContain(retired)
+    }
+    expect([...groups].sort()).toEqual(['inspect', 'session'])
   })
 
   it('enables chat and workspace cards when their context exists', () => {

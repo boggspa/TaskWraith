@@ -88,11 +88,6 @@
   gap: 8px;
 }
 
-.thread-message-card-glyph {
-  flex: 0 0 auto;
-  opacity: 0.7;
-}
-
 .thread-message-card-identity {
   display: inline-flex;
   flex: 0 0 auto;
@@ -102,13 +97,6 @@
 
 .thread-message-card-identity-icon {
   filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.14));
-}
-
-.thread-message-card-heading-text {
-  min-width: 0;
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--rightdock-text);
 }
 
 /*
@@ -281,128 +269,4 @@ button.thread-message-card-sender:focus-visible {
 .thread-message-indicator[data-urgent='true'] {
   border-color: color-mix(in srgb, var(--warning) 55%, transparent);
   color: var(--warning);
-}
-
-/* Send affordance. Warnings sit ABOVE the button on purpose: a caution the user
- * reads after committing is a caution that did not work. */
-
-.thread-message-send {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.thread-message-send-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.thread-message-send-label {
-  font-size: 12px;
-  color: var(--rightdock-text-muted);
-}
-
-.thread-message-send-select {
-  flex: 1;
-  min-width: 0;
-}
-
-.thread-message-send-body {
-  min-height: 76px;
-  resize: vertical;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.thread-message-send-counter {
-  font-size: 11px;
-  color: var(--rightdock-text-muted);
-  text-align: right;
-}
-
-.thread-message-send-counter[data-over='true'] {
-  color: var(--danger);
-}
-
-.thread-message-send-wake {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--rightdock-text);
-}
-
-.thread-message-send-warning {
-  font-size: 11px;
-  line-height: 1.45;
-  padding: 6px 8px;
-  border-radius: var(--rightdock-radius-row);
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
-  color: var(--warning);
-}
-
-.thread-message-send-outcome {
-  font-size: 12px;
-}
-
-.thread-message-send-outcome[data-tone='ok'] {
-  color: var(--success);
-}
-
-.thread-message-send-outcome[data-tone='warn'] {
-  color: var(--warning);
-}
-
-.thread-message-send-outcome[data-tone='error'] {
-  color: var(--danger);
-}
-
-/* Dock surface. Scrolls as one column: the inbox can be long and the send form
- * must stay reachable. Each long card gets the same bounded inner viewport used
- * by adjacent invocation/fan-out result surfaces. */
-
-.thread-message-dock {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-  min-width: 0;
-  height: 100%;
-  flex: 1 1 auto;
-  padding: 12px;
-  overflow-y: auto;
-  color: var(--rightdock-text);
-  background: transparent;
-}
-
-.thread-message-dock-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.thread-message-dock-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.thread-message-dock-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.thread-message-dock-subtitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--rightdock-text-muted);
-  padding-top: 4px;
-  border-top: 1px solid var(--rightdock-border);
-}
-
-.thread-message-dock-note {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--rightdock-text-faint);
 }

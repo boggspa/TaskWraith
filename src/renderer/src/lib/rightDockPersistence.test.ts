@@ -93,8 +93,8 @@ describe('rightDockPersistence', () => {
     vi.stubGlobal('window', { sessionStorage: storage.storage })
 
     writeDockSurface(chatContext('chat-a'), 'home')
-    writeDockSurface(chatContext('chat-b'), 'run')
-    writeDockSurface(workContext('project-a'), 'run')
+    writeDockSurface(chatContext('chat-b'), 'files')
+    writeDockSurface(workContext('project-a'), 'files')
 
     // Chat contexts keep the pre-context bare-chatId key (same-session
     // continuity); work contexts get their own namespaced key.
@@ -104,11 +104,26 @@ describe('rightDockPersistence', () => {
     )
     expect(storage.storage.setItem).toHaveBeenCalledWith(
       'taskwraith.rightDockSurface.work:project-a',
-      'run'
+      'files'
     )
     expect(readDockSurface(chatContext('chat-a'))).toBe('home')
-    expect(readDockSurface(chatContext('chat-b'))).toBe('run')
-    expect(readDockSurface(workContext('project-a'))).toBe('run')
+    expect(readDockSurface(chatContext('chat-b'))).toBe('files')
+    expect(readDockSurface(workContext('project-a'))).toBe('files')
+  })
+
+  it('coerces a retired surface left in storage by an older session to null', () => {
+    // Run, Peers and Compare were removed from the dock. A session that stored
+    // one keeps it in sessionStorage until the tab closes, so the read has to
+    // drop it rather than select a surface that no longer renders.
+    const storage = createStorage()
+    storage.values.set('taskwraith.rightDockSurface.chat-a', 'run')
+    storage.values.set('taskwraith.rightDockSurface.chat-b', 'peers')
+    storage.values.set('taskwraith.rightDockSurface.chat-c', 'candidates')
+    vi.stubGlobal('window', { sessionStorage: storage.storage })
+
+    expect(readDockSurface(chatContext('chat-a'))).toBeNull()
+    expect(readDockSurface(chatContext('chat-b'))).toBeNull()
+    expect(readDockSurface(chatContext('chat-c'))).toBeNull()
   })
 
   it('rejects unknown ids and ignores null contexts', () => {

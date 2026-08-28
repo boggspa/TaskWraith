@@ -1,22 +1,18 @@
 export type RightDockTab =
   | 'home'
-  | 'run'
   | 'chat'
   | 'inspector'
   | 'files'
   | 'office'
   | 'canvas'
   | 'appdrive'
-  | 'candidates'
   | 'media'
   | 'references'
   | 'pins'
-  | 'peers'
   | 'terminal'
 
 export interface RightDockTabAvailabilityInput {
   showHome?: boolean
-  showCockpit: boolean
   hasSideChat: boolean
   isSideChatDockPanelOpen: boolean
   showInspector: boolean
@@ -25,12 +21,10 @@ export interface RightDockTabAvailabilityInput {
   isCanvasDockPanelOpen: boolean
   /** Optional until composition-root wiring lands; defaults unavailable. */
   isAppDriveDockPanelOpen?: boolean
-  isFanoutCandidatesPanelOpen: boolean
   hasWorkspaceContext: boolean
   isChatMediaPanelOpen: boolean
   isProjectReferencesPanelOpen: boolean
   isPinnedMessagesPanelOpen: boolean
-  isThreadMessagePanelOpen: boolean
   isTerminalDockAvailable: boolean
 }
 
@@ -42,7 +36,6 @@ export interface RightDockTabDescriptor {
 export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'home',
   'chat',
-  'run',
   'media',
   'references',
   'pins',
@@ -50,8 +43,6 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'office',
   'canvas',
   'appdrive',
-  'candidates',
-  'peers',
   'inspector',
   'terminal'
 ]
@@ -59,7 +50,6 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
 export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightDockTabDescriptor[] {
   return [
     { id: 'home' as const, label: 'Home', available: input.showHome },
-    { id: 'run' as const, label: 'Run', available: input.showCockpit },
     {
       id: 'chat' as const,
       label: 'Chat',
@@ -82,11 +72,6 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       label: 'Drive',
       available: Boolean(input.isAppDriveDockPanelOpen)
     },
-    {
-      id: 'candidates' as const,
-      label: 'Compare',
-      available: input.isFanoutCandidatesPanelOpen && input.hasWorkspaceContext
-    },
     { id: 'media' as const, label: 'Media', available: input.isChatMediaPanelOpen },
     {
       id: 'references' as const,
@@ -94,7 +79,6 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       available: input.isProjectReferencesPanelOpen
     },
     { id: 'pins' as const, label: 'Notes', available: input.isPinnedMessagesPanelOpen },
-    { id: 'peers' as const, label: 'Peers', available: input.isThreadMessagePanelOpen },
     { id: 'terminal' as const, label: 'Term', available: input.isTerminalDockAvailable }
   ]
     .filter((tab) => tab.available)
@@ -115,7 +99,7 @@ export function resolveActiveRightDockTab(
 ): RightDockTab {
   return availableTabs.some((tab) => tab.id === selectedTab)
     ? selectedTab
-    : availableTabs[0]?.id || 'run'
+    : availableTabs[0]?.id || 'home'
 }
 
 export interface RightDockRestoreDecision {

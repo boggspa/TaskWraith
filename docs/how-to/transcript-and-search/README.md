@@ -13,7 +13,6 @@ This area covers the main chat transcript, message interactions, search, and the
 - [How to: Queued messages row](./queued-messages-row.md)
 - [How to: File changes row](./file-changes-row.md)
 - [How to: Right dock rim](./right-dock-rim.md)
-- [How to: Run cockpit panel](./run-cockpit-panel.md)
 - [How to: Inspector panel](./inspector-panel.md)
 - [How to: Diff hover preview](./diff-hover-preview.md)
 - [In-chat search](../chats-and-threads/in-chat-search.md) *(cross-link — see Chats & Threads)*

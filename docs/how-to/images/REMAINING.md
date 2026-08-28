@@ -41,7 +41,6 @@ which is worse than an honest gap: the page reads as done.
 - `transcript-and-search__copy-transcript-button`
 - `transcript-and-search__proposed-plan-cards`
 - `transcript-and-search__queued-messages-row`
-- `transcript-and-search__run-cockpit-panel`
 
 ## Needs Canvas or media content
 

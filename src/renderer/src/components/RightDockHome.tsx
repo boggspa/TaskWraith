@@ -3,29 +3,18 @@ import type { RightDockTab } from '../lib/rightDockState'
 import {
   CanvasSurfaceSymbolIcon,
   ChatMediaIcon,
-  FanoutCandidatesSymbolIcon,
   FileMenuSelectionIcon,
   OfficeSuiteSymbolIcon,
-  PeerThreadMessageSymbolIcon,
   PinnedMessagesIcon,
-  RunRailSymbolIcon,
   SplitChatIcon
 } from './AppChromeSymbols'
 import { PillCard } from './PillCard'
 
-export type RightDockHomeInspectorDestination =
-  | 'diff'
-  | 'commits'
-  | 'raw'
-  | 'delegation'
-  | 'timeline'
-  | 'background-tasks'
-  | 'safety'
-  | 'capabilities'
+export type RightDockHomeInspectorDestination = 'diff' | 'commits' | 'raw'
 
 export type RightDockHomeSurface = Extract<
   RightDockTab,
-  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas' | 'candidates' | 'peers'
+  'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas'
 >
 
 type RightDockHomeTarget =
@@ -36,20 +25,12 @@ export interface RightDockHomeDestination {
   id: string
   label: string
   description: string
-  group: 'session' | 'inspect' | 'invocations' | 'governance'
+  group: 'session' | 'inspect'
   target: RightDockHomeTarget
   requires?: 'chat' | 'workspace'
-  nested?: boolean
 }
 
 export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] = [
-  {
-    id: 'run',
-    label: 'Live Lanes',
-    description: 'Runs, handoffs, and active work',
-    group: 'session',
-    target: { surface: 'run' }
-  },
   {
     id: 'chat',
     label: 'Side Chats',
@@ -98,14 +79,6 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     requires: 'chat'
   },
   {
-    id: 'peers',
-    label: 'Thread Messages',
-    description: 'Messages to & from other threads',
-    group: 'session',
-    target: { surface: 'peers' },
-    requires: 'chat'
-  },
-  {
     id: 'diff',
     label: 'Diff Studio',
     description: 'Review workspace and run changes',
@@ -121,71 +94,22 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     requires: 'workspace'
   },
   {
-    id: 'candidates',
-    label: 'Fan-out Candidates',
-    description: 'Compare isolated lanes & promote a winner',
-    group: 'inspect',
-    target: { surface: 'candidates' },
-    requires: 'workspace'
-  },
-  {
     id: 'raw',
     label: 'Raw Events',
     description: 'Read provider and tool event output',
     group: 'inspect',
     target: { surface: 'inspector', inspectorTab: 'raw' }
   },
-  {
-    id: 'invocations',
-    label: 'Invocations',
-    description: 'Provider-native invocation details',
-    group: 'invocations',
-    target: { surface: 'inspector', inspectorTab: 'delegation' }
-  },
-  {
-    id: 'timeline',
-    label: 'Invocation Timeline',
-    description: 'Parent and child execution history',
-    group: 'invocations',
-    target: { surface: 'inspector', inspectorTab: 'timeline' },
-    nested: true
-  },
-  {
-    id: 'live',
-    label: 'Live Invocations',
-    description: 'Active and background provider work',
-    group: 'invocations',
-    target: { surface: 'inspector', inspectorTab: 'background-tasks' },
-    nested: true
-  },
-  {
-    id: 'safety',
-    label: 'Safety',
-    description: 'Trust, permissions, and external access',
-    group: 'governance',
-    target: { surface: 'inspector', inspectorTab: 'safety' }
-  },
-  {
-    id: 'capabilities',
-    label: 'Capabilities',
-    description: 'Provider tools, skills, and integrations',
-    group: 'governance',
-    target: { surface: 'inspector', inspectorTab: 'capabilities' }
-  }
 ]
 
 const RIGHT_DOCK_HOME_GROUPS = [
   { id: 'session', label: 'Session' },
-  { id: 'inspect', label: 'Inspect' },
-  { id: 'invocations', label: 'Invocations' },
-  { id: 'governance', label: 'Governance' }
+  { id: 'inspect', label: 'Inspect' }
 ] as const
 
 interface RightDockHomeProps {
   mediaCount: number
   pinnedCount: number
-  /** Optional so an embedder that has no inbox in scope simply shows no count. */
-  threadMessageCount?: number
   hasCurrentChat: boolean
   hasWorkspaceContext: boolean
   onOpenSurface: (surface: RightDockHomeSurface) => void
@@ -200,23 +124,17 @@ interface HomeCardProps {
   onClick: () => void
   disabled?: boolean
   badge?: number
-  nested?: boolean
 }
 
 function HomeGlyph({
   kind
 }: {
-  kind: 'diff' | 'commits' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'
+  kind: 'diff' | 'commits' | 'raw'
 }) {
   const path = {
     diff: 'M3 5h7M3 9h10M3 13h6',
     commits: 'M4 3.5h8M4 8h8M4 12.5h8M2.5 3.5h.1M2.5 8h.1M2.5 12.5h.1',
-    raw: 'm3 5 3 3-3 3M8 12h5',
-    invocations: 'M4 4v3c0 1.2 1 2 2.2 2H12M9 6l3 3-3 3',
-    timeline: 'M4 3v12M7 5h6M7 9h4M7 13h7',
-    live: 'M8 4v4l3 2M8 2a6 6 0 1 0 6 6',
-    safety: 'M8 2 3 4v4c0 3 2 5 5 6 3-1 5-3 5-6V4zM6 8l1.5 1.5L10.5 6',
-    capabilities: 'm9 2-5 8h4l-1 6 6-9H9z'
+    raw: 'm3 5 3 3-3 3M8 12h5'
   }[kind]
   return (
     <svg
@@ -234,30 +152,13 @@ function HomeGlyph({
 }
 
 function destinationIcon(id: string): ReactNode {
-  if (id === 'run') return <RunRailSymbolIcon />
   if (id === 'chat') return <SplitChatIcon />
   if (id === 'media') return <ChatMediaIcon />
   if (id === 'pins') return <PinnedMessagesIcon />
   if (id === 'files') return <FileMenuSelectionIcon />
   if (id === 'office') return <OfficeSuiteSymbolIcon />
   if (id === 'canvas') return <CanvasSurfaceSymbolIcon />
-  if (id === 'candidates') return <FanoutCandidatesSymbolIcon />
-  if (id === 'peers') return <PeerThreadMessageSymbolIcon />
-  return (
-    <HomeGlyph
-      kind={
-        id as
-          | 'diff'
-          | 'commits'
-          | 'raw'
-          | 'invocations'
-          | 'timeline'
-          | 'live'
-          | 'safety'
-          | 'capabilities'
-      }
-    />
-  )
+  return <HomeGlyph kind={id as 'diff' | 'commits' | 'raw'} />
 }
 
 function HomeCard({
@@ -267,13 +168,12 @@ function HomeCard({
   icon,
   onClick,
   disabled,
-  badge,
-  nested
+  badge
 }: HomeCardProps) {
   return (
     <PillCard
       data-right-dock-home-destination={id}
-      className={`right-dock-home-card${nested ? ' right-dock-home-card--nested' : ''}`}
+      className="right-dock-home-card"
       innerClassName="right-dock-home-card-inner"
       onClick={onClick}
       disabled={disabled}
@@ -302,7 +202,6 @@ function HomeCard({
 export function RightDockHome({
   mediaCount,
   pinnedCount,
-  threadMessageCount,
   hasCurrentChat,
   hasWorkspaceContext,
   onOpenSurface,
@@ -328,7 +227,7 @@ export function RightDockHome({
         {RIGHT_DOCK_HOME_GROUPS.map((group) => (
           <section
             key={group.id}
-            className={`right-dock-home-section${group.id === 'invocations' ? ' right-dock-home-section--nested' : ''}`}
+            className="right-dock-home-section"
             aria-labelledby={`right-dock-home-${group.id}`}
           >
             <h3 id={`right-dock-home-${group.id}`}>{group.label}</h3>
@@ -342,15 +241,12 @@ export function RightDockHome({
                   label={destination.label}
                   description={destination.description}
                   icon={destinationIcon(destination.id)}
-                  nested={destination.nested}
                   badge={
                     destination.id === 'media'
                       ? mediaCount
                       : destination.id === 'pins'
                         ? pinnedCount
-                        : destination.id === 'peers'
-                          ? threadMessageCount
-                          : undefined
+                        : undefined
                   }
                   disabled={
                     (destination.requires === 'chat' && !hasCurrentChat) ||
