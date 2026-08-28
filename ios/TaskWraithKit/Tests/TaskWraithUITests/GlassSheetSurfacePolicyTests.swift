@@ -4,9 +4,9 @@ import Testing
 
 @Suite("Glass sheet surface policy")
 struct GlassSheetSurfacePolicyTests {
-    @Test func glassBackdropUsesOneAdaptiveSixtyFivePercentWash() {
-        #expect(TWGlassSheetSurfacePolicy.standardBackdropFillAlpha == 0.65)
-        #expect(TWGlassSheetSurfacePolicy.backdropFillAlpha(glassEnabled: true) == 0.65)
+    @Test func glassBackdropUsesOneAdaptiveSeventyTwoPercentWash() {
+        #expect(TWGlassSheetSurfacePolicy.standardBackdropFillAlpha == 0.72)
+        #expect(TWGlassSheetSurfacePolicy.backdropFillAlpha(glassEnabled: true) == 0.72)
     }
 
     @Test func reduceTransparencyMakesTheBackdropOpaque() {

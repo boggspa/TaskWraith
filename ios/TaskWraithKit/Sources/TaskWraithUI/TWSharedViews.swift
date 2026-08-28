@@ -815,19 +815,17 @@ extension View {
         }
     }
 
-    /// Glass surface for sheet/full-screen-cover presentations.
+    /// One backdrop shared by sheet and full-screen-cover presentations.
     ///
-    /// The refractive liquid-glass variant is applied directly to the presented
-    /// content over a clear `presentationBackground`. Putting the material fill
-    /// *under* the glass inside the presentation background made the material
-    /// itself the glassed subject, which paints the neutral gray plate by
-    /// construction. The legacy fallback branches keep older systems and Reduce
-    /// Transparency honest.
-    private struct TWSheetGlassSurfaceModifier: ViewModifier {
+    /// This view must live inside presented content over a clear presentation
+    /// host. A glassEffect placed in `presentationBackground` samples the
+    /// sheet container's neutral backing instead of the presenting transcript,
+    /// reproducing the opaque gray plate.
+    private struct TWSheetGlassBackdrop: View {
         var cornerRadius: CGFloat
         var rimmed: Bool
 
-        func body(content: Content) -> some View {
+        var body: some View {
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             let isLight = TWThemeStore.shared.systemTheme.isLight
             let rimTop: Color =
@@ -842,24 +840,24 @@ extension View {
                 TWGlassSheetSurfacePolicy.backdropFillAlpha(
                     glassEnabled: TWTheme.composerGlassEnabled))
 
-            if !TWTheme.composerGlassEnabled {
-                content
-                    .background { shape.fill(backdropFill) }
-                    .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
-            } else if #available(iOS 26.0, macOS 26.0, *) {
-                content
-                    .glassEffect(.clear, in: shape)
-                    .background(backdropFill, in: shape)
-                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
-            } else {
-                content
-                    .background {
-                        shape
-                            .fill(.ultraThinMaterial)
-                            .overlay(shape.fill(backdropFill))
-                    }
-                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
+            Group {
+                if !TWTheme.composerGlassEnabled {
+                    shape.fill(backdropFill)
+                } else if #available(iOS 26.0, macOS 26.0, *) {
+                    shape
+                        .fill(Color.clear)
+                        .glassEffect(.clear, in: shape)
+                        // The theme colour belongs above the sampled glass so
+                        // 0.72 means the same thing for every host.
+                        .overlay(shape.fill(backdropFill))
+                } else {
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay(shape.fill(backdropFill))
+                }
             }
+            .ignoresSafeArea()
+            .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
         }
 
         @ViewBuilder
@@ -873,6 +871,17 @@ extension View {
                             startPoint: .top,
                             endPoint: .bottom),
                         lineWidth: 1)
+            }
+        }
+    }
+
+    private struct TWSheetGlassSurfaceModifier: ViewModifier {
+        var cornerRadius: CGFloat
+        var rimmed: Bool
+
+        func body(content: Content) -> some View {
+            content.background {
+                TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
             }
         }
     }
@@ -901,7 +910,7 @@ enum TWGlassSheetSurfacePolicy {
     /// Adaptive app-background wash under every iOS sheet, full-screen cover,
     /// popover and picker glass surface. The theme supplies the light/dark
     /// colour; one alpha keeps presentation hosts visually consistent.
-    static let standardBackdropFillAlpha = 0.65
+    static let standardBackdropFillAlpha = 0.72
 
     static func backdropFillAlpha(glassEnabled: Bool) -> Double {
         glassEnabled ? standardBackdropFillAlpha : 1.0
@@ -1012,7 +1021,10 @@ extension View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(cornerRadius)
                 .presentationBackground(.clear)
-                .modifier(TWSheetGlassSurfaceModifier(cornerRadius: cornerRadius, rimmed: rimmed))
+                .modifier(
+                    TWSheetGlassSurfaceModifier(
+                        cornerRadius: cornerRadius,
+                        rimmed: rimmed))
                 .twGlassPresentationHostChrome()
         #else
             self
@@ -1111,12 +1123,10 @@ func twSettledRowModelChip(from speaker: String?) -> String? {
 
 /// House surface for custom picker panels.
 ///
-/// iOS/macOS 26 gets the compositor-backed clear Liquid Glass variant applied
-/// directly to the picker content. Applying glass to a translucent background
-/// subview and then lowering that subview's opacity flattens the refraction into
-/// the grey plate this primitive is intended to avoid. Older systems use the
-/// real system ultra-thin material; Reduce Transparency gets an opaque theme
-/// surface instead of blur.
+/// iOS/macOS 26 gets a compositor-backed Liquid Glass background with the
+/// adaptive wash composited above it and picker content above both. Older
+/// systems use the real system ultra-thin material; Reduce Transparency gets
+/// an opaque theme surface instead of blur.
 ///
 /// `tint` is deliberately optional. Picker call sites can attach semantic
 /// accent colour without inventing another material implementation.
@@ -1156,21 +1166,25 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         } else if #available(iOS 26.0, macOS 26.0, *) {
             content
-                .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
-                .background(legibilityFill, in: shape)
+                .background {
+                    shape
+                        .fill(Color.clear)
+                        .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
+                        .overlay(shape.fill(legibilityFill))
+                }
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         } else {
             content
                 .background {
                     shape
                         .fill(.ultraThinMaterial)
+                        .overlay(shape.fill(legibilityFill))
                         .overlay {
                             if let tint {
                                 shape.fill(tint.opacity(0.10))
                             }
                         }
                 }
-                .background(legibilityFill, in: shape)
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         }
     }
