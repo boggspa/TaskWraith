@@ -165,6 +165,43 @@ describe('ThreadHome', () => {
     expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
   })
 
+  it('adds only the heatmap to the full home without crowding pane homes', () => {
+    const render = (variant: 'main' | 'pane') =>
+      renderToStaticMarkup(
+        <ThreadHome
+          variant={variant}
+          threads={[]}
+          recentThreads={[]}
+          overviewSections={{
+            heatmaps: <div>Heatmap content</div>
+          }}
+          onNewChat={vi.fn()}
+          onSelectThread={vi.fn()}
+          onSelectSurface={vi.fn()}
+        />
+      )
+
+    const main = render('main')
+    expect(main).toContain('thread-home-scroll--with-overview')
+    expect(main).not.toContain('thread-home-dashboard-region')
+    expect(main).toContain('aria-label="Activity heatmaps"')
+    expect(main.indexOf('New Chat')).toBeLessThan(main.indexOf('Heatmap content'))
+
+    const pane = render('pane')
+    expect(pane).not.toContain('Heatmap content')
+  })
+
+  it('centres the launcher and heatmap as a scroll-safe lightweight group', () => {
+    const css = readFileSync(new URL('../assets/css/43-thread-home.css', import.meta.url), 'utf8')
+    expect(css).toContain(
+      '.thread-home-scroll--with-overview > .thread-home-section:first-child {'
+    )
+    expect(css).toContain('margin-top: auto')
+    expect(css).toContain('margin: clamp(36px, 5vh, 64px) auto auto')
+    expect(css).not.toContain('thread-home-dashboard-region')
+    expect(css).not.toContain('thread-home-additions-region')
+  })
+
   it('does not route through or mutate the right dock', () => {
     const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('activateRightDock')

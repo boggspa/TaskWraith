@@ -26,6 +26,29 @@
   padding: 24px 16px;
 }
 
+/* Full Thread Home keeps one lightweight welcome activity carousel directly
+ * beneath the launcher. Paired auto margins centre the group when space allows
+ * and collapse to zero when a long active-thread list needs real scrolling. */
+.thread-home-scroll--with-overview {
+  justify-content: flex-start;
+}
+
+.thread-home-scroll--with-overview > .thread-home-section:first-child {
+  margin-top: auto;
+}
+
+.thread-home-heatmaps-region {
+  flex: 0 0 auto;
+  width: min(920px, 100%);
+  margin: clamp(36px, 5vh, 64px) auto auto;
+  box-sizing: border-box;
+}
+
+.thread-home-heatmaps-region .welcome-standalone-heatmaps {
+  max-width: min(100%, var(--composer-content-max-width));
+  margin: 0 auto;
+}
+
 .thread-home-pane-actions {
   top: 8px;
   right: 8px;

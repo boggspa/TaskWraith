@@ -58,6 +58,11 @@ export interface ThreadHomeThreadOption {
   paneIndex?: number
 }
 
+/** Existing home-screen surfaces composed into the full Thread Home. */
+export interface ThreadHomeOverviewSections {
+  heatmaps?: ReactNode
+}
+
 export const THREAD_HOME_RECENT_LIMIT = 6
 
 function workspaceLabelForChat(chat: ChatRecord): string {
@@ -167,6 +172,7 @@ export interface ThreadHomeProps {
   mediaCount?: number
   busySurface?: ThreadHomeSurface | null
   issue?: string | null
+  overviewSections?: ThreadHomeOverviewSections
   onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onSelectSurface: (surface: ThreadHomeSurface) => void
@@ -183,6 +189,7 @@ export function ThreadHome({
   mediaCount = 0,
   busySurface,
   issue,
+  overviewSections,
   onNewChat,
   onSelectThread,
   onSelectSurface,
@@ -190,6 +197,7 @@ export function ThreadHome({
   onActivate
 }: ThreadHomeProps) {
   const surfaceDisabled = !authorityChatId || Boolean(busySurface)
+  const showOverviewSections = variant === 'main' && Boolean(overviewSections?.heatmaps)
   const renderThreadRow = (thread: ThreadHomeThreadOption) => (
     <button
       key={thread.chatId}
@@ -239,7 +247,11 @@ export function ThreadHome({
           </button>
         </div>
       )}
-      <div className="thread-home-scroll">
+      <div
+        className={`thread-home-scroll${
+          showOverviewSections ? ' thread-home-scroll--with-overview' : ''
+        }`}
+      >
         <section className="thread-home-section" aria-label="Active threads">
           <div className="thread-home-thread-list">
             <button
@@ -307,6 +319,11 @@ export function ThreadHome({
             </div>
           )}
         </section>
+        {showOverviewSections && overviewSections?.heatmaps && (
+          <section className="thread-home-heatmaps-region" aria-label="Activity heatmaps">
+            {overviewSections.heatmaps}
+          </section>
+        )}
       </div>
     </section>
   )
@@ -441,6 +458,7 @@ export interface ThreadHomeWorkspaceProps {
   paneChatIds: readonly (string | null)[]
   authorityChat: ChatRecord | null
   mediaRefs: ChatMediaRef[]
+  overviewSections?: ThreadHomeOverviewSections
   onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onClosePane?: () => void
@@ -505,6 +523,7 @@ function ThreadHomeWorkspaceInner(
     paneChatIds,
     authorityChat,
     mediaRefs,
+    overviewSections,
     onNewChat,
     onSelectThread,
     onClosePane,
@@ -650,6 +669,7 @@ function ThreadHomeWorkspaceInner(
         mediaCount={mediaRefs.length}
         busySurface={busySurface}
         issue={issue}
+        overviewSections={overviewSections}
         onNewChat={onNewChat}
         onSelectThread={onSelectThread}
         onSelectSurface={(next) => void openSurface(next)}
