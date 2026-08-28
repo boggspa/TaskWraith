@@ -1,11 +1,53 @@
-import type {
-  ConcurrentLaneStatus,
-  EnsembleParticipantStatus,
-  EnsembleRoundState,
-  EnsembleRoundTurnTransition
-} from '../main/store/types'
+/**
+ * Minimal structural lifecycle contract shared by Desktop and the standalone
+ * Node Host. Keep this module independent of main/store/types: the Host compiler
+ * follows type-only imports and would otherwise emit the whole Desktop type
+ * closure into the production Host payload.
+ */
+export type EnsembleLifecycleParticipantStatus =
+  | 'idle'
+  | 'running'
+  | 'answered'
+  | 'yielded'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+  | 'sleeping'
+  | 'unreachable'
 
-const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
+export type EnsembleLifecycleLaneStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked'
+  | 'awaiting-approval'
+
+export interface EnsembleRoundLifecycleTurnTransition {
+  readonly phase: 'settling-provider' | 'handoff'
+  readonly runtimeInstanceId: string
+  readonly sourceParticipantId: string
+  readonly sourceRunId: string
+  readonly targetParticipantId?: string
+  readonly startedAt: string
+}
+
+export interface EnsembleRoundLifecycleState {
+  readonly roundId: string
+  readonly status: 'running' | 'completed' | 'cancelled' | 'failed'
+  readonly activeParticipantId?: string
+  readonly turnTransition?: EnsembleRoundLifecycleTurnTransition
+  readonly participants: readonly {
+    readonly participantId: string
+    readonly status: EnsembleLifecycleParticipantStatus
+  }[]
+  readonly lanes?: Readonly<Record<string, { readonly status: EnsembleLifecycleLaneStatus }>>
+  readonly pendingWakeupIds?: readonly string[]
+  readonly sleepingParticipantIds?: readonly string[]
+}
+
+const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set<EnsembleLifecycleParticipantStatus>([
   'idle',
   'running',
   'sleeping'
@@ -24,11 +66,11 @@ const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
  * projection that tells the phone which lane cards to shimmer. They must agree;
  * a copy that drifts leaves a card marked busy after its seat has finished.
  */
-export const LIVE_ENSEMBLE_LANE_STATUSES: ReadonlySet<ConcurrentLaneStatus> =
-  new Set<ConcurrentLaneStatus>(['pending', 'running', 'blocked', 'awaiting-approval'])
+export const LIVE_ENSEMBLE_LANE_STATUSES: ReadonlySet<EnsembleLifecycleLaneStatus> =
+  new Set<EnsembleLifecycleLaneStatus>(['pending', 'running', 'blocked', 'awaiting-approval'])
 
 export function isEnsembleRoundDispatchLive(
-  round: EnsembleRoundState | null | undefined
+  round: EnsembleRoundLifecycleState | null | undefined
 ): boolean {
   if (round?.status !== 'running') return false
   const participants = Array.isArray(round.participants) ? round.participants : []
@@ -59,7 +101,7 @@ export function isEnsembleRoundDispatchLive(
  * in-memory orchestrator no longer exists.
  */
 export function isEnsembleRoundPresentationLive(
-  round: EnsembleRoundState | null | undefined
+  round: EnsembleRoundLifecycleState | null | undefined
 ): boolean {
   if (round?.status !== 'running') return false
   if (round.turnTransition) return true
@@ -79,7 +121,7 @@ export function isEnsembleRoundPresentationLive(
  * naming an empty seat.
  */
 export function ensembleTurnTransitionLabel(
-  transition: EnsembleRoundTurnTransition | null | undefined,
+  transition: EnsembleRoundLifecycleTurnTransition | null | undefined,
   targetRoleLabel?: string | null
 ): string | undefined {
   if (!transition) return undefined
