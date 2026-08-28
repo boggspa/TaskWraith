@@ -196,12 +196,26 @@ extension HostLiveness {
         probeLedger: HostLivenessProbeLedger,
         now: Date = Date()
     ) -> HostLiveness? {
-        derive(
+        // The shared snapshot reducer deliberately marks an ordered delta-applied
+        // snapshot `.cached`: the reducer is provenance-agnostic and cannot know
+        // whether its caller replayed history or consumed a live stream. This
+        // replica CAN know. A `.live` paired-host phase is emitted only after the
+        // gateway has established cursor continuity, so `.cached` here means
+        // "coherently advanced from the live baseline", not "showing an offline
+        // cache". Treat that one combination as positive freshness. Preserve
+        // explicit `.stale`, and never upgrade a non-live replica.
+        let effectiveFreshness: HostProjectionFreshness?
+        if projectionPhase == .live, healthProjection?.freshness == .cached {
+            effectiveFreshness = .live
+        } else {
+            effectiveFreshness = healthProjection?.freshness
+        }
+        return derive(
             HostLivenessInputs(
                 sessionPhase: sessionPhase,
                 connectionPhase: healthProjection?.connectionPhase,
                 health: healthProjection?.hostStatus,
-                freshness: healthProjection?.freshness,
+                freshness: effectiveFreshness,
                 transportHealthy: projectionPhase == .live
                     || probeLedger.transportHealthy(at: now),
                 peerAckFailing: probeLedger.peerAckFailing(at: now)))

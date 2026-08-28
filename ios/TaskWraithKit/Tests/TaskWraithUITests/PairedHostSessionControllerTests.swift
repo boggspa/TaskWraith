@@ -171,8 +171,13 @@ struct PairedHostSessionControllerTests {
       return
     }
 
-    await waitUntil { controller.snapshot?.cursor == 3 && !controller.resyncInFlight }
+    await waitUntil {
+      controller.snapshot?.cursor == 3 && controller.phase == .live && !controller.resyncInFlight
+    }
     #expect(controller.snapshot?.cursor == 3)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(controller.health?.freshness == .live)
+    #expect(controller.phase == .live)
     let requests = await transport.requests()
     #expect(requests.count == 1)
     #expect(requests[0].method == PairedHostProjectionMethods.request)

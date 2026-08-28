@@ -32,13 +32,25 @@ struct HostLivenessProjectionAdapterTests {
                 == .live)
     }
 
-    @Test("live transport with cached host fields is stale, not unreachable")
-    func cachedProjectionIsStale() {
+    @Test("live replica continuity keeps an ordered delta-applied cache live")
+    func liveDeltaCacheIsLive() {
         #expect(
             HostLiveness.derive(
                 sessionPhase: .connected,
                 projectionPhase: .live,
                 healthProjection: health(freshness: .cached),
+                probeLedger: HostLivenessProbeLedger(),
+                now: now)
+                == .live)
+    }
+
+    @Test("an explicitly stale projection remains stale even while the replica is live")
+    func explicitStalenessIsNotUpgraded() {
+        #expect(
+            HostLiveness.derive(
+                sessionPhase: .connected,
+                projectionPhase: .live,
+                healthProjection: health(freshness: .stale),
                 probeLedger: HostLivenessProbeLedger(),
                 now: now)
                 == .stale)
