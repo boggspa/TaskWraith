@@ -34,6 +34,20 @@ describe('Thread Home integration', () => {
     expect(layoutSource).toContain('handleNewDefaultGlobalChat?.()')
   })
 
+  it('shares welcome activity slots with full Thread Home but keeps its dashboard welcome-only', () => {
+    expect(appSource).toContain('isThreadHomeOpen: threadHomeOpen')
+    expect(appSource).toContain('const isWelcomeOrThreadHome = isWelcomeChat || threadHomeOpen')
+    expect(layoutSource).toContain('const threadHomeOverviewSections = threadHomeOpen')
+    expect(layoutSource).not.toContain('dashboard: sharedUsageDashboard')
+    expect(layoutSource).toContain(
+      '<WelcomeHeatmaps slots={composerCtx.welcomeHeatmapSlots} layout="single" />'
+    )
+    expect(layoutSource).toContain(
+      '{shouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled && ('
+    )
+    expect(layoutSource).toContain('overviewSections={threadHomeOverviewSections}')
+  })
+
   it('routes close through the glass pill and retires the old floating pane close button', () => {
     const pillStart = layoutSource.indexOf('<MainPaneActionPill\n')
     const pillEnd = layoutSource.indexOf('/>', pillStart)

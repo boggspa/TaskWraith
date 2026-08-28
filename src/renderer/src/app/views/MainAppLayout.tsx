@@ -104,6 +104,7 @@ import {
   SkyWeatherVisual
 } from '../../components/FxLayers'
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
+import { WelcomeHeatmaps } from '../../components/WelcomeHeatmaps'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
 import { ThreadHomeWorkspace, type ThreadHomeWorkspaceHandle } from '../../components/ThreadHome'
@@ -654,6 +655,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     handleNewChat,
     handleNewDefaultGlobalChat
   ])
+  const threadHomeOverviewSections = threadHomeOpen
+    ? {
+        heatmaps: composerCtx.shouldShowWelcomeStandaloneHeatmaps ? (
+          <WelcomeHeatmaps slots={composerCtx.welcomeHeatmapSlots} layout="single" />
+        ) : undefined
+      }
+    : undefined
   const refreshProviderAuthStatus = useCallback(
     async (provider: Parameters<typeof refreshProviderMetadata>[0]) => {
       if (provider === 'codex') {
@@ -2278,6 +2286,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               paneChatIds={[currentChatAppChatId]}
               authorityChat={currentChat}
               mediaRefs={currentChatMediaRefs}
+              overviewSections={threadHomeOverviewSections}
               onNewChat={startNewThreadFromHome}
               onSelectThread={selectThreadFromHome}
               onPreviewImage={setPreviewChatMediaRef}
