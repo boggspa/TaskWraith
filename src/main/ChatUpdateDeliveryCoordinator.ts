@@ -575,6 +575,33 @@ export class ChatUpdateDeliveryCoordinator {
     this.statesByTarget.delete(targetId)
   }
 
+  /**
+   * Drop one chat's optimistic revision history and send its canonical record
+   * as an urgent snapshot. Used when Host CAS recovery reanchors persistence
+   * below revisions main had already projected optimistically.
+   */
+  reseed(target: ChatUpdateDeliveryTarget, chat: ChatRecord): void {
+    if (!chat?.appChatId || target.isDestroyed()) return
+    const states = this.statesByTarget.get(target.id)
+    const previous = states?.get(chat.appChatId)
+    if (previous) {
+      if (previous.acknowledged || previous.baselineChat || previous.inFlight) {
+        this.counters.baselineDrops += 1
+      }
+      this.disposeState(previous)
+      states?.delete(chat.appChatId)
+    }
+    this.enqueue(target, chat)
+    const state = this.statesByTarget.get(target.id)?.get(chat.appChatId)
+    if (!state?.pending) return
+    state.pending.priority = 'urgent'
+    if (state.timer) {
+      this.clearTimer(state.timer)
+      state.timer = undefined
+    }
+    this.maybeSend(state)
+  }
+
   private acknowledgeRendered(targetId: number, ack: ChatUpdateAck): boolean {
     if (!ack.applied || !ack.chatId) return false
     const state = this.statesByTarget.get(targetId)?.get(ack.chatId)

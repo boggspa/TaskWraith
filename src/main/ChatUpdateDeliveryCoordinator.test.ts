@@ -166,6 +166,32 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[1].kind).toBe('snapshot')
   })
 
+  it('reseeds a lower Host-rebased revision as an urgent snapshot', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 100,
+      emitProtocolVersion: 2
+    })
+    const [optimistic] = projectSequence(chat(10, ['optimistic']))
+    coordinator.enqueue(sink, optimistic)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true
+    })
+
+    const [rebased] = projectSequence(chat(3, ['rebased']))
+    coordinator.enqueue(sink, rebased)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.protocolCounters().staleEnqueueDrops).toBe(1)
+
+    coordinator.reseed(sink, rebased)
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[1].chat.persistenceRevision).toBe(3)
+  })
+
   it('retries a rejected delivery once without creating a rejection loop', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })

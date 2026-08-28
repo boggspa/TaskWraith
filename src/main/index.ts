@@ -11116,6 +11116,28 @@ function enqueueChatUpdated(target: BrowserWindow | null | undefined, chat: Chat
   )
 }
 
+function reseedChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
+  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return
+  const webContents = target.webContents
+  chatUpdateDeliveryCoordinator.reseed(
+    {
+      id: webContents.id,
+      isDestroyed: () => target.isDestroyed() || webContents.isDestroyed(),
+      send: (channel, payload) => webContents.send(channel, payload)
+    },
+    chat
+  )
+}
+
+function broadcastHostPersistRecoverySnapshot(chat: ChatRecord): void {
+  reseedChatUpdated(mainWindow, chat)
+  const popout = workspacePopoutWindows.get(`chat:${chat.appChatId}`)
+  if (popout) reseedChatUpdated(popout, chat)
+  markHumanCollaborationProjectionDirty?.(chat.appChatId)
+}
+
+AppStore.setHostPersistConflictRecoveryListener(broadcastHostPersistRecoverySnapshot)
+
 function broadcastContextCompactionProgress(event: ContextCompactionProgressEvent): void {
   safeSendToWebContents(mainWindow, 'context-compaction-progress', event)
   if (!event.chatId || workspacePopoutWindows.size === 0) return
