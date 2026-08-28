@@ -1,6 +1,6 @@
 # AppDrive — agent actuation over TaskWraith-owned surfaces
 
-**Status:** Written 2026-07-26. Implementation status re-verified against the tree **2026-08-20** — see §0a, which supersedes the per-slice status in §11 wherever they disagree. The retrospective shipped contract is [AppDrive V1](appdrive-v1-contract.md).
+**Status:** Written 2026-07-26. Implementation status re-verified against the tree **2026-08-20** — see §0a, which supersedes the per-slice status in §11 wherever they disagree. The retrospective shipped contract is [AppDrive V1](v1-contract.md).
 **Scope of this document:** Tiers 0, 2, 3 and 4 have shipped. Tier 1’s loopback-only fence was skipped when Tier 2 (any-origin web) shipped in 1.9.5 **ahead of its stated gate**; §0a records that product decision and the residual risk. Tier 5 remains out of scope, and Tier 3-as-designed (XCUITest/idb) was overtaken by the Simulator Canvas that shipped instead.
 **Citation convention:** source links point at a **file, not a line**. They previously carried `:NNN` anchors, and on 2026-08-16 only 3 of 43 symbol-anchored citations still landed within five lines of the symbol they named — one pointed past end-of-file — so the anchors were removed rather than re-pinned. The backticked symbol name beside each link is the locator; search for it. A handful of bare `` `:NNN` `` references remain inside prose as relative hints and are subject to the same drift.
 
@@ -67,7 +67,7 @@ Two consequences the rest of this document does not yet reflect:
   postcondition. Managed native actions carry mandatory driver verification and
   may receive a second-participant attestation; their current lease remains
   Run/provider-bound rather than claiming participant-required mode.
-- **AppDrive V1 contract:** [appdrive-v1-contract.md](appdrive-v1-contract.md)
+- **AppDrive V1 contract:** [v1-contract.md](v1-contract.md)
   records the retrospective shipped boundary, including the any-origin web
   decision and the features explicitly outside V1.
 
@@ -93,16 +93,16 @@ The *product* built on AppDrive is **QA lanes** — agents driving your own buil
 
 The v1 instinct is right: restrict actuation to surfaces TaskWraith owns, and the catastrophic wrong-window / wrong-tab failure class disappears.
 
-> **NO LONGER TRUE as of 1.9.5 — the paragraph this replaces claimed agent-opened canvases were "additionally near-harmless" because their partitions were per-session ephemeral (`canvas-${sessionId}`, no `persist:` prefix), so a fresh canvas had no cookies and could not act as the user anywhere.** The first-class Canvas Browser now shares one durable profile (`persist:taskwraith-canvas-browser-v1`, [CanvasBrowserProfile.ts](../src/main/canvas/CanvasBrowserProfile.ts)); cookies and sign-ins persist across restarts and across canvases. **An authenticated surface is the normal case now, not the exception.** Directly constructed drivers still get a one-canvas in-memory profile, but the app injects the shared persistent one. Do not reason from the old softener anywhere in this document — it is why residual risk §10.1 is now the default case and why the consequential check in §7 had to ship.
+> **NO LONGER TRUE as of 1.9.5 — the paragraph this replaces claimed agent-opened canvases were "additionally near-harmless" because their partitions were per-session ephemeral (`canvas-${sessionId}`, no `persist:` prefix), so a fresh canvas had no cookies and could not act as the user anywhere.** The first-class Canvas Browser now shares one durable profile (`persist:taskwraith-canvas-browser-v1`, [CanvasBrowserProfile.ts](../../src/main/canvas/CanvasBrowserProfile.ts)); cookies and sign-ins persist across restarts and across canvases. **An authenticated surface is the normal case now, not the exception.** Directly constructed drivers still get a one-canvas in-memory profile, but the app injects the shared persistent one. Do not reason from the old softener anywhere in this document — it is why residual risk §10.1 is now the default case and why the consequential check in §7 had to ship.
 
-**But the containment is not enforced today, because `canvasInteraction` grants are per-service, never per-surface.** The session-grant key is `provider:service:workspacePath` ([PermissionService.ts](../src/main/PermissionService.ts)) — no `canvasId`, no `chatId`. So:
+**But the containment is not enforced today, because `canvasInteraction` grants are per-service, never per-surface.** The session-grant key is `provider:service:workspacePath` ([PermissionService.ts](../../src/main/PermissionService.ts)) — no `canvasId`, no `chatId`. So:
 
 - one "allow for session" covers every canvas in that run **and every canvas opened afterwards**;
 - one "allow for workspace" covers every canvas in every chat for that provider;
-- `canvas_list` is chat-scoped and returns the chat's canvases *including* the renderer-created embedded one the user logged into ([CanvasService.ts](../src/main/canvas/CanvasService.ts));
+- `canvas_list` is chat-scoped and returns the chat's canvases *including* the renderer-created embedded one the user logged into ([CanvasService.ts](../../src/main/canvas/CanvasService.ts));
 - therefore an agent can enumerate and actuate a surface the user never pointed it at.
 
-The single exception is the `plan` preset, where `canvasInteraction` is grant-immune and re-prompts per call (`PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`, [EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts)). That is the mechanism we need, just not the default.
+The single exception is the `plan` preset, where `canvasInteraction` is grant-immune and re-prompts per call (`PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`, [EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts)). That is the mechanism we need, just not the default.
 
 **Fixing the grant key was the gating item for the web tiers — it shipped in `bbfa9ec7c` (§3.2).** Until a grant names a surface, "the user chose this window" is a UX story, not an invariant. The source-ahead Tier 4 path does not reuse that broad grant: it has its own exact run/window lease and independent user-consent flow (§12b).
 
@@ -120,36 +120,36 @@ These are bugs in `canvas_click` / `canvas_fill` / `canvas_sketch_update` **toda
 
 ### D1 — Actuation returns success without a verified postcondition
 
-`act()` resolves the ref out of the frozen snapshot map and fires immediately ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)). There is **no** `isConnected` check, no bbox revalidation, no snapshot epoch. `CanvasActionInput` ([canvasTypes.ts](../src/main/canvas/canvasTypes.ts)) has no precondition field, and `CanvasElementTree` exposes only `capturedAt` — nothing the caller could echo back.
+`act()` resolves the ref out of the frozen snapshot map and fires immediately ([CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)). There is **no** `isConnected` check, no bbox revalidation, no snapshot epoch. `CanvasActionInput` ([canvasTypes.ts](../../src/main/canvas/canvasTypes.ts)) has no precondition field, and `CanvasElementTree` exposes only `capturedAt` — nothing the caller could echo back.
 
-Failure path: a React re-render between `canvas_snapshot` and `canvas_click` leaves the frozen ref pointing at a detached node. `scrollIntoView` no-ops, `el.click()` on a detached node does not throw, so the driver returns `{ok: true, found: true, action: 'click'}` ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)) and `CanvasService` audits `found: true` while nothing happened on screen.
+Failure path: a React re-render between `canvas_snapshot` and `canvas_click` leaves the frozen ref pointing at a detached node. `scrollIntoView` no-ops, `el.click()` on a detached node does not throw, so the driver returns `{ok: true, found: true, action: 'click'}` ([CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)) and `CanvasService` audits `found: true` while nothing happened on screen.
 
 This is the worst possible bug in an actuation layer: the model then re-observes, sees no change, and **tries harder**. It is also the same shape as the known missing-terminal-else class — silent empty success.
 
 ### D2 — Audit ordering is inverted (defence-in-depth, NOT a reachable bug)
 
-**Corrected 2026-07-26 after attempting to reproduce it.** `assertLiveAfterAwait` runs **after** the driver call ([CanvasService.ts](../src/main/canvas/CanvasService.ts) click, `:790` fill, `:843` sketch), so on a liveness race it throws and skips the audit `emit` for an action that already executed. The ordering is genuinely backwards.
+**Corrected 2026-07-26 after attempting to reproduce it.** `assertLiveAfterAwait` runs **after** the driver call ([CanvasService.ts](../../src/main/canvas/CanvasService.ts) click, `:790` fill, `:843` sketch), so on a liveness race it throws and skips the audit `emit` for an action that already executed. The ordering is genuinely backwards.
 
-But it is **not reachable**. `emit` independently refuses to write once the history generation has moved ([CanvasService.ts](../src/main/canvas/CanvasService.ts)), and every path that makes `assertLiveAfterAwait` throw also either bumps the generation synchronously (`beginHistoryClear` does it before its first await, [CanvasService.ts](../src/main/canvas/CanvasService.ts)) or tears the canvas down and deletes its generation entry. Three vectors were tried — global clear, scoped authority clear, canvas close during await — and in all three the event would have been purged anyway. The only theoretical gap is a session *replaced* under the same `canvasId`, which cannot happen because ids are per-open UUIDs.
+But it is **not reachable**. `emit` independently refuses to write once the history generation has moved ([CanvasService.ts](../../src/main/canvas/CanvasService.ts)), and every path that makes `assertLiveAfterAwait` throw also either bumps the generation synchronously (`beginHistoryClear` does it before its first await, [CanvasService.ts](../../src/main/canvas/CanvasService.ts)) or tears the canvas down and deletes its generation entry. Three vectors were tried — global clear, scoped authority clear, canvas close during await — and in all three the event would have been purged anyway. The only theoretical gap is a session *replaced* under the same `canvasId`, which cannot happen because ids are per-open UUIDs.
 
 So: reorder it, because relying on a subtle invariant in a *different* function for a correctness property is fragile and the reorder is free — but do not bill it as a bug fix. The reachable wins in this area are the **pre-flight** assert (never touch a canvas whose clear is in flight) and **serialization** (below).
 
-Contrast `evaluate` ([CanvasService.ts](../src/main/canvas/CanvasService.ts)), which does it correctly and for a real reason: `emitStrict('eval.started')` **before** execution, fail-closed if it cannot persist.
+Contrast `evaluate` ([CanvasService.ts](../../src/main/canvas/CanvasService.ts)), which does it correctly and for a real reason: `emitStrict('eval.started')` **before** execution, fail-closed if it cannot persist.
 
 ### D3 — No user-takeover concept exists, and the agent fights the user
 
 No pause, no cancel-on-input, no lock, no "human is driving" flag anywhere. Worse:
 
-- `actScript` calls `scrollIntoView` ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)) and `el.focus()` (`:217`, `:235`) on **every** click and fill — a focus steal mid-typing;
+- `actScript` calls `scrollIntoView` ([CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)) and `el.focus()` (`:217`, `:235`) on **every** click and fill — a focus steal mid-typing;
 - `fill` overwrites through the native value setter with no merge (`:229`);
-- `chargeInteraction` is a counter, not a mutex ([CanvasService.ts](../src/main/canvas/CanvasService.ts)) — concurrent calls interleave freely;
-- `overlayGuard`'s `setVisible(false)` incidentally makes the view unclickable, but it fires on DOM occlusion only ([CanvasPane.tsx](../src/renderer/src/components/CanvasPane.tsx)) and the driver keeps scripting the hidden page.
+- `chargeInteraction` is a counter, not a mutex ([CanvasService.ts](../../src/main/canvas/CanvasService.ts)) — concurrent calls interleave freely;
+- `overlayGuard`'s `setVisible(false)` incidentally makes the view unclickable, but it fires on DOM occlusion only ([CanvasPane.tsx](../../src/renderer/src/components/CanvasPane.tsx)) and the driver keeps scripting the hidden page.
 
 The only human override is destroy, not pause.
 
 ### D4 — The sketch driver silently destroys in-progress user work
 
-Page-side `applyUpdate` sets `doc.elements = next` unconditionally for `mode:'replace'` ([CanvasSketchDriver.ts](../src/main/canvas/CanvasSketchDriver.ts)). The human's in-progress stroke is pushed into `doc.elements` at pointerdown (`:316`), so an agent `canvas_sketch_update` mid-drag drops the draft from the document; the local `draft` var keeps mutating an orphan, `render()` rebuilds only from `doc.elements`, and `finish()` cannot restore it. `doc.updatedAt` is maintained (`:173`) and never used as a precondition. Last-writer-wins, reproducible, loses user work.
+Page-side `applyUpdate` sets `doc.elements = next` unconditionally for `mode:'replace'` ([CanvasSketchDriver.ts](../../src/main/canvas/CanvasSketchDriver.ts)). The human's in-progress stroke is pushed into `doc.elements` at pointerdown (`:316`), so an agent `canvas_sketch_update` mid-drag drops the draft from the document; the local `draft` var keeps mutating an orphan, `render()` rebuilds only from `doc.elements`, and `finish()` cannot restore it. `doc.updatedAt` is maintained (`:173`) and never used as a precondition. Last-writer-wins, reproducible, loses user work.
 
 ### D5 — Grants are not surface-scoped
 
@@ -157,8 +157,8 @@ Page-side `applyUpdate` sets `doc.elements = next` unconditionally for `mode:'re
 
 ### Also worth fixing in the same pass (not defects, but adjacent)
 
-- **`McpToolCatalog.ts:3506` lies to the agent**: it says a launched Run process "runs jailed to the workspace." It is not — spawn options are `cwd/shell/detached/windowsHide/env` with the real `process.env` inherited ([LaunchManager.ts](../src/main/launch/LaunchManager.ts)), no seatbelt, full user privileges. The only jail is a cwd check. Either sandbox it or fix the string; a false security claim in agent-facing text is worse than no claim.
-- **The sketch surface is hardened less than the web one**: [CanvasSketchDriver.ts](../src/main/canvas/CanvasSketchDriver.ts) sets only window-open deny + `setPermissionRequestHandler(false)` — no `setPermissionCheckHandler`, no `will-download` guard, no WebRTC policy, despite sharing the embed factory with the web driver which has all four ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)).
+- **`McpToolCatalog.ts:3506` lies to the agent**: it says a launched Run process "runs jailed to the workspace." It is not — spawn options are `cwd/shell/detached/windowsHide/env` with the real `process.env` inherited ([LaunchManager.ts](../../src/main/launch/LaunchManager.ts)), no seatbelt, full user privileges. The only jail is a cwd check. Either sandbox it or fix the string; a false security claim in agent-facing text is worse than no claim.
+- **The sketch surface is hardened less than the web one**: [CanvasSketchDriver.ts](../../src/main/canvas/CanvasSketchDriver.ts) sets only window-open deny + `setPermissionRequestHandler(false)` — no `setPermissionCheckHandler`, no `will-download` guard, no WebRTC policy, despite sharing the embed factory with the web driver which has all four ([CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)).
 - **The stale `canvasEval` docs** (§11, S0) — already stale in the tree today.
 
 ---
@@ -169,8 +169,8 @@ The instinct to model AppDrive on `canvasEval` is half right. `canvasEval` promp
 
 | concern | template | why |
 |---|---|---|
-| **May this actor touch this surface at all?** | `ConcurrentLaneWriteScope` + `validateLaneWriteScopeForRun` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts)) | Approved **once** by user or Boss, persisted durably on the round state, consulted **per-call** at MCP-tool-execution time, scoped to a resource. Exactly a lease. Already adversarially reviewed for files. |
-| **May this *specific* action, which looks destructive, proceed?** | `CanvasEvalApprovalReceipt` + `CanvasStore.appendEventStrict` claim ([CanvasStore.ts](../src/main/canvas/CanvasStore.ts)) | Content-bound, single-use, claim-before-write, durable across restart, desktop-only review. Exactly a consequential-action confirmation. |
+| **May this actor touch this surface at all?** | `ConcurrentLaneWriteScope` + `validateLaneWriteScopeForRun` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts)) | Approved **once** by user or Boss, persisted durably on the round state, consulted **per-call** at MCP-tool-execution time, scoped to a resource. Exactly a lease. Already adversarially reviewed for files. |
+| **May this *specific* action, which looks destructive, proceed?** | `CanvasEvalApprovalReceipt` + `CanvasStore.appendEventStrict` claim ([CanvasStore.ts](../../src/main/canvas/CanvasStore.ts)) | Content-bound, single-use, claim-before-write, durable across restart, desktop-only review. Exactly a consequential-action confirmation. |
 
 Plus a third layer that needs no human at all:
 
@@ -215,7 +215,7 @@ interface AppDriveLease {
 
 **Leases are not agent-requestable in v1.** Like `ConcurrentLaneWriteScope`, they are created by the human (composer / dock panel) or by Boss. There is no `appdrive_lease_request` tool. This removes the entire self-arming attack surface and a large chunk of the work.
 
-**Migration:** when the renderer opens an embedded canvas (`canvas:open-embedded`, [CanvasEmbedIpc.ts](../src/main/canvas/CanvasEmbedIpc.ts)), auto-mint a lease scoped to that canvas + origin for the chat's own run. Existing human-initiated flows keep working with no new prompt. Agent-opened floating canvases get **no** lease — the agent must be handed one.
+**Migration:** when the renderer opens an embedded canvas (`canvas:open-embedded`, [CanvasEmbedIpc.ts](../../src/main/canvas/CanvasEmbedIpc.ts)), auto-mint a lease scoped to that canvas + origin for the chat's own run. Existing human-initiated flows keep working with no new prompt. Agent-opened floating canvases get **no** lease — the agent must be handed one.
 
 ### 3.2 Grant surface-binding (D5) — **SHIPPED 2026-07-26** (`bbfa9ec7c`)
 
@@ -233,13 +233,13 @@ Also dropped: no persistence, sanitizer or migration work is needed, because no 
 
 Additive change to the grant record: an optional `surfaceId`. `resolvePermission` only matches a grant whose `surfaceId` equals the request's; services with no surface leave it `undefined` and behave exactly as today.
 
-- session key becomes `provider:service:workspacePath:surfaceId?` ([PermissionService.ts](../src/main/PermissionService.ts))
-- workspace grant match gains the same component ([PermissionService.ts](../src/main/PermissionService.ts))
-- **`canvasInteraction` joins the `workspaceGrantServiceIdsFor` drop list** ([EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts)) alongside `canvasEval`/`mediaRecording`. A workspace-wide "click anything in any chat forever" grant is indefensible. **This is a deliberate behaviour change and needs its own commit and its own review.**
+- session key becomes `provider:service:workspacePath:surfaceId?` ([PermissionService.ts](../../src/main/PermissionService.ts))
+- workspace grant match gains the same component ([PermissionService.ts](../../src/main/PermissionService.ts))
+- **`canvasInteraction` joins the `workspaceGrantServiceIdsFor` drop list** ([EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts)) alongside `canvasEval`/`mediaRecording`. A workspace-wide "click anything in any chat forever" grant is indefensible. **This is a deliberate behaviour change and needs its own commit and its own review.**
 
 Net UX: one prompt still covers a whole drive session — it is just bound to one surface.
 
-**Why not `forcePrompt` instead?** There is a cheaper, already-tested mechanism: `mcpToolAlwaysPrompts` ([McpRouteGuards.ts](../src/main/mcp/McpRouteGuards.ts)) sets `forcePrompt`, which is checked *ahead of* every auto-approval path — Boss auto-approval returns null on it ([BossmanAutoApproval.ts](../src/main/BossmanAutoApproval.ts)) and the trusted-session write path defers to it. It is one line, touches no shared type, and is the strongest available statement of "no standing grant, trusted session or session-YOLO may ever silence this". The appearance feature chose exactly this for `theme_tokens_set` over adding a service id.
+**Why not `forcePrompt` instead?** There is a cheaper, already-tested mechanism: `mcpToolAlwaysPrompts` ([McpRouteGuards.ts](../../src/main/mcp/McpRouteGuards.ts)) sets `forcePrompt`, which is checked *ahead of* every auto-approval path — Boss auto-approval returns null on it ([BossmanAutoApproval.ts](../../src/main/BossmanAutoApproval.ts)) and the trusted-session write path defers to it. It is one line, touches no shared type, and is the strongest available statement of "no standing grant, trusted session or session-YOLO may ever silence this". The appearance feature chose exactly this for `theme_tokens_set` over adding a service id.
 
 **It is the wrong tool here, and the reason is the shape of the work.** A drive session performs hundreds of actions; a modal per click is unusable, and an unusable gate is worse than a correctly-scoped one because people route around it. That is the same reasoning that ruled out cloning `canvasEval`'s per-call receipt for actuation (§3). The user *should* be able to say "yes, drive this surface" once — the defect was never that `canvasInteraction` is grantable, it is that the grant names no surface. So scope the grant; don't abolish it.
 
@@ -247,7 +247,7 @@ The two mechanisms are not exclusive, and `canvas_eval` uses both: always-prompt
 
 ### 3.3 Instance epoch (new primitive)
 
-There is **no TaskWraith instance identifier anywhere** in the MCP or approval path. `appRunId` is `provider-timestamp-random` ([RunRoute.ts](../src/main/run/RunRoute.ts)) with no instance component; `ApprovalLedgerRecord` has no instance field; the broker request payload has none. The only instance-ish artifacts are implicit — the per-process broker token ([index.ts](../src/main/index.ts)) and the `userData`-derived socket path.
+There is **no TaskWraith instance identifier anywhere** in the MCP or approval path. `appRunId` is `provider-timestamp-random` ([RunRoute.ts](../../src/main/run/RunRoute.ts)) with no instance component; `ApprovalLedgerRecord` has no instance field; the broker request payload has none. The only instance-ish artifacts are implicit — the per-process broker token ([index.ts](../../src/main/index.ts)) and the `userData`-derived socket path.
 
 That matters because provider MCP registrations are **user-global** (`~/.cursor/mcp.json`, `~/.gemini/settings.json`), so a stale registration can point a CLI child at the wrong instance's socket. The broker token would reject a genuinely foreign instance, so the realistic failure is stale-config → wrong-socket rather than authenticated cross-instance write — but for an actuation primitive that distinction is too fine to rely on.
 
@@ -255,7 +255,7 @@ That matters because provider MCP registrations are **user-global** (`~/.cursor/
 
 ### 3.4 Never resolve by chatId alone
 
-`RunManager.resolve` falls back: with only `appChatId` it returns the **most recently updated** active session for that provider in that chat ([RunManager.ts](../src/main/RunManager.ts)). In a parallel fan-out with two seats on one provider, a chatId-only-routed call resolves to the **wrong seat's** `ensembleRun`. `validateMutatingMcpRoute` only requires *one of* the two ([McpRouteGuards.ts](../src/main/mcp/McpRouteGuards.ts)).
+`RunManager.resolve` falls back: with only `appChatId` it returns the **most recently updated** active session for that provider in that chat ([RunManager.ts](../../src/main/RunManager.ts)). In a parallel fan-out with two seats on one provider, a chatId-only-routed call resolves to the **wrong seat's** `ensembleRun`. `validateMutatingMcpRoute` only requires *one of* the two ([McpRouteGuards.ts](../../src/main/mcp/McpRouteGuards.ts)).
 
 **Every AppDrive verb must require `appRunId` and reject chatId-only routing.**
 
@@ -265,9 +265,9 @@ That matters because provider MCP registrations are **user-global** (`~/.cursor/
 
 ### 4.1 Gate on participant identity, never on role strings
 
-`role` is a free-form `string` ([types.ts](../src/main/store/types.ts)) and `stageRole` is `'scout'|'worker'|'reviewer'|'background'` ([types.ts](../src/main/store/types.ts)) — **both are agent-patchable** through `ensemble_roster_edit`'s `PATCH_FIELDS` ([EnsembleRosterMutation.ts](../src/main/EnsembleRosterMutation.ts), `:153`). Authority is participant-ID equality against `chat.ensemble.bossmanParticipantId` / `secondInCommandParticipantId` ([types.ts](../src/main/store/types.ts)), as every existing check does.
+`role` is a free-form `string` ([types.ts](../../src/main/store/types.ts)) and `stageRole` is `'scout'|'worker'|'reviewer'|'background'` ([types.ts](../../src/main/store/types.ts)) — **both are agent-patchable** through `ensemble_roster_edit`'s `PATCH_FIELDS` ([EnsembleRosterMutation.ts](../../src/main/EnsembleRosterMutation.ts), `:153`). Authority is participant-ID equality against `chat.ensemble.bossmanParticipantId` / `secondInCommandParticipantId` ([types.ts](../../src/main/store/types.ts)), as every existing check does.
 
-Resolver already exists and is already called from the MCP dispatcher: `listParticipantsForRun(context.appRunId)` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts)) returns `bossmanAuthorityRole: 'boss'|'second_in_command'` plus `bossmanPrimaryUnavailableReason`, failover included. Prefer wrapping `actionableRunForTool` → `resolveBossAuthorityForCaller` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts)) so the gate inherits the `terminalFinalized` check that stops late/retried calls reusing dead authority.
+Resolver already exists and is already called from the MCP dispatcher: `listParticipantsForRun(context.appRunId)` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts)) returns `bossmanAuthorityRole: 'boss'|'second_in_command'` plus `bossmanPrimaryUnavailableReason`, failover included. Prefer wrapping `actionableRunForTool` → `resolveBossAuthorityForCaller` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts)) so the gate inherits the `terminalFinalized` check that stops late/retried calls reusing dead authority.
 
 ### 4.2 The matrix
 
@@ -284,9 +284,9 @@ Captain's dormant failover authority and its active operator lease are **differe
 
 ### 4.3 BG — the posture clamp falls out for free
 
-BG is a stage (`stageRole === 'background'`), not a role or flag. Verified properties: dispatched via `runParallelFanoutPass` with `waitForCompletion: false` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts)); absent from `activeRound` until explicitly delegated (`:13444`); excluded from rotation, plan ownership and authority lines ([EnsemblePrompt.ts](../src/main/EnsemblePrompt.ts), `:411`, `:376`); can never hold Boss or Captain (`:9997`, `:10011`); **always** gets `disallowTrustedSession: true` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts)).
+BG is a stage (`stageRole === 'background'`), not a role or flag. Verified properties: dispatched via `runParallelFanoutPass` with `waitForCompletion: false` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts)); absent from `activeRound` until explicitly delegated (`:13444`); excluded from rotation, plan ownership and authority lines ([EnsemblePrompt.ts](../../src/main/EnsemblePrompt.ts), `:411`, `:376`); can never hold Boss or Captain (`:9997`, `:10011`); **always** gets `disallowTrustedSession: true` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts)).
 
-Critically, `resolveBackgroundDispatchPosture` ([EnsembleBackgroundDispatch.ts](../src/main/services/EnsembleBackgroundDispatch.ts)) clamps a BG lane to `read_only_clamp` unless `honorSeatPosture && writeLanesEnabled`, and `honorSeatPosture: true` is set **only** by the user-origin `runRound` call site. Peer mentions and `ensemble_yield` routes stay clamped.
+Critically, `resolveBackgroundDispatchPosture` ([EnsembleBackgroundDispatch.ts](../../src/main/services/EnsembleBackgroundDispatch.ts)) clamps a BG lane to `read_only_clamp` unless `honorSeatPosture && writeLanesEnabled`, and `honorSeatPosture: true` is set **only** by the user-origin `runRound` call site. Peer mentions and `ensemble_yield` routes stay clamped.
 
 **Therefore: a BG lane that was not user-mentioned cannot hold an AppDrive lease at all, with no new code.** Only a user-origin-mentioned BG seat with write lanes enabled can be delegated one.
 
@@ -302,15 +302,15 @@ Otherwise Boss becomes a privilege-escalation path around a seat the user delibe
 
 Three literal unions exist for one concept and this is a live drift hazard for a new gate:
 
-- `'boss' | 'second_in_command'` — [EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts), [EnsembleSubThreadMailboxDelivery.ts](../src/main/EnsembleSubThreadMailboxDelivery.ts)
-- `'boss' | 'captain'` — [BossmanAutoApproval.ts](../src/main/BossmanAutoApproval.ts), `rosterPresetAuthorityRole` ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts))
-- `'boss' | 'captain' | 'agent'` — [EnsembleParticipantsAboveRow.tsx](../src/renderer/src/components/EnsembleParticipantsAboveRow.tsx)
+- `'boss' | 'second_in_command'` — [EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts), `EnsembleSubThreadMailboxDelivery.ts` (removed in `f3bedae3d`)
+- `'boss' | 'captain'` — [BossmanAutoApproval.ts](../../src/main/BossmanAutoApproval.ts), `rosterPresetAuthorityRole` ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts))
+- `'boss' | 'captain' | 'agent'` — [EnsembleParticipantsAboveRow.tsx](../../src/renderer/src/components/EnsembleParticipantsAboveRow.tsx)
 
-Pick one (`'boss' | 'captain'` reads better in UI and matches the user-facing labels) and normalise before adding a fourth consumer. Likewise, there are already **three** hand-duplicated copies of the Boss-unavailability check ([EnsembleOrchestrator.ts](../src/main/services/EnsembleOrchestrator.ts), [index.ts](../src/main/index.ts), [EnsembleSubThreadMailboxDelivery.ts](../src/main/EnsembleSubThreadMailboxDelivery.ts)) — route the fourth through an existing one, do not re-derive.
+Pick one (`'boss' | 'captain'` reads better in UI and matches the user-facing labels) and normalise before adding a fourth consumer. Likewise, there are already **three** hand-duplicated copies of the Boss-unavailability check ([EnsembleOrchestrator.ts](../../src/main/services/EnsembleOrchestrator.ts), [index.ts](../../src/main/index.ts), `EnsembleSubThreadMailboxDelivery.ts` (removed in `f3bedae3d`)) — route the fourth through an existing one, do not re-derive.
 
 ### 4.5 Boss auto-approval stays out
 
-[BossmanAutoApproval.ts](../src/main/BossmanAutoApproval.ts) refuses everything outside `shellCommands`/`fileChanges`, explicitly so Boss can never touch the MCP auto-allow surface. **Keep that.** `appDrive` joins `neverAutoAllow` ([ApprovalOrchestration.ts](../src/main/run/ApprovalOrchestration.ts)) — Boss may *create a lease* through the deliberate lease flow, and may never *auto-approve an actuation*.
+[BossmanAutoApproval.ts](../../src/main/BossmanAutoApproval.ts) refuses everything outside `shellCommands`/`fileChanges`, explicitly so Boss can never touch the MCP auto-allow surface. **Keep that.** `appDrive` joins `neverAutoAllow` ([ApprovalOrchestration.ts](../../src/main/run/ApprovalOrchestration.ts)) — Boss may *create a lease* through the deliberate lease flow, and may never *auto-approve an actuation*.
 
 ---
 
@@ -346,7 +346,7 @@ staleReason?: 'stale_target' | 'stale_input_epoch' | 'user_active' | 'occluded'
 
 `verified` comes from a cheap pre/post digest of `{target subtree hash, document.title, url, inputEpoch}`. A click that dispatched but changed nothing returns `executed: true, verified: 'unchanged'` — which the agent contract (§8) requires it to treat as a possible no-op rather than a success. **`ok: true` with `found: true` for a detached node becomes impossible.**
 
-Note `CanvasActResult.action` duplicates the `CanvasActionInput['kind']` union rather than deriving from it ([canvasTypes.ts](../src/main/canvas/canvasTypes.ts)) — widen both or the new verbs typecheck in one place and not the other.
+Note `CanvasActResult.action` duplicates the `CanvasActionInput['kind']` union rather than deriving from it ([canvasTypes.ts](../../src/main/canvas/canvasTypes.ts)) — widen both or the new verbs typecheck in one place and not the other.
 
 ### 5.3 Serialization and takeover
 
@@ -359,7 +359,7 @@ Note `CanvasActResult.action` duplicates the `CanvasActionInput['kind']` union r
 
 Reorder `click`/`fill` to match `evaluate`: `require → charge → assertLive → emit(intent) → act → emit(outcome only on failure)`.
 
-Emitting the intent *before* execution means a crash or a history-clear race leaves a record that the action was attempted. Emitting the outcome only on failure/unverified keeps it to ~1 event per action against `EVENT_HISTORY_LIMIT = 2000` ([CanvasStore.ts](../src/main/canvas/CanvasStore.ts)).
+Emitting the intent *before* execution means a crash or a history-clear race leaves a record that the action was attempted. Emitting the outcome only on failure/unverified keeps it to ~1 event per action against `EVENT_HISTORY_LIMIT = 2000` ([CanvasStore.ts](../../src/main/canvas/CanvasStore.ts)).
 
 **Use best-effort `emit` for ordinary actions and `emitStrict` only for consequential ones (§7).** A strict write is a pinned-fd, fsync'd full-file JSON rewrite; 200 of them per session would be a main-process stall — the known unbounded-sync-`writeJson` freeze class. **Mitigated (dark, `b745115a1`):** item 6 moves the write+fsync+rename+dir-fsync tail (~40 ms of a ~70 ms large-chat save) off main for `normal` saves behind `TASKWRAITH_UTILITY_WRITE=1` with a registered writer; uncontended barriers stay synchronous on main, contended barriers follow the queue (ordering). Flag off by default; no composition-root wiring yet. Audit-before-execute *strictly* only where the action is irreversible.
 
@@ -430,15 +430,15 @@ The predicate matches **page-authored labels**, so it is a judgment-error speed 
 
 The original plan, for reference — evaluate a **destructive predicate** against the *resolved structured target* — accessible name, ARIA role, element type, enclosing form's method. Matches (delete / remove / send / publish / transfer / pay / confirm / submit-to-non-idempotent, plus `type=submit` inside a form with a payment or destructive intent hint) require a durable **per-call human confirmation**:
 
-- mint a content-bound receipt at prompt-creation time from the exact resolved target the human is shown ([ApprovalOrchestration.ts](../src/main/run/ApprovalOrchestration.ts)), self-verify it immediately, fail closed on mint failure;
-- digest over UTF-16LE code units, not UTF-8 — unpaired surrogates alias to U+FFFD under UTF-8 and would let one receipt verify a different target ([CanvasEvalAudit.ts](../src/main/canvas/CanvasEvalAudit.ts));
+- mint a content-bound receipt at prompt-creation time from the exact resolved target the human is shown ([ApprovalOrchestration.ts](../../src/main/run/ApprovalOrchestration.ts)), self-verify it immediately, fail closed on mint failure;
+- digest over UTF-16LE code units, not UTF-8 — unpaired surrogates alias to U+FFFD under UTF-8 and would let one receipt verify a different target ([CanvasEvalAudit.ts](../../src/main/canvas/CanvasEvalAudit.ts));
 - verify twice: cheap presence check in the executor, authoritative re-derivation in the service;
-- claim the `approvalId` in a single-use on-disk ledger **before** writing the event ([CanvasStore.ts](../src/main/canvas/CanvasStore.ts)) so replay throws and a crash burns the approval rather than reopening the window;
-- **desktop-only review** — a paired phone may decline but never accept ([ApprovalService.ts](../src/main/services/ApprovalService.ts)).
+- claim the `approvalId` in a single-use on-disk ledger **before** writing the event ([CanvasStore.ts](../../src/main/canvas/CanvasStore.ts)) so replay throws and a crash burns the approval rather than reopening the window;
+- **desktop-only review** — a paired phone may decline but never accept ([ApprovalService.ts](../../src/main/services/ApprovalService.ts)).
 
 **This is the payoff of AX-first targeting.** You cannot gate "click (840, 210)"; you can gate `Button: "Delete account"`. So the tier order is not "fall back to pixels when structure is missing" — it is "**pixels are the mode where the safety rails are gone**", and a pixel-only action must therefore always be treated as consequential. Note that macOS/DOM structure is excellent for native Cocoa and standard web, and genuinely poor for canvas/WebGL, games and custom-drawn UIs, so the pixel mode is not rare — it needs to be first-class and loud from day one.
 
-Ledger note: `canvas-eval-approval-uses.json` is append-only with **no GC**, and `purgeAuthoritiesStrict` deliberately does not clear it ([CanvasStore.ts](../src/main/canvas/CanvasStore.ts)) so a scoped privacy clear cannot un-burn an approval. Unbounded growth is the intentional price. AppDrive's uses ledger inherits the same property — say so in the design, do not "fix" it.
+Ledger note: `canvas-eval-approval-uses.json` is append-only with **no GC**, and `purgeAuthoritiesStrict` deliberately does not clear it ([CanvasStore.ts](../../src/main/canvas/CanvasStore.ts)) so a scoped privacy clear cannot un-burn an approval. Unbounded growth is the intentional price. AppDrive's uses ledger inherits the same property — say so in the design, do not "fix" it.
 
 ---
 
@@ -464,7 +464,7 @@ observe (snapshot + inputEpoch)
 
 **Shipped Tier 4 difference:** the native `window` driver is intentionally not this generic future-verb surface. Its structured input scope is AX-only `observe`, `inspect`, `click`, and `fill`, with a safety-screened capture path; it has no keyboard, coordinate/CGEvent, pixel, eval, network, console, reload, resize, annotate, or sketch path. A native action must follow a fresh observation and is followed by a required re-observation before another action (§12b).
 
-**Explicitly not in v1:** drag, right-click, double-click, file upload (already refused, [CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)), arbitrary key codes, multi-action batches.
+**Explicitly not in v1:** drag, right-click, double-click, file upload (already refused, [CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)), arbitrary key codes, multi-action batches.
 
 The web verb set and its public MCP catalogue are now complete for V1. Drag,
 right-click, double-click, file upload, arbitrary key codes and multi-action
@@ -476,7 +476,7 @@ batches remain deliberately excluded.
 
 ### Tier 1 is loopback-only. This is the most important scoping decision in the document.
 
-Codex's ordering put web first for code proximity. Keep that, but **fence v1 to loopback origins** — your own dev server, your own build under test ([canvasTypes.ts](../src/main/canvas/canvasTypes.ts) already has `isLoopbackHost`). That buys code proximity *and* disposability *and* the QA product story, with no third-party account and no user credentials anywhere near the actuation layer. It is strictly better than either "web, broadly" or "simulator first", because the first thing that ships is undoable.
+Codex's ordering put web first for code proximity. Keep that, but **fence v1 to loopback origins** — your own dev server, your own build under test ([canvasTypes.ts](../../src/main/canvas/canvasTypes.ts) already has `isLoopbackHost`). That buys code proximity *and* disposability *and* the QA product story, with no third-party account and no user credentials anywhere near the actuation layer. It is strictly better than either "web, broadly" or "simulator first", because the first thing that ships is undoable.
 
 ### One actuating lane in v1
 
@@ -531,7 +531,7 @@ Each slice is independently shippable with gates green. Stage by explicit path a
 
 | # | Slice | Notes |
 |---|---|---|
-| **S0** | Land the dirty `canvasEval` posture change + fix its 4 stale doc surfaces | `plan: deny→ask` and the test flips are already in the tree. Fix [McpToolCatalog.ts](../src/main/McpToolCatalog.ts), [OllamaToolsDoc.ts](../src/main/ollama/OllamaToolsDoc.ts), its pinning test, and regenerate `resources/Tools.md`. Clears the tree before anything else. |
+| **S0** | Land the dirty `canvasEval` posture change + fix its 4 stale doc surfaces | `plan: deny→ask` and the test flips are already in the tree. Fix [McpToolCatalog.ts](../../src/main/McpToolCatalog.ts), [OllamaToolsDoc.ts](../../src/main/ollama/OllamaToolsDoc.ts), its pinning test, and regenerate `resources/Tools.md`. Clears the tree before anything else. |
 | **S1** | D1 — target identity + preconditions + honest `CanvasActResult` | Widen both duplicated unions. |
 | **S2** | D2 + serialization — audit-before-execute reordering, per-canvas mutex | Best-effort emit, not strict. |
 | **S3** | D3 — user takeover: `inputEpoch`, `userActiveUntil`, drop the click focus steal, conditional `scrollIntoView` | Main-side `before-input-event` is the authority. |
@@ -556,48 +556,48 @@ This codebase punishes incomplete seam sweeps — `canvasInteraction` and `canva
 ### 12.1 Adding the `appDrive` `AgenticServiceId` (S9)
 
 **Typecheck tripwires (fail loudly — good):**
-[store/types.ts](../src/main/store/types.ts) union · `:598` `AgenticServicesSettings` · `:1789` `ProviderToolingCapabilityId` Exclude · [RunPermissionPosture.ts](../src/main/RunPermissionPosture.ts) · [ScheduledOccurrenceSeal.ts](../src/main/ScheduledOccurrenceSeal.ts) · [AgenticServiceMessages.ts](../src/main/AgenticServiceMessages.ts) labels · [workspacePolicyServices.ts](../src/renderer/src/lib/workspacePolicyServices.ts) + `:47` · [ProviderCapabilities.ts](../src/main/ProviderCapabilities.ts) + `:1231`
+[store/types.ts](../../src/main/store/types.ts) union · `:598` `AgenticServicesSettings` · `:1789` `ProviderToolingCapabilityId` Exclude · [RunPermissionPosture.ts](../../src/main/RunPermissionPosture.ts) · [ScheduledOccurrenceSeal.ts](../../src/main/ScheduledOccurrenceSeal.ts) · [AgenticServiceMessages.ts](../../src/main/AgenticServiceMessages.ts) labels · [workspacePolicyServices.ts](../../src/renderer/src/lib/workspacePolicyServices.ts) + `:47` · [ProviderCapabilities.ts](../../src/main/ProviderCapabilities.ts) + `:1231`
 
 **Silent-drop seams (fail quietly — the dangerous ones):**
 
-1. **[EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts) `AGENTIC_SERVICE_IDS` array** — if the id is missing here, the resolver loop at `:329` never applies the preset *or* the override, so the service silently keeps its raw global setting under **every** posture including `read_only`. Second-order and easy to miss.
-2. **[EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts) `servicesFromSettings`** — key-by-key, no spread; omission leaves `undefined`.
-3. **[NativeApprovalPolicy.ts](../src/main/NativeApprovalPolicy.ts) `effectiveAgenticSettings`** — spreads `...current`, so the value survives but `preserveCurrentDeny` is skipped and the preset's `deny` is silently replaced by the raw setting. This is the exact P1 leak class.
-4. **[CliProviderRuntime.ts](../src/main/providers/CliProviderRuntime.ts)** — same shape; the runtime-profile strictness clamp is silently skipped.
-5. **[settingsHandlers.ts](../src/main/ipc/settingsHandlers.ts) `rendererSafeSettings`** — omission means the renderer never sees the policy.
-6. **[MainSanitizers.ts](../src/main/settings/MainSanitizers.ts) settings-patch rebuild** — its own comment records that three services were once silently dropped here.
-7. Also: [MainSanitizers.ts](../src/main/settings/MainSanitizers.ts), `:97` `GRANTABLE_AGENTIC_SERVICE_IDS`, `:1293` · [store/index.ts](../src/main/store/index.ts) · [agenticServicesDefaults.ts](../src/renderer/src/lib/agenticServicesDefaults.ts) · [RunQueueService.ts](../src/main/services/RunQueueService.ts) · [ManagedPolicyService.ts](../src/main/ManagedPolicyService.ts) · [PluginManifest.ts](../src/main/plugins/PluginManifest.ts) · [ScheduledOccurrencePostureAuthority.ts](../src/main/ScheduledOccurrencePostureAuthority.ts) (**runtime throw**, not typecheck) · [AgenticServiceMessages.ts](../src/main/AgenticServiceMessages.ts) `assertAgenticServiceId` (**rejects the service at the IPC/tool boundary**) · [PluginTypes.ts](../src/shared/plugins/PluginTypes.ts) (hand-duplicated union, **no** typecheck error)
+1. **[EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts) `AGENTIC_SERVICE_IDS` array** — if the id is missing here, the resolver loop at `:329` never applies the preset *or* the override, so the service silently keeps its raw global setting under **every** posture including `read_only`. Second-order and easy to miss.
+2. **[EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts) `servicesFromSettings`** — key-by-key, no spread; omission leaves `undefined`.
+3. **[NativeApprovalPolicy.ts](../../src/main/NativeApprovalPolicy.ts) `effectiveAgenticSettings`** — spreads `...current`, so the value survives but `preserveCurrentDeny` is skipped and the preset's `deny` is silently replaced by the raw setting. This is the exact P1 leak class.
+4. **[CliProviderRuntime.ts](../../src/main/providers/CliProviderRuntime.ts)** — same shape; the runtime-profile strictness clamp is silently skipped.
+5. **[settingsHandlers.ts](../../src/main/ipc/settingsHandlers.ts) `rendererSafeSettings`** — omission means the renderer never sees the policy.
+6. **[MainSanitizers.ts](../../src/main/settings/MainSanitizers.ts) settings-patch rebuild** — its own comment records that three services were once silently dropped here.
+7. Also: [MainSanitizers.ts](../../src/main/settings/MainSanitizers.ts), `:97` `GRANTABLE_AGENTIC_SERVICE_IDS`, `:1293` · [store/index.ts](../../src/main/store/index.ts) · [agenticServicesDefaults.ts](../../src/renderer/src/lib/agenticServicesDefaults.ts) · [RunQueueService.ts](../../src/main/services/RunQueueService.ts) · [ManagedPolicyService.ts](../../src/main/ManagedPolicyService.ts) · [PluginManifest.ts](../../src/main/plugins/PluginManifest.ts) · [ScheduledOccurrencePostureAuthority.ts](../../src/main/ScheduledOccurrencePostureAuthority.ts) (**runtime throw**, not typecheck) · [AgenticServiceMessages.ts](../../src/main/AgenticServiceMessages.ts) `assertAgenticServiceId` (**rejects the service at the IPC/tool boundary**) · [PluginTypes.ts](../../src/shared/plugins/PluginTypes.ts) (hand-duplicated union, **no** typecheck error)
 
-**Presets:** [EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts) `read_only` (exhaustive) · `:113` `plan` (exhaustive) · `:180` `workspace_write` (sparse) · `:209` `full_access` (sparse) · `:226` `PREVIEW_RISK_PROMPT_SERVICES` · `:246` `PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`
+**Presets:** [EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts) `read_only` (exhaustive) · `:113` `plan` (exhaustive) · `:180` `workspace_write` (sparse) · `:209` `full_access` (sparse) · `:226` `PREVIEW_RISK_PROMPT_SERVICES` · `:246` `PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`
 
-**Non-grantable machinery:** [PermissionService.ts](../src/main/PermissionService.ts) `isNonGrantableService` · [EffectiveRunPermissions.ts](../src/main/EffectiveRunPermissions.ts) `clampNonGrantablePolicy` · `:442` `workspaceGrantServiceIdsFor` · `neverAutoAllow` at **three** hand-listing sites: [index.ts](../src/main/index.ts), [ApprovalOrchestration.ts](../src/main/run/ApprovalOrchestration.ts), [index.ts](../src/main/index.ts) · [AgenticServiceMessages.ts](../src/main/AgenticServiceMessages.ts) `approvalActionsForPolicy` (**omission puts "Allow for session" on an elevated card**)
+**Non-grantable machinery:** [PermissionService.ts](../../src/main/PermissionService.ts) `isNonGrantableService` · [EffectiveRunPermissions.ts](../../src/main/EffectiveRunPermissions.ts) `clampNonGrantablePolicy` · `:442` `workspaceGrantServiceIdsFor` · `neverAutoAllow` at **three** hand-listing sites: [index.ts](../../src/main/index.ts), [ApprovalOrchestration.ts](../../src/main/run/ApprovalOrchestration.ts), [index.ts](../../src/main/index.ts) · [AgenticServiceMessages.ts](../../src/main/AgenticServiceMessages.ts) `approvalActionsForPolicy` (**omission puts "Allow for session" on an elevated card**)
 
 **Three live tool→service classifiers.** `canonicalToolCoalesce` is authoritative for the catalog path but is duplicated by two others; `NativeApprovalPolicy` and the Codex path are pure delegators and need no edit:
-- [canonicalToolCoalesce.ts](../src/shared/canonicalToolCoalesce.ts) — shared, authoritative
-- [index.ts](../src/main/index.ts) `claudeAgenticServiceForTool` — its **own substring ladder**; fires first on the Claude path
-- [McpToolApprovalPreview.ts](../src/main/McpToolApprovalPreview.ts) — **does not import the shared module at all**; hand-assigns service literals, terminal fallthrough is `mcpTools`. **Most likely to be missed.**
-- [GrokAcpProtocol.ts](../src/main/grok/GrokAcpProtocol.ts) `grokToolKindToService` — a fourth, keyed on ACP *kind*; unconfirmed whether canvas tools reach it. Verify at runtime.
+- [canonicalToolCoalesce.ts](../../src/shared/canonicalToolCoalesce.ts) — shared, authoritative
+- [index.ts](../../src/main/index.ts) `claudeAgenticServiceForTool` — its **own substring ladder**; fires first on the Claude path
+- [McpToolApprovalPreview.ts](../../src/main/McpToolApprovalPreview.ts) — **does not import the shared module at all**; hand-assigns service literals, terminal fallthrough is `mcpTools`. **Most likely to be missed.**
+- [GrokAcpProtocol.ts](../../src/main/grok/GrokAcpProtocol.ts) `grokToolKindToService` — a fourth, keyed on ACP *kind*; unconfirmed whether canvas tools reach it. Verify at runtime.
 
 **Tests:** 6 typecheck-blocking, 5 runtime-blocking, 3 assertion-blocking, ~15 more for coverage. Full list in the S9 working notes.
 
 ### 12.2 Adding the new `canvas_*` verbs (S11)
 
-- **Registry:** [taskWraithMcpCatalog.ts](../src/shared/taskWraithMcpCatalog.ts) `TASKWRAITH_MCP_TOOLS` first · [CanvasToolExecutors.ts](../src/main/mcp/CanvasToolExecutors.ts) `CANVAS_MCP_TOOL_NAMES` · [McpToolCatalog.ts](../src/main/McpToolCatalog.ts) entry — `orderTaskWraithMcpToolDefinitions` (`:4874`) **throws at module init** on a registry name with no definition.
-- **The fail-open hazard:** the family router at [index.ts](../src/main/index.ts) has **no terminal else** (`text=''`, `richResult=null`), so a name in the catalog but missing from `CANVAS_MCP_TOOL_NAMES` returns a **silent successful empty result**. `executeCanvasTool`'s own switch does fail closed ([CanvasToolExecutors.ts](../src/main/mcp/CanvasToolExecutors.ts)). Add the terminal else as part of this slice.
+- **Registry:** [taskWraithMcpCatalog.ts](../../src/shared/taskWraithMcpCatalog.ts) `TASKWRAITH_MCP_TOOLS` first · [CanvasToolExecutors.ts](../../src/main/mcp/CanvasToolExecutors.ts) `CANVAS_MCP_TOOL_NAMES` · [McpToolCatalog.ts](../../src/main/McpToolCatalog.ts) entry — `orderTaskWraithMcpToolDefinitions` (`:4874`) **throws at module init** on a registry name with no definition.
+- **The fail-open hazard:** the family router at [index.ts](../../src/main/index.ts) has **no terminal else** (`text=''`, `richResult=null`), so a name in the catalog but missing from `CANVAS_MCP_TOOL_NAMES` returns a **silent successful empty result**. `executeCanvasTool`'s own switch does fail closed ([CanvasToolExecutors.ts](../../src/main/mcp/CanvasToolExecutors.ts)). Add the terminal else as part of this slice.
 - **Gateway profiles are immutable:** exact membership/hash tests now guard the historical snapshots. Never add a verb to an existing `gateway-v1` through `gateway-v9` identity. Mint the next unused generation (currently `gateway-v10`, plus a mesh variant if needed), then update the profile-id union, session fence and predicates, launch-authority allowlist, provider adapters, and immutable-profile tests together.
-- **`PLAN_INSTRUMENT_ADVERTISE_TOOLS` is hand-listed** ([McpAutoAllowedTools.ts](../src/main/mcp/McpAutoAllowedTools.ts)) — a new actuation verb must be added or a `plan` seat can never reach it. Stay out of `MCP_AUTO_ALLOWED_TOOLS`.
-- **`ToolClassTaxonomy`:** keep actuation verbs **out** of `ORCHESTRATION_TOOLS` ([ToolClassTaxonomy.ts](../src/main/ToolClassTaxonomy.ts)) so they inherit the `workspace_write` default and its read-only block. *Verify during implementation how the class-axis block interacts with plan-instrument advertising* — `canvas_click` is both `workspace_write` and plan-advertised, so the two axes evidently compose in a way worth confirming rather than assuming.
-- **`inputSchema` is not enforced** — only `ensemble_bossman_control` is in `PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS` ([McpPreApprovalArgumentValidation.ts](../src/main/mcp/McpPreApprovalArgumentValidation.ts)). **Join it**, so the human sees validated args on the approval card.
-- Route A (extend `CanvasActionInput.kind`) covers `key`/`type`/`scroll`/`hover`/`select`: the four non-web drivers already `unsupported(...)` for any `act` kind, so they need no edit. Route B (`wait_for` as a new `CanvasDriver` method) requires all six drivers plus `FakeDriver` ([CanvasService.test.ts](../src/main/canvas/CanvasService.test.ts)) — TypeScript catches those.
-- `actScript`'s JSON payload drops any field not in `{kind,ref,selector,x,y,value}` ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)) — new params need explicit plumbing.
-- `canvasTargetAudit` only digests `ref`/`selector` ([CanvasService.ts](../src/main/canvas/CanvasService.ts)); a `type` verb needs its own redacted projection. `fill` deliberately never logs `value` — preserve that.
-- **`resources/Tools.md` is a byte-identical drift test** ([OllamaToolsDoc.test.ts](../src/main/ollama/OllamaToolsDoc.test.ts)). Regenerate: `npm run generate:ollama-tools-md`.
-- **IPC** only if a renderer control is added: [IpcValidation.ts](../src/main/IpcValidation.ts) `IPC_ARGUMENT_SCHEMAS` (a missing entry throws on **first invocation**, though `IpcValidation.test.ts` / `RendererIpcPolicy.test.ts` do catch it at test time) · [RendererIpcPolicy.ts](../src/main/RendererIpcPolicy.ts) · [CanvasEmbedIpc.ts](../src/main/canvas/CanvasEmbedIpc.ts) · preload `index.ts` + `index.d.ts`.
+- **`PLAN_INSTRUMENT_ADVERTISE_TOOLS` is hand-listed** ([McpAutoAllowedTools.ts](../../src/main/mcp/McpAutoAllowedTools.ts)) — a new actuation verb must be added or a `plan` seat can never reach it. Stay out of `MCP_AUTO_ALLOWED_TOOLS`.
+- **`ToolClassTaxonomy`:** keep actuation verbs **out** of `ORCHESTRATION_TOOLS` ([ToolClassTaxonomy.ts](../../src/main/ToolClassTaxonomy.ts)) so they inherit the `workspace_write` default and its read-only block. *Verify during implementation how the class-axis block interacts with plan-instrument advertising* — `canvas_click` is both `workspace_write` and plan-advertised, so the two axes evidently compose in a way worth confirming rather than assuming.
+- **`inputSchema` is not enforced** — only `ensemble_bossman_control` is in `PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS` ([McpPreApprovalArgumentValidation.ts](../../src/main/mcp/McpPreApprovalArgumentValidation.ts)). **Join it**, so the human sees validated args on the approval card.
+- Route A (extend `CanvasActionInput.kind`) covers `key`/`type`/`scroll`/`hover`/`select`: the four non-web drivers already `unsupported(...)` for any `act` kind, so they need no edit. Route B (`wait_for` as a new `CanvasDriver` method) requires all six drivers plus `FakeDriver` ([CanvasService.test.ts](../../src/main/canvas/CanvasService.test.ts)) — TypeScript catches those.
+- `actScript`'s JSON payload drops any field not in `{kind,ref,selector,x,y,value}` ([CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts)) — new params need explicit plumbing.
+- `canvasTargetAudit` only digests `ref`/`selector` ([CanvasService.ts](../../src/main/canvas/CanvasService.ts)); a `type` verb needs its own redacted projection. `fill` deliberately never logs `value` — preserve that.
+- **`resources/Tools.md` is a byte-identical drift test** ([OllamaToolsDoc.test.ts](../../src/main/ollama/OllamaToolsDoc.test.ts)). Regenerate: `npm run generate:ollama-tools-md`.
+- **IPC** only if a renderer control is added: [IpcValidation.ts](../../src/main/IpcValidation.ts) `IPC_ARGUMENT_SCHEMAS` (a missing entry throws on **first invocation**, though `IpcValidation.test.ts` / `RendererIpcPolicy.test.ts` do catch it at test time) · [RendererIpcPolicy.ts](../../src/main/RendererIpcPolicy.ts) · [CanvasEmbedIpc.ts](../../src/main/canvas/CanvasEmbedIpc.ts) · preload `index.ts` + `index.d.ts`.
 
 ### 12.3 Pre-existing gaps found in passing (not caused by this work)
 
-- `threadMessage` is missing from the `tw_approvals_list` service enum ([McpToolCatalog.ts](../src/main/McpToolCatalog.ts)) — agents cannot filter for it.
-- `TaskWraithPluginAgenticServiceId` is missing `externalPublish` ([PluginTypes.ts](../src/shared/plugins/PluginTypes.ts)) although `PluginManifest.ts:104` accepts it.
+- `threadMessage` is missing from the `tw_approvals_list` service enum ([McpToolCatalog.ts](../../src/main/McpToolCatalog.ts)) — agents cannot filter for it.
+- `TaskWraithPluginAgenticServiceId` is missing `externalPublish` ([PluginTypes.ts](../../src/shared/plugins/PluginTypes.ts)) although `PluginManifest.ts:104` accepts it.
 - The earlier `CanvasDriverKind: 'window'` gap is closed by `CanvasWindowDriver`; its narrow, consented contract is recorded in §12b rather than treated as a generic Canvas driver.
 
 ---
@@ -619,7 +619,7 @@ Narrower than it first sounds now that credential fields are refused outright (�
 A retro-scrub was considered and rejected on grounds worth recording, because it will be proposed again:
 
 - **The approval ledger is hashed into a signed audit bundle** — `ProductOperations.ts:148`, `approvalLedger: diagnosticsSha256(...)`, with a record count at `:128`. Rewriting historical records to redact them would silently invalidate the hash of any bundle already issued, and the resulting mismatch is indistinguishable from tampering. **Scrubbing an audit log is itself an audit-integrity event.**
-- **The ledger self-caps.** Writes go through `capApprovalLedgerRecords` ([store/index.ts](../src/main/store/index.ts)), which bounds retained non-live history — live records are always kept, the rest age out through ordinary use. The residue is transient by design.
+- **The ledger self-caps.** Writes go through `capApprovalLedgerRecords` ([store/index.ts](../../src/main/store/index.ts)), which bounds retained non-live history — live records are always kept, the rest age out through ordinary use. The residue is transient by design.
 - **There is no precedent for mutating durable run events.** The only paths that touch them are the scoped and global history clears, which are user-initiated and already the right tool. Inventing a mutation path for this would be a new capability with a wider blast radius than the thing it cleans up.
 
 So disclosure plus the existing history-clear is the correct remediation, not merely the cheap one.
@@ -676,7 +676,7 @@ The process under test remains unsandboxed. An isolated TaskWraith profile conta
 
 ## 12c. Computer Use mode taxonomy (Foreground / Background / Isolated)
 
-Product language for “Computer Use” must not collapse into Tier 5 or into profile isolation. The accepted mode split (see [`docs/appdrive-computer-use-rfc.md`](./appdrive-computer-use-rfc.md) and `src/shared/appDriveComputerUseContract.ts`) is:
+Product language for “Computer Use” must not collapse into Tier 5 or into profile isolation. The accepted mode split (see [`docs/appdrive/computer-use-rfc.md`](./computer-use-rfc.md) and `src/shared/appDriveComputerUseContract.ts`) is:
 
 | Mode | Contract | Status |
 |---|---|---|
@@ -695,8 +695,8 @@ Rules that override marketing copy:
 
 1. Does `grokToolKindToService` sit on the live path for canvas tools, or do Grok canvas calls always route through the MCP-bridge preview? Needs runtime tracing.
 2. ~~How do the class axis and `PLAN_INSTRUMENT_ADVERTISE_TOOLS` compose?~~ **ANSWERED 2026-07-26, verified at the source.** They are two orthogonal layers that AND, and the class axis does **not** gate the plan tier at all:
-   - `classifyTool(name) === 'workspace_write'` feeds exactly two consumers — `isReadOnlyBlockedTool` ([ToolClassTaxonomy.ts](../src/main/ToolClassTaxonomy.ts)), which is the **read_only deny**, and `isMutatingTaskWraithMcpTool` ([McpRouteGuards.ts](../src/main/mcp/McpRouteGuards.ts)), which is the **unrouted-mutation guard** (a mutating bridge call with no run/chat route is rejected outright, `:69` and `:106`).
-   - `PLAN_INSTRUMENT_ADVERTISE_TOOLS` ([McpAutoAllowedTools.ts](../src/main/mcp/McpAutoAllowedTools.ts)) is **bridge visibility only**. Plan-tier safety comes from the main-side service gate (`canvasInteraction: 'ask'`), backed by the `SAFETY INVARIANT` test at [McpAutoAllowedTools.test.ts](../src/main/mcp/McpAutoAllowedTools.test.ts) asserting no plan instrument is also in `MCP_AUTO_ALLOWED_TOOLS`.
+   - `classifyTool(name) === 'workspace_write'` feeds exactly two consumers — `isReadOnlyBlockedTool` ([ToolClassTaxonomy.ts](../../src/main/ToolClassTaxonomy.ts)), which is the **read_only deny**, and `isMutatingTaskWraithMcpTool` ([McpRouteGuards.ts](../../src/main/mcp/McpRouteGuards.ts)), which is the **unrouted-mutation guard** (a mutating bridge call with no run/chat route is rejected outright, `:69` and `:106`).
+   - `PLAN_INSTRUMENT_ADVERTISE_TOOLS` ([McpAutoAllowedTools.ts](../../src/main/mcp/McpAutoAllowedTools.ts)) is **bridge visibility only**. Plan-tier safety comes from the main-side service gate (`canvasInteraction: 'ask'`), backed by the `SAFETY INVARIANT` test at [McpAutoAllowedTools.test.ts](../../src/main/mcp/McpAutoAllowedTools.test.ts) asserting no plan instrument is also in `MCP_AUTO_ALLOWED_TOOLS`.
 
    Being `workspace_write` therefore neither adds nor removes anything under `plan`. **Trap for new verbs:** `PLAN_INSTRUMENT_ADVERTISE_TOOLS` is a `.filter()` over three hard-coded literals plus `MEDIA_EDITING_TOOLS`, so a new verb is not picked up automatically and must be added by name. It fails safe (forget it → invisible to plan seats, not silently permitted), but the invariant test only iterates that derived list, so a new verb inherits the not-auto-allowed guarantee **only once added** — add to both or neither.
 3. ~~Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based?~~ **MOOT — decided by shipping (see §0a).** The fence was never built and 1.9.5 shipped any-origin browsing over a durable signed-in profile. `isLoopbackHost` remains exported but is called only by its own tests. Re-propose against the any-origin product if a fence is still wanted; do not "restore" this one.

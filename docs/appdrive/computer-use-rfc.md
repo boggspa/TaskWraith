@@ -15,7 +15,7 @@
 | Isolated Drive (VM guest HID)                                                                     | **RFC only**                                    | Not profile `--taskwraith-isolated-instance`                                                     |
 | This RFC + shared contract + `AppDriveSliceAcceptance.test.ts`                                    | **Decision lock / acceptance evidence**         | Documentary + invariant tests; no actuation authority                                            |
 
-Related: [`docs/appdrive-design.md`](./appdrive-design.md) §12b (exact Tier 4 contract), §12c (mode taxonomy pointer).
+Related: [`docs/appdrive/design.md`](./design.md) §12b (exact Tier 4 contract), §12c (mode taxonomy pointer).
 
 ---
 

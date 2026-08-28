@@ -25,6 +25,7 @@ product and tooling manual on every thread.
 | Sub-thread delegation or recall; async child results; join/wait behavior; Ensemble participation; fan-out or background lanes; yield, mentions, or mid-round questions | [Delegation and Ensemble doctrine](docs/agent-doctrine/DELEGATION_AND_ENSEMBLE.md) |
 | Runtime/session behavior; approvals; prompt caching; forks; effective worktrees; MCP/tool behavior or catalogue; provider status; editor/GUI/creative tools; host state an agent cannot see | [Runtime and tool doctrine](docs/agent-doctrine/RUNTIME_AND_TOOLS.md) |
 | Thread introspection; memory promotion; repo-convention application; release/version claims; shipped versus source-ahead behavior | [Introspection and release-state doctrine](docs/agent-doctrine/INTROSPECTION_AND_RELEASE_STATE.md) |
+| Documentation placement; adding, moving, renaming, or deleting a markdown file; deciding whether a document is published or stays local-only; force-adding under `docs/` | [Documentation layout doctrine](docs/agent-doctrine/DOCUMENTATION_LAYOUT.md) |
 
 Pure read-only analysis does not require the repository workflow document unless
 the answer depends on its semantics. Reading a file is not permission to mutate

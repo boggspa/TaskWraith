@@ -4,7 +4,7 @@
 
 **Status:** Shipped boundary, recorded retrospectively after the implementation reality pass
 
-**Design history:** [appdrive-design.md](appdrive-design.md)
+**Design history:** [design.md](design.md)
 
 AppDrive lets an agent drive an application only through a surface TaskWraith
 owns or has attached through its explicit managed-window flow. It is a QA and
