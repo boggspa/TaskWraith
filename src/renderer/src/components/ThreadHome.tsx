@@ -375,6 +375,21 @@ export function ThreadHome({
             </button>
             <button
               type="button"
+              className="thread-home-thread-row thread-home-primary-action-row thread-home-terminal-card"
+              onClick={onOpenTerminal}
+              aria-label="Open New Terminal. Choose a workspace."
+            >
+              <span className="thread-home-thread-provider" aria-hidden>
+                <AppleTerminalIcon />
+              </span>
+              <span className="thread-home-thread-copy">
+                <strong>New Terminal</strong>
+                <small>Choose a workspace</small>
+              </span>
+              <span className="thread-home-thread-provider-label">Open</span>
+            </button>
+            <button
+              type="button"
               className="thread-home-mission-control-card"
               onClick={onOpenMissionControl}
               aria-label={`Open Mission Control. ${missionControl.summary}. ${missionControl.phase}`}
@@ -398,21 +413,6 @@ export function ThreadHome({
               <span className="thread-home-mission-control-chevron" aria-hidden>
                 ›
               </span>
-            </button>
-            <button
-              type="button"
-              className="thread-home-thread-row thread-home-primary-action-row thread-home-terminal-card"
-              onClick={onOpenTerminal}
-              aria-label="Open Terminal. Choose a workspace."
-            >
-              <span className="thread-home-thread-provider" aria-hidden>
-                <AppleTerminalIcon />
-              </span>
-              <span className="thread-home-thread-copy">
-                <strong>Terminal</strong>
-                <small>Choose a workspace</small>
-              </span>
-              <span className="thread-home-thread-provider-label">Open</span>
             </button>
             <div className="thread-home-list-heading" role="heading" aria-level={3}>
               Active

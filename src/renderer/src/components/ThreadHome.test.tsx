@@ -136,9 +136,9 @@ describe('ThreadHome', () => {
     )
 
     expect(html).toContain('aria-label="Thread Home"')
-    expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Mission Control'))
-    expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Open Terminal'))
-    expect(html.indexOf('Open Terminal')).toBeLessThan(html.indexOf('>Active</div>'))
+    expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Open New Terminal'))
+    expect(html.indexOf('Open New Terminal')).toBeLessThan(html.indexOf('Mission Control'))
+    expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('>Active</div>'))
     expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Alpha'))
     expect(html.indexOf('>Active</div>')).toBeLessThan(html.indexOf('Alpha'))
     expect(html.indexOf('Alpha')).toBeLessThan(html.indexOf('>Recents</div>'))
@@ -170,7 +170,8 @@ describe('ThreadHome', () => {
       'aria-label="Open Mission Control. 3 active · 12 participants · 2 channels. Live"'
     )
     expect(html).toContain('thread-home-mission-control-card')
-    expect(html).toContain('aria-label="Open Terminal. Choose a workspace."')
+    expect(html).toContain('aria-label="Open New Terminal. Choose a workspace."')
+    expect(html).toContain('<strong>New Terminal</strong>')
   })
 
   it('asks which added workspace should become the terminal cwd', () => {
