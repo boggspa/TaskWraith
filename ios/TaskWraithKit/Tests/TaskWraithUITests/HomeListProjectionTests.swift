@@ -69,6 +69,62 @@ struct HomeListProjectionTests {
         #expect(projection.pendingAttentionCount(for: card) == 1)
     }
 
+    @Test func terminalSnapshotRetiresOnlyItsMatchingStaleRunningCard() throws {
+        let cards = try decode(
+            [RemoteTaskCard].self,
+            """
+            [
+              {"id":"failed","threadId":"failed","status":"running","runId":"run-failed"},
+              {"id":"cancelled","threadId":"cancelled","status":"running","runId":"run-cancelled"},
+              {"id":"newer","threadId":"newer","status":"running","runId":"run-new"},
+              {"id":"unsnapped","threadId":"unsnapped","status":"running"},
+              {"id":"archived","threadId":"archived","status":"running","archived":true}
+            ]
+            """)
+        let failed = try decode(
+            RemoteThreadSnapshot.self,
+            """
+            {"threadId":"failed","runSummary":{"runId":"run-failed","status":"failed"}}
+            """)
+        let cancelled = try decode(
+            RemoteThreadSnapshot.self,
+            """
+            {"threadId":"cancelled","runSummary":{"runId":"run-cancelled","status":"cancelled"}}
+            """)
+        let older = try decode(
+            RemoteThreadSnapshot.self,
+            """
+            {"threadId":"newer","runSummary":{"runId":"run-old","status":"failed"}}
+            """)
+
+        let active = HomeActiveRunProjection.cards(
+            taskCards: cards,
+            threadSnapshots: [
+                "failed": failed,
+                "cancelled": cancelled,
+                "newer": older,
+            ])
+
+        #expect(active.map(\.id) == ["newer", "unsnapped"])
+    }
+
+    @Test func legacyTerminalSummaryWithoutRunIdRetiresStaleRunningCard() throws {
+        let card = try decode(
+            RemoteTaskCard.self,
+            #"{"id":"stale","threadId":"wire-stale","status":"running"}"#)
+        let snapshot = try decode(
+            RemoteThreadSnapshot.self,
+            """
+            {"threadId":"wire-stale","runSummary":{"endedAt":"2026-08-28T18:34:00Z"}}
+            """)
+
+        #expect(
+            HomeActiveRunProjection.cards(
+                taskCards: [card],
+                threadSnapshots: ["wire-stale": snapshot]
+            ).isEmpty)
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         try JSONDecoder().decode(T.self, from: Data(json.utf8))
     }

@@ -76,6 +76,68 @@ enum HomeSearchRanker {
     }
 }
 
+/// Active Runs is primarily driven by the lightweight task-card projection,
+/// but a thread snapshot can arrive later with stronger terminal evidence for
+/// the SAME run. Let that matching failure/cancellation/completion retire a
+/// stale `running` card without letting an older run hide genuinely new work.
+enum HomeActiveRunProjection {
+    static func cards(
+        taskCards: [RemoteTaskCard],
+        threadSnapshots: [String: RemoteThreadSnapshot]
+    ) -> [RemoteTaskCard] {
+        taskCards.filter { card in
+            guard card.status == "running", !(card.archived ?? false) else { return false }
+            guard let snapshot = snapshot(for: card, in: threadSnapshots) else { return true }
+            return !hasMatchingTerminalRun(card: card, snapshot: snapshot)
+        }
+    }
+
+    private static func snapshot(
+        for card: RemoteTaskCard,
+        in snapshots: [String: RemoteThreadSnapshot]
+    ) -> RemoteThreadSnapshot? {
+        if let threadId = card.threadId, let snapshot = snapshots[threadId] {
+            return snapshot
+        }
+        return snapshots[card.id]
+    }
+
+    private static func hasMatchingTerminalRun(
+        card: RemoteTaskCard,
+        snapshot: RemoteThreadSnapshot
+    ) -> Bool {
+        var summaries = snapshot.runSummaries ?? []
+        if let primary = snapshot.runSummary { summaries.append(primary) }
+        guard !summaries.isEmpty else { return false }
+
+        if let cardRunId = normalizedRunId(card.runId) {
+            if let matching = summaries.last(where: {
+                normalizedRunId($0.runId) == cardRunId
+            }) {
+                return twIsTerminalRunSummary(matching)
+            }
+            // Explicitly different run IDs mean the task card describes newer
+            // work whose thread snapshot has not caught up yet.
+            if summaries.contains(where: { normalizedRunId($0.runId) != nil }) {
+                return false
+            }
+        }
+
+        // Legacy projections can omit run IDs. Their primary summary is still
+        // stronger lifecycle evidence than a stranded card status.
+        return snapshot.runSummary.map(twIsTerminalRunSummary)
+            ?? summaries.last.map(twIsTerminalRunSummary)
+            ?? false
+    }
+
+    private static func normalizedRunId(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else { return nil }
+        return value
+    }
+}
+
 /// Immutable, one-pass inputs for the home list's repeated card lookups.
 ///
 /// `HomeView` is intentionally still the single observer of
@@ -677,7 +739,9 @@ struct HomeView: View {
         }
 
         // ── Active Runs — live work first, desktop-sidebar parity. ────────
-        let activeCards = model.taskCards.filter { $0.status == "running" && !($0.archived ?? false) }
+        let activeCards = HomeActiveRunProjection.cards(
+            taskCards: model.taskCards,
+            threadSnapshots: model.threadSnapshots)
         if !activeCards.isEmpty {
             Section {
                 if !collapsedSections.contains("activeRuns") {
