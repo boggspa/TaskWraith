@@ -2471,7 +2471,7 @@
 
 .ensemble-add-participant-duplicate-list {
   display: flex;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2488,10 +2488,11 @@
   gap: 5px;
   max-width: 220px;
   min-height: 26px;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-raised, var(--panel-bg)) 76%, transparent);
+  padding: 3px 1px 4px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
   cursor: pointer;
@@ -2499,12 +2500,13 @@
 
 .ensemble-add-participant-duplicate-chip:hover:not(:disabled),
 .ensemble-add-participant-duplicate-chip.is-selected {
-  border-color: color-mix(
-    in srgb,
-    var(--duplicate-participant-accent) 68%,
-    var(--panel-border)
-  );
-  background: color-mix(in srgb, var(--duplicate-participant-accent) 12%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--duplicate-participant-accent) 68%, transparent);
+  background: transparent;
+}
+
+.ensemble-add-participant-duplicate-chip:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--duplicate-participant-accent) 58%, transparent);
+  outline-offset: 2px;
 }
 
 .ensemble-add-participant-duplicate-chip:disabled {

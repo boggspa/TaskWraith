@@ -648,6 +648,23 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('>GPT-5.6-Sol</span>')
     })
 
+    it('renders duplicate seats without pill chrome', () => {
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      const duplicateSeatRule = css.match(
+        /\.ensemble-add-participant-duplicate-chip\s*\{([^}]*)\}/
+      )?.[1]
+
+      expect(duplicateSeatRule).toBeDefined()
+      expect(duplicateSeatRule).toContain('border: 0;')
+      expect(duplicateSeatRule).toContain('border-bottom: 1px solid transparent;')
+      expect(duplicateSeatRule).toContain('border-radius: 0;')
+      expect(duplicateSeatRule).toContain('background: transparent;')
+      expect(duplicateSeatRule).not.toContain('999px')
+    })
+
     it('keeps unavailable legacy providers visible but disables their duplicate action', () => {
       const html = renderToStaticMarkup(
         <EnsembleParticipantDuplicateRow
