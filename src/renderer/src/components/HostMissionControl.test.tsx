@@ -262,7 +262,8 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('<span>Active missions</span>')
     expect(markup).toContain('<span>Running rounds</span>')
     expect(markup).toContain('<span>Active seats</span>')
-    expect(markup).toContain('Mission timeline')
+    expect(markup).not.toContain('Mission timeline')
+    expect(markup).not.toContain('Round timeline')
     expect(markup).toContain('id="host-rosters-title">Rosters</h3>')
     expect(markup).toContain('2 threads · 30 seats')
     expect(markup).toContain('aria-label="Alpha thread roster, 15 seats, 0 active"')
@@ -319,24 +320,22 @@ describe('HostMissionControl', () => {
     expect(markup).not.toContain('aria-label="Roster 0 roster')
   })
 
-  it('renders generation/cursor, mission and round timelines, outcomes, and every seat', () => {
+  it('keeps diagnostics and every seat available without timeline stacks', () => {
     const markup = renderToStaticMarkup(
       <HostMissionControl state={stateFromSnapshot(missionFixture())} />
     )
 
     expect(markup).toContain('Mission Control')
     expect(markup).toContain('Generation 4 · Cursor 12')
-    expect(markup).toContain('Active mission')
-    expect(markup).toContain('Round timeline')
-    expect(markup).toContain('continuous · parallel')
-    expect(markup).toContain('codex: completed')
+    expect(markup).not.toContain('Mission timeline')
+    expect(markup).not.toContain('Round timeline')
     for (let index = 0; index < 30; index += 1) {
       expect(markup).toContain(`Seat ${index}`)
     }
     expect(markup).toContain('Seat 29, claude, idle, disabled')
   })
 
-  it('keeps provider, round, mission, and connection outcomes visibly distinct', () => {
+  it('keeps the live connection state distinct from roster controls', () => {
     const source = missionFixture()
     source.missions = [
       {
@@ -359,9 +358,8 @@ describe('HostMissionControl', () => {
     const markup = renderToStaticMarkup(<HostMissionControl state={state} />)
 
     expect(markup).toContain('Live')
-    expect(markup).toContain('blocked')
-    expect(markup).toContain('cancelled · 0 seats')
-    expect(markup).toContain('codex: completed')
+    expect(markup).not.toContain('Mission timeline')
+    expect(markup).not.toContain('Round timeline')
   })
 
   it('shows the exact resolved-question receipt without exposing an answer body', () => {
@@ -458,6 +456,10 @@ describe('HostMissionControl', () => {
     const markup = renderToStaticMarkup(<HostMissionControl state={state} commands={commands} />)
     expect(markup).toContain('Channels')
     expect(markup).toContain('Shared work')
+    expect(markup).toContain('aria-label="Channels, 1"')
+    expect(markup).not.toContain(
+      '<details class="host-mission-control-section host-mission-control-section--channels" open=""'
+    )
     expect(markup).toContain('2 members · 3 messages')
     expect(markup).toContain('Revoke Alex')
     expect(markup).toContain('Close Channel')

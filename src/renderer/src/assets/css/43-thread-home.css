@@ -791,6 +791,92 @@
   background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
 }
 
+.host-mission-control--pane .host-mission-control-section--channels {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.host-mission-control--pane .host-mission-control-section--channels > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 9px 15px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.host-mission-control--pane
+  .host-mission-control-section--channels
+  > summary::-webkit-details-marker {
+  display: none;
+}
+
+.host-mission-control--pane .host-mission-control-section--channels > summary:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.host-mission-control--pane .host-mission-control-section--channels > summary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: -2px;
+}
+
+.host-mission-control--pane .host-mission-control-section--channels[open] > summary {
+  border-bottom: 1px solid color-mix(in srgb, var(--surface-border) 55%, transparent);
+}
+
+.host-mission-control-channels-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.host-mission-control-channels-copy strong {
+  color: var(--text-primary);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.host-mission-control-channels-copy small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-mission-control-channels-count {
+  color: var(--text-secondary);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.host-mission-control-channels-chevron {
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.host-mission-control-section--channels[open] .host-mission-control-channels-chevron {
+  transform: rotate(90deg);
+}
+
+.host-mission-control--pane
+  .host-mission-control-section--channels
+  > .host-mission-control-timeline {
+  padding: 0 15px 14px;
+}
+
+.host-mission-control--pane .host-mission-control-section--channels > .host-mission-control-empty {
+  padding: 14px 15px;
+}
+
 .host-mission-control--pane .host-mission-control-section--priority {
   border-color: color-mix(in srgb, var(--warning, #f5b14c) 30%, var(--surface-border));
 }
