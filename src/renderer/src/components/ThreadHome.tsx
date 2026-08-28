@@ -42,7 +42,11 @@ import {
   type HostMissionControlModel
 } from './HostMissionControl'
 import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
-import { applyHostLifecycleToProjectionState } from './HostStatusRow'
+import {
+  applyHostLifecycleToProjectionState,
+  describeHostLifecycleControl,
+  describeHostProviders
+} from './HostStatusRow'
 import { HostLifecycleIpcClient } from '../lib/host/hostLifecycleIpcClient'
 
 export type ThreadHomeSurface =
@@ -707,18 +711,25 @@ function ThreadHomeWorkspaceInner(
   const hostProjectionSourceState = useHostProjection(hostProjectionStore)
   const [hostLifecycleClient] = useState(() => new HostLifecycleIpcClient())
   const [hostLifecycle, setHostLifecycle] = useState<HostLifecycleSnapshot | null>(null)
+  const [hostLifecycleError, setHostLifecycleError] = useState<string>()
+  const [hostLifecyclePending, setHostLifecyclePending] = useState(false)
+  const hostLifecycleMountedRef = useRef(true)
   useEffect(() => {
-    let active = true
+    hostLifecycleMountedRef.current = true
     const adopt = (next: HostLifecycleSnapshot): void => {
-      if (!active) return
+      if (!hostLifecycleMountedRef.current) return
       setHostLifecycle((current) =>
         !current || next.revision >= current.revision ? next : current
       )
+      setHostLifecycleError(undefined)
     }
     const unsubscribe = hostLifecycleClient.subscribe(adopt)
-    void hostLifecycleClient.status().then(adopt, () => undefined)
+    void hostLifecycleClient.status().then(adopt, (error: unknown) => {
+      if (!hostLifecycleMountedRef.current) return
+      setHostLifecycleError(error instanceof Error ? error.message : String(error))
+    })
     return () => {
-      active = false
+      hostLifecycleMountedRef.current = false
       unsubscribe()
     }
   }, [hostLifecycleClient])
@@ -726,6 +737,38 @@ function ThreadHomeWorkspaceInner(
     hostProjectionSourceState,
     hostLifecycle
   )
+  const hostLifecycleControl = describeHostLifecycleControl(
+    hostLifecycle,
+    hostLifecyclePending,
+    hostLifecycleError
+  )
+  const hostProviders = describeHostProviders(hostProjectionState)
+  const runHostLifecycleAction = (): void => {
+    const action = hostLifecycleControl.action
+    if (!action || hostLifecycleControl.disabled) return
+    setHostLifecyclePending(true)
+    setHostLifecycleError(undefined)
+    void hostLifecycleClient
+      .set(action)
+      .then((result) => {
+        if (!hostLifecycleMountedRef.current) return
+        if (result.snapshot) {
+          setHostLifecycle((current) =>
+            !current || result.snapshot!.revision >= current.revision ? result.snapshot! : current
+          )
+        }
+        if (!result.ok) setHostLifecycleError(result.error)
+        void hostProjectionStore?.refresh()
+      })
+      .catch((error: unknown) => {
+        if (hostLifecycleMountedRef.current) {
+          setHostLifecycleError(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (hostLifecycleMountedRef.current) setHostLifecyclePending(false)
+      })
+  }
   const hostMissionControlModel = useMemo(
     () => projectHostMissionControl(hostProjectionState),
     [hostProjectionState]
@@ -999,6 +1042,9 @@ function ThreadHomeWorkspaceInner(
             state={hostProjectionState}
             commands={hostCommandController}
             presentation="pane"
+            lifecycleControl={hostLifecycleControl}
+            providers={hostProviders}
+            onLifecycleAction={runHostLifecycleAction}
           />
         )}
         {surface === 'terminal' &&

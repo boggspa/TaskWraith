@@ -117,6 +117,12 @@ function missionFixture(): HostSnapshot {
         threadId: 'thread-z',
         status: 'completed',
         endedAt: 500,
+        routing: {
+          mode: 'turn_bound',
+          fanout: 'serial',
+          bossParticipantId: 'participant-0',
+          captainParticipantId: 'participant-1'
+        },
         participantIds: [],
         providerRunIds: []
       },
@@ -125,7 +131,12 @@ function missionFixture(): HostSnapshot {
         threadId: 'thread-a',
         status: 'running',
         startedAt: 100,
-        routing: { mode: 'continuous', fanout: 'parallel' },
+        routing: {
+          mode: 'continuous',
+          fanout: 'parallel',
+          bossParticipantId: 'participant-15',
+          captainParticipantId: 'participant-16'
+        },
         participantIds: ['participant-15'],
         providerRunIds: ['run-success']
       }
@@ -140,7 +151,12 @@ function missionFixture(): HostSnapshot {
         modelId: index % 2 === 0 ? 'gpt-5.6-sol' : 'claude-opus-5',
         reasoningEffort: index % 2 === 0 ? 'xhigh' : 'high',
         permissionPresetId: index % 2 === 0 ? 'workspace_write' : 'full_access',
-        stage: index % 3 === 0 ? ('reviewer' as const) : ('worker' as const),
+        stage:
+          index === 2
+            ? ('any' as const)
+            : index % 3 === 0
+              ? ('reviewer' as const)
+              : ('worker' as const),
         order: firstGroup ? index : index - 15,
         enabled: index !== 29,
         status: index === 0 ? 'working' : 'idle',
@@ -216,13 +232,33 @@ describe('HostMissionControl', () => {
   it('renders the current control layout as an always-open Thread Home pane', () => {
     const state = stateFromSnapshot(missionFixture())
     const model = projectHostMissionControl(state)
-    const markup = renderToStaticMarkup(<HostMissionControl state={state} presentation="pane" />)
+    const markup = renderToStaticMarkup(
+      <HostMissionControl
+        state={state}
+        presentation="pane"
+        lifecycleControl={{
+          note: 'Runs only while TaskWraith is open',
+          stateLabel: 'Running in this app',
+          action: 'stop',
+          actionLabel: 'Stop Host',
+          disabled: false
+        }}
+        providers={{ known: true, available: 9, total: 9, label: '9 of 9 configured' }}
+        onLifecycleAction={vi.fn()}
+      />
+    )
 
     expect(formatHostMissionControlSummary(model)).toBe('1 active · 30 participants')
     expect(markup).toContain('host-mission-control--pane')
     expect(markup).toContain('aria-label="Mission Control, 1 active · 30 participants"')
     expect(markup).toContain('aria-label="Mission Control overview"')
     expect(markup).not.toContain('<span class="host-mission-control-cursor">')
+    expect(markup).toContain('aria-label="TaskWraith Host control"')
+    expect(markup).toContain('Running in this app')
+    expect(markup).toContain('Stop Host')
+    expect(markup).toContain('<strong>9 of 9</strong>')
+    expect(markup).toContain('Providers configured')
+    expect(markup).not.toContain('Host approvals')
     expect(markup).toContain('<span>Active missions</span>')
     expect(markup).toContain('<span>Running rounds</span>')
     expect(markup).toContain('<span>Active seats</span>')
@@ -235,6 +271,10 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('Extra High')
     expect(markup).toContain('Full WS Access')
     expect(markup).toContain('Full Access')
+    expect(markup).toContain('title="Boss"')
+    expect(markup).toContain('title="Captain"')
+    expect(markup).toContain('title="Reviewer"')
+    expect(markup).toContain('title="Seat 2"><strong>#3 Seat 2</strong>')
     expect(markup).toContain('open=""><summary aria-label="Zeta thread roster, 15 seats, 1 active"')
     expect(markup).not.toContain(
       'open=""><summary aria-label="Alpha thread roster, 15 seats, 0 active"'

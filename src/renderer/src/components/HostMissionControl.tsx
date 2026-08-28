@@ -13,8 +13,10 @@ import type {
   HostProjectedParticipant,
   HostProjectedQuestion,
   HostProjectedRound,
+  HostProjectedRouting,
   HostProjectedRun
 } from '../lib/host/hostSnapshotProjection'
+import type { HostLifecycleControlView, HostProvidersView } from './HostStatusRow'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
@@ -43,6 +45,9 @@ export interface HostMissionControlProps {
   readonly state: HostProjectionState
   readonly commands?: HostCommandController | null
   readonly presentation?: 'disclosure' | 'pane'
+  readonly lifecycleControl?: HostLifecycleControlView
+  readonly providers?: HostProvidersView
+  readonly onLifecycleAction?: () => void
 }
 
 export const HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT = 12
@@ -155,7 +160,10 @@ function participantDetail(participant: HostProjectedParticipant): string {
     .join(' · ')
 }
 
-function participantSeatState(participant: HostProjectedParticipant): SeatChangeSeatState {
+function participantSeatState(
+  participant: HostProjectedParticipant,
+  authority?: SeatChangeSeatState['authority']
+): SeatChangeSeatState {
   return {
     provider: participant.providerId,
     model: participant.modelId || '',
@@ -168,8 +176,18 @@ function participantSeatState(participant: HostProjectedParticipant): SeatChange
     ...(participant.permissionPresetId
       ? { permissionPresetId: participant.permissionPresetId }
       : {}),
-    ...(participant.stage && participant.stage !== 'any' ? { stageRole: participant.stage } : {})
+    ...(participant.stage && participant.stage !== 'any' ? { stageRole: participant.stage } : {}),
+    ...(authority ? { authority } : {})
   }
+}
+
+function participantAuthority(
+  participantId: string,
+  routing: HostProjectedRouting | undefined
+): SeatChangeSeatState['authority'] | undefined {
+  if (routing?.bossParticipantId === participantId) return 'boss'
+  if (routing?.captainParticipantId === participantId) return 'captain'
+  return undefined
 }
 
 function participantStatus(participant: HostProjectedParticipant): {
@@ -208,7 +226,10 @@ function commandStateFor(commands: HostCommandController | null | undefined) {
 export function HostMissionControl({
   state,
   commands,
-  presentation = 'disclosure'
+  presentation = 'disclosure',
+  lifecycleControl,
+  providers,
+  onLifecycleAction
 }: HostMissionControlProps) {
   const [commandState, setCommandState] = useState<HostCommandControllerState>(() =>
     commandStateFor(commands)
@@ -233,6 +254,15 @@ export function HostMissionControl({
   const threadUpdatedAt = new Map(
     state.projection?.threads.map((thread) => [thread.id, thread.updatedAt])
   )
+  const routingByThread = new Map<string, HostProjectedRouting>()
+  for (const round of model.rounds) {
+    if (round.routing && !routingByThread.has(round.threadId)) {
+      routingByThread.set(round.threadId, round.routing)
+    }
+  }
+  if (model.participantGroups.length === 1 && state.projection?.routing) {
+    routingByThread.set(model.participantGroups[0]!.threadId, state.projection.routing)
+  }
   const activeParticipantCount = model.participantGroups.reduce(
     (total, group) => total + group.participants.filter((participant) => participant.active).length,
     0
@@ -273,6 +303,12 @@ export function HostMissionControl({
     model.generation !== undefined && model.cursor !== undefined
       ? `Generation ${model.generation} · Cursor ${model.cursor}`
       : 'Waiting for a Host snapshot'
+  const hostRunning = lifecycleControl
+    ? lifecycleControl.stateLabel === 'Running in this app'
+    : model.phase === 'Live'
+  const providerCount = providers?.known
+    ? `${providers.available ?? 0} of ${providers.total ?? 0}`
+    : '—'
 
   const submitRunCancel = (threadId: string): void => {
     if (!commands || !canMutate) return
@@ -312,21 +348,58 @@ export function HostMissionControl({
           presentation === 'pane' ? ' host-mission-control-body--pane' : ''
         }`}
       >
-        <div
-          className="host-mission-control-position"
-          role="status"
-          aria-live="polite"
-          title={presentation === 'pane' ? positionDetail : undefined}
-        >
-          <span
-            className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
-            aria-hidden
-          />
-          <span>{model.phase}</span>
-          {presentation !== 'pane' ? (
+        {presentation !== 'pane' ? (
+          <div className="host-mission-control-position" role="status" aria-live="polite">
+            <span
+              className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
+              aria-hidden
+            />
+            <span>{model.phase}</span>
             <span className="host-mission-control-cursor">{positionDetail}</span>
-          ) : null}
-        </div>
+          </div>
+        ) : (
+          <section
+            className="host-mission-control-host-row"
+            aria-label="TaskWraith Host control"
+            title={positionDetail}
+          >
+            <div
+              className="host-mission-control-host-lifecycle"
+              {...(lifecycleControl?.detail ? { title: lifecycleControl.detail } : {})}
+            >
+              <span
+                className={`host-mission-control-dot is-${hostRunning ? 'live' : 'stale'}`}
+                aria-hidden
+              />
+              <span className="host-mission-control-host-copy">
+                <strong>TaskWraith Host</strong>
+                <span>{lifecycleControl?.stateLabel ?? model.phase}</span>
+                <small>
+                  {lifecycleControl?.note ?? 'Runs only while TaskWraith is open'} · {model.phase}{' '}
+                  projection
+                </small>
+              </span>
+              {lifecycleControl?.actionLabel && onLifecycleAction ? (
+                <button
+                  type="button"
+                  className="host-lifecycle-toggle"
+                  disabled={lifecycleControl.disabled}
+                  onClick={onLifecycleAction}
+                  aria-label={`${lifecycleControl.actionLabel}. Host runs only while TaskWraith is open.`}
+                >
+                  {lifecycleControl.actionLabel}
+                </button>
+              ) : null}
+            </div>
+            <div
+              className="host-mission-control-provider-satellite"
+              title={providers?.label ?? 'Provider configuration unavailable'}
+            >
+              <strong>{providerCount}</strong>
+              <span>Providers configured</span>
+            </div>
+          </section>
+        )}
 
         {presentation === 'pane' && state.projection ? (
           <div
@@ -609,6 +682,7 @@ export function HostMissionControl({
                 </div>
                 <div className="host-mission-control-roster-list">
                   {visibleParticipantGroups.map((group) => {
+                    const routing = routingByThread.get(group.threadId)
                     const activeCount = group.participants.filter(
                       (participant) => participant.active
                     ).length
@@ -659,7 +733,10 @@ export function HostMissionControl({
                             </span>
                           </div>
                           {group.participants.map((participant) => {
-                            const seat = participantSeatState(participant)
+                            const seat = participantSeatState(
+                              participant,
+                              participantAuthority(participant.id, routing)
+                            )
                             const status = participantStatus(participant)
                             const statusClassName = status.key
                               .toLowerCase()
@@ -684,11 +761,12 @@ export function HostMissionControl({
                                     className="host-mission-control-seat-role"
                                     style={{ color: seatAccentVar(seat) }}
                                     title={
-                                      participantRoleIconTitle(undefined, seat.stageRole) ||
+                                      participantRoleIconTitle(seat.authority, seat.stageRole) ||
                                       participant.role
                                     }
                                   >
                                     <ParticipantRoleIcon
+                                      authority={seat.authority}
                                       stageRole={seat.stageRole}
                                       className="host-mission-control-seat-role-icon"
                                     />

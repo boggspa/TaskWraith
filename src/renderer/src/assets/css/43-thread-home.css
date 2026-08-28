@@ -677,6 +677,75 @@
   margin-left: auto;
 }
 
+.host-mission-control-host-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(20px, 4vw, 52px);
+  padding: 2px 3px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--surface-border) 62%, transparent);
+}
+
+.host-mission-control-host-lifecycle {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.host-mission-control-host-copy {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.host-mission-control-host-copy strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.host-mission-control-host-copy > span {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-mission-control-host-copy small {
+  grid-column: 1 / -1;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.host-mission-control-provider-satellite {
+  display: grid;
+  gap: 3px;
+  min-width: 110px;
+  text-align: right;
+}
+
+.host-mission-control-provider-satellite strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 590;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.host-mission-control-provider-satellite span {
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
 .host-mission-control-overview-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -1039,6 +1108,17 @@
 
   .host-mission-control-overview-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .host-mission-control-host-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .host-mission-control-provider-satellite {
+    min-width: 0;
+    padding-left: 18px;
+    text-align: left;
   }
 
   .host-mission-control-roster > summary {
