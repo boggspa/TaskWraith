@@ -8,7 +8,10 @@ export class RawLogRingBuffer {
   private start = 0
   private countValue = 0
 
-  constructor(readonly capacity = RAW_LOG_RING_CAPACITY) {
+  constructor(
+    readonly capacity = RAW_LOG_RING_CAPACITY,
+    private readonly now = () => new Date().toISOString()
+  ) {
     if (!Number.isSafeInteger(capacity) || capacity <= 0) {
       throw new Error('Raw log ring capacity must be a positive safe integer')
     }
@@ -20,6 +23,11 @@ export class RawLogRingBuffer {
   }
 
   append(entry: RawLogEntry): void {
+    if (!entry.timestamp) entry.timestamp = this.now()
+    this.store(entry)
+  }
+
+  private store(entry: RawLogEntry): void {
     if (this.countValue < this.capacity) {
       this.entries[(this.start + this.countValue) % this.capacity] = entry
       this.countValue += 1
@@ -33,7 +41,7 @@ export class RawLogRingBuffer {
     this.clear()
     const start = Math.max(0, entries.length - this.capacity)
     for (let index = start; index < entries.length; index += 1) {
-      this.append(entries[index])
+      this.store(entries[index])
     }
   }
 

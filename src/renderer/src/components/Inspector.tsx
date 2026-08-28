@@ -50,6 +50,7 @@ interface InspectorProps {
   rawLogs: Array<{
     type: 'stdout' | 'stderr' | 'tool' | 'info'
     content: string
+    timestamp?: string
     sequence?: number
     hash?: string
     spanId?: string
@@ -410,13 +411,26 @@ function formatRawEventsForClipboard(logs: InspectorProps['rawLogs']): string {
   return `${header}\n${'-'.repeat(header.length)}\n${lines.join('\n')}\n`
 }
 
+export function scopeRawLogsToRound(
+  logs: InspectorProps['rawLogs'],
+  roundStartedAt: string | undefined,
+  scope: 'round' | 'all'
+): InspectorProps['rawLogs'] {
+  if (scope === 'all' || !roundStartedAt) return logs
+  return logs.filter((log) => Boolean(log.timestamp && log.timestamp >= roundStartedAt))
+}
+
 function RawTab(props: InspectorProps) {
   const { rawLogs, rawFilter, setRawFilter, setRawLogs, rawLogsEndRef } = props
   const { copiedId, copy } = useCopyFeedback()
   const ensembleParticipants = getOrderedEnsembleParticipants(props.currentChat)
   const isEnsemble = ensembleParticipants.length > 0
-  const filteredLogs = rawLogs.filter((l) => rawFilter === 'all' || l.type === rawFilter)
-  const typeCounts = rawLogs.reduce(
+  const activeRound = props.currentChat?.ensemble?.activeRound
+  const [roundScope, setRoundScope] = useState<'round' | 'all'>('round')
+  useEffect(() => setRoundScope('round'), [activeRound?.roundId])
+  const scopedLogs = scopeRawLogsToRound(rawLogs, activeRound?.startedAt, roundScope)
+  const filteredLogs = scopedLogs.filter((l) => rawFilter === 'all' || l.type === rawFilter)
+  const typeCounts = scopedLogs.reduce(
     (acc, log) => {
       acc[log.type] = (acc[log.type] || 0) + 1
       return acc
@@ -448,17 +462,17 @@ function RawTab(props: InspectorProps) {
             className={`message-actions-chip-button message-actions-chip-button--copy${
               copiedId === 'raw-events' ? ' is-copied' : ''
             }`}
-            disabled={rawLogs.length === 0}
-            onClick={() => copy('raw-events', formatRawEventsForClipboard(rawLogs))}
+            disabled={scopedLogs.length === 0}
+            onClick={() => copy('raw-events', formatRawEventsForClipboard(scopedLogs))}
             title={
               copiedId === 'raw-events'
                 ? 'Copied'
-                : `Copy all ${rawLogs.length} raw event${rawLogs.length === 1 ? '' : 's'} (with metadata) to clipboard`
+                : `Copy ${scopedLogs.length} visible raw event${scopedLogs.length === 1 ? '' : 's'} (with metadata) to clipboard`
             }
             aria-label={
               copiedId === 'raw-events'
                 ? 'Copied raw events'
-                : `Copy all ${rawLogs.length} raw events to clipboard`
+                : `Copy ${scopedLogs.length} visible raw events to clipboard`
             }
           >
             {copiedId === 'raw-events' ? (
@@ -542,10 +556,25 @@ function RawTab(props: InspectorProps) {
               margin: '0 0 var(--space-sm) 0'
             }}
           >
-            Combined event buffer for this Ensemble chat. Participant runs stay tagged in chat/run
-            metadata, while this tab keeps the raw stdout, stderr, tool, and host info stream in one
-            chronological view.
+            Defaults to the current round so an earlier participant failure cannot masquerade as a
+            new-round event. “All rounds” restores the full chat-wide stdout, stderr, tool, and host
+            info history.
           </p>
+          {activeRound?.startedAt && (
+            <div className="safety-row">
+              <span>Scope</span>
+              <SegmentedControl
+                ariaLabel="Raw event round scope"
+                value={roundScope}
+                options={[
+                  { value: 'round' as const, label: 'Current round' },
+                  { value: 'all' as const, label: 'All rounds' }
+                ]}
+                onValueChange={setRoundScope}
+                size="compact"
+              />
+            </div>
+          )}
           <div className="safety-row">
             <span>Participants</span>
             <span>{formatParticipantProviderList(ensembleParticipants)}</span>
@@ -553,7 +582,7 @@ function RawTab(props: InspectorProps) {
           <div className="safety-row">
             <span>Events</span>
             <span>
-              {rawLogs.length} total · {typeCounts.stdout || 0} stdout · {typeCounts.stderr || 0}{' '}
+              {scopedLogs.length} shown · {typeCounts.stdout || 0} stdout · {typeCounts.stderr || 0}{' '}
               stderr · {typeCounts.tool || 0} tool · {typeCounts.info || 0} info
             </span>
           </div>
@@ -569,8 +598,10 @@ function RawTab(props: InspectorProps) {
               margin: 0
             }}
           >
-            {rawLogs.length === 0
-              ? 'No raw events captured yet. Run a task to stream stdout, stderr, and tool events here.'
+            {scopedLogs.length === 0
+              ? roundScope === 'round' && activeRound?.startedAt
+                ? 'No raw events captured for the current round. Switch to “All rounds” for earlier events.'
+                : 'No raw events captured yet. Run a task to stream stdout, stderr, and tool events here.'
               : `No ${rawFilter} events to show. Switch the filter to "all" to see other event types.`}
           </p>
         ) : (

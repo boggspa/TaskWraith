@@ -24,4 +24,15 @@ describe('RawLogRingBuffer', () => {
 
     expect(ring.snapshot().map((item) => item.content)).toEqual(['two', 'three'])
   })
+
+  it('timestamps live appends without relabelling historical replacement entries', () => {
+    const ring = new RawLogRingBuffer(3, () => '2026-08-28T17:38:35.000Z')
+    const live = entry('live')
+    ring.append(live)
+    expect(live.timestamp).toBe('2026-08-28T17:38:35.000Z')
+
+    const historical = entry('historical')
+    ring.replace([historical])
+    expect(historical.timestamp).toBeUndefined()
+  })
 })
