@@ -42,7 +42,7 @@ Clients share the transport-independent protocol in `src/shared/hostProtocol.ts`
   needs the desktop window open first: when no Host is reachable it launches the
   app executable in windowless Host mode under the TUI's own process identity,
   waits for an authenticated handshake, then connects. See
-  [`src/tui/WINDOWLESS_HOST.md`](src/tui/WINDOWLESS_HOST.md).
+  [`src/tui/WINDOWLESS_HOST.md`](../src/tui/WINDOWLESS_HOST.md).
 - Paired iOS uses the existing E2EE remote bridge and a paired-identity Host
   gateway for snapshots, deltas, governed commands, and durable receipts.
 - Multi-human Channels contribute a compact lifecycle/member projection and
@@ -84,7 +84,7 @@ continuity cannot be proven.
    non-release-qualifying `unattested-development` mode in every build
    (packaged included), gated by structural identity/probe/posture checks
    rather than an exact reviewed tuple. See
-   [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
+   [`docs/kimi-code-acp-migration.md`](kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Every admitted provider turn crosses the shared signed-posture normalizer
    and host lifecycle inventory. Stronger layers such as per-tool mediation,

@@ -1,7 +1,7 @@
 # Advanced Optional Setup
 
 <p align="center">
-  <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
+  <img src="../design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
 </p>
 
 TaskWraith's core setup is intentionally small: install or sign in to the
@@ -169,7 +169,7 @@ push-start one after a grace period while the companion is closed. ActivityKit
 must read that card state, so it is not end-to-end encrypted; it is restricted
 to the non-sensitive allowlist and hard privacy boundary in
 [`PRIVACY.md`](PRIVACY.md) and
-[`ios/TaskWraithApp/AppStorePrivacyNotes.md`](ios/TaskWraithApp/AppStorePrivacyNotes.md).
+[`ios/TaskWraithApp/AppStorePrivacyNotes.md`](../ios/TaskWraithApp/AppStorePrivacyNotes.md).
 
 ## Screen Watch
 

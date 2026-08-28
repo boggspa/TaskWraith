@@ -1,7 +1,7 @@
 # Trust and Safety
 
 <p align="center">
-  <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
+  <img src="../design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
 </p>
 
 TaskWraith keeps its own work records on your computer, but it can still
@@ -12,7 +12,7 @@ after the behavior is boring and understandable.
 
 This page is written for cautious users deciding whether to try the app on a real
 workspace. Engineering guardrails are also documented in [SAFETY.md](SAFETY.md)
-and [SECURITY.md](SECURITY.md).
+and [SECURITY.md](../SECURITY.md).
 
 ## Current Maturity
 

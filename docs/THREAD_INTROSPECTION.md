@@ -481,5 +481,5 @@ through the apply layer (store helpers landed; IPC/MCP/ledger integration pendin
 ## Related docs
 
 - [SESSION_AND_WORKSPACE.md](SESSION_AND_WORKSPACE.md) — sessions, recall posture
-- [AGENTS.md](AGENTS.md) — agent runtime environment (includes introspection note)
+- [AGENTS.md](../AGENTS.md) — agent runtime environment (includes introspection note)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — store and orchestration overview

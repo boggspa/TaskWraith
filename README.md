@@ -15,7 +15,7 @@ TaskWraith keeps its orchestration, local history, and workspace authority on
 the user's machine; prompts and run context still go to whichever cloud
 provider the user selects.
 
-Read [POSITIONING.md](POSITIONING.md) for the concise product promise, claim
+Read [POSITIONING.md](docs/POSITIONING.md) for the concise product promise, claim
 boundaries, topology decision guide, and recommended small Ensemble panels.
 
 > **iOS companion status:** TaskWraith for iPhone/iPad is in **TestFlight beta**.
@@ -60,7 +60,7 @@ with `cursor-agent` and works in solo chats, Ensembles, and delegated work.
 Cursor can use its native tools alongside TaskWraith tools, with the selected
 permission posture and workspace Tool Grants applying wherever TaskWraith
 mediates. The provider-native boundary is explained in
-[Trust & Safety](TRUST_AND_SAFETY.md).
+[Trust & Safety](docs/TRUST_AND_SAFETY.md).
 
 This is not just provider switching. Ensemble participants see the same
 transcript, can build on each other's work, hand off deliberately, run
@@ -116,11 +116,11 @@ Screen Watch, Canvas/browser automation, creative app bridges, unattended
 workflow grants, or full-workspace/yolo permissions until the app has earned
 trust through several low-risk sessions.
 
-Read [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md) for the safe-first-run guide,
+Read [TRUST_AND_SAFETY.md](docs/TRUST_AND_SAFETY.md) for the safe-first-run guide,
 capability matrix, storage locations, provider data boundaries, release
 verification steps, and known limits. Optional features that require outside
 accounts, local services, or macOS permissions are covered in
-[ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md). [SAFETY.md](SAFETY.md)
+[ADVANCED_OPTIONAL_SETUP.md](docs/ADVANCED_OPTIONAL_SETUP.md). [SAFETY.md](docs/SAFETY.md)
 and [SECURITY.md](SECURITY.md) contain the engineering guardrails and release
 baseline.
 
@@ -129,7 +129,7 @@ leave privacy-minimised product observation off until you affirmatively choose
 **Share** during first launch or under **Settings → Safety & Privacy**. The
 choice is optional, sends only the fixed no-content contract, can be withdrawn
 at any time, and never affects app features. Builds without an endpoint send
-nothing. [PRIVACY.md](PRIVACY.md) explains platform aggregates, retention,
+nothing. [PRIVACY.md](docs/PRIVACY.md) explains platform aggregates, retention,
 user choices, and the exact data boundary.
 
 <table>
@@ -188,7 +188,7 @@ user choices, and the exact data boundary.
   broker, provenance, or scheduled-seal evidence is reported as a limited or
   unsealed run and does not by itself remove a provider.
   Provider names describe compatible integrations only — CLIs and accounts stay
-  user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
+  user-installed. See the [Model Catalogue](docs/MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.
   AntiGravity settings can also open the official user-installed `agy` updater;
   TaskWraith does not download or repackage that CLI, access its credentials, or
@@ -219,7 +219,7 @@ user choices, and the exact data boundary.
   with explicit complete/blocked lifecycle tools.
 - **Composer Shells**: Provider-aware and task-oriented composer variants give
   each working mode its own affordances—including the ChatGPT shell—without
-  changing the safety model. See [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md)
+  changing the safety model. See [COMPOSER_VARIANTS.md](docs/COMPOSER_VARIANTS.md)
   for the Electron shell gallery.
 - **Plan Workflow**: Plan runs keep the provider in a read-only execution
   posture while allowing a product-managed markdown plan file to be written under
@@ -350,7 +350,7 @@ Cursor, Grok, and most other seats need the matching CLI installed and a
 terminal login first. Ollama is local (install Ollama, then `ollama pull` a
 model) and does not require a cloud account for local runs. Start with a
 scratch repo and a read-only posture — see [Trust, Safety, and First
-Runs](#trust-safety-and-first-runs) and [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md).
+Runs](#trust-safety-and-first-runs) and [TRUST_AND_SAFETY.md](docs/TRUST_AND_SAFETY.md).
 
 ## Development Setup
 
@@ -370,7 +370,7 @@ Discord Context is optional and read-only: it attaches recent messages from
 bot-accessible channels as untrusted context and does not post back to Discord.
 Setup requires a Discord bot token, at least one guild/server ID, and channel
 read permissions; see
-[Advanced Optional Setup - Discord Context](ADVANCED_OPTIONAL_SETUP.md#discord-context)
+[Advanced Optional Setup - Discord Context](docs/ADVANCED_OPTIONAL_SETUP.md#discord-context)
 for the environment variables and packaged-app config path.
 
 ## Useful Commands
@@ -414,7 +414,7 @@ validation, SBOM generation, or platform-specific artifact signing.
 - `swift`: macOS bridge daemon sources used by local release builds.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 
-See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
-`ADVANCED_OPTIONAL_SETUP.md`, `SESSION_AND_WORKSPACE.md`, `THREAD_INTROSPECTION.md`,
-`COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and
-`PRIVACY.md`, and `TERMS_NOTES.md` for more detail.
+See `CHANGELOG.md` for release history, and `docs/TRUST_AND_SAFETY.md`,
+`docs/ADVANCED_OPTIONAL_SETUP.md`, `docs/SESSION_AND_WORKSPACE.md`, `docs/THREAD_INTROSPECTION.md`,
+`docs/COMPOSER_VARIANTS.md`, `docs/ARCHITECTURE.md`, `docs/SAFETY.md`, `SECURITY.md`, and
+`docs/PRIVACY.md`, and `docs/TERMS_NOTES.md` for more detail.

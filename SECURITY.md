@@ -6,7 +6,7 @@ release signing as security-sensitive changes.
 
 For the user-facing trust model, safe-first-run guide, capability matrix, local
 storage locations, and artifact verification commands, see
-[TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md). This file focuses on development and
+[TRUST_AND_SAFETY.md](docs/TRUST_AND_SAFETY.md). This file focuses on development and
 release hygiene.
 
 Open, release-sensitive code findings and bounded containment hypotheses are
