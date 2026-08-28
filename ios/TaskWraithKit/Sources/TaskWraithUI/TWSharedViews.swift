@@ -834,26 +834,29 @@ extension View {
                 isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.18)
             let rimBottom: Color =
                 isLight ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
-            // Light legibility scrim only — heavy composerBg washes read as solid
-            // gray over sheet presentation backgrounds.
-            let scrim =
-                isLight ? Color.white.opacity(0.06) : Color.black.opacity(0.10)
+            // Every iOS presentation owns the same adaptive theme wash. The
+            // fill is deliberately translucent so Liquid Glass can still
+            // refract/blur the presenting view, while text never rides the
+            // nearly bare background exposed by full-screen covers.
+            let backdropFill = TWTheme.appBg.opacity(
+                TWGlassSheetSurfacePolicy.backdropFillAlpha(
+                    glassEnabled: TWTheme.composerGlassEnabled))
 
             if !TWTheme.composerGlassEnabled {
                 content
-                    .background { shape.fill(TWTheme.surface2) }
+                    .background { shape.fill(backdropFill) }
                     .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
             } else if #available(iOS 26.0, macOS 26.0, *) {
                 content
                     .glassEffect(.clear, in: shape)
-                    .background(scrim, in: shape)
+                    .background(backdropFill, in: shape)
                     .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
             } else {
                 content
                     .background {
                         shape
                             .fill(.ultraThinMaterial)
-                            .overlay(shape.fill(scrim))
+                            .overlay(shape.fill(backdropFill))
                     }
                     .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
             }
@@ -895,6 +898,15 @@ extension EnvironmentValues {
 /// glass-hosted sheet (Diff Studio's DiffStudioSheetGlassPolicy delegates its
 /// chrome tier here).
 enum TWGlassSheetSurfacePolicy {
+    /// Adaptive app-background wash under every iOS sheet, full-screen cover,
+    /// popover and picker glass surface. The theme supplies the light/dark
+    /// colour; one alpha keeps presentation hosts visually consistent.
+    static let standardBackdropFillAlpha = 0.65
+
+    static func backdropFillAlpha(glassEnabled: Bool) -> Double {
+        glassEnabled ? standardBackdropFillAlpha : 1.0
+    }
+
     /// Alpha for chrome surfaces (list/form rows, cards, header bars) over the
     /// glass backdrop; nil keeps the host's default opaque fill. Reduce
     /// Transparency (glassEnabled false) keeps surfaces fully opaque over the
@@ -1118,17 +1130,23 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let isLight = TWThemeStore.shared.systemTheme.isLight
-        let scrimOpacity = colorSchemeContrast == .increased ? 0.18 : 0.10
-        let legibilityScrim =
-            isLight ? Color.white.opacity(scrimOpacity) : Color.black.opacity(scrimOpacity)
+        #if os(iOS)
+            let legibilityFill = TWTheme.appBg.opacity(
+                TWGlassSheetSurfacePolicy.backdropFillAlpha(
+                    glassEnabled: !(reduceTransparency || !TWTheme.composerGlassEnabled)))
+        #else
+            let isLight = TWThemeStore.shared.systemTheme.isLight
+            let scrimOpacity = colorSchemeContrast == .increased ? 0.18 : 0.10
+            let legibilityFill =
+                isLight ? Color.white.opacity(scrimOpacity) : Color.black.opacity(scrimOpacity)
+        #endif
         let rimWidth: CGFloat = colorSchemeContrast == .increased ? 1.5 : 1
 
         if reduceTransparency || !TWTheme.composerGlassEnabled {
             content
                 .background {
                     shape
-                        .fill(TWTheme.surface2)
+                        .fill(legibilityFill)
                         .overlay {
                             if let tint {
                                 shape.fill(tint.opacity(0.12))
@@ -1139,7 +1157,7 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
         } else if #available(iOS 26.0, macOS 26.0, *) {
             content
                 .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
-                .background(legibilityScrim, in: shape)
+                .background(legibilityFill, in: shape)
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         } else {
             content
@@ -1152,7 +1170,7 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
                             }
                         }
                 }
-                .background(legibilityScrim, in: shape)
+                .background(legibilityFill, in: shape)
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         }
     }
@@ -1170,6 +1188,20 @@ extension View {
                 tint: tint,
                 cornerRadius: cornerRadius,
                 interactive: interactive))
+    }
+
+    /// iOS house chrome for compact popovers that previously painted an
+    /// opaque `surface2` rectangle. Other platforms retain that existing
+    /// solid surface.
+    @ViewBuilder
+    func twPopoverGlassSurface(cornerRadius: CGFloat = 14) -> some View {
+        #if os(iOS)
+            self
+                .twPickerGlassSurface(cornerRadius: cornerRadius)
+                .presentationBackground(.clear)
+        #else
+            self.background(TWTheme.surface2)
+        #endif
     }
 }
 
@@ -6389,7 +6421,7 @@ private struct GoalRailControl: View {
             popoverBody
                 .frame(width: 320)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -6540,7 +6572,7 @@ private struct PlanRailControl: View {
             popoverBody
                 .frame(width: 320)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -7963,6 +7995,7 @@ public struct AppSettingsSheet: View {
                     ) {
                         if let workspaceId = approvalLedgerWorkspaceId {
                             ApprovalLedgerSheet(model: model, workspaceId: workspaceId)
+                                .twSheetLiquidGlass(detents: [.large])
                         }
                     }
                 SettingsValueRow(title: "Questions waiting", value: "\(model.questions.count)")

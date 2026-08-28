@@ -14,6 +14,7 @@ struct TerminalSheet: View {
     let workspaceId: String
     let workspaceName: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     private enum Phase: Equatable {
         case elevation
@@ -51,7 +52,7 @@ struct TerminalSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .background(TWTheme.appBg)
+            .background(glassSheetHosted ? Color.clear : TWTheme.appBg)
             .navigationTitle("Terminal — \(workspaceName)")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

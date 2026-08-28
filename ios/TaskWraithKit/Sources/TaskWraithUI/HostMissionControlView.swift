@@ -222,14 +222,17 @@ struct HostMissionControlView: View {
   var body: some View {
     NavigationStack {
       List {
-        statusSection
-        missionSection
-        roundSection
-        receiptsSection
-        participantSections
+        Group {
+          statusSection
+          missionSection
+          roundSection
+          receiptsSection
+          participantSections
+        }
+        .twGlassSheetRowBackground()
       }
-      .scrollContentBackground(.hidden)
-      .background(TWTheme.appBg)
+      .twGlassSheetListCanvas()
+      .background(Color.clear)
       .navigationTitle("Mission Control")
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

@@ -4,6 +4,15 @@ import Testing
 
 @Suite("Glass sheet surface policy")
 struct GlassSheetSurfacePolicyTests {
+    @Test func glassBackdropUsesOneAdaptiveSixtyFivePercentWash() {
+        #expect(TWGlassSheetSurfacePolicy.standardBackdropFillAlpha == 0.65)
+        #expect(TWGlassSheetSurfacePolicy.backdropFillAlpha(glassEnabled: true) == 0.65)
+    }
+
+    @Test func reduceTransparencyMakesTheBackdropOpaque() {
+        #expect(TWGlassSheetSurfacePolicy.backdropFillAlpha(glassEnabled: false) == 1.0)
+    }
+
     @Test func nonGlassHostsKeepTheirDefaultFills() {
         #expect(
             TWGlassSheetSurfacePolicy.chromeFillAlpha(

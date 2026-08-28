@@ -12,6 +12,7 @@ struct ApprovalLedgerSheet: View {
     let workspaceId: String
     var threadId: String? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     @State private var entries: [ApprovalLedgerEntry] = []
     @State private var loading = true
@@ -41,12 +42,12 @@ struct ApprovalLedgerSheet: View {
                 } else {
                     List(entries, id: \.resolvedId) { entry in
                         row(entry)
-                            .listRowBackground(TWTheme.surface1)
+                            .twGlassSheetRowBackground()
                     }
-                    .scrollContentBackground(.hidden)
+                    .twGlassSheetListCanvas()
                 }
             }
-            .background(TWTheme.appBg)
+            .background(glassSheetHosted ? Color.clear : TWTheme.appBg)
             .navigationTitle("Approval ledger")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

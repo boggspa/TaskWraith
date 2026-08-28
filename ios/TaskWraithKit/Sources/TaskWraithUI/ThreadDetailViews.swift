@@ -5131,7 +5131,7 @@ struct ThreadRowView: View, Equatable {
                 onDismissBlocked: { deletionPresentation = nil }
             )
             .padding()
-            .presentationDetents([.medium])
+            .twSheetLiquidGlass(detents: [.medium])
         }
     }
 
@@ -5525,6 +5525,7 @@ struct ThreadRowView: View, Equatable {
             .sheet(item: $preview) { preview in
                 TranscriptMediaPreviewSheet(
                     preview: preview, model: model, threadId: threadId)
+                    .twSheetLiquidGlass(detents: [.large])
             }
         }
 
@@ -5813,6 +5814,7 @@ struct ThreadRowView: View, Equatable {
         let model: RemoteSessionModel
         let threadId: String
         @Environment(\.dismiss) private var dismiss
+        @Environment(\.twGlassSheetHosted) private var glassSheetHosted
         @State private var markupSource: MarkupCaptureSource?
 
         var body: some View {
@@ -5825,7 +5827,10 @@ struct ThreadRowView: View, Equatable {
                         AVStreamPreview(descriptor: descriptor, model: model)
                     }
                 }
-                .background(TWTheme.appBg.ignoresSafeArea())
+                .background(
+                    (glassSheetHosted ? Color.clear : TWTheme.appBg)
+                        .ignoresSafeArea()
+                )
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -5849,6 +5854,7 @@ struct ThreadRowView: View, Equatable {
                             dismiss()
                         },
                         onCancel: { markupSource = nil })
+                        .twSheetLiquidGlass(detents: [.large])
                 }
             }
         }

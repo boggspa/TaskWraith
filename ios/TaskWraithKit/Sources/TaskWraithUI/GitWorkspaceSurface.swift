@@ -90,6 +90,7 @@ public struct GitWorkspaceSurface: View {
                             TerminalSheet(
                                 model: model, workspaceId: workspaceId,
                                 workspaceName: repoName)
+                                .twSheetLiquidGlass(detents: [.large])
                         }
                     }
                 }

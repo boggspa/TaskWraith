@@ -922,7 +922,7 @@ struct Composer: View {
                 )
                 .frame(width: 280)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
             }
         }

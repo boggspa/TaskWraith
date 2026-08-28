@@ -195,6 +195,7 @@ struct SubThreadSpawnSheet: View {
                     .accessibilityHint(
                         "A proposal only. The Mac validates the provider before creating the sub-thread.")
                 }
+                .twGlassSheetRowBackground()
 
                 Section {
                     TextEditor(text: $prompt)
@@ -213,6 +214,7 @@ struct SubThreadSpawnSheet: View {
                                 ? TWTheme.statusFailed : TWTheme.textTertiary)
                     }
                 }
+                .twGlassSheetRowBackground()
 
                 Section {
                     Toggle("Return the result here", isOn: $returnResult)
@@ -223,12 +225,14 @@ struct SubThreadSpawnSheet: View {
                             : "The child stays available as a separate task."
                     )
                 }
+                .twGlassSheetRowBackground()
 
                 if let reason = readiness.reason {
                     Section {
                         Text(reason)
                             .foregroundStyle(TWTheme.textSecondary)
                     }
+                    .twGlassSheetRowBackground()
                 }
 
                 if let errorText {
@@ -236,8 +240,11 @@ struct SubThreadSpawnSheet: View {
                         Text(errorText)
                             .foregroundStyle(TWTheme.statusFailed)
                     }
+                    .twGlassSheetRowBackground()
                 }
             }
+            .twGlassSheetListCanvas()
+            .background(Color.clear)
             .navigationTitle("Spawn sub-thread")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
