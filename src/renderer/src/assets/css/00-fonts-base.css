@@ -324,6 +324,11 @@ body {
 
 .window-drag-strip {
   display: none;
+  /* Pure OS drag affordance: never hit-test. Chromium builds -webkit-app-region
+   * regions from the layout tree and ignores pointer-events, so the window stays
+   * draggable while clicks fall through to the chrome underneath — the right
+   * dock header sits at window y=0 and lost its top ~19px to this band. */
+  pointer-events: none;
   position: fixed;
   top: 0;
   left: 0;

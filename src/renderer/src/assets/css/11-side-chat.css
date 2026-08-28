@@ -754,6 +754,17 @@
   box-shadow: none;
 }
 
+/* The dock is -webkit-app-region: no-drag (above), but the side chat it hosts
+ * is an .app-transcript, and that carries a 32px darwin ::before drag band
+ * (02-transcript-messages-fx.css). Draggable regions are flat geometry folded
+ * in layout order with last-op-wins, so the DESCENDANT drag re-arms an OS
+ * window-move band over the dock's own chrome — mousedown there drags the
+ * window instead of hitting the side chat's floating actions. Stacking cannot
+ * help: this is resolved by the OS, not by DOM hit-testing. */
+:root[data-platform='darwin'] .right-dock .app-transcript::before {
+  content: none;
+}
+
 :root .right-dock .app-inspector,
 :root .right-dock .app-file-editor {
   --text-primary: var(--rightdock-text);
