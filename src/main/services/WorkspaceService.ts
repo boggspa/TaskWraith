@@ -358,7 +358,15 @@ export class WorkspaceService {
     const normalized = this.deps.canonicalPath(requireNonEmptyString(workspacePath, 'Workspace'))
     this.assertSafeWorkspaceRoot(normalized)
     const realPath = await this.resolveRealDirectory(normalized)
-    return this.deps.appStore.addOrUpdateWorkspace(normalized, { realPath })
+    if (this.legacyStoreWritesOpen()) {
+      return this.deps.appStore.addOrUpdateWorkspace(normalized, { realPath })
+    }
+    // The Host canonicalizes the selected path itself; a caller-asserted
+    // realPath is stripped at the wire and adopted back from the Host record.
+    if (!this.deps.appStore.addOrUpdateWorkspaceViaHost) {
+      throw new Error('Host-routed workspace upsert is unavailable.')
+    }
+    return this.deps.appStore.addOrUpdateWorkspaceViaHost(normalized, { realPath })
   }
 
   private safeWorkspacePartial(partial: Partial<WorkspaceRecord> = {}): Partial<WorkspaceRecord> {

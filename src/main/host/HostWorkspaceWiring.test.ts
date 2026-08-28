@@ -273,4 +273,34 @@ describe('HostWorkspaceWiring', () => {
       consoleWarn.mockRestore()
     }
   })
+
+  it('(e) routes the native folder-picker selection through the Host (sidebar add-workspace)', async () => {
+    const workspaceDir = tmpWorkspaceDir('taskwraith-workspace-native-')
+    const { AppStore, upserts } = await importStoreWithHostOwnedGate([])
+    const { WorkspaceService } = await import('../services/WorkspaceService')
+    const service = new WorkspaceService({
+      appStore: AppStore as never,
+      allowlist: {
+        list: () => [],
+        upsert: (entry) => entry as never,
+        remove: () => false,
+        clear: () => undefined
+      },
+      canonicalPath: (value) => value,
+      resolveRealDirectory: async (value) => value,
+      selectDirectory: async () => null,
+      checkTrust: () => ({ trusted: true }) as never
+    })
+    // Review2's residual: this exact path threw LegacyStoreWriterGateClosedError
+    // at HEAD for the sidebar + / Settings "add workspace" button.
+    const added = await service.addWorkspaceFromNativeSelection(workspaceDir)
+    expect(upserts).toHaveLength(1)
+    const [input] = upserts
+    expect(input.path).toBe(workspaceDir)
+    // The caller-asserted realPath is stripped at the wire; the Host computes
+    // it and the returned record adopts the Host's value via read-back.
+    expect('realPath' in input).toBe(false)
+    expect(added.realPath).toBeTruthy()
+    expect(AppStore.getWorkspaces().find((w) => w.id === added.id)?.realPath).toBe(added.realPath)
+  })
 })
