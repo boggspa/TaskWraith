@@ -245,6 +245,14 @@ it('omits decoder-invalid seats so one malformed row cannot poison the snapshot'
   })
   expect(decoded.ok).toBe(true)
   expect(donor.participants.map((participant) => participant.id)).toEqual(['valid-seat'])
+  expect(donor.warnings).toEqual([
+    expect.objectContaining({
+      warningId: 'projection_rows_omitted:participants',
+      severity: 'warning',
+      code: 'projection_rows_omitted',
+      message: 'family participants omitted 6 decoder-invalid rows'
+    })
+  ])
   if (decoded.ok) {
     expect(decoded.value.participants.map((participant) => participant.id)).toEqual(['valid-seat'])
     expect(decoded.value.threads).toEqual([

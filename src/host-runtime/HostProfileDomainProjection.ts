@@ -8,7 +8,8 @@ import {
   decodeHostSnapshot,
   type HostHealthProjection,
   type HostParticipantProjection,
-  type HostProviderModelProjection
+  type HostProviderModelProjection,
+  type HostWarningProjection
 } from '../shared/hostProtocol'
 
 export type HostProfileDomainSnapshotFamilies = Omit<
@@ -123,12 +124,24 @@ function decodeParticipantCandidate(
   return decoded.ok ? (decoded.value.participants[0] ?? null) : null
 }
 
-function projectThreadParticipants(thread: ProfileThread): HostParticipantProjection[] {
-  if (thread.chatKind !== 'ensemble') return []
+interface ProjectedThreadParticipants {
+  readonly participants: HostParticipantProjection[]
+  readonly omitted: number
+  readonly warningAt: number
+}
+
+function projectThreadParticipants(thread: ProfileThread): ProjectedThreadParticipants {
+  if (thread.chatKind !== 'ensemble') {
+    return { participants: [], omitted: 0, warningAt: 0 }
+  }
   const ensemble = thread.ensemble
-  if (!ensemble || typeof ensemble !== 'object' || Array.isArray(ensemble)) return []
+  if (!ensemble || typeof ensemble !== 'object' || Array.isArray(ensemble)) {
+    return { participants: [], omitted: 0, warningAt: 0 }
+  }
   const record = ensemble as Record<string, unknown>
-  if (!Array.isArray(record.participants)) return []
+  if (!Array.isArray(record.participants)) {
+    return { participants: [], omitted: 0, warningAt: 0 }
+  }
   const activeRound =
     record.activeRound &&
     typeof record.activeRound === 'object' &&
@@ -137,15 +150,23 @@ function projectThreadParticipants(thread: ProfileThread): HostParticipantProjec
       : null
   const activeParticipantId = activeRound?.activeParticipantId
   const seen = new Set<string>()
-  const out: HostParticipantProjection[] = []
+  const participants: HostParticipantProjection[] = []
+  let omitted = 0
 
   for (const value of record.participants) {
     const participant = decodeParticipantCandidate(thread, value, activeParticipantId)
-    if (!participant || seen.has(participant.id)) continue
+    if (!participant || seen.has(participant.id)) {
+      omitted += 1
+      continue
+    }
     seen.add(participant.id)
-    out.push(participant)
+    participants.push(participant)
   }
-  return out
+  return {
+    participants,
+    omitted,
+    warningAt: omitted > 0 ? thread.updatedAt : 0
+  }
 }
 
 export function projectHostProfileDomainSnapshot(
@@ -160,6 +181,30 @@ export function projectHostProfileDomainSnapshot(
     updatedAt: workspace.updatedAt
   }))
   const threads = store.listThreads()
+  const participantProjections = threads.map(projectThreadParticipants)
+  const participants = participantProjections.flatMap((projection) => projection.participants)
+  const omittedParticipants = participantProjections.reduce(
+    (count, projection) => count + projection.omitted,
+    0
+  )
+  const participantWarningAt = participantProjections.reduce(
+    (latest, projection) => Math.max(latest, projection.warningAt),
+    0
+  )
+  const warnings: HostWarningProjection[] =
+    omittedParticipants === 0
+      ? []
+      : [
+          {
+            warningId: 'projection_rows_omitted:participants',
+            severity: 'warning',
+            code: 'projection_rows_omitted',
+            message: `family participants omitted ${omittedParticipants} decoder-invalid row${
+              omittedParticipants === 1 ? '' : 's'
+            }`,
+            at: participantWarningAt
+          }
+        ]
   return {
     health,
     workspaces,
@@ -188,13 +233,13 @@ export function projectHostProfileDomainSnapshot(
     ),
     missions: [],
     rounds: [],
-    participants: threads.flatMap(projectThreadParticipants),
+    participants,
     providers: [...providers],
     questions: [],
     approvals: [],
     schedules: [],
     usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
     artifacts: [],
-    warnings: []
+    warnings
   }
 }
