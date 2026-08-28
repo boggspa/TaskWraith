@@ -117,6 +117,8 @@ interface ObjectPatch {
 
 const TOP_LEVEL_EXCLUDES = new Set(['appChatId', 'messages', 'runs', 'persistenceRevision'])
 const MESSAGE_FIELD_EXCLUDES = new Set(['id', 'content', 'toolActivities'])
+const MESSAGE_REBASE_EXCLUDES = new Set(['id'])
+const RUN_REBASE_EXCLUDES = new Set(['runId'])
 
 function persistenceRevision(record: Pick<ChatRecord, 'persistenceRevision'>): number {
   const revision = record.persistenceRevision
@@ -442,6 +444,179 @@ function findMessage(record: ChatRecord, messageId: string): ChatMessage {
 function applyPatch(target: Record<string, unknown>, patch: ObjectPatch): void {
   for (const [key, value] of Object.entries(patch.set)) target[key] = jsonClone(value)
   for (const key of patch.clear) delete target[key]
+}
+
+function recordsById<T>(
+  items: readonly T[],
+  idOf: (item: T) => string,
+  label: string
+): Map<string, T> {
+  const records = new Map<string, T>()
+  for (const item of items) {
+    const id = idOf(item)
+    if (!id || records.has(id)) throw new Error(`Chat rebase ${label} identities are ambiguous`)
+    records.set(id, item)
+  }
+  return records
+}
+
+function rebaseObjectFields<T extends object>(
+  base: T,
+  desired: T,
+  source: T,
+  excluded: ReadonlySet<string>,
+  depth = 0
+): T {
+  if (depth > 64) throw new Error('Chat rebase object depth exceeds its bound')
+  const baseRecord = base as unknown as Record<string, unknown>
+  const desiredRecord = desired as unknown as Record<string, unknown>
+  const sourceRecord = source as unknown as Record<string, unknown>
+  const rebased: Record<string, unknown> = { ...sourceRecord }
+  const keys = new Set([...Object.keys(baseRecord), ...Object.keys(desiredRecord)])
+  for (const key of keys) {
+    if (excluded.has(key)) continue
+    const baseHas =
+      Object.prototype.hasOwnProperty.call(baseRecord, key) && baseRecord[key] !== undefined
+    const desiredHas =
+      Object.prototype.hasOwnProperty.call(desiredRecord, key) && desiredRecord[key] !== undefined
+    if (!desiredHas) {
+      if (baseHas) delete rebased[key]
+      continue
+    }
+    if (baseHas && jsonEqual(baseRecord[key], desiredRecord[key])) continue
+    const baseValue = baseRecord[key]
+    const desiredValue = desiredRecord[key]
+    const sourceValue = sourceRecord[key]
+    rebased[key] =
+      isPlainJsonObject(baseValue) &&
+      isPlainJsonObject(desiredValue) &&
+      isPlainJsonObject(sourceValue)
+        ? rebaseObjectFields(baseValue, desiredValue, sourceValue, new Set(), depth + 1)
+        : jsonClone(desiredValue)
+  }
+  return rebased as unknown as T
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function rebaseIdentityArray<T extends object>(input: {
+  base: readonly T[]
+  desired: readonly T[]
+  source: readonly T[]
+  idOf: (item: T) => string
+  identityField: string
+  label: string
+}): T[] {
+  const baseById = recordsById(input.base, input.idOf, input.label)
+  const desiredById = recordsById(input.desired, input.idOf, input.label)
+  recordsById(input.source, input.idOf, input.label)
+  const removedByDesktop = new Set([...baseById.keys()].filter((id) => !desiredById.has(id)))
+  const result = input.source
+    .filter((item) => !removedByDesktop.has(input.idOf(item)))
+    .map((item) => jsonClone(item))
+  const resultIndexById = new Map(result.map((item, index) => [input.idOf(item), index]))
+
+  for (let desiredIndex = 0; desiredIndex < input.desired.length; desiredIndex += 1) {
+    const desiredItem = input.desired[desiredIndex]
+    const id = input.idOf(desiredItem)
+    const baseItem = baseById.get(id)
+    const sourceIndex = resultIndexById.get(id) ?? -1
+    if (baseItem) {
+      if (sourceIndex < 0) {
+        if (!jsonEqual(baseItem, desiredItem)) {
+          throw new Error(`Chat rebase ${input.label} ${id} changed after Host removal`)
+        }
+        continue
+      }
+      if (!jsonEqual(baseItem, desiredItem)) {
+        result[sourceIndex] = rebaseObjectFields(
+          baseItem,
+          desiredItem,
+          result[sourceIndex],
+          input.identityField === 'id' ? MESSAGE_REBASE_EXCLUDES : RUN_REBASE_EXCLUDES
+        )
+      }
+      continue
+    }
+
+    if (sourceIndex >= 0) {
+      if (!jsonEqual(result[sourceIndex], desiredItem)) {
+        throw new Error(`Chat rebase ${input.label} ${id} was added independently`)
+      }
+      continue
+    }
+
+    let targetIndex = result.length
+    for (let index = desiredIndex + 1; index < input.desired.length; index += 1) {
+      const anchor = resultIndexById.get(input.idOf(input.desired[index]))
+      if (anchor !== undefined) {
+        targetIndex = anchor
+        break
+      }
+    }
+    result.splice(targetIndex, 0, jsonClone(desiredItem))
+    for (let index = targetIndex; index < result.length; index += 1) {
+      resultIndexById.set(input.idOf(result[index]), index)
+    }
+  }
+  return result
+}
+
+/**
+ * Three-way rebase for a Desktop full-record intent after the Host advanced
+ * the same chat. Fields untouched by Desktop remain Host-authored; explicit
+ * Desktop changes are replayed. Message/run additions from either side are
+ * retained by stable identity, while ambiguous identity collisions fail
+ * closed instead of overwriting transcript history.
+ */
+export function rebaseChatRecordUpdate(
+  base: ChatRecord,
+  desired: ChatRecord,
+  source: ChatRecord
+): ChatRecord {
+  if (
+    !base.appChatId ||
+    base.appChatId !== desired.appChatId ||
+    base.appChatId !== source.appChatId
+  ) {
+    throw new Error('Chat rebase requires one stable appChatId')
+  }
+  const baseRevision = persistenceRevision(base)
+  const desiredRevision = persistenceRevision(desired)
+  const sourceRevision = persistenceRevision(source)
+  if (desiredRevision <= baseRevision || sourceRevision < baseRevision) {
+    throw new Error(
+      `Chat rebase revision mismatch for ${base.appChatId}: ` +
+        `base ${baseRevision}, desired ${desiredRevision}, source ${sourceRevision}`
+    )
+  }
+  if (sourceRevision >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Chat rebase source revision is exhausted')
+  }
+
+  const record = rebaseObjectFields(base, desired, source, TOP_LEVEL_EXCLUDES)
+  record.messages = rebaseIdentityArray({
+    base: base.messages,
+    desired: desired.messages,
+    source: source.messages,
+    idOf: (message) => message.id,
+    identityField: 'id',
+    label: 'message'
+  })
+  record.runs = rebaseIdentityArray({
+    base: base.runs,
+    desired: desired.runs,
+    source: source.runs,
+    idOf: (run) => run.runId,
+    identityField: 'runId',
+    label: 'run'
+  })
+  record.persistenceRevision = sourceRevision + 1
+  return record
 }
 
 export function applyChatRecordMutation(

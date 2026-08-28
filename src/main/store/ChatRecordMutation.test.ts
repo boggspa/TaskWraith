@@ -4,7 +4,8 @@ import {
   applyChatRecordMutation,
   deriveChatRecordMutation,
   deriveChatRecordMutationWithProjection,
-  estimateChatRecordMutationBytes
+  estimateChatRecordMutationBytes,
+  rebaseChatRecordUpdate
 } from './ChatRecordMutation'
 
 function message(id: string, content: string, toolActivities?: ToolActivity[]): ChatMessage {
@@ -204,6 +205,113 @@ describe('ChatRecordMutation', () => {
     const stale = { ...before, persistenceRevision: 2 }
 
     expect(() => applyChatRecordMutation(stale, batch)).toThrow(/revision mismatch/)
+  })
+
+  it('rebases Desktop intent onto a Host-advanced record without losing Host messages or runs', () => {
+    const base = chat([message('m-1', 'base')], [run('run-1')], 3, {
+      ensemble: {
+        enabled: true,
+        maxParticipants: 8,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 0,
+            permissionPresetId: 'default'
+          }
+        ]
+      },
+      providerMetadata: { approvalMode: 'default' }
+    })
+    const desired = advance(base, (next) => {
+      next.title = 'Desktop follow-up'
+      next.ensemble = {
+        ...next.ensemble!,
+        activeRound: { roundId: 'round-2', status: 'running', participants: [] }
+      } as never
+      next.messages[0].content = 'desktop update'
+      next.messages.push(message('m-desktop', 'desktop addition'))
+      next.runs.push(run('run-desktop'))
+    })
+    const source = structuredClone(base)
+    source.persistenceRevision = 7
+    source.providerMetadata = { approvalMode: 'default', hostReceipt: 'preserve' } as never
+    const sourceParticipant = source.ensemble!.participants[0] as unknown as Record<string, unknown>
+    sourceParticipant.hostSession = 'preserve'
+    source.messages[0].metadata = { host: true }
+    source.messages.push(message('m-host', 'host addition'))
+    source.runs[0].status = 'success'
+    source.runs.push(run('run-host', 'success'))
+
+    const rebased = rebaseChatRecordUpdate(base, desired, source)
+
+    expect(rebased.persistenceRevision).toBe(8)
+    expect(rebased.title).toBe('Desktop follow-up')
+    expect(rebased.providerMetadata).toEqual({
+      approvalMode: 'default',
+      hostReceipt: 'preserve'
+    })
+    expect(rebased.messages.map((item) => item.id)).toEqual(['m-1', 'm-host', 'm-desktop'])
+    expect(rebased.messages[0]).toMatchObject({
+      content: 'desktop update',
+      metadata: { host: true }
+    })
+    expect(rebased.runs.map((item) => item.runId)).toEqual(['run-1', 'run-host', 'run-desktop'])
+    expect(rebased.runs[0].status).toBe('success')
+    expect(rebased.ensemble?.activeRound?.roundId).toBe('round-2')
+    expect(rebased.ensemble?.participants[0]).toMatchObject({ hostSession: 'preserve' })
+  })
+
+  it('fails closed when Desktop changed an item the Host removed', () => {
+    const base = chat([message('m-1', 'base')], [], 3)
+    const desired = advance(base, (next) => {
+      next.messages[0].content = 'desktop update'
+    })
+    const source = { ...structuredClone(base), messages: [], persistenceRevision: 5 }
+
+    expect(() => rebaseChatRecordUpdate(base, desired, source)).toThrow(/after Host removal/)
+  })
+
+  it('rebases independent tail appends across a large follow-up transcript', () => {
+    const base = chat(
+      Array.from({ length: 5_000 }, (_, index) => message(`m-${index}`, `historical-${index}`)),
+      [],
+      40
+    )
+    const desired = advance(base, (next) => {
+      next.messages.push(message('m-desktop-follow-up', 'new user follow-up'))
+    })
+    const source = structuredClone(base)
+    source.persistenceRevision = 43
+    source.messages.push(message('m-host-terminal', 'prior Host terminal update'))
+
+    const rebased = rebaseChatRecordUpdate(base, desired, source)
+
+    expect(rebased.persistenceRevision).toBe(44)
+    expect(rebased.messages).toHaveLength(5_002)
+    expect(rebased.messages.slice(-2).map((item) => item.id)).toEqual([
+      'm-host-terminal',
+      'm-desktop-follow-up'
+    ])
+  })
+
+  it('bounds recursive merging of unknown future record fields', () => {
+    const nested = (leaf: string): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf }
+      for (let depth = 0; depth < 66; depth += 1) value = { child: value }
+      return value
+    }
+    const base = chat([], [], 3, { unknownFutureField: nested('base') } as never)
+    const desired = advance(base, (next) => {
+      const record = next as unknown as Record<string, unknown>
+      record.unknownFutureField = nested('desired')
+    })
+    const source = { ...structuredClone(base), persistenceRevision: 5 }
+
+    expect(() => rebaseChatRecordUpdate(base, desired, source)).toThrow(/depth exceeds/)
   })
 
   it('keeps a streamed append bounded independently of transcript history size', () => {

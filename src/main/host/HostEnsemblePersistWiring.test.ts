@@ -194,9 +194,8 @@ describe('HostEnsemblePersistWiring', () => {
     await expect(AppStore.awaitChatRecordPersisted('chat-ensemble-failure')).rejects.toBe(failure)
   })
 
-  it('rebases the optimistic cache after a Host revision conflict', async () => {
-    const { AppStore, profilePath, persistPort, enqueued } =
-      await importStoreWithHostOwnedGate()
+  it('rebases and retries a follow-up save after the Host advances the record', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
     // importStoreWithHostOwnedGate resets the module graph; construct the
     // error with the same class instance imported by that fresh AppStore.
     const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
@@ -204,7 +203,7 @@ describe('HostEnsemblePersistWiring', () => {
     const chatId = 'chat-ensemble-revision-conflict'
     const durable = {
       ...ensembleChatRecord(chatId),
-      persistenceRevision: 0,
+      persistenceRevision: 3,
       updatedAt: 2
     }
     const chatsDir = join(profilePath, 'chats')
@@ -220,14 +219,70 @@ describe('HostEnsemblePersistWiring', () => {
     )
     persistPort.drain.mockRejectedValueOnce(conflict)
     const optimistic = AppStore.saveChat({ ...durable, title: 'Optimistic update' } as never)
-    expect(optimistic.persistenceRevision).toBe(1)
-    expect(enqueued.at(-1)?.expectedRevision).toBe(0)
+    expect(optimistic.persistenceRevision).toBe(4)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(3)
+
+    const hostAdvanced = {
+      ...durable,
+      persistenceRevision: 5,
+      updatedAt: 4,
+      messages: [
+        ...((durable as Record<string, unknown>).messages as Array<Record<string, unknown>>),
+        {
+          id: 'host-follow-up-message',
+          role: 'assistant',
+          content: 'Host-only update',
+          timestamp: '2026-08-27T00:00:01.000Z'
+        }
+      ],
+      hostOnlyField: { preserve: true }
+    }
+    writeFileSync(chatPath, JSON.stringify(hostAdvanced))
+    chmodSync(chatPath, 0o600)
+
+    const firstBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    const concurrentBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    expect(concurrentBarrier).toBe(firstBarrier)
+    await expect(firstBarrier).resolves.toBeUndefined()
+
+    expect(persistPort.drain).toHaveBeenCalledTimes(2)
+    expect(enqueued).toHaveLength(2)
+    const retry = enqueued[1]
+    expect(retry.expectedRevision).toBe(5)
+    expect(retry.record.persistenceRevision).toBe(6)
+    expect(retry.record.title).toBe('Optimistic update')
+    expect(retry.record.messages).toContainEqual(
+      expect.objectContaining({ id: 'host-follow-up-message', content: 'Host-only update' })
+    )
+    expect(retry.record).toMatchObject({ hostOnlyField: { preserve: true } })
+  })
+
+  it('bounds repeated Host revision conflicts instead of looping the round forever', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-revision-conflict-bound'
+    const durable = {
+      ...ensembleChatRecord(chatId),
+      persistenceRevision: 3,
+      updatedAt: 2
+    }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify({ ...durable, persistenceRevision: 5, updatedAt: 4 }))
+    chmodSync(chatPath, 0o600)
+    const conflict = new CurrentHostThreadRecordPersistError(
+      'revision_conflict',
+      'Host record persistence revision conflicted.',
+      { hostErrorCode: 'thread_record_revision_conflict' }
+    )
+    persistPort.drain.mockRejectedValue(conflict)
+    AppStore.saveChat({ ...durable, title: 'Bounded retry' } as never)
 
     await expect(AppStore.awaitChatRecordPersisted(chatId)).rejects.toBe(conflict)
-
-    AppStore.saveChat({ ...optimistic, title: 'Retry after conflict' })
-    expect(enqueued.at(-1)?.expectedRevision).toBe(0)
-    expect(enqueued.at(-1)?.record.persistenceRevision).toBe(1)
+    expect(persistPort.drain).toHaveBeenCalledTimes(3)
+    expect(enqueued).toHaveLength(3)
   })
 
   it('keeps the proven legacy admitted path when the writer gate is open', async () => {

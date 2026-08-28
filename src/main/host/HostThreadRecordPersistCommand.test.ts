@@ -29,6 +29,7 @@ import {
   classifyHostPersistRejection,
   createDesktopHostThreadRecordPersistClient,
   type HostThreadRecordPersistBrokerPort,
+  type HostThreadRecordPersistInput,
   type HostThreadRecordTransferPort
 } from './HostThreadRecordPersistCommand'
 
@@ -177,6 +178,7 @@ function createClient(
     transfer?: HostThreadRecordTransferPort
     profilePath?: string
     nowMs?: () => number
+    onPersisted?: (input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => void
   } = {}
 ): HostThreadRecordPersistClient {
   let id = 0
@@ -188,7 +190,8 @@ function createClient(
     wait: async () => {},
     pollIntervalMs: 25,
     timeoutMs: 100,
-    ...(options.nowMs ? { nowMs: options.nowMs } : {})
+    ...(options.nowMs ? { nowMs: options.nowMs } : {}),
+    ...(options.onPersisted ? { onPersisted: options.onPersisted } : {})
   })
 }
 
@@ -331,6 +334,20 @@ describe('HostThreadRecordPersistClient failure paths', () => {
     })
   })
 
+  it('names a body-free revision conflict instead of exposing a generic failed status', async () => {
+    const broker = scriptedBroker((command) => [
+      receiptFor(command, 'failed', { errorCode: 'thread_record_revision_conflict' })
+    ])
+    const client = createClient(broker)
+
+    await expect(
+      client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 2 })
+    ).rejects.toMatchObject({
+      code: 'revision_conflict',
+      message: 'Host record persistence revision conflicted.'
+    })
+  })
+
   it('classifies an unrelated rejection as host_rejected rather than a conflict', () => {
     const rejection = classifyHostPersistRejection({
       errorCode: 'authority_denied',
@@ -371,6 +388,21 @@ describe('HostThreadRecordPersistClient failure paths', () => {
     await client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
 
     expect(transfer.removed).toEqual([])
+  })
+
+  it('acknowledges the exact persisted input without letting bookkeeping overturn success', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const onPersisted = vi.fn(() => {
+      throw new Error('local bookkeeping failed')
+    })
+    const client = createClient(broker, { onPersisted })
+    const input = { chatId: 'chat-1', record: chatRecord(), expectedRevision: 3 }
+
+    await expect(client.persist(input)).resolves.toMatchObject({ status: 'succeeded' })
+    expect(onPersisted).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({ status: 'succeeded' })
+    )
   })
 })
 

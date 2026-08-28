@@ -177,6 +177,8 @@ export interface HostThreadRecordPersistClientOptions {
   readonly wait?: (milliseconds: number) => Promise<void>
   readonly pollIntervalMs?: number
   readonly timeoutMs?: number
+  /** Non-authoritative local acknowledgement after the exact record lands. */
+  readonly onPersisted?: (input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => void
 }
 
 interface PersistLane {
@@ -246,6 +248,7 @@ export class HostThreadRecordPersistClient
   private readonly wait: (milliseconds: number) => Promise<void>
   private readonly pollIntervalMs: number
   private readonly timeoutMs: number
+  private readonly onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
   private readonly lanes = new Map<string, PersistLane>()
 
   constructor(options: HostThreadRecordPersistClientOptions) {
@@ -268,6 +271,7 @@ export class HostThreadRecordPersistClient
     this.wait = options.wait ?? defaultWait
     this.pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250)
     this.timeoutMs = Math.max(this.pollIntervalMs, options.timeoutMs ?? 30_000)
+    this.onPersisted = typeof options.onPersisted === 'function' ? options.onPersisted : undefined
   }
 
   async persist(input: HostThreadRecordPersistInput): Promise<HostCommandReceipt> {
@@ -310,7 +314,14 @@ export class HostThreadRecordPersistClient
     }
 
     try {
-      return await this.execute(command)
+      const receipt = await this.execute(command)
+      try {
+        this.onPersisted?.(input, receipt)
+      } catch {
+        // The Host write is already durable. Local rebase bookkeeping must
+        // never turn that success into a failed receipt or a duplicate retry.
+      }
+      return receipt
     } catch (error) {
       // The Host removes the artifact only when it actually consumes it, so a
       // command that never landed would otherwise leak an owner-only file.
@@ -561,9 +572,13 @@ export class HostThreadRecordPersistClient
     if (receipt.status === 'pending') return null
     if (receipt.status === 'succeeded') return receipt
     const classified = classifyHostPersistRejection(receipt)
+    const fallbackMessage =
+      classified.code === 'revision_conflict'
+        ? 'Host record persistence revision conflicted.'
+        : `Host record persistence ended with ${receipt.status}.`
     throw new HostThreadRecordPersistError(
       classified.code,
-      receipt.errorMessage ?? `Host record persistence ended with ${receipt.status}.`,
+      receipt.errorMessage ?? fallbackMessage,
       { ...(classified.hostErrorCode ? { hostErrorCode: classified.hostErrorCode } : {}), receipt }
     )
   }
@@ -572,6 +587,7 @@ export class HostThreadRecordPersistClient
 export function createDesktopHostThreadRecordPersistClient(input: {
   userDataPath: string
   appVersion: string
+  onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
 }): HostThreadRecordPersistClient {
   const broker = createHostProjectionBroker({
     userDataPath: input.userDataPath,
@@ -589,6 +605,7 @@ export function createDesktopHostThreadRecordPersistClient(input: {
   return new HostThreadRecordPersistClient({
     broker,
     profilePath: input.userDataPath,
-    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+    ...(input.onPersisted ? { onPersisted: input.onPersisted } : {})
   })
 }

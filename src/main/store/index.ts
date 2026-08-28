@@ -56,7 +56,10 @@ import {
   ChatUpdateProjectionTracker,
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
-import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
+import {
+  rebaseChatRecordUpdate,
+  type AuthoredChatTranscriptMutation
+} from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 import {
   runLegacyStoreWriteAdmission,
@@ -69,6 +72,7 @@ import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import {
   createDesktopHostThreadRecordPersistClient,
   HostThreadRecordPersistError,
+  type HostThreadRecordPersistInput,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
 import {
@@ -453,6 +457,34 @@ const usageJournalPath = path.join(userDataPath, 'usage-journal.jsonl')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
 const legacyStoreCanWrite = (): boolean => legacyStoreWriterGate.allowsCurrentWrite()
 
+interface HostPersistRebaseState {
+  base: ChatRecord
+  desired: ChatRecord
+}
+
+const hostPersistRebaseByChatId = new Map<string, HostPersistRebaseState>()
+const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 2
+
+function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): void {
+  const existing = hostPersistRebaseByChatId.get(desired.appChatId)
+  if (existing) {
+    existing.desired = desired
+    return
+  }
+  if (base) hostPersistRebaseByChatId.set(desired.appChatId, { base, desired })
+}
+
+function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
+  const state = hostPersistRebaseByChatId.get(input.chatId)
+  if (!state) return
+  const persistedRevision = chatPersistenceRevision(input.record)
+  if (persistedRevision >= chatPersistenceRevision(state.desired)) {
+    hostPersistRebaseByChatId.delete(input.chatId)
+    return
+  }
+  if (persistedRevision >= chatPersistenceRevision(state.base)) state.base = input.record
+}
+
 /**
  * Desktop -> Host `thread.record.persist` client. Since the Host cutover the
  * legacy writer gate is Host-owned, so `AppStore.saveChat` can no longer write
@@ -465,7 +497,8 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
   if (!hostThreadRecordPersistPort) {
     hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
       userDataPath,
-      appVersion: storeRuntime.appVersion || 'unknown'
+      appVersion: storeRuntime.appVersion || 'unknown',
+      onPersisted: (input) => acknowledgeHostPersisted(input)
     })
   }
   return hostThreadRecordPersistPort
@@ -478,6 +511,7 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
  * error). The memo entry is dropped as soon as the drain settles.
  */
 const chatRecordPersistBarriers = new Map<string, Promise<void>>()
+const chatRecordConflictRecoveryBarriers = new Map<string, Promise<void>>()
 
 /**
  * Chats with Host-queue persistence work not yet confirmed durable. The
@@ -7507,9 +7541,11 @@ export class AppStore {
    *
    * Revision contract: the Host owns the counter (persistThreadRecord writes 0
    * on create and previous+1 on update), so the enqueued record is stamped
-   * with exactly the value the Host will write, and expectedRevision is the
-   * revision the caller last observed. The desktop and Host counters stay in
-   * lockstep because every write to this record now flows through this queue.
+   * with the value this compare-and-swap will write, and expectedRevision is
+   * the revision the caller last observed. Host-native lifecycle/configuration
+   * writes may advance the record concurrently; the durability barrier rebases
+   * this accumulated Desktop intent onto that newer source within a strict
+   * retry bound.
    */
   private static saveChatThroughHost(chat: ChatRecord): ChatRecord {
     this.assertHistoryMutationAllowed({
@@ -7586,6 +7622,7 @@ export class AppStore {
     attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
     attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
     chat.persistenceRevision = normalizedChat.persistenceRevision
+    noteHostPersistIntent(previousChatForFeedback, normalizedChat)
     hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
     hostThreadRecordPersist().enqueue({
       chatId: normalizedChat.appChatId,
@@ -7960,30 +7997,76 @@ export class AppStore {
 
   /**
    * Durability barrier for the Host-routed persistence path: resolves once the
-   * chat's queued `thread.record.persist` work has landed, and RETHROWS the
-   * first typed failure (HostThreadRecordPersistError). Awaited before
+   * chat's queued `thread.record.persist` work has landed. Revision conflicts
+   * are rebased onto the latest Host record and retried within a strict bound;
+   * every other typed failure is rethrown. Awaited before
    * ensemble participant dispatch and on ensemble-chat creation so a genuine
    * persistence failure surfaces at the exact site where the user meets it.
    * Concurrent awaiters share one in-flight drain and all observe its outcome.
    */
-  static async awaitChatRecordPersisted(chatId: string): Promise<void> {
-    try {
-      await barrierChatRecordPersist(chatId)
-    } catch (error) {
-      if (
-        error instanceof HostThreadRecordPersistError &&
-        error.code === 'revision_conflict'
-      ) {
-        // A failed Host write never advanced the durable revision, but the
-        // synchronous save path already stamped its optimistic next revision
-        // into this dirty cache entry. Keeping that shadow makes every retry
-        // build on a revision the Host has never observed. Drop only the
-        // in-memory shadow; the next save re-reads and normalizes the durable
-        // Host record before it re-enqueues the caller's current chat state.
-        this.chatRecordCache.delete(chatId)
-        hostPersistShadowChatIds.delete(chatId)
+  static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    const existing = chatRecordConflictRecoveryBarriers.get(chatId)
+    if (existing) return existing
+    const recovery = this.awaitChatRecordPersistedWithRecovery(chatId).finally(() => {
+      if (chatRecordConflictRecoveryBarriers.get(chatId) === recovery) {
+        chatRecordConflictRecoveryBarriers.delete(chatId)
       }
-      throw error
+    })
+    chatRecordConflictRecoveryBarriers.set(chatId, recovery)
+    return recovery
+  }
+
+  private static async awaitChatRecordPersistedWithRecovery(chatId: string): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await barrierChatRecordPersist(chatId)
+        if (hostThreadRecordPersist().pending(chatId) === 0) {
+          hostPersistRebaseByChatId.delete(chatId)
+        }
+        return
+      } catch (error) {
+        if (
+          !(error instanceof HostThreadRecordPersistError) ||
+          error.code !== 'revision_conflict' ||
+          attempt >= HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT
+        ) {
+          throw error
+        }
+        const intent = hostPersistRebaseByChatId.get(chatId)
+        const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+        if (!intent || stored === null) throw error
+
+        let source: ChatRecord
+        let rebased: ChatRecord
+        try {
+          source = chatComposerSelectionOverlayStore.apply(
+            this.normalizeChatRecord(stored as ChatRecord)
+          )
+          rebased = rebaseChatRecordUpdate(intent.base, intent.desired, source)
+        } catch (rebaseError) {
+          this.chatRecordCache.delete(chatId)
+          hostPersistShadowChatIds.delete(chatId)
+          hostPersistRebaseByChatId.delete(chatId)
+          throw new HostThreadRecordPersistError(
+            'revision_conflict',
+            'Host record persistence changed concurrently and could not be safely rebased.',
+            {
+              ...(error.hostErrorCode ? { hostErrorCode: error.hostErrorCode } : {}),
+              cause: rebaseError
+            }
+          )
+        }
+
+        hostPersistRebaseByChatId.set(chatId, { base: source, desired: rebased })
+        this.chatRecordCache.set(chatId, { mtimeMs: -1, size: -1, record: rebased })
+        hostPersistShadowChatIds.add(chatId)
+        hostPersistUnconfirmedChatIds.add(chatId)
+        hostThreadRecordPersist().enqueue({
+          chatId,
+          record: rebased,
+          expectedRevision: chatPersistenceRevision(source)
+        })
+      }
     }
   }
 
@@ -7991,6 +8074,8 @@ export class AppStore {
   static setHostThreadRecordPersistPortForTests(port: HostThreadRecordPersistPort | null): void {
     hostThreadRecordPersistPort = port
     chatRecordPersistBarriers.clear()
+    chatRecordConflictRecoveryBarriers.clear()
+    hostPersistRebaseByChatId.clear()
   }
 
   /**
@@ -8604,6 +8689,7 @@ export class AppStore {
       chatComposerSelectionOverlayStore.delete(chatId)
       this.chatRecordCache.delete(chatId)
       hostPersistShadowChatIds.delete(chatId)
+      hostPersistRebaseByChatId.delete(chatId)
       const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
       if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
         throw new Error(
@@ -8640,6 +8726,7 @@ export class AppStore {
       chatComposerSelectionOverlayStore.delete(chatId)
       this.chatRecordCache.delete(chatId)
       hostPersistShadowChatIds.delete(chatId)
+      hostPersistRebaseByChatId.delete(chatId)
       hostPersistUnconfirmedChatIds.delete(chatId)
     }
   }
