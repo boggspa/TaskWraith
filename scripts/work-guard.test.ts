@@ -229,10 +229,11 @@ describe('liveness — backward compatibility', () => {
   })
 })
 
-describe('liveness — a sandboxed seat claims by lock owner id, not pid', () => {
-  // A seat cannot record a pid, so it authenticates with the per-seat
+describe('liveness — an owner-id-only seat claim has no pid', () => {
+  // A seat using the narrow per-seat identity authenticates with the
   // TASKWRAITH_LOCK_OWNER_ID it carries in its environment, and
-  // `.githooks/pre-commit` BLOCKS on that claim. This tool must agree.
+  // `.githooks/pre-commit` BLOCKS on that claim. This tool must agree. A
+  // separately verified stable-PID fallback uses the ordinary pid lane above.
   //
   // Measured before this lane existed: a marker the hook was actively blocking
   // on reported live:false here, and its own claimed paths were simultaneously

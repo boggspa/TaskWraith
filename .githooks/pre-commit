@@ -162,13 +162,13 @@ is_own_marker_claim() {
 
 # Manual ownership accepts EITHER identity, because not every agent can produce
 # both. An external or interactive agent normally has no owner id and uses its
-# stable session-host PID. A sandboxed TaskWraith provider seat cannot safely
-# use that lane — its shell and provider-host PIDs are transient — but it does
-# carry a per-seat opaque id in its environment (TASKWRAITH_LOCK_OWNER_ID,
-# scoped to runId+laneId+participantId), which the derived lane already trusts.
-# Accepting it here lets a seat raise a narrow, intent-length claim of its own;
-# derived markers cannot serve that, as they live only as long as the write
-# lease that projects them.
+# stable session-host PID. A TaskWraith seat normally uses the narrower opaque
+# TASKWRAITH_LOCK_OWNER_ID (scoped to runId+laneId+participantId), but repository
+# doctrine also permits a verified long-lived ancestor PID when that id is
+# unavailable. A shared host PID proves liveness, not exclusive seat identity,
+# so that fallback requires explicit coordination and narrow marker paths.
+# Derived markers remain owner-id-only because they project runtime locks shared
+# beneath Electron and live only as long as the write lease that projects them.
 #
 # An absent or empty env var must NEVER match, or every process outside
 # TaskWraith would inherit every seat's bypass at once.

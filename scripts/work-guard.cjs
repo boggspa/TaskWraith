@@ -529,9 +529,10 @@ function liveness(marker, side, now) {
           : marker.expiresMs
         : Math.min(marker.expiresMs, startedMs + MAX_LEASE_MS)
   const expired = cappedExpiry === null || now > cappedExpiry
-  // A sandboxed seat's claim carries `lockOwnerId` and no pid, so there is no
-  // process to probe and `expires` is its ONLY decay signal — exactly how
-  // `.githooks/pre-commit` treats it. An absent or unreadable lease therefore
+  // An owner-id-only seat claim carries no pid, so there is no process to probe
+  // and `expires` is its ONLY decay signal — exactly how `.githooks/pre-commit`
+  // treats it. (A doctrine-approved stable-PID fallback follows the ordinary
+  // `alive && !expired` lane above.) An absent or unreadable lease therefore
   // cannot be live here either, or a seat could hold a path forever.
   //
   // Without this lane the two tools contradict each other: measured 2026-08-06,

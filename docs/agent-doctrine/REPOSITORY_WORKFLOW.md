@@ -193,22 +193,20 @@ crashed or forgotten claim decays on its own instead of blocking the tree
 forever. The pid half is the same liveness model the credential authority uses
 (owner pid plus process birth identity) — copy it rather than inventing another.
 
-#### When a pid will not hold your claim — TaskWraith seats
+#### TaskWraith seats — owner id preferred, stable pid allowed
 
-This exception applies to **TaskWraith seats only**. An external or interactive
-agent does not need `TASKWRAITH_LOCK_OWNER_ID`: when it has a stable,
-long-lived session-host PID, use that normal `pid:` field. The hook recognises
-the claim when that PID is an ancestor of `git`; do not add an invented
-`lockOwnerId:` just because the environment variable is absent. Without a
-stable ancestor PID, coordinate instead.
+An external or interactive agent does not need `TASKWRAITH_LOCK_OWNER_ID`:
+when it has a stable, long-lived session-host PID, use that normal `pid:` field.
+The hook recognises the claim when that PID is an ancestor of `git`; do not add
+an invented `lockOwnerId:` just because the environment variable is absent.
+Without a stable ancestor PID, coordinate instead.
 
-**Use `lockOwnerId:` instead of `pid:`** — the _exact_ value of
-`TASKWRAITH_LOCK_OWNER_ID`, which main stamps into your seat's environment at
-launch. Read it; never invent one. It is an opaque id, so a human-readable
-stand-in (`lockOwnerId: MySeatName`) matches nothing at the hook — while
-`work-guard` still counts the field as a held lease, so the two tools then
-contradict each other over your own claim. Verify it in the same shell you will
-commit from, because that is the environment the hook reads:
+For a **TaskWraith seat**, prefer the exact `TASKWRAITH_LOCK_OWNER_ID` that main
+stamps into the seat's environment. Read it; never invent one. It is an opaque
+id, so a human-readable stand-in (`lockOwnerId: MySeatName`) matches nothing at
+the hook — while `work-guard` still counts the field as a held lease, so the two
+tools then contradict each other over the same claim. Verify it in the shell
+you will commit from, because that is the environment the hook reads:
 
 ```bash
 printenv TASKWRAITH_LOCK_OWNER_ID
@@ -225,15 +223,33 @@ paths:
 ---
 ```
 
-**Why, precisely** — because the reason matters for choosing between them. It is
-_not_ that a seat cannot see pids: TaskWraith imposes no OS sandbox on any seat,
-and the hook's own ancestry walk runs inside seat-invoked commits. The problem
-is that a seat has no _stable, long-lived_ pid to record. Each shell invocation
-is a fresh transient process, and a provider host pid can rotate underneath a
-running session — observed 2026-08-06, a session's marker decayed twice in one
-evening when its Claude host pid rotated, silently un-claiming its files while
-it was still working. A pid you cannot keep alive is worse than no pid, because
-it decays without telling you.
+A stable PID is also a valid alternative for a TaskWraith seat when the owner id
+is unavailable. It must name the long-lived session/provider host that is an
+ancestor of the `git` process, not the transient shell, tool subprocess, or an
+unrelated Electron process. Verify the same PID across separate invocations and
+confirm that the commit shell descends from it. If the host PID is shared by
+independent seats, use it only after explicit coordination and keep `paths:`
+narrow; the PID then proves liveness, not exclusive seat identity.
+
+```yaml
+---
+session: <session id>
+agent: <provider/model>
+pid: <verified stable session-host pid>
+expires: <ISO-8601 UTC — short lease, renew it>
+paths:
+  - src/main/Thing.ts
+---
+```
+
+**Why the preference still matters** — each shell invocation is a fresh
+transient process, and some provider host pids rotate underneath a running
+session. Observed 2026-08-06, a session's marker decayed twice in one evening
+when its Claude host pid rotated, silently un-claiming its files while it was
+still working. A pid you cannot keep alive is worse than no pid because it
+decays without telling you. The fallback above is therefore conditional on a
+verified long-lived ancestor; it is not authority to record the current shell's
+pid merely because it is visible.
 
 That id is issued at the narrowest execution boundary available — it is scoped
 to `runId + laneId + participantId` (`src/main/WorkspaceLockExecutionIdentity.ts`),
@@ -244,19 +260,20 @@ done outside TaskWraith in the same checkout.
 Not every shell you can reach carries it. It is stamped into the seat process
 itself, so commands your provider runs natively inherit it — but TaskWraith's
 brokered `run_shell_command` rebuilds its environment from scratch and strips
-the key deliberately, and so does `run_task`. Commit from a shell where the
-`printenv` above prints your id, or the hook cannot tell your claim from a
-peer's.
+the key deliberately, and so does `run_task`. When claiming by owner id, commit
+from a shell where the `printenv` above prints that id. When using the stable-PID
+fallback, commit through a shell descended from the recorded PID. Otherwise the
+hook cannot tell your claim from a peer's.
 
 If no owner id was stamped for a TaskWraith seat,
-`TASKWRAITH_LOCK_OWNER_ID` is absent rather than empty. That seat then has
-neither safe identity — say so and coordinate in the open rather than raising a
-marker that claims nothing. This is not the external-agent case: an external
-agent with a stable session-host PID uses `pid:`, not `lockOwnerId:`.
+`TASKWRAITH_LOCK_OWNER_ID` is absent rather than empty. Use the verified stable
+PID alternative above when one exists. If neither identity is available, say
+so and coordinate in the open rather than raising a marker that claims nothing.
 
 Ownership is exact string equality against the env var, so an absent or empty
-`TASKWRAITH_LOCK_OWNER_ID` never matches anything. Either field alone is enough;
-supply both if you have both.
+`TASKWRAITH_LOCK_OWNER_ID` never matches anything. PID ownership is the hook's
+ancestor-and-liveness check. Either field alone is enough; supply both if you
+have both.
 
 **With no pid there is no process to probe, so `expires` is the only decay
 signal your claim has.** A missing or unparseable `expires` is treated as
