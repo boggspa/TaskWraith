@@ -194,6 +194,42 @@ describe('HostEnsemblePersistWiring', () => {
     await expect(AppStore.awaitChatRecordPersisted('chat-ensemble-failure')).rejects.toBe(failure)
   })
 
+  it('rebases the optimistic cache after a Host revision conflict', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } =
+      await importStoreWithHostOwnedGate()
+    // importStoreWithHostOwnedGate resets the module graph; construct the
+    // error with the same class instance imported by that fresh AppStore.
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-revision-conflict'
+    const durable = {
+      ...ensembleChatRecord(chatId),
+      persistenceRevision: 0,
+      updatedAt: 2
+    }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify(durable))
+    chmodSync(chatPath, 0o600)
+
+    const conflict = new CurrentHostThreadRecordPersistError(
+      'revision_conflict',
+      'Host record persistence revision conflicted.',
+      { hostErrorCode: 'thread_record_revision_conflict' }
+    )
+    persistPort.drain.mockRejectedValueOnce(conflict)
+    const optimistic = AppStore.saveChat({ ...durable, title: 'Optimistic update' } as never)
+    expect(optimistic.persistenceRevision).toBe(1)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(0)
+
+    await expect(AppStore.awaitChatRecordPersisted(chatId)).rejects.toBe(conflict)
+
+    AppStore.saveChat({ ...optimistic, title: 'Retry after conflict' })
+    expect(enqueued.at(-1)?.expectedRevision).toBe(0)
+    expect(enqueued.at(-1)?.record.persistenceRevision).toBe(1)
+  })
+
   it('keeps the proven legacy admitted path when the writer gate is open', async () => {
     const { AppStore, persistPort } = await importStoreWithHostOwnedGate({ hostOwnGate: false })
     const chat = ensembleChatRecord('chat-ensemble-legacy')

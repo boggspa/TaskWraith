@@ -68,6 +68,7 @@ import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import {
   createDesktopHostThreadRecordPersistClient,
+  HostThreadRecordPersistError,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
 import {
@@ -7965,8 +7966,25 @@ export class AppStore {
    * persistence failure surfaces at the exact site where the user meets it.
    * Concurrent awaiters share one in-flight drain and all observe its outcome.
    */
-  static awaitChatRecordPersisted(chatId: string): Promise<void> {
-    return barrierChatRecordPersist(chatId)
+  static async awaitChatRecordPersisted(chatId: string): Promise<void> {
+    try {
+      await barrierChatRecordPersist(chatId)
+    } catch (error) {
+      if (
+        error instanceof HostThreadRecordPersistError &&
+        error.code === 'revision_conflict'
+      ) {
+        // A failed Host write never advanced the durable revision, but the
+        // synchronous save path already stamped its optimistic next revision
+        // into this dirty cache entry. Keeping that shadow makes every retry
+        // build on a revision the Host has never observed. Drop only the
+        // in-memory shadow; the next save re-reads and normalizes the durable
+        // Host record before it re-enqueues the caller's current chat state.
+        this.chatRecordCache.delete(chatId)
+        hostPersistShadowChatIds.delete(chatId)
+      }
+      throw error
+    }
   }
 
   /** Test seam: swap the Host persist port and drop any memoized barriers. */
