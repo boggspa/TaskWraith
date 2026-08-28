@@ -192,6 +192,36 @@ export class HostProjectionTransportError extends Error {
   }
 }
 
+function isMissingLocalControlArtifact(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+  )
+}
+
+async function readLocalControlArtifactWhenReady(
+  path: string,
+  maxBytes: number,
+  deadline: number,
+  cancelled: () => boolean
+): Promise<string> {
+  for (;;) {
+    if (cancelled()) throw new Error('TaskWraith Host projection client closed.')
+    try {
+      return readPrivateLocalControlArtifact(path, maxBytes)
+    } catch (error) {
+      // Discovery is the Host readiness flag and is atomically renamed only
+      // after the socket and token are ready. A Desktop command can race that
+      // publication during app startup, so wait within the existing connect
+      // budget. Unsafe, malformed, or permission-widened artifacts still fail
+      // immediately; only genuine absence is retryable.
+      if (!isMissingLocalControlArtifact(error)) throw error
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) throw new HostProjectionTransportError('host_unavailable')
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, remaining)))
+    }
+  }
+}
+
 /** Internal retry sentinel: TCP accepted then closed without a welcome frame. */
 class HostProjectionHandshakeClosedBeforeWelcomeError extends Error {
   constructor() {
@@ -337,6 +367,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   }
 
   private async connectOnce(baseOnly: boolean): Promise<HostBootstrapWelcome> {
+    const connectDeadline = Date.now() + this.options.connectTimeoutMs
     const explicitDiscoveryPath = this.options.discoveryPath
     let canonicalUserDataPath: string | null = null
     if (!explicitDiscoveryPath && this.options.userDataPath) {
@@ -350,7 +381,12 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     }
 
     const discovery = parseDiscovery(
-      readPrivateLocalControlArtifact(discoveryPath, HOST_LOCAL_CONTROL_MAX_DISCOVERY_BYTES)
+      await readLocalControlArtifactWhenReady(
+        discoveryPath,
+        HOST_LOCAL_CONTROL_MAX_DISCOVERY_BYTES,
+        connectDeadline,
+        () => this.closedByClient
+      )
     )
     if (canonicalUserDataPath) {
       if (
@@ -360,9 +396,13 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
         throw new Error('TaskWraith Host discovery paths do not match the configured profile.')
       }
     }
-    const token = readPrivateLocalControlArtifact(
-      discovery.tokenPath,
-      HOST_LOCAL_CONTROL_MAX_TOKEN_BYTES
+    const token = (
+      await readLocalControlArtifactWhenReady(
+        discovery.tokenPath,
+        HOST_LOCAL_CONTROL_MAX_TOKEN_BYTES,
+        connectDeadline,
+        () => this.closedByClient
+      )
     ).trim()
     if (!token) throw new Error('TaskWraith Host token is unavailable.')
     this.discoveryIdentity = {
@@ -391,11 +431,14 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       socket.on('data', (chunk: string) => this.onData(chunk))
       socket.once('error', (error) => this.onDisconnect(error))
       socket.once('close', () => this.onDisconnect(null))
-      this.connectTimer = setTimeout(() => {
-        const error = new Error('Timed out connecting to the TaskWraith Host.')
-        this.failConnect(error)
-        socket.destroy()
-      }, this.options.connectTimeoutMs)
+      this.connectTimer = setTimeout(
+        () => {
+          const error = new Error('Timed out connecting to the TaskWraith Host.')
+          this.failConnect(error)
+          socket.destroy()
+        },
+        Math.max(1, connectDeadline - Date.now())
+      )
       this.connectTimer.unref?.()
     })
   }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -173,6 +173,59 @@ const NO_GIT_OFFER: readonly HostCapability[] = [
   'receipts',
   'health'
 ]
+
+describe('discovery readiness', () => {
+  it('waits within the connect budget when a command races atomic discovery publication', async () => {
+    const host = await startFakeHost({ hostOffer: FULL_OFFER })
+    const discovery = readFileSync(host.discoveryPath, 'utf8')
+    rmSync(host.discoveryPath)
+    const publish = setTimeout(() => {
+      writeFileSync(host.discoveryPath, discovery, { mode: 0o600 })
+    }, 40)
+    cleanups.push(() => clearTimeout(publish))
+    const client = new HostProjectionClient({
+      client: { clientId: 'tui-test', clientClass: 'tui', clientVersion: '1.9.6' },
+      discoveryPath: host.discoveryPath,
+      connectTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000
+    })
+    cleanups.push(() => client.close())
+
+    await expect(client.connect()).resolves.toMatchObject({ hostId: 'fake-host' })
+  })
+
+  it('returns typed host_unavailable after discovery stays absent for the connect budget', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-host-missing-discovery-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const client = new HostProjectionClient({
+      client: { clientId: 'tui-test', clientClass: 'tui', clientVersion: '1.9.6' },
+      discoveryPath: join(dir, 'missing.json'),
+      connectTimeoutMs: 25,
+      requestTimeoutMs: 1_000
+    })
+    cleanups.push(() => client.close())
+
+    await expect(client.connect()).rejects.toMatchObject({
+      name: 'HostProjectionTransportError',
+      code: 'host_unavailable'
+    })
+  })
+
+  it('cancels a discovery wait when the client closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-host-cancel-discovery-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const client = new HostProjectionClient({
+      client: { clientId: 'tui-test', clientClass: 'tui', clientVersion: '1.9.6' },
+      discoveryPath: join(dir, 'missing.json'),
+      connectTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000
+    })
+    const pending = client.connect()
+    setTimeout(() => client.close(), 10)
+
+    await expect(pending).rejects.toThrow(/client closed/)
+  })
+})
 
 describe('getWorkspaceGitRead capability negotiation', () => {
   it('requests workspace-git and reads when the Host offers it', async () => {
