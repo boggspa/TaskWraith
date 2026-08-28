@@ -6,6 +6,28 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
+## 1.9.7 - Unreleased
+
+### Provider setup and run control
+
+- **Kimi K3 routes are distinct and plan-aware.** K3 now offers the regular
+  plan-dependent route (up to 1M context) and the quota-efficient fixed-256K
+  route as separate model choices. Both retain Low/High/Max thinking and stay
+  independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
+  the installed Kimi catalog without inspecting provider credentials.
+
+### Transcript, export, and review
+
+- **Multiview goes to eight.** Four full-height columns and a 4×2 eight-pane
+  grid join the layout picker; opening more work grows through the new shapes,
+  while closing or shrinking parks surviving panes rather than losing them.
+- **Every thread pane gets a home and an exit.** The top-right glass pill now
+  closes a thread view without deleting its history, draft, or active run.
+  Single-pane closes reveal Thread Home; empty Multiview panes use the same
+  home to reopen visible or running threads and launch independent Charts,
+  Browser, Mesh, Sketch, Media, or Simulator surfaces without changing the
+  inspector dock.
+
 ## 1.9.6 - 2026-08-19
 
 ### TaskWraith Studio
@@ -34,11 +56,6 @@ context needed to answer.
 
 ### Provider setup and run control
 
-- **Kimi K3 routes are distinct and plan-aware.** K3 now offers the regular
-  plan-dependent route (up to 1M context) and the quota-efficient fixed-256K
-  route as separate model choices. Both retain Low/High/Max thinking and stay
-  independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
-  the installed Kimi catalog without inspecting provider credentials.
 - **Web Session Quota Tracking.** You can now import Mistral and Ollama web sessions into TaskWraith to accurately track API Usage, Vibe Usage, 5H quotas, and Weekly consumption. Cookies are securely encrypted into the OS keychain and never appear in terminal history.
 - **Ollama Cloud.** TaskWraith discovers the cloud models on your Ollama
   account and runs keyed models directly. The API key is held in the operating
@@ -171,15 +188,6 @@ context needed to answer.
   harvestable when tool detail is externalized, and tombstone repair is armed
   on the real record rather than its summary row, so a thread's Commits card
   fills in on open instead of staying empty.
-- **Multiview goes to eight.** Four full-height columns and a 4×2 eight-pane
-  grid join the layout picker; opening more work grows through the new shapes,
-  while closing or shrinking parks surviving panes rather than losing them.
-- **Every thread pane gets a home and an exit.** The top-right glass pill now
-  closes a thread view without deleting its history, draft, or active run.
-  Single-pane closes reveal Thread Home; empty Multiview panes use the same
-  home to reopen visible or running threads and launch independent Charts,
-  Browser, Mesh, Sketch, Media, or Simulator surfaces without changing the
-  inspector dock.
 - **One transcript answers a keyboard scroll.** In Multiview, PageUp or End
   now acts on the focused pane alone instead of disengaging follow in every
   pane at once, and a terminal-resize drag is released when its pane
@@ -4454,5 +4462,5 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 
 ---
 
-See [`README.md`](README.md) for setup and [`SAFETY.md`](SAFETY.md) /
+See [`README.md`](README.md) for setup and [`SAFETY.md`](docs/SAFETY.md) /
 [`SECURITY.md`](SECURITY.md) for the safety and security boundaries.
