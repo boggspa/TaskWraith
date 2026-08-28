@@ -473,11 +473,33 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
  * error). The memo entry is dropped as soon as the drain settles.
  */
 const chatRecordPersistBarriers = new Map<string, Promise<void>>()
+
+/**
+ * Chats with Host-queue persistence work not yet confirmed durable. The
+ * shutdown drain reports this count when it cannot finish, so a quit-time
+ * loss is named rather than silent.
+ */
+const hostPersistUnconfirmedChatIds = new Set<string>()
+
+/**
+ * Chats whose dirty cache entry came from the Host-routed save branch. The
+ * legacy coalescer dirty marker is transient by construction (the deferred
+ * write re-anchors the stat when it lands); the Host branch has no such
+ * callback, so readChatRecordCached reconciles these ids against the real
+ * file instead of serving the shadow forever. That keeps Host-side writes —
+ * solo run lifecycle, thread.configure — visible to desktop reads and keeps
+ * the next save's expectedRevision honest (no revision-conflict loop).
+ */
+const hostPersistShadowChatIds = new Set<string>()
+
 const barrierChatRecordPersist = (chatId: string): Promise<void> => {
   const existing = chatRecordPersistBarriers.get(chatId)
   if (existing) return existing
   const barrier = hostThreadRecordPersist()
     .drain(chatId)
+    .then(() => {
+      hostPersistUnconfirmedChatIds.delete(chatId)
+    })
     .finally(() => {
       if (chatRecordPersistBarriers.get(chatId) === barrier) {
         chatRecordPersistBarriers.delete(chatId)
@@ -485,6 +507,54 @@ const barrierChatRecordPersist = (chatId: string): Promise<void> => {
     })
   chatRecordPersistBarriers.set(chatId, barrier)
   return barrier
+}
+
+/**
+ * Explicit upper bound for the shutdown Host-queue drain. Quit is one of the
+ * few places where blocking on durability is correct, but a hung or
+ * unreachable Host must not hold the process open forever: when the bound
+ * expires the still-queued records are abandoned at process exit (lost), and
+ * that outcome is logged with the unconfirmed chat count.
+ */
+const HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000
+
+async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promise<void> {
+  const bound =
+    Number.isSafeInteger(timeoutMs) && (timeoutMs as number) > 0
+      ? (timeoutMs as number)
+      : HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS
+  let timer: ReturnType<typeof setTimeout> | null = null
+  // The drain promise always settles through its own handlers, so a late
+  // settlement after a lost race can never surface as an unhandled rejection
+  // while the process is trying to exit.
+  let drainFailure: unknown
+  const drain = hostThreadRecordPersist()
+    .drainAll()
+    .then(
+      () => 'drained' as const,
+      (error: unknown) => {
+        drainFailure = error
+        return 'failed' as const
+      }
+    )
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), bound)
+    timer.unref?.()
+  })
+  try {
+    const outcome = await Promise.race([drain, timeout])
+    if (outcome === 'drained') {
+      hostPersistUnconfirmedChatIds.clear()
+      return
+    }    console.error(
+      `[persist] Host chat persistence did not fully drain before shutdown ` +
+        `(${outcome}); ${hostPersistUnconfirmedChatIds.size} chat(s) may have transcript ` +
+        `that was not persisted:`,
+      outcome === 'failed' ? drainFailure : new Error(`drain exceeded ${bound} ms`)
+    )
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 const usageJournalStore = new UsageJournalStore({
@@ -6110,6 +6180,33 @@ export class AppStore {
     // through the coalescer and hasn't been flushed to disk yet. Skip the
     // file-stat check and return the cached record directly.
     if (cached && cached.mtimeMs === -1) {
+      if (hostPersistShadowChatIds.has(chatId)) {
+        // Host-routed save: the dirty marker has no deferred-write callback to
+        // re-anchor it, and the Host itself also writes this record (solo run
+        // lifecycle, thread.configure). Reconcile against the real file: once
+        // it carries a revision at or beyond ours, the durable record wins and
+        // the cache re-anchors to the real stat — the shadow heals instead of
+        // freezing the transcript or looping revision conflicts.
+        try {
+          const stat = fs.statSync(chatPath)
+          const onDiskRaw = readJson<ChatRecord | null>(chatPath, null)
+          if (onDiskRaw) {
+            const onDisk = this.normalizeChatRecord(onDiskRaw)
+            if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
+              const record = chatComposerSelectionOverlayStore.apply(onDisk)
+              this.chatRecordCache.set(chatId, {
+                mtimeMs: stat.mtimeMs,
+                size: stat.size,
+                record
+              })
+              hostPersistShadowChatIds.delete(chatId)
+              return record
+            }
+          }
+        } catch {
+          // The Host has not created/landed the file yet — serve the shadow.
+        }
+      }
       const record = chatComposerSelectionOverlayStore.apply(cached.record)
       cached.record = record
       return record
@@ -7347,6 +7444,7 @@ export class AppStore {
       size: -1,
       record: normalizedChat
     })
+    hostPersistShadowChatIds.add(normalizedChat.appChatId)
     const chatUpdateProjection: ChatUpdateProjectionObservation = {
       state: chatUpdateProjectionTracker.seed(normalizedChat),
       delta: null
@@ -7354,6 +7452,7 @@ export class AppStore {
     attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
     attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
     chat.persistenceRevision = normalizedChat.persistenceRevision
+    hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
     hostThreadRecordPersist().enqueue({
       chatId: normalizedChat.appChatId,
       record: normalizedChat,
@@ -7744,13 +7843,21 @@ export class AppStore {
   }
 
   /**
-   * T3a-1: Synchronously flush ALL pending coalesced writes. Called at
-   * shutdown (will-quit) to ensure no data is lost.
+   * T3a-1: Flush ALL pending chat persistence at shutdown (will-quit).
+   * Legacy-gate-open: synchronously flush the coalescer as before. Host-owned
+   * gate: the legacy coalescer is empty by construction, but the Host persist
+   * queue may still hold queued records — drain it, bounded so a hung Host
+   * cannot hold the process open. A drain failure or timeout is reported
+   * loudly (with the still-unconfirmed chat count) and quit proceeds; at
+   * shutdown nothing else can be done, and the loss must never be silent.
    */
-  static flushAllChatSaves(): void {
-    if (!legacyStoreCanWrite()) return
-    saveCoalescer.flushAll()
-    incrementalChatPersistence.checkpointAll()
+  static async flushAllChatSaves(options?: { hostDrainTimeoutMs?: number }): Promise<void> {
+    if (legacyStoreCanWrite()) {
+      saveCoalescer.flushAll()
+      incrementalChatPersistence.checkpointAll()
+      return
+    }
+    await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
   }
 
   static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {

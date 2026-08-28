@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,6 +19,7 @@ afterEach(() => {
 interface WiredStore {
   AppStore: typeof import('../store/index').AppStore
   LegacyStoreWriterGateClosedError: typeof import('../store/LegacyStoreWriterGate').LegacyStoreWriterGateClosedError
+  profilePath: string
   persistPort: HostThreadRecordPersistPort & {
     enqueue: ReturnType<typeof vi.fn>
     drain: ReturnType<typeof vi.fn>
@@ -66,7 +67,7 @@ async function importStoreWithHostOwnedGate(options?: {
     pending: vi.fn(() => 0)
   }
   AppStore.setHostThreadRecordPersistPortForTests(persistPort)
-  return { AppStore, LegacyStoreWriterGateClosedError, persistPort, enqueued }
+  return { AppStore, LegacyStoreWriterGateClosedError, profilePath, persistPort, enqueued }
 }
 
 function ensembleChatRecord(appChatId: string): Record<string, unknown> {
@@ -203,5 +204,40 @@ describe('HostEnsemblePersistWiring', () => {
       bossmanParticipantId: 'seat-boss',
       activeRound: { roundId: 'round-1' }
     })
+  })
+
+  it('heals the in-memory shadow when the Host advances the record (solo-chat interop)', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    // A desktop save through the Host branch leaves a dirty in-memory shadow.
+    AppStore.saveChat({
+      ...ensembleChatRecord('chat-solo-interop'),
+      chatKind: 'single',
+      ensemble: undefined
+    } as never)
+    // While the Host has not landed the file, the shadow is served.
+    expect(AppStore.getChat('chat-solo-interop')?.title).toBe('New Ensemble')
+    // The Host then lands the write AND advances the record on its own (solo
+    // run lifecycle / thread.configure): revision 3, newer title.
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const hostAdvanced = {
+      ...ensembleChatRecord('chat-solo-interop'),
+      chatKind: 'single',
+      ensemble: undefined,
+      title: 'Host-side update',
+      persistenceRevision: 3,
+      updatedAt: 2000
+    }
+    writeFileSync(join(chatsDir, 'chat-solo-interop.json'), JSON.stringify(hostAdvanced))
+    chmodSync(join(chatsDir, 'chat-solo-interop.json'), 0o600)
+    // The shadow heals: reads return the Host's newer record, not the stale
+    // desktop projection, so a transcript cannot freeze on the dirty marker.
+    expect(AppStore.getChat('chat-solo-interop')?.title).toBe('Host-side update')
+    // And the next desktop save builds on the Host's true revision instead of
+    // looping a revision conflict against its own shadow.
+    AppStore.saveChat({ ...hostAdvanced, title: 'Desktop follow-up' } as never)
+    const last = enqueued[enqueued.length - 1]
+    expect(last.expectedRevision).toBe(3)
+    expect((last.record as unknown as { persistenceRevision?: number }).persistenceRevision).toBe(4)
   })
 })

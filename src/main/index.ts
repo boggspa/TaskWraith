@@ -47210,7 +47210,7 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {})
           })
-          if (result?.status === 'started') {
+          if (result?.status === 'started' || result?.status === 'steered') {
             // Durability barrier: persist the round-started record through the
             // Host before participants dispatch; a failure rejects this IPC.
             await AppStore.awaitChatRecordPersisted(action.threadId)
@@ -52627,7 +52627,21 @@ if (isGeminiMcpBridgeProcess) {
       quit: () => app.quit()
     })
 
-    app.on('will-quit', () => {
+    let hostPersistShutdownDrainAttempted = false
+
+    app.on('will-quit', (event) => {
+      if (!hostPersistShutdownDrainAttempted) {
+        hostPersistShutdownDrainAttempted = true
+        // The Host persist queue drains asynchronously. Hold quit once for a
+        // bounded drain, then re-enter with the attempt spent; a hung Host
+        // cannot hold the process open because the drain is time-bounded and
+        // reports (never silently drops) any unconfirmed records.
+        event.preventDefault()
+        void AppStore.flushAllChatSaves()
+          .catch((e) => console.error('Failed to flush pending chat saves on quit', e))
+          .finally(() => app.quit())
+        return
+      }
       terminalSessionManagerRef?.killAll()
       gitSnapshotWorker.dispose()
       tuiHeadlessHostSession.dispose()
@@ -52646,7 +52660,9 @@ if (isGeminiMcpBridgeProcess) {
       // coalesced write still pending at quit would lose that chat's newest
       // transcript entirely.
       try {
-        AppStore.flushAllChatSaves()
+        void AppStore.flushAllChatSaves().catch((e) =>
+          console.error('Failed to flush pending chat saves on quit', e)
+        )
       } catch (e) {
         console.error('Failed to flush pending chat saves on quit', e)
       }
@@ -59242,7 +59258,12 @@ if (isGeminiMcpBridgeProcess) {
             ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
             ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {})
           })
-          if (absorbed?.status === 'steered') return absorbed
+          if (absorbed?.status === 'steered') {
+            // Durability barrier: the absorbed steer row must be persisted
+            // through the Host before this handler reports success.
+            await AppStore.awaitChatRecordPersisted(chatId)
+            return absorbed
+          }
         }
         // P1 F6 — Use-next selection is stored on the round runtime and
         // re-resolved per seat into the Project reference prompt appendix.
@@ -59265,7 +59286,7 @@ if (isGeminiMcpBridgeProcess) {
             ? { projectReferenceContextSelection }
             : {})
         })
-        if (ensembleStartResult?.status === 'started') {
+        if (ensembleStartResult?.status === 'started' || ensembleStartResult?.status === 'steered') {
           // Durability barrier: the round-started record must be persisted
           // through the Host before this handler reports success.
           await AppStore.awaitChatRecordPersisted(chatId)
