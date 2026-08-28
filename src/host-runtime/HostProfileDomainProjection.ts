@@ -3,7 +3,13 @@
 import type { HostSnapshotProjectorInput } from './HostSnapshotProjector'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
 import { basename } from 'node:path'
-import type { HostHealthProjection, HostProviderModelProjection } from '../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_MAX_ID,
+  HOST_PROTOCOL_MAX_SHORT,
+  type HostHealthProjection,
+  type HostParticipantProjection,
+  type HostProviderModelProjection
+} from '../shared/hostProtocol'
 
 export type HostProfileDomainSnapshotFamilies = Omit<
   HostSnapshotProjectorInput,
@@ -72,6 +78,95 @@ function providerOutcome(
   }
 }
 
+const PARTICIPANT_STAGES = new Set<NonNullable<HostParticipantProjection['stage']>>([
+  'scout',
+  'worker',
+  'reviewer',
+  'background',
+  'any'
+])
+
+type ProfileThread = ReturnType<HostProfileDomainStore['listThreads']>[number]
+
+function safeProjectionText(value: unknown, max: number): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= max &&
+    value.trim() === value &&
+    [...value].every((character) => {
+      const code = character.charCodeAt(0)
+      return code > 0x1f && code !== 0x7f
+    })
+  )
+}
+
+function projectThreadParticipants(thread: ProfileThread): HostParticipantProjection[] {
+  if (thread.chatKind !== 'ensemble') return []
+  const ensemble = thread.ensemble
+  if (!ensemble || typeof ensemble !== 'object' || Array.isArray(ensemble)) return []
+  const record = ensemble as Record<string, unknown>
+  if (!Array.isArray(record.participants)) return []
+  const activeRound =
+    record.activeRound &&
+    typeof record.activeRound === 'object' &&
+    !Array.isArray(record.activeRound)
+      ? (record.activeRound as Record<string, unknown>)
+      : null
+  const activeParticipantId = safeProjectionText(
+    activeRound?.activeParticipantId,
+    HOST_PROTOCOL_MAX_ID
+  )
+    ? activeRound.activeParticipantId
+    : undefined
+  const seen = new Set<string>()
+  const out: HostParticipantProjection[] = []
+
+  for (const value of record.participants) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const participant = value as Record<string, unknown>
+    if (
+      !safeProjectionText(participant.id, HOST_PROTOCOL_MAX_ID) ||
+      !safeProjectionText(participant.provider, HOST_PROTOCOL_MAX_ID) ||
+      !safeProjectionText(participant.role, HOST_PROTOCOL_MAX_SHORT) ||
+      !Number.isInteger(participant.order) ||
+      (participant.order as number) < 0 ||
+      typeof participant.enabled !== 'boolean' ||
+      seen.has(participant.id)
+    ) {
+      continue
+    }
+    seen.add(participant.id)
+
+    const model = safeProjectionText(participant.modelId, HOST_PROTOCOL_MAX_ID)
+      ? participant.modelId
+      : safeProjectionText(participant.model, HOST_PROTOCOL_MAX_ID)
+        ? participant.model
+        : undefined
+    const stage =
+      typeof participant.stage === 'string' &&
+      PARTICIPANT_STAGES.has(participant.stage as NonNullable<HostParticipantProjection['stage']>)
+        ? (participant.stage as NonNullable<HostParticipantProjection['stage']>)
+        : undefined
+    const status = safeProjectionText(participant.status, HOST_PROTOCOL_MAX_SHORT)
+      ? participant.status
+      : undefined
+    out.push({
+      id: participant.id,
+      threadId: thread.appChatId,
+      providerId: participant.provider,
+      role: participant.role,
+      ...(model ? { modelId: model } : {}),
+      ...(stage ? { stage } : {}),
+      order: participant.order as number,
+      enabled: participant.enabled,
+      ...(status ? { status } : {}),
+      active: participant.active === true || participant.id === activeParticipantId
+    })
+  }
+  return out
+}
+
 export function projectHostProfileDomainSnapshot(
   options: HostProfileDomainProjectionOptions
 ): HostProfileDomainSnapshotFamilies {
@@ -91,7 +186,7 @@ export function projectHostProfileDomainSnapshot(
       id: thread.appChatId,
       workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
       title: thread.title,
-      chatKind: 'single',
+      chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
       archived: thread.archived,
       pinned: thread.pinned === true,
       updatedAt: thread.updatedAt,
@@ -112,7 +207,7 @@ export function projectHostProfileDomainSnapshot(
     ),
     missions: [],
     rounds: [],
-    participants: [],
+    participants: threads.flatMap(projectThreadParticipants),
     providers: [...providers],
     questions: [],
     approvals: [],
