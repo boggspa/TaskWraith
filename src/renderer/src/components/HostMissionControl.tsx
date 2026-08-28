@@ -41,6 +41,8 @@ export interface HostMissionControlProps {
   readonly presentation?: 'disclosure' | 'pane'
 }
 
+export const HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT = 12
+
 function missionPriority(status: HostProjectedMission['status']): number {
   return status === 'active' ? 0 : 1
 }
@@ -149,6 +151,12 @@ function participantDetail(participant: HostProjectedParticipant): string {
     .join(' · ')
 }
 
+function participantIdentity(participant: HostProjectedParticipant): string {
+  return [participant.providerId, participant.modelId]
+    .filter((value): value is string => Boolean(value))
+    .join(' · ')
+}
+
 function roundProviderOutcomes(
   round: HostProjectedRound,
   runById: ReadonlyMap<string, HostProjectedRun>
@@ -175,6 +183,7 @@ export function HostMissionControl({
   const [commandState, setCommandState] = useState<HostCommandControllerState>(() =>
     commandStateFor(commands)
   )
+  const [showAllRosters, setShowAllRosters] = useState(false)
   useEffect(() => {
     setCommandState(commandStateFor(commands))
     return commands?.subscribe(setCommandState)
@@ -191,6 +200,45 @@ export function HostMissionControl({
   const canMutate =
     Boolean(commands) && state.status === 'live' && state.projection?.freshness === 'live'
   const threadTitle = new Map(state.projection?.threads.map((thread) => [thread.id, thread.title]))
+  const threadUpdatedAt = new Map(
+    state.projection?.threads.map((thread) => [thread.id, thread.updatedAt])
+  )
+  const activeParticipantCount = model.participantGroups.reduce(
+    (total, group) => total + group.participants.filter((participant) => participant.active).length,
+    0
+  )
+  const overviewMetrics = [
+    { label: 'Active missions', value: model.activeMissionCount },
+    {
+      label: 'Running rounds',
+      value: model.rounds.filter((round) => round.status === 'running').length
+    },
+    {
+      label: 'Provider runs',
+      value: model.runs.filter((run) => run.providerOutcome === 'running').length
+    },
+    { label: 'Active seats', value: activeParticipantCount },
+    { label: 'Participants', value: model.participantCount },
+    { label: 'Channels', value: model.channels?.length ?? '—' },
+    {
+      label: 'Open questions',
+      value:
+        state.projection?.questions.filter((question) => question.status === 'open').length ?? '—'
+    }
+  ]
+  const orderedParticipantGroups = [...model.participantGroups].sort((left, right) => {
+    const leftActive = left.participants.some((participant) => participant.active)
+    const rightActive = right.participants.some((participant) => participant.active)
+    if (leftActive !== rightActive) return rightActive ? 1 : -1
+    const updatedAt =
+      (threadUpdatedAt.get(right.threadId) ?? 0) - (threadUpdatedAt.get(left.threadId) ?? 0)
+    if (updatedAt !== 0) return updatedAt
+    return left.title.localeCompare(right.title) || left.threadId.localeCompare(right.threadId)
+  })
+  const visibleParticipantGroups = showAllRosters
+    ? orderedParticipantGroups
+    : orderedParticipantGroups.slice(0, HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT)
+  const hiddenRosterCount = orderedParticipantGroups.length - visibleParticipantGroups.length
 
   const submitRunCancel = (threadId: string): void => {
     if (!commands || !canMutate) return
@@ -225,7 +273,11 @@ export function HostMissionControl({
 
   const body = (
     <>
-      <div className="host-mission-control-body">
+      <div
+        className={`host-mission-control-body${
+          presentation === 'pane' ? ' host-mission-control-body--pane' : ''
+        }`}
+      >
         <div className="host-mission-control-position" role="status" aria-live="polite">
           <span
             className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
@@ -241,6 +293,21 @@ export function HostMissionControl({
           )}
         </div>
 
+        {presentation === 'pane' && state.projection ? (
+          <div
+            className="host-mission-control-overview-metrics"
+            role="list"
+            aria-label="Mission Control overview"
+          >
+            {overviewMetrics.map((metric) => (
+              <div key={metric.label} role="listitem">
+                <strong>{metric.value}</strong>
+                <span>{metric.label}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {commandState.notice ? (
           <div
             className={`host-mission-control-notice is-${commandState.notice.tone}`}
@@ -252,7 +319,10 @@ export function HostMissionControl({
         ) : null}
 
         {commandState.pending ? (
-          <section className="host-mission-control-section" aria-labelledby="host-command-title">
+          <section
+            className="host-mission-control-section host-mission-control-section--priority"
+            aria-labelledby="host-command-title"
+          >
             <h3 id="host-command-title">Host approval</h3>
             <div className="host-mission-control-command-card">
               <span>
@@ -298,7 +368,7 @@ export function HostMissionControl({
           <>
             {activeRunThreadIds.length > 0 ? (
               <section
-                className="host-mission-control-section"
+                className="host-mission-control-section host-mission-control-section--priority"
                 aria-labelledby="host-actions-title"
               >
                 <h3 id="host-actions-title">Governed actions</h3>
@@ -322,7 +392,7 @@ export function HostMissionControl({
 
             {model.channels !== undefined ? (
               <section
-                className="host-mission-control-section"
+                className="host-mission-control-section host-mission-control-section--channels"
                 aria-labelledby="host-channels-title"
               >
                 <h3 id="host-channels-title">Channels</h3>
@@ -387,7 +457,10 @@ export function HostMissionControl({
               </section>
             ) : null}
 
-            <section className="host-mission-control-section" aria-labelledby="host-missions-title">
+            <section
+              className="host-mission-control-section host-mission-control-section--timeline"
+              aria-labelledby="host-missions-title"
+            >
               <h3 id="host-missions-title">Mission timeline</h3>
               {model.missions.length === 0 ? (
                 <div className="host-mission-control-empty">No Host missions yet.</div>
@@ -417,7 +490,10 @@ export function HostMissionControl({
             </section>
 
             {model.rounds.length > 0 ? (
-              <section className="host-mission-control-section" aria-labelledby="host-rounds-title">
+              <section
+                className="host-mission-control-section host-mission-control-section--timeline"
+                aria-labelledby="host-rounds-title"
+              >
                 <h3 id="host-rounds-title">Round timeline</h3>
                 <div className="host-mission-control-timeline">
                   {model.rounds.map((round) => {
@@ -457,7 +533,7 @@ export function HostMissionControl({
 
             {model.questionReceipts.length > 0 ? (
               <section
-                className="host-mission-control-section"
+                className="host-mission-control-section host-mission-control-section--receipts"
                 aria-labelledby="host-question-receipts-title"
               >
                 <h3 id="host-question-receipts-title">Recent question receipts</h3>
@@ -485,52 +561,109 @@ export function HostMissionControl({
               </section>
             ) : null}
 
-            {model.participantGroups.map((group) => (
+            {model.participantGroups.length > 0 ? (
               <section
-                className="host-mission-control-section"
-                aria-labelledby={`host-participants-${group.threadId}`}
-                key={group.threadId}
+                className="host-mission-control-rosters"
+                aria-labelledby="host-rosters-title"
               >
-                <h3 id={`host-participants-${group.threadId}`}>
-                  {group.title} · {group.participants.length}
-                </h3>
-                <div className="host-mission-control-participants" role="list">
-                  {group.participants.map((participant) => (
-                    <div
-                      className={`host-mission-control-participant${
-                        participant.enabled ? '' : ' is-disabled'
-                      }`}
-                      key={`${participant.threadId}:${participant.id}`}
-                      role="listitem"
-                      aria-label={`${participant.role}, ${participant.providerId}, ${
-                        participant.active ? 'active' : (participant.status ?? 'idle')
-                      }, ${participant.enabled ? 'enabled' : 'disabled'}`}
-                    >
-                      <span
-                        className={`host-mission-control-dot is-${
-                          participant.active ? 'running' : 'muted'
-                        }`}
-                        aria-hidden
-                      />
-                      <span className="host-mission-control-row-copy">
-                        <strong>{participant.role}</strong>
-                        <span>{participantDetail(participant)}</span>
-                      </span>
-                      {commands ? (
-                        <button
-                          type="button"
-                          className="host-mission-control-seat-toggle"
-                          disabled={!canMutate || commandState.busy}
-                          onClick={() => submitSeatToggle(participant)}
-                        >
-                          {participant.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
+                <div className="host-mission-control-rosters-heading">
+                  <h3 id="host-rosters-title">Rosters</h3>
+                  <span>
+                    {model.participantGroups.length} threads · {model.participantCount} seats
+                  </span>
                 </div>
+                <div className="host-mission-control-roster-list">
+                  {visibleParticipantGroups.map((group) => {
+                    const activeCount = group.participants.filter(
+                      (participant) => participant.active
+                    ).length
+                    const providerCount = new Set(
+                      group.participants.map((participant) => participant.providerId)
+                    ).size
+                    return (
+                      <details
+                        className="host-mission-control-roster"
+                        key={group.threadId}
+                        open={activeCount > 0}
+                      >
+                        <summary
+                          aria-label={`${group.title} roster, ${group.participants.length} seats, ${activeCount} active`}
+                        >
+                          <span
+                            className={`host-mission-control-dot is-${
+                              activeCount > 0 ? 'running' : 'muted'
+                            }`}
+                            aria-hidden
+                          />
+                          <span className="host-mission-control-roster-copy">
+                            <strong title={group.title}>{group.title}</strong>
+                            <small>
+                              {providerCount} provider{providerCount === 1 ? '' : 's'}
+                            </small>
+                          </span>
+                          <span className="host-mission-control-roster-counts">
+                            {activeCount > 0 ? `${activeCount} active · ` : ''}
+                            {group.participants.length} seats
+                          </span>
+                          <span className="host-mission-control-roster-chevron" aria-hidden>
+                            ›
+                          </span>
+                        </summary>
+                        <div className="host-mission-control-participants" role="list">
+                          {group.participants.map((participant) => (
+                            <div
+                              className={`host-mission-control-participant${
+                                participant.enabled ? '' : ' is-disabled'
+                              }`}
+                              key={`${participant.threadId}:${participant.id}`}
+                              role="listitem"
+                              aria-label={`${participant.role}, ${participant.providerId}, ${
+                                participant.active ? 'active' : (participant.status ?? 'idle')
+                              }, ${participant.enabled ? 'enabled' : 'disabled'}`}
+                            >
+                              <span
+                                className={`host-mission-control-dot is-${
+                                  participant.active ? 'running' : 'muted'
+                                }`}
+                                aria-hidden
+                              />
+                              <span className="host-mission-control-row-copy">
+                                <strong title={participant.role}>{participant.role}</strong>
+                                <span title={participantDetail(participant)}>
+                                  {participantIdentity(participant)}
+                                </span>
+                              </span>
+                              {commands ? (
+                                <button
+                                  type="button"
+                                  className="host-mission-control-seat-toggle"
+                                  disabled={!canMutate || commandState.busy}
+                                  onClick={() => submitSeatToggle(participant)}
+                                >
+                                  {participant.enabled ? 'Disable' : 'Enable'}
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )
+                  })}
+                </div>
+                {hiddenRosterCount > 0 || showAllRosters ? (
+                  <button
+                    type="button"
+                    className="host-mission-control-roster-more"
+                    aria-expanded={showAllRosters}
+                    onClick={() => setShowAllRosters((current) => !current)}
+                  >
+                    {showAllRosters
+                      ? 'Show fewer rosters'
+                      : `Show ${hiddenRosterCount} more roster${hiddenRosterCount === 1 ? '' : 's'}`}
+                  </button>
+                ) : null}
               </section>
-            ))}
+            ) : null}
           </>
         )}
       </div>

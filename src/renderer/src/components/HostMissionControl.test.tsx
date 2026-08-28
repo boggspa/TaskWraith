@@ -12,6 +12,7 @@ import type { HostCommandRunOutcome } from '../lib/host/HostCommandClient'
 import { projectHostSnapshot } from '../lib/host/hostSnapshotProjection'
 import {
   formatHostMissionControlSummary,
+  HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT,
   HostMissionControl,
   projectHostMissionControl
 } from './HostMissionControl'
@@ -217,9 +218,57 @@ describe('HostMissionControl', () => {
     expect(formatHostMissionControlSummary(model)).toBe('1 active · 30 participants')
     expect(markup).toContain('host-mission-control--pane')
     expect(markup).toContain('aria-label="Mission Control, 1 active · 30 participants"')
+    expect(markup).toContain('aria-label="Mission Control overview"')
+    expect(markup).toContain('<span>Active missions</span>')
+    expect(markup).toContain('<span>Running rounds</span>')
+    expect(markup).toContain('<span>Active seats</span>')
     expect(markup).toContain('Mission timeline')
-    expect(markup).not.toContain('<details')
-    expect(markup).not.toContain('<summary')
+    expect(markup).toContain('id="host-rosters-title">Rosters</h3>')
+    expect(markup).toContain('2 threads · 30 seats')
+    expect(markup).toContain('aria-label="Alpha thread roster, 15 seats, 0 active"')
+    expect(markup).toContain('aria-label="Zeta thread roster, 15 seats, 1 active"')
+    expect(markup).toContain('open=""><summary aria-label="Zeta thread roster, 15 seats, 1 active"')
+    expect(markup).not.toContain(
+      'open=""><summary aria-label="Alpha thread roster, 15 seats, 0 active"'
+    )
+    expect(markup).toMatch(/^<section class="host-mission-control host-mission-control--pane"/)
+    expect(markup).not.toContain(
+      '<summary aria-label="Mission Control, 1 active · 30 participants"'
+    )
+  })
+
+  it('shows recent rosters first and bounds the initial fleet inventory', () => {
+    const rosterCount = HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT + 2
+    const source = snapshot({
+      threads: Array.from({ length: rosterCount }, (_, index) => ({
+        id: `thread-${index}`,
+        workspaceId: null,
+        title: `Roster ${index}`,
+        chatKind: 'ensemble' as const,
+        archived: false,
+        pinned: false,
+        updatedAt: index,
+        messageCount: 1
+      })),
+      participants: Array.from({ length: rosterCount }, (_, index) => ({
+        id: `participant-${index}`,
+        threadId: `thread-${index}`,
+        providerId: 'codex',
+        role: `Seat ${index}`,
+        order: 0,
+        enabled: true,
+        active: false
+      }))
+    })
+
+    const markup = renderToStaticMarkup(
+      <HostMissionControl state={stateFromSnapshot(source)} presentation="pane" />
+    )
+
+    expect(HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT).toBe(12)
+    expect(markup).toContain('Show 2 more rosters')
+    expect(markup).toContain(`Roster ${rosterCount - 1}`)
+    expect(markup).not.toContain('aria-label="Roster 0 roster')
   })
 
   it('renders generation/cursor, mission and round timelines, outcomes, and every seat', () => {
