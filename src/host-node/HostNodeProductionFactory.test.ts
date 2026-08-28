@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -64,6 +65,7 @@ it('composes all nine live providers on a cold profile', async () => {
       'provider-catalog',
       'provider-auth',
       'history',
+      'workspace-git',
       'setup',
       'commands',
       'receipts',
@@ -71,6 +73,7 @@ it('composes all nine live providers on a cold profile', async () => {
     ]
   })
   await client.connect()
+  expect(client.welcome?.capabilities).not.toContain('workspace-git')
   const statuses = await client.getProviderStatuses()
   const ids = statuses.map((status) => status.providerId).sort()
   expect(ids).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS].sort())
@@ -86,6 +89,95 @@ it('composes all nine live providers on a cold profile', async () => {
   for (const status of statuses) {
     expect(['ready', 'auth_required', 'unavailable', 'degraded']).toContain(status.status)
   }
+  client.close()
+  await server.stop()
+})
+
+it('probes Git once, advertises only when available, and serves a hardened workspace read', async () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-git-')))
+  paths.push(parent)
+  const profile = join(parent, 'profile')
+  const workspace = join(parent, 'workspace')
+  const binary = join(parent, 'git-test')
+  const counter = join(parent, 'git-calls')
+  mkdirSync(workspace)
+  mkdirSync(join(workspace, '.git'))
+  writeFileSync(
+    binary,
+    [
+      '#!/bin/sh',
+      `printf x >> "${counter}"`,
+      'test -z "$GITHUB_TOKEN" || exit 9',
+      'case "$*" in',
+      '  *--version*) printf "git version test\\n" ;;',
+      `  *--show-toplevel*) printf "%s\\n" "${workspace}" ;;`,
+      '  *--show-current*) printf "main\\n" ;;',
+      '  *"rev-parse HEAD"*) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;',
+      '  *status*) printf "M  file.ts\\0" ;;',
+      '  *) exit 1 ;;',
+      'esac'
+    ].join('\n')
+  )
+  chmodSync(binary, 0o700)
+
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    gitExecutable: binary,
+    env: { PATH: '', GITHUB_TOKEN: 'must-not-reach-git' },
+    temporaryParent: parent
+  })
+  await server.start()
+  expect(readFileSync(counter, 'utf8')).toBe('x')
+
+  const client = new HostProjectionClient({
+    userDataPath: profile,
+    client: { clientId: 'git-client', clientClass: 'test', clientVersion: '1.0' },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'workspace-git',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ]
+  })
+  await client.connect()
+  expect(client.welcome?.capabilities).toContain('workspace-git')
+  const register: HostCommand = {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: 'git-workspace-register',
+    idempotencyKey: 'git-workspace-register-key',
+    actor: { actorId: 'git-client', clientId: 'git-client', clientClass: 'test' },
+    name: 'workspace.register',
+    target: {},
+    arguments: { path: workspace },
+    issuedAt: '2026-08-28T00:00:00.000Z'
+  }
+  const receipt = await client.submitCommand(register)
+  const workspaceId = receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : ''
+  const result = await (
+    client as unknown as {
+      request(
+        kind: 'workspace.git.read',
+        params: { workspaceId: string; scope: 'status' }
+      ): Promise<{ kind: string; result: unknown }>
+    }
+  ).request('workspace.git.read', { workspaceId, scope: 'status' })
+  expect(result).toMatchObject({
+    kind: 'workspace.git.read',
+    result: {
+      scope: 'status',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: [{ path: 'file.ts', kind: 'modified' }],
+      truncated: false
+    }
+  })
+  expect(readFileSync(counter, 'utf8')).toBe('xxxxx')
+
   client.close()
   await server.stop()
 })

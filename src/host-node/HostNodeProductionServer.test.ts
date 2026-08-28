@@ -32,6 +32,9 @@ function harness(overrides: Record<string, unknown> = {}) {
   let projectionDirty: (() => void) | null = null
   let interactionTimeoutMs: number | undefined
   let domainProfilePath: string | undefined
+  let composedGitReadProvider:
+    | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
+    | undefined
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -67,6 +70,8 @@ function harness(overrides: Record<string, unknown> = {}) {
     providerAuthStatus: vi.fn(),
     threadHistory: vi.fn(),
     historySince: vi.fn(),
+    supportsWorkspaceGit: false,
+    gitRead: vi.fn(),
     registry: { supportsApprovals: false, supportsQuestions: false },
     interactions: new HostNodeInteractionRegistry(),
     shutdown: vi.fn(async () => {
@@ -107,6 +112,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     createComposition: (input) => {
       order.push('composition')
       capabilityOffer = input.hostCapabilityOffer
+      composedGitReadProvider = input.gitReadProvider as typeof composedGitReadProvider
       return composition as never
     },
     createListener: (input) => {
@@ -125,6 +131,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     domain,
     signalListeners,
     capabilityOffer: () => capabilityOffer,
+    gitReadProvider: () => composedGitReadProvider,
     domainProfilePath: () => domainProfilePath,
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
@@ -202,6 +209,40 @@ describe('HostNodeProductionServer', () => {
     await h2.server.start()
     expect(h2.capabilityOffer()).toContain('approvals')
     expect(h2.capabilityOffer()).toContain('questions')
+  })
+
+  it('offers workspace-git only from a constructed domain with a Git read service', async () => {
+    const unavailable = harness()
+    await unavailable.server.start()
+    expect(unavailable.capabilityOffer()).not.toContain('workspace-git')
+    expect(unavailable.gitReadProvider()).toBeUndefined()
+    await unavailable.server.stop()
+
+    const available = harness()
+    available.domain.supportsWorkspaceGit = true
+    available.domain.gitRead.mockResolvedValue({
+      scope: 'status',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: [],
+      truncated: false
+    })
+    await available.server.start()
+    expect(available.capabilityOffer()).toContain('workspace-git')
+    const provider = available.gitReadProvider()
+    expect(provider).toBeTypeOf('function')
+    const context = {
+      actor: { actorId: 'tui-1', clientId: 'tui-1', clientClass: 'tui' as const },
+      client: { clientId: 'tui-1', clientClass: 'tui' as const, clientVersion: '1.0.0' }
+    }
+    await expect(
+      provider?.(context, { workspaceId: 'workspace-1', scope: 'status' })
+    ).resolves.toMatchObject({ scope: 'status' })
+    expect(available.domain.gitRead).toHaveBeenCalledWith(context, {
+      workspaceId: 'workspace-1',
+      scope: 'status'
+    })
+    await available.server.stop()
   })
 
   it('fails a second profile owner before identity/store/domain creation', async () => {

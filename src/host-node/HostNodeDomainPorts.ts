@@ -16,6 +16,14 @@ import {
   HOST_QUESTION_ANSWER_DECISIONS,
   TASKWRAITH_DESKTOP_HOST_ACTOR
 } from '../shared/hostProtocol'
+import {
+  decodeHostWorkspaceGitReadResult,
+  HOST_WORKSPACE_GIT_RESULT_MAX_BYTES,
+  type HostWorkspaceGitFileKind,
+  type HostWorkspaceGitReadParams,
+  type HostWorkspaceGitReadResult,
+  type HostWorkspaceGitStatusFile
+} from '../shared/hostProtocolTransport'
 import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
@@ -28,6 +36,8 @@ import type {
   HostProviderOffersProjection,
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
+import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
+import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
 import type { HostCommandExecutionResult } from '../host-runtime/HostCommandExecutionResult'
 import {
@@ -68,6 +78,8 @@ export interface HostNodeDomainPortsOptions {
   readonly events: HostNodeRunEventSink
   /** Live provider factories; the domain constructs one registry from them. */
   readonly providers: readonly HostNodeProvider[]
+  /** Optional hardened read service; absence means workspace-git is not offered. */
+  readonly gitReadService?: Pick<HostGitReadService, 'read'>
   readonly health: () => HostHealthProjection
   readonly now?: () => number
   /** Lease release must not proceed while a provider child may still be alive. */
@@ -123,6 +135,108 @@ function exactDesktopRecordMutationContext(
     context.actor.clientId === expected.clientId &&
     context.actor.actorId === expected.actorId
   )
+}
+
+function localReadContext(context: HostAuthorityCallContext): boolean {
+  return (
+    isExactHostActorIdentity(context.actor) &&
+    LOCAL_CLIENT_CLASSES.has(context.client.clientClass) &&
+    context.actor.clientId === context.client.clientId &&
+    context.actor.clientClass === context.client.clientClass
+  )
+}
+
+function wireGitFileKind(kind: HostGitFileStatus['kind']): HostWorkspaceGitFileKind {
+  switch (kind) {
+    case 'added':
+    case 'copied':
+      return 'created'
+    case 'modified':
+    case 'deleted':
+    case 'renamed':
+    case 'untracked':
+    case 'ignored':
+    case 'conflicted':
+      return kind
+    case 'unknown':
+      throw new Error('Standalone Host git returned an unknown file status')
+  }
+}
+
+function wireGitFile(file: HostGitFileStatus): HostWorkspaceGitStatusFile {
+  return {
+    path: file.path,
+    ...(file.originalPath === undefined ? {} : { originalPath: file.originalPath }),
+    index: file.index,
+    workingTree: file.workingTree,
+    kind: wireGitFileKind(file.kind),
+    staged: file.staged,
+    unstaged: file.unstaged
+  }
+}
+
+function serializedGitResultFits(result: HostWorkspaceGitReadResult): boolean {
+  return (
+    Buffer.byteLength(JSON.stringify({ kind: 'workspace.git.read', result }), 'utf8') <=
+    HOST_WORKSPACE_GIT_RESULT_MAX_BYTES
+  )
+}
+
+function validateWireGitResult(result: HostWorkspaceGitReadResult): HostWorkspaceGitReadResult {
+  const decoded = decodeHostWorkspaceGitReadResult(result)
+  if (!decoded.ok || !serializedGitResultFits(decoded.value)) {
+    throw new Error('Standalone Host git result is not wire-safe')
+  }
+  return decoded.value
+}
+
+function projectHostGitResult(result: HostGitReadResult): HostWorkspaceGitReadResult {
+  const base = { branch: result.branch, head: result.head }
+  if (result.scope === 'status') {
+    if (!Array.isArray(result.files)) throw new Error('Standalone Host git status is unavailable')
+    const files = result.files.map(wireGitFile)
+    let low = 0
+    let high = files.length
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2)
+      const candidate: HostWorkspaceGitReadResult = {
+        scope: 'status',
+        ...base,
+        files: files.slice(0, middle),
+        truncated: middle < files.length
+      }
+      if (serializedGitResultFits(candidate)) low = middle
+      else high = middle - 1
+    }
+    return validateWireGitResult({
+      scope: 'status',
+      ...base,
+      files: files.slice(0, low),
+      truncated: low < files.length
+    })
+  }
+
+  if (!result.text) throw new Error('Standalone Host git text is unavailable')
+  const characters = Array.from(result.text.text)
+  let low = 0
+  let high = characters.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    const candidate: HostWorkspaceGitReadResult = {
+      scope: result.scope,
+      ...base,
+      text: characters.slice(0, middle).join(''),
+      truncated: result.text.truncated || middle < characters.length
+    }
+    if (serializedGitResultFits(candidate)) low = middle
+    else high = middle - 1
+  }
+  return validateWireGitResult({
+    scope: result.scope,
+    ...base,
+    text: characters.slice(0, low).join(''),
+    truncated: result.text.truncated || low < characters.length
+  })
 }
 
 function isSetupMutationName(name: HostCommand['name']): boolean {
@@ -255,6 +369,46 @@ export class HostNodeDomainPorts {
 
   historySince(request: HostHistorySinceRequest): HostHistorySinceResult {
     return this.options.store.historySince(request)
+  }
+
+  get supportsWorkspaceGit(): boolean {
+    return this.options.gitReadService !== undefined
+  }
+
+  async gitRead(
+    context: HostAuthorityCallContext,
+    request: HostWorkspaceGitReadParams
+  ): Promise<HostWorkspaceGitReadResult> {
+    if (!this.options.gitReadService || !localReadContext(context)) {
+      throw new Error('Standalone Host git workspace is unavailable')
+    }
+
+    let workspaceId: string
+    try {
+      if ('workspaceId' in request && request.workspaceId !== undefined) {
+        workspaceId = request.workspaceId
+      } else if ('threadId' in request && request.threadId !== undefined) {
+        const thread = this.options.store.getThread(request.threadId)
+        if (!thread || thread.scope !== 'workspace' || !thread.workspaceId) {
+          throw new Error('thread workspace unavailable')
+        }
+        workspaceId = thread.workspaceId
+      } else {
+        throw new Error('workspace target unavailable')
+      }
+      const workspace = this.options.store
+        .listWorkspaces()
+        .find((candidate) => candidate.id === workspaceId)
+      if (!workspace) throw new Error('registered workspace unavailable')
+      const result = await this.options.gitReadService.read({
+        workspaceRealPath: workspace.realPath,
+        scope: request.scope,
+        ...(request.path === undefined ? {} : { path: request.path })
+      })
+      return projectHostGitResult(result)
+    } catch (error) {
+      throw new Error('Standalone Host git workspace is unavailable', { cause: error })
+    }
   }
 
   /** Cancels and awaits active provider children before profile-lease release. */

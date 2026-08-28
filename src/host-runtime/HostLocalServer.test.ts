@@ -124,6 +124,7 @@ function mockHostSession(
         'provider-catalog',
         'provider-auth',
         'history',
+        'workspace-git',
         'setup',
         'host-lifecycle',
         'commands',
@@ -173,6 +174,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
   snapshot: ReturnType<typeof vi.fn>
   deltas: ReturnType<typeof vi.fn>
   threadOffers: ReturnType<typeof vi.fn>
+  gitRead: ReturnType<typeof vi.fn>
   providerStatuses: ReturnType<typeof vi.fn>
   providerOffers: ReturnType<typeof vi.fn>
   providerAuthFlows: ReturnType<typeof vi.fn>
@@ -222,6 +224,16 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
         }
       ],
       source: 'curated'
+    }
+  })
+  const gitRead = vi.fn().mockResolvedValue({
+    ok: true,
+    value: {
+      scope: 'status',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: [],
+      truncated: false
     }
   })
   const receipt = vi.fn().mockResolvedValue({
@@ -283,6 +295,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
     snapshot,
     deltas,
     threadOffers,
+    gitRead,
     providerStatuses,
     providerOffers,
     providerAuthFlows,
@@ -298,6 +311,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
     snapshot: ReturnType<typeof vi.fn>
     deltas: ReturnType<typeof vi.fn>
     threadOffers: ReturnType<typeof vi.fn>
+    gitRead: ReturnType<typeof vi.fn>
     providerStatuses: ReturnType<typeof vi.fn>
     providerOffers: ReturnType<typeof vi.fn>
     providerAuthFlows: ReturnType<typeof vi.fn>
@@ -978,6 +992,51 @@ describe('HostLocalServer', () => {
       expect(frame).toMatchObject({ ok: false, error: { code: 'unauthorized' } })
       expect(authority.threadOffers).not.toHaveBeenCalled()
       client.close()
+    })
+
+    it('declares workspace Git reads behind their exact negotiated capability', () => {
+      const source = readFileSync(new URL('./HostLocalServer.ts', import.meta.url), 'utf8')
+      expect(source).toMatch(/'workspace\.git\.read': 'workspace-git'/)
+    })
+
+    it('refuses workspace Git before Authority without capability and routes it when negotiated', async () => {
+      const denied = await authAndConnect(['bootstrap', 'health'])
+      denied.writeLine(
+        JSON.stringify(
+          makeRequest('workspace.git.read', 'r-git-denied', {
+            workspaceId: 'workspace-1',
+            scope: 'status'
+          })
+        )
+      )
+      expect(await denied.readFrame()).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized' }
+      })
+      expect(authority.gitRead).not.toHaveBeenCalled()
+      denied.close()
+
+      const allowed = await authAndConnect(['bootstrap', 'workspace-git', 'health'])
+      allowed.writeLine(
+        JSON.stringify(
+          makeRequest('workspace.git.read', 'r-git-status', {
+            workspaceId: 'workspace-1',
+            scope: 'status'
+          })
+        )
+      )
+      expect(await allowed.readFrame()).toMatchObject({
+        ok: true,
+        result: {
+          kind: 'workspace.git.read',
+          result: { scope: 'status', branch: 'main', truncated: false }
+        }
+      })
+      expect(authority.gitRead).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId: 'workspace-1',
+        scope: 'status'
+      })
+      allowed.close()
     })
 
     it('gates provider setup reads by their exact negotiated capabilities', async () => {

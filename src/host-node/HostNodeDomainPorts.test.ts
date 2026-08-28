@@ -199,6 +199,120 @@ afterEach(() => {
 })
 
 describe('HostNodeDomainPorts', () => {
+  it('refuses unregistered or unclaimed Git workspace scope before the service can spawn', async () => {
+    const { domainOptions, store, workspace } = open()
+    const read = vi.fn().mockResolvedValue({
+      scope: 'status',
+      repositoryRoot: workspace,
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: []
+    })
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      gitReadService: { read }
+    } as never)
+    type TestContext = typeof context
+    type TestRequest = { workspaceId?: string; threadId?: string; scope: 'status' }
+    const gitRead = (context_: TestContext, request: TestRequest) =>
+      (
+        domain as unknown as {
+          gitRead(context_: TestContext, request_: TestRequest): Promise<unknown>
+        }
+      ).gitRead(context_, request)
+
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(context, { workspaceId: 'missing-workspace', scope: 'status' })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+
+    const globalThread = store.createThread({ scope: 'global' })
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(context, { threadId: globalThread.appChatId, scope: 'status' })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+
+    const registered = store.registerWorkspace({ path: workspace })
+    const iosContext = {
+      actor: { actorId: 'ios-1', clientId: 'ios-1', clientClass: 'ios' as const },
+      client: { clientId: 'ios-1', clientClass: 'ios' as const, clientVersion: '1.0.0' }
+    }
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(iosContext as unknown as typeof context, {
+          workspaceId: registered.id,
+          scope: 'status'
+        })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('projects registered workspace and thread Git reads into the bounded wire result', async () => {
+    const { domainOptions, store, workspace } = open()
+    const read = vi.fn(async (input: { scope: 'status' | 'diff' | 'log' }) =>
+      input.scope === 'status'
+        ? {
+            scope: 'status' as const,
+            repositoryRoot: workspace,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            files: [
+              {
+                path: 'new.ts',
+                originalPath: 'source.ts',
+                index: 'A',
+                workingTree: ' ',
+                kind: 'copied' as const,
+                staged: true,
+                unstaged: false
+              }
+            ]
+          }
+        : {
+            scope: 'diff' as const,
+            repositoryRoot: workspace,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: {
+              text: '\\'.repeat(128 * 1024),
+              truncated: false,
+              byteLength: 128 * 1024
+            }
+          }
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      gitReadService: { read }
+    } as never)
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+
+    await expect(
+      domain.gitRead(context, { workspaceId: registered.id, scope: 'status' })
+    ).resolves.toMatchObject({
+      scope: 'status',
+      files: [{ path: 'new.ts', originalPath: 'source.ts', kind: 'created' }],
+      truncated: false
+    })
+    const diff = await domain.gitRead(context, {
+      threadId: thread.appChatId,
+      scope: 'diff'
+    })
+    expect(diff).toMatchObject({ scope: 'diff', truncated: true })
+    expect(diff.scope === 'diff' && diff.text.length).toBeLessThan(128 * 1024)
+    expect(read).toHaveBeenNthCalledWith(1, {
+      workspaceRealPath: registered.realPath,
+      scope: 'status'
+    })
+    expect(read).toHaveBeenNthCalledWith(2, {
+      workspaceRealPath: registered.realPath,
+      scope: 'diff'
+    })
+  })
+
   it('allows only the exact Desktop Host actor to mutate workspace records', async () => {
     const { domain, store, workspace } = open()
     const upsert = desktopCommand(

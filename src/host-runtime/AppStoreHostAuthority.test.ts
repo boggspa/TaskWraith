@@ -12,6 +12,7 @@ import {
   type HostHealthProjection
 } from '../shared/hostProtocol'
 import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
+import type { HostWorkspaceGitReadParams } from '../shared/hostProtocolTransport'
 import {
   AppStoreHostAuthority,
   createHostStandaloneAuthorityActivationPermit,
@@ -724,6 +725,47 @@ describe('AppStoreHostAuthority', () => {
       error: 'host_unavailable'
     })
     expect(threadOffersProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('gates and decodes the optional workspace Git read provider', async () => {
+    const ctx = contextFor(ACTOR_A, CLIENT_A)
+    const gitReadProvider = vi.fn(
+      (_context: HostAuthorityCallContext, _request: HostWorkspaceGitReadParams) => ({
+        scope: 'status' as const,
+        branch: 'main',
+        head: 'a'.repeat(40),
+        files: [],
+        truncated: false
+      })
+    )
+    const authority = open({ ports: { gitReadProvider } })
+    await expect(
+      authority.gitRead(ctx, { workspaceId: 'workspace-1', scope: 'status' })
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { scope: 'status', branch: 'main', truncated: false }
+    })
+    expect(gitReadProvider).toHaveBeenCalledWith(ctx, {
+      workspaceId: 'workspace-1',
+      scope: 'status'
+    })
+
+    await expect(
+      open().gitRead(ctx, { workspaceId: 'workspace-1', scope: 'status' })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
+    await expect(
+      open({
+        ports: {
+          gitReadProvider: () => ({
+            scope: 'status',
+            branch: 'main',
+            head: 'short',
+            files: [],
+            truncated: false
+          })
+        }
+      }).gitRead(ctx, { workspaceId: 'workspace-1', scope: 'status' })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
   })
 
   it('fails thread offers closed when its optional provider is absent or mismatched', async () => {

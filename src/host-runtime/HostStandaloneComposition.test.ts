@@ -98,6 +98,34 @@ describe('HostStandaloneComposition', () => {
     await second.shutdown()
   })
 
+  it('forwards the optional workspace Git read provider into Authority', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-git-'))
+    paths.push(runtimePath)
+    const gitReadProvider = vi.fn(() => ({
+      scope: 'status' as const,
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: [],
+      truncated: false
+    }))
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      gitReadProvider
+    })
+
+    await expect(
+      composition.authority.gitRead?.(context, {
+        workspaceId: 'workspace-1',
+        scope: 'status'
+      })
+    ).resolves.toMatchObject({ ok: true, value: { scope: 'status' } })
+    expect(gitReadProvider).toHaveBeenCalledWith(context, {
+      workspaceId: 'workspace-1',
+      scope: 'status'
+    })
+    await composition.shutdown()
+  })
+
   it('does not construct a standalone composition when the lease assertion fails', () => {
     const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-fail-'))
     paths.push(runtimePath)

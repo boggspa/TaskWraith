@@ -45,7 +45,8 @@ import {
   type HostLocalTransportError,
   type HostLocalTransportHostFrame,
   type HostLocalTransportReceiptLookupParams,
-  type HostLocalTransportSuccessResult
+  type HostLocalTransportSuccessResult,
+  type HostWorkspaceGitReadParams
 } from '../shared/hostProtocolTransport'
 import {
   HOST_PROTOCOL_VERSION,
@@ -75,6 +76,7 @@ const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, Ho
   'provider.auth.flows': 'provider-auth',
   'provider.auth.status': 'provider-auth',
   'thread.history': 'history',
+  'workspace.git.read': 'workspace-git',
   'history.since': 'history'
 }
 
@@ -886,6 +888,8 @@ export class HostLocalServer {
         return this.handleProviderAuthStatus(context, frame.id, frame.params.providerId)
       case 'thread.history':
         return this.handleThreadHistory(context, frame.id, frame.params)
+      case 'workspace.git.read':
+        return this.handleWorkspaceGitRead(context, frame.id, frame.params)
       case 'history.since':
         return this.handleHistorySince(context, frame.id, frame.params)
       case 'receipt.lookup':
@@ -1090,6 +1094,18 @@ export class HostLocalServer {
     const result = await provider.call(this.options.authority, context, request)
     if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
     return this.success(id, { kind: 'thread.history', page: result.value })
+  }
+
+  private async handleWorkspaceGitRead(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostWorkspaceGitReadParams
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.gitRead
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'workspace.git.read', result: result.value })
   }
 
   private async handleHistorySince(

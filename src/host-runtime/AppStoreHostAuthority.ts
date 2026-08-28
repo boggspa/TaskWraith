@@ -22,6 +22,12 @@ import {
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import {
+  decodeHostWorkspaceGitReadParams,
+  decodeHostWorkspaceGitReadResult,
+  type HostWorkspaceGitReadParams,
+  type HostWorkspaceGitReadResult
+} from '../shared/hostProtocolTransport'
+import {
   decodeHostHistorySinceRequest,
   decodeHostHistorySinceResult,
   decodeHostThreadHistoryPage,
@@ -189,6 +195,11 @@ export type AppStoreHostAuthorityThreadOffersProvider = (
   threadId: string
 ) => TaskWraithControlThreadOffers | Promise<TaskWraithControlThreadOffers>
 
+export type AppStoreHostAuthorityGitReadProvider = (
+  context: HostAuthorityCallContext,
+  request: HostWorkspaceGitReadParams
+) => HostWorkspaceGitReadResult | Promise<HostWorkspaceGitReadResult>
+
 export type AppStoreHostAuthorityProviderStatusesProvider = () =>
   | readonly HostProviderStatusProjection[]
   | Promise<readonly HostProviderStatusProjection[]>
@@ -249,6 +260,7 @@ export interface AppStoreHostAuthorityPorts {
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
+  readonly gitReadProvider?: AppStoreHostAuthorityGitReadProvider
   readonly providerStatusesProvider?: AppStoreHostAuthorityProviderStatusesProvider
   readonly providerOffersProvider?: AppStoreHostAuthorityProviderOffersProvider
   readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
@@ -396,6 +408,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
+  private readonly gitReadProvider?: AppStoreHostAuthorityGitReadProvider
   private readonly providerStatusesProvider?: AppStoreHostAuthorityProviderStatusesProvider
   private readonly providerOffersProvider?: AppStoreHostAuthorityProviderOffersProvider
   private readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
@@ -441,6 +454,7 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.healthProvider !== 'function' ||
       (ports.threadOffersProvider !== undefined &&
         typeof ports.threadOffersProvider !== 'function') ||
+      (ports.gitReadProvider !== undefined && typeof ports.gitReadProvider !== 'function') ||
       (ports.providerStatusesProvider !== undefined &&
         typeof ports.providerStatusesProvider !== 'function') ||
       (ports.providerOffersProvider !== undefined &&
@@ -469,6 +483,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.setupExecutor = ports.setupExecutor
     this.healthProvider = ports.healthProvider
     this.threadOffersProvider = ports.threadOffersProvider
+    this.gitReadProvider = ports.gitReadProvider
     this.providerStatusesProvider = ports.providerStatusesProvider
     this.providerOffersProvider = ports.providerOffersProvider
     this.providerAuthFlowsProvider = ports.providerAuthFlowsProvider
@@ -584,6 +599,28 @@ export class AppStoreHostAuthority implements HostAuthority {
         return { ok: false, error: 'host_unavailable' }
       }
       return { ok: true, value: offers }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async gitRead(
+    context: HostAuthorityCallContext,
+    request: HostWorkspaceGitReadParams
+  ): Promise<HostAuthorityResult<HostWorkspaceGitReadResult>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    const decodedRequest = decodeHostWorkspaceGitReadParams(request)
+    if (!decodedRequest.ok || !this.gitReadProvider) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const decoded = decodeHostWorkspaceGitReadResult(
+        await this.gitReadProvider(context, decodedRequest.value)
+      )
+      return decoded.ok
+        ? { ok: true, value: decoded.value }
+        : { ok: false, error: 'host_unavailable' }
     } catch {
       return { ok: false, error: 'host_unavailable' }
     }

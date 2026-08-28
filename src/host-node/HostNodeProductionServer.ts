@@ -244,6 +244,9 @@ export class HostNodeProductionServer {
         ...(this.options.threadOffersProvider
           ? { threadOffersProvider: this.options.threadOffersProvider }
           : {}),
+        ...(this.domain.supportsWorkspaceGit
+          ? { gitReadProvider: (context, request) => this.domain!.gitRead(context, request) }
+          : {}),
         providerStatusesProvider: () => this.domain!.providerStatuses(),
         providerOffersProvider: (providerId) => this.domain!.providerOffers(providerId),
         providerAuthFlowsProvider: (providerId) => this.domain!.providerAuthFlows(providerId),
@@ -388,6 +391,7 @@ export class HostNodeProductionServer {
   private capabilities(): readonly HostCapability[] {
     const base: HostCapability[] = ['bootstrap', 'snapshot', 'deltas']
     if (this.options.threadOffersProvider) base.push('model-offers')
+    if (this.domain?.supportsWorkspaceGit) base.push('workspace-git')
     base.push(
       'provider-catalog',
       'provider-auth',

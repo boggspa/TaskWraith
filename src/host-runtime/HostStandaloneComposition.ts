@@ -12,6 +12,7 @@ import {
   createHostStandaloneAuthorityActivationPermit,
   type AppStoreHostAuthorityEvaluator,
   type AppStoreHostAuthorityExecutor,
+  type AppStoreHostAuthorityGitReadProvider,
   type AppStoreHostAuthorityHealthProvider,
   type AppStoreHostAuthorityHistorySinceProvider,
   type AppStoreHostAuthorityProviderAuthFlowsProvider,
@@ -43,6 +44,7 @@ export interface HostStandaloneCompositionInput {
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
+  readonly gitReadProvider?: AppStoreHostAuthorityGitReadProvider
   readonly providerStatusesProvider?: AppStoreHostAuthorityProviderStatusesProvider
   readonly providerOffersProvider?: AppStoreHostAuthorityProviderOffersProvider
   readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
@@ -121,6 +123,7 @@ export function createHostStandaloneComposition(
       ...(input.setupExecutor ? { setupExecutor: input.setupExecutor } : {}),
       healthProvider: input.healthProvider,
       ...(input.threadOffersProvider ? { threadOffersProvider: input.threadOffersProvider } : {}),
+      ...(input.gitReadProvider ? { gitReadProvider: input.gitReadProvider } : {}),
       ...(input.providerStatusesProvider
         ? { providerStatusesProvider: input.providerStatusesProvider }
         : {}),

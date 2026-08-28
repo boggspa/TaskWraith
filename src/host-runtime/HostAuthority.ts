@@ -20,6 +20,10 @@ import type {
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import type {
+  HostWorkspaceGitReadParams,
+  HostWorkspaceGitReadResult
+} from '../shared/hostProtocolTransport'
+import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
   HostThreadHistoryPage,
@@ -107,6 +111,12 @@ export interface HostAuthority {
     context: HostAuthorityCallContext,
     threadId: string
   ): Promise<HostAuthorityResult<TaskWraithControlThreadOffers>>
+
+  /** Capability-gated, workspace-scoped read. Never enters mutation/receipt machinery. */
+  gitRead?(
+    context: HostAuthorityCallContext,
+    request: HostWorkspaceGitReadParams
+  ): Promise<HostAuthorityResult<HostWorkspaceGitReadResult>>
 
   /** Capability-gated cold-start read; no provider runtime or credential body. */
   providerStatuses?(
