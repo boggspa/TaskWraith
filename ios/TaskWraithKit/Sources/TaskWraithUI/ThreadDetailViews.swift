@@ -4530,6 +4530,9 @@ struct MessageActionsBar: View {
     let onTogglePin: (() -> Void)?
     let onOpenSideChat: (() -> Void)?
     var onDelete: (() -> Void)? = nil
+    /// False when the buttons are embedded beside thumbs feedback in the
+    /// transcript's single footer row; the outer row owns the flexible tail.
+    var fillsAvailableWidth = true
 
     var body: some View {
         HStack(spacing: 2) {
@@ -4560,7 +4563,9 @@ struct MessageActionsBar: View {
                     action: onDelete
                 )
             }
-            Spacer(minLength: 0)
+            if fillsAvailableWidth {
+                Spacer(minLength: 0)
+            }
         }
         .padding(.top, 2)
         .accessibilityElement(children: .contain)
@@ -5005,59 +5010,7 @@ struct ThreadRowView: View, Equatable {
                             )
                             .textSelection(.enabled)
                         }
-                        if let footerTime = transcriptFooterTime {
-                            HStack(spacing: 6) {
-                                Text(footerTime)
-                                    .font(.caption2)
-                                    .foregroundStyle(TWTheme.textMuted.opacity(0.88))
-                                    .monospacedDigit()
-                                if showsMessageActionChrome {
-                                    MessageActionsBar(
-                                        isPinned: isPinned,
-                                        onCopy: { copyText(preview) },
-                                        onAddToPrompt: {
-                                            model.requestComposerAppend(preview, threadId: threadId)
-                                        },
-                                        onTogglePin: { togglePin() },
-                                        onOpenSideChat: { openSideChatFromMessage() },
-                                        onDelete: canDeleteTranscriptMessage
-                                            ? { requestMessageDeletion() }
-                                            : nil
-                                    )
-                                }
-                            }
-                            if showsMessageActionChrome,
-                                let assistantFeedbackItem, let card = threadCard
-                            {
-                                AssistantMessageFeedbackBar(
-                                    item: assistantFeedbackItem,
-                                    onFeedback: { request in
-                                        model.toggleMessageFeedback(card, request: request)
-                                    }
-                                )
-                            }
-                        } else if showsMessageActionChrome {
-                            MessageActionsBar(
-                                isPinned: isPinned,
-                                onCopy: { copyText(preview) },
-                                onAddToPrompt: {
-                                    model.requestComposerAppend(preview, threadId: threadId)
-                                },
-                                onTogglePin: { togglePin() },
-                                onOpenSideChat: { openSideChatFromMessage() },
-                                onDelete: canDeleteTranscriptMessage
-                                    ? { requestMessageDeletion() }
-                                    : nil
-                            )
-                            if let assistantFeedbackItem, let card = threadCard {
-                                AssistantMessageFeedbackBar(
-                                    item: assistantFeedbackItem,
-                                    onFeedback: { request in
-                                        model.toggleMessageFeedback(card, request: request)
-                                    }
-                                )
-                            }
-                        }
+                        messageFooter(preview: preview)
                     }
                     .contextMenu {
                         messageActionMenu(
@@ -5113,6 +5066,60 @@ struct ThreadRowView: View, Equatable {
             .padding()
             .twSheetLiquidGlass(detents: [.medium])
         }
+    }
+
+    /// Timestamp + ordinary actions + thumbs all share one compact row. The
+    /// feedback view still expands its reason picker below that row when a poor
+    /// rating is selected.
+    @ViewBuilder
+    private func messageFooter(preview: String) -> some View {
+        if showsMessageActionChrome {
+            if let assistantFeedbackItem, let card = threadCard {
+                AssistantMessageFeedbackBar(
+                    item: assistantFeedbackItem,
+                    onFeedback: { request in
+                        model.toggleMessageFeedback(card, request: request)
+                    },
+                    leadingContent: {
+                        HStack(spacing: 6) {
+                            transcriptFooterTimestamp
+                            messageActions(preview: preview, fillsAvailableWidth: false)
+                        }
+                    }
+                )
+            } else {
+                HStack(spacing: 6) {
+                    transcriptFooterTimestamp
+                    messageActions(preview: preview, fillsAvailableWidth: true)
+                }
+            }
+        } else {
+            transcriptFooterTimestamp
+        }
+    }
+
+    @ViewBuilder
+    private var transcriptFooterTimestamp: some View {
+        if let footerTime = transcriptFooterTime {
+            Text(footerTime)
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textMuted.opacity(0.88))
+                .monospacedDigit()
+        }
+    }
+
+    private func messageActions(preview: String, fillsAvailableWidth: Bool) -> MessageActionsBar {
+        MessageActionsBar(
+            isPinned: isPinned,
+            onCopy: { copyText(preview) },
+            onAddToPrompt: {
+                model.requestComposerAppend(preview, threadId: threadId)
+            },
+            onTogglePin: { togglePin() },
+            onOpenSideChat: { openSideChatFromMessage() },
+            onDelete: canDeleteTranscriptMessage ? { requestMessageDeletion() } : nil,
+            fillsAvailableWidth: fillsAvailableWidth
+        )
     }
 
     /// Body content for the per-lane clamped viewport (Electron
