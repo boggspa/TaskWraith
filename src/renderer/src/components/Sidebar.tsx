@@ -6718,15 +6718,15 @@ export function Sidebar({
               <span>Settings</span>
             </button>
           </div>
-          {/* Traffic-light control cluster: Approvals (red) / Shares (yellow) /
-              Devices (green). Each opens a popover anchored to its own icon;
+          {/* Attention control cluster: Approvals waiting (yellow) / Devices
+              connected (green). Each opens a popover anchored to its own icon;
               the bottom item deep-links to the matching Settings tab. Settings
               stays flex:1 so it dominates the row. */}
           <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
             <div className="sidebar-footer-control-anchor" ref={approvalsFooterAnchorRef}>
               <button
                 type="button"
-                className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
+                className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-yellow' : ''}${
                   approvalsPopoverOpen ? ' is-open' : ''
                 }`}
                 onClick={() => {

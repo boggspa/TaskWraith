@@ -20,6 +20,7 @@ import {
   sidebarCompactChatRowPropsAreEqual,
   type WorkspaceBoardCreateInput
 } from './Sidebar'
+import { CollapsedSidebarCornerPill } from './CollapsedSidebarCornerPill'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -2674,19 +2675,20 @@ describe('Sidebar footer controls', () => {
     expect(html).not.toContain('aria-label="People"')
   })
 
-  it('glows the Approvals button red only while an approval is pending', () => {
-    // glow-red is unique to the Approvals button, so presence/absence of the
+  it('glows the Approvals button yellow only while an approval is pending', () => {
+    // glow-yellow is unique to the Approvals button, so presence/absence of the
     // class unambiguously reflects the pending-approval signal.
     const idle = renderSidebar([makeChat()])
-    expect(idle).not.toContain('glow-red')
+    expect(idle).not.toContain('glow-yellow')
 
     const pending = renderSidebar([makeChat()], {
       pendingAgentApprovalByChatId: { 'parent-1': makeApproval() }
     })
-    expect(pending).toContain('glow-red')
+    expect(pending).toContain('glow-yellow')
+    expect(pending).not.toContain('glow-red')
   })
 
-  it('glows the Approvals button red while an agent question is pending', () => {
+  it('glows the Approvals button yellow while an agent question is pending', () => {
     const pending = renderSidebar([makeChat()], {
       pendingAgentQuestionsByChatId: {
         'parent-1': [
@@ -2702,20 +2704,63 @@ describe('Sidebar footer controls', () => {
         ]
       }
     })
-    expect(pending).toContain('glow-red')
+    expect(pending).toContain('glow-yellow')
+    expect(pending).not.toContain('glow-red')
     // This test's subject is the Approvals BUTTON. It used to also assert the
     // row's "Needs input" chip; that chip is retired, and the row-ink path a
     // pending question now takes has its own coverage in "Sidebar
     // waiting-on-you accent".
   })
 
-  it('ignores cleared (null) approval entries for the red glow', () => {
+  it('ignores cleared (null) approval entries for the yellow glow', () => {
     // usePerChatState deletes keys on reset, but guard against a lingering null
     // still suppressing the glow.
     const html = renderSidebar([makeChat()], {
       pendingAgentApprovalByChatId: { 'parent-1': null }
     })
-    expect(html).not.toContain('glow-red')
+    expect(html).not.toContain('glow-yellow')
+  })
+
+  it('keeps the collapsed-sidebar Approvals control on the same yellow attention state', () => {
+    const renderCollapsed = (
+      attention: Pick<
+        ComponentProps<typeof CollapsedSidebarCornerPill>,
+        'pendingAgentApprovalByChatId' | 'pendingAgentQuestionsByChatId'
+      >
+    ) =>
+      renderToStaticMarkup(
+        <CollapsedSidebarCornerPill
+          chats={[makeChat()]}
+          onSelectChat={() => {}}
+          onOpenSettings={() => {}}
+          onOpenSettingsTab={() => {}}
+          {...attention}
+        />
+      )
+
+    const approval = renderCollapsed({
+      pendingAgentApprovalByChatId: { 'parent-1': makeApproval() }
+    })
+    const question = renderCollapsed({
+      pendingAgentQuestionsByChatId: {
+        'parent-1': [
+          {
+            questionId: 'q-collapsed',
+            appRunId: 'run-1',
+            messageId: 'agent-question-q-collapsed',
+            provider: 'codex',
+            question: 'Which option?',
+            options: ['A', 'B'],
+            askedAt: 1
+          }
+        ]
+      }
+    })
+
+    expect(approval).toContain('glow-yellow')
+    expect(question).toContain('glow-yellow')
+    expect(approval).not.toContain('glow-red')
+    expect(question).not.toContain('glow-red')
   })
 
 })

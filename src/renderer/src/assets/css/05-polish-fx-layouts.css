@@ -3328,7 +3328,7 @@
 
 /* Footer control cluster — three icon buttons (Approvals / Shares / Devices),
    each opening a popover. They share a base look; a per-button glow class
-   signals state (red = pending approval, yellow = active share, green = device
+   signals state (yellow = waiting for approval or an answer, green = device
    connected). Replaces the old single `.sidebar-footer-remote` button. */
 .sidebar-footer-controls {
   position: relative;
