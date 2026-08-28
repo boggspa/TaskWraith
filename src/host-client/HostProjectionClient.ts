@@ -57,7 +57,9 @@ import {
   type HostLocalTransportEvent,
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportRequest,
-  type HostLocalTransportSuccessResult
+  type HostLocalTransportSuccessResult,
+  type HostWorkspaceGitReadParams,
+  type HostWorkspaceGitReadResult
 } from '../shared/hostProtocolTransport'
 import {
   decodeTaskWraithHostDiscovery,
@@ -89,8 +91,23 @@ const DEFAULT_CLIENT_CAPABILITIES: readonly HostCapability[] = [
   'commands',
   'receipts',
   'health',
-  'recovery'
+  'recovery',
+  // Requested, not assumed. The Host advertises workspace-git only when a git
+  // binary actually resolves, and the welcome is an INTERSECTION of request and
+  // offer, so asking for it on a Host without git simply leaves it unoffered.
+  'workspace-git'
 ]
+
+/**
+ * Result of a workspace git read.
+ *
+ * `available: false` is a first-class state, not an error: a Host with no git
+ * binary never offers the capability, and the TUI must render that as "git is
+ * not available here" rather than as a failure.
+ */
+export type HostWorkspaceGitReadOutcome =
+  | { readonly available: true; readonly result: HostWorkspaceGitReadResult }
+  | { readonly available: false; readonly reason: 'capability-unavailable' }
 
 export interface HostProjectionClientIdentity {
   clientId: string
@@ -456,6 +473,40 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected thread history result kind.')
     }
     return result.page
+  }
+
+  /**
+   * Read git state for a workspace or thread.
+   *
+   * Returns an OUTCOME UNION rather than throwing on absence, unlike the other
+   * read methods. That is deliberate: every other read is always available on a
+   * connected Host, but workspace-git is advertised only when a git binary
+   * resolves, so "this Host has no git" is a routine, expected state — not a
+   * failure. The TUI has to render those two differently, and a thrown error
+   * would force it to pattern-match on message text to tell them apart.
+   *
+   * NOT CONNECTED IS NOT THE SAME AS UNAVAILABLE. supports() returns false when
+   * there is no welcome at all, so checking it alone would report a dropped
+   * connection as "git unavailable here" — a wrong and sticky diagnosis. The
+   * connection is therefore checked first and still throws.
+   */
+  async getWorkspaceGitRead(
+    params: HostWorkspaceGitReadParams
+  ): Promise<HostWorkspaceGitReadOutcome> {
+    if (!this.welcome) {
+      throw new Error('TaskWraith Host is not connected.')
+    }
+    if (!this.welcome.capabilities.includes('workspace-git')) {
+      return { available: false, reason: 'capability-unavailable' }
+    }
+    const result = await this.request('workspace.git.read', params)
+    if (result.kind !== 'workspace.git.read') {
+      throw new Error('TaskWraith Host returned an unexpected workspace git result kind.')
+    }
+    // The whole result is returned, so `truncated` reaches the caller intact. A
+    // truncated diff that arrives looking complete is the exact failure the
+    // 128KiB cap exists to prevent, so this must never be projected away.
+    return { available: true, result: result.result }
   }
 
   async getHistorySince(request: HostHistorySinceRequest): Promise<HostHistorySinceResult> {
