@@ -30,6 +30,11 @@ import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
 import type { TaskWraithPluginActivatedMobileProjection } from '../shared/plugins/PluginTypes'
 import { withContextUsageSnapshot } from '../shared/contextUsage'
+import {
+  DEFAULT_DARK_THEME_ACCENT_COLOR,
+  DEFAULT_LIGHT_THEME_ACCENT_COLOR,
+  DEFAULT_THEME_ACCENT_COLOR
+} from '../shared/themeAccentColor'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -350,6 +355,21 @@ describe('RemoteTaskProjection', () => {
       light: '#12AB3424',
       dark: '#12AB342e'
     })
+  })
+
+  it('projects the semantic default accent for light and dark appearances', () => {
+    expect(
+      buildRemoteShellAppearance({
+        themeAppearance: 'light',
+        themeAccentColor: DEFAULT_THEME_ACCENT_COLOR
+      }).colors.accent
+    ).toBe(DEFAULT_LIGHT_THEME_ACCENT_COLOR)
+    expect(
+      buildRemoteShellAppearance({
+        themeAppearance: 'dark',
+        themeAccentColor: DEFAULT_THEME_ACCENT_COLOR
+      }).colors.accent
+    ).toBe(DEFAULT_DARK_THEME_ACCENT_COLOR)
   })
 
   it('builds a bounded task feed sorted by recent activity', () => {

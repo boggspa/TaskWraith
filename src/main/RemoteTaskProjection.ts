@@ -27,7 +27,11 @@ import type {
   WorkspaceBoardDefinition
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
-import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../shared/themeAccentColor'
+import {
+  DEFAULT_THEME_ACCENT_COLOR,
+  resolveDefaultThemeAccentColor,
+  resolveThemeAccentColorForAppearance
+} from '../shared/themeAccentColor'
 import {
   LIVE_ENSEMBLE_LANE_STATUSES,
   ensembleTurnTransitionLabel,
@@ -1048,9 +1052,12 @@ export function buildRemoteShellAppearance(
 ): RemoteShellAppearance {
   const resolved = { ...DEFAULT_REMOTE_SHELL_SETTINGS, ...settings }
   const accent = settings.themeAccentColor
-    ? normalizeThemeAccentColor(settings.themeAccentColor)
+    ? resolveThemeAccentColorForAppearance(
+        settings.themeAccentColor,
+        resolved.themeAppearance
+      )
     : resolved.themeAccentStyle === 'system'
-      ? THEME_ACCENTS[resolved.themeAppearance] || DEFAULT_REMOTE_SHELL_COLORS.accent
+      ? resolveDefaultThemeAccentColor(resolved.themeAppearance)
       : THEME_ACCENTS[resolved.themeAccentStyle] || DEFAULT_REMOTE_SHELL_COLORS.accent
 
   return {

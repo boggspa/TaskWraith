@@ -19,6 +19,7 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { DEFAULT_THEME_ACCENT_COLOR } from '../../shared/themeAccentColor'
 
 describe('normalizeAuditRunIdentity', () => {
   it('accepts a valid audit role identity with optional dimension/findingId', () => {
@@ -1119,7 +1120,7 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitizeSettingsPatch({ themeAccentColor: '#12ab34' }).themeAccentColor).toBe('#12AB34')
     expect(sanitizeSettingsPatch({ themeAccentColor: 'f0c' }).themeAccentColor).toBe('#FF00CC')
     expect(sanitizeSettingsPatch({ themeAccentColor: 'not-a-colour' }).themeAccentColor).toBe(
-      '#5A8CFF'
+      DEFAULT_THEME_ACCENT_COLOR
     )
   })
 

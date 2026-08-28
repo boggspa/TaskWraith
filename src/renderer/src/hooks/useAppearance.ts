@@ -14,7 +14,12 @@ import type {
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
-import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../../../shared/themeAccentColor'
+import {
+  DEFAULT_THEME_ACCENT_COLOR,
+  isDefaultThemeAccentColor,
+  normalizeThemeAccentColor,
+  resolveThemeAccentColorForAppearance
+} from '../../../shared/themeAccentColor'
 import {
   normalizeAgentThemeTokenOverrides,
   type AgentThemeTokenOverrides
@@ -325,10 +330,15 @@ export function useAppearance() {
     root.setAttribute('data-corners', next.themeCornerStyle)
     root.setAttribute('data-accent', 'custom')
     root.setAttribute('data-user-bubble-color', 'shared')
-    root.style.setProperty('--accent', next.themeAccentColor)
+    const themeAccentColor = resolveThemeAccentColorForAppearance(
+      next.themeAccentColor,
+      next.themeAppearance,
+      Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches)
+    )
+    root.style.setProperty('--accent', themeAccentColor)
     root.style.setProperty(
       '--accent-hover',
-      `color-mix(in srgb, ${next.themeAccentColor} 78%, white)`
+      `color-mix(in srgb, ${themeAccentColor} 78%, white)`
     )
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
@@ -555,7 +565,8 @@ export function useAppearance() {
   useEffect(() => {
     const motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     const transparencyQuery = window.matchMedia?.('(prefers-reduced-transparency: reduce)')
-    if (!motionQuery && !transparencyQuery) {
+    const colorSchemeQuery = window.matchMedia?.('(prefers-color-scheme: light)')
+    if (!motionQuery && !transparencyQuery && !colorSchemeQuery) {
       return
     }
 
@@ -585,11 +596,25 @@ export function useAppearance() {
       })
     }
 
+    const handleColorSchemeChange = () => {
+      setState((prev) => {
+        if (
+          prev.themeAppearance !== 'system' ||
+          !isDefaultThemeAccentColor(prev.themeAccentColor)
+        ) {
+          return prev
+        }
+        return { ...prev }
+      })
+    }
+
     motionQuery?.addEventListener?.('change', handlePreferenceChange)
     transparencyQuery?.addEventListener?.('change', handlePreferenceChange)
+    colorSchemeQuery?.addEventListener?.('change', handleColorSchemeChange)
     return () => {
       motionQuery?.removeEventListener?.('change', handlePreferenceChange)
       transparencyQuery?.removeEventListener?.('change', handlePreferenceChange)
+      colorSchemeQuery?.removeEventListener?.('change', handleColorSchemeChange)
     }
   }, [])
 

@@ -1,9 +1,15 @@
 /**
  * The single user-selected colour that drives both the app accent and the
- * user's message bubble. Older settings retain separate named accent/bubble
- * choices; `resolveThemeAccentColor` folds those into this value on read.
+ * user's message bubble. The canonical default value is a semantic sentinel:
+ * it resolves to a neutral dark or light colour with the active appearance.
+ * Older settings retain separate named accent/bubble choices;
+ * `resolveThemeAccentColor` folds those into this value on read.
  */
-export const DEFAULT_THEME_ACCENT_COLOR = '#5A8CFF'
+export const DEFAULT_DARK_THEME_ACCENT_COLOR = '#0B0C0F'
+export const DEFAULT_LIGHT_THEME_ACCENT_COLOR = '#FAFAFA'
+export const DEFAULT_THEME_ACCENT_COLOR = DEFAULT_DARK_THEME_ACCENT_COLOR
+
+const LIGHT_THEME_APPEARANCES = new Set(['light', 'citrus', 'mist', 'sage', 'alabaster'])
 
 const LEGACY_THEME_ACCENT_COLORS: Readonly<Record<string, string>> = {
   blue: '#5A8CFF',
@@ -37,6 +43,34 @@ export function normalizeThemeAccentColor(
   fallback = DEFAULT_THEME_ACCENT_COLOR
 ): string {
   return normalizeHexColor(value) ?? normalizeHexColor(fallback) ?? DEFAULT_THEME_ACCENT_COLOR
+}
+
+/** Resolves the semantic Default choice against the active app/OS appearance. */
+export function resolveDefaultThemeAccentColor(
+  themeAppearance: unknown,
+  systemPrefersLight = false
+): string {
+  const useLightDefault =
+    LIGHT_THEME_APPEARANCES.has(String(themeAppearance)) ||
+    (themeAppearance === 'system' && systemPrefersLight)
+  return useLightDefault ? DEFAULT_LIGHT_THEME_ACCENT_COLOR : DEFAULT_DARK_THEME_ACCENT_COLOR
+}
+
+/** True only for the canonical persisted value representing the Default choice. */
+export function isDefaultThemeAccentColor(value: unknown): boolean {
+  return normalizeHexColor(value) === DEFAULT_THEME_ACCENT_COLOR
+}
+
+/** Keeps custom colours fixed while making the Default choice theme-aware. */
+export function resolveThemeAccentColorForAppearance(
+  value: unknown,
+  themeAppearance: unknown,
+  systemPrefersLight = false
+): string {
+  const normalized = normalizeThemeAccentColor(value)
+  return normalized === DEFAULT_THEME_ACCENT_COLOR
+    ? resolveDefaultThemeAccentColor(themeAppearance, systemPrefersLight)
+    : normalized
 }
 
 /**

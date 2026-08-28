@@ -1,9 +1,10 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { ThemeCornerStyle } from '../../../main/store/types'
+import type { ThemeAppearance, ThemeCornerStyle } from '../../../main/store/types'
 import {
   DEFAULT_THEME_ACCENT_COLOR,
-  normalizeThemeAccentColor
+  isDefaultThemeAccentColor,
+  resolveThemeAccentColorForAppearance
 } from '../../../shared/themeAccentColor'
 import {
   accentFromHue,
@@ -27,18 +28,33 @@ function rangeFillStyle(value: number, min: number, max: number): React.CSSPrope
 
 export function SettingsSharedAccentControl({
   color,
+  themeAppearance,
   cornerStyle,
   transcriptFontFamily,
   onColorChange,
   onCornerStyleChange
 }: {
   color: string
+  themeAppearance?: ThemeAppearance
   cornerStyle: ThemeCornerStyle
   transcriptFontFamily: string
   onColorChange: (next: string) => void
   onCornerStyleChange: (next: ThemeCornerStyle) => void
 }): React.JSX.Element {
-  const safeColor = normalizeThemeAccentColor(color)
+  const activeThemeAppearance =
+    themeAppearance ??
+    (typeof document !== 'undefined'
+      ? document.documentElement.getAttribute('data-theme') || 'system'
+      : 'system')
+  const systemPrefersLight =
+    typeof window !== 'undefined' &&
+    Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches)
+  const defaultSelected = isDefaultThemeAccentColor(color)
+  const safeColor = resolveThemeAccentColorForAppearance(
+    color,
+    activeThemeAppearance,
+    systemPrefersLight
+  )
   const parsed = parsePoolColorInput(safeColor) || parsePoolColorInput(DEFAULT_THEME_ACCENT_COLOR)
   const safeHue = normalizeHue(parsed?.hue ?? 0)
   const safeSaturation = normalizePoolIconSaturation(parsed?.saturation ?? 70)
@@ -111,10 +127,10 @@ export function SettingsSharedAccentControl({
         <button
           type="button"
           className="agent-pool-mini-btn settings-diff-stat-color-reset"
-          disabled={safeColor === DEFAULT_THEME_ACCENT_COLOR}
+          disabled={defaultSelected}
           onClick={() => onColorChange(DEFAULT_THEME_ACCENT_COLOR)}
         >
-          Reset
+          Default
         </button>
       </header>
       <div className="agent-pool-color-controls settings-diff-stat-color-controls">

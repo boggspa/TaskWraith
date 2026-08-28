@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_THEME_ACCENT_COLOR } from '../../../shared/themeAccentColor'
 import { SettingsSharedAccentControl } from './SettingsSharedAccentControl'
 
 describe('SettingsSharedAccentControl', () => {
@@ -7,6 +8,7 @@ describe('SettingsSharedAccentControl', () => {
     const html = renderToStaticMarkup(
       <SettingsSharedAccentControl
         color="#C040FF"
+        themeAppearance="dark"
         cornerStyle="hard"
         transcriptFontFamily="Selected Preview Font"
         onColorChange={() => {}}
@@ -15,6 +17,7 @@ describe('SettingsSharedAccentControl', () => {
     )
 
     expect(html).toContain('Shared color')
+    expect(html).toContain('Default')
     expect(html).toContain('HSL')
     expect(html).toContain('Accent and chat bubble hue')
     expect(html).toContain('Accent and chat bubble hex color')
@@ -24,5 +27,22 @@ describe('SettingsSharedAccentControl', () => {
     expect(html).toContain('--transcript-font-family:Selected Preview Font')
     expect(html).not.toContain('Selected accent')
     expect(html).toContain('aria-pressed="true"')
+  })
+
+  it('renders the semantic default with its light appearance value', () => {
+    const html = renderToStaticMarkup(
+      <SettingsSharedAccentControl
+        color={DEFAULT_THEME_ACCENT_COLOR}
+        themeAppearance="light"
+        cornerStyle="rounded"
+        transcriptFontFamily="system-ui"
+        onColorChange={() => {}}
+        onCornerStyleChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('#FAFAFA')
+    expect(html).toContain('disabled=""')
+    expect(html).toContain('>Default</button>')
   })
 })
