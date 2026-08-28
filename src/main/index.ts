@@ -15629,6 +15629,20 @@ function recordScheduledOccurrenceChildBinding(input: {
   }
 }
 
+/**
+ * Host-aware chat erasure for call sites outside ChatService's scope: legacy
+ * gate open -> synchronous legacy delete (unchanged); Host-owned gate ->
+ * thread.record.delete via the ViaHost variant. ChatService.deleteChat is the
+ * same branch plus collaboration-share handling; use it where it is in scope.
+ */
+async function deleteChatErasureAware(chatId: string): Promise<void> {
+  if (AppStore.legacyStoreWritesOpen()) {
+    AppStore.deleteChat(chatId)
+    return
+  }
+  await AppStore.deleteChatViaHost(chatId)
+}
+
 function wasDurableScheduledRunIdObserved(runId: string): boolean {
   return AppStore.hasScheduledRunIdTombstone(runId)
 }
@@ -41754,7 +41768,13 @@ async function executeGeminiMcpTool(
             isolation
           })
           if (!workerPermissions.ok) {
-            await AppStore.deleteChat(subThread.appChatId)
+            try {
+              await deleteChatErasureAware(subThread.appChatId)
+            } catch (cleanupError) {
+              // Cleanup failure must not mask the permission rejection that
+              // caused the rollback — log it and surface the real reason.
+              console.error('[delegate_wave] sub-thread rollback delete failed', cleanupError)
+            }
             throw new Error(`delegate_wave: ${workerPermissions.reason}`)
           }
           const subThreadEffectivePermissions = workerPermissions.effectivePermissions
@@ -41936,7 +41956,13 @@ async function executeGeminiMcpTool(
           } catch {
             // Best-effort card cleanup.
           }
-          await AppStore.deleteChat(child.subThreadId)
+          try {
+            await deleteChatErasureAware(child.subThreadId)
+          } catch (error) {
+            // Rollback cleanup is best-effort: a refused delete must not mask
+            // the spawn failure being rolled back.
+            console.error('[delegate_wave] rollback worker sub-thread delete failed', error)
+          }
         },
         projectFleetWaveCard: ({
           waveId,

@@ -52,7 +52,7 @@ export interface ExternalProviderThreadImportDeps {
   readonly getChat: (chatId: string) => ChatRecord | null
   readonly createGlobalChat: () => ChatRecord
   readonly saveChat: (chat: ChatRecord) => ChatRecord
-  readonly deleteChat: (chatId: string) => void
+  readonly deleteChat: (chatId: string) => void | Promise<void>
   readonly now?: () => number
   readonly createId?: () => string
 }
@@ -594,9 +594,13 @@ export class ExternalProviderThreadImportService {
         saved.messages.length < importedMessages.length
       ) {
         try {
-          this.deps.deleteChat(created.appChatId)
-        } catch {
-          // The draft may never have been persisted (history disabled).
+          await this.deps.deleteChat(created.appChatId)
+        } catch (error) {
+          // A genuinely absent draft (history disabled) is a no-op by
+          // contract; landing here means the cleanup itself was REFUSED.
+          // That must not pass silently and leak an orphaned draft — but the
+          // history-disabled import error below stays the primary failure.
+          console.error('[external-import] draft chat cleanup failed after refused history', error)
         }
         throw new ExternalProviderThreadImportError(
           'history-disabled',
