@@ -5,6 +5,8 @@ TaskWraith's Welcome sheet includes a small **Try this first** card under
 to test this?” with a bounded exercise that makes the panel visible without
 silently changing a workspace.
 
+<!-- screenshot-pending: Welcome sheet "Try this first: a governed workspace review" card with Copy task and Show the sample task -->
+
 ## What the sample does
 
 The task asks the current seats to inspect the workspace through different

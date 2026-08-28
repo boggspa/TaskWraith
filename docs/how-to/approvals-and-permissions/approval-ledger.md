@@ -17,6 +17,18 @@ The Approval Ledger is an audit log of every approval decision TaskWraith has re
 4. Click a row to expand it and see details: method, service, decision, decision source, granted scope, any attached note, timestamps, run/chat ids, and the retained request preview or metadata. Signed-elevated `canvas_eval` is deliberately content-minimised: its exact script exists only in the transient desktop approval, while the durable row retains an approval-bound digest/length receipt rather than the script or returned value/error.
 5. Click **Refresh** to pull the latest decisions, or **Export JSON** to download the currently-filtered records for sharing or forensics. Treat the export as sensitive: ordinary approval rows can include request bodies, command previews, file paths, prompt snippets, metadata, decision notes, and workspace identifiers. The `canvas_eval` durable redaction above remains in force for exports.
 
+## Remote-device audit records
+The iOS companion bridge keeps its own remote-device audit path for paired-device actions and trust decisions. The companion is currently a TestFlight beta, not a generally distributed App Store release. Remote authority stays gated by end-to-end-encrypted pairing, per-workspace allowlists, granted capabilities and approval modes, and host-side policy. You can disable the bridge in **Settings → Devices**; `IOS_REMOTE_TRUE=0` or `IOS_REMOTE_TRUE=false` is the emergency force-off and prevents the bridge from starting at all.
+
+## Release check
+Before a release, verify:
+
+- approval ledger tests pass
+- remote-device audit ledger tests pass when remote/iOS code changes
+- Settings → Automation → Approvals & Grants still loads and exports records
+- `/audit` completion and failure states are visible, dismissible, and durable
+- release notes call out any new policy or grant behavior
+
 ## Tips & related
 - [Pending Approval Modal](pending-approval-modal.md) — where the original accept/decline decisions are made.
 - [Permission Elevation Sheet](permission-elevation-sheet.md) — prompts for raising approval posture, also recorded here.

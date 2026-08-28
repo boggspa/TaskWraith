@@ -1,8 +1,8 @@
 # How-To Manual — Screenshot Shot List
 
-86 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+88 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 captured, 25 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 86 guide pages minus the 25 with no capture on disk.
+Current inventory, reconciled 2026-08-27 against the 2026-07-18 latest-source capture pass: **61 captured, 27 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 88 guide pages minus the 27 with no capture on disk.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -22,7 +22,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `approvals-and-permissions__approval-ledger.png` | Electron | Approval Ledger panel with filter and export controls | **Settings → Automation → Approvals & Grants.** |
-| `approvals-and-permissions__approval-timeouts.png` | Electron | Settings panel showing approval timeout fields per provider | Settings → **Behavior** tab → **Timeout windows** section. |
+| `approvals-and-permissions__approval-timeouts.png` | Electron | Settings panel showing approval timeout fields per provider | Settings → **General** tab → **Timeout windows** section. |
 | `approvals-and-permissions__pending-approval-modal.png` | Electron | Pending approval modal showing Accept / Decline options with countdown | Appears automatically above the composer for the chat that triggered the request, whenever an agent's action needs your approval. |
 | `approvals-and-permissions__permission-elevation-sheet.png` | Electron | Permission elevation sheet showing posture options | Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Accept Edits, Full WS Access, or Full Access. |
 | `approvals-and-permissions__provider-agentic-policies.png` | Electron | Provider settings showing agentic policy matrix | **Settings → AI & Providers → Providers → Agentic services.** A read-only summary ("Policy posture") also appears on **Settings → Data → Safety & Privacy**, with an **Edit policies** button that jumps back here. |
@@ -33,7 +33,7 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with the address bar and a loaded page | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
-| `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) from the composer's Plus Tools menu. |
+| `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) with the Multiview layout picker in the composer's telemetry row, then pick a surface card in an empty pane's Thread Home. |
 | `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
 | `canvas-and-previews__ios-canvas-preview.png` | iOS | iOS canvas preview card in the companion app | Open a chat in the companion app that has an open Canvas on the desktop. |
 
@@ -44,7 +44,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `chats-and-threads__chat-types.png` | Electron | Chat surface with the Chat / Code / Work switcher and chat, Channels, and Ensemble sections. **The capture on disk is stale** — it predates the Channels rename and still shows a "Shared" sidebar section; recapture. | Use **Chat** for General chats, **Code** for workspace-scoped threads/workflows/boards, and **Work** for Projects; Pinned, Recents, Ensembles, and Channels are scoped to the active Chat or Code surface. |
 | `chats-and-threads__in-chat-search.png` | Electron | In-chat search bar with highlighted results in the transcript | In any chat, press **⌘F** on macOS or **Ctrl+F** on Windows/Linux to open the search bar above the transcript. |
 | `chats-and-threads__pinned-messages.png` | Electron | Pinned messages panel in the right dock | Pin a message from its hover action chip or right-click context menu in any transcript. |
-| `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Open the **linked chat menu** (the split-pane icon with a chevron, in the chat header next to the other corner buttons) and choose how to open it: - **Open isolated side split** — docks a sidecar pane beside the current chat with a copied parent snapshot. |
+| `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Click the split-pane corner control (**Open isolated side chat**), or run `/side`, to dock a sidecar pane beside the current chat. |
 | `chats-and-threads__sub-thread-delegation.png` | Electron | Sub-thread delegation card and return card in a chat transcript | Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread**. |
 
 ### composer
@@ -53,7 +53,7 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `composer__ensemble-mode-picker.png` | Electron | Composer ensemble mode picker showing Turn / Continuous options | In an **ensemble chat**, look at the **composer's action row** above the input box. |
 | `composer__goal-button.png` | Electron | Composer goal button popover showing objective and status | In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. |
-| `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, multiview, screen watch | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
+| `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, screen watch, and workspace tools | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
 | `composer__provider-model-permissions-pickers.png` | Electron | Composer inline pickers row with provider, model+reasoning, and permissions chips | In the **composer's inline pickers row**, just below the prompt input. |
 | `composer__schedule-prompt.png` | Electron | Composer schedule button with quick offset options | In the **composer's control row** (the icon row beneath the prompt box), next to the Goal button. |
 | `composer__slash-commands.png` | Electron | Composer slash command menu open with available commands | Open it from the **chat composer** in three ways: - Type `/` at the start of a word in the composer. |
@@ -84,7 +84,9 @@ The current refresh uses latest-source development apps, not an installed releas
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `getting-started__add-workspace.png` | Electron | Workspaces section header with its Add workspace plus button | Select **Code**, then click the **+** button on the **Workspaces** section header, or go to **Settings → Workspaces → Workspaces**. |
+| `getting-started__external-provider-thread-import.png` | Electron | Settings → Archived showing the Import an external provider thread panel | Open **Settings → Archived**, then use **Import an external provider thread**. |
 | `getting-started__first-launch-sheet.png` | Electron | Top of the First Launch Sheet showing provider status and authentication actions | It appears automatically the first time you launch TaskWraith. |
+| `getting-started__first-run-ensemble-task.png` | Electron | Welcome sheet "Try this first: a governed workspace review" card with Copy task and Show the sample task | In the Welcome sheet, under **8. Try Ensemble chats**. |
 | `getting-started__sidebar-onboarding-hint.png` | Electron | Sidebar onboarding hint card under the + button | In the **Sidebar**, directly under the **+** (Add workspace) button, when no workspaces are loaded. |
 | `getting-started__welcome-screen.png` | Electron | General welcome draft with greeting, composer, and Weather/Sky backdrop | Appears in the **center stage** when a selected General draft is pristine and idle; workspace drafts can additionally show usage and activity dashboards. |
 

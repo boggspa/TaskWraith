@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Ask, Accept Edits, Full WS Access, or Full Access). The eight static-live providers are Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, and Mistral; AntiGravity is conditionally offered after its consent/credential setup, and Gemini remains history-only. Kimi's structural ACP admission runs in every build. An admitted binary without a reviewed roster tuple is labelled `unattested-development`; credentials do not bypass the structural checks. Cursor's current Path-B route can use its native tools alongside TaskWraith's governed tools.
+These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Ask, Accept Edits, Full WS Access, or Full Access). The nine static-live providers are Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, Mistral, and Muse; AntiGravity is conditionally offered after its consent/credential setup, and Gemini remains history-only. Kimi's structural ACP admission runs in every build. An admitted binary without a reviewed roster tuple is labelled `unattested-development`; credentials do not bypass the structural checks. Cursor's current Path-B route can use its native tools alongside TaskWraith's governed tools.
 
 In a normal top-level chat, these pickers stay usable even after the thread has
 history. If the chat is idle, changes apply immediately. If a turn is already
@@ -39,7 +39,7 @@ rewriting its already-running signed turn. Solo workspace grants are consulted
 by the TaskWraith approval gate as each eligible tool action is requested.
 
 ## Tips & related
-- [Model Catalogue](../../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.
+- [Model Catalogue](../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.
 - [Plus Tools Menu](plus-tools-menu.md) — sits at the start of the same action row as these pickers.
 - [Ensemble Mode Picker](ensemble-mode-picker.md) — when these pickers edit a selected participant instead of the chat.
 - [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to providers and manage agentic service policies that back the Tool Grants column.

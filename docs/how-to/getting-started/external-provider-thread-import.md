@@ -3,6 +3,8 @@
 TaskWraith can import a user-selected Codex, Claude, Cursor, or AntiGravity
 transcript as a local archived snapshot.
 
+<!-- screenshot-pending: Settings → Archived showing the Import an external provider thread panel -->
+
 ## Import a file
 
 1. Open **Settings → Archived**.

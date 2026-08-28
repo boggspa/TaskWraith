@@ -1,14 +1,14 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 captures against 86 guide pages — of which one
+Inventory reconciled 2026-08-27 against the 2026-07-18 latest-source capture pass: **61 of 88 captured; 27 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 captures against 88 guide pages — of which one
 (`chats-and-threads__chat-types`) is known stale rather than current, so 60 are
-trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
+trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 88-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 25 pending and
+These pages **do** have an image, so they are not part of the 27 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
@@ -45,7 +45,7 @@ which is worse than an honest gap: the page reads as done.
 
 ## Needs Canvas or media content
 
-- `canvas-and-previews__canvas-browser` — added after the capture pass and never registered; keep private paths, vault URLs, and signed-in site content out of frame.
+- `canvas-and-previews__canvas-browser` — keep private paths, vault URLs, and signed-in site content out of frame.
 - `canvas-and-previews__canvas-multiview-pane`
 - `canvas-and-previews__mesh-canvas` — capture a redacted exported scene; do not show local source paths or vault URLs.
 - `media-audio-and-video__chat-media-dock`
@@ -60,5 +60,7 @@ which is worse than an honest gap: the page reads as done.
 
 ## Needs clean-profile or update state
 
+- `getting-started__external-provider-thread-import`
+- `getting-started__first-run-ensemble-task` — the Welcome sheet's **Try this first** card; use a scratch workspace and keep private paths out of frame.
 - `getting-started__sidebar-onboarding-hint`
 - `sidebar-navigation__update-pill`
