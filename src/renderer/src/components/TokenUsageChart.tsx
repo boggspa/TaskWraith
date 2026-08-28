@@ -248,8 +248,8 @@ export function TokenUsageChart({
             ))}
           </div>
         )}
-        <span className="token-usage-chart-total">
-          {windowLabel} <strong>{formatTokenCount(data.totalTokens)}</strong> tokens
+        <span className="token-usage-chart-total usage-heatmap-chip">
+          {windowLabel} <strong>{formatTokenCount(data.totalTokens)}</strong>
         </span>
       </div>
       {data.maxTokens > 0 ? (
@@ -263,7 +263,9 @@ export function TokenUsageChart({
           {data.days.map((day, index) => {
             const height = (day.tokens / data.maxTokens) * 96
             const barStyle: CSSProperties | undefined = day.dominantProvider
-              ? { fill: HEATMAP_PROVIDER_COLOR_HEX[day.dominantProvider] }
+              ? ({
+                  '--token-usage-bar-color': HEATMAP_PROVIDER_COLOR_HEX[day.dominantProvider]
+                } as CSSProperties)
               : undefined
             return (
               <rect

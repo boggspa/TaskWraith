@@ -3926,10 +3926,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .usage-heatmap-cell {
   border-radius: 2px;
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  transition: opacity 180ms ease;
+  opacity: var(--usage-heatmap-cell-opacity, 1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
   /* When cells have no events they inherit the background from
-   * this rule; when they have a provider colour the inline style
-   * overrides background + opacity. */
+   * this rule; active cells receive their provider colour and intensity
+   * through custom properties so welcome surfaces can keep a crisp rim while
+   * moving only the fill from faint to saturated. */
+}
+.usage-heatmap-cell:not([data-empty="true"]) {
+  background-color: var(--usage-heatmap-cell-color, var(--accent));
 }
 [data-reduce-motion="true"] .usage-heatmap-cell {
   transition: none;
@@ -4092,7 +4101,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .usage-heatmap--workspace-activity .workspace-activity-heatmap-cell:not([data-empty="true"]) {
@@ -4102,45 +4113,139 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-title {
-  color: rgba(255, 232, 214, 0.56);
+  color: rgba(255, 232, 214, 0.78);
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
-  color: rgba(255, 232, 214, 0.36);
+  color: rgba(255, 232, 214, 0.56);
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
-  color: rgba(255, 232, 214, 0.44);
-  background: rgba(255, 232, 214, 0.075);
+  color: rgba(255, 232, 214, 0.64);
+  background: transparent;
+  border-color: rgba(255, 232, 214, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 242, 232, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28);
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
-  color: rgba(255, 242, 232, 0.68);
+  color: rgba(255, 242, 232, 0.9);
 }
 
 [data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: rgba(255, 232, 214, 0.105);
+  background: transparent;
+  border-color: rgba(255, 232, 214, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 242, 232, 0.065);
 }
 
 [data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-title {
-  color: rgba(18, 21, 27, 0.58);
+  color: rgba(18, 21, 27, 0.76);
 }
 
 [data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
-  color: rgba(18, 21, 27, 0.36);
+  color: rgba(18, 21, 27, 0.55);
 }
 
 [data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
-  color: rgba(18, 21, 27, 0.50);
-  background: rgba(18, 21, 27, 0.065);
+  color: rgba(18, 21, 27, 0.64);
+  background: transparent;
+  border-color: rgba(18, 21, 27, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(18, 21, 27, 0.08);
 }
 
 [data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
-  color: rgba(18, 21, 27, 0.72);
+  color: rgba(18, 21, 27, 0.9);
 }
 
 [data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: rgba(18, 21, 27, 0.085);
+  background: transparent;
+  border-color: rgba(18, 21, 27, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+/* Thread Home activity cycle — high-contrast rim treatment. The cycle, width,
+ * provider filter state, and provider colour variables remain untouched; this
+ * scopes the auditioned paint only to the existing welcome variants. */
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab {
+  border-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab[data-active="true"] {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border-color: color-mix(in srgb, currentColor 58%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, currentColor 42%, transparent),
+    0 0 7px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+:is(.usage-heatmap--welcome-standalone, .daily-heatmap--welcome-standalone, .token-usage-chart--welcome) .usage-heatmap-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 17%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, black 24%, transparent);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.usage-heatmap--welcome-standalone .usage-heatmap-cell {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: transparent;
+}
+
+.usage-heatmap--welcome-standalone .usage-heatmap-cell:not([data-empty="true"]) {
+  border-color: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-rim),
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-strength),
+    transparent
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 28%, transparent),
+    0 0 6px
+      color-mix(
+        in srgb,
+        var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-glow),
+        transparent
+      );
+  opacity: 1;
 }
 
 /* Phase L6 slice 6 — glass chrome polish on the Model Usage Card.
@@ -8674,7 +8779,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .daily-heatmap-cell {
   border-radius: 2px;
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  transition: opacity 180ms ease;
+  opacity: var(--usage-heatmap-cell-opacity, 1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
+}
+.daily-heatmap-cell:not([data-empty='true']) {
+  background-color: var(--usage-heatmap-cell-color, var(--accent));
 }
 .daily-heatmap-cell[data-outside='true'] {
   /* Padding that squares off the first and last weeks. Invisible, but it must
@@ -8703,6 +8816,53 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * height for the month axis staying legible. */
 .daily-heatmap--welcome-standalone .daily-heatmap-grid {
   aspect-ratio: 62 / 7;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-title {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: transparent;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell:not([data-empty='true']) {
+  border-color: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-rim),
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-strength),
+    transparent
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 28%, transparent),
+    0 0 6px
+      color-mix(
+        in srgb,
+        var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-glow),
+        transparent
+      );
+  opacity: 1;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell[data-empty='true'] {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell[data-outside='true'] {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-month-axis {
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
 }
 
 /* Settings instance: sits in the Model Usage activity stack beside the 90-day

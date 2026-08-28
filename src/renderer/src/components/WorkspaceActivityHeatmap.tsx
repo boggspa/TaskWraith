@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { WorkspaceActivitySnapshot } from '../../../main/store/types'
 import { HEATMAP_ROWS } from '../lib/UsageHeatmap'
 import {
@@ -72,11 +72,15 @@ function loadWorkspaceActivityWithoutBlocking(
 }
 
 function WorkspaceActivityCellTile({ cell }: { cell: WorkspaceActivityHeatmapCell }) {
+  const intensityPercent = `${Math.round(cell.intensity * 100)}%`
   const style = cell.active
-    ? {
-        backgroundColor: 'var(--accent)',
-        opacity: cell.intensity
-      }
+    ? ({
+        '--usage-heatmap-cell-color': 'var(--accent)',
+        '--usage-heatmap-cell-opacity': cell.intensity,
+        '--usage-heatmap-cell-strength': intensityPercent,
+        '--usage-heatmap-cell-rim': `${Math.round(24 + cell.intensity * 64)}%`,
+        '--usage-heatmap-cell-glow': `${Math.round(cell.intensity * 22)}%`
+      } as CSSProperties)
     : undefined
   return (
     <span

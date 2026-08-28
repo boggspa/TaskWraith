@@ -16,7 +16,7 @@
  * (`Shared/Views/LLMActivityHeatmapView.swift`) — same 30×12
  * grid dimensions, same per-bucket dominant-provider colouring.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { UsageRecord } from '../../../main/store/types'
 import { DigitOdometer } from './DigitOdometer'
 import {
@@ -44,11 +44,15 @@ const HEATMAP_LOAD_DEADLINE_MS = 1_000
 /** A single cell. Pulled out so React.memo can short-circuit
  * re-renders when the cell's bucket data hasn't changed. */
 function HeatmapCellTile({ cell }: { cell: HeatmapCell }) {
+  const intensityPercent = `${Math.round(cell.intensity * 100)}%`
   const style = cell.color
-    ? {
-        backgroundColor: cell.color,
-        opacity: cell.intensity
-      }
+    ? ({
+        '--usage-heatmap-cell-color': cell.color,
+        '--usage-heatmap-cell-opacity': cell.intensity,
+        '--usage-heatmap-cell-strength': intensityPercent,
+        '--usage-heatmap-cell-rim': `${Math.round(24 + cell.intensity * 64)}%`,
+        '--usage-heatmap-cell-glow': `${Math.round(cell.intensity * 22)}%`
+      } as CSSProperties)
     : undefined
   return (
     <span

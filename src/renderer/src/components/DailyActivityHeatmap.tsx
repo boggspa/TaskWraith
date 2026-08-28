@@ -17,7 +17,7 @@
  * per-day version of the rule deleted 75 days of real history on a real corpus
  * because of exactly that gap. See `dailyUsageRollup.ts`.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
 import {
   DAILY_USAGE_HEATMAP_DAYS,
@@ -56,14 +56,19 @@ const EXTERNAL_SCAN_WINDOW_DAYS = 90
 const MS_PER_DAY = 86_400_000
 
 function DailyHeatmapCellTile({ cell }: { cell: DailyHeatmapCell }) {
-  const style: React.CSSProperties = {
+  const style = {
     gridColumn: cell.column + 1,
-    gridRow: cell.row + 1
-  }
-  if (cell.color) {
-    style.backgroundColor = cell.color
-    style.opacity = cell.intensity
-  }
+    gridRow: cell.row + 1,
+    ...(cell.color
+      ? {
+          '--usage-heatmap-cell-color': cell.color,
+          '--usage-heatmap-cell-opacity': cell.intensity,
+          '--usage-heatmap-cell-strength': `${Math.round(cell.intensity * 100)}%`,
+          '--usage-heatmap-cell-rim': `${Math.round(24 + cell.intensity * 64)}%`,
+          '--usage-heatmap-cell-glow': `${Math.round(cell.intensity * 22)}%`
+        }
+      : {})
+  } as CSSProperties
   return (
     <span
       className="daily-heatmap-cell"
@@ -206,10 +211,10 @@ export function DailyActivityHeatmap({
             </div>
           )}
           <span className="daily-heatmap-chips" aria-label={`${title} all-provider totals`}>
-            <span className="daily-heatmap-chip">
+            <span className="daily-heatmap-chip usage-heatmap-chip">
               365D <strong>{formatDailyTokenCount(grid.totalTokens)}</strong>
             </span>
-            <span className="daily-heatmap-chip">
+            <span className="daily-heatmap-chip usage-heatmap-chip">
               {grid.activeDays} active {grid.activeDays === 1 ? 'day' : 'days'}
             </span>
           </span>
