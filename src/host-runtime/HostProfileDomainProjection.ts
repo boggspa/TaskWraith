@@ -4,8 +4,8 @@ import type { HostSnapshotProjectorInput } from './HostSnapshotProjector'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
 import { basename } from 'node:path'
 import {
-  HOST_PROTOCOL_MAX_ID,
-  HOST_PROTOCOL_MAX_SHORT,
+  createEmptyHostSnapshot,
+  decodeHostSnapshot,
   type HostHealthProjection,
   type HostParticipantProjection,
   type HostProviderModelProjection
@@ -78,27 +78,47 @@ function providerOutcome(
   }
 }
 
-const PARTICIPANT_STAGES = new Set<NonNullable<HostParticipantProjection['stage']>>([
-  'scout',
-  'worker',
-  'reviewer',
-  'background',
-  'any'
-])
-
 type ProfileThread = ReturnType<HostProfileDomainStore['listThreads']>[number]
 
-function safeProjectionText(value: unknown, max: number): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= max &&
-    value.trim() === value &&
-    [...value].every((character) => {
-      const code = character.charCodeAt(0)
-      return code > 0x1f && code !== 0x7f
-    })
-  )
+const PARTICIPANT_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
+  generation: 0,
+  cursor: 0
+})
+
+function decodeParticipantCandidate(
+  thread: ProfileThread,
+  value: unknown,
+  activeParticipantId: unknown
+): HostParticipantProjection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const participant = value as Record<string, unknown>
+  const hasModelId = Object.prototype.hasOwnProperty.call(participant, 'modelId')
+  const hasModel = Object.prototype.hasOwnProperty.call(participant, 'model')
+  const candidate = {
+    id: participant.id,
+    threadId: thread.appChatId,
+    providerId: participant.provider,
+    role: participant.role,
+    ...(hasModelId
+      ? { modelId: participant.modelId }
+      : hasModel
+        ? { modelId: participant.model }
+        : {}),
+    ...(Object.prototype.hasOwnProperty.call(participant, 'stage')
+      ? { stage: participant.stage }
+      : {}),
+    order: participant.order,
+    enabled: participant.enabled,
+    ...(Object.prototype.hasOwnProperty.call(participant, 'status')
+      ? { status: participant.status }
+      : {}),
+    active: participant.active === true || participant.id === activeParticipantId
+  }
+  const decoded = decodeHostSnapshot({
+    ...PARTICIPANT_VALIDATION_SNAPSHOT,
+    participants: [candidate]
+  })
+  return decoded.ok ? (decoded.value.participants[0] ?? null) : null
 }
 
 function projectThreadParticipants(thread: ProfileThread): HostParticipantProjection[] {
@@ -113,56 +133,15 @@ function projectThreadParticipants(thread: ProfileThread): HostParticipantProjec
     !Array.isArray(record.activeRound)
       ? (record.activeRound as Record<string, unknown>)
       : null
-  const activeParticipantId = safeProjectionText(
-    activeRound?.activeParticipantId,
-    HOST_PROTOCOL_MAX_ID
-  )
-    ? activeRound.activeParticipantId
-    : undefined
+  const activeParticipantId = activeRound?.activeParticipantId
   const seen = new Set<string>()
   const out: HostParticipantProjection[] = []
 
   for (const value of record.participants) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
-    const participant = value as Record<string, unknown>
-    if (
-      !safeProjectionText(participant.id, HOST_PROTOCOL_MAX_ID) ||
-      !safeProjectionText(participant.provider, HOST_PROTOCOL_MAX_ID) ||
-      !safeProjectionText(participant.role, HOST_PROTOCOL_MAX_SHORT) ||
-      !Number.isInteger(participant.order) ||
-      (participant.order as number) < 0 ||
-      typeof participant.enabled !== 'boolean' ||
-      seen.has(participant.id)
-    ) {
-      continue
-    }
+    const participant = decodeParticipantCandidate(thread, value, activeParticipantId)
+    if (!participant || seen.has(participant.id)) continue
     seen.add(participant.id)
-
-    const model = safeProjectionText(participant.modelId, HOST_PROTOCOL_MAX_ID)
-      ? participant.modelId
-      : safeProjectionText(participant.model, HOST_PROTOCOL_MAX_ID)
-        ? participant.model
-        : undefined
-    const stage =
-      typeof participant.stage === 'string' &&
-      PARTICIPANT_STAGES.has(participant.stage as NonNullable<HostParticipantProjection['stage']>)
-        ? (participant.stage as NonNullable<HostParticipantProjection['stage']>)
-        : undefined
-    const status = safeProjectionText(participant.status, HOST_PROTOCOL_MAX_SHORT)
-      ? participant.status
-      : undefined
-    out.push({
-      id: participant.id,
-      threadId: thread.appChatId,
-      providerId: participant.provider,
-      role: participant.role,
-      ...(model ? { modelId: model } : {}),
-      ...(stage ? { stage } : {}),
-      order: participant.order as number,
-      enabled: participant.enabled,
-      ...(status ? { status } : {}),
-      active: participant.active === true || participant.id === activeParticipantId
-    })
+    out.push(participant)
   }
   return out
 }

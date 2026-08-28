@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 
+import { createEmptyHostSnapshot, decodeHostSnapshot } from '../shared/hostProtocol'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
 import { projectHostProfileDomainSnapshot } from './HostProfileDomainProjection'
 
@@ -181,4 +182,73 @@ it('projects an ensemble thread kind and its persisted seat roster without synth
   expect(
     donor.participants.some((participant) => participant.threadId === soloThread.appChatId)
   ).toBe(false)
+})
+
+it('omits decoder-invalid seats so one malformed row cannot poison the snapshot', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-hostile-projection-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-hostile-workspace-'))
+  paths.push(profile, workspace)
+  let id = 0
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => `hostile-id-${++id}`
+  })
+  const registered = store.registerWorkspace({ path: workspace })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Hostile roster'
+  })
+  store.configureThread({ threadId: thread.appChatId, providerId: 'claude' })
+  const current = store.getThread(thread.appChatId)!
+  const base = {
+    provider: 'claude',
+    role: 'Seat',
+    order: 0,
+    enabled: true,
+    instructions: ''
+  }
+  store.persistThreadRecord({
+    threadId: current.appChatId,
+    expectedRevision: current.persistenceRevision ?? 0,
+    record: {
+      ...current,
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          { ...base, id: 'valid-seat' },
+          { ...base, id: 'p'.repeat(490), order: 1 },
+          { ...base, id: 'o'.repeat(513), order: 2 },
+          { ...base, id: 'bad-stage', stage: 'generalissimo', order: 3 },
+          { ...base, id: 'bad-status', status: 's'.repeat(201), order: 4 },
+          { ...base, id: 'bad-enabled', enabled: 'yes', order: 5 },
+          { ...base, id: 'bad\u0001control', order: 6 }
+        ]
+      }
+    }
+  })
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: {
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    },
+    providers: []
+  })
+  const decoded = decodeHostSnapshot({
+    ...createEmptyHostSnapshot({ generation: 0, cursor: 0 }),
+    ...donor
+  })
+  expect(decoded.ok).toBe(true)
+  expect(donor.participants.map((participant) => participant.id)).toEqual(['valid-seat'])
+  if (decoded.ok) {
+    expect(decoded.value.participants.map((participant) => participant.id)).toEqual(['valid-seat'])
+    expect(decoded.value.threads).toEqual([
+      expect.objectContaining({ id: thread.appChatId, chatKind: 'ensemble' })
+    ])
+  }
 })
