@@ -11,10 +11,12 @@ import {
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
   modelPickerHueClass,
+  resolveCollapsedUnifiedProviderIds,
   resolveCombinedModelPickerEnterAction,
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition,
-  runCombinedModelPickerConfirmAction
+  runCombinedModelPickerConfirmAction,
+  toggleExpandedProviderGroup
 } from './CombinedModelPicker'
 import type { ProviderId } from '../../../main/store/types'
 import {
@@ -448,6 +450,34 @@ describe('CombinedModelPicker', () => {
 
     expect(entries.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
       'claude:claude-opus-4-8'
+    ])
+  })
+
+  it('starts every provider collapsed and retains explicit expansion choices', () => {
+    const groups = [
+      {
+        provider: 'codex' as const,
+        modelOptions: [{ id: 'gpt-5.5', label: 'GPT-5.5' }]
+      },
+      {
+        provider: 'claude' as const,
+        modelOptions: [{ id: 'claude-opus-4-8', label: 'Opus 4.8' }]
+      }
+    ]
+    const initiallyExpanded = new Set<ProviderId>()
+
+    expect([...resolveCollapsedUnifiedProviderIds(groups, initiallyExpanded)]).toEqual([
+      'codex',
+      'claude'
+    ])
+
+    const afterClaudeExpansion = toggleExpandedProviderGroup(initiallyExpanded, 'claude')
+    expect([...resolveCollapsedUnifiedProviderIds(groups, afterClaudeExpansion)]).toEqual(['codex'])
+
+    const afterClaudeCollapse = toggleExpandedProviderGroup(afterClaudeExpansion, 'claude')
+    expect([...resolveCollapsedUnifiedProviderIds(groups, afterClaudeCollapse)]).toEqual([
+      'codex',
+      'claude'
     ])
   })
 

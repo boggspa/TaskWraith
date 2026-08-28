@@ -344,6 +344,7 @@ export type UnifiedModelEntry = {
 }
 
 const NO_COLLAPSED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
+const NO_EXPANDED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
 
 export function flattenUnifiedProviderModels(
   groups: readonly CombinedModelPickerProviderGroup[],
@@ -356,11 +357,22 @@ export function flattenUnifiedProviderModels(
   )
 }
 
-function toggleCollapsedProviderGroup(
-  collapsedProviderIds: ReadonlySet<ProviderId>,
+export function resolveCollapsedUnifiedProviderIds(
+  groups: readonly CombinedModelPickerProviderGroup[],
+  expandedProviderIds: ReadonlySet<ProviderId> = NO_EXPANDED_PROVIDER_GROUPS
+): Set<ProviderId> {
+  return new Set(
+    groups
+      .filter((group) => !expandedProviderIds.has(group.provider))
+      .map((group) => group.provider)
+  )
+}
+
+export function toggleExpandedProviderGroup(
+  expandedProviderIds: ReadonlySet<ProviderId>,
   provider: ProviderId
 ): Set<ProviderId> {
-  const next = new Set(collapsedProviderIds)
+  const next = new Set(expandedProviderIds)
   if (next.has(provider)) next.delete(provider)
   else next.add(provider)
   return next
@@ -1255,8 +1267,16 @@ export function CombinedModelPicker({
   const [providerHighlight, setProviderHighlight] = useState(0)
   const [modelHighlight, setModelHighlight] = useState(0)
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
-  const [collapsedProviderIds, setCollapsedProviderIds] = useState<Set<ProviderId>>(() => new Set())
+  // No explicit expansions means every provider starts collapsed. This state
+  // belongs to the mounted picker rather than an individual open cycle, so
+  // closing and reopening preserves exactly the disclosure state the user left.
+  const [expandedProviderIds, setExpandedProviderIds] = useState<Set<ProviderId>>(() => new Set())
   const resetSignatureRef = useRef<string | null>(null)
+
+  const collapsedProviderIds = useMemo(
+    () => resolveCollapsedUnifiedProviderIds(unifiedProviderGroups, expandedProviderIds),
+    [expandedProviderIds, unifiedProviderGroups]
+  )
 
   const unifiedModelEntries = useMemo<UnifiedModelEntry[]>(
     () => flattenUnifiedProviderModels(unifiedProviderGroups, collapsedProviderIds),
@@ -1904,8 +1924,8 @@ export function CombinedModelPicker({
                   expanded={!groupCollapsed}
                   disabled={disabled}
                   onToggle={() => {
-                    setCollapsedProviderIds((current) =>
-                      toggleCollapsedProviderGroup(current, group.provider)
+                    setExpandedProviderIds((current) =>
+                      toggleExpandedProviderGroup(current, group.provider)
                     )
                     setModelHighlight(-1)
                   }}
