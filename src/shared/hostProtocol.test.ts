@@ -852,6 +852,11 @@ describe('Host protocol Wave 2A contract', () => {
   })
 
   it('intersects capabilities in stable host order without inventing entries', () => {
+    expect(HOST_CAPABILITY_ORDER).toContain('workspace-git')
+    expect(
+      intersectHostCapabilities(HOST_CAPABILITY_ORDER, ['workspace-git' as HostCapability])
+    ).toEqual(['workspace-git'])
+
     expect(
       intersectHostCapabilities(
         ['snapshot', 'deltas', 'commands', 'receipts', 'health'],

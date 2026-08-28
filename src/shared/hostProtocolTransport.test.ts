@@ -27,6 +27,7 @@ import {
   HOST_LOCAL_TRANSPORT_MAX_ID,
   HOST_LOCAL_TRANSPORT_REQUEST_KINDS,
   HOST_LOCAL_TRANSPORT_VERSION,
+  HOST_WORKSPACE_GIT_RESULT_MAX_BYTES,
   assertHostLocalTransportErrorBodyFree,
   decodeHostLocalTransportClientFrame,
   decodeHostLocalTransportHostFrame,
@@ -265,6 +266,13 @@ describe('hostProtocolTransport Wave 3.2', () => {
         case 'thread.history':
           frame = { ...base, kind, params: { threadId: 'thread-1', limit: 25 } }
           break
+        case 'workspace.git.read':
+          frame = {
+            ...base,
+            kind,
+            params: { workspaceId: 'workspace-1', scope: 'status' }
+          }
+          break
         case 'history.since':
           frame = {
             ...base,
@@ -324,6 +332,22 @@ describe('hostProtocolTransport Wave 3.2', () => {
           id: 'r-offers',
           ok: true,
           result: { kind: 'thread.offers', offers: sampleThreadOffers() }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-workspace-git',
+          ok: true,
+          result: {
+            kind: 'workspace.git.read',
+            result: {
+              scope: 'status',
+              branch: 'main',
+              head: 'a'.repeat(40),
+              files: [],
+              truncated: false
+            }
+          }
         },
         {
           type: 'response',
@@ -479,6 +503,193 @@ describe('hostProtocolTransport Wave 3.2', () => {
         event: 'host.closing',
         sequence: 9
       })
+    })
+  })
+
+  describe('workspace Git read contract', () => {
+    it('accepts either a workspace or thread target and round-trips typed results', () => {
+      for (const frame of [
+        {
+          type: 'request' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-workspace',
+          kind: 'workspace.git.read' as const,
+          params: {
+            workspaceId: 'workspace-1',
+            scope: 'diff' as const,
+            path: 'src/shared/hostProtocol.ts'
+          }
+        },
+        {
+          type: 'request' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-thread',
+          kind: 'workspace.git.read' as const,
+          params: { threadId: 'thread-1', scope: 'status' as const }
+        }
+      ]) {
+        expect(decodeHostLocalTransportClientFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+
+      for (const frame of [
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-status',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'status' as const,
+              branch: 'main',
+              head: 'a'.repeat(40),
+              files: [
+                {
+                  path: 'src/shared/hostProtocol.ts',
+                  index: 'M',
+                  workingTree: ' ',
+                  kind: 'modified' as const,
+                  staged: true,
+                  unstaged: false
+                }
+              ],
+              truncated: false
+            }
+          }
+        },
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-diff',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'diff' as const,
+              branch: null,
+              head: null,
+              text: 'diff --git a/file b/file',
+              truncated: true
+            }
+          }
+        },
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-log',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'log' as const,
+              branch: 'feature',
+              head: 'b'.repeat(64),
+              text: 'b'.repeat(64) + ' subject',
+              truncated: false
+            }
+          }
+        }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+    })
+
+    it('rejects ambiguous targets, invalid scopes, unsafe paths, and unknown fields', () => {
+      for (const params of [
+        { scope: 'status' },
+        { workspaceId: 'workspace-1', threadId: 'thread-1', scope: 'status' },
+        { workspaceId: 'workspace-1', scope: 'show' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: '/etc/passwd' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: 'C:\\Windows\\system.ini' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: 'src/../secret' },
+        { workspaceId: 'workspace-1', scope: 'diff', extra: true }
+      ]) {
+        expect(
+          decodeHostLocalTransportClientFrame({
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: 'git-invalid',
+            kind: 'workspace.git.read',
+            params
+          })
+        ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+      }
+    })
+
+    it('strictly decodes bounded results with an explicit truncation marker', () => {
+      expect(HOST_WORKSPACE_GIT_RESULT_MAX_BYTES).toBe(128 * 1024)
+      const base = {
+        type: 'response' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'git-result',
+        ok: true as const
+      }
+      for (const result of [
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'diff',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: 'diff',
+            truncated: false,
+            extra: true
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'status',
+            branch: 'main',
+            head: 'not-a-revision',
+            files: [],
+            truncated: false
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'status',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            files: [
+              {
+                path: '../outside',
+                index: '?',
+                workingTree: '?',
+                kind: 'untracked',
+                staged: false,
+                unstaged: true
+              }
+            ],
+            truncated: false
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'diff',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: '\\'.repeat(HOST_WORKSPACE_GIT_RESULT_MAX_BYTES),
+            truncated: true
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'log',
+            branch: null,
+            head: null,
+            text: 'log without marker'
+          }
+        }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame({ ...base, result })).toEqual({
+          ok: false,
+          error: { code: 'invalid_payload' }
+        })
+      }
     })
   })
 

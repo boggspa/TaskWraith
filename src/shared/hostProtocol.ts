@@ -52,6 +52,7 @@ export type HostCapability =
   | 'provider-catalog'
   | 'provider-auth'
   | 'history'
+  | 'workspace-git'
   /** Opt-in setup mutations; never requested by legacy/default clients. */
   | 'setup'
   | 'host-lifecycle'
@@ -912,6 +913,7 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'provider-catalog',
   'provider-auth',
   'history',
+  'workspace-git',
   'setup',
   'host-lifecycle',
   'commands',

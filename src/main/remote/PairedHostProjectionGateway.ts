@@ -28,7 +28,10 @@ import {
   type HostProjectionClientOptions
 } from '../host/HostProjectionClient'
 
-/** Remote/iOS remains on the existing projection ceiling until it has an explicit setup/history UX. */
+/**
+ * Remote/iOS remains on the existing projection ceiling until it has explicit
+ * setup/history UX and a separate decision to expose repository contents.
+ */
 const PAIRED_HOST_CAPABILITIES: readonly HostCapability[] = [
   'bootstrap',
   'snapshot',
@@ -292,6 +295,7 @@ export class PairedHostProjectionGateway {
       case 'provider.auth.flows':
       case 'provider.auth.status':
       case 'thread.history':
+      case 'workspace.git.read':
       case 'history.since':
       case 'host.shutdown':
         throw new PairedHostProjectionRequestError('unauthorized')

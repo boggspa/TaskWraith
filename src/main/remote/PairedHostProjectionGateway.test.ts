@@ -11,7 +11,10 @@ import type {
   HostSnapshotFrame
 } from '../../shared/hostProtocol'
 import { createEmptyHostSnapshot } from '../../shared/hostProtocol'
-import type { HostProjectionClient } from '../host/HostProjectionClient'
+import type {
+  HostProjectionClient,
+  HostProjectionClientOptions
+} from '../host/HostProjectionClient'
 import {
   PAIRED_HOST_PROJECTION_METHODS,
   PairedHostProjectionGateway,
@@ -146,10 +149,13 @@ function harness() {
   const fake = new FakeHostClient()
   const sent: Array<{ method: string; params: unknown }> = []
   const retries: Array<{ callback: () => void; delayMs: number; cancelled: boolean }> = []
+  const createClient = vi.fn(
+    (_options: HostProjectionClientOptions) => fake as unknown as HostProjectionClient
+  )
   const gateway = new PairedHostProjectionGateway({
     userDataPath: '/tmp/taskwraith-paired-host-test',
     clientVersion: '1.9.4',
-    createClient: vi.fn(() => fake as unknown as HostProjectionClient),
+    createClient,
     scheduleRetry: (callback, delayMs): PairedHostProjectionRetryHandle => {
       const entry = { callback, delayMs, cancelled: false }
       retries.push(entry)
@@ -163,7 +169,7 @@ function harness() {
       displayName: 'My iPhone',
       send: (method, params) => sent.push({ method, params })
     })
-  return { gateway, fake, sent, retries, attach }
+  return { gateway, fake, sent, retries, createClient, attach }
 }
 
 describe('PairedHostProjectionGateway', () => {
@@ -260,6 +266,19 @@ describe('PairedHostProjectionGateway', () => {
         code: 'unauthorized'
       })
     }
+  })
+
+  it('explicitly refuses workspace Git reads when the paired client did not negotiate them', async () => {
+    const h = harness()
+    await h.attach()
+
+    expect(h.createClient.mock.calls[0]?.[0].capabilities).not.toContain('workspace-git')
+    await expect(
+      h.gateway.request(DEVICE_KEY, {
+        kind: 'workspace.git.read',
+        params: { workspaceId: 'workspace-1', scope: 'diff', path: 'src/main/index.ts' }
+      })
+    ).rejects.toMatchObject({ code: 'unauthorized' })
   })
 
   it('submits only commands whose actor exactly matches the authenticated pair', async () => {

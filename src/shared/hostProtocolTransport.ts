@@ -60,6 +60,68 @@ export const HOST_LOCAL_TRANSPORT_MAX_ID = 512
 /** Bounded auth token length on the hello frame (opaque; never logged here). */
 export const HOST_LOCAL_TRANSPORT_MAX_TOKEN = 512
 
+/** Maximum serialized workspace Git success-result size (including JSON escaping). */
+export const HOST_WORKSPACE_GIT_RESULT_MAX_BYTES = 128 * 1024
+
+/** Bounded workspace-relative path carried by a Git read request or status row. */
+export const HOST_WORKSPACE_GIT_MAX_PATH = 4_096
+
+export const HOST_WORKSPACE_GIT_READ_SCOPES = ['status', 'diff', 'log'] as const
+
+export type HostWorkspaceGitReadScope = (typeof HOST_WORKSPACE_GIT_READ_SCOPES)[number]
+
+export const HOST_WORKSPACE_GIT_FILE_KINDS = [
+  'created',
+  'modified',
+  'deleted',
+  'renamed',
+  'untracked',
+  'conflicted',
+  'ignored'
+] as const
+
+export type HostWorkspaceGitFileKind = (typeof HOST_WORKSPACE_GIT_FILE_KINDS)[number]
+
+export type HostWorkspaceGitReadParams =
+  | {
+      workspaceId: string
+      threadId?: undefined
+      scope: HostWorkspaceGitReadScope
+      path?: string
+    }
+  | {
+      threadId: string
+      workspaceId?: undefined
+      scope: HostWorkspaceGitReadScope
+      path?: string
+    }
+
+export interface HostWorkspaceGitStatusFile {
+  path: string
+  originalPath?: string
+  index: string
+  workingTree: string
+  kind: HostWorkspaceGitFileKind
+  staged: boolean
+  unstaged: boolean
+}
+
+interface HostWorkspaceGitReadResultBase {
+  branch: string | null
+  head: string | null
+  truncated: boolean
+}
+
+export type HostWorkspaceGitReadResult =
+  | (HostWorkspaceGitReadResultBase & {
+      scope: 'status'
+      files: readonly HostWorkspaceGitStatusFile[]
+    })
+  | (HostWorkspaceGitReadResultBase & {
+      scope: 'diff' | 'log'
+      text: string
+    })
+
 /**
  * Closed body-free error codes. Never attach message/prose/args — callers map
  * codes to UI copy outside the wire contract.
@@ -93,6 +155,7 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'provider.auth.flows',
   'provider.auth.status',
   'thread.history',
+  'workspace.git.read',
   'history.since',
   'receipt.lookup',
   'health.get',
@@ -175,6 +238,13 @@ export type HostLocalTransportRequest =
       type: 'request'
       transportVersion: HostLocalTransportVersion
       id: string
+      kind: 'workspace.git.read'
+      params: HostWorkspaceGitReadParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
       kind: 'history.since'
       params: HostHistorySinceRequest
     }
@@ -232,6 +302,7 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'provider.auth.flows'; flows: readonly HostProviderAuthFlowProjection[] }
   | { kind: 'provider.auth.status'; status: HostProviderAuthStatusProjection }
   | { kind: 'thread.history'; page: HostThreadHistoryPage }
+  | { kind: 'workspace.git.read'; result: HostWorkspaceGitReadResult }
   | { kind: 'history.since'; result: HostHistorySinceResult }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
@@ -353,6 +424,73 @@ function isOptionalBoundedString(value: unknown, max: number): boolean {
   return (
     value === undefined || (typeof value === 'string' && value.length > 0 && value.length <= max)
   )
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed)
+  return Object.keys(value).every((key) => allowedSet.has(key))
+}
+
+function isWorkspaceGitReadScope(value: unknown): value is HostWorkspaceGitReadScope {
+  return (
+    typeof value === 'string' &&
+    (HOST_WORKSPACE_GIT_READ_SCOPES as readonly string[]).includes(value)
+  )
+}
+
+function isWorkspaceGitFileKind(value: unknown): value is HostWorkspaceGitFileKind {
+  return (
+    typeof value === 'string' &&
+    (HOST_WORKSPACE_GIT_FILE_KINDS as readonly string[]).includes(value)
+  )
+}
+
+function isSafeWorkspaceGitPath(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > HOST_WORKSPACE_GIT_MAX_PATH ||
+    value.includes('\0')
+  ) {
+    return false
+  }
+  if (value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(value)) {
+    return false
+  }
+  const segments = value.split(/[\\/]/)
+  return segments.every((segment) => segment.length > 0 && segment !== '..')
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x7f) {
+      bytes += 1
+    } else if (code <= 0x7ff) {
+      bytes += 2
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4
+        index += 1
+      } else {
+        bytes += 3
+      }
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
+}
+
+function serializedJsonByteLength(value: unknown): number | null {
+  try {
+    const encoded = JSON.stringify(value)
+    return typeof encoded === 'string' ? utf8ByteLength(encoded) : null
+  } catch {
+    return null
+  }
 }
 
 function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadOffers {
@@ -494,6 +632,168 @@ function decodeProviderIdParams(
   return { ok: true, value: { providerId: value.providerId } }
 }
 
+export function decodeHostWorkspaceGitReadParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitReadParams> {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['workspaceId', 'threadId', 'scope', 'path']) ||
+    !isWorkspaceGitReadScope(value.scope)
+  ) {
+    return fail('invalid_payload')
+  }
+  const hasWorkspaceId = Object.prototype.hasOwnProperty.call(value, 'workspaceId')
+  const hasThreadId = Object.prototype.hasOwnProperty.call(value, 'threadId')
+  if (hasWorkspaceId === hasThreadId) return fail('invalid_payload')
+  if (hasWorkspaceId && !isBoundedId(value.workspaceId)) return fail('invalid_payload')
+  if (hasThreadId && !isBoundedId(value.threadId)) return fail('invalid_payload')
+
+  const hasPath = Object.prototype.hasOwnProperty.call(value, 'path')
+  if (hasPath && !isSafeWorkspaceGitPath(value.path)) return fail('invalid_payload')
+
+  if (hasWorkspaceId) {
+    return {
+      ok: true,
+      value: {
+        workspaceId: value.workspaceId as string,
+        scope: value.scope,
+        ...(hasPath ? { path: value.path as string } : {})
+      }
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      threadId: value.threadId as string,
+      scope: value.scope,
+      ...(hasPath ? { path: value.path as string } : {})
+    }
+  }
+}
+
+function isWorkspaceGitBranch(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 1_024 &&
+      !value.includes('\0') &&
+      !value.includes('\n') &&
+      !value.includes('\r'))
+  )
+}
+
+function isWorkspaceGitHead(value: unknown): value is string | null {
+  return (
+    value === null || (typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value))
+  )
+}
+
+function decodeWorkspaceGitStatusFile(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitStatusFile> {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      'path',
+      'originalPath',
+      'index',
+      'workingTree',
+      'kind',
+      'staged',
+      'unstaged'
+    ]) ||
+    !isSafeWorkspaceGitPath(value.path) ||
+    typeof value.index !== 'string' ||
+    value.index.length !== 1 ||
+    typeof value.workingTree !== 'string' ||
+    value.workingTree.length !== 1 ||
+    !isWorkspaceGitFileKind(value.kind) ||
+    typeof value.staged !== 'boolean' ||
+    typeof value.unstaged !== 'boolean'
+  ) {
+    return fail('invalid_payload')
+  }
+  const hasOriginalPath = Object.prototype.hasOwnProperty.call(value, 'originalPath')
+  if (hasOriginalPath && !isSafeWorkspaceGitPath(value.originalPath)) {
+    return fail('invalid_payload')
+  }
+  return {
+    ok: true,
+    value: {
+      path: value.path,
+      ...(hasOriginalPath ? { originalPath: value.originalPath as string } : {}),
+      index: value.index,
+      workingTree: value.workingTree,
+      kind: value.kind,
+      staged: value.staged,
+      unstaged: value.unstaged
+    }
+  }
+}
+
+export function decodeHostWorkspaceGitReadResult(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitReadResult> {
+  const serializedBytes = serializedJsonByteLength(value)
+  if (
+    !isRecord(value) ||
+    serializedBytes === null ||
+    serializedBytes > HOST_WORKSPACE_GIT_RESULT_MAX_BYTES ||
+    !isWorkspaceGitReadScope(value.scope) ||
+    !isWorkspaceGitBranch(value.branch) ||
+    !isWorkspaceGitHead(value.head) ||
+    typeof value.truncated !== 'boolean'
+  ) {
+    return fail('invalid_payload')
+  }
+
+  if (value.scope === 'status') {
+    if (
+      Object.keys(value).length !== 5 ||
+      !hasOnlyKeys(value, ['scope', 'branch', 'head', 'files', 'truncated']) ||
+      !Array.isArray(value.files) ||
+      value.files.length > 4_096
+    ) {
+      return fail('invalid_payload')
+    }
+    const files: HostWorkspaceGitStatusFile[] = []
+    for (const file of value.files) {
+      const decoded = decodeWorkspaceGitStatusFile(file)
+      if (!decoded.ok) return decoded
+      files.push(decoded.value)
+    }
+    return {
+      ok: true,
+      value: {
+        scope: 'status',
+        branch: value.branch,
+        head: value.head,
+        files,
+        truncated: value.truncated
+      }
+    }
+  }
+
+  if (
+    Object.keys(value).length !== 5 ||
+    !hasOnlyKeys(value, ['scope', 'branch', 'head', 'text', 'truncated']) ||
+    typeof value.text !== 'string'
+  ) {
+    return fail('invalid_payload')
+  }
+  return {
+    ok: true,
+    value: {
+      scope: value.scope,
+      branch: value.branch,
+      head: value.head,
+      text: value.text,
+      truncated: value.truncated
+    }
+  }
+}
+
 function decodeSuccessResult(
   value: unknown
 ): HostLocalTransportDecodeResult<HostLocalTransportSuccessResult> {
@@ -532,6 +832,19 @@ function decodeSuccessResult(
       const page = decodeHostThreadHistoryPage(value.page)
       if (!page.ok) return fail('invalid_payload')
       return { ok: true, value: { kind: 'thread.history', page: page.value } }
+    }
+    case 'workspace.git.read': {
+      const serializedBytes = serializedJsonByteLength(value)
+      if (
+        Object.keys(value).length !== 2 ||
+        serializedBytes === null ||
+        serializedBytes > HOST_WORKSPACE_GIT_RESULT_MAX_BYTES
+      ) {
+        return fail('invalid_payload')
+      }
+      const result = decodeHostWorkspaceGitReadResult(value.result)
+      if (!result.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'workspace.git.read', result: result.value } }
     }
     case 'history.since': {
       const result = decodeHostHistorySinceResult(value.result)
@@ -682,6 +995,20 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'thread.history',
+            params: params.value
+          }
+        }
+      }
+      case 'workspace.git.read': {
+        const params = decodeHostWorkspaceGitReadParams(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'workspace.git.read',
             params: params.value
           }
         }
