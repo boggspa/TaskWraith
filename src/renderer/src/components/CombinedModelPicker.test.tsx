@@ -477,6 +477,29 @@ describe('CombinedModelPicker', () => {
     expect(collapsed).not.toContain('composer-combined-picker-provider-chevron is-expanded')
   })
 
+  it('uses each provider accent with the shared OS UI font and tracked uppercase labels', () => {
+    const css = readFileSync(
+      new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+      'utf8'
+    )
+    const headerRule = css.match(
+      /\.composer-combined-picker-provider-header\s*\{([^}]*)\}/
+    )?.[1]
+    const labelRule = css.match(
+      /\.composer-combined-picker-provider-header-label\s*\{([^}]*)\}/
+    )?.[1]
+
+    expect(headerRule).toBeDefined()
+    expect(headerRule).toContain('var(--model-provider-accent, var(--accent)) 76%')
+    expect(headerRule).toContain('font-family: var(--font-sans)')
+    expect(labelRule).toBeDefined()
+    expect(labelRule).toContain('letter-spacing: 0.065em')
+    expect(labelRule).toContain('text-transform: uppercase')
+    expect(css).not.toContain(
+      '.composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header'
+    )
+  })
+
   it('keeps the unified model rail fixed-height and independently scrollable', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
