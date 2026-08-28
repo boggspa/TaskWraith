@@ -1027,6 +1027,7 @@ import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandCli
 import { HostLifecycleController } from './host/HostLifecycleController'
 import { createHostExternalLifecycleAdapter } from './host/HostExternalLifecycleAdapter'
 import { consumePreparedExternalHost } from './host/HostExternalRuntimeState'
+import { getInProcessProfileAuthority } from './host/HostInProcessProfileAuthorityState'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -51051,6 +51052,9 @@ if (isGeminiMcpBridgeProcess) {
 
     const externalHostProfilePath = fsSync.realpathSync(app.getPath('userData'))
     const preparedExternalHost = consumePreparedExternalHost(externalHostProfilePath)
+    const inProcessProfileAuthority = preparedExternalHost
+      ? null
+      : getInProcessProfileAuthority(externalHostProfilePath)
     const desktopHostBroker = createHostProjectionBroker({
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion()
@@ -52350,6 +52354,7 @@ if (isGeminiMcpBridgeProcess) {
     const createProductionHost = () =>
       createHostProductionBootstrap({
         userDataPath: app.getPath('userData'),
+        ...(inProcessProfileAuthority ? { profileAuthority: inProcessProfileAuthority } : {}),
         host: {
           hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
           hostVersion: app.getVersion()

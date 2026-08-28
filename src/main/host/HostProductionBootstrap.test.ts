@@ -11,8 +11,9 @@
  * the retry behaviour it controls, so flipping the flag fails twice.
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -41,9 +42,17 @@ import type { HostSupervisor, HostSupervisorInput } from '../../host-runtime/Hos
 const MOCK_HOST = { hostId: 'test-host-1', hostVersion: '0.0.0-test' }
 
 let pathSeq = 0
+const profilePaths: string[] = []
+
 function uniquePath(): string {
   pathSeq += 1
   return `/tmp/host-bootstrap-test-${pathSeq}`
+}
+
+function profilePath(): string {
+  const path = mkdtempSync(join(tmpdir(), 'host-bootstrap-profile-'))
+  profilePaths.push(path)
+  return path
 }
 
 function mockChatList(): HostProductionChatListPort {
@@ -163,6 +172,10 @@ function captureSupervisorInput(overrides: Partial<HostProductionBootstrapOption
 
 beforeEach(() => {
   resetHostProductionBootstrapForTests()
+})
+
+afterEach(() => {
+  while (profilePaths.length > 0) rmSync(profilePaths.pop()!, { recursive: true, force: true })
 })
 
 /* ------------------------------------------------------------------ */
@@ -417,6 +430,12 @@ describe('HostProductionBootstrap options validation', () => {
       createHostProductionBootstrap(validOptions({ host: { hostId: '', hostVersion: '' } }))
     ).toThrow('HostProductionBootstrap requires an injected host identity')
   })
+
+  it('rejects an incomplete in-process profile authority port', () => {
+    expect(() =>
+      createHostProductionBootstrap(validOptions({ profileAuthority: {} as never }))
+    ).toThrow('profileAuthority.assertProfileAuthority')
+  })
 })
 
 /* ------------------------------------------------------------------ */
@@ -485,6 +504,45 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       )
     ).resolves.toMatchObject({ status: 'succeeded' })
     expect(closeChannel).toHaveBeenCalledWith('channel-a')
+  })
+
+  it('routes Host-owned profile commands outside Bridge when fallback authority is present', async () => {
+    const bridge = mockBridge()
+    const bridgeSend = vi.spyOn(bridge, 'executeComposerPrompt')
+    const assertProfileAuthority = vi.fn()
+    const { compositionInput } = captureSupervisorInput({
+      userDataPath: profilePath(),
+      bridge,
+      profileAuthority: { assertProfileAuthority }
+    })
+    const actor = { actorId: 'desktop', clientId: 'desktop', clientClass: 'desktop' as const }
+
+    await expect(
+      Promise.resolve(
+        compositionInput.commandExecutor(
+          {
+            type: 'host.command',
+            protocolVersion: 2,
+            commandId: '11111111-1111-4111-8111-111111111111',
+            idempotencyKey: 'workspace-records-clear-1',
+            actor,
+            name: 'workspace.records.clear',
+            target: {},
+            arguments: {},
+            issuedAt: '2026-08-28T10:00:00.000Z'
+          },
+          {
+            actor,
+            client: { clientId: 'desktop', clientClass: 'desktop', clientVersion: 'test' }
+          }
+        )
+      )
+    ).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'workspace_records_already_empty'
+    })
+    expect(assertProfileAuthority).toHaveBeenCalled()
+    expect(bridgeSend).not.toHaveBeenCalled()
   })
 
   it('wires canonical thread offers from the same live context source as composer validation', async () => {

@@ -19,6 +19,10 @@ import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
 import { HostExternalSupervisor } from './host/HostExternalSupervisor'
 import { ProfileWriterLivePeerError } from './host/DesktopWriterArbitration'
 import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
+import {
+  clearInProcessProfileAuthority,
+  publishInProcessProfileAuthority
+} from './host/HostInProcessProfileAuthorityState'
 import type { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
@@ -128,11 +132,32 @@ let externalHostPreparation: HostExternalPreparation | null = null
 let inProcessHostLease: HostProfileAuthorityLease | null = null
 
 function releaseInProcessHostLease(): void {
-  inProcessHostLease?.release()
+  const lease = inProcessHostLease
   inProcessHostLease = null
+  if (!lease) return
+  clearInProcessProfileAuthority(lease)
+  lease.release()
 }
 
-app.on('will-quit', () => {
+async function prepareInProcessHost(profilePath: string): Promise<void> {
+  const lease = await drainLegacyStoreForInProcessHost({ profilePath })
+  if (!lease) {
+    throw new Error('In-process Host did not acquire an exact profile authority lease.')
+  }
+  try {
+    publishInProcessProfileAuthority({ profilePath, lease })
+    inProcessHostLease = lease
+  } catch (error) {
+    lease.release()
+    throw error
+  }
+}
+
+// `index.ts` uses will-quit to hold the first quit attempt while Host-routed
+// chat persistence drains. Release only after that gate has completed and the
+// final quit is committed, or the in-process record executor loses authority
+// underneath its own shutdown barrier.
+app.on('quit', () => {
   releaseInProcessHostLease()
 })
 
@@ -155,7 +180,7 @@ void bootstrapMainProcess({
       throw new Error('Legacy userData migration did not complete safely.')
     }
     if (!isDesktopExternalHostEnabled()) {
-      inProcessHostLease = await drainLegacyStoreForInProcessHost({ profilePath })
+      await prepareInProcessHost(profilePath)
       return
     }
     externalHostPreparation = createExternalHostPreparation(profilePath)
@@ -174,7 +199,7 @@ void bootstrapMainProcess({
       }
       externalHostPreparation = null
       try {
-        inProcessHostLease = await drainLegacyStoreForInProcessHost({ profilePath })
+        await prepareInProcessHost(profilePath)
       } catch (fallbackError) {
         if (
           fallbackError instanceof ProfileWriterLivePeerError ||

@@ -65,6 +65,14 @@ import {
 import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
 import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
+import {
+  HostProfileDomainStore,
+  type HostProfileAuthorityPort
+} from '../../host-runtime/HostProfileDomainStore'
+import {
+  HostProfileRecordCommandExecutor,
+  isHostProfileRecordMutationName
+} from '../../host-runtime/HostProfileRecordCommandExecutor'
 import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
 import {
   createHostProductionContextResolvers,
@@ -212,6 +220,8 @@ export interface HostProductionBootstrapOptions {
    * canonical store/service callbacks, never Host domain logic.
    */
   readonly contextSources: HostProductionContextResolverDeps
+  /** Exact in-process profile lease authority; absent on the external Node Host path. */
+  readonly profileAuthority?: HostProfileAuthorityPort
   /** Complete main-backed provider/setup ports; omitted means no setup capabilities. */
   readonly setup?: HostProductionSetupAdapterOptions
   /** Complete canonical history ports; omitted means history remains unavailable. */
@@ -393,6 +403,12 @@ export function createHostProductionBootstrap(
   ) {
     throw new Error('HostProductionBootstrap requires an injected host identity')
   }
+  if (
+    options.profileAuthority !== undefined &&
+    typeof options.profileAuthority.assertProfileAuthority !== 'function'
+  ) {
+    throw new Error('HostProductionBootstrap requires profileAuthority.assertProfileAuthority')
+  }
 
   /* ---- re-entrancy: one live supervisor per resolved data dir ---- */
   const key = registryKey(options.userDataPath)
@@ -433,8 +449,26 @@ export function createHostProductionBootstrap(
     resolvers: contextResolvers,
     ...(options.nowMs ? { nowMs: options.nowMs } : {})
   })
+  const profileRecordExecutor = options.profileAuthority
+    ? new HostProfileRecordCommandExecutor({
+        profilePath: options.userDataPath,
+        store: new HostProfileDomainStore({
+          profilePath: options.userDataPath,
+          authority: options.profileAuthority
+        })
+      })
+    : null
   const channelExecutor = options.channels ? new HostChannelCommandExecutor(options.channels) : null
   const commandExecutor: AppStoreHostAuthorityExecutor = (command, context) => {
+    if (isHostProfileRecordMutationName(command.name)) {
+      return profileRecordExecutor
+        ? profileRecordExecutor.execute(command)
+        : {
+            status: 'failed',
+            errorCode: 'host_unavailable',
+            errorMessage: 'In-process profile mutation authority is unavailable'
+          }
+    }
     if (command.name === 'channel.member.revoke' || command.name === 'channel.close') {
       return channelExecutor
         ? channelExecutor.execute(command, context)

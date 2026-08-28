@@ -39,6 +39,8 @@ import {
 } from '../../shared/taskWraithHostPaths.node'
 import {
   HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
   type HostActorIdentity,
   type HostCommand,
   type HostCommandName
@@ -54,6 +56,7 @@ import {
 } from './HostProductionBootstrap'
 import { createHostProductionQuestionShadow } from './HostProductionQuestionShadow'
 import type { HostSupervisor } from '../../host-runtime/HostSupervisor'
+import { publishHostThreadRecordTransfer } from '../../host-runtime/HostThreadRecordTransfer'
 
 const HOST_ID = 'boot-proof-host-0001'
 const HOST_VERSION = '0.0.0-boot-proof'
@@ -132,6 +135,20 @@ function mutationClient(): HostProjectionClient {
     client: {
       clientId: MUTATION_CLIENT_ID,
       clientClass: 'desktop',
+      clientVersion: HOST_VERSION
+    },
+    capabilities: ['bootstrap', 'snapshot', 'commands', 'receipts', 'health'],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
+function desktopRecordMutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+      clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
       clientVersion: HOST_VERSION
     },
     capabilities: ['bootstrap', 'snapshot', 'commands', 'receipts', 'health'],
@@ -315,6 +332,30 @@ function mutationCommand(input: {
     target: input.target,
     arguments: input.arguments ?? {},
     issuedAt: '2026-08-09T00:00:00.000Z'
+  }
+}
+
+function desktopRecordMutationCommand(input: {
+  commandId: string
+  transferId: string
+  sha256: string
+  byteLength: number
+}): HostCommand {
+  return {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: input.commandId,
+    idempotencyKey: `desktop:thread-record:${input.commandId}`,
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+    name: 'thread.record.persist',
+    target: { threadId: 'thread-ensemble-start' },
+    arguments: {
+      transferId: input.transferId,
+      sha256: input.sha256,
+      byteLength: input.byteLength,
+      expectedRevision: 0
+    },
+    issuedAt: '2026-08-28T10:00:00.000Z'
   }
 }
 
@@ -676,6 +717,61 @@ describe('Wave 4.4 serve — a real client completes a real authenticated round 
         }
       ]
     })
+  }, 20_000)
+
+  it('persists Ensemble round-start state through the real in-process Host fallback', async () => {
+    const assertProfileAuthority = vi.fn()
+    supervisor = createHostProductionBootstrap({
+      ...productionOptions(),
+      profileAuthority: { assertProfileAuthority }
+    })
+    await supervisor.start()
+
+    client = desktopRecordMutationClient()
+    await client.connect()
+    const record = {
+      appChatId: 'thread-ensemble-start',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: userDataPath,
+      title: 'Ensemble start',
+      archived: false,
+      messages: [],
+      updatedAt: Date.parse('2026-08-28T10:00:00.000Z'),
+      ensemble: {
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Begin',
+          startedAt: '2026-08-28T10:00:00.000Z',
+          participants: []
+        },
+        participants: []
+      }
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: userDataPath,
+      transferId: 'ensemble-start-transfer',
+      record
+    })
+    const commandId = '77777777-7777-4777-8777-777777777777'
+    const receipt = await client.submitCommand(
+      desktopRecordMutationCommand({ commandId, ...descriptor })
+    )
+
+    expect(receipt).toMatchObject({
+      commandId,
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted'
+    })
+    expect(
+      JSON.parse(readFileSync(join(userDataPath, 'chats', 'thread-ensemble-start.json'), 'utf8'))
+    ).toMatchObject({
+      appChatId: 'thread-ensemble-start',
+      persistenceRevision: 0,
+      ensemble: record.ensemble
+    })
+    expect(assertProfileAuthority).toHaveBeenCalled()
   }, 20_000)
 
   it('executes a governed mutation through challenge, allow, Bridge, and receipt', async () => {

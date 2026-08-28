@@ -10,6 +10,10 @@ const inProcessWriter = readFileSync(
   join(process.cwd(), 'src/main/host/LegacyInProcessHostWriter.ts'),
   'utf8'
 )
+const inProcessAuthorityState = readFileSync(
+  join(process.cwd(), 'src/main/host/HostInProcessProfileAuthorityState.ts'),
+  'utf8'
+)
 
 describe('Desktop external Host cutover', () => {
   it('defaults Desktop onto the external Host with an explicit 0 opt-out', () => {
@@ -62,8 +66,17 @@ describe('Desktop external Host cutover', () => {
     expect(inProcessWriter).toContain('HostProfileAuthorityLease.acquire')
     expect(inProcessWriter).toContain('lease.assertHeld()')
     expect(inProcessWriter).toContain('lease.release()')
-    expect(bootstrap).toContain('inProcessHostLease = await drainLegacyStoreForInProcessHost')
-    expect(bootstrap).toContain("app.on('will-quit'")
+    expect(bootstrap).toContain('const lease = await drainLegacyStoreForInProcessHost')
+    expect(bootstrap).toContain('inProcessHostLease = lease')
+    expect(bootstrap).toContain('publishInProcessProfileAuthority({ profilePath, lease })')
+    expect(bootstrap).toContain('clearInProcessProfileAuthority(lease)')
+    expect(source).toContain('getInProcessProfileAuthority(externalHostProfilePath)')
+    expect(source).toContain('profileAuthority: inProcessProfileAuthority')
+    expect(inProcessAuthorityState).toContain(
+      'assertProfileAuthority: () => input.lease.assertHeld()'
+    )
+    expect(bootstrap).toContain("app.on('quit'")
+    expect(bootstrap).toContain('Release only after that gate has completed')
     expect(bootstrap).toContain('releaseInProcessHostLease')
     expect(bootstrap).toContain('cleanupPreparedMainProcess: async () => {')
     const cleanup = bootstrap.slice(bootstrap.indexOf('cleanupPreparedMainProcess:'))
