@@ -144,6 +144,28 @@ export interface HostThreadRecordPersistPort {
   pending(chatId: string): number
 }
 
+export interface HostThreadRecordDeleteInput {
+  readonly chatId: string
+  readonly expectedRevision: number
+}
+
+/**
+ * Deletion is a SEPARATE port on purpose.
+ *
+ * The persist consumers — the ensemble durability barrier and the shutdown
+ * drain — have no business knowing a chat can be erased, and folding
+ * `deleteRecord` into HostThreadRecordPersistPort would force every one of their
+ * test doubles to stub a method they never call. The erasure transaction depends
+ * on this narrower port instead; HostThreadRecordPersistClient implements both.
+ */
+export interface HostThreadRecordDeletePort {
+  /**
+   * Awaited whole-record deletion. Supersedes any persist queued for this chat
+   * so a pending save can never land after the delete and resurrect the record.
+   */
+  deleteRecord(input: HostThreadRecordDeleteInput): Promise<void>
+}
+
 export interface HostThreadRecordPersistClientOptions {
   readonly broker: HostThreadRecordPersistBrokerPort
   /** Host profile directory. On Desktop this is app userData (bootstrap.ts:146-148). */
@@ -162,6 +184,8 @@ interface PersistLane {
   running: boolean
   chain: Promise<void>
   error: HostThreadRecordPersistError | null
+  /** True while a delete owns this chat: queued and incoming persists are superseded. */
+  superseded: boolean
 }
 
 const defaultTransferPort: HostThreadRecordTransferPort = {
@@ -210,7 +234,9 @@ export function classifyHostPersistRejection(receipt: HostCommandReceipt): {
   return { code: 'host_rejected', ...(rawCode ? { hostErrorCode: rawCode } : {}) }
 }
 
-export class HostThreadRecordPersistClient implements HostThreadRecordPersistPort {
+export class HostThreadRecordPersistClient
+  implements HostThreadRecordPersistPort, HostThreadRecordDeletePort
+{
   private readonly broker: HostThreadRecordPersistBrokerPort
   private readonly profilePath: string
   private readonly transfer: HostThreadRecordTransferPort
@@ -315,6 +341,9 @@ export class HostThreadRecordPersistClient implements HostThreadRecordPersistPor
             }))
       return
     }
+    // A delete owns this chat: the record is going away, so a save enqueued
+    // before the delete settles must never be submitted.
+    if (lane.superseded) return
     // Latest wins: each record is a complete snapshot, so a newer one supersedes
     // an older entry that has not started yet.
     lane.queued = input
@@ -359,6 +388,67 @@ export class HostThreadRecordPersistClient implements HostThreadRecordPersistPor
     return lane.running || lane.queued ? 1 : 0
   }
 
+  /**
+   * A delete is the LATEST write intent for its chat, so anything queued before
+   * it — or enqueued while it is in flight — is superseded and must never be
+   * submitted. Letting a queued save land after the delete would recreate the
+   * record: the user deletes a chat, it silently reappears, and no error is ever
+   * raised. That is why this is not simply a queued operation.
+   *
+   * An ALREADY-SUBMITTED persist is different: it cannot be un-submitted, so the
+   * delete waits for it and lands afterwards. The durable end state is still
+   * "deleted", which is the outcome the caller asked for.
+   */
+  async deleteRecord(input: HostThreadRecordDeleteInput): Promise<void> {
+    this.assertDeleteInput(input)
+    const lane = this.laneFor(input.chatId)
+    lane.queued = null
+    lane.superseded = true
+    try {
+      while (lane.running) {
+        await lane.chain
+        // Anything that slipped in while awaiting is superseded by this delete.
+        lane.queued = null
+      }
+      // A superseded persist's failure is moot once the record is being removed.
+      lane.error = null
+      await this.executeDelete(input)
+    } finally {
+      lane.superseded = false
+    }
+  }
+
+  private async executeDelete(input: HostThreadRecordDeleteInput): Promise<void> {
+    const commandId = this.createId()
+    const command: HostCommand = {
+      type: 'host.command',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId,
+      idempotencyKey: `thread:record-delete:${commandId}`,
+      actor: { ...this.actor },
+      name: 'thread.record.delete',
+      target: { threadId: input.chatId },
+      // Exactly { expectedRevision } — threadId is carried by the target.
+      arguments: { expectedRevision: input.expectedRevision },
+      issuedAt: new Date(this.nowMs()).toISOString()
+    }
+    // A missing record is idempotent success on the Host side, so a successful
+    // receipt is the only signal this client needs.
+    await this.execute(command)
+  }
+
+  private assertDeleteInput(input: HostThreadRecordDeleteInput): void {
+    if (!input || typeof input.chatId !== 'string' || input.chatId.length === 0) {
+      throw new HostThreadRecordPersistError('invalid_input', 'A chat id is required to delete.')
+    }
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new HostThreadRecordPersistError(
+        'invalid_input',
+        'A non-negative expected revision is required.'
+      )
+    }
+  }
+
   private laneFor(chatId: string): PersistLane {
     const existing = this.lanes.get(chatId)
     if (existing) return existing
@@ -366,7 +456,8 @@ export class HostThreadRecordPersistClient implements HostThreadRecordPersistPor
       queued: null,
       running: false,
       chain: Promise.resolve(),
-      error: null
+      error: null,
+      superseded: false
     }
     this.lanes.set(chatId, created)
     return created

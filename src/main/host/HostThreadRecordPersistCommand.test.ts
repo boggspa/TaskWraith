@@ -561,6 +561,198 @@ describe('client construction', () => {
   })
 })
 
+describe('deleteRecord', () => {
+  function namesOf(commands: HostCommand[]): string[] {
+    return commands.map((command) => command.name)
+  }
+
+  it('submits a descriptor-free thread.record.delete the protocol accepts', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const client = createClient(broker)
+
+    await client.deleteRecord({ chatId: 'chat-1', expectedRevision: 4 })
+
+    const [command] = broker.commands
+    expect(command.name).toBe('thread.record.delete')
+    expect(command.target).toEqual({ threadId: 'chat-1' })
+    // The wire contract is exactly { expectedRevision }; threadId rides the target.
+    expect(command.arguments).toEqual({ expectedRevision: 4 })
+    expect(decodeHostCommand(command).ok).toBe(true)
+  })
+
+  it('NEVER submits a QUEUED persist after a delete — a resurrected chat is silent corruption', async () => {
+    // enqueue() starts work synchronously, so a lone enqueue is already
+    // SUBMITTED. A genuinely queued entry requires one persist in flight ahead
+    // of it — that is the real window where a save can outlive a delete.
+    const deferred: { release: () => void } = { release: () => {} }
+    const gate = new Promise<void>((resolve) => {
+      deferred.release = resolve
+    })
+    let gateFirst = true
+    const base = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const broker: HostThreadRecordPersistBrokerPort & { commands: HostCommand[] } = {
+      commands: base.commands,
+      submitCommand: async (command) => {
+        if (gateFirst && command.name === 'thread.record.persist') {
+          gateFirst = false
+          await gate
+        }
+        return base.submitCommand(command)
+      },
+      lookupReceipt: (commandId) => base.lookupReceipt(commandId)
+    }
+    const client = createClient(broker)
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'A' }), expectedRevision: 0 })
+    await Promise.resolve()
+    // B is genuinely queued behind the in-flight A and has NOT been submitted.
+    client.enqueue({ chatId: 'chat-1', record: chatRecord({ title: 'B' }), expectedRevision: 0 })
+
+    const deleting = client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    deferred.release()
+    await deleting
+    await client.drain('chat-1')
+
+    // A was already submitted and cannot be recalled; B must never appear.
+    expect(namesOf(broker.commands)).toEqual(['thread.record.persist', 'thread.record.delete'])
+  })
+
+  it('supersedes a persist enqueued WHILE the delete is in flight', async () => {
+    const deferred: { release: () => void } = { release: () => {} }
+    const gate = new Promise<void>((resolve) => {
+      deferred.release = resolve
+    })
+    const base = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const broker: HostThreadRecordPersistBrokerPort & { commands: HostCommand[] } = {
+      commands: base.commands,
+      submitCommand: async (command) => {
+        if (command.name === 'thread.record.delete') await gate
+        return base.submitCommand(command)
+      },
+      lookupReceipt: (commandId) => base.lookupReceipt(commandId)
+    }
+    const client = createClient(broker)
+
+    const deleting = client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    deferred.release()
+    await deleting
+    await client.drain('chat-1')
+
+    expect(namesOf(broker.commands)).toEqual(['thread.record.delete'])
+  })
+
+  it('lets an ALREADY-SUBMITTED persist settle, then deletes last', async () => {
+    // An in-flight command cannot be un-submitted, so the only correct ordering
+    // is persist-then-delete: the final durable state is still "deleted".
+    const deferred: { release: () => void } = { release: () => {} }
+    const gate = new Promise<void>((resolve) => {
+      deferred.release = resolve
+    })
+    const base = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const broker: HostThreadRecordPersistBrokerPort & { commands: HostCommand[] } = {
+      commands: base.commands,
+      submitCommand: async (command) => {
+        if (command.name === 'thread.record.persist') await gate
+        return base.submitCommand(command)
+      },
+      lookupReceipt: (commandId) => base.lookupReceipt(commandId)
+    }
+    const client = createClient(broker)
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    await Promise.resolve()
+    const deleting = client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    deferred.release()
+    await deleting
+
+    expect(namesOf(broker.commands)).toEqual(['thread.record.persist', 'thread.record.delete'])
+  })
+
+  it('does not resurface a superseded persist failure — the record is gone anyway', async () => {
+    let failPersist = true
+    const base = scriptedBroker((command) =>
+      command.name === 'thread.record.persist' && failPersist
+        ? [receiptFor(command, 'failed', { errorCode: 'host_write_failed' })]
+        : [receiptFor(command, 'succeeded')]
+    )
+    const client = createClient(base)
+
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    await Promise.resolve()
+    failPersist = false
+    await client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+
+    await expect(client.drain('chat-1')).resolves.toBeUndefined()
+  })
+
+  it('allows a legitimate re-create after the delete resolves', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const client = createClient(broker)
+
+    await client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    await client.drain('chat-1')
+
+    expect(namesOf(broker.commands)).toEqual(['thread.record.delete', 'thread.record.persist'])
+  })
+
+  it('treats a Host-reported success for a missing record as idempotent success', async () => {
+    const broker = scriptedBroker((command) => [
+      receiptFor(command, 'succeeded', { resultSummary: 'thread_record_absent' })
+    ])
+    const client = createClient(broker)
+
+    await expect(
+      client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    ).resolves.toBeUndefined()
+    await expect(
+      client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+    ).resolves.toBeUndefined()
+  })
+
+  it('surfaces a revision conflict as the typed retryable error', async () => {
+    const broker = scriptedBroker((command) => [
+      receiptFor(command, 'failed', {
+        errorCode: 'thread_record_revision_conflict',
+        errorMessage: 'Thread persistence revision mismatch'
+      })
+    ])
+    const client = createClient(broker)
+
+    await expect(
+      client.deleteRecord({ chatId: 'chat-1', expectedRevision: 9 })
+    ).rejects.toMatchObject({
+      code: 'revision_conflict',
+      hostErrorCode: 'thread_record_revision_conflict'
+    })
+  })
+
+  it.each([
+    ['a missing chat id', { chatId: '', expectedRevision: 0 }],
+    ['a negative revision', { chatId: 'chat-1', expectedRevision: -1 }],
+    ['a fractional revision', { chatId: 'chat-1', expectedRevision: 1.5 }]
+  ])('rejects %s before submitting anything', async (_label, input) => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const client = createClient(broker)
+
+    await expect(
+      client.deleteRecord(input as { chatId: string; expectedRevision: number })
+    ).rejects.toMatchObject({ code: 'invalid_input' })
+    expect(broker.commands).toEqual([])
+  })
+
+  it('never publishes a transfer artifact for a delete', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const transfer = fakeTransfer()
+    const client = createClient(broker, { transfer })
+
+    await client.deleteRecord({ chatId: 'chat-1', expectedRevision: 0 })
+
+    expect(transfer.published).toEqual([])
+  })
+})
+
 /**
  * The production factory is what src/main/store/index.ts actually composes.
  * These tests drive THAT function — not a hand-built client — through the REAL
