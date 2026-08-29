@@ -26,13 +26,17 @@
  *   Prefer measuring with the dev/release instances quiescent.
  * - An env-var HOME override does NOT isolate that root (or userData):
  *   Electron's app.getPath('home'/'appData') resolves via NSHomeDirectory(),
- *   not $HOME. True isolation needs the authoritative isolated-HOME contract
- *   (scripts/perf/isolatedHome.cjs) or an app-level override for the authority
- *   root, which does not exist today.
+ *   not $HOME. Pass --authority-root=<absolute path> to use the app-level,
+ *   test-only override instead (TASKWRAITH_WORKSPACE_LOCK_AUTHORITY_ROOT; see
+ *   src/main/startup/WorkspaceLockAuthorityRootOverride.ts). It is fail-closed:
+ *   a packaged build, a relative path, or a value that resolves back to the
+ *   shared root all refuse to launch rather than silently measuring the shared
+ *   root, which is exactly how an earlier "WAL-free" control run lied.
  *
  * Usage:
  *   node scripts/perf/startupRunMatrix.cjs --instance-id=perf-startup-<you> \
- *     [--port=9379] [--cold=3] [--warm=5] [--out=/tmp/startup-matrix.jsonl]
+ *     [--port=9379] [--cold=3] [--warm=5] [--out=/tmp/startup-matrix.jsonl] \
+ *     [--authority-root=/abs/path] [--seed-wal=<file.jsonl>]
  */
 
 const { spawn } = require('child_process')
@@ -55,6 +59,59 @@ const port = Number(arg('port', '9379'))
 const coldRuns = Number(arg('cold', '3'))
 const warmRuns = Number(arg('warm', '5'))
 const outFile = arg('out', '/tmp/startup-matrix.jsonl')
+const authorityRoot = arg('authority-root', '')
+const seedWal = arg('seed-wal', '')
+
+if (authorityRoot && !path.isAbsolute(authorityRoot)) {
+  console.error('--authority-root must be an absolute path.')
+  process.exit(1)
+}
+if (seedWal && !authorityRoot) {
+  console.error('--seed-wal requires --authority-root (never seed the shared root).')
+  process.exit(1)
+}
+
+/**
+ * Plants a known WAL into the isolated authority root so a run measures a
+ * chosen history size rather than whatever the machine happens to hold. Only
+ * ever writes inside --authority-root.
+ */
+function seedAuthorityRoot() {
+  if (!authorityRoot) return null
+  const dir = path.join(authorityRoot, 'work-lock-authority')
+  // Only --seed-wal wipes. Without it the existing root is measured as-is,
+  // which is how an "after checkpoint" run is compared against its own "before".
+  if (seedWal) fs.rmSync(authorityRoot, { recursive: true, force: true })
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  if (!seedWal) return { reused: true, ...authorityRootShape() }
+  const raw = fs.readFileSync(seedWal, 'utf8')
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), raw, { mode: 0o600 })
+  return { bytes: Buffer.byteLength(raw), events: raw.split('\n').filter(Boolean).length }
+}
+
+/** Post-run journal shape, so a report can state what was actually measured. */
+function authorityRootShape() {
+  if (!authorityRoot) return null
+  const dir = path.join(authorityRoot, 'work-lock-authority')
+  const stat = (name) => {
+    try {
+      return fs.statSync(path.join(dir, name)).size
+    } catch {
+      return null
+    }
+  }
+  let archive = []
+  try {
+    archive = fs.readdirSync(path.join(dir, 'archive'))
+  } catch {
+    archive = []
+  }
+  return {
+    eventsBytes: stat('events.jsonl'),
+    checkpointBytes: stat('checkpoint.json'),
+    archiveSegments: archive.length
+  }
+}
 
 if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(instanceId) || instanceId === 'verify') {
   console.error(
@@ -100,11 +157,19 @@ function inspectorState() {
 // failure as an identity conflict or a busy authority.
 function classifyLog(logText) {
   return {
-    recoveryDisabled: /startup recovery failed; run and schedule recovery remain disabled/.test(
+    recoveryDisabled:
+      /startup recovery failed \(|startup recovery failed; run and schedule recovery remain disabled/.test(
+        logText
+      ),
+    walIdentityConflict: /WAL changed identity or revision/.test(logText),
+    authorityBusy: /WorkspaceLockAuthorityBusyError|is committing a workspace-lock transition/.test(
       logText
     ),
-    walIdentityConflict: /WAL changed identity or revision/.test(logText),
-    authorityBusy: /WorkspaceLockAuthorityBusyError/.test(logText)
+    // Post-checkpoint signals: which replay path boot actually took, and
+    // whether the deferred compaction ran.
+    authorityRootOverride: /TEST-ONLY authority root override in use/.test(logText),
+    compacted: /\[workspace-lock\] sealed \d+ frames/.test(logText),
+    recoveredAfterRetry: /Workspace locking is available again/.test(logText)
   }
 }
 
@@ -112,6 +177,7 @@ async function runOnce(kind, runIndex) {
   if (kind === 'cold') fs.rmSync(profileDir(), { recursive: true, force: true })
   const env = { ...process.env, TASKWRAITH_INSTANCE_ID: instanceId, IOS_REMOTE_TRUE: '0' }
   delete env.ELECTRON_RUN_AS_NODE
+  if (authorityRoot) env.TASKWRAITH_WORKSPACE_LOCK_AUTHORITY_ROOT = authorityRoot
   const logPath = `${outFile.replace(/\.jsonl$/, '')}.run${runIndex}.${kind}.log`
   const logFd = fs.openSync(logPath, 'w')
   const t0 = Date.now()
@@ -159,7 +225,8 @@ async function runOnce(kind, runIndex) {
   }
   await sleep(1500)
   fs.closeSync(logFd)
-  const signatures = classifyLog(fs.readFileSync(logPath, 'utf8'))
+  const logText = fs.readFileSync(logPath, 'utf8')
+  const signatures = classifyLog(logText)
   let failureClass
   if (appExit && appExit.beforeKill) failureClass = 'app-exited-early'
   else if (bootReady && signatures.recoveryDisabled) failureClass = 'boot-ready-degraded'
@@ -175,6 +242,7 @@ async function runOnce(kind, runIndex) {
     appExit,
     inspector,
     logPath,
+    authority: authorityRootShape(),
     devtoolsUpMs: by('devtools-up') ? by('devtools-up').wall - t0 : null,
     windowStartMs: origin ? Math.round(origin - t0) : null,
     dclMs:
@@ -201,6 +269,10 @@ function agg(rows, key) {
 
 async function main() {
   fs.writeFileSync(outFile, '')
+  const seeded = seedAuthorityRoot()
+  if (seeded) {
+    console.log(JSON.stringify({ ev: 'authority-root', path: authorityRoot, seeded }))
+  }
   const results = []
   let runIndex = 0
   for (let i = 0; i < coldRuns; i++) results.push(await runOnce('cold', runIndex++))
@@ -220,6 +292,8 @@ async function main() {
   for (const r of results)
     failureClasses[r.failureClass] = (failureClasses[r.failureClass] || 0) + 1
   summary.failureClasses = failureClasses
+  summary.authorityRoot = authorityRoot || '(shared per-user root)'
+  summary.authority = authorityRootShape()
   console.log('SUMMARY ' + JSON.stringify(summary))
   fs.rmSync(profileDir(), { recursive: true, force: true })
   console.log('MATRIX DONE')

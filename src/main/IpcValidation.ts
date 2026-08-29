@@ -548,6 +548,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'work-locks:subscribe': ['object'],
   'work-locks:unsubscribe': ['optionalObject'],
   'work-locks:force-release-recovery': ['object'],
+  // Both are argument-free: the state is main-owned, and the retry deliberately
+  // takes no renderer-supplied parameters so it cannot be steered.
+  'startup-authority:get': [],
+  'startup-authority:retry': [],
   'git:stage': ['optionalObject'],
   'git:unstage': ['optionalObject'],
   'git:commit': ['optionalObject'],
