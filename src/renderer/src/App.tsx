@@ -18185,23 +18185,6 @@ function App(): React.JSX.Element {
       })
       return
     }
-    // A shared thread cannot leave panel mode, and main refuses it. Bail HERE,
-    // before the destructive save below.
-    //
-    // `chatWithSeatRemoved` is persisted BEFORE the mode change on purpose (see
-    // the note above — it is what makes setChatKind stash the post-removal
-    // roster). So letting main's refusal be the first line of defence would
-    // delete the seat and THEN decline the collapse, leaving a shared panel
-    // sitting below its own floor with nothing to undo it. Main's guard stays
-    // the authority against callers that never come through here; this one
-    // exists so the data is never destroyed on the way to being told no.
-    if (collaboratingChatIds.has(targetChat.appChatId)) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'This chat is shared. Stop sharing before switching it out of panel mode.'
-      })
-      return
-    }
     chatKindTogglingRef.current = true
     setChatKindMutationBusy(true)
     try {

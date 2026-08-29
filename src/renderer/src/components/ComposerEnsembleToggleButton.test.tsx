@@ -8,6 +8,7 @@ import {
 } from './EnsembleParticipantsAboveRow'
 
 const source = readFileSync(new URL('./ComposerEnsembleToggleButton.tsx', import.meta.url), 'utf8')
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const css = readFileSync(
   new URL('../assets/css/39-ensemble-roster-popover.css', import.meta.url),
   'utf8'
@@ -35,6 +36,33 @@ const participants: EnsembleParticipant[] = [
 ]
 
 describe('ComposerEnsembleToggleButton participant manager', () => {
+  it('dispatches a changed On/Off selection after closing its popover', () => {
+    const selectionStart = source.indexOf('const selectMode = (nextEnabled: boolean): void => {')
+    const selectionEnd = source.indexOf('\n  const modeToggleTitle', selectionStart)
+    const selection = source.slice(selectionStart, selectionEnd)
+
+    expect(selectionStart).toBeGreaterThan(-1)
+    expect(selection).toContain('if (modeToggleDisabled) return')
+    expect(selection.indexOf('setOpen(false)')).toBeLessThan(
+      selection.indexOf('if (nextEnabled !== enabled) onToggle(nextEnabled)')
+    )
+  })
+
+  it('does not treat an active collaboration as a veto on collapsing to solo', () => {
+    const collapseStart = appSource.indexOf('const handleCollapseEnsembleToSoloForChat = async (')
+    const collapseEnd = appSource.indexOf(
+      '\n  const handleCollapseEnsembleToSolo = async (',
+      collapseStart
+    )
+    const collapse = appSource.slice(collapseStart, collapseEnd)
+
+    expect(collapseStart).toBeGreaterThan(-1)
+    expect(collapseEnd).toBeGreaterThan(collapseStart)
+    expect(collapse).not.toContain('collaboratingChatIds')
+    expect(collapse).not.toContain('Stop sharing before switching')
+    expect(collapse).toContain("targetKind: 'single'")
+  })
+
   it('keeps the popover trigger enabled while locking only On/Off mode changes', () => {
     const modeControlStart = source.indexOf('const segmentedModeControl = (')
     const modeControlEnd = source.indexOf('\n\n  const popover =', modeControlStart)

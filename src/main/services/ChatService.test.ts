@@ -956,13 +956,7 @@ describe('ChatService', () => {
     expect(saved.providerMetadata).toEqual({ rendererSetting: 'next' })
   })
 
-  /**
-   * The refusal used to live only in the desktop `set-chat-kind` IPC handler,
-   * under a comment claiming it was "the gate every surface goes through". It
-   * was not: the bridge/iOS action calls this method directly. It lives here
-   * now, which is the one thing every door has in common.
-   */
-  describe('a shared chat cannot be switched out of panel mode', () => {
+  describe('explicit chat mode remains the host choice during collaboration', () => {
     function makeSharedDeps(
       chat: ChatRecord,
       shares: Array<{ enabled: boolean; participants?: Array<{ status: string }> }>
@@ -979,19 +973,18 @@ describe('ChatService', () => {
       return { deps, setChatKind }
     }
 
-    it('refuses the collapse and never reaches the destructive store mutation', () => {
-      // AppStore.setChatKind strips the roster into providerMetadata.stashedEnsemble
-      // before anything else can object, and a later preset-apply consumes that
-      // stash — so a seat removed by a collapse can RESURRECT. With externals in
-      // seats that is a kicked person coming back.
+    it('allows a collapse while external seats remain active in the collaboration store', () => {
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
         { enabled: true, participants: [{ status: 'active' }] }
       ])
 
-      expect(() =>
-        new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
-      ).toThrow(/shared/i)
-      expect(setChatKind).not.toHaveBeenCalled()
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalledWith('chat-1', 'single', {
+        seedParticipant: undefined,
+        canonicalProvider: undefined,
+        canonicalProviderMetadata: undefined
+      })
+      expect(deps.humanCollaborationStore?.listShares).not.toHaveBeenCalled()
     })
 
     it('allows the collapse when the share record survives but nobody is admitted', () => {

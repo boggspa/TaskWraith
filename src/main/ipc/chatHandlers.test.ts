@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS, registerChatHandlers } from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
-import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
+import type {
+  RebindChatWorkspaceInput,
+  RebindChatWorkspaceOptions,
+  SetChatKindInput
+} from '../services/ChatService'
 import { queuePendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 
 vi.mock('electron', () => ({
@@ -75,8 +79,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getSubThreads: vi.fn(() => [chat('sub-thread')]),
       createSideChat: vi.fn(() => chat('side-chat', { parentChatRelation: 'sideChat' })),
       getSideChats: vi.fn(() => [chat('side-chat')]),
-      listHumanCollaborationShares: vi.fn(() => []),
-      setChatKind: vi.fn((args: { chatId: string; targetKind: 'single' | 'ensemble' }) =>
+      setChatKind: vi.fn((args: SetChatKindInput) =>
         chat(args.chatId, { chatKind: args.targetKind })
       ),
       rebindChatWorkspace: vi.fn(
@@ -120,7 +123,6 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
         )
       })
     },
-    setChatKindMutation: vi.fn(async (args) => chat(args.chatId, { chatKind: args.targetKind })),
     deleteExecutionGraphHistoryForChat: vi.fn(async () => undefined),
     revokeApprovalsForChat: vi.fn(),
     beginChatHistoryMutation: vi.fn(),
@@ -538,19 +540,26 @@ describe('registerChatHandlers', () => {
     }
   )
 
-  it('routes set-chat-kind through the Host mutation and broadcasts the result', async () => {
+  it('routes the complete set-chat-kind request through canonical ChatService and broadcasts', async () => {
     const deps = createDeps()
     registerChatHandlers(deps)
 
-    const result = await handlerFor('set-chat-kind')({} as any, {
+    const seedParticipant = {
+      id: 'seed-1',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'Boss',
+      instructions: '',
+      order: 1
+    }
+    const args: SetChatKindInput = {
       chatId: 'chat-1',
-      targetKind: 'ensemble'
-    })
+      targetKind: 'ensemble',
+      seedParticipant
+    }
+    const result = await handlerFor('set-chat-kind')({} as any, args)
     expect(result).toEqual(chat('chat-1', { chatKind: 'ensemble' }))
-    expect(deps.setChatKindMutation).toHaveBeenCalledWith({
-      chatId: 'chat-1',
-      targetKind: 'ensemble'
-    })
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith(args)
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
   })
 
@@ -563,7 +572,7 @@ describe('registerChatHandlers', () => {
     await expect(
       handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'ensemble' })
     ).rejects.toThrow('Ensemble Mode is disabled.')
-    expect(deps.setChatKindMutation).not.toHaveBeenCalled()
+    expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
   })
 
   it('allows an ensemble→solo conversion even when ensemble mode is disabled', async () => {
@@ -572,66 +581,15 @@ describe('registerChatHandlers', () => {
     })
     registerChatHandlers(deps)
 
-    const result = await handlerFor('set-chat-kind')({} as any, {
+    const args: SetChatKindInput = {
       chatId: 'chat-1',
-      targetKind: 'single'
-    })
+      targetKind: 'single',
+      canonicalProvider: 'kimi',
+      canonicalProviderMetadata: { selectedModelType: 'kimi-k2.7-code' }
+    }
+    const result = await handlerFor('set-chat-kind')({} as any, args)
     expect(result).toEqual(chat('chat-1', { chatKind: 'single' }))
-    expect(deps.setChatKindMutation).toHaveBeenCalledWith({
-      chatId: 'chat-1',
-      targetKind: 'single'
-    })
-  })
-
-  /**
-   * A shared panel must not be collapsible. The collapse path strips the roster
-   * and stashes it, and AppStore.setChatKind's solo→ensemble branch restores
-   * that stash — so a seat removed by a collapse can come back. With external collaborators holding
-   * seats that means a removed person's seat could resurrect, which is why this
-   * is refused at the main-side gate rather than made collapse-aware.
-   */
-  it('refuses to collapse a SHARED ensemble chat out of panel mode', async () => {
-    const deps = createDeps({})
-    // ACTIVE participants are the discriminator, not the share record: both
-    // revoke paths leave an enabled share behind with nobody admitted, and
-    // refusing on that basis blocked the revert this guard exists to make safe.
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: true, participants: [{ status: 'active' }] } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
-    registerChatHandlers(deps)
-
-    await expect(
-      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    ).rejects.toThrow(/shared/i)
-    expect(deps.setChatKindMutation).not.toHaveBeenCalled()
-  })
-
-  it('still allows the collapse when the share is disabled', async () => {
-    const deps = createDeps({})
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: false } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
-    registerChatHandlers(deps)
-
-    await handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    expect(deps.setChatKindMutation).toHaveBeenCalled()
-  })
-
-  // A shared chat that is ALREADY solo is not a collapse — refusing there would
-  // reject a harmless no-op, and a shared solo thread is a real state (it only
-  // PRESENTS as a panel; the persisted kind stays 'single').
-  it('does not refuse a no-op on a shared chat that is already solo', async () => {
-    const deps = createDeps({})
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: true } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'single' }))
-    registerChatHandlers(deps)
-
-    await handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    expect(deps.setChatKindMutation).toHaveBeenCalled()
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith(args)
   })
 
   it.each([
@@ -669,7 +627,7 @@ describe('registerChatHandlers', () => {
 
       expect(assertSenderChatScope).toHaveBeenCalledWith(event, 'other-chat', capability)
       if (service) expect(deps.chatService[service]).not.toHaveBeenCalled()
-      expect(deps.setChatKindMutation).not.toHaveBeenCalled()
+      expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
       expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
       expect(deps.broadcastThreadList).not.toHaveBeenCalled()
       expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()

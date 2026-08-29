@@ -635,33 +635,6 @@ export class ChatService {
       ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
       : undefined
     if (seedParticipant) assertLiveProviderId(seedParticipant.provider)
-    // A SHARED thread cannot leave panel mode — not the host, not an agent, not
-    // any renderer. Collapsing routes through AppStore.setChatKind, which strips
-    // the roster into `providerMetadata.stashedEnsemble`; a later preset-apply
-    // consumes that stash, so a seat removed by a collapse can RESURRECT. With
-    // externals occupying seats, that means a kicked person's seat coming back.
-    //
-    // The refusal lives HERE because this is the only thing all the doors have
-    // in common. The desktop `set-chat-kind` handler and the bridge/iOS action
-    // both check it too, so their callers get shaped errors instead of a throw —
-    // but the bridge path reaches this method directly, and a comment on the
-    // desktop handler used to claim it was "the gate every surface goes
-    // through". It was not. This is.
-    if (targetKind !== 'ensemble') {
-      // ACTIVE PARTICIPANTS, not enabled shares. An enabled share with nobody
-      // admitted protects nothing — and keying on it made the guard refuse the
-      // very revert it exists to make safe, because both revoke paths leave the
-      // share record behind. What must never happen is collapsing a panel
-      // somebody is still admitted to.
-      if (
-        this.activeExternalCountForChat(chatId) > 0 &&
-        this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble'
-      ) {
-        throw new Error(
-          'This chat is shared. Stop sharing before switching it out of panel mode.'
-        )
-      }
-    }
     const canonicalProviderMetadata =
       args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
         ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)

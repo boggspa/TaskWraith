@@ -1,9 +1,5 @@
 import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type {
-  ChatService,
-  RebindChatWorkspaceInput,
-  SetChatKindInput
-} from '../services/ChatService'
+import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
 import {
   isChatGitWorkflowState,
   type ChatGitWorkflowInput
@@ -45,10 +41,6 @@ import {
   parseChatComposerSelectionPatchRequest,
   type ChatComposerSelectionPatchResult
 } from '../../shared/chatComposerSelectionPatch'
-import {
-  createDesktopHostThreadKindCommandClient,
-  createHostThreadKindMutation
-} from '../host/HostThreadKindCommand'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
@@ -75,16 +67,11 @@ export interface ChatHandlerDeps {
     | 'createSubThread'
     | 'getSubThreads'
     | 'createSideChat'
+    | 'setChatKind'
     | 'rebindChatWorkspace'
     | 'queueChatWorkspaceRebind'
     | 'getSideChats'
-    // Required, not optional: the set-chat-kind gate needs to know whether a
-    // chat is shared, and a missing method must be a compile error rather than
-    // a silently-permitted collapse of a shared panel.
-    | 'listHumanCollaborationShares'
   >
-  /** Host-owned chat-kind mutation; tests inject it, production uses a narrow main-only Host session. */
-  setChatKindMutation?: (input: SetChatKindInput) => Promise<ChatRecord>
   /**
    * Host-routed chat-persistence durability barrier (AppStore.saveChat's
    * Host-owned-gate branch enqueues; this drains). Awaited after ensemble-chat
@@ -413,17 +400,6 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     writeStateFile: writeThreadTitleRepairStateFile,
     mode: threadTitleRepairModeFromEnv(process.env.TASKWRAITH_THREAD_TITLE_REPAIR)
   })
-  const setChatKindMutation =
-    deps.setChatKindMutation ??
-    (() => {
-      return createHostThreadKindMutation({
-        client: createDesktopHostThreadKindCommandClient({
-          userDataPath: app.getPath('userData'),
-          appVersion: app.getVersion()
-        }),
-        getChat: (chatId) => deps.chatService.getChat(chatId)
-      })
-    })()
   const observeNoHistoryChat = (chat: ChatRecord): void => {
     if (deps.getSettings().storeLocalChatHistory === false) {
       deps.observeSoloSteerTranscriptRows(chat)
@@ -567,39 +543,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       if (args?.targetKind === 'ensemble' && deps.getSettings().ensembleModeEnabled === false) {
         throw new Error('Ensemble Mode is disabled.')
       }
-      // A SHARED thread cannot leave panel mode — not by the host, not by an
-      // agent, not by any renderer. Collapsing routes through
-      // AppStore.setChatKind, which strips the roster and stashes it in
-      // `providerMetadata.stashedEnsemble`; the next preset-apply consumes that
-      // stash, so a seat removed by a collapse can silently RESURRECT later.
-      // With external collaborators occupying seats that is not a cosmetic
-      // problem — a kicked person's seat could come back.
-      //
-      // `ChatService.setChatKind` refuses this too, and THAT is the gate every
-      // door goes through; this copy is kept because it is cheap and because it
-      // fails before any of the argument validation below. The share check runs
-      // first because it is cheap; only then do we pay for a chat read to
-      // confirm this is actually a collapse and not a no-op.
-      if (args?.targetKind !== 'ensemble') {
-        // ACTIVE participants, not enabled shares — both revoke paths leave the
-        // share record behind, and an enabled share nobody is admitted to
-        // protects nothing. ChatService.setChatKind is the authority; this copy
-        // is the cheap early check.
-        const admitted = deps.chatService
-          .listHumanCollaborationShares(args.chatId)
-          .filter((share) => share.enabled)
-          .some((share) => (share.participants || []).some((p) => p.status === 'active'))
-        if (admitted && deps.chatService.getChat(args.chatId)?.chatKind === 'ensemble') {
-          throw new Error(
-            'This chat is shared. Stop sharing before switching it out of panel mode.'
-          )
-        }
-      }
-      const chat = await setChatKindMutation({
-        chatId: args.chatId,
-        targetKind: args.targetKind,
-        ...(args.canonicalProvider ? { canonicalProvider: args.canonicalProvider } : {})
-      })
+      const chat = deps.chatService.setChatKind(args)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
