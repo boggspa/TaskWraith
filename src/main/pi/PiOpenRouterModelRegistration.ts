@@ -54,7 +54,7 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
   {
     modelId: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     label: 'Nemotron 3 Ultra',
-    reasoning: false,
+    reasoning: true,
     input: ['text'],
     contextWindow: 1_000_000,
     maxTokens: 65_536,

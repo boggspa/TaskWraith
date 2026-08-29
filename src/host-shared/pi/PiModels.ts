@@ -460,7 +460,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     label: 'Nemotron 3 Ultra',
     contextWindow: 1_000_000,
     maxOutputTokens: 65_536,
-    thinking: false,
+    thinking: true,
     images: false
   }
 ]

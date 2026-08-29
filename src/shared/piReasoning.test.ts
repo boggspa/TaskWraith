@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PI_FULL_LADDER, resolvePiReasoningSupport } from './piReasoning'
+import { PI_STATIC_MODELS } from '../host-shared/pi/PiModels'
 
 describe('resolvePiReasoningSupport', () => {
   // Each row is sourced to the upstream's own API docs. The point of the table
@@ -67,6 +68,16 @@ describe('resolvePiReasoningSupport', () => {
     expect(resolvePiReasoningSupport('brand-new/model-1').efforts).toEqual(PI_FULL_LADDER)
     expect(resolvePiReasoningSupport(undefined).efforts).toEqual(PI_FULL_LADDER)
     expect(resolvePiReasoningSupport('').efforts).toEqual(PI_FULL_LADDER)
+  })
+
+  // The catalogue's `thinking` flag and this table are two statements about the
+  // same fact, and only one of them is read by sub-thread delegation — a
+  // disagreement there silently DROPS a delegated effort rather than failing.
+  it('agrees with every catalogue row about whether the model reasons', () => {
+    const disagreements = PI_STATIC_MODELS.filter(
+      (model) => model.thinking !== (resolvePiReasoningSupport(model.wireId).efforts.length > 0)
+    ).map((model) => model.wireId)
+    expect(disagreements).toEqual([])
   })
 
   it('routes the same model differently per upstream', () => {
