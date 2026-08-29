@@ -47,6 +47,19 @@ describe('TaskWraith TUI provider presentation', () => {
     }
   })
 
+  it('uses the official Xiaomi accent for Xiaomi-backed Pi models', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('pi', 'xiaomi-token-plan-cn/mimo-v2.5-pro')
+    ).toMatchObject({
+      runtimeProvider: 'pi',
+      displayProvider: 'Xiaomi',
+      hueKey: 'xiaomi',
+      accent: '#008844'
+    })
+    expect(taskWraithProviderAccent('xiaomi')).toBe(TASKWRAITH_PROVIDER_ACCENTS.xiaomi)
+    expect(TASKWRAITH_PROVIDER_ACCENTS.xiaomi).not.toBe(TASKWRAITH_PROVIDER_ACCENTS.ensemble)
+  })
+
   it('falls back to the runtime seat when no spoof is known', () => {
     const ollama = resolveTaskWraithProviderPresentation('ollama', 'private/model')
     const pi = resolveTaskWraithProviderPresentation('pi', 'private/model')

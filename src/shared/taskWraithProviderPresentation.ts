@@ -23,6 +23,7 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   muse: '#1671EA',
   ensemble: '#986781',
   mistral: '#D44404',
+  xiaomi: '#008844',
   alibaba: '#8C52EF',
   'deep-reinforce': '#BE5809',
   ibm: '#3079BC',
