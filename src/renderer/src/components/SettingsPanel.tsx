@@ -2458,6 +2458,8 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_eval',
     'canvas_navigate',
     'canvas_close',
+    'web_login_list',
+    'web_login_open',
     'mesh_scene_create',
     'mesh_scene_list',
     'mesh_scene_inspect',

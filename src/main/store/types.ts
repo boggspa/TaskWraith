@@ -555,7 +555,8 @@ export type AgenticServiceId =
   // the future mic/camera tools land default-closed.
   | 'mediaRecording'
   // Canvas Browser navigation (canvas_navigate: open/goto/back/forward/reload/
-  // stop on the sandboxed web-preview surface). A DEDICATED grant bucket —
+  // stop on the sandboxed web-preview surface, and web_login_open, which binds
+  // one to a saved site login). A DEDICATED grant bucket —
   // grantable like crossThreadRead under Accept Edits — kept separate from
   // `canvasInteraction` so approving read-class browsing never grants click/fill
   // actuation, and separate from `mcpTools` so Ask and Plan can

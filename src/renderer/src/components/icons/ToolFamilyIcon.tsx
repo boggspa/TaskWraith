@@ -36,6 +36,7 @@ export type ToolFamily =
   | 'browser'
   | 'window-context'
   | 'canvas'
+  | 'site-login'
   | 'image-view'
   | 'image'
   | 'audio'
@@ -341,6 +342,12 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_render_chart':
     case 'canvas_close':
       return 'canvas'
+    // Saved site logins are their own family, not canvas: the row is about an
+    // account the user holds, and reading it as "just another canvas verb"
+    // hides that an agent is acting AS THE USER somewhere.
+    case 'web_login_list':
+    case 'web_login_open':
+      return 'site-login'
     // Mesh Canvas is its own surface (3D scene service + dock viewer), not the
     // 2D canvas — the scene tools get a wireframe-cube glyph of their own.
     case 'mesh_scene_create':
@@ -710,6 +717,16 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M7.6 11.5C9.1 8.9 11 8.1 12.8 9.1 14.6 10.1 15.9 9.3 16.8 7.4" />
           <circle cx="7.8" cy="7.5" r="1" />
           <circle cx="16.1" cy="12.5" r="1" />
+        </g>
+      )
+    case 'site-login':
+      // A key, matching SiteLoginSymbolIcon in the Work > Logins dock tab.
+      return (
+        <g>
+          <circle cx="8.4" cy="8.4" r="4.3" />
+          <path d="M11.5 11.5 19.5 19.5" />
+          <path d="M16.8 16.8 15 18.6" />
+          <path d="M18.9 18.9 17.1 20.7" />
         </g>
       )
     case 'mesh':

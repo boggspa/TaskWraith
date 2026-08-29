@@ -2037,6 +2037,12 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'none',
     'none'
   ),
+  // ALWAYS, not url-argument. Unlike canvas_navigate - whose back/forward/reload
+  // verbs carry no url - this verb always loads a document, landing on the
+  // site's own origin when no url is given. Classifying it by its url argument
+  // let a no-url call read as "no egress" and slip past a network-deny posture,
+  // because networkUrlArgumentIsRemote (ToolClassTaxonomy.ts) has no case for a
+  // tool it does not know and answers false.
   web_login_open: tool(
     'orchestration',
     'webBrowsing',
@@ -2044,7 +2050,7 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'web-login',
     'host-state',
     'application-resource',
-    'url-argument'
+    'always'
   ),
   mesh_scene_create: tool(
     'workspace_write',
