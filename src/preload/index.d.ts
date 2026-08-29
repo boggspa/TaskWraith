@@ -102,6 +102,7 @@ import type {
 } from '../shared/usageWebSession'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { StartupAuthorityRecoveryState } from '../shared/startupAuthority'
 import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
@@ -2763,6 +2764,11 @@ declare global {
       forceReleaseRecoveryBlockedWorkLock: (
         request: WorkLockRecoveryRequest
       ) => Promise<WorkLockRecoveryResult>
+      getStartupAuthorityState: () => Promise<StartupAuthorityRecoveryState>
+      retryStartupAuthority: () => Promise<StartupAuthorityRecoveryState>
+      onStartupAuthorityState: (
+        callback: (state: StartupAuthorityRecoveryState) => void
+      ) => () => void
       subscribeWorkLocks: (
         query: WorkLockProjectionQuery,
         callback: (update: WorkLockProjectionUpdate) => void

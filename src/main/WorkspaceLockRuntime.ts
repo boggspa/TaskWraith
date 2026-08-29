@@ -22,6 +22,8 @@ import { NodeWorkspaceLockPersistence } from './workLocks/NodeWorkspaceLockPersi
 import {
   WorkspaceLockAuthority,
   type WorkspaceLockAuthorityListener,
+  type WorkspaceLockCompactionOptions,
+  type WorkspaceLockCompactionOutcome,
   type WorkspaceLockRecoveryResult
 } from './workLocks/WorkspaceLockAuthority'
 import {
@@ -234,6 +236,10 @@ interface WorkspaceLockAuthorityLike {
   quarantineChildOwnerAcquisitions(owner: WorkspaceLockOwner): Promise<WorkspaceLockRecoveryResult>
   snapshot(): WorkspaceLockSnapshot
   onChange(listener: WorkspaceLockAuthorityListener): () => void
+  compactIfNeeded?(
+    options?: WorkspaceLockCompactionOptions
+  ): Promise<WorkspaceLockCompactionOutcome>
+  replaySource?(): 'legacy' | 'checkpoint' | 'checkpoint-superseded'
   dispose(): void
 }
 
@@ -955,6 +961,23 @@ export class WorkspaceLockRuntime {
     }
     this.unhealthyReason = null
     return { ok: true, runId, clearedReason: expectedReason }
+  }
+
+  /**
+   * Seals workspace-lock history the next boot would otherwise replay. Runs
+   * after the window exists, never on the awaited startup path — the first
+   * compaction still has to read the whole journal once.
+   */
+  async compactWorkspaceLockHistory(
+    options?: WorkspaceLockCompactionOptions
+  ): Promise<WorkspaceLockCompactionOutcome> {
+    if (!this.authority.compactIfNeeded) return { compacted: false, reason: 'unsupported' }
+    return this.authority.compactIfNeeded(options)
+  }
+
+  /** How the current authority state was reconstructed, for startup diagnostics. */
+  workspaceLockReplaySource(): 'legacy' | 'checkpoint' | 'checkpoint-superseded' | 'unknown' {
+    return this.authority.replaySource?.() ?? 'unknown'
   }
 
   markUnhealthy(reason: string): void {

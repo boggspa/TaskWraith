@@ -1459,7 +1459,9 @@ export class WorkspaceLockAuthority {
       const current = this.readWal(true)
       if (current.byteLength < byteThreshold) {
         released = this.persistence.releaseInstanceFence(fence.fenceId)
-        if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+        if (!released) {
+          throw new Error('Workspace-lock compaction fence was replaced before release.')
+        }
         return {
           compacted: false,
           reason: 'below_threshold',
@@ -1477,7 +1479,9 @@ export class WorkspaceLockAuthority {
       })
       if (!plan) {
         released = this.persistence.releaseInstanceFence(fence.fenceId)
-        if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+        if (!released) {
+          throw new Error('Workspace-lock compaction fence was replaced before release.')
+        }
         return { compacted: false, reason: 'nothing_to_seal', byteLength: current.byteLength }
       }
 
@@ -1496,7 +1500,9 @@ export class WorkspaceLockAuthority {
         throw new Error('Workspace-lock compaction changed the replayed sequence.')
       }
       released = this.persistence.releaseInstanceFence(fence.fenceId)
-      if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+      if (!released) {
+        throw new Error('Workspace-lock compaction fence was replaced before release.')
+      }
       return {
         compacted: true,
         boundarySequence: plan.boundarySequence,

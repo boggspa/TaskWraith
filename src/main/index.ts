@@ -2336,7 +2336,7 @@ import { ingestBlackboardPostImages } from './blackboard/BlackboardPostAttachmen
 import { applyBlackboardPollVoteToChat } from './blackboard/BlackboardPoll'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
 import { BlackboardExpiryService } from './blackboard/BlackboardExpiryService'
-import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
+import { WorkspaceLockRuntime } from './WorkspaceLockRuntime'
 import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
 import { WorkspaceLockTerminalReconciler } from './WorkspaceLockTerminalReconciler'
 import { WorkspaceLockGatedProviderLaunch } from './WorkspaceLockGatedProviderLaunch'
@@ -2360,6 +2360,17 @@ import {
   type VerifiedWorkspaceMutationExecutionContext
 } from './mcp/VerifiedWorkspaceMutationHandoff'
 import { registerWorkLockHandlers } from './ipc/workLockHandlers'
+import { registerStartupAuthorityHandlers } from './ipc/startupAuthorityHandlers'
+import {
+  bootOnlyRecoveryVerdict,
+  captureBootOnlyRecoveryShape,
+  type BootOnlyRecoveryRunShape
+} from './startup/BootOnlyRecoveryGuard'
+import {
+  describeStartupAuthorityState,
+  StartupAuthorityRecoverySupervisor
+} from './startup/StartupAuthorityRecovery'
+import { resolveWorkspaceLockAuthorityRoot } from './startup/WorkspaceLockAuthorityRootOverride'
 import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
 import { providerRunRequiresCoarseWorkspaceLock } from './WorkspaceLockProviderPolicy'
 import {
@@ -2611,6 +2622,12 @@ let workspaceLockStartupRecoveryBlockedReason: string | null = null
  */
 let workspaceLockMutationAdmissionPoisonReason: string | null = null
 let workspaceLockRuntimeRef: WorkspaceLockRuntime | null = null
+/** Bounded retry + UI projection for a degraded workspace-lock authority boot. */
+let startupAuthorityRecoveryRef: StartupAuthorityRecoverySupervisor | null = null
+let broadcastStartupAuthorityState: (() => void) | null = null
+/** Run-queue shape at boot; a mid-session retry may only re-run boot-only
+ *  recovery while it is unchanged. See startup/BootOnlyRecoveryGuard.ts. */
+let runQueueShapeAtBoot: BootOnlyRecoveryRunShape[] = []
 let runOrphanProcessReaperRef: RunOrphanProcessReaper | null = null
 const workspaceLockProviderCoordinator = new WorkspaceLockProviderCoordinator({
   getRuntime: () => workspaceLockRuntimeRef
@@ -42904,6 +42921,43 @@ function startExternalUsagePrewarmOnce(): void {
   prewarmExternalUsageCache()
 }
 
+/**
+ * Seals workspace-lock history off the boot path.
+ *
+ * boot() replayed the complete journal before createWindow on every launch —
+ * 1.78 s at the observed 127.6 MiB. Compaction is scheduled well after first
+ * paint so the launch that pays for the first one is not the one being
+ * measured, and a failure is reported without ever blocking the app.
+ */
+const WORKSPACE_LOCK_COMPACTION_DELAY_MS = 20_000
+let workspaceLockCompactionTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleWorkspaceLockHistoryCompaction(): void {
+  if (workspaceLockCompactionTimer) return
+  workspaceLockCompactionTimer = setTimeout(() => {
+    workspaceLockCompactionTimer = null
+    const runtime = workspaceLockRuntimeRef
+    if (!runtime) return
+    void runtime
+      .compactWorkspaceLockHistory()
+      .then((outcome) => {
+        if (!outcome.compacted) return
+        console.info(
+          `[workspace-lock] sealed ${outcome.sealedFrameCount} frames at sequence ${outcome.boundarySequence}; ` +
+            `journal ${outcome.beforeByteLength} -> ${outcome.afterByteLength} bytes (${outcome.archiveFilename})`
+        )
+      })
+      .catch((error) => {
+        // Compaction is an optimisation. A failure must never degrade the
+        // authority; the next launch simply replays as it did before.
+        console.warn(
+          '[workspace-lock] history compaction failed; the journal is unchanged:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+  }, WORKSPACE_LOCK_COMPACTION_DELAY_MS)
+  workspaceLockCompactionTimer.unref?.()
+}
+
 /** Called from the window's `ready-to-show`. Arms the settle gap rather than
  * starting the scan immediately — first paint is exactly when the renderer is
  * busiest. */
@@ -42977,6 +43031,12 @@ function createWindow(): void {
     emitDueScheduledTasks()
     appShellStatsService.start(isMainWindowStatsActive())
     noteFirstPaintForExternalUsagePrewarm()
+    // Both of these are deliberately post-window. Retrying a degraded authority
+    // must never delay first paint, and the first WAL compaction still has to
+    // read the whole journal once.
+    broadcastStartupAuthorityState?.()
+    startupAuthorityRecoveryRef?.startAutomaticRetries()
+    scheduleWorkspaceLockHistoryCompaction()
   })
   mainWindow.on('resize', schedulePersistMainWindowBounds)
   mainWindow.on('move', schedulePersistMainWindowBounds)
@@ -43477,17 +43537,32 @@ if (isGeminiMcpBridgeProcess) {
     // execution graph, scheduled occurrence, or wakeup can resume provider
     // mutation. Failure leaves new reads available while every mutation and
     // recovery dispatch remains fail-closed for this process.
-    try {
+    runQueueShapeAtBoot = captureBootOnlyRecoveryShape(
+      AppStore.getRunQueueJobs({ includeTerminal: true })
+    )
+    const openWorkspaceLockAuthority = async (): Promise<void> => {
       const processIdentity = new WorkspaceLockProcessIdentityService()
-      const workspaceLockAuthorityRoot = workspaceLockAuthorityRootForHome(app.getPath('home'))
-      await fs.mkdir(workspaceLockAuthorityRoot, { recursive: true, mode: 0o700 })
+      const authorityRoot = resolveWorkspaceLockAuthorityRoot({
+        homePath: app.getPath('home'),
+        override: process.env.TASKWRAITH_WORKSPACE_LOCK_AUTHORITY_ROOT,
+        isPackaged: app.isPackaged
+      })
+      if (authorityRoot.overridden) {
+        console.warn(
+          `[workspace-lock] TEST-ONLY authority root override in use: ${authorityRoot.root}`
+        )
+      }
+      await fs.mkdir(authorityRoot.root, { recursive: true, mode: 0o700 })
       try {
-        await fs.chmod(workspaceLockAuthorityRoot, 0o700)
+        await fs.chmod(authorityRoot.root, 0o700)
       } catch {
         // Windows and constrained filesystems may not expose POSIX modes.
       }
+      // A retry must not leave the failed attempt's runtime behind.
+      workspaceLockRuntimeRef?.dispose()
+      workspaceLockRuntimeRef = null
       workspaceLockRuntimeRef = await WorkspaceLockRuntime.open({
-        userDataRoot: workspaceLockAuthorityRoot,
+        userDataRoot: authorityRoot.root,
         instanceId: instanceResourceIdentity.scopeId,
         processIdentity
       })
@@ -43499,14 +43574,38 @@ if (isGeminiMcpBridgeProcess) {
         },
         onError: (message, error) => console.warn(`[run-orphan-reaper] ${message}`, error)
       })
-    } catch (error) {
+    }
+    startupAuthorityRecoveryRef = new StartupAuthorityRecoverySupervisor({
+      open: () => openWorkspaceLockAuthority(),
+      canRunBootOnlyRecovery: () =>
+        bootOnlyRecoveryVerdict(
+          runQueueShapeAtBoot,
+          captureBootOnlyRecoveryShape(AppStore.getRunQueueJobs({ includeTerminal: true }))
+        ).safe,
+      onRecovered: async ({ canRunBootOnlyRecovery }) => {
+        // A successful retry reopens mutation, provider admission and
+        // scheduling. Boot-only run/graph recovery is only replayed while the
+        // queue is provably untouched; otherwise the state says "restart".
+        workspaceLockStartupRecoveryBlockedReason = null
+        if (
+          scheduledOccurrenceRecoveryBlockedReason?.startsWith('Workspace-lock recovery is required:')
+        ) {
+          scheduledOccurrenceRecoveryBlockedReason = null
+        }
+        if (canRunBootOnlyRecovery) await runDeferredWorkspaceLockRecovery()
+      },
+      onStateChange: (state) => {
+        const message = describeStartupAuthorityState(state)
+        if (message) console.warn(`[workspace-lock] ${message}`)
+        broadcastStartupAuthorityState?.()
+      },
+      logError: (message, error) => console.error(`${message}:`, error)
+    })
+    const startupAuthorityState = await startupAuthorityRecoveryRef.runInitialAttempt()
+    if (startupAuthorityState.status !== 'available') {
       workspaceLockStartupRecoveryBlockedReason =
-        error instanceof Error ? error.message : String(error)
+        startupAuthorityState.failure?.message ?? 'Workspace-lock authority is unavailable.'
       scheduledOccurrenceRecoveryBlockedReason ||= `Workspace-lock recovery is required: ${workspaceLockStartupRecoveryBlockedReason}`
-      console.error(
-        '[workspace-lock] startup recovery failed; run and schedule recovery remain disabled:',
-        error
-      )
     }
     registerWorkLockHandlers({
       resolveAuthorizedQuery: (event, query) => {
@@ -52897,6 +52996,10 @@ if (isGeminiMcpBridgeProcess) {
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()
       stopBridgeDaemon()
+      startupAuthorityRecoveryRef?.dispose()
+      startupAuthorityRecoveryRef = null
+      if (workspaceLockCompactionTimer) clearTimeout(workspaceLockCompactionTimer)
+      workspaceLockCompactionTimer = null
       workspaceLockRuntimeRef?.dispose()
       workspaceLockRuntimeRef = null
       runOrphanProcessReaperRef = null
@@ -53029,107 +53132,119 @@ if (isGeminiMcpBridgeProcess) {
         error
       )
     }
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason
-    ) {
-      try {
-        await runOrphanProcessReaperRef?.reap(AppStore.getRunQueueJobs({ includeTerminal: true }))
-      } catch (error) {
-        console.warn(
-          '[run-orphan-reaper] Startup cleanup failed; queue recovery will retain the orphan warning.',
-          error
-        )
-      }
-    }
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason
-    ) {
-      const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
-      recordStartupRecoveryEvents(startupRecoveryRecords)
-      try {
-        // Queue recovery owns process/transport reconciliation. Only after it has
-        // settled those rows may the graph ledger decide whether a claimed
-        // attempt is safe to requeue or must stop at requires_action.
-        executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
-        for (const diagnostic of executionGraphRecoveryDiagnostics) {
-          console.error(
-            `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
-          )
-        }
-      } catch (error) {
-        executionGraphRecoveryDiagnostics = []
-        executionGraphServiceDiagnostics = [
-          ...executionGraphServiceDiagnostics,
-          {
-            code: 'startup_recovery_failed',
-            message: executionGraphDiagnosticMessage(error)
-          }
-        ]
-        console.error('[ExecutionGraph] startup recovery failed:', error)
-      }
-    }
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason &&
-      !scheduledOccurrenceRecoveryBlockedReason
-    ) {
-      AppStore.recoverInterruptedScheduledTasksAfterStartup()
-      // Widened backstop at boot: the 'running'-only startup recovery above misses a
-      // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
-      // Settle those too so the workflow unblocks at launch.
-      reconcileStalledScheduledTasks()
-      // Stage 1 slice 2: close any workflow-runs ledger left open by a crash mid-run
-      // with a terminal stall_settled event. Runs AFTER both ScheduledTask recoveries
-      // so executions they already settled (via syncWorkflowFromScheduledTask) are
-      // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
-      AppStore.reconcileStaleWorkflowRunLedgers()
-    }
-    // Slice 6: same boot-time close-out for orphaned AUDIT runs — an audit run is a
-    // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
-    // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
-    // forever. Settles each to 'failed' with a restart-interruption note.
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason
-    ) {
-      AppStore.reconcileStaleAuditRuns()
-    }
-    // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason &&
-      !scheduledOccurrenceRecoveryBlockedReason
-    ) {
-      stallReconcilerInterval = setInterval(
-        reconcileStalledScheduledTasks,
-        Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
-      )
-      stallReconcilerInterval.unref?.()
-    }
-    // Floor sweep for orphaned chat.runs that still project as running on iOS
-    // after a crash, missed terminal flush, or bridge drop. Startup already
-    // settles with minAgeMs=0 via recoverSubThreadControlPlane; the interval
-    // uses a short grace window so mid-dispatch seeds are not false-failed.
-    if (
-      !historyDeletionStartupRecoveryBlockedReason &&
-      !workspaceLockStartupRecoveryBlockedReason
-    ) {
-      chatRunReconcilerInterval = setInterval(() => {
+    /**
+     * The startup recovery that a degraded workspace-lock boot skipped.
+     *
+     * Extracted verbatim so a successful mid-session retry can replay exactly
+     * what boot would have done, rather than a re-derived subset. Every guard
+     * inside is unchanged; the caller decides whether replaying is safe (see
+     * startup/BootOnlyRecoveryGuard.ts) because these steps settle any ACTIVE
+     * run without proving its process is dead.
+     */
+    const runDeferredWorkspaceLockRecovery = async (): Promise<void> => {
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason
+      ) {
         try {
-          reconcileStaleChatRunsProjection({
-            minAgeMs: CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS
-          })
+          await runOrphanProcessReaperRef?.reap(AppStore.getRunQueueJobs({ includeTerminal: true }))
         } catch (error) {
           console.warn(
-            '[chat-run-reconciler] periodic sweep failed:',
-            error instanceof Error ? error.message : String(error)
+            '[run-orphan-reaper] Startup cleanup failed; queue recovery will retain the orphan warning.',
+            error
           )
         }
-      }, CHAT_RUN_RECONCILER_INTERVAL_MS)
-      chatRunReconcilerInterval.unref?.()
+      }
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason
+      ) {
+        const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
+        recordStartupRecoveryEvents(startupRecoveryRecords)
+        try {
+          // Queue recovery owns process/transport reconciliation. Only after it has
+          // settled those rows may the graph ledger decide whether a claimed
+          // attempt is safe to requeue or must stop at requires_action.
+          executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
+          for (const diagnostic of executionGraphRecoveryDiagnostics) {
+            console.error(
+              `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
+            )
+          }
+        } catch (error) {
+          executionGraphRecoveryDiagnostics = []
+          executionGraphServiceDiagnostics = [
+            ...executionGraphServiceDiagnostics,
+            {
+              code: 'startup_recovery_failed',
+              message: executionGraphDiagnosticMessage(error)
+            }
+          ]
+          console.error('[ExecutionGraph] startup recovery failed:', error)
+        }
+      }
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason &&
+        !scheduledOccurrenceRecoveryBlockedReason
+      ) {
+        AppStore.recoverInterruptedScheduledTasksAfterStartup()
+        // Widened backstop at boot: the 'running'-only startup recovery above misses a
+        // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
+        // Settle those too so the workflow unblocks at launch.
+        reconcileStalledScheduledTasks()
+        // Stage 1 slice 2: close any workflow-runs ledger left open by a crash mid-run
+        // with a terminal stall_settled event. Runs AFTER both ScheduledTask recoveries
+        // so executions they already settled (via syncWorkflowFromScheduledTask) are
+        // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
+        AppStore.reconcileStaleWorkflowRunLedgers()
+      }
+      // Slice 6: same boot-time close-out for orphaned AUDIT runs — an audit run is a
+      // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
+      // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
+      // forever. Settles each to 'failed' with a restart-interruption note.
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason
+      ) {
+        AppStore.reconcileStaleAuditRuns()
+      }
+      // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason &&
+        !scheduledOccurrenceRecoveryBlockedReason
+      ) {
+        stallReconcilerInterval = setInterval(
+          reconcileStalledScheduledTasks,
+          Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
+        )
+        stallReconcilerInterval.unref?.()
+      }
+      // Floor sweep for orphaned chat.runs that still project as running on iOS
+      // after a crash, missed terminal flush, or bridge drop. Startup already
+      // settles with minAgeMs=0 via recoverSubThreadControlPlane; the interval
+      // uses a short grace window so mid-dispatch seeds are not false-failed.
+      if (
+        !historyDeletionStartupRecoveryBlockedReason &&
+        !workspaceLockStartupRecoveryBlockedReason
+      ) {
+        chatRunReconcilerInterval = setInterval(() => {
+          try {
+            reconcileStaleChatRunsProjection({
+              minAgeMs: CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS
+            })
+          } catch (error) {
+            console.warn(
+              '[chat-run-reconciler] periodic sweep failed:',
+              error instanceof Error ? error.message : String(error)
+            )
+          }
+        }, CHAT_RUN_RECONCILER_INTERVAL_MS)
+        chatRunReconcilerInterval.unref?.()
+      }
     }
+    await runDeferredWorkspaceLockRecovery()
     AppStore.recoverExpiredApprovalLedger()
     void getGeminiMcpBridgeStatus({
       autoRepairIfEnabled: AppStore.getSettings().geminiMcpBridgeEnabled
@@ -56309,6 +56424,36 @@ if (isGeminiMcpBridgeProcess) {
       appendBugReport: (userDataPath, payload) => appendBugReport(userDataPath, payload),
       isMainRendererSender
     })
+
+    // A degraded workspace-lock boot must be legible in the UI, not just the
+    // console: while it is degraded, workspace mutation, provider admission,
+    // run recovery and scheduling are all fail-closed.
+    const startupAuthorityIpc = registerStartupAuthorityHandlers({
+      getState: () =>
+        startupAuthorityRecoveryRef?.state() ?? {
+          status: 'pending',
+          failure: null,
+          attempts: 0,
+          nextRetryAtMs: null,
+          lastAttemptAtMs: null,
+          recoveredAfterRetry: false,
+          bootRecoveryIncomplete: false
+        },
+      retryNow: async () => {
+        if (!startupAuthorityRecoveryRef) {
+          throw new Error('Startup authority recovery is not initialized.')
+        }
+        return startupAuthorityRecoveryRef.retryNow()
+      },
+      forEachRendererWindow: (visit) => {
+        if (mainWindow) visit(mainWindow)
+        for (const win of workspacePopoutWindows.values()) visit(win)
+      }
+    })
+    broadcastStartupAuthorityState = () => {
+      const state = startupAuthorityRecoveryRef?.state()
+      if (state) startupAuthorityIpc.broadcast(state)
+    }
 
     registerAppearanceHandlers({
       getSettings: () => AppStore.getSettings(),

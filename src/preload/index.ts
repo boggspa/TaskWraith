@@ -906,6 +906,13 @@ const api = {
       'work-locks:force-release-recovery',
       request
     ) as Promise<WorkLockRecoveryResult>,
+  getStartupAuthorityState: () => ipcRenderer.invoke('startup-authority:get'),
+  retryStartupAuthority: () => ipcRenderer.invoke('startup-authority:retry'),
+  onStartupAuthorityState: (callback: (state: unknown) => void) => {
+    const wrapped = (_event: unknown, state: unknown): void => callback(state)
+    ipcRenderer.on('startup-authority:state', wrapped)
+    return () => ipcRenderer.removeListener('startup-authority:state', wrapped)
+  },
   subscribeWorkLocks: (
     query: WorkLockProjectionQuery,
     callback: (update: WorkLockProjectionUpdate) => void

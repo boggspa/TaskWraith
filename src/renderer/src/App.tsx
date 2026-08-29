@@ -443,6 +443,7 @@ import { CreativeActionApprovalModal } from './components/CreativeActionApproval
 import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { NeedsInputBanner, useNeedsInputBannerController } from './components/NeedsInputBanner'
+import { StartupAuthorityBanner } from './components/StartupAuthorityBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
@@ -32029,6 +32030,10 @@ function App(): React.JSX.Element {
         return the user to the chat surface.
       */}
       {IOS_REMOTE_ENABLED && <IncomingPairingPrompt />}
+      {/* Degraded workspace-lock authority. Self-hiding on a healthy boot; it
+          is the only user-visible signal that workspace mutation, provider
+          admission, run recovery and scheduling are fail-closed. */}
+      <StartupAuthorityBanner />
       <NeedsInputBanner
         entries={needsInputBanner.entries}
         onOpen={(entry) => {

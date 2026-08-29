@@ -1274,7 +1274,7 @@ function mergeMarkers(
 }
 
 function assertState(state: WorkspaceLockWalState): void {
-  if (!state || state.baseline !== null && typeof state.baseline !== 'object') {
+  if (!state || (state.baseline !== null && typeof state.baseline !== 'object')) {
     throw new Error('invalid workspace-lock WAL state')
   }
   // Frames before this point live in a checkpoint (and a sealed archive
