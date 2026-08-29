@@ -9,10 +9,19 @@
  * `design-assets/ghost/ghost-guy-mark-monoline.svg`, which is a monoline mark
  * with four features worth preserving in a character grid:
  *
- *   1. a rounded crown that flares outward rather than a flat cap,
+ *   1. a crown that flares outward rather than a flat cap,
  *   2. two *rectangular* eyes (not dots) sitting symmetrically about centre,
  *   3. a pleated hem rather than a straight bottom edge, and
  *   4. three wisps trailing below that hem.
+ *
+ * The stroke is drawn in the *heavy* Box Drawing weight. The SVG is a
+ * stroke-width 3.25 monoline on a 128 viewBox — around 2.5% of the mark's
+ * width — which the light weight under-reads at this raster size. Heavy costs
+ * the rounded shoulders: Box Drawing has no heavy counterpart to the arcs
+ * (U+256D..U+2570) or the diagonals (U+2571/U+2572), so the outward flare is
+ * drawn as a stair of heavy corners instead. Flare is the load-bearing half of
+ * that feature; the corner radius is not, and mixing a light arc into a heavy
+ * outline reads as a rendering fault rather than as a curve.
  *
  * The SVG's hem is an irregular wave (two deep valleys and one shallow one).
  * That irregularity is below the resolution of a 21-column raster, so the hem
@@ -55,39 +64,41 @@ export const GHOST_BANNER_CHROME_ROWS = 6
 export const GHOST_BANNER_MIN_ROWS = GHOST_BANNER_ROWS + GHOST_BANNER_CHROME_ROWS
 
 /**
- * Box-drawing transcription. Box Drawing (U+2500..U+257F) is already the
- * chrome vocabulary in `theme.ts`, so this introduces no new font dependency.
+ * Box-drawing transcription in the heavy weight. Box Drawing (U+2500..U+257F)
+ * is already the chrome vocabulary in `theme.ts`, so this introduces no new
+ * font dependency — `━┃┏┓┗┛┳╹` sit in the same block as the light forms it
+ * replaced.
  */
 const GHOST_BANNER_UNICODE: readonly string[] = [
-  '      ╭───────╮      ',
-  '     ╱         ╲     ',
-  '   ╱             ╲   ',
-  '  │               │  ',
-  '  │  ┌──┐   ┌──┐  │  ',
-  '  │  │  │   │  │  │  ',
-  '  │  └──┘   └──┘  │  ',
-  '  │               │  ',
-  '  ╰──┬────┬────┬──╯  ',
-  '     │    │    │     ',
-  '     ╵    ╵    ╵     '
+  '      ┏━━━━━━━┓      ',
+  '    ┏━┛       ┗━┓    ',
+  '  ┏━┛           ┗━┓  ',
+  '  ┃               ┃  ',
+  '  ┃  ┏━━┓   ┏━━┓  ┃  ',
+  '  ┃  ┃  ┃   ┃  ┃  ┃  ',
+  '  ┃  ┗━━┛   ┗━━┛  ┃  ',
+  '  ┃               ┃  ',
+  '  ┗━━┳━━━━┳━━━━┳━━┛  ',
+  '     ┃    ┃    ┃     ',
+  '     ╹    ╹    ╹     '
 ]
 
 /**
- * Pure-ASCII degradation, on the same grid and with the same feature set. A
+ * Pure-ASCII degradation, on the same grid and at the same weight. A
  * terminal without UTF-8 is a supported terminal (theme.ts rule 3), and `tw
  * --ascii` must produce this variant rather than a mojibaked one.
  */
 const GHOST_BANNER_ASCII: readonly string[] = [
-  '      .-------.      ',
-  '     /         \\     ',
-  '   /             \\   ',
-  '  |               |  ',
-  '  |  +--+   +--+  |  ',
-  '  |  |  |   |  |  |  ',
-  '  |  +--+   +--+  |  ',
-  '  |               |  ',
-  "  '--+----+----+--'  ",
-  '     |    |    |     ',
+  '      #=======#      ',
+  '    #=#       #=#    ',
+  '  #=#           #=#  ',
+  '  #               #  ',
+  '  #  #==#   #==#  #  ',
+  '  #  #  #   #  #  #  ',
+  '  #  #==#   #==#  #  ',
+  '  #               #  ',
+  '  #==#====#====#==#  ',
+  '     #    #    #     ',
   "     '    '    '     "
 ]
 

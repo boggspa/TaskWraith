@@ -419,5 +419,22 @@ export const TUI_MOTION = {
   /** Blend amount one cell behind the head. */
   shimmerMid: 0.28,
   /** Trailing gap so the sweep reads as a loop rather than a scroll. */
-  shimmerTailPadding: 5
+  shimmerTailPadding: 5,
+  /**
+   * Quiet cells between one home-banner sweep and the next. The banner sweeps
+   * its block on a `column + row` diagonal, so a 21x11 mark has a longest
+   * phase of 30 cells. A tail this long leaves the mark at rest for roughly a
+   * third of each loop, which is what separates a sweep from a surface being
+   * continuously scanned.
+   */
+  bannerSweepTailPadding: 14,
+  /**
+   * Frame interval for the home-frame banner sweep. Deliberately slower than
+   * the working shimmer: a working thread is already repainting, whereas the
+   * home frame repaints for no other reason, so every frame here is CPU spent
+   * while the user is doing nothing. Keep it an exact multiple of the working
+   * shimmer's interval — that is what lets one timer drive both frames by
+   * skipping ticks, rather than a second timer running against the first.
+   */
+  bannerSweepIntervalMs: 240
 } as const

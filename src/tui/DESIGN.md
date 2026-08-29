@@ -38,6 +38,15 @@ hex, a second glyph set, or a parallel density resolver. `theme.ts` stays
 the sole token authority; `ghostBanner.ts` composes printable banner lines
 from those tokens (hand-authored art, not an SVG→ASCII generator).
 
+The mark is drawn in the **heavy** Box Drawing weight, matching the source
+SVG's monoline rather than under-reading it at raster scale. Heavy has no
+counterpart to the arcs or diagonals, so the crown's outward flare is stepped
+rather than curved; the flare is the feature, the radius is not.
+
+Colour over the banner belongs to [`ghostBannerSweep.ts`](./ghostBannerSweep.ts),
+which is where the home-frame sweep lives. `ghostBanner.ts` stays free of ANSI
+so that the art can be asserted as plain text.
+
 ## Density by named affordance
 
 Width adaptation is resolved **once** through `resolveTuiDensity(width)`.
@@ -107,9 +116,23 @@ visible column wide. That is what lets `visibleWidth` / `padAnsi` / composer
 viewport math keep an 80×24 layout unchanged under fallback. A multi-column
 ASCII substitute is a defect in the glyph set, not a renderer quirk.
 
-Static motion: the only animation is the working shimmer (`TUI_MOTION`). It is
-disabled by `NO_COLOR`, `--no-animation`, and any non-TTY. Nothing else
-animates; nothing animates while idle.
+Sparse motion: there are exactly **two** animations, both parameterised by
+`TUI_MOTION` and both disabled by `NO_COLOR`, `--no-animation`, and any
+non-TTY.
+
+1. **The working shimmer** — a one-dimensional sweep along the working status
+   line, bound to a thread being `working`.
+2. **The home-frame banner sweep** — a diagonal sweep across the Monoline
+   Ghost, drawn only on the home frame.
+
+The banner sweep is a deliberate, reviewed exception to the older rule that
+nothing animates while idle: the home frame _is_ the idle state, so a mark
+that only moves under load would never move at all. It is the exception, not a
+precedent. Its cost is a repaint of an otherwise-still frame, which is why it
+runs at `bannerSweepIntervalMs` rather than the working shimmer's rate and why
+`bannerSweepTailPadding` leaves the mark at rest for part of every loop. A
+third animation, or either of these two running on a frame it does not own, is
+a regression.
 
 ## Sidecar boundary — what the TUI deliberately drops
 
@@ -120,8 +143,8 @@ authority. It is not a fully-fledged CLI twin of the desktop app.
 Deliberately omitted relative to the GUI chrome framework:
 
 - Hover affordances and pointer-depth interaction
-- Motion depth beyond the single state-bound shimmer (glass, blur, stacked
-  animated layers, persistent backgrounds)
+- Motion depth beyond the two sweeps above (glass, blur, stacked animated
+  layers, persistent backgrounds)
 - Desktop-only interaction depth: drag-and-drop, stacked modals, canvas/media,
   rich documents
 
