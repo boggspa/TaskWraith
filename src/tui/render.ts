@@ -961,7 +961,7 @@ function renderTuneOverlay(
   const offers = state.offers
   const lines = [borderTitle('Model (preview)', width, ansi, glyphs)]
   if (state.offersLoading) {
-    lines.push(borderedLine(ansi.dim('Fetching offers from the App…'), width, ansi, glyphs))
+    lines.push(borderedLine(ansi.dim('Fetching offers from the Host…'), width, ansi, glyphs))
   } else if (!offers) {
     lines.push(borderedLine(ansi.dim('No model offers are available.'), width, ansi, glyphs))
   } else if (offers.locked) {

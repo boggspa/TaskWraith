@@ -944,4 +944,22 @@ describe('TaskWraith TUI renderer', () => {
       expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
     }
   })
+  it('names the Host, not the App, while the tune lens is fetching offers', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'tune'
+    state.offersLoading = true
+    state.offers = undefined
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    // The standalone Node Host serves this catalogue itself — there is no App
+    // in the loop, and saying otherwise sends a solo-CLI user hunting for one.
+    expect(frame).toContain('Fetching offers from the Host')
+    expect(frame).not.toContain('from the App')
+  })
 })
