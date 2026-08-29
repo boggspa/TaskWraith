@@ -682,7 +682,20 @@ public final class RemoteSessionModel: ObservableObject {
     /// computed statics, so the rebuild is how they re-read) — which would
     /// otherwise drop the open chat + reset the sidebar. `selectedTaskId` drives
     /// the iPad detail column and the iPhone `navigationDestination(item:)`.
-    @Published public var selectedTaskId: String?
+    @Published public var selectedTaskId: String? {
+        didSet {
+            // Only a real change counts. This is the ONLY signal that
+            // distinguishes "the user opened a thread" from "SwiftUI rebuilt
+            // the thread view": both run ThreadDetailView's arming `.task`,
+            // and only the former should snap the transcript to the tail.
+            guard oldValue != selectedTaskId else { return }
+            threadSelectionGeneration &+= 1
+        }
+    }
+    /// Advances whenever the selected thread changes. Consumed by
+    /// `TranscriptFollowStateStore.shouldArmOnOpen` so a remount cannot be
+    /// mistaken for an open.
+    public private(set) var threadSelectionGeneration = 0
     // Sidebar layout — persisted across launches (see TWSidebarPersistence). The
     // paren-wrapped initializer disambiguates the didSet block from a trailing
     // closure on `load(_:)`.

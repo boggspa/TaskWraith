@@ -2875,10 +2875,34 @@ struct ThreadDetailView: View {
             model.clearActionMessage()
             model.visibleThreadId = taskId
             requestSnapshotIfNeeded()
+
+            // Adopt this thread's DURABLE follow state. `@State` dies with the
+            // view's structural identity, and AppShell rebuilds the whole shell
+            // on every `model.phase` transition, so anything held here alone is
+            // discarded by a reconnect the user never asked for.
+            let store = TranscriptFollowStateStore.shared
+            followPin = store.pin(for: taskId)
+
+            guard
+                store.shouldArmOnOpen(
+                    threadId: taskId,
+                    selectionGeneration: model.threadSelectionGeneration)
+            else {
+                // A remount, not an open. Restore what the user chose and do
+                // NOT pin — pinning here is what yanked them back to the tail.
+                autoFollow = store.autoFollow(for: taskId)
+                return
+            }
+
             followPin.userLatchedOff = false
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
             requestFollowPin(proxy, force: true)
+        }
+        .onChange(of: autoFollow) { _, isFollowing in
+            // Mirror intent into the store on every transition so a remount
+            // that lands between here and the next open restores the truth.
+            TranscriptFollowStateStore.shared.setAutoFollow(isFollowing, for: taskId)
         }
         .task(id: snapshotRequestTrigger) {
             requestSnapshotIfNeeded()
