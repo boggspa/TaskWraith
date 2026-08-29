@@ -1,4 +1,9 @@
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
+import {
+  hostComputeGoalRuntimeTiming,
+  hostFormatActiveGoalPromptBlock,
+  hostShouldInjectActiveGoal
+} from '../host-shared/ActiveGoalContract'
 import type {
   ActiveGoal,
   ActiveGoalMode,
@@ -152,28 +157,7 @@ export function computeGoalRuntimeTiming(
   ledger: GoalRuntimeLedger | null | undefined,
   now: GoalRuntimeTimestampInput = new Date()
 ): GoalRuntimeTiming {
-  if (!ledger) {
-    return { activeMs: 0, wallMs: 0, pausedMs: 0, blockedMs: 0 }
-  }
-
-  const timestamp = goalRuntimeTimestamp(now)
-  const effectiveEndAt = ledger.endedAt || timestamp
-  const timing: GoalRuntimeTiming = {
-    activeMs: 0,
-    wallMs: goalRuntimeDurationMs(ledger.startedAt, effectiveEndAt),
-    pausedMs: 0,
-    blockedMs: 0
-  }
-
-  for (const interval of ledger.intervals) {
-    const intervalEndAt = interval.endedAt || effectiveEndAt
-    const durationMs = goalRuntimeDurationMs(interval.startedAt, intervalEndAt)
-    if (interval.status === 'active') timing.activeMs += durationMs
-    else if (interval.status === 'paused') timing.pausedMs += durationMs
-    else if (interval.status === 'blocked') timing.blockedMs += durationMs
-  }
-
-  return timing
+  return hostComputeGoalRuntimeTiming(ledger, now)
 }
 
 export function createActiveGoal(
@@ -251,13 +235,9 @@ export function resolveActiveGoalForEnsemble(
 }
 
 export function shouldInjectActiveGoal(goal: ActiveGoal | null | undefined): goal is ActiveGoal {
-  return Boolean(
-    goal &&
-    (goal.status === 'active' || goal.status === 'blocked') &&
-    goal.mode !== 'codex_native' &&
-    goal.mode !== 'claude_native' &&
-    goal.mode !== 'grok_native'
-  )
+  // The rule lives in the host-shared contract so the standalone Host and the
+  // App can never disagree about whether a goal binds a run.
+  return hostShouldInjectActiveGoal(goal)
 }
 
 export function updateActiveGoalLifecycle(
@@ -313,31 +293,6 @@ function goalRuntimeTimestamp(value: GoalRuntimeTimestampInput): string {
   return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString()
 }
 
-function goalRuntimeDurationMs(startedAt: string, endedAt: string): number {
-  const startMs = Date.parse(startedAt)
-  const endMs = Date.parse(endedAt)
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0
-  return endMs - startMs
-}
-
 export function formatActiveGoalPromptBlock(goal: ActiveGoal): string {
-  const statusLine =
-    goal.status === 'blocked' && goal.blockedReason
-      ? `Status: blocked — ${goal.blockedReason}`
-      : `Status: ${goal.status}`
-  return [
-    '<taskwraith_active_goal>',
-    `Provider mode: ${activeGoalModeLabel(goal.mode)}`,
-    statusLine,
-    'Objective:',
-    goal.objective,
-    '',
-    'Rules:',
-    '- Treat this as the current thread objective and stopping condition.',
-    '- Do not replace, clear, or silently reinterpret the objective; the user owns it.',
-    '- Use goal_read to inspect the objective and goal_complete or goal_blocked when the objective is achieved or genuinely blocked.',
-    '- todo_write may publish visible steps, but it does not complete the active goal.',
-    '- If the user asks for work that conflicts with this goal, ask before switching objectives.',
-    '</taskwraith_active_goal>'
-  ].join('\n')
+  return hostFormatActiveGoalPromptBlock(goal)
 }
