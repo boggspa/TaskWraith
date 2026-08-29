@@ -1421,6 +1421,20 @@ describe('RemoteThreadProjection', () => {
           }
         }),
         msg(4, {
+          id: 'handoff-advance',
+          role: 'system',
+          content: 'Continuous handoff 49/124.',
+          metadata: {
+            continuationHopsChange: {
+              event: 'advance',
+              before: 48,
+              after: 49,
+              maxHops: 124,
+              changedAt: '2026-08-15T12:00:30.000Z'
+            }
+          }
+        }),
+        msg(8, {
           id: 'auto-approvals',
           role: 'system',
           content: 'User enabled thread-wide Auto Approvals.',
@@ -1475,15 +1489,16 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0].noticeKind).toBe('fleetWave')
       expect(snap.rows[1].noticeKind).toBe('ensembleBossmanPoll')
       expect(snap.rows[2].noticeKind).toBe('continuationHopsChange')
-      expect(snap.rows[3].noticeKind).toBe('autoApprovalsChange')
-      expect(snap.rows[4].noticeKind).toBe('blackboardChange')
-      expect(snap.rows[4].providerHueClass).toBe('alibaba')
-      expect(snap.rows[4].speaker).toBeUndefined()
+      expect(snap.rows[3].noticeKind).toBe('continuationHopsChange')
+      expect(snap.rows[4].noticeKind).toBe('autoApprovalsChange')
       expect(snap.rows[5].noticeKind).toBe('blackboardChange')
       expect(snap.rows[5].providerHueClass).toBe('alibaba')
       expect(snap.rows[5].speaker).toBeUndefined()
+      expect(snap.rows[6].noticeKind).toBe('blackboardChange')
+      expect(snap.rows[6].providerHueClass).toBe('alibaba')
+      expect(snap.rows[6].speaker).toBeUndefined()
       // Ordinary chrome keeps folding — the stamp marks the exceptions only.
-      expect(snap.rows[6].noticeKind).toBeUndefined()
+      expect(snap.rows[7].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed hop-change payload rather than stamping it', () => {

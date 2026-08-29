@@ -136,7 +136,10 @@ import {
   resolveSeatAuthority
 } from '../../shared/seatChange'
 import type { SeatParticipantAddedPayload, SeatRosterSeat } from '../../shared/seatChange'
-import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
+import {
+  appendContinuationHopsChangeTranscriptEvent,
+  buildContinuationHopsAdvanceTranscriptEvent
+} from './EnsembleContinuationHopsTranscript'
 import { appendAutoApprovalsChangeTranscriptEvent } from './EnsembleAutoApprovalsTranscript'
 import { buildEnsembleFanoutDispatchPayload } from './EnsembleFanoutDispatchTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
@@ -18014,17 +18017,6 @@ export class EnsembleOrchestrator {
           )
             ? [priorityAuthorityMatch]
             : tagMatches
-        if (priorityAuthorityMatch && routeableTagMatches.length !== tagMatches.length) {
-          const authorityLabel =
-            priorityAuthorityMatch.participant.id === bossmanParticipantId
-              ? 'Boss'
-              : 'active Captain'
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `@-mention: ${participantDisplayName(priorityAuthorityMatch.participant)} is ${authorityLabel} and takes routing priority over advisory participant mentions.`
-          )
-        }
         const seenTagged = new Set<string>()
         const mentionedParticipants: EnsembleParticipant[] = []
         const ambiguityWarnings: string[] = []
@@ -18083,13 +18075,6 @@ export class EnsembleOrchestrator {
           }
           // Spike 4 — an explicit @-mention outranks the reviewer stage gate.
           for (const target of orderedTargets) stageGateExemptIds.add(target.id)
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `@-mention: ${orderedTargets
-              .map((entry) => entry.role || entry.provider)
-              .join(', ')} promoted to speak next.`
-          )
         }
         const extraTargets = routedMentionedParticipants.filter(
           (tagged) => !remainingTargetIds.has(tagged.id)
@@ -20178,22 +20163,28 @@ export class EnsembleOrchestrator {
         }
         options.onCompleteRuns?.(laneRuns)
 
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          formatFanoutWaveCompletionStatus({
-            label,
-            outcomes: laneRuns.map((run) => ({
-              label: participantDisplayName(run.participant),
-              status: run.status,
-              reason: run.terminalReason
-            })),
-            completionDisposition: options.completionDisposition,
-            hasSourceRun: Boolean(options.sourceRunId),
-            continuousReviewWave:
-              label === 'Review wave' && runtime.orchestrationMode === 'continuous'
-          })
-        )
+        const suppressSuccessfulUserFanoutCompletion =
+          options.promptAuthority === 'user' &&
+          laneRuns.length > 0 &&
+          laneRuns.every((run) => run.status === 'answered' || run.status === 'yielded')
+        if (!suppressSuccessfulUserFanoutCompletion) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            formatFanoutWaveCompletionStatus({
+              label,
+              outcomes: laneRuns.map((run) => ({
+                label: participantDisplayName(run.participant),
+                status: run.status,
+                reason: run.terminalReason
+              })),
+              completionDisposition: options.completionDisposition,
+              hasSourceRun: Boolean(options.sourceRunId),
+              continuousReviewWave:
+                label === 'Review wave' && runtime.orchestrationMode === 'continuous'
+            })
+          )
+        }
       } finally {
         for (const run of laneRuns) {
           runtime.activeScoutRunIds?.delete(run.runId)
@@ -20516,6 +20507,7 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     statusMessage: string
   ): void {
+    const previousContinuationHops = runtime.continuationHops
     runtime.continuationHops += 1
     remaining.unshift(participant)
     this.incrementBossmanBudgetUsage(runtime, [participant.id], { extraTurns: 1 })
@@ -20528,11 +20520,20 @@ export class EnsembleOrchestrator {
           }
         : round
     )
-    const label = runtime.orchestrationMode === 'continuous' ? 'Continuous handoff' : 'Extra turn'
+    const event = buildContinuationHopsAdvanceTranscriptEvent({
+      before: previousContinuationHops,
+      after: runtime.continuationHops,
+      maxHops: runtime.maxContinuationHops,
+      changedAt: this.deps.nowIso(),
+      roundId: runtime.roundId,
+      statusMessage,
+      targetLabel: participant.role || participant.provider
+    })
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `${statusMessage} ${label} ${runtime.continuationHops}/${runtime.maxContinuationHops}.`
+      event.content,
+      { metadata: event.metadata }
     )
   }
 
@@ -20894,6 +20895,7 @@ export class EnsembleOrchestrator {
       queuedSelectionNote = ` ${outcome.note}`
       if (outcome.applied) roster = outcome.roster
     }
+    const previousContinuationHops = runtime.continuationHops
     const fresh: EnsembleParticipant[] = []
     for (const participant of roster) {
       if (runtime.continuationHops >= runtime.maxContinuationHops) {
@@ -20934,11 +20936,19 @@ export class EnsembleOrchestrator {
       !queuedSelectionNote && roster.length < fullRoster.length
         ? ` Focused continuation pass: ${fresh.length} of ${fullRoster.length} seats have open work, directed routing, or authority.`
         : ''
-    this.appendRoundStatus(
-      runtime.chatId,
-      runtime.roundId,
-      `Continuous mode: no explicit handoff — auto-continuing for pass ${runtime.continuationPass} (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote}${queuedSelectionNote} Mark the goal complete to stop.`
-    )
+    const event = buildContinuationHopsAdvanceTranscriptEvent({
+      before: previousContinuationHops,
+      after: runtime.continuationHops,
+      maxHops: runtime.maxContinuationHops,
+      changedAt: this.deps.nowIso(),
+      roundId: runtime.roundId,
+      statusMessage: `Continuous mode: no explicit handoff — auto-continuing for pass ${runtime.continuationPass}.${narrowingNote}${queuedSelectionNote} Mark the goal complete to stop.`,
+      targetLabel: `Pass ${runtime.continuationPass}`,
+      sourceLabel: 'Automatic'
+    })
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, event.content, {
+      metadata: event.metadata
+    })
     return fresh
   }
 

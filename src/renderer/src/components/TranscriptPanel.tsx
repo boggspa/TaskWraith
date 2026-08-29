@@ -229,9 +229,8 @@ import {
 import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/transcriptSeat'
 import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
-import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
+import { resolveContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
 import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
-import { isBlackboardChangePayload } from '../../../shared/blackboardChange'
 import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
@@ -256,12 +255,7 @@ import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturn
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
 import { isThreadMessageTranscriptMessage } from './ThreadMessageTranscriptCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
-import {
-  ContextCompactionCard,
-  ContextCompactionGlyph,
-  contextCompactionMessageFailed,
-  contextCompactionMessageMetaLabel
-} from './ContextCompactionCard'
+import { ContextCompactionCard } from './ContextCompactionCard'
 import {
   buildParticipantContextRows,
   currentContextTokens
@@ -273,11 +267,15 @@ import {
 } from '../../../shared/contextWindows'
 import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
+import { isRedundantEnsembleTranscriptNotice } from '../../../shared/ensembleTranscriptNoise'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
 import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
-import { BlackboardChangeRow } from './BlackboardChangeRow'
+import {
+  BlackboardChangeRow,
+  resolveBlackboardChangePresentation
+} from './BlackboardChangeRow'
 import { EnsembleFanoutDispatchRow } from './EnsembleFanoutDispatchRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
@@ -1013,11 +1011,6 @@ export function liveViewportKindKey(stackKey: string, kind: ActivityTimelineSegm
  * highlight target) is applied by each caller.
  */
 function plainSystemNoticeMessage(msg: ChatMessage): boolean {
-  // Successful `contextCompaction` records deliberately qualify as plain
-  // notices: they fold into settled one-liners / super-groups like every other
-  // transcript row (their `content` is the pre-formatted summary line). A
-  // FAILED compaction remains a full warning row; reducing it to a neutral
-  // "system notice" in a super-group would conceal the failure and its error.
   return (
     msg.role === 'system' &&
     msg.metadata?.kind !== 'transcriptHistoryPageBoundary' &&
@@ -1040,7 +1033,8 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
     msg.metadata?.kind !== 'providerRunFailure' &&
-    !contextCompactionMessageFailed(msg) &&
+    // Context compaction has the same preserved hierarchy as seat changes.
+    msg.metadata?.kind !== 'contextCompaction' &&
     msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
     msg.metadata?.kind !== 'ensembleBossmanPoll' &&
     // An ANSWERED question keeps its full card (AgentQuestionTombstoneCard), so
@@ -1057,13 +1051,13 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Hop-limit changes have the same transcript standing as seat changes.
     // Only valid structured payloads are promoted; malformed records keep the
     // carrier sentence as their plain fallback.
-    !isContinuationHopsChangePayload(msg.metadata?.continuationHopsChange) &&
+    !resolveContinuationHopsChangePayload(msg) &&
     // Human-owned Auto Approvals changes use the same durable before/after
     // standing as seat and hop-limit changes.
     !isAutoApprovalsChangePayload(msg.metadata?.autoApprovalsChange) &&
     // Run-authored Blackboard mutations are tool-call-style events, not
     // anonymous system notices. Malformed legacy records keep the fallback.
-    !isBlackboardChangePayload(msg.metadata?.blackboardChange) &&
+    !resolveBlackboardChangePresentation(msg) &&
     // A fan-out dispatch is a tool-style orchestration receipt with attributed
     // seats, not anonymous System chrome.
     !isEnsembleFanoutDispatchPayload(msg.metadata?.ensembleFanoutDispatch) &&
@@ -2791,9 +2785,13 @@ export const TranscriptPanel = memo(
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
     const visibleMessages = useMemo(() => {
       if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
-      // Queued-run cards were removed from the transcript; drop any historical
-      // `queuedRunRequest` system messages so they no longer surface.
-      return resolvedMessages.filter((message) => message?.metadata?.kind !== 'queuedRunRequest')
+      // Queued-run cards and routine Ensemble routing receipts were removed
+      // from the transcript; keep historical records equally quiet.
+      return resolvedMessages.filter(
+        (message) =>
+          message?.metadata?.kind !== 'queuedRunRequest' &&
+          !isRedundantEnsembleTranscriptNotice(message)
+      )
     }, [isWelcomeChat, resolvedMessages])
     const hasLiveContextCompactionProgress = useMemo(
       () => contextCompactionProgress.some((event) => event.status === 'started'),
@@ -4926,15 +4924,11 @@ export const TranscriptPanel = memo(
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
-            const isContinuationHopsChange = isContinuationHopsChangePayload(
-              msg.metadata?.continuationHopsChange
-            )
+            const isContinuationHopsChange = Boolean(resolveContinuationHopsChangePayload(msg))
             const isAutoApprovalsChange = isAutoApprovalsChangePayload(
               msg.metadata?.autoApprovalsChange
             )
-            const isBlackboardChange = isBlackboardChangePayload(
-              msg.metadata?.blackboardChange
-            )
+            const isBlackboardChange = Boolean(resolveBlackboardChangePresentation(msg))
             const isFanoutDispatch = isEnsembleFanoutDispatchPayload(
               msg.metadata?.ensembleFanoutDispatch
             )
@@ -5101,8 +5095,8 @@ export const TranscriptPanel = memo(
             )
             // Plain system notices fold the same way: one line ("System ·
             // @-mention: extra turn appended…") once the conversation moved
-            // past them. Special system cards (round headers, health /
-            // compaction / failure / closeout, collaborator comments) and
+            // past them. Special system cards (round headers, health,
+            // compaction, failure, closeout, collaborator comments) and
             // rows carrying interactive attachments keep their full
             // rendering; pinned notices stay open (the user marked them).
             const isPlainSystemNotice =
@@ -5859,14 +5853,10 @@ export const TranscriptPanel = memo(
                     older transcripts / exports.
                   */
                   <ParticipantHealthCard key={msg.id} message={msg} />
-                ) : isContextCompaction && !systemAutoCollapsible ? (
+                ) : isContextCompaction ? (
                   /*
                     Provider context compaction (auto or manual), rendered in
-                    the tool-call row idiom. Reached only while the record is
-                    NOT fold-eligible (tail row, pinned, jump target) — once
-                    the conversation moves past it, the systemAutoCollapsible
-                    lane below folds it into a one-liner exactly like other
-                    settled rows, with this row as the expanded body.
+                    the same preserved transcript hierarchy as seat changes.
                     `msg.content` carries the plain-text summary as the
                     fallback for older transcripts, exports, and the iOS
                     system-row projection.
@@ -5900,45 +5890,24 @@ export const TranscriptPanel = memo(
                   <CollapsedTranscriptRow
                     key={msg.id}
                     header={null}
-                    metaLabel={
-                      isContextCompaction ? contextCompactionMessageMetaLabel(msg) : 'System'
-                    }
+                    metaLabel="System"
                     label={collapsedSystemNoticeLabel(msg.content)}
-                    icons={
-                      isContextCompaction ? (
-                        <span
-                          className={`collapsed-context-compaction-glyph ${
-                            contextCompactionMessageFailed(msg) ? 'is-failed' : 'is-completed'
-                          }`}
-                          aria-hidden
-                        >
-                          <ContextCompactionGlyph failed={contextCompactionMessageFailed(msg)} />
-                        </span>
-                      ) : undefined
-                    }
-                    errored={isContextCompaction && contextCompactionMessageFailed(msg)}
                     compact
                     expanded={collapsedSystemExpanded}
                     onToggle={(expanded) => setCollapsedStackExpanded(rowKey, expanded)}
-                    ariaTargetLabel={
-                      isContextCompaction ? 'context compaction record' : 'system notice'
-                    }
+                    ariaTargetLabel="system notice"
                   >
                     {collapsedSystemExpanded ? (
-                      isContextCompaction ? (
-                        <ContextCompactionCard message={msg} />
-                      ) : (
-                        <div className="message-group">
-                          <div
-                            className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
-                            onContextMenu={(event) =>
-                              openMessageContextMenu(event, msg, msg.content || '', 'system message')
-                            }
-                          >
-                            <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
-                          </div>
+                      <div className="message-group">
+                        <div
+                          className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
+                          onContextMenu={(event) =>
+                            openMessageContextMenu(event, msg, msg.content || '', 'system message')
+                          }
+                        >
+                          <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
                         </div>
-                      )
+                      </div>
                     ) : null}
                   </CollapsedTranscriptRow>
                 ) : (

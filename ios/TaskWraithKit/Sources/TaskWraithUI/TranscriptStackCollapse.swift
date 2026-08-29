@@ -62,6 +62,18 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
 /// app chrome. `kind` normally rescues it (see `twIsPlainSystemNoticeRow`), but
 /// this is the leg that also holds for a Mac old enough to send the payload
 /// without the promotion.
+public func twIsContextCompactionRow(
+    compaction: RemoteThreadSnapshot.Row.ContextCompaction?, preview: String?, role: String?,
+    kind: String?
+) -> Bool {
+    if compaction != nil { return true }
+    guard role == "system" || kind == "system" else { return false }
+    let lower = (preview ?? "").lowercased()
+    return lower.hasPrefix("context compacted")
+        || lower.hasPrefix("context compaction failed")
+        || lower.hasPrefix("compacting context")
+}
+
 private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
         || row.subThreadReturn != nil || row.subThreadDelegation != nil
@@ -69,6 +81,8 @@ private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
         || row.seatRoster != nil || row.seatParticipantAdded != nil
         || row.peopleContribution != nil || row.threadMessage != nil
         || row.guestReply != nil || row.isCloseout == true
+        || twIsContextCompactionRow(
+            compaction: row.contextCompaction, preview: row.preview, role: row.role, kind: row.kind)
 }
 
 /// True when the transcript window carries a row that explains why `runId`
@@ -110,10 +124,8 @@ public func twCanCollapseIntoStack(_ row: RemoteThreadSnapshot.Row) -> Bool {
     return twIsThinkingOnlyRow(row)
 }
 
-/// Plain system notices ("@-mention: extra turn appended…", round-close
-/// markers, and context-compaction records) collapse to one line. Expanding
-/// a compaction record restores its full card. Interactive/special surfaces
-/// (question/plan/health/sub-thread cards) and rows with media attachments
+/// Plain system notices (for example round-close markers) collapse to one
+/// line. Interactive and preserved surfaces — including context compaction —
 /// keep their full rendering.
 public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard row.role == "system" || row.kind == "system" else { return false }

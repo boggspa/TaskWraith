@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import type { ChatMessage } from '../../../main/store/types'
 import {
   CONTINUATION_HOPS_CHANGE_REVEAL_DELAY_MS,
-  isContinuationHopsChangePayload,
+  resolveContinuationHopsChangePayload,
   type ContinuationHopsChangeActor
 } from '../../../shared/continuationHopsChange'
 import { SEAT_CHANGE_COALESCE_WINDOW_MS } from '../../../shared/seatChange'
@@ -29,19 +29,58 @@ function ContinuationHopsIcon(): JSX.Element {
   )
 }
 
+function ContinuationHopsValue({
+  value,
+  maxHops,
+  previous = false
+}: {
+  value: number
+  maxHops?: number
+  previous?: boolean
+}): JSX.Element {
+  const className = `continuation-hops-change-value${previous ? ' is-previous' : ''}`
+  if (maxHops === undefined) {
+    return (
+      <span className={className}>
+        <DigitOdometer
+          value={value}
+          ariaLabel={`${previous ? 'Previous max' : 'Max'} handoff turns ${value}`}
+        />
+      </span>
+    )
+  }
+
+  return (
+    <span
+      className={className}
+      role="img"
+      aria-label={
+        previous
+          ? `Previous handoff turns ${value} of ${maxHops}`
+          : `Handoff turns ${value} of ${maxHops}`
+      }
+    >
+      <span aria-hidden>
+        <DigitOdometer value={value} />
+        <span>/</span>
+        <DigitOdometer value={maxHops} />
+      </span>
+    </span>
+  )
+}
+
 /**
- * Durable max-handoff-turns change, rendered in the same transcript lane as a
- * seat change. Every mount holds the old number long enough to read, then lets
- * DigitOdometer carry the visible old -> new transition. Clicking reveals the
- * static old value underneath.
+ * Durable max-handoff-turns change or consumed handoff, rendered in the same
+ * transcript lane as a seat change. Every mount holds the old number long
+ * enough to read, then lets DigitOdometer carry the visible old -> new
+ * transition. Clicking reveals the static old value underneath.
  */
 export function ContinuationHopsChangeRow({
   message
 }: {
   message: ChatMessage
 }): JSX.Element | null {
-  const candidate = message.metadata?.continuationHopsChange
-  const payload = isContinuationHopsChangePayload(candidate) ? candidate : null
+  const payload = resolveContinuationHopsChangePayload(message)
   const [phase, setPhase] = useState<'before' | 'after'>('before')
   const [expanded, setExpanded] = useState(false)
   const [fresh] = useState(() =>
@@ -59,12 +98,17 @@ export function ContinuationHopsChangeRow({
 
   if (!payload) return null
 
+  const isAdvance = payload.event === 'advance'
   const currentValue = phase === 'before' ? payload.before : payload.after
-  const changedBy = actorLabel(payload.actor)
-  const actorTitle = [changedBy, payload.actorRole, payload.actorParticipantId]
-    .filter(Boolean)
-    .join(' · ')
+  const changedBy = isAdvance ? null : actorLabel(payload.actor)
+  const primaryLabel = isAdvance ? payload.targetLabel || payload.sourceLabel : changedBy
+  const secondaryLabel = isAdvance && payload.targetLabel ? payload.sourceLabel : undefined
+  const actorTitle = isAdvance
+    ? [payload.sourceLabel, payload.targetLabel].filter(Boolean).join(' → ')
+    : [changedBy, payload.actorRole, payload.actorParticipantId].filter(Boolean).join(' · ')
   const time = formatChangeTime(message.timestamp)
+  const rowLabel = isAdvance ? 'Handoff turns' : 'Max handoff turns'
+  const previousTitle = isAdvance ? 'handoff count' : 'turn limit'
 
   return (
     <div
@@ -77,19 +121,32 @@ export function ContinuationHopsChangeRow({
         className="seat-change-row continuation-hops-change-row"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        title={expanded ? 'Hide the previous turn limit' : 'Show the previous turn limit'}
+        title={`${expanded ? 'Hide' : 'Show'} the previous ${previousTitle}`}
       >
         <span className="seat-change-icon continuation-hops-change-icon" aria-hidden>
           <ContinuationHopsIcon />
         </span>
-        <span className="continuation-hops-change-label">Max handoff turns</span>
-        <span className="continuation-hops-change-value">
-          <DigitOdometer value={currentValue} ariaLabel={`Max handoff turns ${currentValue}`} />
-        </span>
-        <span className={`continuation-hops-change-actor is-${payload.actor}`} title={actorTitle}>
-          {changedBy}
-        </span>
-        {payload.reason && (
+        <span className="continuation-hops-change-label">{rowLabel}</span>
+        <ContinuationHopsValue
+          value={currentValue}
+          maxHops={isAdvance ? payload.maxHops : undefined}
+        />
+        {primaryLabel && (
+          <span
+            className={`continuation-hops-change-actor${
+              isAdvance ? ' is-advance' : ` is-${payload.actor}`
+            }`}
+            title={actorTitle}
+          >
+            {primaryLabel}
+          </span>
+        )}
+        {secondaryLabel && (
+          <span className="continuation-hops-change-reason" title={secondaryLabel}>
+            {secondaryLabel}
+          </span>
+        )}
+        {!isAdvance && payload.reason && (
           <span className="continuation-hops-change-reason" title={payload.reason}>
             Reason: {payload.reason}
           </span>
@@ -99,12 +156,11 @@ export function ContinuationHopsChangeRow({
       {expanded && (
         <div className="seat-change-was continuation-hops-change-was">
           <span className="seat-change-was-label">was</span>
-          <span className="continuation-hops-change-value is-previous">
-            <DigitOdometer
-              value={payload.before}
-              ariaLabel={`Previous max handoff turns ${payload.before}`}
-            />
-          </span>
+          <ContinuationHopsValue
+            value={payload.before}
+            maxHops={isAdvance ? payload.maxHops : undefined}
+            previous
+          />
         </div>
       )}
     </div>

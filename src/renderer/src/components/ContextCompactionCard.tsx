@@ -14,11 +14,10 @@ import { getProviderName } from './Sidebar'
  *
  * Rendered in the TOOL-CALL idiom (one flowing line: glyph · speaker meta ·
  * title · tabular detail), NOT as a bordered banner card, so compaction reads
- * as part of the transcript's activity language and participates in the
- * settled-row collapse system like every other one-liner. Presentation stays
- * FROZEN — participant labels are stamped on the message when the row is
- * written (`displayParticipantLabel`) and never re-derived from the live
- * roster.
+ * as part of the transcript's activity language at the same preserved
+ * hierarchy as seat and handoff changes. Presentation stays FROZEN —
+ * participant labels are stamped on the message when the row is written
+ * (`displayParticipantLabel`) and never re-derived from the live roster.
  *
  * Data contract: `message.metadata.kind === 'contextCompaction'` with
  * `metadata.contextCompaction = { kind, telemetry }` (src/shared/contextCompaction.ts).

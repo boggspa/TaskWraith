@@ -532,6 +532,13 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
     })
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content === 'User Fan-Out complete · 2 lane(s) returned.'
+      )
+    ).toBe(false)
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 

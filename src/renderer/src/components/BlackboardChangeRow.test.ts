@@ -86,6 +86,51 @@ describe('BlackboardChangeRow', () => {
     expect(html).toContain(detail)
   })
 
+  it.each([
+    ['updated', '+1', 'add'],
+    ['pollOpened', '+1', 'add'],
+    ['cleaned', '-2', 'delete']
+  ] as const)('renders the %s entry delta with edit-tool diff styling', (action, delta, tone) => {
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, { message: messageWithChange(action) })
+    )
+
+    expect(html).toContain('blackboard-change-entry-delta')
+    expect(html).toContain(`activity-line-stat activity-line-stat-${tone}`)
+    expect(html).toContain(`<span class="sr-only">${delta} Entries</span>`)
+    expect(html).toContain('blackboard-change-stat-unit" aria-hidden="true">Entries</span>')
+  })
+
+  it('promotes exact legacy update and cleanup sentences without trusted attribution', () => {
+    const updated = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: {
+          id: 'legacy-updated',
+          role: 'system',
+          content: 'Blackboard updated: fact / work1-snapshot-family-quarantine-uncommitted.',
+          timestamp: '2026-08-29T22:05:00.000Z',
+          metadata: { kind: 'ensembleRoundStatus' }
+        }
+      })
+    )
+    const cleaned = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: {
+          id: 'legacy-cleaned',
+          role: 'system',
+          content: 'Blackboard cleaned: removed 3 entries.',
+          timestamp: '2026-08-29T22:06:00.000Z',
+          metadata: { kind: 'ensembleRoundStatus' }
+        }
+      })
+    )
+    expect(updated).toContain('Blackboard updated')
+    expect(updated).toContain('+1 Entries')
+    expect(updated).not.toContain(' by System')
+    expect(cleaned).toContain('Blackboard cleaned')
+    expect(cleaned).toContain('-3 Entries')
+  })
+
   it('rejects malformed metadata so the plain system fallback remains available', () => {
     const message = messageWithChange('updated')
     if (message.metadata) {
@@ -108,6 +153,7 @@ describe('BlackboardChangeRow', () => {
     expect(html).toContain('Blackboard + next writer')
     expect(html).toContain('aria-expanded="false"')
     expect(html).not.toContain('confidence high')
+    expect(html).not.toContain('blackboard-change-entry-delta')
     expect(rowSource).toContain('blackboard-scout-brief-explanation')
     expect(rowSource).toContain('later briefs update this entry')
   })
@@ -125,11 +171,13 @@ describe('BlackboardChangeRow', () => {
   it('reuses the seat/handoff event hierarchy while keeping Blackboard-specific tool styling', () => {
     expect(rowSource).toContain('seat-change-message blackboard-change-message')
     expect(rowSource).toContain('seat-change-row blackboard-change-row')
-    expect(rowSource).toContain('<BlackboardGlyph />')
+    expect(rowSource).toContain('<ToolFamilyIcon family="blackboard"')
     expect(composerSource).toContain("import { BlackboardGlyph } from './icons/BlackboardGlyph'")
     expect(composerSource).toContain('<BlackboardGlyph />')
     expect(cssSource).toContain('.blackboard-change-icon {')
     expect(cssSource).toContain('color-mix(in srgb, var(--accent)')
+    expect(rowSource).toContain('<DigitOdometer')
+    expect(cssSource).toContain('.blackboard-change-stat-unit {')
     expect(cssSource).toContain('.blackboard-scout-brief-explanation {')
   })
 })
@@ -140,7 +188,7 @@ describe('TranscriptPanel Blackboard event wiring', () => {
     const plainEnd = panelSource.indexOf('function superGroupParticipantKey(', plainStart)
     expect(plainStart).toBeGreaterThanOrEqual(0)
     expect(panelSource.slice(plainStart, plainEnd)).toContain(
-      '!isBlackboardChangePayload(msg.metadata?.blackboardChange) &&'
+      '!resolveBlackboardChangePresentation(msg) &&'
     )
   })
 

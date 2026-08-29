@@ -117,7 +117,7 @@ describe('ContextCompactionCard', () => {
     expect(html).not.toContain('provider-pi')
   })
 
-  it('exposes the failed bit + meta label for the collapsed one-liner lane', () => {
+  it('exposes the failed bit and frozen meta label to transcript consumers', () => {
     const failed = makeMessage({
       metadata: {
         kind: 'contextCompaction',

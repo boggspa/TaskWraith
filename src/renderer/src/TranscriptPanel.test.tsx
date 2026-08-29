@@ -3483,6 +3483,76 @@ describe('collapsed one-liner super-groups', () => {
   })
 })
 
+describe('routine Ensemble transcript receipts', () => {
+  it('hides historical success notices whose effect is already visible', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      ...[
+        'Routed next: Claude.',
+        '@-mention: Boss is Boss and takes routing priority over advisory participant mentions.',
+        '@-mention: Worker promoted to speak next.',
+        'User Fan-Out complete · 2 lane(s) returned.'
+      ].map(
+        (content, index) =>
+          ({
+            id: `routine-${index}`,
+            role: 'system',
+            content,
+            timestamp: `2026-01-01T00:00:0${index + 1}.000Z`,
+            metadata: { kind: 'ensembleRoundStatus' }
+          }) as ChatMessage
+      ),
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:06.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).not.toContain('Routed next: Claude.')
+    expect(html).not.toContain('takes routing priority')
+    expect(html).not.toContain('promoted to speak next')
+    expect(html).not.toContain('User Fan-Out complete')
+    expect(html).toContain('FINAL_ANSWER_MARKER')
+  })
+
+  it('promotes canonical legacy handoff and Blackboard rows instead of grouping them', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'legacy-handoff',
+        role: 'system',
+        content: '@-mention: extra turn appended for Boss. Continuous handoff 49/124.',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: { kind: 'ensembleRoundStatus' }
+      },
+      {
+        id: 'legacy-blackboard',
+        role: 'system',
+        content: 'Blackboard updated: fact / work1-snapshot-family-quarantine-uncommitted.',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: { kind: 'ensembleRoundStatus' }
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('Handoff turns')
+    expect(html).toContain('Blackboard updated')
+    expect(html).toContain('blackboard-change-entry-delta')
+    expect(html).not.toContain('system notices')
+  })
+})
+
 describe('context-compaction transcript rows', () => {
   const compactionMessage = (id: string): ChatMessage =>
     ({
@@ -3514,7 +3584,7 @@ describe('context-compaction transcript rows', () => {
     expect(html).not.toContain('collapsed-activity-stack-summary')
   })
 
-  it('folds a passed compaction record into a one-liner like other settled rows', () => {
+  it('keeps a passed compaction record at the preserved event hierarchy', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
       compactionMessage('compaction-mid'),
@@ -3528,14 +3598,31 @@ describe('context-compaction transcript rows', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
     )
-    // One-liner label = the message's pre-formatted summary content, with the
-    // compaction glyph riding the summary and the frozen speaker meta prefix.
-    expect(html).toContain('collapsed-activity-stack-summary')
-    expect(html).toContain('Context compacted · 145k → 18k tokens · automatic · Claude')
-    expect(html).toContain('collapsed-context-compaction-glyph')
-    expect(html).toContain('Claude')
-    // The full row body only mounts when expanded.
-    expect(html).not.toContain('context-compaction-row')
+    expect(html).toContain('context-compaction-row is-completed')
+    expect(html).toContain('Compacted context')
+    expect(html).toContain('145k → 18k tokens')
+    expect(html).not.toContain('collapsed-context-compaction-glyph')
+    expect(html).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('never folds adjacent compaction events into a system-notice group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      compactionMessage('compaction-one'),
+      compactionMessage('compaction-two'),
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html.match(/context-compaction-row is-completed/g)).toHaveLength(2)
+    expect(html).not.toContain('2 system notices')
+    expect(html).not.toContain('is-super-hidden')
   })
 
   it('keeps a failed compaction visible instead of laundering it into a neutral super-group', () => {

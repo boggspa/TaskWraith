@@ -15567,6 +15567,13 @@ Next action:
     // Default order would be Codex next; @Researcher should override.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('gemini')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content.includes('promoted to speak next')
+      )
+    ).toBe(false)
   })
 
   it('promotes multiple @mentioned participants in mention order', async () => {
@@ -16076,10 +16083,15 @@ Next action:
     expect(harness.dispatched).toHaveLength(10)
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(6)
     expect(continuousLimitStatuses(harness)).toHaveLength(1)
-    const messageContents = harness.chat.messages.map((message) => message.content || '')
-    const partialPassStatusIndex = messageContents.findIndex((content) =>
-      content.includes('auto-continuing for pass 3 (6/6 hops)')
+    const partialPassStatusIndex = harness.chat.messages.findIndex(
+      (message) =>
+        message.content.includes('auto-continuing for pass 3.') &&
+        message.metadata?.continuationHopsChange?.event === 'advance' &&
+        message.metadata.continuationHopsChange.before === 4 &&
+        message.metadata.continuationHopsChange.after === 6 &&
+        message.metadata.continuationHopsChange.maxHops === 6
     )
+    const messageContents = harness.chat.messages.map((message) => message.content || '')
     const limitStatusIndex = messageContents.findIndex((content) =>
       content.includes('Continuous handoff limit reached (6/6)')
     )
@@ -17295,8 +17307,12 @@ Next action:
     expect(
       harness.chat.messages.some(
         (message) =>
-          message.metadata?.kind === 'ensembleRoundStatus' &&
-          message.content.includes('Yielded back to GrokTagA (grok). Continuous handoff 1/24.')
+          message.metadata?.kind === 'ensembleContinuationHopsChange' &&
+          message.content.includes('Yielded back to GrokTagA (grok). Continuous handoff 1/24.') &&
+          message.metadata.continuationHopsChange?.event === 'advance' &&
+          message.metadata.continuationHopsChange.before === 0 &&
+          message.metadata.continuationHopsChange.after === 1 &&
+          message.metadata.continuationHopsChange.maxHops === 24
       )
     ).toBe(true)
   })
@@ -17626,7 +17642,7 @@ Next action:
       harness.chat.messages.some((message) =>
         message.content.includes('@-mention: Reviewer promoted to speak next.')
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('unwinds nested yield-return frames in LIFO order', async () => {
@@ -18260,15 +18276,13 @@ Next action:
     expect(harness.dispatched[1].ensembleRun).toMatchObject({
       participantId: 'ensemble-codex-lead'
     })
-    const messages = harness.chat.messages.map((m) => m.content)
     expect(
-      messages.some(
-        (content) =>
-          typeof content === 'string' &&
-          content.includes('Boss') &&
-          content.includes('takes routing priority')
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content.includes('takes routing priority')
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('re-summons the Boss on a priority @-mention even after the Boss already spoke', async () => {
@@ -20957,7 +20971,7 @@ Next action:
       harness.chat.messages.some((message) =>
         message.content.includes('@-mention: Researcher promoted to speak next.')
       )
-    ).toBe(true)
+    ).toBe(false)
     completeDispatchedRun(harness, 2)
   })
 

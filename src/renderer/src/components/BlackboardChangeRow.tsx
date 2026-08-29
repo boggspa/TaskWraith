@@ -6,7 +6,68 @@ import {
   type BlackboardChangePayload
 } from '../../../shared/blackboardChange'
 import { providerAccentVar } from '../lib/ollamaDisplayBrand'
-import { BlackboardGlyph } from './icons/BlackboardGlyph'
+import { ToolFamilyIcon } from './icons/ToolFamilyIcon'
+import { DigitOdometer } from './DigitOdometer'
+
+export type LegacyBlackboardChangePresentation =
+  | {
+      action: 'updated'
+      category: Extract<BlackboardChangePayload, { action: 'updated' }>['category']
+      key: string
+      changedAt: string
+    }
+  | { action: 'cleaned'; removedCount: number; changedAt: string }
+
+export type BlackboardChangePresentation =
+  | BlackboardChangePayload
+  | LegacyBlackboardChangePresentation
+
+const LEGACY_BLACKBOARD_UPDATED =
+  /^Blackboard updated: (decision|fact|risk|do-not-repeat|note) \/ (.{1,80})\.$/
+const LEGACY_BLACKBOARD_CLEANED = /^Blackboard cleaned: removed (\d{1,2}) (entry|entries)\.$/
+
+function hasControlCharacters(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0)
+    return code < 32 || code === 127
+  })
+}
+
+/** Strict display-only promotion for canonical rows written before structured metadata shipped. */
+export function resolveBlackboardChangePresentation(
+  message: ChatMessage
+): BlackboardChangePresentation | null {
+  const candidate = message.metadata?.blackboardChange
+  if (candidate !== undefined) {
+    return isBlackboardChangePayload(candidate) ? candidate : null
+  }
+  if (
+    message.role !== 'system' ||
+    message.metadata?.kind !== 'ensembleRoundStatus' ||
+    typeof message.content !== 'string' ||
+    !Number.isFinite(Date.parse(message.timestamp)) ||
+    message.content.length > 160 ||
+    message.content.includes('\n')
+  ) {
+    return null
+  }
+  const updated = message.content.match(LEGACY_BLACKBOARD_UPDATED)
+  if (updated) {
+    if (hasControlCharacters(updated[2])) return null
+    return {
+      action: 'updated',
+      category: updated[1] as Extract<BlackboardChangePayload, { action: 'updated' }>['category'],
+      key: updated[2],
+      changedAt: message.timestamp
+    }
+  }
+  const cleaned = message.content.match(LEGACY_BLACKBOARD_CLEANED)
+  if (!cleaned) return null
+  const removedCount = Number(cleaned[1])
+  const expectedNoun = removedCount === 1 ? 'entry' : 'entries'
+  if (removedCount < 1 || removedCount > 60 || cleaned[2] !== expectedNoun) return null
+  return { action: 'cleaned', removedCount, changedAt: message.timestamp }
+}
 
 function formatChangeTime(timestamp: string): string {
   const parsed = new Date(timestamp)
@@ -14,14 +75,14 @@ function formatChangeTime(timestamp: string): string {
   return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function actionLabel(payload: BlackboardChangePayload): string {
+function actionLabel(payload: BlackboardChangePresentation): string {
   if (payload.action === 'scoutBriefShared') return 'Scout brief shared'
   if (payload.action === 'pollOpened') return 'Blackboard poll opened'
   if (payload.action === 'cleaned') return 'Blackboard cleaned'
   return 'Blackboard updated'
 }
 
-function actionDetail(payload: BlackboardChangePayload): string {
+function actionDetail(payload: BlackboardChangePresentation): string {
   if (payload.action === 'scoutBriefShared') {
     const caveat =
       payload.confidence === 'low'
@@ -64,19 +125,44 @@ function ScoutBriefDetail({ payload }: { payload: BlackboardChangePayload }): JS
   )
 }
 
+function BlackboardEntryDelta({
+  payload
+}: {
+  payload: BlackboardChangePresentation
+}): JSX.Element | null {
+  if (payload.action === 'scoutBriefShared') return null
+  const isRemoval = payload.action === 'cleaned'
+  const value = isRemoval ? payload.removedCount : 1
+  const sign = isRemoval ? '-' : '+'
+
+  return (
+    <span className="activity-line-stats blackboard-change-entry-delta">
+      <DigitOdometer
+        value={value}
+        sign={sign}
+        ariaLabel={`${sign}${value} Entries`}
+        className={`activity-line-stat activity-line-stat-${isRemoval ? 'delete' : 'add'}`}
+      />
+      <span className="blackboard-change-stat-unit" aria-hidden>
+        Entries
+      </span>
+    </span>
+  )
+}
+
 function ChangeContents({
   payload,
   label,
   time
 }: {
-  payload: BlackboardChangePayload
+  payload: BlackboardChangePresentation
   label: string
   time: string
 }): JSX.Element {
   return (
     <>
       <span className="seat-change-icon blackboard-change-icon" aria-hidden>
-        <BlackboardGlyph />
+        <ToolFamilyIcon family="blackboard" size={16} className="blackboard-glyph" />
       </span>
       <span className="blackboard-change-label">{label}</span>
       {payload.action === 'updated' ? (
@@ -96,13 +182,10 @@ function ChangeContents({
             {payload.optionCount} {payload.optionCount === 1 ? 'choice' : 'choices'}
           </span>
         </>
-      ) : payload.action === 'cleaned' ? (
-        <span className="blackboard-change-detail">
-          {payload.removedCount} {payload.removedCount === 1 ? 'entry' : 'entries'} removed
-        </span>
-      ) : (
+      ) : payload.action === 'cleaned' ? null : (
         <ScoutBriefDetail payload={payload} />
       )}
+      <BlackboardEntryDelta payload={payload} />
       {time && <span className="seat-change-time blackboard-change-time">{time}</span>}
     </>
   )
@@ -114,8 +197,7 @@ function ChangeContents({
  * accent, not an assistant header or seat-name label.
  */
 export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.Element | null {
-  const candidate = message.metadata?.blackboardChange
-  const payload = isBlackboardChangePayload(candidate) ? candidate : null
+  const payload = resolveBlackboardChangePresentation(message)
   const [expanded, setExpanded] = useState(false)
   const [fresh] = useState(() => {
     if (!payload) return false
@@ -128,7 +210,10 @@ export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.
   const label = actionLabel(payload)
   const detail = actionDetail(payload)
   const time = formatChangeTime(message.timestamp)
-  const accent = providerAccentVar(payload.displayHueClass || payload.provider)
+  const structured = 'displayProviderLabel' in payload
+  const accent = structured
+    ? providerAccentVar(payload.displayHueClass || payload.provider)
+    : undefined
   const style = accent ? ({ '--accent': accent } as CSSProperties) : undefined
   const isScoutBrief = payload.action === 'scoutBriefShared'
 
@@ -142,7 +227,9 @@ export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.
       aria-label={
         isScoutBrief
           ? `${label}: ${detail}`
-          : `${label} by ${payload.displayProviderLabel}: ${detail}`
+          : structured
+            ? `${label} by ${payload.displayProviderLabel}: ${detail}`
+            : `${label}: ${detail}`
       }
     >
       {isScoutBrief ? (

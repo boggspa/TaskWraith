@@ -4114,13 +4114,8 @@ struct ContextCompactionSummaryCard: View {
         compaction: RemoteThreadSnapshot.Row.ContextCompaction?,
         preview: String?, role: String?, kind: String?
     ) -> Bool {
-        if compaction != nil { return true }
-        guard let preview, !preview.isEmpty else { return false }
-        guard role == "system" || kind == "system" else { return false }
-        let lower = preview.lowercased()
-        return lower.hasPrefix("context compacted")
-            || lower.hasPrefix("context compaction failed")
-            || lower.hasPrefix("compacting context")
+        twIsContextCompactionRow(
+            compaction: compaction, preview: preview, role: role, kind: kind)
     }
 
     private var failed: Bool {

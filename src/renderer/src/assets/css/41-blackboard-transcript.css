@@ -60,6 +60,20 @@
   font-size: var(--font-size-xs);
 }
 
+/* Blackboard writes borrow the exact +N / -N odometer tones used by edit tool
+ * calls. The inherited activity-line-stat classes resolve through the user's
+ * Appearance diff colours; only the Blackboard-specific unit belongs here. */
+.blackboard-change-entry-delta {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.blackboard-change-stat-unit {
+  color: color-mix(in srgb, var(--text-primary) 48%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
 .blackboard-change-time {
   margin-left: 2px;
 }
