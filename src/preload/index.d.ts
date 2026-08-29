@@ -167,6 +167,7 @@ import type {
   ProjectReferenceExtractConsent
 } from '../shared/projectReferenceExtract'
 import type { ProjectStudioCompanionMeta, ProjectStudioKind } from '../shared/projectStudio'
+import type { WebSiteLogin, WebSiteLoginAccess } from '../shared/webSiteLogin'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,
@@ -2340,6 +2341,25 @@ declare global {
         | { ok: true; text: string; truncated: boolean; charCount: number }
         | { ok: false; code: string; message: string }
       >
+      listWebSiteLogins: () => Promise<WebSiteLogin[]>
+      addWebSiteLogin: (input: {
+        origin: string
+        label?: string
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      updateWebSiteLogin: (input: {
+        id: string
+        label?: string
+        extraOrigins?: string[]
+        agentAccess?: WebSiteLoginAccess
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      removeWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
+      signInWebSiteLogin: (input: { id: string }) => Promise<{
+        ok: boolean
+        reason?: string
+        suggestedOrigins?: string[]
+        site?: WebSiteLogin | null
+      }>
+      signOutWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
       generateProjectStudioDraft: (input: {
         projectId: string
         kind: ProjectStudioKind

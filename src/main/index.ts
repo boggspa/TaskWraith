@@ -1380,6 +1380,10 @@ import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { WebSiteLoginStore } from './webLogin/WebSiteLoginStore'
 import { WebSiteProfileRegistry } from './webLogin/WebSiteProfileRegistry'
 import { resolveWebSiteCanvasBinding } from './webLogin/WebSiteCanvasBinding'
+import { WebLoginSignInWindowController } from './webLogin/WebLoginSignInWindow'
+import { createSignInBrowserWindow } from './webLogin/WebLoginSignInWindowElectron'
+import { WebLoginService } from './webLogin/WebLoginService'
+import { registerWebLoginHandlers } from './ipc/webLoginHandlers'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
@@ -4580,6 +4584,11 @@ const webSiteProfiles = new WebSiteProfileRegistry({
       partition,
       resolveSession: (name) => session.fromPartition(name)
     })
+})
+const webLoginService = new WebLoginService({
+  store: webSiteLoginStore,
+  profiles: webSiteProfiles,
+  signInWindows: new WebLoginSignInWindowController({ createWindow: createSignInBrowserWindow })
 })
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {
@@ -55136,6 +55145,15 @@ if (isGeminiMcpBridgeProcess) {
     })
     projectReferenceExtracts.registerHandlers(assertMainRendererSender)
     projectStudio.registerHandlers(assertMainRendererSender)
+    registerWebLoginHandlers({
+      assertSenderCanManageWebLogins: assertMainRendererSender,
+      listSites: () => webLoginService.list(),
+      addSite: (input) => webLoginService.add(input),
+      updateSite: (id, patch) => webLoginService.update(id, patch),
+      removeSite: (id) => webLoginService.forget(id),
+      signOutSite: (id) => webLoginService.signOut(id),
+      signInSite: (id) => webLoginService.signIn(id)
+    })
     // Authoritative project changes fan out to the main window; the renderer
     // facade reconciles its optimistic snapshot from this event. The payload
     // is the full registry state: { projects, workProfiles }.

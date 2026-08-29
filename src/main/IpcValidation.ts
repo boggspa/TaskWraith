@@ -130,6 +130,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'projects:studio-save': ['object'],
   'projects:studio-discard': ['object'],
   'projects:studio-list': ['object'],
+  // Authorized site sessions. Payloads are validated in webLoginHandlers.
+  'web-login:list': [],
+  'web-login:add': ['object'],
+  'web-login:update': ['object'],
+  'web-login:remove': ['object'],
+  'web-login:sign-in': ['object'],
+  'web-login:sign-out': ['object'],
   'projects:extract-reference': ['object'],
   'projects:get-reference-extract': ['object'],
   'projects:revoke-reference-extract': ['object'],

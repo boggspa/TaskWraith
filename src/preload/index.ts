@@ -2225,6 +2225,18 @@ const api = {
     ipcRenderer.invoke('projects:studio-discard', input),
   listProjectStudioArtifacts: (input: { projectId: string; includeDiscarded?: boolean }) =>
     ipcRenderer.invoke('projects:studio-list', input),
+  listWebSiteLogins: () => ipcRenderer.invoke('web-login:list'),
+  addWebSiteLogin: (input: { origin: string; label?: string }) =>
+    ipcRenderer.invoke('web-login:add', input),
+  updateWebSiteLogin: (input: {
+    id: string
+    label?: string
+    extraOrigins?: string[]
+    agentAccess?: 'off' | 'read' | 'act'
+  }) => ipcRenderer.invoke('web-login:update', input),
+  removeWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:remove', input),
+  signInWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-in', input),
+  signOutWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-out', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>

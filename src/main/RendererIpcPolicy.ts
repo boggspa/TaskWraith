@@ -519,6 +519,14 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:studio-save',
   'projects:studio-discard',
   'projects:studio-list',
+  // Site logins grant and revoke the authority an agent has over a real
+  // account. Main renderer only; a popout has no business reaching them.
+  'web-login:list',
+  'web-login:add',
+  'web-login:update',
+  'web-login:remove',
+  'web-login:sign-in',
+  'web-login:sign-out',
   'projects:extract-reference',
   'projects:get-reference-extract',
   'projects:revoke-reference-extract',
