@@ -36,6 +36,8 @@ import type {
   HostProviderOffersProjection,
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
+import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
@@ -396,6 +398,56 @@ export class HostNodeDomainPorts {
     const offers = this.registry.getOffers(providerId)
     if (!offers) throw new Error('Unknown standalone provider')
     return offers
+  }
+
+  /**
+   * Curated model offers for one thread, projected from the SAME catalogue the
+   * composer.send gate validates against, so the tune lens can never stage a
+   * selection this Host would then reject as a configuration mismatch.
+   *
+   * `current` is derived from the stored thread record, never from anything a
+   * client sends — a client may name a selection, it may not assert the one in
+   * force. A thread with no provider, or one naming a provider this Host does
+   * not compose, returns an empty catalogue with `locked` set: an honest
+   * refusal, never an invented list of models that could not actually run.
+   */
+  threadOffers(threadId: string): TaskWraithControlThreadOffers {
+    const thread = this.options.store.getThread(threadId)
+    if (!thread) throw new Error('Unknown standalone thread')
+    const providerId = typeof thread.provider === 'string' ? thread.provider : undefined
+    const metadata = (thread.providerMetadata ?? {}) as Record<string, unknown>
+    const currentModel =
+      typeof metadata.selectedModelType === 'string' ? metadata.selectedModelType : undefined
+    const currentReasoning =
+      typeof metadata.reasoningEffort === 'string' ? metadata.reasoningEffort : undefined
+    const offers = providerId ? this.registry.getOffers(providerId) : undefined
+    const catalogue = offers?.models ?? []
+    const currentLabel = catalogue.find((model) => model.modelId === currentModel)?.label
+    const unavailable = 'Not available on this Host'
+    const locked = !providerId
+      ? 'This chat has no provider yet - use /new to choose one.'
+      : !offers
+        ? `This Host does not compose ${providerId}, so it offers no models for it.`
+        : undefined
+    return {
+      threadId,
+      provider: resolveTaskWraithProviderPresentation(providerId, currentModel, currentLabel),
+      ...(currentModel ? { currentModel } : {}),
+      ...(currentReasoning ? { currentReasoningEffort: currentReasoning } : {}),
+      models: catalogue.map((model) => ({
+        id: model.modelId,
+        ...(model.label ? { label: model.label } : {}),
+        ...(model.default === true ? { isDefault: true } : {}),
+        ...(currentModel && model.modelId === currentModel ? { current: true } : {}),
+        ...(model.available ? {} : { disabled: true, disabledReason: unavailable }),
+        reasoningEfforts: model.reasoning.map((effort) => ({
+          id: effort.reasoningId,
+          ...(effort.available ? {} : { disabled: true, disabledReason: unavailable })
+        }))
+      })),
+      source: 'curated',
+      ...(locked ? { locked } : {})
+    }
   }
 
   providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {

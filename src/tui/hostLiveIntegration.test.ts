@@ -45,6 +45,7 @@ const PRODUCTION_CAPABILITY_FLOOR: readonly HostCapability[] = [
   'deltas',
   'provider-catalog',
   'provider-auth',
+  'model-offers',
   'history',
   'setup',
   'host-lifecycle',

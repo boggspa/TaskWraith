@@ -247,9 +247,11 @@ export class HostNodeProductionServer {
           this.domain!.executeCommand(context, command, { id: context.client.clientId }),
         setupExecutor: this.domain.setupExecutor,
         healthProvider: this.options.health ?? domainOptions.health,
-        ...(this.options.threadOffersProvider
-          ? { threadOffersProvider: this.options.threadOffersProvider }
-          : {}),
+        // The domain owns the curated per-thread catalogue, so a standalone Host
+        // serves model offers on its own. An injected provider still wins, which
+        // keeps the desktop-backed composition free to supply its own resolver.
+        threadOffersProvider:
+          this.options.threadOffersProvider ?? ((threadId) => this.domain!.threadOffers(threadId)),
         ...(this.domain.supportsWorkspaceGit
           ? { gitReadProvider: (context, request) => this.domain!.gitRead(context, request) }
           : {}),
@@ -396,7 +398,7 @@ export class HostNodeProductionServer {
 
   private capabilities(): readonly HostCapability[] {
     const base: HostCapability[] = ['bootstrap', 'snapshot', 'deltas']
-    if (this.options.threadOffersProvider) base.push('model-offers')
+    if (this.options.threadOffersProvider || this.domain) base.push('model-offers')
     if (this.domain?.supportsWorkspaceGit) base.push('workspace-git')
     if (this.domain?.supportsEnsembleSeatControl) base.push('ensemble')
     base.push(

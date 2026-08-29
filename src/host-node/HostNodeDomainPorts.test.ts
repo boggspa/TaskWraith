@@ -885,6 +885,73 @@ describe('HostNodeDomainPorts', () => {
     ).toEqual({ decision: 'deny', reason: 'standalone_thread_required' })
   })
 
+  it('projects curated thread offers for a configured thread and locks one with no provider', async () => {
+    const { domain, workspace } = open()
+    const workspaceResult = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-offers-workspace', {}, { path: workspace }),
+      { id: 'tui-target' }
+    )
+    const workspaceId = (workspaceResult.resultRef as { workspaceId: string }).workspaceId
+    const configured = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-offers-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await domain.executeCommand(
+      context,
+      command(
+        'thread.configure',
+        'cmd-offers-configure',
+        { threadId: configured },
+        {
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          reasoningId: 'high',
+          postureId: 'workspace_write',
+          offerRevision: 'muse-offer-1',
+          postureConsent: true
+        }
+      ),
+      { id: 'tui-target' }
+    )
+
+    const offers = await domain.threadOffers(configured)
+    expect(offers.threadId).toBe(configured)
+    expect(offers.source).toBe('curated')
+    expect(offers.locked).toBeUndefined()
+    expect(offers.currentModel).toBe('muse-spark-1.2')
+    expect(offers.currentReasoningEffort).toBe('high')
+    expect(offers.provider.runtimeProvider).toBe('muse')
+    expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2'])
+    const model = offers.models[0]
+    expect(model.current).toBe(true)
+    expect(model.isDefault).toBe(true)
+    expect(model.disabled).toBeUndefined()
+    expect(model.reasoningEfforts.map((effort) => effort.id)).toEqual(['high'])
+
+    // A thread created by /new carries no provider until cold start configures it.
+    // Offers must stay honest and locked rather than inventing a catalogue.
+    const bare = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-offers-bare', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    const bareOffers = await domain.threadOffers(bare)
+    expect(bareOffers.models).toEqual([])
+    expect(bareOffers.locked).toBeTruthy()
+
+    expect(() => domain.threadOffers('id-absent')).toThrow(/Unknown standalone thread/)
+  })
+
   it('waits for tracked provider completion during shutdown before reporting stopped', async () => {
     const { domain, store, workspace, releaseRun } = open({ killReleases: false })
     const registered = store.registerWorkspace({ path: workspace })
