@@ -282,3 +282,82 @@ export function summariseCodexStatus(status: any): ProviderAuthSummary {
     hint: 'Open Settings → Providers → Codex to sign in to TaskWraith Codex.'
   }
 }
+
+/**
+ * Ollama status → the shared provider vocabulary.
+ *
+ * Ollama used to report a bespoke amber "local setup optional" state because
+ * local models need no account. That predates `settings.ollamaCliSignIn`: a
+ * completed `ollama signin` is now remembered across launches, so Ollama has a
+ * durable account answer like every other provider, and the permanent amber dot
+ * only ever read as an unresolved warning.
+ *
+ * Green here means what the onboarding legend promises — "TaskWraith can launch
+ * this provider" — so a running Ollama server is ready whether or not an
+ * ollama.com account is attached; the label carries the account half. With no
+ * server AND no account there is nothing to run, and that is the calm neutral
+ * state, not a red failure: Ollama is opt-in, and nothing is broken.
+ *
+ * `available` is the snapshot's own runnable answer — local daemon reachable,
+ * or Cloud models runnable through a configured API key.
+ */
+export function summariseOllamaStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Not checked yet',
+      hint: 'Open Settings → Providers → Ollama to sign in or add a Cloud API key.'
+    }
+  }
+  const cloud =
+    record.cloud && typeof record.cloud === 'object'
+      ? (record.cloud as Record<string, unknown>)
+      : null
+  const runnable = record.available === true || record.localAvailable === true
+  if (!runnable) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Ollama not running',
+      hint: 'Install Ollama and start it, then pull a local model — or sign in to ollama.com to run Cloud models.'
+    }
+  }
+  if (cloud?.apiKeyConfigured === true) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Cloud API key saved',
+      hint: 'Cloud models use Ollama’s direct API; local models remain on the local daemon.'
+    }
+  }
+  if (cloud?.authenticated === true) {
+    const plan = String(cloud.plan || '').trim()
+    return {
+      variant: 'signed-in',
+      statusText: plan ? `Signed in (${plan})` : 'Signed in',
+      hint: 'Local and Ollama Cloud models are both available through the local Ollama daemon.'
+    }
+  }
+  return {
+    variant: 'signed-in',
+    statusText: 'Running · not signed in',
+    hint:
+      cloud?.enabled === false
+        ? 'Local models are ready to run. This Ollama daemon has Cloud features disabled, so there is no sign-in to complete.'
+        : 'Local models are ready to run. Sign in with `ollama signin`, or add a Cloud API key in Settings, to also run Ollama Cloud models.'
+  }
+}
+
+/**
+ * Whether an ollama.com account is attached — the separate axis from
+ * `summariseOllamaStatus`'s runnable/green answer. Surfaces that offer sign-in
+ * and sign-out actions must key on THIS, not on the green dot, or a running but
+ * signed-out Ollama is offered a sign-out it never signed in for.
+ */
+export function isOllamaAccountSignedIn(status: unknown): boolean {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  const cloud =
+    record?.cloud && typeof record.cloud === 'object'
+      ? (record.cloud as Record<string, unknown>)
+      : null
+  return cloud?.authenticated === true || cloud?.apiKeyConfigured === true
+}

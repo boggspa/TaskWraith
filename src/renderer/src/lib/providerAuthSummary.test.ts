@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isOllamaAccountSignedIn,
   summariseCodexStatus,
   summariseMistralVibeStatus,
   summariseMuseCodeStatus,
+  summariseOllamaStatus,
   summariseProviderApiKeyStatus
 } from './providerAuthSummary'
 
@@ -215,5 +217,125 @@ describe('summariseCodexStatus', () => {
       variant: 'partial',
       statusText: 'Usage session available'
     })
+  })
+})
+
+describe('summariseOllamaStatus', () => {
+  it('waits for a status snapshot instead of guessing', () => {
+    expect(summariseOllamaStatus(null)).toMatchObject({
+      variant: 'not-signed-in',
+      statusText: 'Not checked yet'
+    })
+  })
+
+  it('never reports the retired amber setup-optional state', () => {
+    for (const status of [
+      null,
+      { available: false, localAvailable: false },
+      { available: true, localAvailable: true, cloud: { enabled: true, authenticated: false } },
+      { available: true, localAvailable: true, cloud: { enabled: false, authenticated: false } },
+      { available: true, localAvailable: true, cloud: { enabled: true, authenticated: true } }
+    ]) {
+      const summary = summariseOllamaStatus(status)
+      expect(summary.variant).not.toBe('partial')
+      expect(summary.statusText.toLowerCase()).not.toContain('optional')
+    }
+  })
+
+  it('keeps a runtime with neither server nor account neutral, never a red failure', () => {
+    expect(summariseOllamaStatus({ available: false, localAvailable: false })).toMatchObject({
+      variant: 'not-signed-in',
+      statusText: 'Ollama not running'
+    })
+  })
+
+  it('is ready once the server runs, whether or not an account is attached', () => {
+    expect(
+      summariseOllamaStatus({
+        available: true,
+        localAvailable: true,
+        cloud: { supported: true, enabled: true, authenticated: false }
+      })
+    ).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Running · not signed in'
+    })
+  })
+
+  it('names the plan when the remembered ollama.com account is signed in', () => {
+    expect(
+      summariseOllamaStatus({
+        available: true,
+        localAvailable: true,
+        cloud: { supported: true, enabled: true, authenticated: true, plan: 'pro' }
+      })
+    ).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Signed in (pro)'
+    })
+  })
+
+  it('reports the direct-API key route separately from a daemon sign-in', () => {
+    expect(
+      summariseOllamaStatus({
+        available: true,
+        localAvailable: false,
+        cloud: { supported: true, enabled: true, authenticated: true, apiKeyConfigured: true }
+      })
+    ).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Cloud API key saved'
+    })
+  })
+
+  it('checks runnability before the account so a remembered sign-in cannot paint a dead runtime green', () => {
+    expect(
+      summariseOllamaStatus({
+        available: false,
+        localAvailable: false,
+        // The remembered-sign-in repair writes this even while the daemon is down.
+        cloud: {
+          supported: true,
+          enabled: true,
+          authenticated: true,
+          authenticatedFromMemory: true
+        }
+      })
+    ).toMatchObject({ variant: 'not-signed-in', statusText: 'Ollama not running' })
+  })
+
+  it('says there is no sign-in to finish when the daemon disables Cloud', () => {
+    const summary = summariseOllamaStatus({
+      available: true,
+      localAvailable: true,
+      cloud: { supported: true, enabled: false, authenticated: false }
+    })
+    expect(summary.variant).toBe('signed-in')
+    expect(summary.hint).toContain('Cloud features disabled')
+  })
+})
+
+describe('isOllamaAccountSignedIn', () => {
+  it('separates the account axis from the green runnable dot', () => {
+    // Running, no account — green from summariseOllamaStatus, but no sign-out
+    // action should be offered.
+    const running = {
+      available: true,
+      localAvailable: true,
+      cloud: { supported: true, enabled: true, authenticated: false }
+    }
+    expect(summariseOllamaStatus(running).variant).toBe('signed-in')
+    expect(isOllamaAccountSignedIn(running)).toBe(false)
+  })
+
+  it('counts both the remembered CLI sign-in and the direct API key', () => {
+    expect(isOllamaAccountSignedIn({ cloud: { authenticated: true } })).toBe(true)
+    expect(isOllamaAccountSignedIn({ cloud: { apiKeyConfigured: true } })).toBe(true)
+  })
+
+  it('never guesses from a missing or unanswered status', () => {
+    expect(isOllamaAccountSignedIn(null)).toBe(false)
+    expect(isOllamaAccountSignedIn({ available: true })).toBe(false)
+    expect(isOllamaAccountSignedIn({ cloud: { authenticated: null } })).toBe(false)
   })
 })
