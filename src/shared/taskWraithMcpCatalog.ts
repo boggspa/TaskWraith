@@ -318,6 +318,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // click/fill/eval keep their own stricter services.
   'canvas_navigate',
   'canvas_close',
+
+  // Authorized site sessions (docs/appdrive/authorized-site-sessions.md).
+  'web_login_list',
+  'web_login_open',
   // Mesh Canvas — declarative, provider-agnostic 3D scene construction and
   // presentation. Normal gateway seats discover this specialist surface with
   // capability_search; a fresh mesh-authorised participant can receive it

@@ -33,6 +33,7 @@ export type CanonicalToolClass =
   | 'ui_elicitation'
 
 export const CANONICAL_DISPATCH_OWNERS = [
+  'web-login',
   'workspace-tools',
   'git-tools',
   'web-tools',
@@ -2024,6 +2025,26 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'canvas',
     'host-state',
     'application-resource'
+  ),
+  // Authorized site sessions. The list is a catalogue read with no egress of
+  // its own; opening binds a canvas to a site and is webBrowsing, like every
+  // other verb that puts a page on screen.
+  web_login_list: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'web-login',
+    'none',
+    'none'
+  ),
+  web_login_open: tool(
+    'orchestration',
+    'webBrowsing',
+    'application.mutate',
+    'web-login',
+    'host-state',
+    'application-resource',
+    'url-argument'
   ),
   mesh_scene_create: tool(
     'workspace_write',

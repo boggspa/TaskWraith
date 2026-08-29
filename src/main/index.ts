@@ -1384,6 +1384,10 @@ import { WebLoginSignInWindowController } from './webLogin/WebLoginSignInWindow'
 import { createSignInBrowserWindow } from './webLogin/WebLoginSignInWindowElectron'
 import { WebLoginService } from './webLogin/WebLoginService'
 import { registerWebLoginHandlers } from './ipc/webLoginHandlers'
+import {
+  createWebLoginToolExecutors,
+  isWebLoginMcpToolName
+} from './mcp/WebLoginToolExecutors'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
@@ -4909,6 +4913,22 @@ function teardownCanvasSurfacesForWindowClose(): void {
     })
 }
 let canvasLaunchAttemptsSnapshot: (() => LaunchAttempt[]) | null = null
+const webLoginToolExecutors = createWebLoginToolExecutors({
+  listSites: () => webLoginService.list(),
+  openBoundCanvas: async ({ siteId, url, context, provider }) => {
+    const opened = await canvasService.open(
+      { driver: 'web', siteId, ...(url ? { url } : {}) },
+      {
+        provider,
+        chatId: context.appChatId,
+        runId: context.appRunId,
+        workspacePath: context.workspacePath,
+        ...(context.participantId ? { participantId: context.participantId } : {})
+      }
+    )
+    return { canvasId: opened.canvasId, ...(url ? { url } : {}) }
+  }
+})
 const canvasToolExecutors = createCanvasToolExecutors({
   controller: canvasService,
   launchAttempts: () => canvasLaunchAttemptsSnapshot?.() ?? [],
@@ -39166,6 +39186,11 @@ async function executeGeminiMcpTool(
     ) {
       markDispatchHandled('browser-tools')
       applyRichResult(await executeBrowserTool(toolName, args, context))
+    } else if (isWebLoginMcpToolName(toolName)) {
+      markDispatchHandled('web-login')
+      applyRichResult(
+        await webLoginToolExecutors.executeWebLoginTool(toolName, args, context, parentProvider)
+      )
     } else if (isCanvasMcpToolName(toolName)) {
       markDispatchHandled('canvas')
       const canvasResult = await canvasToolExecutors.executeCanvasTool(

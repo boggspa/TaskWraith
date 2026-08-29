@@ -177,6 +177,12 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'theme_tokens_get',
   'theme_tokens_set',
   'canvas_close',
+  // FULL-only placement: every hidden generation is a filter() off FULL, so
+  // these reach discovery on every gateway generation ever shipped without
+  // minting a new one, and stay out of *_DIRECT_TOOLS where their schemas
+  // would count against the 40,000-char fresh-gateway transport budget.
+  'web_login_list',
+  'web_login_open',
   'tw_recall_find',
   'tw_recall_read',
   'tw_recall_read_events',

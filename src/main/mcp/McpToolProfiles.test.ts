@@ -209,9 +209,9 @@ describe('immutable v1 MCP profile snapshots', () => {
     // 2026-08-20: five structured verbs + report/verify — 161 → 168.
     // 2026-08-23: ultra_task — 168 → 169. Source literal landed with this
     // re-pin (the original commit bumped only the length expectation).
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(169)
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(171)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      'ce5d1e653cf7cd0ef3feb690bd3ffd8c3a39e89f05b11ef4d0f9c779c24e693d'
+      '5f04dcb9f959a6cb6cf804763ef8f8501494c2701cd1910e587bf9808d052073'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -255,9 +255,9 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // 2026-08-20: claim_fleet_wave — 122 → 123, same FULL filter() route.
     // 2026-08-20: five structured verbs + report/verify — 123 → 130.
     // 2026-08-23: ultra_task — 130 → 131 via FULL filter() (discoverable).
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(131)
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(133)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '7881ac0c0efbbaf7d6cd07f2c0d57ad59c1a794453c3398e092e4fa9d1d35912'
+      'fb8ee2a415192871177a9d1e3c5e3b9c2b7513b100ccb27a6667676bc693fb61'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -1470,12 +1470,13 @@ describe('catalogue reachability', () => {
     // 2026-08-20: 144 → 145 (claim_fleet_wave), same FULL-only route.
     // 2026-08-20: five structured verbs + report/verify — 145 → 152.
     // 2026-08-23: 152 → 153 (ultra_task), same FULL-only route.
-    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(153)
+    // 2026-08-29: 153 → 155 (web_login_list, web_login_open), same FULL-only route.
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(155)
     expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '110fec4c2b6eb766211e16d3af4778d0374a24f3123b40d10ecb0137a99efa83'
+      'f3c0a24fee36f91d9a600d511c07d10e40418a6c8974704a05a5536eabce391a'
     )
     expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '110fec4c2b6eb766211e16d3af4778d0374a24f3123b40d10ecb0137a99efa83'
+      'f3c0a24fee36f91d9a600d511c07d10e40418a6c8974704a05a5536eabce391a'
     )
   })
 

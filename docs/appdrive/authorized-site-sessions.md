@@ -371,7 +371,7 @@ this index.
 | **P1** | Per-site partitions and the navigation fence | The security spine, no UI. `webSiteLogin` model, main-owned catalogue store, `siteId` threaded through the canvas stack, document-navigation origin fence. Unbound surfaces keep today's behaviour. |
 | **P2** | Human-only sign-in window | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge. |
 | **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
-| **P4** | Agent surface | `web_login_list` and `web_login_open`; a **new** gateway profile generation; auto-allow and profile membership; approval preview; regenerated tool docs. |
+| **P4** | Agent surface | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
 | **P5** | Re-authentication signalling and the liveness probe | `signin_required`, the Work-tab prompt, optional per-site probe. |
 
 P1 is the bulk of the work and the only slice that carries regression risk to
