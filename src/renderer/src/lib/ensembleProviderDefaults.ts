@@ -189,15 +189,36 @@ const PI_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: 'Max' }
 ]
 
-const OLLAMA_TOGGLE_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'on', label: 'On' }
-]
-const OLLAMA_LEVEL_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' }
-]
+const OLLAMA_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  on: 'On',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  max: 'Max'
+}
+
+/**
+ * Project the resolved Ollama surface into picker stops.
+ *
+ * The ladder is derived rather than picked from two fixed arrays because it is
+ * genuinely per-model: GPT-OSS has no Off, GLM 5.3 has no Medium, and a model
+ * that always reasons gets a single locked stop instead of an Off that the
+ * daemon would accept and ignore.
+ */
+function ollamaReasoningOptions(
+  support: ReturnType<typeof resolveOllamaReasoningSupport>
+): CombinedModelPickerReasoningOption[] {
+  if (support.efforts.length === 0) return []
+  const alwaysOnReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: OLLAMA_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && alwaysOnReason ? { disabledReason: alwaysOnReason } : {})
+  }))
+}
 
 /** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
  *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
@@ -600,17 +621,15 @@ export function getEnsembleReasoningOptions(
       if (isPiMistralThinkingCapableModel(modelId)) return MISTRAL_THINKING_REASONING
       return PI_REASONING
     }
-    case 'ollama': {
-      const support = resolveOllamaReasoningSupport({
-        modelId,
-        ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
-          ? { capabilities: modelMetadata.capabilities }
-          : {})
-      })
-      if (support.kind === 'toggle') return OLLAMA_TOGGLE_REASONING
-      if (support.kind === 'levels') return OLLAMA_LEVEL_REASONING
-      return []
-    }
+    case 'ollama':
+      return ollamaReasoningOptions(
+        resolveOllamaReasoningSupport({
+          modelId,
+          ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
+            ? { capabilities: modelMetadata.capabilities }
+            : {})
+        })
+      )
     case 'muse':
       return MUSE_REASONING
     default:

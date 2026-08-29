@@ -227,7 +227,8 @@ export interface OllamaLaunchControls {
   readonly transport: 'http-chat'
   /** Exact native `/api/chat` think value: boolean for ordinary thinking
    * models, level string for GPT-OSS, null when thinking is unsupported. */
-  readonly reasoningLevel: boolean | 'low' | 'medium' | 'high' | null
+  /** Ollama's wire `think` value: a boolean, or one of its four levels. */
+  readonly reasoningLevel: boolean | 'low' | 'medium' | 'high' | 'max' | null
   readonly contextCapTokens: number
   readonly protocolMode: 'native_first' | 'json_fallback' | 'json_only'
   readonly compactToolSchemas: boolean

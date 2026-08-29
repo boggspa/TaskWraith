@@ -66,7 +66,7 @@ import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
 import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
 import { applyRememberedOllamaCliSignIn, normalizeOllamaCliSignIn } from './OllamaCliSignInMemory'
 import { OLLAMA_CLOUD_API_BASE_URL, ollamaCloudApiHeaders } from './OllamaCloudApi'
-import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
+import { resolveOllamaTurnNumPredict, type OllamaThinkingSetting } from './OllamaRunProfiles'
 import {
   createOllamaHarnessRunState,
   evaluateOllamaHarnessGate,
@@ -3739,7 +3739,7 @@ async function runOllamaChatTurn(input: {
   tools?: OllamaNativeToolDefinition[]
   temperature?: number
   jsonToolFallback?: boolean
-  think?: boolean | 'low' | 'medium' | 'high'
+  think?: OllamaThinkingSetting
   numCtx?: number
   numPredict?: number
   keepAlive?: string
