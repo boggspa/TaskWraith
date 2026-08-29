@@ -171,9 +171,14 @@ export function deliverExecutionResult(
 
   const attempt = outputAttempt(projection)
   // A graph can settle without ever reaching its output stage (it failed at a
-  // scout, or was cancelled). Key on the execution's terminal state instead, so
-  // the delivery still has a stable identity.
-  const outputAttemptId = attempt?.id || `${projection.executionId}:${outcome}`
+  // scout, or was cancelled), so there is no attempt id to key on. Fall back to
+  // the terminal state PLUS the ledger sequence that produced it: a graph can
+  // pause, be recovered, and pause again on a different blocker, and keying on
+  // the state alone would dedupe the second blocker away as a replay of the
+  // first. The same settle replayed carries the same sequence, so idempotency
+  // still holds.
+  const outputAttemptId =
+    attempt?.id || `${projection.executionId}:${outcome}:${projection.lastSequence}`
   const content = contentFor(projection, outcome, attempt)
 
   const { event, inserted } = deps.enqueueResult({

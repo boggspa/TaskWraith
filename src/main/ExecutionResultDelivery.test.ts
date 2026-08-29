@@ -110,6 +110,40 @@ describe('deliverExecutionResult', () => {
     expect(d.appendResultCard.mock.calls[0][0]).toMatchObject({ outcome: 'failed' })
   })
 
+  // A graph can pause, be recovered, and pause again on a different blocker.
+  // Keying delivery on the terminal state alone would dedupe the second blocker
+  // away as a replay of the first, and the owner would never learn about it.
+  it('delivers a second, different pause rather than deduping it as a replay', () => {
+    const d = deps()
+    const pause = (reason: string, lastSequence: number) =>
+      projection({
+        state: 'requires_action',
+        lastSequence,
+        activations: {
+          'activation-scout': {
+            id: 'activation-scout',
+            stepId: 'ultratask-scout-1',
+            state: 'requires_action',
+            reason
+          }
+        },
+        attempts: {}
+      })
+
+    expect(deliverExecutionResult(pause('Dispatch failed.', 21), d as never).delivered).toBe(true)
+    expect(
+      deliverExecutionResult(pause('Reviewer needs input.', 44), d as never).delivered
+    ).toBe(true)
+    expect(d.appendResultCard).toHaveBeenCalledTimes(2)
+    expect(d.appendResultCard.mock.calls[1][0].content).toMatch(/reviewer needs input/i)
+
+    // The SAME pause replayed is still a replay.
+    const replay = { ...d, hasDeliveredCard: vi.fn(() => true) }
+    expect(deliverExecutionResult(pause('Dispatch failed.', 21), replay as never).delivered).toBe(
+      false
+    )
+  })
+
   it('does not deliver while the graph is still running', () => {
     const d = deps()
     const result = deliverExecutionResult(projection({ state: 'running' }), d as never)
