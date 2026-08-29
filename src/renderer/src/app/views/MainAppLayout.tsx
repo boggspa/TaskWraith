@@ -14,6 +14,7 @@ import {
   NOOP_PLAN_CHOICE_SUBMIT,
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
+import { guardChatCreate } from '../../lib/chatCreateFailure'
 import {
   buildSideChatComposerProps,
   SideChatComposerRuntime
@@ -617,10 +618,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     const workspaceId = currentChat?.workspaceId || currentWorkspace?.id
     const workspacePath = currentChat?.workspacePath || currentWorkspace?.path
     if (currentChat?.scope !== 'global' && workspaceId && workspacePath && handleNewChat) {
-      void handleNewChat(workspaceId, workspacePath)
+      guardChatCreate('thread home (workspace)', handleNewChat(workspaceId, workspacePath))
       return
     }
-    void handleNewDefaultGlobalChat?.()
+    guardChatCreate('thread home (general)', handleNewDefaultGlobalChat?.())
   }, [
     currentChat?.scope,
     currentChat?.workspaceId,
@@ -630,6 +631,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     handleNewChat,
     handleNewDefaultGlobalChat
   ])
+  const handleSidebarNewChat = useCallback(
+    (workspaceId: string, workspacePath: string) => {
+      guardChatCreate('sidebar new-chat menu', handleNewChat?.(workspaceId, workspacePath))
+    },
+    [handleNewChat]
+  )
   const threadHomeOverviewSections = threadHomeOpen
     ? {
         heatmaps: composerCtx.shouldShowWelcomeStandaloneHeatmaps ? (
@@ -1424,7 +1431,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onSelectWorkspace={handleNavigateToWorkspace}
                 onRemoveWorkspace={handleRemoveWorkspace}
                 onSelectWorkspaceDialog={handleSelectWorkspace}
-                onNewChat={handleNewChat}
+                onNewChat={handleSidebarNewChat}
                 onNewGlobalChat={handleNewDefaultGlobalChat}
                 onNewEnsemble={handleNewEnsemble}
                 ensembleModeEnabled={isEnsembleModeEnabled}
