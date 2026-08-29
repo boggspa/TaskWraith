@@ -75,7 +75,7 @@ describe('resolvePiReasoningSupport', () => {
   // disagreement there silently DROPS a delegated effort rather than failing.
   it('agrees with every catalogue row about whether the model reasons', () => {
     const disagreements = PI_STATIC_MODELS.filter(
-      (model) => model.thinking !== (resolvePiReasoningSupport(model.wireId).efforts.length > 0)
+      (model) => model.thinking !== resolvePiReasoningSupport(model.wireId).efforts.length > 0
     ).map((model) => model.wireId)
     expect(disagreements).toEqual([])
   })
