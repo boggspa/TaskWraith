@@ -20,6 +20,7 @@ const allClosed: RightDockTabAvailabilityInput = {
   hasWorkspaceContext: false,
   isChatMediaPanelOpen: false,
   isProjectReferencesPanelOpen: false,
+  isWebSiteLoginsPanelOpen: false,
   isPinnedMessagesPanelOpen: false,
   isTerminalDockAvailable: false
 }
@@ -175,6 +176,7 @@ describe('rightDockState', () => {
         'chat',
         'media',
         'references',
+        'logins',
         'pins',
         'files',
         'office',

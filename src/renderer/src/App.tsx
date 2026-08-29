@@ -523,6 +523,7 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   LinkCircleSymbolIcon,
+  SiteLoginSymbolIcon,
   CanvasSurfaceSymbolIcon,
   OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
@@ -2221,6 +2222,7 @@ function App(): React.JSX.Element {
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
+  const [isWebSiteLoginsPanelOpen, setIsWebSiteLoginsPanelOpen] = useState(false)
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
@@ -3643,6 +3645,8 @@ function App(): React.JSX.Element {
         return isChatMediaPanelOpen
       case 'references':
         return isProjectReferencesPanelOpen
+      case 'logins':
+        return isWebSiteLoginsPanelOpen
       case 'pins':
         return isPinnedMessagesPanelOpen
       case 'files':
@@ -26296,6 +26300,7 @@ function App(): React.JSX.Element {
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
+    isWebSiteLoginsPanelOpen,
     isPinnedMessagesPanelOpen,
     isTerminalDockAvailable
   })
@@ -26373,6 +26378,14 @@ function App(): React.JSX.Element {
       hint: 'Reusable Project reference library'
     },
     {
+      id: 'logins',
+      label: 'Logins',
+      icon: <SiteLoginSymbolIcon />,
+      enabled: isWebSiteLoginsPanelOpen,
+      group: 'work',
+      hint: 'Sites you stay signed into'
+    },
+    {
       id: 'pins',
       label: 'Notes',
       icon: <PinnedMessagesIcon />,
@@ -26445,6 +26458,9 @@ function App(): React.JSX.Element {
           setIsProjectReferencesPanelOpen(false)
         }
         break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(false)
+        break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
         break
@@ -26478,6 +26494,9 @@ function App(): React.JSX.Element {
         break
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(true)
+        break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(true)
         break
       case 'references':
         setIsProjectReferencesPanelOpen(true)
@@ -26667,6 +26686,10 @@ function App(): React.JSX.Element {
   const handleOpenProjectReferencesLibrary = (projectId: string): void => {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
+  }
+  /** Work tab -> Logins. App-global, so unlike Refs it needs no Project. */
+  const handleOpenWebSiteLogins = (): void => {
+    activateRightDockTab('logins')
   }
   /** Transcript citation chip → Work Refs extract viewer. Only when the
    * focused chat belongs to exactly one Project (same ownership rule as
@@ -29540,6 +29563,9 @@ function App(): React.JSX.Element {
         case 'media':
           setChatMediaPanelOpenPreservingTranscript(true)
           break
+        case 'logins':
+          setIsWebSiteLoginsPanelOpen(true)
+          break
         case 'references':
           setIsProjectReferencesPanelOpen(true)
           if (activeWorkProject) {
@@ -31686,6 +31712,7 @@ function App(): React.JSX.Element {
       }
     },
     handleOpenProjectReferencesLibrary,
+    handleOpenWebSiteLogins,
     handleSelectedProjectChange: setActiveWorkProjectId,
     workProjectHeader,
     handleSidebarPrimarySurfaceSelect,
@@ -31728,6 +31755,7 @@ function App(): React.JSX.Element {
     isOldVersion,
     isPinnedMessagesPanelOpen,
     isProjectReferencesPanelOpen,
+    isWebSiteLoginsPanelOpen,
     isWorkRouteReferencesPinned,
     isSideChatProviderLocked,
     isSideChatRunning,

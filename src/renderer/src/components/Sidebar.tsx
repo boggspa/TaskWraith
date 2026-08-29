@@ -208,6 +208,8 @@ interface SidebarProps {
   onStartProjectHome?: (projectId: string) => void
   /** Reports the selected Project detail target for Work-scoped host chrome. */
   onSelectedProjectChange?: (projectId: string | null) => void
+  /** Open the app-global site Logins dock panel (Work panel pass-through). */
+  onOpenWebSiteLogins?: () => void
   /** Open the References dock panel for a project (Work panel pass-through). */
   onOpenReferencesLibrary?: (projectId: string) => void
   onOpenThreadGraph?: (projectId: string) => void
@@ -3050,6 +3052,7 @@ export function Sidebar({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  onOpenWebSiteLogins,
   onOpenThreadGraph,
   executionRunEntries,
   onOpenExecutionRun,
@@ -5261,6 +5264,34 @@ export function Sidebar({
                 onSearchResultCountChange={setProjectsSearchResultCount}
                 initialSelectedProjectId={initialSelectedWorkProjectId}
               />
+              {onOpenWebSiteLogins && (
+                <section className="sidebar-project-graphs-section" aria-label="Site logins">
+                  <div className="sidebar-project-graphs-header">
+                    <span className="sidebar-project-graphs-title">Logins</span>
+                    <span className="sidebar-project-graphs-hint">Sites you stay signed into</span>
+                  </div>
+                  <div className="sidebar-project-graphs-list">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="sidebar-project-graph-item"
+                      onClick={onOpenWebSiteLogins}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          onOpenWebSiteLogins()
+                        }
+                      }}
+                      title="Open saved site logins"
+                    >
+                      <span className="sidebar-project-graph-glyph" aria-hidden="true">
+                        &#9679;
+                      </span>
+                      <span className="sidebar-project-graph-name">Saved site logins</span>
+                    </div>
+                  </div>
+                </section>
+              )}
               {onOpenExecutionRun && executionRunEntries && executionRunEntries.length > 0 && (
                 <section
                   className="sidebar-execution-runs-section"

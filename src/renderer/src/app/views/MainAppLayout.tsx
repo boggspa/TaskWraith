@@ -74,6 +74,7 @@ import {
   XSymbolIcon
 } from '../../components/AppChromeSymbols'
 import { PinnedMessagesPanel } from '../../components/PinnedMessagesPanel'
+import { WebLoginsDockPanel } from '../../components/WebLoginsDockPanel'
 import {
   ChatMediaDockPanel,
   ChatMediaPreviewOverlay
@@ -303,6 +304,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenSideChatFromRunResult,
   handleOpenPluginWorkflowTemplate,
   handleOpenProjectReferencesLibrary,
+  handleOpenWebSiteLogins,
   workProjectHeader,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
@@ -372,6 +374,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isLinkedChatPopout,
   isMultiviewSplit,
   isPinnedMessagesPanelOpen,
+  isWebSiteLoginsPanelOpen,
   isProjectReferencesPanelOpen,
   isWorkRouteReferencesPinned,
   isSideChatProviderLocked,
@@ -1430,6 +1433,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onStartProjectHome={handleStartProjectHome}
                 onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
+                onOpenWebSiteLogins={handleOpenWebSiteLogins}
                 onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
                 executionRunEntries={executionRunEntries}
                 onOpenExecutionRun={handleOpenExecutionRunFromWork}
@@ -2820,6 +2824,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   ) : (
                     <WorkProjectReferencesEmptyShell />
                   )
+                )}
+
+                {activeRightDockTab === 'logins' && isWebSiteLoginsPanelOpen && (
+                  <WebLoginsDockPanel />
                 )}
 
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (

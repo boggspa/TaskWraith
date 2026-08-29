@@ -1122,6 +1122,27 @@ export function TrustSymbolIcon() {
   )
 }
 
+/** Work > Logins. A key, because the row is about an account you hold. */
+export function SiteLoginSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon composer-control-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="5.6" cy="5.6" r="2.9" />
+        <path d="M7.7 7.7 13 13" />
+        <path d="M11.2 11.2 10 12.4" />
+        <path d="M12.6 12.6 11.4 13.8" />
+      </svg>
+    </span>
+  )
+}
+
 export function LinkCircleSymbolIcon() {
   return (
     <span className="sf-symbol-icon composer-control-icon" aria-hidden>

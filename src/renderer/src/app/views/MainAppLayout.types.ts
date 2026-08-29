@@ -99,6 +99,7 @@ type MainAppLayoutSidebarProps = {
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
   handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
   handleOpenProjectReferencesLibrary: NonNullable<SidebarProps['onOpenReferencesLibrary']>
+  handleOpenWebSiteLogins: NonNullable<SidebarProps['onOpenWebSiteLogins']>
   workProjectHeader: Omit<
     import('../../components/ProjectHomeHeader').ProjectHomeHeaderProps,
     'onOpenLibrary'
@@ -284,6 +285,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   dockChatPopoutWindow: any
   dockPresence: any
   dockTabDefs: RightDockSurfaceDef[]
+  /** Work > Logins dock visibility. */
+  isWebSiteLoginsPanelOpen: boolean
   effectiveInspectorWidth: any
   effectiveIsThinking: any
   ensembleEnabledParticipantsForCurrent: any
