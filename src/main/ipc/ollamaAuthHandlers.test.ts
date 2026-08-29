@@ -47,19 +47,40 @@ function createWebSessionStore() {
   }
 }
 
+type SignInRecord = { signedIn: boolean; plan?: string; updatedAt: string }
+type OllamaSettings = {
+  ollamaApiKey?: string
+  ollamaBaseUrl?: string
+  ollamaCliSignIn?: SignInRecord
+}
+
+const NOW = '2026-08-29T00:00:00.000Z'
+
 function createDeps(webSessionStore = createWebSessionStore()) {
-  let settings = { ollamaApiKey: 'encrypted-key' as string | undefined }
+  let settings: OllamaSettings = { ollamaApiKey: 'encrypted-key' }
+  // Never let a suite reach the real daemon: an unstubbed probe reads the
+  // developer's own ollama.com account and makes the assertions machine-local.
+  const probeCloudAccount = vi.fn<
+    (baseUrl: string | undefined) => Promise<{
+      supported: boolean
+      authenticated: boolean | null
+      plan?: string
+      apiKeyConfigured?: boolean
+    }>
+  >(async () => ({ supported: false, authenticated: null }))
   const deps = {
     getSettings: vi.fn(() => settings),
-    updateSettings: vi.fn((patch: { ollamaApiKey?: string }) => {
+    updateSettings: vi.fn((patch: OllamaSettings) => {
       settings = { ...settings, ...patch }
     }),
     isEncryptionAvailable: vi.fn(() => true),
     encryptApiKey: vi.fn((value: string) => `encrypted:${value}`),
     isMainRendererSender: vi.fn(() => true),
-    webSessionStore: () => webSessionStore
+    webSessionStore: () => webSessionStore,
+    probeCloudAccount,
+    now: () => new Date(NOW)
   }
-  return { deps, webSessionStore, getSettingsSnapshot: () => settings }
+  return { deps, webSessionStore, probeCloudAccount, getSettingsSnapshot: () => settings }
 }
 
 describe('registerOllamaAuthHandlers', () => {
@@ -83,6 +104,94 @@ describe('registerOllamaAuthHandlers', () => {
       encryptionAvailable: true,
       webSessionConfigured: true,
       webSessionUpdatedAt: '2026-08-18T12:00:00.000Z'
+    })
+  })
+
+  describe('remembered CLI sign-in', () => {
+    it('persists the daemon saying yes so it survives an app quit', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      probeCloudAccount.mockResolvedValue({ supported: true, authenticated: true, plan: 'pro' })
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: true,
+        cliPlan: 'pro',
+        cliSignInUpdatedAt: NOW
+      })
+      expect(getSettingsSnapshot().ollamaCliSignIn).toEqual({
+        signedIn: true,
+        plan: 'pro',
+        updatedAt: NOW
+      })
+    })
+
+    // The whole defect: a daemon that has not answered yet used to read as
+    // signed out, so every launch forgot a completed `ollama signin`.
+    it('keeps reporting the remembered sign-in when the daemon cannot answer', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaApiKey: 'encrypted-key',
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount.mockResolvedValue({ supported: false, authenticated: null })
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: true,
+        cliPlan: 'pro',
+        cliSignInUpdatedAt: '2026-08-01T00:00:00.000Z'
+      })
+      expect(deps.updateSettings).not.toHaveBeenCalled()
+      expect(getSettingsSnapshot().ollamaCliSignIn).toBeUndefined()
+    })
+
+    it('survives a probe that throws without forgetting the sign-in', async () => {
+      const { deps, probeCloudAccount } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount.mockRejectedValue(new Error('socket hang up'))
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: true
+      })
+      expect(deps.updateSettings).not.toHaveBeenCalled()
+    })
+
+    it('forgets the sign-in as soon as the daemon reports a signed-out account', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount.mockResolvedValue({ supported: true, authenticated: false })
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: false
+      })
+      expect(getSettingsSnapshot().ollamaCliSignIn).toEqual({ signedIn: false, updatedAt: NOW })
+    })
+
+    it('omits the CLI fields entirely before any daemon answer exists', async () => {
+      const { deps } = createDeps()
+      registerOllamaAuthHandlers(deps)
+
+      const status = (await handlerFor('get-ollama-auth-status')({})) as Record<string, unknown>
+      expect(status).not.toHaveProperty('cliSignedIn')
+      expect(status).not.toHaveProperty('cliPlan')
+    })
+
+    // A stored key must not be projected into a probe: it would report an
+    // authenticated Cloud whether or not the CLI was ever signed in.
+    it('probes the daemon account without the stored API key', async () => {
+      const { deps, probeCloudAccount } = createDeps()
+      registerOllamaAuthHandlers(deps)
+
+      await handlerFor('get-ollama-auth-status')({})
+
+      expect(probeCloudAccount).toHaveBeenCalledTimes(1)
+      expect(probeCloudAccount.mock.calls[0]).not.toContain('encrypted-key')
     })
   })
 

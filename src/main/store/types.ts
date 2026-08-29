@@ -2491,6 +2491,15 @@ export interface AppSettings {
   simulatorControlEnabled?: boolean
   /** Encrypted Ollama API key for direct requests to https://ollama.com/api. */
   ollamaApiKey?: string
+  /**
+   * Last DEFINITIVE answer the local Ollama daemon gave about its own account,
+   * so a completed `ollama signin` survives an app quit the way every other
+   * provider's sign-in does. Non-secret by construction: the signed-in flag and
+   * the plan name only, never the account id, email, or key. Main-owned — it is
+   * deliberately absent from the renderer settings-patch allowlist so a
+   * renderer cannot forge a sign-in. See `ollama/OllamaCliSignInMemory.ts`.
+   */
+  ollamaCliSignIn?: { signedIn: boolean; plan?: string; updatedAt: string }
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
   /**

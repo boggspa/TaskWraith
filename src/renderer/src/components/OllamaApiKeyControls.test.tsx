@@ -52,9 +52,53 @@ describe('OllamaApiKeyControlsView', () => {
     })
     expect(after).toContain('Tracking Session (5H) and Weekly usage')
     expect(after).toContain('Session stored — replace…')
-    // One dot per credential; only the web-session one is signed in here.
+    // One dot per credential — account, API key, web session — and only the
+    // web-session one is signed in here.
     expect(after.match(/status-dot-signed-in/g)?.length).toBe(1)
-    expect(after.match(/status-dot-not-available/g)?.length).toBe(1)
+    expect(after.match(/status-dot-not-available/g)?.length).toBe(2)
+  })
+
+  describe('remembered CLI sign-in row', () => {
+    it('shows the remembered account and its plan', () => {
+      const html = render({
+        status: {
+          apiKeyConfigured: false,
+          encryptionAvailable: true,
+          webSessionConfigured: false,
+          cliSignedIn: true,
+          cliPlan: 'pro',
+          cliSignInUpdatedAt: '2026-08-01T00:00:00.000Z'
+        }
+      })
+
+      expect(html).toContain('Ollama account')
+      expect(html).toContain('Signed in — Cloud models unlocked')
+      expect(html).toContain('pro')
+      expect(html.match(/status-dot-signed-in/g)?.length).toBe(1)
+    })
+
+    it('states a remembered sign-out plainly', () => {
+      const html = render({
+        status: {
+          apiKeyConfigured: false,
+          encryptionAvailable: true,
+          webSessionConfigured: false,
+          cliSignedIn: false
+        }
+      })
+
+      expect(html).toContain('Not signed in — Cloud models stay locked')
+      expect(html).not.toContain('Signed in — Cloud models unlocked')
+    })
+
+    // Never claim a sign-out we have not observed: before the first daemon
+    // answer the honest answer is "not known yet".
+    it('does not read as signed out before any daemon answer', () => {
+      const html = render()
+
+      expect(html).toContain('Checked once the Ollama daemon answers')
+      expect(html).not.toContain('Not signed in — Cloud models stay locked')
+    })
   })
 
   it('arms Clear only once a session is actually stored', () => {

@@ -1251,6 +1251,9 @@ declare global {
         encryptionAvailable: boolean
         webSessionConfigured: boolean
         webSessionUpdatedAt?: string
+        cliSignedIn?: boolean
+        cliPlan?: string
+        cliSignInUpdatedAt?: string
       }>
       storeOllamaApiKey: (key: string) => Promise<{
         stored: boolean

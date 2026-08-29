@@ -3819,6 +3819,83 @@ describe('normalizeOllamaModels', () => {
     expect(JSON.stringify(status)).not.toContain('not-exposed@example.com')
   })
 
+  // A cold daemon answers /api/status and its recommendations long before its
+  // account round trip completes. Without the remembered sign-in that gap read
+  // as "Cloud sign-in optional" and disabled every Cloud row on every launch.
+  it('answers an unreachable account probe from the remembered CLI sign-in', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) throw new Error('socket hang up')
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaDefaultModel: 'glm-5.3:cloud',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.cloud).toMatchObject({
+      supported: true,
+      authenticated: true,
+      plan: 'pro',
+      authenticatedFromMemory: true
+    })
+    expect(status.cloudModels?.[0]).toMatchObject({
+      id: 'glm-5.3:cloud',
+      label: 'GLM 5.3',
+      disabled: false
+    })
+    expect(status.modelCount).toBe(1)
+  })
+
+  it('does not claim a Cloud account when the daemon itself is unreachable', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.available).toBe(false)
+    expect(status.cloud).toMatchObject({ supported: false, authenticated: null })
+  })
+
+  it('lets a live signed-out answer beat the remembered sign-in', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) }
+      }
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.cloud).toMatchObject({ authenticated: false })
+    expect(status.cloudModels?.[0]?.disabled).toBe(true)
+  })
+
   it('lists signed-out Cloud rows as disabled without treating them as pullable models', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })

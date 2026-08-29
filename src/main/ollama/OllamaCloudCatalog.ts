@@ -22,6 +22,8 @@ export interface OllamaCloudDiscoverySnapshot {
   source?: string
   /** A write-only encrypted key is configured for direct ollama.com API requests. */
   apiKeyConfigured?: boolean
+  /** `authenticated` came from the remembered CLI sign-in, not this probe. */
+  authenticatedFromMemory?: true
   models: OllamaCloudModelRecommendation[]
 }
 

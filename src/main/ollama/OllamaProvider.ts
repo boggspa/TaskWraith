@@ -64,6 +64,7 @@ import {
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
 import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
+import { applyRememberedOllamaCliSignIn, normalizeOllamaCliSignIn } from './OllamaCliSignInMemory'
 import { OLLAMA_CLOUD_API_BASE_URL, ollamaCloudApiHeaders } from './OllamaCloudApi'
 import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
 import {
@@ -1387,7 +1388,7 @@ export function mergeOllamaLocalAndCloudModels(
 }
 
 export async function fetchOllamaModelCatalog(
-  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'>,
   options: {
     signal?: AbortSignal
     timeoutMs?: number
@@ -1419,7 +1420,14 @@ export async function fetchOllamaModelCatalog(
           timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500),
           apiKey: options.cloudApiKey
         })
-  return mergeOllamaLocalAndCloudModels(localModels, cloud, settings.ollamaDefaultModel, {
+  // Repair BEFORE the merge: the merge is what disables every Cloud row when
+  // `authenticated !== true`, so a remembered sign-in applied afterwards would
+  // fix the card and still leave the models unrunnable.
+  const rememberedCloud = applyRememberedOllamaCliSignIn(
+    cloud,
+    normalizeOllamaCliSignIn(settings.ollamaCliSignIn)
+  )
+  return mergeOllamaLocalAndCloudModels(localModels, rememberedCloud, settings.ollamaDefaultModel, {
     reachable: localReachable,
     error: localError
   })
@@ -1427,7 +1435,7 @@ export async function fetchOllamaModelCatalog(
 
 /** Models that can be dispatched now: installed local tags plus signed-in Cloud rows. */
 export async function fetchOllamaModels(
-  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'>,
   options: {
     signal?: AbortSignal
     timeoutMs?: number
@@ -1502,7 +1510,7 @@ async function enrichOllamaModelsWithShowInfo(
 }
 
 export async function getOllamaStatusSnapshot(
-  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'>,
   options: { cloudApiKey?: string | null } = {}
 ): Promise<OllamaStatusSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
