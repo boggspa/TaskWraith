@@ -42,6 +42,14 @@ import {
   type WorkspaceLockWalRecoveryDecision,
   type WorkspaceLockWalState
 } from './WorkspaceLockWal'
+import {
+  decodeWorkspaceLockWalCheckpoint,
+  planWorkspaceLockWalCompaction,
+  resolveWorkspaceLockWalState,
+  WORKSPACE_LOCK_WAL_CHECKPOINT_BYTE_THRESHOLD,
+  WORKSPACE_LOCK_WAL_RETAINED_TAIL_EVENTS,
+  type WorkspaceLockWalCheckpoint
+} from './WorkspaceLockWalCheckpoint'
 
 export interface WorkspaceLockAuthorityOptions {
   persistence: Pick<
@@ -57,7 +65,17 @@ export interface WorkspaceLockAuthorityOptions {
     | 'writeDerivedMarker'
     | 'removeDerivedMarker'
   > &
-    Partial<Pick<NodeWorkspaceLockPersistence, 'readEventsRevision'>>
+    Partial<
+      Pick<
+        NodeWorkspaceLockPersistence,
+        | 'readEventsRevision'
+        | 'readCheckpointRevision'
+        | 'readCheckpointDocument'
+        | 'writeArchiveSegment'
+        | 'writeCheckpointDocument'
+        | 'truncateEventsToSuffix'
+      >
+    >
   dependencies: WorkspaceLockAuthorityDependencies
   /** Renewable derived-marker lifetime. Durable leases themselves do not expire. */
   markerLifetimeMs?: number
@@ -75,6 +93,28 @@ export interface WorkspaceLockReleaseOptions {
   /** Human-confirmed override for old live/uninspectable owners. */
   forceOrphaned?: boolean
 }
+
+export interface WorkspaceLockCompactionOptions {
+  byteThreshold?: number
+  retainedTailEvents?: number
+}
+
+export type WorkspaceLockCompactionOutcome =
+  | {
+      compacted: true
+      boundarySequence: number
+      sealedFrameCount: number
+      retainedFrameCount: number
+      beforeByteLength: number
+      afterByteLength: number
+      archiveFilename: string
+    }
+  | {
+      compacted: false
+      reason: 'unsupported' | 'below_threshold' | 'nothing_to_seal'
+      byteLength?: number
+      byteThreshold?: number
+    }
 
 export interface WorkspaceLockRecoveryResult {
   transitionId?: string
@@ -135,6 +175,9 @@ export class WorkspaceLockAuthority {
   private state: WorkspaceLockWalState = decodeWorkspaceLockWal('')
   private walRevision: string | null = null
   private walByteLength = 0
+  private checkpoint: WorkspaceLockWalCheckpoint | null = null
+  private checkpointRevision: string | null = null
+  private lastReplaySource: 'legacy' | 'checkpoint' | 'checkpoint-superseded' = 'legacy'
   private markerRenewalTimer: ReturnType<typeof setTimeout> | null = null
 
   private constructor(options: WorkspaceLockAuthorityOptions) {
@@ -1384,6 +1427,95 @@ export class WorkspaceLockAuthority {
     }
   }
 
+  /**
+   * Seals history the boot path no longer has to replay.
+   *
+   * Deliberately not part of `open()`: the first compaction still has to read
+   * the whole journal once, and the boot path is the one place that must not
+   * pay for it. Callers run this after the window exists. The protocol, its
+   * crash table, and what stops being replayable are in
+   * `docs/performance/workspace-lock-wal-checkpoint.md`.
+   */
+  async compactIfNeeded(
+    options: WorkspaceLockCompactionOptions = {}
+  ): Promise<WorkspaceLockCompactionOutcome> {
+    if (
+      !this.persistence.writeArchiveSegment ||
+      !this.persistence.writeCheckpointDocument ||
+      !this.persistence.truncateEventsToSuffix
+    ) {
+      return { compacted: false, reason: 'unsupported' }
+    }
+    const byteThreshold = options.byteThreshold ?? WORKSPACE_LOCK_WAL_CHECKPOINT_BYTE_THRESHOLD
+    const retainedTailEvents = options.retainedTailEvents ?? WORKSPACE_LOCK_WAL_RETAINED_TAIL_EVENTS
+    if (!Number.isSafeInteger(byteThreshold) || byteThreshold < 0) {
+      throw new Error('Workspace-lock compaction byte threshold must be a non-negative integer.')
+    }
+
+    const fence = this.newFence(this.generation)
+    await this.acquireTransitionFence(fence)
+    let released = false
+    try {
+      const current = this.readWal(true)
+      if (current.byteLength < byteThreshold) {
+        released = this.persistence.releaseInstanceFence(fence.fenceId)
+        if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+        return {
+          compacted: false,
+          reason: 'below_threshold',
+          byteLength: current.byteLength,
+          byteThreshold
+        }
+      }
+      const plan = planWorkspaceLockWalCompaction({
+        state: current.state,
+        rawTail: this.persistence.readEvents().raw,
+        createdAt: this.nowIso(),
+        authority: this.walAuthority(),
+        previousCheckpoint: this.checkpoint,
+        retainedTailEvents
+      })
+      if (!plan) {
+        released = this.persistence.releaseInstanceFence(fence.fenceId)
+        if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+        return { compacted: false, reason: 'nothing_to_seal', byteLength: current.byteLength }
+      }
+
+      // Order is load-bearing: seal, publish, truncate. A crash between any two
+      // steps leaves a state that still replays to exactly the same history.
+      this.persistence.writeArchiveSegment(plan.archiveFilename, plan.archivedFrames)
+      this.persistence.writeCheckpointDocument(plan.serializedCheckpoint)
+      this.checkpointRevision = null
+      const afterByteLength = this.persistence.truncateEventsToSuffix(
+        current.byteLength,
+        plan.retainedFrames
+      )
+      this.walRevision = null
+      const reread = this.readWal(false)
+      if (reread.state.sequence !== current.state.sequence) {
+        throw new Error('Workspace-lock compaction changed the replayed sequence.')
+      }
+      released = this.persistence.releaseInstanceFence(fence.fenceId)
+      if (!released) throw new Error('Workspace-lock compaction fence was replaced before release.')
+      return {
+        compacted: true,
+        boundarySequence: plan.boundarySequence,
+        sealedFrameCount: plan.sealedFrameCount,
+        retainedFrameCount: plan.retainedFrameCount,
+        beforeByteLength: current.byteLength,
+        afterByteLength,
+        archiveFilename: plan.archiveFilename
+      }
+    } finally {
+      if (!released) this.persistence.releaseInstanceFence(fence.fenceId)
+    }
+  }
+
+  /** How the current in-memory state was reconstructed, for startup diagnostics. */
+  replaySource(): 'legacy' | 'checkpoint' | 'checkpoint-superseded' {
+    return this.lastReplaySource
+  }
+
   dispose(): void {
     if (this.markerRenewalTimer) clearTimeout(this.markerRenewalTimer)
     this.markerRenewalTimer = null
@@ -1495,18 +1627,20 @@ export class WorkspaceLockAuthority {
     if (observedRevision && observedRevision === this.walRevision) {
       return { state: this.state, byteLength: this.walByteLength }
     }
+    const checkpoint = this.readCheckpoint()
     let snapshot = this.persistence.readEvents()
     if (snapshot.raw && !snapshot.raw.endsWith('\n')) {
       const lastNewline = snapshot.raw.lastIndexOf('\n')
       const prefix = lastNewline < 0 ? '' : snapshot.raw.slice(0, lastNewline + 1)
-      const state = decodeWorkspaceLockWal(prefix)
+      const resolved = resolveWorkspaceLockWalState(prefix, checkpoint)
       if (!repairTail) {
         // Do not cache an unrepaired torn tail: a later fenced read must see
         // and truncate it even when the file metadata has not changed.
-        this.state = state
+        this.state = resolved.state
+        this.lastReplaySource = resolved.source
         this.walByteLength = snapshot.byteLength
         this.walRevision = null
-        return { state, byteLength: snapshot.byteLength }
+        return { state: resolved.state, byteLength: snapshot.byteLength }
       }
       const repairedLength = this.persistence.repairTornEventTail(snapshot.byteLength, prefix)
       snapshot = this.persistence.readEvents()
@@ -1514,11 +1648,32 @@ export class WorkspaceLockAuthority {
         throw new Error('Workspace-lock WAL changed during torn-tail repair.')
       }
     }
-    const state = decodeWorkspaceLockWal(snapshot.raw)
-    this.state = state
+    const resolved = resolveWorkspaceLockWalState(snapshot.raw, checkpoint)
+    this.state = resolved.state
+    this.lastReplaySource = resolved.source
     this.walByteLength = snapshot.byteLength
     this.walRevision = snapshot.revision
-    return { state, byteLength: snapshot.byteLength }
+    return { state: resolved.state, byteLength: snapshot.byteLength }
+  }
+
+  /**
+   * Reads the checkpoint only when its own file revision changed. Re-validating
+   * the complete id sets on every fenced transition would give back much of what
+   * checkpointing is for.
+   */
+  private readCheckpoint(): WorkspaceLockWalCheckpoint | null {
+    if (!this.persistence.readCheckpointDocument) return null
+    const observedRevision = this.persistence.readCheckpointRevision?.()
+    if (observedRevision && observedRevision === this.checkpointRevision) return this.checkpoint
+    const raw = this.persistence.readCheckpointDocument()
+    if (raw === null) {
+      this.checkpoint = null
+      this.checkpointRevision = observedRevision ?? null
+      return null
+    }
+    this.checkpoint = decodeWorkspaceLockWalCheckpoint(raw)
+    this.checkpointRevision = observedRevision ?? null
+    return this.checkpoint
   }
 
   private appendWalEvent(serializedLineWithNewline: string, expectedByteLength: number): number {

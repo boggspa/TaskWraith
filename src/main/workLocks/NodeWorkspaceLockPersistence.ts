@@ -18,6 +18,8 @@ export const WORKSPACE_LOCK_AUTHORITY_DIRECTORY = 'work-lock-authority'
 export const WORKSPACE_LOCK_EVENTS_FILENAME = 'events.jsonl'
 export const WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME = 'instance-fence.json'
 export const WORKSPACE_LOCK_RECLAIM_GUARD_FILENAME = 'instance-fence.reclaim-guard.json'
+export const WORKSPACE_LOCK_CHECKPOINT_FILENAME = 'checkpoint.json'
+export const WORKSPACE_LOCK_ARCHIVE_DIRECTORY = 'archive'
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
@@ -547,6 +549,109 @@ export class NodeWorkspaceLockPersistence {
       if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return false
       throw error
     }
+  }
+
+  /** Cheap identity so a cached, already-validated checkpoint can be reused. */
+  readCheckpointRevision(): string {
+    this.ensureAuthorityDirectory()
+    const path = this.checkpointPath()
+    try {
+      const stat = this.fs.lstatSync(path)
+      assertRegularFile(stat, path)
+      return eventRevision(stat, path)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return 'absent'
+      throw error
+    }
+  }
+
+  /** Raw checkpoint document, or null on a v1 authority root that has none. */
+  readCheckpointDocument(): string | null {
+    this.ensureAuthorityDirectory()
+    const snapshot = this.readOptionalRegularFile(this.checkpointPath())
+    return snapshot ? snapshot.raw : null
+  }
+
+  /**
+   * Step 2 of the publication protocol: seal history that the checkpoint will
+   * stand for. Writing this before the checkpoint means no frame ever exists in
+   * neither the tail nor the archive.
+   */
+  writeArchiveSegment(filename: string, content: string): void {
+    if (!isSinglePathSegment(filename) || !/^events-\d{20}\.jsonl$/.test(filename)) {
+      throw new Error('Workspace-lock archive segment filename is unsafe.')
+    }
+    if (typeof content !== 'string' || !content.endsWith('\n')) {
+      throw new Error('Workspace-lock archive segment must be newline-terminated JSONL.')
+    }
+    validateJsonLines(content, filename)
+    const directory = this.archiveDirectory()
+    this.ensurePrivateDirectory(directory)
+    this.atomicReplaceRegularFile(join(directory, filename), content)
+    const written = this.readRequiredRegularFile(join(directory, filename))
+    if (written.raw !== content) {
+      throw new Error('Workspace-lock archive segment could not be verified.')
+    }
+  }
+
+  /** Step 3: publish the checkpoint. Atomic; a reader sees old or new, never half. */
+  writeCheckpointDocument(content: string): void {
+    if (typeof content !== 'string' || !content.endsWith('\n') || content === '\n') {
+      throw new Error('Workspace-lock checkpoint must be one newline-terminated document.')
+    }
+    if (content.slice(0, -1).includes('\n')) {
+      throw new Error('Workspace-lock checkpoint must be a single line.')
+    }
+    this.ensureAuthorityDirectory()
+    this.atomicReplaceRegularFile(this.checkpointPath(), content)
+    if (this.readRequiredRegularFile(this.checkpointPath()).raw !== content) {
+      throw new Error('Workspace-lock checkpoint could not be verified.')
+    }
+  }
+
+  /**
+   * Step 4: drop the sealed prefix. Only ever removes bytes that are already an
+   * exact prefix of the live file, so a concurrent appender's frames survive or
+   * the truncation refuses.
+   */
+  truncateEventsToSuffix(expectedByteLength: number, retainedFrames: string): number {
+    validateExpectedByteLength(expectedByteLength)
+    if (typeof retainedFrames !== 'string' || (retainedFrames && !retainedFrames.endsWith('\n'))) {
+      throw new Error('Workspace-lock retained frames must be empty or newline-terminated.')
+    }
+    validateJsonLines(retainedFrames, this.eventsPath())
+    this.ensureAuthorityDirectory()
+    const path = this.eventsPath()
+    const current = this.readRequiredRegularFile(path)
+    if (current.bytes.byteLength !== expectedByteLength) {
+      throw new Error(
+        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${current.bytes.byteLength}).`
+      )
+    }
+    validateJsonLines(current.raw, path)
+    if (!current.raw.endsWith('\n')) {
+      throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+    }
+    if (!current.raw.endsWith(retainedFrames)) {
+      throw new Error('Workspace-lock retained frames are not the exact live WAL suffix.')
+    }
+    // A failed replace leaves an ambiguous cursor; force full revalidation.
+    this.validatedEventsRevision = null
+    this.atomicReplaceRegularFile(path, retainedFrames)
+    const truncated = this.readEvents()
+    const truncatedByteLength = Buffer.byteLength(retainedFrames, 'utf8')
+    if (truncated.raw !== retainedFrames || truncated.byteLength !== truncatedByteLength) {
+      throw new Error('Workspace-lock WAL truncation could not be verified.')
+    }
+    return truncatedByteLength
+  }
+
+  private checkpointPath(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_CHECKPOINT_FILENAME)
+  }
+
+  private archiveDirectory(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_ARCHIVE_DIRECTORY)
   }
 
   private eventsPath(): string {

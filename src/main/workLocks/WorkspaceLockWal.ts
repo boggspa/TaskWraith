@@ -153,13 +153,35 @@ export type WorkspaceLockWalEventInput =
       payload: WorkspaceLockWalCleanupPayload
     }
 
+/**
+ * Everything a checkpoint must carry to stand in for the events it compacted.
+ * Deliberately the complete projection minus `events`/`leases`: the id sets are
+ * never truncated, because refusing a reused transition or lease id is a fence,
+ * not an optimisation. See docs/performance/workspace-lock-wal-checkpoint.md.
+ */
+export interface WorkspaceLockWalCheckpointBaseline {
+  sequence: number
+  lastDigest: string
+  lastTransitionId: string
+  transitionIds: string[]
+  leaseIds: string[]
+  maxGeneration: number
+  activeLeases: WorkspaceLockLease[]
+  recoveredLeases: WorkspaceLockLease[]
+  knownMarkers: WorkspaceLockWalMarker[]
+}
+
 export interface WorkspaceLockWalState {
   sequence: number
   lastDigest: string
   lastTransitionId: string
   /** All prior transition ids; never infer uniqueness from a digest chain alone. */
   transitionIds: string[]
-  /** Validated history retained so request-level idempotency survives restart. */
+  /**
+   * Validated history retained so request-level idempotency survives restart.
+   * With a checkpoint this holds only the frames after `baseline.sequence`;
+   * an older transition is refused rather than replayed.
+   */
   events: WorkspaceLockWalEvent[]
   /** Lease ids are never reusable, including after a normal release. */
   leaseIds: string[]
@@ -172,6 +194,8 @@ export interface WorkspaceLockWalState {
   leases: WorkspaceLockLease[]
   /** Active markers plus inactive markers whose durable cleanup is still pending. */
   knownMarkers: WorkspaceLockWalMarker[]
+  /** The compacted prefix `events` starts after, or null when it holds everything. */
+  baseline: WorkspaceLockWalCheckpointBaseline | null
 }
 
 export interface WorkspaceLockWalAppendResult {
@@ -212,8 +236,42 @@ export function createEmptyWorkspaceLockWalState(): WorkspaceLockWalState {
     activeLeases: [],
     recoveredLeases: [],
     leases: [],
-    knownMarkers: []
+    knownMarkers: [],
+    baseline: null
   }
+}
+
+/**
+ * The state a checkpoint stands for: sequence `baseline.sequence` reached, and
+ * no retained events, so replay of the following frames starts here instead of
+ * from zero.
+ */
+export function workspaceLockWalStateFromBaseline(
+  baseline: WorkspaceLockWalCheckpointBaseline
+): WorkspaceLockWalState {
+  const activeLeases = baseline.activeLeases.map(cloneLease).sort(compareLease)
+  const recoveredLeases = baseline.recoveredLeases.map(cloneLease).sort(compareLease)
+  const state: WorkspaceLockWalState = {
+    sequence: baseline.sequence,
+    lastDigest: baseline.lastDigest,
+    lastTransitionId: baseline.lastTransitionId,
+    transitionIds: [...baseline.transitionIds],
+    events: [],
+    leaseIds: [...baseline.leaseIds],
+    maxGeneration: baseline.maxGeneration,
+    activeLeases,
+    recoveredLeases,
+    leases: [...activeLeases, ...recoveredLeases],
+    knownMarkers: baseline.knownMarkers.map((marker) => ({ ...marker })),
+    baseline
+  }
+  assertState(state)
+  return state
+}
+
+/** The compacted prefix length; 0 when `events` still holds the whole history. */
+export function workspaceLockWalCheckpointSequence(state: WorkspaceLockWalState): number {
+  return state.baseline ? state.baseline.sequence : 0
 }
 
 /**
@@ -248,9 +306,14 @@ export function appendWorkspaceLockWalEvent(
  * possible torn append and is ignored; every newline-terminated frame must be
  * fully valid or recovery stops fail-closed.
  */
-export function decodeWorkspaceLockWal(raw: string): WorkspaceLockWalState {
+export function decodeWorkspaceLockWal(
+  raw: string,
+  baseline?: WorkspaceLockWalCheckpointBaseline | null
+): WorkspaceLockWalState {
   if (typeof raw !== 'string') throw new Error('Workspace-lock WAL must be UTF-8 text.')
-  let state = createEmptyWorkspaceLockWalState()
+  let state = baseline
+    ? workspaceLockWalStateFromBaseline(baseline)
+    : createEmptyWorkspaceLockWalState()
   if (!raw) return state
 
   const lastNewline = raw.lastIndexOf('\n')
@@ -258,8 +321,8 @@ export function decodeWorkspaceLockWal(raw: string): WorkspaceLockWalState {
   if (!completePrefix) return state
 
   const lines = completePrefix.slice(0, -1).split('\n')
-  const transitionIds = new Set<string>()
-  const leaseIds = new Set<string>()
+  const transitionIds = new Set<string>(state.transitionIds)
+  const leaseIds = new Set<string>(state.leaseIds)
   for (const [index, line] of lines.entries()) {
     if (!line || line.includes('\r')) throw corrupt(index + 1, 'empty or non-canonical frame')
     let parsed: unknown
@@ -291,9 +354,11 @@ export function historicalWorkspaceLockWalEvent(
   transitionId: string
 ): { event: WorkspaceLockWalEvent; previous: WorkspaceLockWalState } | null {
   assertState(state)
-  let previous = createEmptyWorkspaceLockWalState()
-  const transitionIds = new Set<string>()
-  const leaseIds = new Set<string>()
+  let previous = state.baseline
+    ? workspaceLockWalStateFromBaseline(state.baseline)
+    : createEmptyWorkspaceLockWalState()
+  const transitionIds = new Set<string>(previous.transitionIds)
+  const leaseIds = new Set<string>(previous.leaseIds)
   for (const event of state.events) {
     if (event.transitionId === transitionId) {
       previous.leaseIds.sort()
@@ -575,7 +640,8 @@ function applyValidatedWorkspaceLockWalEvent(
     activeLeases,
     recoveredLeases,
     leases: [...activeLeases, ...recoveredLeases],
-    knownMarkers: markers
+    knownMarkers: markers,
+    baseline: current.baseline
   }
 }
 
@@ -583,6 +649,82 @@ export function digestWorkspaceLockWalRecord(
   recordWithoutDigest: WorkspaceLockWalUnsignedRecord
 ): string {
   return createHash('sha256').update(canonicalJson(recordWithoutDigest), 'utf8').digest('hex')
+}
+
+/**
+ * Exposed so the checkpoint envelope signs with the exact same construction as
+ * an event. Two digest constructions would be two things to keep in step.
+ */
+export function canonicalWorkspaceLockWalJson(value: unknown): string {
+  return canonicalJson(value)
+}
+
+export function workspaceLockWalDigest(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')
+}
+
+/**
+ * Validates an untrusted checkpoint projection with the same fail-closed
+ * validators replay uses. A checkpoint stands in for events that are no longer
+ * on the boot path, so it may not be trusted any further than one of them.
+ */
+export function validateWorkspaceLockWalCheckpointBaseline(
+  value: unknown
+): WorkspaceLockWalCheckpointBaseline {
+  const baseline = object(value, 'checkpoint baseline')
+  exactKeys(baseline, [
+    'sequence',
+    'lastDigest',
+    'lastTransitionId',
+    'transitionIds',
+    'leaseIds',
+    'maxGeneration',
+    'activeLeases',
+    'recoveredLeases',
+    'knownMarkers'
+  ])
+  if (!positiveSafeInteger(baseline.sequence)) throw new Error('invalid checkpoint sequence')
+  if (!digest(baseline.lastDigest)) throw new Error('invalid checkpoint digest anchor')
+  opaqueId(baseline.lastTransitionId, 'checkpoint transition anchor')
+  if (!safeGeneration(baseline.maxGeneration)) throw new Error('invalid checkpoint generation')
+  const transitionIds = idArray(baseline.transitionIds, 'checkpoint transition id')
+  if (transitionIds.length !== baseline.sequence) {
+    throw new Error('checkpoint transition history does not match its sequence')
+  }
+  if (transitionIds[transitionIds.length - 1] !== baseline.lastTransitionId) {
+    throw new Error('checkpoint last transition id is not current')
+  }
+  const leaseIdList = idArray(baseline.leaseIds, 'checkpoint lease id')
+  if (leaseIdList.some((leaseId, index) => index > 0 && leaseId < leaseIdList[index - 1])) {
+    throw new Error('checkpoint lease ids are not sorted')
+  }
+  if (!Array.isArray(baseline.activeLeases) || !Array.isArray(baseline.recoveredLeases)) {
+    throw new Error('checkpoint lease projection must be an array')
+  }
+  const activeLeases = baseline.activeLeases.map((lease) => validateLease(lease))
+  const recoveredLeases = baseline.recoveredLeases.map((lease) => validateLease(lease))
+  const knownMarkers = validateMarkers(baseline.knownMarkers)
+  const projection: WorkspaceLockWalCheckpointBaseline = {
+    sequence: baseline.sequence,
+    lastDigest: baseline.lastDigest,
+    lastTransitionId: baseline.lastTransitionId,
+    transitionIds,
+    leaseIds: leaseIdList,
+    maxGeneration: baseline.maxGeneration,
+    activeLeases,
+    recoveredLeases,
+    knownMarkers
+  }
+  // Reuse the full state invariant rather than restating a weaker subset here.
+  workspaceLockWalStateFromBaseline(projection)
+  return projection
+}
+
+function idArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} list must be an array`)
+  for (const id of value) opaqueId(id, label)
+  unique(value as string[], label)
+  return [...(value as string[])]
 }
 
 function validatePayload(kind: WorkspaceLockWalEventKind, value: unknown): unknown {
@@ -1132,14 +1274,21 @@ function mergeMarkers(
 }
 
 function assertState(state: WorkspaceLockWalState): void {
+  if (!state || state.baseline !== null && typeof state.baseline !== 'object') {
+    throw new Error('invalid workspace-lock WAL state')
+  }
+  // Frames before this point live in a checkpoint (and a sealed archive
+  // segment); `events` is the replayable suffix after it.
+  const compacted = state.baseline ? state.baseline.sequence : 0
   if (
-    !state ||
+    !nonNegativeSafeInteger(compacted) ||
     !nonNegativeSafeInteger(state.sequence) ||
+    compacted > state.sequence ||
     !Array.isArray(state.transitionIds) ||
     !Array.isArray(state.events) ||
     !Array.isArray(state.leaseIds) ||
     state.transitionIds.length !== state.sequence ||
-    state.events.length !== state.sequence ||
+    state.events.length !== state.sequence - compacted ||
     (state.sequence === 0
       ? state.lastDigest !== '' || state.lastTransitionId !== ''
       : !digest(state.lastDigest) || !isWorkspaceLockOpaqueId(state.lastTransitionId))
@@ -1160,7 +1309,8 @@ function assertState(state: WorkspaceLockWalState): void {
   if (
     state.events.some(
       (event, index) =>
-        event.transitionId !== state.transitionIds[index] || event.sequence !== index + 1
+        event.transitionId !== state.transitionIds[compacted + index] ||
+        event.sequence !== compacted + index + 1
     )
   ) {
     throw new Error('workspace-lock WAL events do not match transition history')
