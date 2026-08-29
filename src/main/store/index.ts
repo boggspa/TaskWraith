@@ -361,6 +361,14 @@ import {
   type SubThreadMailboxEventInput,
   type SubThreadMailboxLedger
 } from '../SubThreadMailbox'
+import {
+  emptyExecutionResultMailbox,
+  enqueueExecutionResultMailboxEvent as enqueueExecutionResultEvent,
+  normalizeExecutionResultMailboxLedger,
+  type ExecutionResultMailbox,
+  type ExecutionResultMailboxEventInput,
+  type ExecutionResultMailboxLedger
+} from '../ExecutionResultMailbox'
 import { seatFromSoloChatRun } from '../ThreadMessageSeatCapture'
 import {
   acknowledgeThreadMessagesInLedger,
@@ -1157,6 +1165,7 @@ function persistIncrementalChatAdmitted(
   }
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
+const executionResultMailboxesPath = path.join(userDataPath, 'execution-result-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 // Volatile chat-list-entry churn (search preview, message/diff counters,
 // per-run stats, source stat) lands on disk at most this often per chat. It
@@ -4343,6 +4352,14 @@ function readSubThreadMailboxLedger(): SubThreadMailboxLedger {
 
 function writeSubThreadMailboxLedger(ledger: SubThreadMailboxLedger): void {
   writeJson(subThreadMailboxesPath, normalizeSubThreadMailboxLedger(ledger))
+}
+
+function readExecutionResultMailboxLedger(): ExecutionResultMailboxLedger {
+  return normalizeExecutionResultMailboxLedger(readJson<unknown>(executionResultMailboxesPath, {}))
+}
+
+function writeExecutionResultMailboxLedger(ledger: ExecutionResultMailboxLedger): void {
+  writeJson(executionResultMailboxesPath, normalizeExecutionResultMailboxLedger(ledger))
 }
 
 function readThreadMessageLedger(): ThreadMessageLedger {
@@ -9603,6 +9620,46 @@ export class AppStore {
       writeSubThreadMailboxLedger(ledger)
     }
     return result
+  }
+
+  static getExecutionResultMailbox(threadId: string): ExecutionResultMailbox {
+    const ledger = readExecutionResultMailboxLedger()
+    return ledger.mailboxes[threadId] || emptyExecutionResultMailbox(threadId)
+  }
+
+  /**
+   * Durable delivery of a graph's terminal result to its owning thread. The
+   * read-modify-write below has no await in it, so it is atomic with respect to
+   * concurrent in-process callers — the same property the sub-thread mailbox
+   * relies on. A duplicate costs zero disk I/O.
+   */
+  static enqueueExecutionResultMailboxEvent(
+    input: ExecutionResultMailboxEventInput,
+    options: { now?: string } = {}
+  ): ReturnType<typeof enqueueExecutionResultEvent> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Execution result mailbox enqueue',
+      chatIds: [input.threadId],
+      workspaceIds: [this.getChat(input.threadId)?.workspaceId]
+    })
+    const ledger = readExecutionResultMailboxLedger()
+    const result = enqueueExecutionResultEvent(ledger.mailboxes[input.threadId], input, options)
+    if (result.inserted) {
+      ledger.mailboxes[input.threadId] = result.mailbox
+      writeExecutionResultMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static deleteExecutionResultMailbox(threadId: string): void {
+    const ledger = readExecutionResultMailboxLedger()
+    if (!ledger.mailboxes[threadId]) return
+    delete ledger.mailboxes[threadId]
+    if (Object.keys(ledger.mailboxes).length === 0) {
+      deletePathBestEffort(executionResultMailboxesPath, 'execution result mailbox ledger')
+      return
+    }
+    writeExecutionResultMailboxLedger(ledger)
   }
 
   static deleteSubThreadMailbox(parentChatId: string): void {
