@@ -16530,7 +16530,10 @@ export class EnsembleOrchestrator {
       // before it) must have landed in the Host profile before the first
       // participant dispatch. A rejection here rejects runRound; the startRound
       // kickoff's catch fails the round loudly rather than dispatching on
-      // unpersisted state.
+      // unpersisted state. A Host revision conflict is deliberately NOT one of
+      // those rejections: the Host record is intact and the barrier re-anchors
+      // onto it, so a bookkeeping conflict can never be the reason a round
+      // refuses to start.
       await this.deps.persistChatBarrier(runtime.chatId)
     }
     if (runtime.startAfterCancellation) {

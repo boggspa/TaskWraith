@@ -471,7 +471,7 @@ interface HostPersistRebaseState {
 }
 
 const hostPersistRebaseByChatId = new Map<string, HostPersistRebaseState>()
-const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 2
+const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 3
 let hostPersistConflictRecoveryListener: ((chat: ChatRecord) => void) | null = null
 
 function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): void {
@@ -480,7 +480,11 @@ function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): vo
     existing.desired = desired
     return
   }
-  if (base) hostPersistRebaseByChatId.set(desired.appChatId, { base, desired })
+  // A create has no ancestor, but the intent is still recorded: a conflict on
+  // the create (the Host reports `Thread is not found` as a revision conflict)
+  // must have the accumulated Desktop record to carry forward, or the chat is
+  // stranded with nothing to rebase.
+  hostPersistRebaseByChatId.set(desired.appChatId, { base: base ?? desired, desired })
 }
 
 function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
@@ -7557,6 +7561,10 @@ export class AppStore {
    * command. The enqueue never throws; durability is raised at explicit
    * barriers (`awaitChatRecordPersisted`) so a genuine persistence failure
    * still surfaces loudly at round start instead of silently at 85 call sites.
+   * A revision conflict is not such a failure: the barrier rebases onto the
+   * Host record and, failing that, re-anchors this optimistic revision to the
+   * Host's so the NEXT save can land. The stamp below only ever advances, so
+   * without that re-anchor one rejected write wedges the chat forever.
    *
    * Revision contract: the Host owns the counter (persistThreadRecord writes 0
    * on create and previous+1 on update), so the enqueued record is stamped
@@ -8014,7 +8022,23 @@ export class AppStore {
     return saveCoalescer.flush(chatId)
   }
 
-  /** Immediate CAS-conflict recovery used by the production Host save lane. */
+  /**
+   * Immediate CAS-conflict recovery used by the production Host save lane.
+   *
+   * The Host owns `chats/<id>.json`, so whatever that file says is always a
+   * revision this compare-and-swap can actually satisfy. Recovery therefore
+   * never gives up: `saveChatThroughHost` derives its baseline from the
+   * optimistic in-memory shadow, and that shadow only ever advances (+1 per
+   * save) — this function is the ONLY thing that re-anchors it to the Host.
+   * Every early return here strands the chat permanently, because the next
+   * save asks for an even higher revision the Host will never hold.
+   *
+   * 2026-08-29 evidence from `host-runtime/command-receipts`: 496 of 731
+   * `thread.record.persist` commands failed `thread_record_revision_conflict`,
+   * with one ensemble thread pinned at revision 13 across 222 consecutive
+   * attempts — its rebase intent had been dropped by an earlier settled
+   * barrier, so recovery returned null and the shadow was never re-anchored.
+   */
   static recoverHostPersistConflict(
     input: HostThreadRecordPersistInput,
     error: HostThreadRecordPersistError
@@ -8022,31 +8046,54 @@ export class AppStore {
     if (error.code !== 'revision_conflict') return null
     const chatId = input.chatId
     const intent = hostPersistRebaseByChatId.get(chatId)
+    // The accumulated Desktop intent, or — when an earlier settled barrier
+    // dropped it — the record this attempt was already carrying.
+    const desired = intent?.desired ?? input.record
     const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
-    if (!intent || stored === null) return null
-
-    let source: ChatRecord
-    let rebased: ChatRecord
-    try {
-      source = chatComposerSelectionOverlayStore.apply(
-        this.normalizeChatRecord(stored as ChatRecord)
-      )
-      rebased = rebaseChatRecordUpdate(intent.base, intent.desired, source)
-    } catch (rebaseError) {
-      this.chatRecordCache.delete(chatId)
-      hostPersistShadowChatIds.delete(chatId)
-      hostPersistRebaseByChatId.delete(chatId)
-      throw new HostThreadRecordPersistError(
-        'revision_conflict',
-        'Host record persistence changed concurrently and could not be safely rebased.',
-        {
-          ...(error.hostErrorCode ? { hostErrorCode: error.hostErrorCode } : {}),
-          cause: rebaseError
-        }
-      )
+    // No Host record at all: `Thread is not found` is reported as a revision
+    // conflict, so a CAS against any non-zero revision can never land. Re-issue
+    // it as the create it actually is instead of wedging the chat forever.
+    if (stored === null) {
+      const created: ChatRecord = { ...desired, persistenceRevision: 0 }
+      return this.adoptHostPersistRecovery(chatId, created, created, 0)
     }
 
-    hostPersistRebaseByChatId.set(chatId, { base: source, desired: rebased })
+    const source = chatComposerSelectionOverlayStore.apply(
+      this.normalizeChatRecord(stored as ChatRecord)
+    )
+    const sourceRevision = chatPersistenceRevision(source)
+    // A base ahead of the Host record is a stale optimistic shadow, not a real
+    // ancestor, and rebasing onto it throws. Fall back to the Host record as
+    // the ancestor: everything the Desktop holds is then a local change, which
+    // is exactly the truth once its own writes never landed.
+    const base =
+      intent && chatPersistenceRevision(intent.base) <= sourceRevision ? intent.base : source
+    // rebaseChatRecordUpdate requires desired to sit strictly above base.
+    const rebaseTarget: ChatRecord =
+      chatPersistenceRevision(desired) > chatPersistenceRevision(base)
+        ? desired
+        : { ...desired, persistenceRevision: chatPersistenceRevision(base) + 1 }
+
+    let rebased: ChatRecord
+    try {
+      rebased = rebaseChatRecordUpdate(base, rebaseTarget, source)
+    } catch {
+      // Last resort: force the Desktop record onto the Host's revision. A
+      // three-way merge that cannot be computed is not a reason to refuse to
+      // write — the alternative is a thread that is never persisted again.
+      rebased = { ...rebaseTarget, persistenceRevision: sourceRevision + 1 }
+    }
+    return this.adoptHostPersistRecovery(chatId, source, rebased, sourceRevision)
+  }
+
+  /** Re-anchors the shadow onto a recovered record and returns the retry. */
+  private static adoptHostPersistRecovery(
+    chatId: string,
+    base: ChatRecord,
+    rebased: ChatRecord,
+    expectedRevision: number
+  ): HostThreadRecordPersistInput {
+    hostPersistRebaseByChatId.set(chatId, { base, desired: rebased })
     this.chatRecordCache.set(chatId, { mtimeMs: -1, size: -1, record: rebased })
     hostPersistShadowChatIds.add(chatId)
     hostPersistUnconfirmedChatIds.add(chatId)
@@ -8055,21 +8102,43 @@ export class AppStore {
     } catch {
       // Persistence recovery is authoritative; renderer reseeding is additive.
     }
-    return {
-      chatId,
-      record: rebased,
-      expectedRevision: chatPersistenceRevision(source)
+    return { chatId, record: rebased, expectedRevision }
+  }
+
+  /**
+   * Re-anchors a projection the Host never accepted. The record the user is
+   * looking at is kept — dropping it would roll the transcript back to a stale
+   * durable copy — but its revision is reset to the Host's, so the NEXT save
+   * asks for a revision the Host can satisfy. Leaving the shadow ahead is what
+   * turns a single conflict into a permanent one.
+   */
+  private static releaseHostPersistShadow(chatId: string): void {
+    hostPersistRebaseByChatId.delete(chatId)
+    const cached = this.chatRecordCache.get(chatId)
+    if (!cached || cached.mtimeMs !== -1) return
+    let hostRevision = 0
+    try {
+      hostRevision = chatPersistenceRevision(
+        readJsonStrictIfPresent(chatPathForId(chatsDir, chatId)) as ChatRecord | null
+      )
+    } catch {
+      // An unreadable record leaves the create-case revision, which the next
+      // save's conflict recovery corrects against the real file.
     }
+    cached.record = { ...cached.record, persistenceRevision: hostRevision }
   }
 
   /**
    * Durability barrier for the Host-routed persistence path: resolves once the
    * chat's queued `thread.record.persist` work has landed. Revision conflicts
-   * are rebased onto the latest Host record and retried within a strict bound;
-   * every other typed failure is rethrown. Awaited before
-   * ensemble participant dispatch and on ensemble-chat creation so a genuine
-   * persistence failure surfaces at the exact site where the user meets it.
-   * Concurrent awaiters share one in-flight drain and all observe its outcome.
+   * are rebased onto the latest Host record and retried within a strict bound,
+   * and an unresolved one re-anchors the record and RESOLVES: the Host copy is
+   * intact, so a compare-and-swap bookkeeping fault must never be the reason an
+   * ensemble round refuses to start. Every other typed failure is rethrown.
+   * Awaited before ensemble participant dispatch and on ensemble-chat creation
+   * so a genuine persistence failure surfaces at the exact site where the user
+   * meets it. Concurrent awaiters share one in-flight drain and all observe its
+   * outcome.
    */
   static awaitChatRecordPersisted(chatId: string): Promise<void> {
     const existing = chatRecordConflictRecoveryBarriers.get(chatId)
@@ -8094,18 +8163,29 @@ export class AppStore {
       } catch (error) {
         if (
           !(error instanceof HostThreadRecordPersistError) ||
-          error.code !== 'revision_conflict' ||
-          attempt >= HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT
+          error.code !== 'revision_conflict'
         ) {
           throw error
         }
         const intent = hostPersistRebaseByChatId.get(chatId)
-        if (!intent) throw error
+        const pending = intent?.desired ?? this.chatRecordCache.get(chatId)?.record ?? null
+        if (attempt >= HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT || !pending) {
+          // A revision conflict is a persistence-bookkeeping fault, never a
+          // reason to refuse to start a round: the Host's own record is intact
+          // and the next save rebases onto it. Re-anchor the shadow so the
+          // conflict cannot repeat forever, report it, and let the caller run.
+          this.releaseHostPersistShadow(chatId)
+          console.error(
+            `[host-persist] unresolved revision conflict for chat ${chatId} after ` +
+              `${attempt} rebase attempt(s); re-anchored the record and continued.`
+          )
+          return
+        }
         const recovered = this.recoverHostPersistConflict(
           {
             chatId,
-            record: intent.desired,
-            expectedRevision: chatPersistenceRevision(intent.base)
+            record: pending,
+            expectedRevision: chatPersistenceRevision(intent?.base ?? pending)
           },
           error
         )

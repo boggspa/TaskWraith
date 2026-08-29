@@ -130,6 +130,9 @@ function ensembleChatRecord(appChatId: string): Record<string, unknown> {
   }
 }
 
+/** Mirrors HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT in src/main/store/index.ts. */
+const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 3
+
 describe('HostEnsemblePersistWiring', () => {
   it('persists an ensemble round-start save through the Host when the gate is Host-owned (the user regression)', async () => {
     const { AppStore, persistPort, enqueued } = await importStoreWithHostOwnedGate()
@@ -260,7 +263,50 @@ describe('HostEnsemblePersistWiring', () => {
     expect(recoveryListener).toHaveBeenCalledWith(retry.record)
   })
 
-  it('bounds repeated Host revision conflicts instead of looping the round forever', async () => {
+  it('rebases a conflict whose rebase intent an earlier settled barrier dropped', async () => {
+    // The production wedge (2026-08-29): a settled barrier drops the chat's
+    // rebase intent, the optimistic shadow keeps advancing (+1 per save), and
+    // the next conflict has no intent to rebase. Before this slice recovery
+    // returned null there and the conflict was rethrown, so every later save
+    // asked for a revision the Host would never hold — one ensemble thread
+    // stayed pinned at revision 13 across 222 consecutive failed persists.
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-intent-dropped'
+    const durable = { ...ensembleChatRecord(chatId), persistenceRevision: 3, updatedAt: 2 }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify(durable))
+    chmodSync(chatPath, 0o600)
+
+    // A save that the barrier settles: the intent is dropped on the way out.
+    AppStore.saveChat({ ...durable, title: 'First' } as never)
+    await AppStore.awaitChatRecordPersisted(chatId)
+    // The Host never actually landed it — the durable record is still at 3
+    // while the in-memory shadow has advanced to 4.
+    const next = AppStore.saveChat({ ...durable, title: 'Second' } as never)
+    expect(next.persistenceRevision).toBe(5)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(4)
+
+    persistPort.drain.mockRejectedValueOnce(
+      new CurrentHostThreadRecordPersistError(
+        'revision_conflict',
+        'Host record persistence revision conflicted.',
+        { hostErrorCode: 'thread_record_revision_conflict' }
+      )
+    )
+    await expect(AppStore.awaitChatRecordPersisted(chatId)).resolves.toBeUndefined()
+    // Recovery re-anchored onto the Host's own revision instead of giving up,
+    // and carried the Desktop's accumulated intent forward.
+    const retry = enqueued.at(-1)!
+    expect(retry.expectedRevision).toBe(3)
+    expect(retry.record.persistenceRevision).toBe(4)
+    expect(retry.record.title).toBe('Second')
+  })
+
+  it('never blocks a round on an unresolved conflict, and re-anchors the record', async () => {
     const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
     const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
       await import('./HostThreadRecordPersistCommand')
@@ -283,9 +329,17 @@ describe('HostEnsemblePersistWiring', () => {
     persistPort.drain.mockRejectedValue(conflict)
     AppStore.saveChat({ ...durable, title: 'Bounded retry' } as never)
 
-    await expect(AppStore.awaitChatRecordPersisted(chatId)).rejects.toBe(conflict)
-    expect(persistPort.drain).toHaveBeenCalledTimes(3)
-    expect(enqueued).toHaveLength(3)
+    // Bounded, but NOT fatal: a persistence-bookkeeping conflict must never be
+    // the reason an ensemble round refuses to start.
+    await expect(AppStore.awaitChatRecordPersisted(chatId)).resolves.toBeUndefined()
+    expect(persistPort.drain).toHaveBeenCalledTimes(HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT + 1)
+    expect(enqueued).toHaveLength(HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT + 1)
+    // The shadow is re-anchored to the Host's revision (5), so the next save
+    // asks for a revision the Host can satisfy instead of diverging further.
+    persistPort.drain.mockResolvedValue(undefined)
+    AppStore.saveChat({ ...durable, title: 'After the conflict' } as never)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(5)
+    expect(enqueued.at(-1)?.record.persistenceRevision).toBe(6)
   })
 
   it('keeps the proven legacy admitted path when the writer gate is open', async () => {

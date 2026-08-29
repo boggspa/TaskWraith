@@ -287,7 +287,7 @@ export class HostThreadRecordPersistClient
     this.maxConflictRetries =
       Number.isSafeInteger(options.maxConflictRetries) && (options.maxConflictRetries ?? -1) >= 0
         ? options.maxConflictRetries!
-        : 2
+        : 3
   }
 
   async persist(input: HostThreadRecordPersistInput): Promise<HostCommandReceipt> {
