@@ -878,7 +878,7 @@ In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool v
 
 ## ensemble_fanout_all
 
-In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged reader-intent participant concurrently, including while both authority seats are available — omit targets to select all enabled, idle peers. Target resolution ignores the round fan-out policy and stage filters, and every dispatched seat keeps its own normal-turn permission posture. If any selected seat would produce WRITE intent, this scope-less tool fails before provider dispatch: seat permission, Full WS Access, and caller seniority cannot replace lane scopes. Use ensemble_fanout with mode="locked_writers" and explicit writeScopes keyed by every writer target instead. It never widens a user-targeted (composer-directed) round and still counts against the shared Boss/Captain fan-out budget. Returns a dispatch receipt immediately; lane results appear later in the transcript. At most 3 fan-outs may run at once; a fourth call is refused and you must ensemble_await one of them first. That caps concurrent CALLS, not lanes — one fan-out may still carry the whole roster.
+In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged reader-intent participant concurrently, including while both authority seats are available — omit targets to select all enabled, idle peers. Target resolution ignores the round fan-out policy and stage filters. Every dispatched seat keeps its own normal-turn permission posture, but the lane remains reader intent: a write-capable seat is admitted while workspace and external mutations remain blocked. This scope-less tool cannot authorize writer work; use ensemble_fanout with mode="locked_writers" and explicit writeScopes for mutations. It never widens a user-targeted (composer-directed) round and still counts against the shared Boss/Captain fan-out budget. Returns a dispatch receipt immediately; lane results appear later in the transcript. At most 3 fan-outs may run at once; a fourth call is refused and you must ensemble_await one of them first. That caps concurrent CALLS, not lanes — one fan-out may still carry the whole roster.
 
 - Access: governed by your run permission role
 - Required args: prompt
@@ -891,7 +891,7 @@ Wait (bounded) for fan-out lanes, sub-threads, or waves to settle — the JOIN s
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Optional args: laneIds, subThreadIds, waveIds, timeoutSeconds
+- Optional args: laneIds, subThreadIds, waveIds, executionIds, timeoutSeconds
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_await","arguments":{"laneIds":[]}}}}`
 
 ## ensemble_lane_result
@@ -923,12 +923,12 @@ Portable Boss/Captain Ensemble control. Set action plus its fields in params (or
 
 ## ensemble_bossman_control
 
-In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the Continuous-pass queue including Continuous pass 1 (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Turn-bound first pass still preserves every participant; Continuous acting Boss/Captain may select/skip on pass 1. Non-authority callers and stale round/run/participant ids are rejected and audited.
+Boss/Captain control surface for an active Ensemble round. Required fields by action: set_round_plan → planSummary (or plan/summary/steps); set_goal → goal; assign_work → objective; summon_participant/replace_participant → targetParticipantId; create_poll → question + options; submit_review_verdict → gateId + verdict. Rejected for missing authority, stale round id, or missing action field.
 
 - Access: governed by your run permission role
 - Required args: action
 - Optional args: roundId, targetParticipantId, targetRunId, participantIds, participantRoles, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, planSummary, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","planSummary":"Review."}}}}`
 
 ## ensemble_poll_response
 
@@ -1082,7 +1082,7 @@ Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral 
 
 ## ultra_task
 
-Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns 2-6 scout stages, their all-join, the worker artifact, independent review, synthesis, and final output. The initiating provider may finish after receiving the workflow id; cli-default/default/custom models are refused.
+Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns 2-6 scout stages, their all-join, the worker artifact, independent review, synthesis, and final output. Your thread stays accountable for it: call ensemble_await on the returned executionId to keep your turn active and receive the result. cli-default/default/custom models are refused.
 
 - Access: governed by your run permission role
 - Required args: task
@@ -1091,7 +1091,7 @@ Start a durable staged UltraTask graph for one exact provider/model. TaskWraith 
 
 ## scout_brief
 
-Emit a structured brief from a parallel fan-out lane. The next serial writer/synthesizer receives the collected briefs in its prompt. Returns an error outside an active fan-out lane.
+Share structured findings from a parallel fan-out lane with the next serial writer/synthesizer and upsert this scout's session Blackboard brief. Confidence is evidence quality: high = directly verified, medium = partly verified, low = tentative or incomplete. Returns an error outside an active fan-out lane.
 
 - Access: read-only (no approval needed)
 - Required args: findings, confidence
