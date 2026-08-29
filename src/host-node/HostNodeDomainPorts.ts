@@ -982,7 +982,7 @@ export class HostNodeDomainPorts {
   private recoverInterruptedRuns(): void {
     const composedProviderIds = new Set(this.registry.providerIds)
     const endedAt = new Date(this.now()).toISOString()
-    for (const thread of this.options.store.listThreads()) {
+    for (const thread of this.options.store.listThreadSummaries()) {
       if (!thread.provider || !composedProviderIds.has(thread.provider)) continue
       for (const run of thread.runs ?? []) {
         if (run.provider !== thread.provider || run.status !== 'running') continue

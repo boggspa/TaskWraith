@@ -38,6 +38,13 @@ function open() {
   return { profile, workspace, authority, store }
 }
 
+function seedMessages(profile: string, threadId: string, messages: readonly unknown[]): void {
+  const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${threadId}.json`)
+  const record = JSON.parse(readFileSync(chatPath, 'utf8')) as Record<string, unknown>
+  record.messages = [...messages]
+  writeFileSync(chatPath, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+}
+
 afterEach(() => {
   while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
 })
@@ -918,15 +925,15 @@ describe('HostProfileDomainStore', () => {
     expect(onThreadQuarantined).toHaveBeenCalledWith(thread.appChatId, 'record-too-large')
   })
 
-  it('serves an unchanged chat record from cache instead of re-parsing it every listing', () => {
+  it('serves an unchanged thread summary from cache instead of re-parsing it every listing', () => {
     const { store } = open()
     store.createThread({ scope: 'global', title: 'one' })
     store.createThread({ scope: 'global', title: 'two' })
     store.createThread({ scope: 'global', title: 'three' })
 
-    const first = store.listThreads()
+    const first = store.listThreadSummaries()
     const readsAfterFirst = store.threadRecordReads
-    const second = store.listThreads()
+    const second = store.listThreadSummaries()
 
     // The reconciler calls this once per second. Re-reading the whole corpus
     // every pass is what saturated the Host's event loop.
@@ -935,14 +942,77 @@ describe('HostProfileDomainStore', () => {
     expect(second).toEqual(first)
   })
 
+  it('summarizes a thread without carrying its messages', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'kept' })
+    seedMessages(profile, thread.appChatId, [
+      { id: 'm1', role: 'user', content: 'first', timestamp: '2026-01-01T00:00:00.000Z' },
+      { id: 'm2', role: 'tool', content: 'noise', timestamp: '2026-01-01T00:00:01.000Z' }
+    ])
+
+    const [summary] = store.listThreadSummaries()
+
+    // Retaining the messages array is the whole cost the summary exists to
+    // avoid: a real corpus is 95% messages by bytes.
+    expect(summary).toBeDefined()
+    expect(summary!.messages).toBeUndefined()
+    expect(summary!.messageCount).toBe(2)
+    expect(summary!.appChatId).toBe(thread.appChatId)
+    expect(summary!.title).toBe('kept')
+    expect(summary!.scope).toBe('global')
+    expect(summary!.updatedAt).toBe(thread.updatedAt)
+  })
+
+  it('previews the newest readable message, walking back past tool rows', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    seedMessages(profile, thread.appChatId, [
+      { id: 'm1', role: 'user', content: 'older question', timestamp: '2026-01-01T00:00:01.000Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content: 'the answer worth showing',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'm3',
+        role: 'tool',
+        content: 'tool output nobody reads',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      },
+      { id: 'm4', role: 'tool', content: 'more tool output', timestamp: '2026-01-01T00:00:04.000Z' }
+    ])
+
+    const [summary] = store.listThreadSummaries()
+
+    expect(summary!.latestPreview).toBe('the answer worth showing')
+  })
+
+  it('omits a preview when no message is terminal-safe', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    seedMessages(profile, thread.appChatId, [
+      {
+        id: 'm1',
+        role: 'assistant',
+        content: 'bel\u0007ringer',
+        timestamp: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+
+    const [summary] = store.listThreadSummaries()
+
+    expect(summary!.latestPreview).toBeUndefined()
+  })
+
   it('re-reads a record the store itself rewrote', () => {
     const { store } = open()
     const thread = store.createThread({ scope: 'global', title: 'before' })
-    store.listThreads()
+    store.listThreadSummaries()
     const readsAfterFirst = store.threadRecordReads
 
     store.configureThread({ threadId: thread.appChatId, title: 'after' })
-    const listed = store.listThreads()
+    const listed = store.listThreadSummaries()
 
     expect(listed.map((item) => item.title)).toEqual(['after'])
     expect(store.threadRecordReads).toBe(readsAfterFirst + 1)
@@ -952,27 +1022,27 @@ describe('HostProfileDomainStore', () => {
     const { profile, store } = open()
     const thread = store.createThread({ scope: 'global', title: 'before' })
     const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
-    store.listThreads()
+    store.listThreadSummaries()
 
     // Same inode, same byte length, rewritten underneath the cache. Identity
     // must include a sub-millisecond write clock or this reads back stale.
     const rewritten = readFileSync(chatPath, 'utf8').replace('"before"', '"aftera"')
     writeFileSync(chatPath, rewritten, { mode: 0o600 })
 
-    expect(store.listThreads().map((item) => item.title)).toEqual(['aftera'])
+    expect(store.listThreadSummaries().map((item) => item.title)).toEqual(['aftera'])
   })
 
   it('still refuses a cached record whose mode was widened underneath it', () => {
     const { profile, store } = open()
     const thread = store.createThread({ scope: 'global' })
-    store.listThreads()
+    store.listThreadSummaries()
 
     chmodSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`), 0o644)
 
     // The owner-only guard used to live inside the read. A cache that skips
     // the read must not also skip the guard.
     if (process.platform !== 'win32') {
-      expect(() => store.listThreads()).toThrow('owner-only')
+      expect(() => store.listThreadSummaries()).toThrow('owner-only')
     }
   })
 
@@ -980,17 +1050,58 @@ describe('HostProfileDomainStore', () => {
     const { profile, store } = open()
     const kept = store.createThread({ scope: 'global', title: 'kept' })
     const removed = store.createThread({ scope: 'global', title: 'removed' })
-    store.listThreads()
+    store.listThreadSummaries()
+    const bothResident = store.cachedThreadSummaryBytes
 
     rmSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${removed.appChatId}.json`))
 
-    expect(store.listThreads().map((item) => item.appChatId)).toEqual([kept.appChatId])
-    expect(store.cachedThreadRecordBytes).toBeLessThan(
-      lstatSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${kept.appChatId}.json`)).size + 1
-    )
+    expect(store.listThreadSummaries().map((item) => item.appChatId)).toEqual([kept.appChatId])
+    expect(store.cachedThreadSummaryBytes).toBeLessThan(bothResident)
   })
 
-  it('stays correct and bounded when the corpus does not fit the cache budget', () => {
+  it('covers a corpus whose records dwarf the cache budget, because it holds summaries', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-summary-budget-'))
+    profiles.push(profile)
+    let sequence = 0
+    const store = new HostProfileDomainStore({
+      profilePath: profile,
+      authority: { assertProfileAuthority: vi.fn() },
+      now: () => 100,
+      idFactory: () => `id-${++sequence}`,
+      threadCacheMaxBytes: 64 * 1024
+    })
+    for (const title of ['one', 'two', 'three']) {
+      const thread = store.createThread({ scope: 'global', title })
+      seedMessages(
+        profile,
+        thread.appChatId,
+        Array.from({ length: 400 }, (_unused, index) => ({
+          id: `m${index}`,
+          role: 'assistant',
+          content: 'x'.repeat(400),
+          timestamp: '2026-01-01T00:00:00.000Z'
+        }))
+      )
+    }
+    const chats = join(profile, HOST_PROFILE_CHATS_DIRECTORY)
+    const sourceBytes = readdirSync(chats).reduce(
+      (total, name) => total + lstatSync(join(chats, name)).size,
+      0
+    )
+
+    store.listThreadSummaries()
+    const readsAfterFirst = store.threadRecordReads
+    store.listThreadSummaries()
+
+    // A record cache budgeted in source bytes could not hold this corpus at
+    // all. Summaries are ~5% of it, so the same budget covers everything.
+    expect(sourceBytes).toBeGreaterThan(64 * 1024)
+    expect(readsAfterFirst).toBe(3)
+    expect(store.threadRecordReads).toBe(3)
+    expect(store.cachedThreadSummaryBytes).toBeLessThan(64 * 1024)
+  })
+
+  it('stays correct and bounded when even the summaries do not fit', () => {
     const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-budget-'))
     profiles.push(profile)
     let sequence = 0
@@ -1004,14 +1115,14 @@ describe('HostProfileDomainStore', () => {
     const titles = ['one', 'two', 'three']
     for (const title of titles) store.createThread({ scope: 'global', title })
 
-    const first = store.listThreads()
-    const second = store.listThreads()
+    const first = store.listThreadSummaries()
+    const second = store.listThreadSummaries()
 
     // A budget too small to hold anything must degrade to today's behaviour,
     // never to a wrong answer.
     expect(second).toEqual(first)
     expect(second.map((item) => item.title).sort()).toEqual([...titles].sort())
-    expect(store.cachedThreadRecordBytes).toBe(0)
+    expect(store.cachedThreadSummaryBytes).toBe(0)
     expect(store.threadRecordReads).toBe(6)
   })
 
@@ -1027,24 +1138,24 @@ describe('HostProfileDomainStore', () => {
         idFactory: () => `id-${++sequence}`,
         threadCacheMaxBytes
       })
-    // Equal-length titles so every record is the same size on disk and the
-    // budget below holds an exact number of them.
-    const seed = openStore(0)
+    // Equal-length titles so every summary is the same size and the budget
+    // below holds an exact number of them.
+    const seed = openStore(64 * 1024)
     for (const title of ['aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff']) {
       seed.createThread({ scope: 'global', title })
     }
-    const chats = join(profile, HOST_PROFILE_CHATS_DIRECTORY)
-    const sizes = readdirSync(chats).map((name) => lstatSync(join(chats, name)).size)
-    expect(new Set(sizes).size).toBe(1)
+    seed.listThreadSummaries()
+    const summaryBytes = seed.cachedThreadSummaryBytes
+    expect(summaryBytes % 6).toBe(0)
     // Room for exactly half the corpus, so admission has to evict on the very
     // sweep that fills it — the case an access-ordered policy gets wrong.
-    const store = openStore(sizes[0]! * 3)
+    const store = openStore((summaryBytes / 6) * 3)
 
-    store.listThreads()
+    store.listThreadSummaries()
     const firstPassReads = store.threadRecordReads
-    store.listThreads()
+    store.listThreadSummaries()
     const secondPassReads = store.threadRecordReads - firstPassReads
-    store.listThreads()
+    store.listThreadSummaries()
     const thirdPassReads = store.threadRecordReads - firstPassReads - secondPassReads
 
     expect(firstPassReads).toBe(6)
@@ -1053,6 +1164,15 @@ describe('HostProfileDomainStore', () => {
     // eviction converges: the three newest stay resident and stay resident.
     expect(secondPassReads).toBe(3)
     expect(thirdPassReads).toBe(3)
-    expect(store.cachedThreadRecordBytes).toBe(sizes[0]! * 3)
+  })
+
+  it('still hands whole records to listThreads for callers that need them', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'full' })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'user', content: 'body' })
+
+    const [record] = store.listThreads()
+
+    expect(record!.messages.map((message) => message.content)).toEqual(['body'])
   })
 })

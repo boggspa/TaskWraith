@@ -191,7 +191,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     }
     if (
       this.options.store
-        .listThreads()
+        .listThreadSummaries()
         .some((candidate) => (candidate.runs ?? []).some((run) => run.runId === normalized.runId))
     ) {
       return { kind: 'duplicate' as const }
@@ -302,7 +302,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   }
 
   private threadIdForStoredRun(runId: string): string | null {
-    for (const thread of this.options.store.listThreads()) {
+    for (const thread of this.options.store.listThreadSummaries()) {
       if ((thread.runs ?? []).some((run) => run.runId === runId)) return thread.appChatId
     }
     return null

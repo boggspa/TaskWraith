@@ -28,7 +28,6 @@ import {
   writeFileSync
 } from 'node:fs'
 import type { BigIntStats } from 'node:fs'
-import { totalmem } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import type {
@@ -48,13 +47,15 @@ const PRIVATE_FILE_MODE = 0o600
 const MAX_WORKSPACES_BYTES = 4 * 1024 * 1024
 const MAX_CHAT_BYTES = 64 * 1024 * 1024
 const MAX_TEXT = 16_000
+/** Preview length the Host projection has always published. */
+const MAX_THREAD_PREVIEW = 2_000
 /**
- * Source bytes of decoded chat records `listThreads()` keeps resident.
+ * Summary bytes `listThreadSummaries()` keeps resident.
  *
- * WHY A CACHE EXISTS AT ALL. `listThreads()` is called once per second by
- * HostProjectionReconciler's snapshot capture, and once more by the run port
- * on every run start. Without a cache each of those passes re-read and
- * re-parsed the WHOLE chat corpus. Measured 2026-08-29 on a real 448-record /
+ * WHY A CACHE EXISTS AT ALL. The summary sweep runs once per second from
+ * HostProjectionReconciler's snapshot capture, and again from the run ports on
+ * every run start. Without a cache each of those passes re-read and re-parsed
+ * the WHOLE chat corpus. Measured 2026-08-29 on a real 448-record /
  * 832MB profile: 689MB of JSON.parse per pass, ~4.9s of blocking work on a 1s
  * timer, 69.5% Host CPU. The event loop was saturated, so client handshakes
  * lost against both the 5s server handshake deadline and the 6.25s client
@@ -62,31 +63,19 @@ const MAX_TEXT = 16_000
  * TaskWraith Host" and TUI/iOS clients reconnected in a storm. The scan was
  * the cause; every timeout was a symptom.
  *
- * WHY IT IS BOUNDED, AND WHY THE BOUND SCALES. Holding the whole corpus costs
- * ~1.26x its source bytes in heap (measured: 689MB source retained 871MB), so
- * an unbounded cache would trade a CPU problem for an OOM on a small machine.
- * A PARTIAL cache is not a proportional compromise, though — measured on the
- * same 689MB corpus, per steady-state pass:
+ * WHY IT IS BOUNDED. A summary is ~5% of its record (689.4MB of records ->
+ * 32.1MB of summaries, measured over 446 real chats), so a fixed budget this
+ * size covers a corpus many times larger than any profile seen in the wild
+ * while still refusing to grow without limit. Whatever does not fit costs
+ * exactly what it costs today, so the cache is never worse than no cache.
  *
- *   no cache      3317ms, 446 reads, heap churning 1-2GB
- *   512MB budget  1144ms, 152 reads, heap churning to 2GB
- *   full coverage    5ms,   0 reads, heap FLAT at ~865MB
- *
- * The tail that does not fit is re-parsed and discarded every second, which
- * keeps the collector hot: the partial cache is worse than full coverage on
- * memory as well as CPU. So size the budget to the machine and let it cover
- * whatever it can, rather than picking a fixed number that half-covers a big
- * profile. Whatever still does not fit costs exactly what it costs today, so
- * the cache is never worse than no cache.
+ * The budget deliberately does NOT scale with machine memory any more. It did
+ * while whole records were held, because full coverage then cost ~870MB and
+ * a partial cache was worse than none on both axes — the tail that did not fit
+ * was re-parsed and discarded every second, keeping the collector hot. At 5%
+ * of that, one number covers everyone.
  */
-const THREAD_CACHE_FLOOR_BYTES = 256 * 1024 * 1024
-const THREAD_CACHE_CEILING_BYTES = 1024 * 1024 * 1024
-function defaultThreadCacheMaxBytes(): number {
-  return Math.min(
-    THREAD_CACHE_CEILING_BYTES,
-    Math.max(THREAD_CACHE_FLOOR_BYTES, Math.floor(totalmem() / 16))
-  )
-}
+const DEFAULT_THREAD_CACHE_MAX_BYTES = 256 * 1024 * 1024
 
 export interface HostProfileAuthorityPort {
   assertProfileAuthority(): void
@@ -151,15 +140,48 @@ export interface HostProfileRunUsage {
   readonly estimatedCostUsd?: number
 }
 
-/** One decoded chat record held against the exact file that produced it. */
-interface CachedThreadRecord {
-  /** dev/ino/mtime/size/mode of the file this record was decoded from. */
+/**
+ * A chat record without its transcript.
+ *
+ * This is what the Host projection and the run ports actually consume, and on
+ * a real profile it is 5% of the record by bytes: measured 2026-08-29 over 446
+ * chats, 689.4MB of records summarize to 32.1MB. Holding these instead of
+ * whole records is what lets the reconciler's cache cover an entire corpus on
+ * any machine rather than only a large one.
+ *
+ * Everything the record carried survives except `messages`; the two fields the
+ * transcript was being read FOR are derived here once, at decode time.
+ */
+export interface HostProfileThreadSummary {
+  readonly appChatId: string
+  readonly scope: 'global' | 'workspace'
+  readonly workspaceId?: string
+  readonly workspacePath?: string
+  readonly title: string
+  readonly provider?: string
+  readonly providerMetadata?: Record<string, unknown>
+  readonly workflowMode?: 'normal' | 'plan'
+  readonly archived: boolean
+  readonly pinned?: boolean
+  readonly runs?: readonly HostProfileRun[]
+  readonly updatedAt: number
+  readonly persistenceRevision?: number
+  /** `messages.length`, so no caller needs the array in order to count it. */
+  readonly messageCount: number
+  /** Newest terminal-safe user/assistant/system message content, bounded. */
+  readonly latestPreview?: string
+  readonly [key: string]: unknown
+}
+
+/** One thread summary held against the exact file that produced it. */
+interface CachedThreadSummary {
+  /** dev/ino/mtime/size/mode of the file this summary was derived from. */
   readonly identity: string
-  /** Source bytes, so eviction can be budgeted without re-stating. */
+  /** Summary bytes, so eviction can be budgeted against what is held. */
   readonly bytes: number
   /** Write clock, used for eviction order. Never access order — see admit. */
   readonly mtimeNs: bigint
-  readonly thread: HostProfileThread
+  readonly summary: HostProfileThreadSummary
 }
 
 export interface HostProfileDomainStoreOptions {
@@ -173,11 +195,10 @@ export interface HostProfileDomainStoreOptions {
    *  a skipped record is announced through the caller — without it the skip is
    *  as silent as the whole-Host failure it replaced. */
   readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
-  /** Source bytes of decoded chat records `listThreads()` may hold resident.
-   *  Budgeted in SOURCE bytes because that is what the directory entry already
-   *  reports; measured on a real 689MB corpus, the decoded records retain
-   *  ~1.26x that in heap. Defaults to a machine-proportional budget; 0 disables
-   *  the cache and restores the uncached full re-read. */
+  /** Summary bytes `listThreadSummaries()` may hold resident. Measured on the
+   *  summaries themselves rather than on the records they came from, since the
+   *  transcript is 95% of a record and none of it is held. 0 disables the cache
+   *  and restores the uncached full re-read. */
   readonly threadCacheMaxBytes?: number
 }
 
@@ -410,6 +431,42 @@ function assertPrivateRegular(path: string): void {
   }
 }
 
+/**
+ * Newest message a terminal can render, scanning back past tool rows.
+ *
+ * It lives here rather than in the projection because the store is the only
+ * layer that reads transcripts, and deriving it once at decode time is what
+ * lets every caller downstream work from a summary. Role is checked before
+ * the character scan: a multi-megabyte tool result must not be walked just to
+ * discover it was never a candidate. Reverse index rather than
+ * `[...messages].reverse()`, which copied a 19,000-entry array per thread.
+ */
+function threadPreview(messages: readonly HostProfileMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'system') {
+      continue
+    }
+    if (message.content.length === 0) continue
+    const terminalSafe = [...message.content].every((character) => {
+      const code = character.charCodeAt(0)
+      return code === 0x09 || code === 0x0a || code === 0x0d || (code > 0x1f && code !== 0x7f)
+    })
+    if (terminalSafe) return message.content.slice(0, MAX_THREAD_PREVIEW)
+  }
+  return undefined
+}
+
+function summarizeThread(thread: HostProfileThread): HostProfileThreadSummary {
+  const { messages, ...rest } = thread
+  const preview = threadPreview(messages)
+  return {
+    ...rest,
+    messageCount: messages.length,
+    ...(preview === undefined ? {} : { latestPreview: preview })
+  }
+}
+
 function readOptionalJson(path: string, maxBytes: number): unknown | null {
   try {
     assertPrivateRegular(path)
@@ -631,7 +688,7 @@ export class HostProfileDomainStore {
   private readonly beforeAtomicPublish?: (targetPath: string) => void
   private readonly quarantinedThreads = new Set<string>()
   private readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
-  private readonly threadCache = new Map<string, CachedThreadRecord>()
+  private readonly threadCache = new Map<string, CachedThreadSummary>()
   private readonly threadCacheMaxBytes: number
   private threadCacheBytes = 0
   private threadRecordReadCount = 0
@@ -651,7 +708,7 @@ export class HostProfileDomainStore {
     this.threadCacheMaxBytes =
       Number.isFinite(options.threadCacheMaxBytes) && Number(options.threadCacheMaxBytes) >= 0
         ? Math.floor(Number(options.threadCacheMaxBytes))
-        : defaultThreadCacheMaxBytes()
+        : DEFAULT_THREAD_CACHE_MAX_BYTES
     this.ensureDirectory(this.chatsPath)
   }
 
@@ -841,21 +898,21 @@ export class HostProfileDomainStore {
     return thread
   }
 
-  /** Threads listThreads() skipped because the record exceeds the read cap.
-   *  This layer takes no logger by design, so the set is exposed instead. */
+  /** Threads the directory sweep skipped because the record exceeds the read
+   *  cap. This layer takes no logger by design, so the set is exposed. */
   get quarantinedThreadIds(): readonly string[] {
     return [...this.quarantinedThreads].sort()
   }
 
-  /** Chat records `listThreads()` has decoded from disk. A pass that re-reads
-   *  nothing is the whole point of the cache, so the count is exposed rather
-   *  than inferred: this layer takes no logger, same as quarantinedThreadIds. */
+  /** Chat records decoded from disk. A pass that re-reads nothing is the whole
+   *  point of the cache, so the count is exposed rather than inferred: this
+   *  layer takes no logger, same as quarantinedThreadIds. */
   get threadRecordReads(): number {
     return this.threadRecordReadCount
   }
 
-  /** Resident source bytes, so a caller can see the budget being respected. */
-  get cachedThreadRecordBytes(): number {
+  /** Resident summary bytes, so a caller can see the budget being respected. */
+  get cachedThreadSummaryBytes(): number {
     return this.threadCacheBytes
   }
 
@@ -890,23 +947,30 @@ export class HostProfileDomainStore {
     return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.mode}`
   }
 
-  private dropThreadRecord(threadId: string): void {
+  private dropThreadSummary(threadId: string): void {
     const entry = this.threadCache.get(threadId)
     if (!entry) return
     this.threadCache.delete(threadId)
     this.threadCacheBytes -= entry.bytes
   }
 
-  private admitThreadRecord(threadId: string, stat: BigIntStats, thread: HostProfileThread): void {
-    this.dropThreadRecord(threadId)
-    const bytes = Number(stat.size)
+  private admitThreadSummary(
+    threadId: string,
+    stat: BigIntStats,
+    summary: HostProfileThreadSummary
+  ): void {
+    this.dropThreadSummary(threadId)
+    // Measured on the summary, not on the record: the file is 95% messages by
+    // bytes and the summary carries none of them, so budgeting by `stat.size`
+    // would reserve twenty times what is actually held.
+    const bytes = Buffer.byteLength(JSON.stringify(summary), 'utf8')
     if (bytes > this.threadCacheMaxBytes) return
     while (this.threadCacheBytes + bytes > this.threadCacheMaxBytes) {
-      // Evict the least recently WRITTEN record, never the least recently
-      // read. listThreads() sweeps the whole directory every pass, so an
-      // access-ordered policy evicts each entry immediately before its next
-      // use and holds a 0% hit rate forever. Write order is stable across a
-      // sweep, so a full cache converges instead of thrashing.
+      // Evict the least recently WRITTEN summary, never the least recently
+      // read. The sweep touches every thread every pass, so an access-ordered
+      // policy evicts each entry immediately before its next use and holds a
+      // 0% hit rate forever. Write order is stable across a sweep, so a full
+      // cache converges instead of thrashing.
       let evictId: string | null = null
       let evictMtimeNs = stat.mtimeNs
       for (const [candidateId, entry] of this.threadCache) {
@@ -916,51 +980,59 @@ export class HostProfileDomainStore {
         }
       }
       // Nothing resident is older than this candidate, so admitting it would
-      // only displace fresher records. Leave the cache exactly as it is.
+      // only displace fresher summaries. Leave the cache exactly as it is.
       if (evictId === null) return
-      this.dropThreadRecord(evictId)
+      this.dropThreadSummary(evictId)
     }
     this.threadCache.set(threadId, {
       identity: this.recordIdentity(stat),
       bytes,
       mtimeNs: stat.mtimeNs,
-      thread
+      summary
     })
     this.threadCacheBytes += bytes
   }
 
-  private threadRecordFor(
+  private threadSummaryFor(
     threadId: string,
     path: string,
     stat: BigIntStats
-  ): HostProfileThread | null {
+  ): HostProfileThreadSummary | null {
     const identity = this.recordIdentity(stat)
     const cached = this.threadCache.get(threadId)
-    if (cached && cached.identity === identity) return cached.thread
+    if (cached && cached.identity === identity) return cached.summary
     const thread = this.getThread(threadId)
     if (!thread) {
-      this.dropThreadRecord(threadId)
+      this.dropThreadSummary(threadId)
       return null
     }
     this.threadRecordReadCount += 1
+    const summary = summarizeThread(thread)
     // Re-stat AFTER the read. readOptionalJson already fails closed on an
     // inode or size change mid-read, but a record rewritten between this
     // stat and that read must not be cached under the identity it no longer
     // has — otherwise the stale copy is served until the next write.
     const after = this.statRecord(path)
     if (after && this.recordIdentity(after) === identity) {
-      this.admitThreadRecord(threadId, stat, thread)
+      this.admitThreadSummary(threadId, stat, summary)
     } else {
-      this.dropThreadRecord(threadId)
+      this.dropThreadSummary(threadId)
     }
-    return thread
+    return summary
   }
 
-  listThreads(): readonly HostProfileThread[] {
+  /**
+   * Walk `chats/`, applying every structural guard, and hand each readable
+   * record's identity to `visit`. Returns the ids actually visited, so a
+   * caller holding per-thread state can retire whatever the directory no
+   * longer names.
+   */
+  private sweepChatRecords(
+    visit: (threadId: string, path: string, stat: BigIntStats) => void
+  ): Set<string> {
     this.assertAuthority()
     this.ensureDirectory(this.chatsPath)
-    const records: HostProfileThread[] = []
-    const present = new Set<string>()
+    const visited = new Set<string>()
     for (const entry of readdirSync(this.chatsPath, { withFileTypes: true })) {
       if (this.isRecognizedTemp(entry.name)) {
         if (!entry.isFile() || entry.isSymbolicLink())
@@ -973,11 +1045,10 @@ export class HostProfileDomainStore {
       if (!safeId(id)) throw new Error('Unsafe chat filename')
       const path = this.chatPath(id)
       const stat = this.statRecord(path)
-      if (!stat) {
-        this.dropThreadRecord(id)
-        continue
-      }
-      present.add(id)
+      // Vanished between readdir and stat. getThread's readOptionalJson
+      // returned null for exactly this race before, so the entry is skipped
+      // rather than failing the whole listing.
+      if (!stat) continue
       if (stat.size > BigInt(MAX_CHAT_BYTES)) {
         // A record too large to read is a capacity problem, not tampering —
         // every structural guard above still fails closed. Quarantine THIS
@@ -988,18 +1059,55 @@ export class HostProfileDomainStore {
           this.quarantinedThreads.add(id)
           this.onThreadQuarantined?.(id, 'record-too-large')
         }
-        this.dropThreadRecord(id)
         continue
       }
       this.quarantinedThreads.delete(id)
-      const thread = this.threadRecordFor(id, path, stat)
-      if (thread) records.push(thread)
+      visited.add(id)
+      visit(id, path, stat)
     }
-    // A deleted chat must not stay resident: the cache is keyed by thread id,
-    // and nothing else would ever revisit an id the directory no longer names.
+    return visited
+  }
+
+  /**
+   * Every thread, minus the messages array — the read the Host projection and
+   * the run ports actually want, and the only one on a hot path.
+   *
+   * Cached against the exact file that produced each summary, so an unchanged
+   * pass costs one stat per thread instead of a parse. `listThreads()` stays
+   * the uncached whole-record primitive for a caller that genuinely needs
+   * transcripts; nothing on a timer should be calling it.
+   */
+  listThreadSummaries(): readonly HostProfileThreadSummary[] {
+    const summaries: HostProfileThreadSummary[] = []
+    const visited = this.sweepChatRecords((id, path, stat) => {
+      const summary = this.threadSummaryFor(id, path, stat)
+      if (summary) summaries.push(summary)
+    })
+    // A deleted or quarantined chat must not stay resident: the cache is keyed
+    // by thread id, and nothing else would revisit an id the sweep skipped.
     for (const threadId of [...this.threadCache.keys()]) {
-      if (!present.has(threadId)) this.dropThreadRecord(threadId)
+      if (!visited.has(threadId)) this.dropThreadSummary(threadId)
     }
+    return summaries
+  }
+
+  /**
+   * Every thread WITH its transcript, uncached.
+   *
+   * Nothing on a timer may call this. It reads and parses the entire chat
+   * corpus on every call — measured 3.3s on a real 689MB profile — which is
+   * exactly what saturated the Host's event loop when the reconciler and the
+   * run ports were using it. They read `listThreadSummaries()` now, and this
+   * is left as the honest primitive for a caller that truly needs messages.
+   */
+  listThreads(): readonly HostProfileThread[] {
+    const records: HostProfileThread[] = []
+    this.sweepChatRecords((id) => {
+      const thread = this.getThread(id)
+      if (!thread) return
+      this.threadRecordReadCount += 1
+      records.push(thread)
+    })
     return records
   }
 

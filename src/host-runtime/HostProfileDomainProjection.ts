@@ -104,25 +104,6 @@ export interface HostProfileDomainProjectionOptions {
   readonly providers: readonly HostProviderModelProjection[]
 }
 
-function safePreview(
-  messages: ReturnType<HostProfileDomainStore['listThreads']>[number]['messages']
-): string | undefined {
-  for (const message of [...messages].reverse()) {
-    const terminalSafe = [...message.content].every((character) => {
-      const code = character.charCodeAt(0)
-      return code === 0x09 || code === 0x0a || code === 0x0d || (code > 0x1f && code !== 0x7f)
-    })
-    if (
-      (message.role === 'user' || message.role === 'assistant' || message.role === 'system') &&
-      message.content.length > 0 &&
-      terminalSafe
-    ) {
-      return message.content.slice(0, 2_000)
-    }
-  }
-  return undefined
-}
-
 function timestamp(value: string | undefined): number | undefined {
   if (!value) return undefined
   const parsed = Date.parse(value)
@@ -154,7 +135,7 @@ function providerOutcome(
   }
 }
 
-type ProfileThread = ReturnType<HostProfileDomainStore['listThreads']>[number]
+type ProfileThread = ReturnType<HostProfileDomainStore['listThreadSummaries']>[number]
 
 const PARTICIPANT_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
   generation: 0,
@@ -264,7 +245,7 @@ export function projectHostProfileDomainSnapshot(
     pinned: workspace.pinned,
     updatedAt: workspace.updatedAt
   }))
-  const threads = store.listThreads()
+  const threads = store.listThreadSummaries()
   const participantProjections = threads.map(projectThreadParticipants)
   const participants = participantProjections.flatMap((projection) => projection.participants)
   const omittedParticipants = participantProjections.reduce(
@@ -302,8 +283,8 @@ export function projectHostProfileDomainSnapshot(
         archived: thread.archived,
         pinned: thread.pinned === true,
         updatedAt: thread.updatedAt,
-        messageCount: thread.messages.length,
-        ...(safePreview(thread.messages) ? { latestPreview: safePreview(thread.messages) } : {}),
+        messageCount: thread.messageCount,
+        ...(thread.latestPreview ? { latestPreview: thread.latestPreview } : {}),
         ...(thread.provider ? { providerId: thread.provider } : {}),
         ...(goal ? { goal } : {})
       }
