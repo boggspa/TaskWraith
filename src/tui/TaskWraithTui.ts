@@ -1360,8 +1360,12 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    if (!this.client.supports('setup')) {
-      this.setNotice('Connected Host does not advertise workspace setup.', 'warning', 3_000)
+    // workspace.register is a setup mutation, but setup mutations are dispatched
+    // over the command channel -- the `setup` capability covers the guided setup
+    // projection, not mutation delivery. Gating on it would refuse on a Host that
+    // advertises commands and would have registered the workspace happily.
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise workspace commands.', 'warning', 3_000)
       this.render()
       return
     }

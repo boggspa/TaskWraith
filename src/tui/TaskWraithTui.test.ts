@@ -1291,6 +1291,23 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
   }, 12_000)
 
+  it('registers a workspace from /workspace with a path that contains spaces', async () => {
+    const { host, userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+
+    // The dispatcher splits the raw line on whitespace, and real workspace paths
+    // routinely contain spaces, so the argument has to be re-joined.
+    feed(input, '/workspace /Users/me/Documents/Dungeons of Darkness\r')
+    await waitFor(
+      () => host.commands.some((c) => c.name === 'workspace.register'),
+      'workspace.register issued'
+    )
+    const registered = [...host.commands].reverse().find((c) => c.name === 'workspace.register')
+    expect(registered?.arguments).toEqual({ path: '/Users/me/Documents/Dungeons of Darkness' })
+  }, 12_000)
+
   it('guides /new through provider selection before creating a solo thread', async () => {
     let configured = false
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-provider-host-'))
