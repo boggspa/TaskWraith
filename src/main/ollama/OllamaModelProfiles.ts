@@ -451,7 +451,7 @@ export function ollamaLocalToolSystemPrompt(
   }
   if (options.ultraTaskDelegationAutoAllow) {
     lines.push(
-      'ULTRATASK DELEGATION IS AUTO-ALLOWED FOR THIS RUN because the user selected UltraTask. Use delegate_wave for parallel scouts/workers/reviewers, or delegate_to_subthread for one focused worker; TaskWraith still validates route, budget, provider, and workspace constraints. Immediately call ensemble_await with the returned waveId or subThreadId, then read the returned result before concluding.'
+      'ULTRATASK DELEGATION IS AUTO-ALLOWED FOR THIS RUN because the user selected UltraTask. Use ultra_task for a full staged graph (scouts, worker, review, synthesis), delegate_wave for parallel scouts/workers/reviewers, or delegate_to_subthread for one focused worker; TaskWraith still validates route, budget, provider, and workspace constraints. Whichever you use, immediately call ensemble_await with the returned executionId, waveId, or subThreadId, then read the returned result before concluding. Your thread stays accountable for the work until its result reaches you.'
     )
   }
   lines.push(

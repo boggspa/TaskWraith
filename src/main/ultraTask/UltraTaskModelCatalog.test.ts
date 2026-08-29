@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isUltraTaskSupported,
+  resolveUltraTaskReasoningEffort
+} from './UltraTaskReasoningResolver'
+import {
   buildUltraTaskModelCapabilityCatalog,
   materializeDiscoveredUltraTaskSupport,
   mergeUltraTaskCatalogCapabilityMetadata
@@ -43,6 +47,41 @@ describe('materializeDiscoveredUltraTaskSupport', () => {
       { id: 'cli-default' },
       { id: 'custom' }
     ])
+  })
+})
+
+// Ollama cloud models are discovered at runtime and never appear in the static
+// catalog, so nothing pins their capability. They must resolve identically to
+// local ones: a user who picks a cloud model should not silently lose UltraTask
+// because the model was discovered rather than declared.
+describe('ollama cloud model parity', () => {
+  it('grants discovered cloud models the same UltraTask support as local ones', () => {
+    const resolved = materializeDiscoveredUltraTaskSupport('ollama', [
+      { id: 'glm-5.3:cloud', label: 'GLM 5.3 (cloud)' },
+      { id: 'qwen3-coder:480b-cloud', label: 'Qwen3 Coder (cloud)' },
+      { id: 'deepseek-v3.1:671b-cloud', label: 'DeepSeek v3.1 (cloud)' },
+      { id: 'gpt-oss:20b', label: 'local control' }
+    ]) as Array<{ id: string; ultraTaskSupported?: boolean }>
+
+    for (const model of resolved) {
+      expect(model.ultraTaskSupported, `${model.id} lost UltraTask support`).toBe(true)
+    }
+  })
+
+  it('resolves a cloud model to the same reasoning ceiling as a local model', () => {
+    expect(resolveUltraTaskReasoningEffort('ollama', 'glm-5.3:cloud')).toBe(
+      resolveUltraTaskReasoningEffort('ollama', 'gpt-oss:20b')
+    )
+    expect(isUltraTaskSupported('ollama', 'glm-5.3:cloud')).toBe(true)
+  })
+
+  // An explicit opt-out must still win for a discovered model, or the parity
+  // rule above would become a way to smuggle support onto an excluded model.
+  it('still honours an explicit exclusion on a discovered model', () => {
+    const [excluded] = materializeDiscoveredUltraTaskSupport('ollama', [
+      { id: 'glm-5.3:cloud', label: 'GLM 5.3 (cloud)', ultraTaskSupported: false }
+    ]) as Array<{ ultraTaskSupported?: boolean }>
+    expect(excluded.ultraTaskSupported).toBe(false)
   })
 })
 

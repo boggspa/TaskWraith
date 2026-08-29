@@ -129,8 +129,13 @@ export function ollamaDirectToolNamesForProfile(
  * Delegation/sub-thread tools conditionally unlocked by the main-issued,
  * HMAC-signed UltraTask run posture. This is the complete local lifecycle:
  * spawn, wait/read, cancel, and advisory wave ownership. `ultra_task` belongs
- * here too because it lowers to `delegate_wave`; leaving it in the ordinary
- * surface would be a second door around the conditional grant.
+ * here too because it spawns provider work this thread becomes accountable
+ * for; leaving it in the ordinary surface would be a second door around the
+ * conditional grant.
+ *
+ * It does NOT lower to `delegate_wave` — that was the pre-graph design, and
+ * its wave-based executor was deleted 2026-08-29. `ultra_task` compiles its
+ * own durable execution graph, which main owns and this thread owns.
  */
 export const OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES = Object.freeze([
   'delegate_to_subthread',

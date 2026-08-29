@@ -493,9 +493,9 @@ function descriptionFor(name) {
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
     ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
-    ensemble_await: 'Wait (bounded) for fan-out lanes, sub-threads, or waves to settle. Optional: laneIds, subThreadIds, waveIds, timeoutSeconds.',
+    ensemble_await: 'Wait (bounded) for fan-out lanes, sub-threads, waves, or durable executions to settle. Optional: laneIds, subThreadIds, waveIds, executionIds, timeoutSeconds. A paused execution counts as settled.',
     ensemble_lane_result: "Read one finished fan-out lane's structured output. Required: laneId; optional fanoutId.",
-    ultra_task: 'Start one host-owned staged UltraTask workflow. Required: task; optional exact provider/model, enableFanout, enableReview, maxWorkers, reasoningEffort, and returnResult. The provider does not join this graph.',
+    ultra_task: 'Start one staged UltraTask graph owned by this thread. Required: task; optional exact provider/model, enableFanout, enableReview, maxWorkers (2-6), reasoningEffort, and returnResult. You do not join the graph, but you stay accountable for it: call ensemble_await with the returned executionId immediately, and do not report completion before its result reaches you.',
     delegate_wave: 'Spawn a fresh delegated-review wave. Required: workers; optional lifecycle, allowMultiProvider, and join. Call ensemble_await with the returned waveId immediately.',
     delegate_to_subthread: 'Spawn a fresh delegated reviewer, or recall one owned sub-thread. Required: provider and prompt; optional model, reasoningEffort, kimiThinking, returnResult, and subThreadId. Call ensemble_await with the returned subThreadId immediately.',
     list_subthreads: 'List lifecycle-aware sub-threads owned by this parent. Optional: parentChatId, includeArchived, includePrompt, waveId.',
@@ -604,6 +604,7 @@ function parametersFor(name) {
         laneIds: optionalTextArray(),
         subThreadIds: optionalTextArray(),
         waveIds: optionalTextArray(),
+        executionIds: optionalTextArray(),
         timeoutSeconds: Type.Optional(Type.Number())
       })
     case 'ensemble_lane_result':
