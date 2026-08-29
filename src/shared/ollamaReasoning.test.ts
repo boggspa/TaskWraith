@@ -7,29 +7,48 @@ import {
 
 describe('resolveOllamaReasoningSupport', () => {
   it('uses the curated fallback before daemon metadata arrives', () => {
-    expect(resolveOllamaReasoningSupport({ modelId: 'ornith-1.5:35b' })).toEqual({
+    expect(resolveOllamaReasoningSupport({ modelId: 'ornith:35b' })).toEqual({
       kind: 'toggle',
       efforts: ['off', 'on'],
       defaultEffort: 'on',
       canDisable: true
     })
     expect(resolveOllamaReasoningSupport({ modelId: 'gemma4:31b-mlx' }).kind).toBe('toggle')
-    for (const modelId of [
-      'mistral-medium-3.5:latest',
-      'mistral-medium-3.5:128b',
-      'qwen3.8-flash-next:125b-mlx',
-      'granite4.2:3b',
-      'granite4.2:latest',
-      'granite4.2:30b'
-    ]) {
-      expect(resolveOllamaReasoningSupport({ modelId }).kind, modelId).toBe('toggle')
+    expect(resolveOllamaReasoningSupport({ modelId: 'qwen3.8-flash-next:125b-mlx' }).kind).toBe(
+      'toggle'
+    )
+    // Only `high` maps through Mistral Medium 3.5's `.ThinkLevel` branch;
+    // every other level falls back to "none".
+    for (const modelId of ['mistral-medium-3.5:latest', 'mistral-medium-3.5:128b']) {
+      expect(resolveOllamaReasoningSupport({ modelId }).efforts, modelId).toEqual(['off', 'high'])
     }
     expect(resolveOllamaReasoningSupport({ modelId: 'gemma3:4b' }).kind).toBe('unsupported')
     expect(resolveOllamaReasoningSupport({ modelId: 'future-local:latest' }).kind).toBe('unknown')
   })
 
+  // These six were curated as thinking-capable and are not. A live daemon
+  // reported no thinking capability for every one that is installed, and the
+  // registry manifests agree: Granite 4.2's three sizes share one template, and
+  // Ornith 1.5 ships without the parser its 1.0 sibling declares.
+  it('does not promise thinking the packaged model cannot do', () => {
+    for (const modelId of [
+      'qwen3:4b-instruct',
+      'minicpm-v4.5:8b',
+      'ornith-1.5:9b',
+      'ornith-1.5:35b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
+      'granite4.2:latest'
+    ]) {
+      expect(resolveOllamaReasoningSupport({ modelId }).kind, modelId).toBe('unsupported')
+    }
+    // The thinking sibling of the instruct variant keeps its control.
+    expect(resolveOllamaReasoningSupport({ modelId: 'ornith:9b' }).kind).toBe('toggle')
+  })
+
   it('recognizes quantized and alias forms without widening unrelated models', () => {
-    expect(resolveOllamaReasoningSupport({ modelId: 'ornith-1.5:35b-q4_K_M' }).kind).toBe('toggle')
+    expect(resolveOllamaReasoningSupport({ modelId: 'ornith:35b-q4_K_M' }).kind).toBe('toggle')
     // GPT-OSS always reasons, so its ladder carries no Off stop.
     expect(resolveOllamaReasoningSupport({ modelId: 'gpt-oss:latest' })).toEqual({
       kind: 'levels',

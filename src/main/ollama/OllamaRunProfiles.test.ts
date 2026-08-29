@@ -135,30 +135,41 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('unknown-local:latest').contextCapTokens).toBe(65_536)
   })
 
-  it('uses level control only for GPT-OSS and boolean thinking for ordinary models', () => {
+  it('sends each model the wire value its own ladder allows', () => {
     expect(
       resolveOllamaThinkingLevel('gpt-oss:latest', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('ornith-1.5:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe(true)
+    expect(resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
+      true
+    )
+    // Mistral Medium 3.5 maps only `high` through its `.ThinkLevel` branch.
     expect(
       resolveOllamaThinkingLevel(
         'mistral-medium-3.5:128b',
         OLLAMA_RUN_PROFILE_PRESETS.provider_parity
       )
-    ).toBe(true)
+    ).toBe('high')
+    // Granite 4.2's packaging exposes no thinking at all.
     expect(
       resolveOllamaThinkingLevel('granite4.2:8b', OLLAMA_RUN_PROFILE_PRESETS.provider_parity)
-    ).toBe(true)
+    ).toBeUndefined()
     expect(
       resolveOllamaThinkingLevel(
-        'ornith-1.5:35b',
+        'ornith:35b',
         OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
         undefined,
         'off'
       )
     ).toBe(false)
+    // GLM 5.3 cannot stop reasoning, so Off must not become `think: false`.
+    expect(
+      resolveOllamaThinkingLevel(
+        'glm-5.3:cloud',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'off'
+      )
+    ).toBe('max')
     expect(
       resolveOllamaThinkingLevel(
         'gpt-oss:20b',

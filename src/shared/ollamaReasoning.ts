@@ -82,7 +82,6 @@ function levels(
 // Runtime launch still prefers exact `/api/show` capabilities, so a retagged or
 // upgraded model can override this table without waiting for a TaskWraith build.
 const KNOWN_TOGGLE_MODEL_IDS = [
-  'qwen3:4b-instruct',
   'qwen3.5:2b',
   'qwen3.5:4b',
   'qwen3.5:9b',
@@ -93,20 +92,13 @@ const KNOWN_TOGGLE_MODEL_IDS = [
   'gemma4:31b-mlx',
   'ornith:9b',
   'ornith:35b',
-  'ornith-1.5:9b',
-  'ornith-1.5:35b',
   'laguna-xs-2.1:q8_0',
   'lfm2.5-thinking:1.2b',
   'lfm2.5:8b',
-  'minicpm-v4.5:8b',
   'nemotron-3-nano:4b',
   'nemotron3:33b',
   'nemotron-3.5-lightning:30b-mlx',
   'muse-glimmer:30b-mlx',
-  'mistral-medium-3.5:128b',
-  'granite4.2:3b',
-  'granite4.2:8b',
-  'granite4.2:30b',
   'deepseek-r1:1.5b',
   'deepseek-r1:8b',
   'glm-4.7-flash:q4_k_m',
@@ -114,6 +106,26 @@ const KNOWN_TOGGLE_MODEL_IDS = [
 ] as const
 
 const KNOWN_NON_THINKING_MODEL_IDS = [
+  // Qwen's own card: this variant "supports only non-thinking mode and does
+  // not generate <think></think> blocks". Its sibling `qwen3:4b` does think.
+  'qwen3:4b-instruct',
+  // Upstream MiniCPM-V 4.5 has hybrid thinking, but the packaged GGUF template
+  // hardcodes `enable_thinking = false`, so it is not reachable here.
+  'minicpm-v4.5:8b',
+  // Ornith 1.5 kept 1.0's `enable_thinking` template verbatim but ships
+  // without the `ornith` parser/renderer that 1.0 declares, so the daemon
+  // reports no thinking capability. Packaging, not a capability change —
+  // recheck if a repackage lands.
+  'ornith-1.5',
+  'ornith-1.5:9b',
+  'ornith-1.5:35b',
+  // All three Granite 4.2 sizes share one byte-identical chat template, so
+  // they cannot differ. IBM's template does support thinking; Ollama's
+  // packaging does not surface it, and the library page shows no badges.
+  'granite4.2',
+  'granite4.2:3b',
+  'granite4.2:8b',
+  'granite4.2:30b',
   'gemma3:4b',
   'granite4:3b',
   'granite4.1:3b',
@@ -162,6 +174,12 @@ const FAMILY_LADDERS: readonly (readonly [string, OllamaReasoningSupport])[] = [
   // in server/routes.go before the model sees it, so a Max stop would be a lie
   // at the client layer. The trace itself cannot be turned off.
   ['gpt-oss', levels(['low', 'medium', 'high'], 'high', false)],
+
+  // Its template branches on `.ThinkLevel` and emits
+  // `[MODEL_SETTINGS]{"reasoning_effort":"high"}` — but only `high` maps
+  // through; every other level falls back to "none". So the honest surface is
+  // high-or-off, expressed through the level API rather than the boolean.
+  ['mistral-medium-3.5', levels(['high'], 'high', true)],
 
   // Z.ai: GLM 5.3 takes low/high/max ONLY — there is no medium — and defaults
   // to max. Disabling is not merely ignored, it FAILS the request, so Off must
