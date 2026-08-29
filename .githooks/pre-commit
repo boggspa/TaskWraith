@@ -734,8 +734,10 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
       printf '  note: %s has a dead runtime owner — reconcile it through TaskWraith\n' "$marker"
       printf '        lock recovery before removing its derived projection.\n'
     else
-      printf '  note: %s is decayed (expired or owner dead) — adoptable. Harvest its\n' "$marker"
-      printf '        paths/worktree, then delete it (AGENTS.md: Adopting a decayed claim).\n'
+      printf '  note: %s may be decayed (expired or owner dead). Confirm with\n' "$marker"
+      printf '        `npm run work-guard` before adopting — a passed expires is NOT\n'
+      printf '        decay while the claim'\''s own files are still being written\n'
+      printf '        (AGENTS.md: Adopting a decayed claim).\n'
     fi
     warn=1
   fi
@@ -762,8 +764,10 @@ for marker in .WORK-IN-PROGRESS-*.md; do
     fi
   fi
   if [ "$decayed" -eq 1 ]; then
-    printf '  note: %s is decayed (expired or owner dead) — adoptable. Harvest its\n' "$marker"
-    printf '        paths/worktree, then delete it (AGENTS.md: Adopting a decayed claim).\n'
+    printf '  note: %s may be decayed (expired or owner dead). Confirm with\n' "$marker"
+    printf '        `npm run work-guard` before adopting — a passed expires is NOT\n'
+    printf '        decay while the claim'\''s own files are still being written\n'
+    printf '        (AGENTS.md: Adopting a decayed claim).\n'
     warn=1
   fi
 done

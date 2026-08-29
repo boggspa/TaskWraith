@@ -454,10 +454,10 @@ runtime-derived claim
 blocks until durable authority removes it, regardless of projected pid or
 expiry. The second is force-adding a gitignored path into this public repo.
 Everything else advises: whole-file staging of a >5,000-line file,
-forty-plus staged paths, your own claim still being up, and a decayed manual
-claim still standing (adopt or delete it). Two blocks and otherwise quiet is
-deliberate; a hook that cries wolf gets disabled, and a disabled hook protects
-nothing.
+forty-plus staged paths, your own claim still being up, and a manual claim
+past its lease (confirm with `work-guard` before adopting it). Two blocks
+and otherwise quiet is deliberate; a hook that cries wolf gets disabled, and
+a disabled hook protects nothing.
 
 `TW_ALLOW_CLAIMED=1 git commit …` overrides a claim you know to be wrong. Use
 it rather than deleting someone's marker.
