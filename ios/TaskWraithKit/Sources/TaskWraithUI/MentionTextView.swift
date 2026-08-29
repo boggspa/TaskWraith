@@ -49,6 +49,30 @@ func twComposerReturnSubmits(
     replacement == "\n" && hasSubmitAction && !isCommittingMarkedText && !newlineLatched
 }
 
+/// Pure decision for the composer's DEFERRED focus bridge, kept outside the
+/// UIKit guard so the macOS test build can pin it.
+///
+/// The bridge dispatches async (a synchronous become/resign inside the layout
+/// pass trips "modifying state during view update"), so when it runs it is
+/// replaying a `wantsFocus` snapshot taken a runloop earlier. `liveFocus` is
+/// the binding's value NOW.
+func twShouldApplyDeferredFocus(
+    wantsFocus: Bool, liveFocus: Bool, isFirstResponder: Bool
+) -> Bool {
+    // Re-checking only the responder cannot detect a dismissal that landed in
+    // the gap. `dismissKeyboard()` clears ThreadDetailView's `composerFocused`
+    // and sends a global `resignFirstResponder`, but the Composer's own
+    // `inputFocused` — the binding this view reads — only follows later, when
+    // `textViewDidEndEditing` writes back. A layout pass inside that window
+    // enqueues with `wantsFocus == true`, and by the time it runs the responder
+    // has resigned: "wants focus, is not first responder", which is exactly the
+    // shape of a GENUINE focus request. So the keyboard the user had just
+    // dismissed came straight back up. The snapshot disagreeing with the live
+    // binding is what tells the two apart.
+    guard wantsFocus == liveFocus else { return false }
+    return wantsFocus != isFirstResponder
+}
+
 #if canImport(UIKit)
     import UIKit
 
@@ -240,7 +264,12 @@ func twComposerReturnSubmits(
             if focused != textView.isFirstResponder {
                 let wantsFocus = focused
                 DispatchQueue.main.async {
-                    guard wantsFocus != textView.isFirstResponder,
+                    // `focused` is a Binding: reading it HERE reads through to
+                    // the live @State, not the snapshot taken above.
+                    guard twShouldApplyDeferredFocus(
+                        wantsFocus: wantsFocus,
+                        liveFocus: focused,
+                        isFirstResponder: textView.isFirstResponder),
                         textView.window != nil
                     else { return }
                     if wantsFocus {

@@ -3580,10 +3580,36 @@ public enum BridgeAction {
 /// exact screenshot users send when pairing fails); this keeps the precise
 /// failure but leads with what to DO about it. Pure + unit-tested.
 public enum TransportErrorCopy {
+    /// Whether an error is Foundation reporting that it could not read a
+    /// payload, rather than a transport or application fault.
+    ///
+    /// These localize to bare, unattributed copy — and `DecodingError` is a
+    /// `LocalizedError` whose `errorDescription` is nil, so the
+    /// `?? ns.localizedDescription` fallback below used to hand the raw string
+    /// to the banner. Measured 2026-08-29: `JSONSerialization` throws 3840,
+    /// `JSONDecoder` throws 4864 (corrupt / type mismatch) and 4865 (key
+    /// missing) — all reading "The data couldn't be read because ...", which
+    /// names no actor and trips no keyword in `twBannerSeverity`, so it landed
+    /// as a calm blue notice that told the user nothing.
+    public static func isUnreadablePayload(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSCocoaErrorDomain else { return false }
+        return ns.code == 3840 || (ns.code >= 4864 && ns.code <= 4866)
+    }
+
     /// `relayUrl` gives host-aware guidance (Tailscale vs LAN front doors).
     public static func friendlyMessage(for error: Error, relayUrl: String?) -> String {
         let ns = error as NSError
         guard ns.domain == NSURLErrorDomain else {
+            // `Session.onEncrypted` parses a frame AFTER `TWCipher.open` has
+            // authenticated it, so an unreadable payload is not a corrupted
+            // wire: it is a Mac that sealed something this build cannot parse.
+            // Name the actor and the likely cause instead of echoing Foundation.
+            if isUnreadablePayload(error) {
+                return "Your Mac sent a message this device couldn't read "
+                    + "(decode error \(ns.code)). They may be running different "
+                    + "TaskWraith versions — update both, then reconnect."
+            }
             return (error as? LocalizedError)?.errorDescription ?? ns.localizedDescription
         }
         let host = relayUrl.flatMap { URL(string: $0)?.host } ?? "your Mac"
