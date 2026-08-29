@@ -1966,4 +1966,177 @@ describe('HostLocalServer', () => {
       expect(server.clientCount()).toBe(0)
     })
   })
+
+  describe('staying reachable under load', () => {
+    it('does not kill a handshake whose deadline expired while the Host was blocked', async () => {
+      // libuv runs the timers phase before the poll phase, so after a long
+      // blocking pass the handshake deadline fires before the hello that
+      // arrived during it is ever delivered. A clock that jumps is how a
+      // stalled loop looks from inside the timer callback.
+      let clock = 1754300000000
+      const stalling = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 4,
+        handshakeTimeoutMs: 200,
+        now: () => {
+          clock += 10_000
+          return clock
+        }
+      })
+      await stalling.start()
+      try {
+        const client = await connectClient(stalling.socketPath)
+        // Past the first deadline, which the stall must have forgiven, and
+        // well short of the bounded extensions running out.
+        await new Promise((resolve) => setTimeout(resolve, 260))
+        const token = readFileSync(stalling.tokenPath, 'utf8').trim()
+        client.writeLine(JSON.stringify(makeClientHello(token)))
+
+        const frame = await client.readFrame()
+
+        expect(frame.type).toBe('welcome')
+        client.close()
+      } finally {
+        await stalling.stop()
+      }
+    })
+
+    it('gives up on a silent client even while the Host keeps stalling', async () => {
+      // Forgiveness has to be bounded, or a socket that never speaks is held
+      // open for as long as the Host stays busy — which is exactly when its
+      // slot is worth the most.
+      let clock = 1754300000000
+      const stalling = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 4,
+        handshakeTimeoutMs: 60,
+        now: () => {
+          clock += 10_000
+          return clock
+        }
+      })
+      await stalling.start()
+      try {
+        const client = await connectClient(stalling.socketPath)
+
+        const frame = await client.readFrame()
+
+        expect(frame.type).toBe('response')
+        if (frame.type === 'response') {
+          expect(frame.ok).toBe(false)
+          if (!frame.ok) expect(frame.error.code).toBe('unauthorized')
+        }
+        client.close()
+      } finally {
+        await stalling.stop()
+      }
+    })
+
+    it('still drops a client that never speaks when the Host is not blocked', async () => {
+      const idle = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 4,
+        handshakeTimeoutMs: 40,
+        now: () => 1754300000000
+      })
+      await idle.start()
+      try {
+        const client = await connectClient(idle.socketPath)
+
+        const frame = await client.readFrame()
+
+        expect(frame.type).toBe('response')
+        if (frame.type === 'response') {
+          expect(frame.ok).toBe(false)
+          if (!frame.ok) expect(frame.error.code).toBe('unauthorized')
+        }
+        client.close()
+      } finally {
+        await idle.stop()
+      }
+    })
+
+    it('tells a client refused for capacity why, instead of closing silently', async () => {
+      const full = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 1,
+        now: () => 1754300000000
+      })
+      await full.start()
+      try {
+        const token = readFileSync(full.tokenPath, 'utf8').trim()
+        const first = await connectClient(full.socketPath)
+        first.writeLine(JSON.stringify(makeClientHello(token)))
+        expect((await first.readFrame()).type).toBe('welcome')
+
+        const refused = await connectClient(full.socketPath)
+        const frame = await refused.readFrame()
+
+        // A bare close is indistinguishable from a Host that died mid-welcome,
+        // so the client retries at once and holds the server at capacity.
+        expect(frame.type).toBe('response')
+        if (frame.type === 'response') {
+          expect(frame.ok).toBe(false)
+          if (!frame.ok) expect(frame.error.code).toBe('host_unavailable')
+        }
+        first.close()
+        refused.close()
+      } finally {
+        await full.stop()
+      }
+    })
+
+    it('admits a realistic fleet on the default client budget', async () => {
+      // App + a dev instance + several TUIs + paired iOS is the normal desk,
+      // and the 7th of those used to be refused with no reason given.
+      const fleet = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        now: () => 1754300000000
+      })
+      await fleet.start()
+      try {
+        const token = readFileSync(fleet.tokenPath, 'utf8').trim()
+        const clients: Awaited<ReturnType<typeof connectClient>>[] = []
+        for (let index = 0; index < 12; index += 1) {
+          const client = await connectClient(fleet.socketPath)
+          clients.push(client)
+          client.writeLine(
+            JSON.stringify(
+              makeClientHello(token, ['bootstrap', 'snapshot', 'health'], {
+                clientId: `fleet-${index}`,
+                clientClass: 'test',
+                clientVersion: '1.0.0'
+              })
+            )
+          )
+          expect((await client.readFrame()).type).toBe('welcome')
+        }
+
+        expect(fleet.clientCount()).toBe(12)
+        for (const client of clients) client.close()
+      } finally {
+        await fleet.stop()
+      }
+    })
+  })
 })

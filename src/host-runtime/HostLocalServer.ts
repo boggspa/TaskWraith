@@ -85,7 +85,25 @@ const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, Ho
 // ---------------------------------------------------------------------------
 
 const HANDSHAKE_TIMEOUT_MS = 5_000
-const MAX_CLIENTS_DEFAULT = 6
+/**
+ * Overshoot past a handshake deadline that means the Host stalled rather than
+ * the client going quiet. libuv runs the timers phase BEFORE the poll phase,
+ * so after a long blocking pass this deadline fires before the hello that
+ * arrived during that pass is ever delivered — the connection is killed for
+ * the Host's own fault, the client retries, and the retry becomes a storm.
+ */
+const HANDSHAKE_STALL_GRACE_MS = 1_000
+/** Bounded, so a genuinely silent client is still dropped rather than held. */
+const MAX_HANDSHAKE_STALL_EXTENSIONS = 2
+/**
+ * One desk legitimately runs the app, a dev instance, several TUIs and one
+ * paired iOS gateway per device against a single Host. At six the seventh was
+ * refused, and because that refusal was a bare socket close the client could
+ * not tell it apart from a Host that died mid-welcome — so it reconnected
+ * immediately and held the server at capacity. Each client costs a socket and
+ * a write backlog already bounded by MAX_SOCKET_WRITE_BACKLOG_BYTES.
+ */
+const MAX_CLIENTS_DEFAULT = 32
 const SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT = 1_000
 const MAX_LINE_BYTES = 256_000
 // Snapshot collections are independently bounded by the Host protocol, but a
@@ -129,8 +147,10 @@ export interface HostLocalServerOptions {
   }
   /** Platform for path construction; defaults to process.platform. */
   platform?: NodeJS.Platform
-  /** Maximum concurrent client connections; defaults to 6. */
+  /** Maximum concurrent client connections; defaults to 32. */
   maxClients?: number
+  /** Deadline for a connected socket to send its hello; defaults to 5s. */
+  handshakeTimeoutMs?: number
   /** Bounded grace for in-flight dispatch and client socket drain during stop. */
   shutdownDrainTimeoutMs?: number
   /** Optional diagnostic logger. */
@@ -156,6 +176,8 @@ interface ClientState {
   binding: HostSessionBinding | null
   buffer: string
   handshakeTimer: ReturnType<typeof setTimeout>
+  /** Deadlines already forgiven as Host stalls rather than client silence. */
+  handshakeStallExtensions: number
 }
 
 // ---------------------------------------------------------------------------
@@ -278,9 +300,15 @@ function authorityErrorToTransportCode(
 
 export class HostLocalServer {
   private readonly options: Required<
-    Pick<HostLocalServerOptions, 'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs'>
+    Pick<
+      HostLocalServerOptions,
+      'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs' | 'handshakeTimeoutMs'
+    >
   > &
-    Omit<HostLocalServerOptions, 'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs'>
+    Omit<
+      HostLocalServerOptions,
+      'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs' | 'handshakeTimeoutMs'
+    >
   private readonly token: string
   private readonly clients = new Set<ClientState>()
   private server: Server | null = null
@@ -304,6 +332,7 @@ export class HostLocalServer {
       platform: options.platform ?? process.platform,
       maxClients: options.maxClients ?? MAX_CLIENTS_DEFAULT,
       shutdownDrainTimeoutMs: options.shutdownDrainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT,
+      handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
       now: options.now ?? (() => Date.now())
     }
     if (
@@ -311,6 +340,12 @@ export class HostLocalServer {
       this.options.shutdownDrainTimeoutMs < 1
     ) {
       throw new Error('Host local shutdown drain timeout is invalid.')
+    }
+    if (
+      !Number.isSafeInteger(this.options.handshakeTimeoutMs) ||
+      this.options.handshakeTimeoutMs < 1
+    ) {
+      throw new Error('Host local handshake timeout is invalid.')
     }
     this.token = randomBytes(32).toString('hex')
     const canonicalUserDataPath = realpathSync(options.userDataPath)
@@ -644,8 +679,37 @@ export class HostLocalServer {
     }
   }
 
+  /**
+   * Arm (or re-arm) the hello deadline for one unauthenticated socket.
+   *
+   * A deadline that fires long after it was due did not measure the client: it
+   * measured this process being unable to run anything, which means the hello
+   * may already be sitting unread in the socket buffer. Forgive that, boundedly
+   * — a silent client still gets dropped, it just takes a few windows longer.
+   */
+  private armHandshakeDeadline(state: ClientState): void {
+    const dueAt = this.options.now() + this.options.handshakeTimeoutMs
+    state.handshakeTimer = setTimeout(() => {
+      if (
+        this.options.now() - dueAt > HANDSHAKE_STALL_GRACE_MS &&
+        state.handshakeStallExtensions < MAX_HANDSHAKE_STALL_EXTENSIONS
+      ) {
+        state.handshakeStallExtensions += 1
+        this.armHandshakeDeadline(state)
+        return
+      }
+      socketWrite(state.socket, errorFrame('', { code: 'unauthorized' }))
+      state.socket.destroy()
+    }, this.options.handshakeTimeoutMs)
+    state.handshakeTimer.unref?.()
+  }
+
   private accept(socket: Socket): void {
     if (this.clients.size >= this.options.maxClients) {
+      // A bare end() is indistinguishable from a Host that died mid-welcome,
+      // so the client reconnects at once and holds the server at capacity.
+      // Name the reason and the client can back off instead.
+      socketWrite(socket, errorFrame('', { code: 'host_unavailable' }))
       socket.end()
       return
     }
@@ -656,12 +720,11 @@ export class HostLocalServer {
       authenticated: false,
       binding: null,
       buffer: '',
-      handshakeTimer: setTimeout(() => {
-        socketWrite(socket, errorFrame('', { code: 'unauthorized' }))
-        socket.destroy()
-      }, HANDSHAKE_TIMEOUT_MS)
+      handshakeTimer: setTimeout(() => undefined, 0),
+      handshakeStallExtensions: 0
     }
-    state.handshakeTimer.unref?.()
+    clearTimeout(state.handshakeTimer)
+    this.armHandshakeDeadline(state)
     this.clients.add(state)
     socket.on('data', (chunk: string) => this.onData(state, chunk))
     socket.on('error', () => this.drop(state))

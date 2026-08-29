@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -915,5 +916,143 @@ describe('HostProfileDomainStore', () => {
     // the skip must announce itself — but once, not once per reconciler tick.
     expect(onThreadQuarantined).toHaveBeenCalledTimes(1)
     expect(onThreadQuarantined).toHaveBeenCalledWith(thread.appChatId, 'record-too-large')
+  })
+
+  it('serves an unchanged chat record from cache instead of re-parsing it every listing', () => {
+    const { store } = open()
+    store.createThread({ scope: 'global', title: 'one' })
+    store.createThread({ scope: 'global', title: 'two' })
+    store.createThread({ scope: 'global', title: 'three' })
+
+    const first = store.listThreads()
+    const readsAfterFirst = store.threadRecordReads
+    const second = store.listThreads()
+
+    // The reconciler calls this once per second. Re-reading the whole corpus
+    // every pass is what saturated the Host's event loop.
+    expect(readsAfterFirst).toBe(3)
+    expect(store.threadRecordReads).toBe(3)
+    expect(second).toEqual(first)
+  })
+
+  it('re-reads a record the store itself rewrote', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'before' })
+    store.listThreads()
+    const readsAfterFirst = store.threadRecordReads
+
+    store.configureThread({ threadId: thread.appChatId, title: 'after' })
+    const listed = store.listThreads()
+
+    expect(listed.map((item) => item.title)).toEqual(['after'])
+    expect(store.threadRecordReads).toBe(readsAfterFirst + 1)
+  })
+
+  it('re-reads a record replaced in place behind the store', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'before' })
+    const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    store.listThreads()
+
+    // Same inode, same byte length, rewritten underneath the cache. Identity
+    // must include a sub-millisecond write clock or this reads back stale.
+    const rewritten = readFileSync(chatPath, 'utf8').replace('"before"', '"aftera"')
+    writeFileSync(chatPath, rewritten, { mode: 0o600 })
+
+    expect(store.listThreads().map((item) => item.title)).toEqual(['aftera'])
+  })
+
+  it('still refuses a cached record whose mode was widened underneath it', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    store.listThreads()
+
+    chmodSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`), 0o644)
+
+    // The owner-only guard used to live inside the read. A cache that skips
+    // the read must not also skip the guard.
+    if (process.platform !== 'win32') {
+      expect(() => store.listThreads()).toThrow('owner-only')
+    }
+  })
+
+  it('drops a deleted record from the cache instead of retaining it forever', () => {
+    const { profile, store } = open()
+    const kept = store.createThread({ scope: 'global', title: 'kept' })
+    const removed = store.createThread({ scope: 'global', title: 'removed' })
+    store.listThreads()
+
+    rmSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${removed.appChatId}.json`))
+
+    expect(store.listThreads().map((item) => item.appChatId)).toEqual([kept.appChatId])
+    expect(store.cachedThreadRecordBytes).toBeLessThan(
+      lstatSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${kept.appChatId}.json`)).size + 1
+    )
+  })
+
+  it('stays correct and bounded when the corpus does not fit the cache budget', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-budget-'))
+    profiles.push(profile)
+    let sequence = 0
+    const store = new HostProfileDomainStore({
+      profilePath: profile,
+      authority: { assertProfileAuthority: vi.fn() },
+      now: () => 100,
+      idFactory: () => `id-${++sequence}`,
+      threadCacheMaxBytes: 1
+    })
+    const titles = ['one', 'two', 'three']
+    for (const title of titles) store.createThread({ scope: 'global', title })
+
+    const first = store.listThreads()
+    const second = store.listThreads()
+
+    // A budget too small to hold anything must degrade to today's behaviour,
+    // never to a wrong answer.
+    expect(second).toEqual(first)
+    expect(second.map((item) => item.title).sort()).toEqual([...titles].sort())
+    expect(store.cachedThreadRecordBytes).toBe(0)
+    expect(store.threadRecordReads).toBe(6)
+  })
+
+  it('does not let a full cache thrash on the sweep that fills it', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-thrash-'))
+    profiles.push(profile)
+    let sequence = 0
+    const openStore = (threadCacheMaxBytes: number) =>
+      new HostProfileDomainStore({
+        profilePath: profile,
+        authority: { assertProfileAuthority: vi.fn() },
+        now: () => 100,
+        idFactory: () => `id-${++sequence}`,
+        threadCacheMaxBytes
+      })
+    // Equal-length titles so every record is the same size on disk and the
+    // budget below holds an exact number of them.
+    const seed = openStore(0)
+    for (const title of ['aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff']) {
+      seed.createThread({ scope: 'global', title })
+    }
+    const chats = join(profile, HOST_PROFILE_CHATS_DIRECTORY)
+    const sizes = readdirSync(chats).map((name) => lstatSync(join(chats, name)).size)
+    expect(new Set(sizes).size).toBe(1)
+    // Room for exactly half the corpus, so admission has to evict on the very
+    // sweep that fills it — the case an access-ordered policy gets wrong.
+    const store = openStore(sizes[0]! * 3)
+
+    store.listThreads()
+    const firstPassReads = store.threadRecordReads
+    store.listThreads()
+    const secondPassReads = store.threadRecordReads - firstPassReads
+    store.listThreads()
+    const thirdPassReads = store.threadRecordReads - firstPassReads - secondPassReads
+
+    expect(firstPassReads).toBe(6)
+    // Least-recently-USED eviction would evict each entry immediately before
+    // its next use and re-read all six every pass, forever. Write-ordered
+    // eviction converges: the three newest stay resident and stay resident.
+    expect(secondPassReads).toBe(3)
+    expect(thirdPassReads).toBe(3)
+    expect(store.cachedThreadRecordBytes).toBe(sizes[0]! * 3)
   })
 })

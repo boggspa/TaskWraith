@@ -27,6 +27,8 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
+import type { BigIntStats } from 'node:fs'
+import { totalmem } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import type {
@@ -46,6 +48,45 @@ const PRIVATE_FILE_MODE = 0o600
 const MAX_WORKSPACES_BYTES = 4 * 1024 * 1024
 const MAX_CHAT_BYTES = 64 * 1024 * 1024
 const MAX_TEXT = 16_000
+/**
+ * Source bytes of decoded chat records `listThreads()` keeps resident.
+ *
+ * WHY A CACHE EXISTS AT ALL. `listThreads()` is called once per second by
+ * HostProjectionReconciler's snapshot capture, and once more by the run port
+ * on every run start. Without a cache each of those passes re-read and
+ * re-parsed the WHOLE chat corpus. Measured 2026-08-29 on a real 448-record /
+ * 832MB profile: 689MB of JSON.parse per pass, ~4.9s of blocking work on a 1s
+ * timer, 69.5% Host CPU. The event loop was saturated, so client handshakes
+ * lost against both the 5s server handshake deadline and the 6.25s client
+ * connect budget — Ensemble rounds failed with "Timed out connecting to the
+ * TaskWraith Host" and TUI/iOS clients reconnected in a storm. The scan was
+ * the cause; every timeout was a symptom.
+ *
+ * WHY IT IS BOUNDED, AND WHY THE BOUND SCALES. Holding the whole corpus costs
+ * ~1.26x its source bytes in heap (measured: 689MB source retained 871MB), so
+ * an unbounded cache would trade a CPU problem for an OOM on a small machine.
+ * A PARTIAL cache is not a proportional compromise, though — measured on the
+ * same 689MB corpus, per steady-state pass:
+ *
+ *   no cache      3317ms, 446 reads, heap churning 1-2GB
+ *   512MB budget  1144ms, 152 reads, heap churning to 2GB
+ *   full coverage    5ms,   0 reads, heap FLAT at ~865MB
+ *
+ * The tail that does not fit is re-parsed and discarded every second, which
+ * keeps the collector hot: the partial cache is worse than full coverage on
+ * memory as well as CPU. So size the budget to the machine and let it cover
+ * whatever it can, rather than picking a fixed number that half-covers a big
+ * profile. Whatever still does not fit costs exactly what it costs today, so
+ * the cache is never worse than no cache.
+ */
+const THREAD_CACHE_FLOOR_BYTES = 256 * 1024 * 1024
+const THREAD_CACHE_CEILING_BYTES = 1024 * 1024 * 1024
+function defaultThreadCacheMaxBytes(): number {
+  return Math.min(
+    THREAD_CACHE_CEILING_BYTES,
+    Math.max(THREAD_CACHE_FLOOR_BYTES, Math.floor(totalmem() / 16))
+  )
+}
 
 export interface HostProfileAuthorityPort {
   assertProfileAuthority(): void
@@ -110,6 +151,17 @@ export interface HostProfileRunUsage {
   readonly estimatedCostUsd?: number
 }
 
+/** One decoded chat record held against the exact file that produced it. */
+interface CachedThreadRecord {
+  /** dev/ino/mtime/size/mode of the file this record was decoded from. */
+  readonly identity: string
+  /** Source bytes, so eviction can be budgeted without re-stating. */
+  readonly bytes: number
+  /** Write clock, used for eviction order. Never access order — see admit. */
+  readonly mtimeNs: bigint
+  readonly thread: HostProfileThread
+}
+
 export interface HostProfileDomainStoreOptions {
   readonly profilePath: string
   readonly authority: HostProfileAuthorityPort
@@ -121,6 +173,12 @@ export interface HostProfileDomainStoreOptions {
    *  a skipped record is announced through the caller — without it the skip is
    *  as silent as the whole-Host failure it replaced. */
   readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+  /** Source bytes of decoded chat records `listThreads()` may hold resident.
+   *  Budgeted in SOURCE bytes because that is what the directory entry already
+   *  reports; measured on a real 689MB corpus, the decoded records retain
+   *  ~1.26x that in heap. Defaults to a machine-proportional budget; 0 disables
+   *  the cache and restores the uncached full re-read. */
+  readonly threadCacheMaxBytes?: number
 }
 
 type StoredEnsembleParticipant = Record<string, unknown> & {
@@ -573,6 +631,10 @@ export class HostProfileDomainStore {
   private readonly beforeAtomicPublish?: (targetPath: string) => void
   private readonly quarantinedThreads = new Set<string>()
   private readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+  private readonly threadCache = new Map<string, CachedThreadRecord>()
+  private readonly threadCacheMaxBytes: number
+  private threadCacheBytes = 0
+  private threadRecordReadCount = 0
 
   constructor(options: HostProfileDomainStoreOptions) {
     if (!options?.authority || typeof options.authority.assertProfileAuthority !== 'function') {
@@ -586,6 +648,10 @@ export class HostProfileDomainStore {
     this.idFactory = options.idFactory ?? randomUUID
     this.beforeAtomicPublish = options.beforeAtomicPublish
     this.onThreadQuarantined = options.onThreadQuarantined
+    this.threadCacheMaxBytes =
+      Number.isFinite(options.threadCacheMaxBytes) && Number(options.threadCacheMaxBytes) >= 0
+        ? Math.floor(Number(options.threadCacheMaxBytes))
+        : defaultThreadCacheMaxBytes()
     this.ensureDirectory(this.chatsPath)
   }
 
@@ -781,25 +847,120 @@ export class HostProfileDomainStore {
     return [...this.quarantinedThreads].sort()
   }
 
-  /** Size is checked from the directory entry rather than through the read, so
-   *  an oversized record never reaches readOptionalJson's throw. */
-  private exceedsRecordCap(threadId: string): boolean {
+  /** Chat records `listThreads()` has decoded from disk. A pass that re-reads
+   *  nothing is the whole point of the cache, so the count is exposed rather
+   *  than inferred: this layer takes no logger, same as quarantinedThreadIds. */
+  get threadRecordReads(): number {
+    return this.threadRecordReadCount
+  }
+
+  /** Resident source bytes, so a caller can see the budget being respected. */
+  get cachedThreadRecordBytes(): number {
+    return this.threadCacheBytes
+  }
+
+  /** One stat serves the size cap, the structural guards and the cache key.
+   *  bigint mode is not incidental: `mtimeNs` is what makes an in-place
+   *  rewrite inside the same millisecond visible to the identity check. */
+  private statRecord(path: string): BigIntStats | null {
     try {
-      return lstatSync(this.chatPath(threadId)).size > MAX_CHAT_BYTES
+      return lstatSync(path, { bigint: true })
     } catch {
       // Deliberate deferral, not a swallow: a record that vanished between
-      // readdir and here makes getThread's readOptionalJson return null, so
-      // the entry is skipped anyway. Throwing here would fail the whole
-      // listing for a race. Not reachable from a test through the public
-      // API, since readdir only names entries that exist.
-      return false
+      // readdir and here was skipped by getThread's null return before, and
+      // throwing here would fail the whole listing for a race.
+      return null
     }
+  }
+
+  /**
+   * The cache key, and with it the security posture of a cache hit.
+   *
+   * `mode` is in here so a file whose permissions were widened underneath a
+   * resident record can never be served from cache: the identity changes, the
+   * pass falls through to a real read, and readOptionalJson's owner-only guard
+   * fails closed exactly as it did before there was a cache. Same for a path
+   * that became a symlink. Do not drop a field to save a comparison — each one
+   * is what keeps a hit as safe as a read.
+   *
+   * `mtimeNs` rather than `mtimeMs` because an in-place rewrite that keeps the
+   * inode and the byte length is invisible at millisecond resolution.
+   */
+  private recordIdentity(stat: BigIntStats): string {
+    return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.mode}`
+  }
+
+  private dropThreadRecord(threadId: string): void {
+    const entry = this.threadCache.get(threadId)
+    if (!entry) return
+    this.threadCache.delete(threadId)
+    this.threadCacheBytes -= entry.bytes
+  }
+
+  private admitThreadRecord(threadId: string, stat: BigIntStats, thread: HostProfileThread): void {
+    this.dropThreadRecord(threadId)
+    const bytes = Number(stat.size)
+    if (bytes > this.threadCacheMaxBytes) return
+    while (this.threadCacheBytes + bytes > this.threadCacheMaxBytes) {
+      // Evict the least recently WRITTEN record, never the least recently
+      // read. listThreads() sweeps the whole directory every pass, so an
+      // access-ordered policy evicts each entry immediately before its next
+      // use and holds a 0% hit rate forever. Write order is stable across a
+      // sweep, so a full cache converges instead of thrashing.
+      let evictId: string | null = null
+      let evictMtimeNs = stat.mtimeNs
+      for (const [candidateId, entry] of this.threadCache) {
+        if (entry.mtimeNs < evictMtimeNs) {
+          evictId = candidateId
+          evictMtimeNs = entry.mtimeNs
+        }
+      }
+      // Nothing resident is older than this candidate, so admitting it would
+      // only displace fresher records. Leave the cache exactly as it is.
+      if (evictId === null) return
+      this.dropThreadRecord(evictId)
+    }
+    this.threadCache.set(threadId, {
+      identity: this.recordIdentity(stat),
+      bytes,
+      mtimeNs: stat.mtimeNs,
+      thread
+    })
+    this.threadCacheBytes += bytes
+  }
+
+  private threadRecordFor(
+    threadId: string,
+    path: string,
+    stat: BigIntStats
+  ): HostProfileThread | null {
+    const identity = this.recordIdentity(stat)
+    const cached = this.threadCache.get(threadId)
+    if (cached && cached.identity === identity) return cached.thread
+    const thread = this.getThread(threadId)
+    if (!thread) {
+      this.dropThreadRecord(threadId)
+      return null
+    }
+    this.threadRecordReadCount += 1
+    // Re-stat AFTER the read. readOptionalJson already fails closed on an
+    // inode or size change mid-read, but a record rewritten between this
+    // stat and that read must not be cached under the identity it no longer
+    // has — otherwise the stale copy is served until the next write.
+    const after = this.statRecord(path)
+    if (after && this.recordIdentity(after) === identity) {
+      this.admitThreadRecord(threadId, stat, thread)
+    } else {
+      this.dropThreadRecord(threadId)
+    }
+    return thread
   }
 
   listThreads(): readonly HostProfileThread[] {
     this.assertAuthority()
     this.ensureDirectory(this.chatsPath)
     const records: HostProfileThread[] = []
+    const present = new Set<string>()
     for (const entry of readdirSync(this.chatsPath, { withFileTypes: true })) {
       if (this.isRecognizedTemp(entry.name)) {
         if (!entry.isFile() || entry.isSymbolicLink())
@@ -810,7 +971,14 @@ export class HostProfileDomainStore {
       if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Unsafe chat directory entry')
       const id = entry.name.slice(0, -'.json'.length)
       if (!safeId(id)) throw new Error('Unsafe chat filename')
-      if (this.exceedsRecordCap(id)) {
+      const path = this.chatPath(id)
+      const stat = this.statRecord(path)
+      if (!stat) {
+        this.dropThreadRecord(id)
+        continue
+      }
+      present.add(id)
+      if (stat.size > BigInt(MAX_CHAT_BYTES)) {
         // A record too large to read is a capacity problem, not tampering —
         // every structural guard above still fails closed. Quarantine THIS
         // thread rather than the whole listing: one oversized chat previously
@@ -820,11 +988,17 @@ export class HostProfileDomainStore {
           this.quarantinedThreads.add(id)
           this.onThreadQuarantined?.(id, 'record-too-large')
         }
+        this.dropThreadRecord(id)
         continue
       }
       this.quarantinedThreads.delete(id)
-      const thread = this.getThread(id)
+      const thread = this.threadRecordFor(id, path, stat)
       if (thread) records.push(thread)
+    }
+    // A deleted chat must not stay resident: the cache is keyed by thread id,
+    // and nothing else would ever revisit an id the directory no longer names.
+    for (const threadId of [...this.threadCache.keys()]) {
+      if (!present.has(threadId)) this.dropThreadRecord(threadId)
     }
     return records
   }
