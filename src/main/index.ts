@@ -2006,6 +2006,8 @@ import {
 } from './ScopedPathAccess'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
+import { systemAccentColorSource } from './SystemAccentColor'
+import { SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL } from '../shared/systemAccentColor'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
@@ -56394,7 +56396,18 @@ if (isGeminiMcpBridgeProcess) {
       },
       applyNativeGlassToWindow,
       getCachedHostWeather,
-      getNativeCapabilitySnapshot
+      getNativeCapabilitySnapshot,
+      getSystemAccentColor: () => systemAccentColorSource.read()
+    })
+
+    // `--accent` follows the DESKTOP's accent, not the in-app message-bubble
+    // colour, so an OS accent change has to reach every open window the same
+    // way an agent restyle does. The source only calls back on an actual
+    // change; see SystemAccentColor.ts for why that de-duplication matters.
+    systemAccentColorSource.watch((color) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, color)
+      }
     })
 
     registerFileIconHandlers({

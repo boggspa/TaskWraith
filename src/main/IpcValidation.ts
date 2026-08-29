@@ -367,6 +367,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'host-lifecycle:status': [],
   'host-lifecycle:set': ['object'],
   'set-appearance-mode': ['any'],
+  'appearance:get-system-accent-color': [],
   'get-host-weather': [],
   'native-capabilities:snapshot': [],
   'fx-rates:get': [],

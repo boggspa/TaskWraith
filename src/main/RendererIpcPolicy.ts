@@ -313,6 +313,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'session-checkpoints:accept',
   'session-checkpoints:dismiss',
   'session-checkpoints:latest',
+  'appearance:get-system-accent-color',
   'set-appearance-mode',
   'set-chat-kind',
   'set-workflow-unattended-elevation',

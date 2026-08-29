@@ -3155,6 +3155,13 @@ declare global {
       ackChatUpdated: (ack: ChatUpdateAck) => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */
       onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => () => void
+      /**
+       * The host OS accent colour (macOS/Windows "accent"), or null where the
+       * platform reports none — the value `--accent` follows.
+       */
+      getSystemAccentColor: () => Promise<string | null>
+      /** The user changed their OS accent; re-apply without a reload. */
+      onSystemAccentColorChanged: (callback: (color: string | null) => void) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void

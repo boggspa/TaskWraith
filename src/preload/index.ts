@@ -144,6 +144,10 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import {
+  SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL,
+  SYSTEM_ACCENT_COLOR_CHANNEL
+} from '../shared/systemAccentColor'
 import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
@@ -3050,6 +3054,19 @@ const api = {
     const wrapped = (_event: unknown, tokens: Record<string, string>): void => callback(tokens)
     ipcRenderer.on('agent-theme-tokens-changed', wrapped)
     return () => ipcRenderer.removeListener('agent-theme-tokens-changed', wrapped)
+  },
+  /**
+   * The host OS accent colour (macOS/Windows "accent"), or null where the
+   * platform reports none. `systemPreferences` is main-only, so this is the
+   * renderer's only route to the value `--accent` follows.
+   */
+  getSystemAccentColor: (): Promise<string | null> =>
+    ipcRenderer.invoke(SYSTEM_ACCENT_COLOR_CHANNEL),
+  /** The user changed their OS accent; re-apply without a reload. */
+  onSystemAccentColorChanged: (callback: (color: string | null) => void) => {
+    const wrapped = (_event: unknown, color: string | null): void => callback(color)
+    ipcRenderer.on(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
   },
   onProjectsChanged: (callback: (projects: unknown) => void) => {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)

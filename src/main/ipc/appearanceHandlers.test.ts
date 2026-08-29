@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { AppSettings } from '../store/types'
 import { registerAppearanceHandlers } from './appearanceHandlers'
+import { SYSTEM_ACCENT_COLOR_CHANNEL } from '../../shared/systemAccentColor'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -57,7 +58,8 @@ function createDeps() {
       }),
       applyNativeGlassToWindow: vi.fn(),
       getCachedHostWeather: vi.fn(async () => ({ condition: 'sunny' })),
-      getNativeCapabilitySnapshot: vi.fn(() => ({ bridge: { available: true } }))
+      getNativeCapabilitySnapshot: vi.fn(() => ({ bridge: { available: true } })),
+      getSystemAccentColor: vi.fn(() => '#1E90FF' as string | null)
     }
   }
 }
@@ -69,6 +71,34 @@ describe('registerAppearanceHandlers', () => {
     expect(handlerFor('set-appearance-mode')).toBeTypeOf('function')
     expect(handlerFor('get-host-weather')).toBeTypeOf('function')
     expect(handlerFor('native-capabilities:snapshot')).toBeTypeOf('function')
+    expect(handlerFor('appearance:get-system-accent-color')).toBeTypeOf('function')
+  })
+
+  it('handles the exact channel preload invokes', () => {
+    // The handler spells this channel as a literal so the build-time IPC-schema
+    // scan can resolve it; this is what stops the two copies drifting apart.
+    registerAppearanceHandlers(createDeps().deps)
+
+    expect(SYSTEM_ACCENT_COLOR_CHANNEL).toBe('appearance:get-system-accent-color')
+    expect(handlerFor(SYSTEM_ACCENT_COLOR_CHANNEL)).toBeTypeOf('function')
+  })
+
+  it('serves the host OS accent colour the renderer applies to --accent', () => {
+    const { deps } = createDeps()
+    registerAppearanceHandlers(deps)
+
+    expect(handlerFor('appearance:get-system-accent-color')({})).toBe('#1E90FF')
+    expect(deps.getSystemAccentColor).toHaveBeenCalled()
+  })
+
+  it('passes a missing OS accent straight through as null', () => {
+    // null is the renderer's signal to leave --accent alone so the active
+    // theme's own accent wins; it must not be coerced to a colour here.
+    const { deps } = createDeps()
+    vi.mocked(deps.getSystemAccentColor).mockReturnValue(null)
+    registerAppearanceHandlers(deps)
+
+    expect(handlerFor('appearance:get-system-accent-color')({})).toBeNull()
   })
 
   it('applies native glass for string payloads without changing reduceTransparency', () => {
