@@ -39,6 +39,14 @@ describe('execution graph main integration', () => {
     expect(dispatcher).toContain('startUltraTaskGraphRef')
     expect(dispatcher).toContain("status: 'running'")
     expect(dispatcher).toContain('Every join is automatic')
+    // The graph is unanchored (it dispatches its own work rather than waiting
+    // on the initiating run) but it is NOT unowned: the handler stamps the
+    // accountable thread/seat, and the result payload sends the seat to
+    // ensemble_await instead of releasing it to report completion early.
+    expect(dispatcher).toContain('owner: {')
+    expect(dispatcher).toContain('threadId: parentChat.appChatId')
+    expect(dispatcher).toContain('ensemble_await({ executionIds:')
+    expect(dispatcher).toContain('Do not report completion before then.')
     expect(dispatcher).not.toContain('executeDelegateWaveTool(')
     expect(initialization).toContain('startUltraTaskGraphRef = (input) =>')
     expect(initialization).toContain('startPreparedUltraTaskGraph(input, {')

@@ -118,7 +118,14 @@ describe('ultra_task MCP schema', () => {
     )
     expect(definition?.description).toMatch(/durable staged UltraTask graph/i)
     expect(definition?.description).toMatch(/TaskWraith owns.*all-join/i)
-    expect(definition?.description).not.toMatch(/ensemble_await/i)
+    // Inverted 2026-08-29. This previously asserted the description must NOT
+    // mention ensemble_await, encoding a design where the graph was detached
+    // and the initiating turn was told it "may finish". That left graphs
+    // dispatching provider work with no accountable seat and no path back to
+    // the user. ultra_task now follows the same turn-ownership doctrine as
+    // delegate_wave and delegate_to_subthread, so the JOIN must be advertised.
+    expect(definition?.description).toMatch(/ensemble_await/i)
+    expect(definition?.description).toMatch(/keep your turn active/i)
   })
 
   it('requires concrete model identity and documents the model-list refusal', () => {

@@ -51,12 +51,94 @@ function deps(overrides: Record<string, unknown> = {}) {
     getChildChats: vi.fn(() => [child('child-1'), child('child-2')]),
     getSubThreadMailbox: vi.fn(() => mailbox([event('child-1'), event('child-2')])),
     isParentRunActive: vi.fn(() => true),
+    getOwnedExecutions: vi.fn(() => []),
     clampTimeoutSeconds: vi.fn(() => 5),
     now: vi.fn(() => 0),
     delay: vi.fn(async () => undefined),
     ...overrides
   }
 }
+
+describe('dispatchEnsembleAwaitTool execution targets', () => {
+  // The turn-holding half of thread ownership. Every other delegation tool
+  // tells the model to await its work; ultra_task could not, because the JOIN
+  // had no way to name a durable execution.
+  it('settles once every awaited execution reaches a terminal state', async () => {
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        { executionId: 'ultratask-1', state: 'succeeded', title: 'UltraTask' }
+      ])
+    })
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-1'] }
+      },
+      d as never
+    )
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('settled')
+    expect(result.executions).toEqual([
+      { executionId: 'ultratask-1', settled: true, state: 'succeeded', title: 'UltraTask' }
+    ])
+  })
+
+  it('reports a still-running execution as a pending timeout, not a settle', async () => {
+    let clock = 0
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [{ executionId: 'ultratask-1', state: 'running' }]),
+      now: vi.fn(() => (clock += 2_000))
+    })
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-1'] }
+      },
+      d as never
+    )
+    expect(result.status).toBe('timeout')
+    expect(result.executions?.[0]?.settled).toBe(false)
+    expect(result.pendingCount).toBe(1)
+  })
+
+  // requires_action is terminal FOR THE WAIT: the graph is stopped and needs a
+  // human. Treating it as pending would block the seat until timeout on work
+  // that is never going to progress on its own.
+  it('settles a paused execution so the seat can report the blockage', async () => {
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        { executionId: 'ultratask-1', state: 'requires_action' }
+      ])
+    })
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-1'] }
+      },
+      d as never
+    )
+    expect(result.status).toBe('settled')
+    expect(result.executions?.[0]?.settled).toBe(true)
+  })
+
+  it('refuses an execution that this thread does not own', async () => {
+    const d = deps({ getOwnedExecutions: vi.fn(() => []) })
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['someone-elses-execution'] }
+      },
+      d as never
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('invalid_execution')
+    expect(result.message).toMatch(/do not belong to this parent chat/i)
+  })
+})
 
 describe('dispatchEnsembleAwaitTool', () => {
   it('joins a solo parent wave from durable parent-chat state', async () => {

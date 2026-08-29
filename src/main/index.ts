@@ -39459,6 +39459,18 @@ async function executeGeminiMcpTool(
                 !runManager.getClaimedTerminalStatus(runId)
             )
           },
+          // Ownership, not mere association, is the authorization boundary here:
+          // a seat may await only the graphs its own thread answers for.
+          getOwnedExecutions: (parentChatId) =>
+            (executionGraphCoordinatorRef
+              ?.listExecutions({ includeTerminal: true })
+              .filter((projection) => projection.owner?.threadId === parentChatId) ?? []).map(
+              (projection) => ({
+                executionId: projection.executionId,
+                state: projection.state,
+                ...(projection.title ? { title: projection.title } : {})
+              })
+            ),
           clampTimeoutSeconds: clampAwaitTimeoutSeconds
         }
       )
@@ -41493,8 +41505,8 @@ async function executeGeminiMcpTool(
             `Task: ${resolved.task}\n\nTaskWraith will run ${resolved.scoutCount} read-only scouts, one ` +
             `${context.effectivePermissions?.readOnly ? 'read-only' : 'workspace-scoped'} worker, ` +
             `one read-only reviewer, and one read-only synthesis stage using ` +
-            `${resolved.provider}/${resolved.model}. The graph owns every join and continues if ` +
-            `the initiating provider turn finishes.`,
+            `${resolved.provider}/${resolved.model}. The graph owns every join, and this thread ` +
+            `stays accountable for it: if the thread goes away the graph pauses for you.`,
           preview: {
             kind: 'subthread-delegation-wave',
             toolName: 'ultra_task',
@@ -41566,8 +41578,11 @@ async function executeGeminiMcpTool(
         executionId: started.executionId,
         stageIds: started.stageIds,
         message:
-          'UltraTask is now owned by TaskWraith’s durable graph. Every join is automatic; ' +
-          'this provider turn may finish without cancelling the workflow.'
+          'UltraTask is running on TaskWraith’s durable graph, owned by this thread. ' +
+          'Every join is automatic, but the task is not complete until its result ' +
+          'reaches you: call ensemble_await({ executionIds: ["' +
+          started.executionId +
+          '"] }) to hold your turn and receive it. Do not report completion before then.'
       })
     } else if (toolName === 'delegate_wave') {
       markDispatchHandled('subthread-control')

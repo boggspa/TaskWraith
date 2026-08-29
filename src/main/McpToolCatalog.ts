@@ -2687,6 +2687,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description:
               'Optional wave ids (from delegate_wave) to wait for.'
           },
+          executionIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional execution ids (from ultra_task) to wait for. A paused graph counts as settled.'
+          },
           timeoutSeconds: {
             type: 'number',
             description:
@@ -3790,7 +3796,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       description:
         'Start a durable staged UltraTask graph for one exact provider/model. TaskWraith owns ' +
         '2-6 scout stages, their all-join, the worker artifact, independent review, synthesis, ' +
-        'and final output. The initiating provider may finish after receiving the workflow id; ' +
+        'and final output. Your thread stays accountable for it: call ensemble_await on the ' +
+        'returned executionId to keep your turn active and receive the result. ' +
         'cli-default/default/custom models are refused.',
       annotations: {
         readOnlyHint: false,

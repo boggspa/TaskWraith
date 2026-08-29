@@ -1,5 +1,6 @@
 import type { SubThreadMailbox, SubThreadMailboxOutcome } from './SubThreadMailbox'
 import type {
+  EnsembleAwaitExecutionStatus,
   EnsembleAwaitInput,
   EnsembleAwaitResult,
   EnsembleAwaitSubThreadStatus,
@@ -15,6 +16,26 @@ interface AwaitableChildChat {
     returnResultToParent?: boolean
   }
 }
+
+/**
+ * A durable execution owned by the awaiting thread, as main sees it now.
+ * `state` mirrors ExecutionRunState.
+ */
+interface AwaitableOwnedExecution {
+  executionId: string
+  state: string
+  title?: string
+}
+
+/** States a graph will not leave without help. `requires_action` counts: the
+ * graph is stopped for a human, so continuing to block the seat would just
+ * burn the timeout on work that cannot progress. */
+const SETTLED_EXECUTION_STATES = new Set([
+  'succeeded',
+  'failed',
+  'cancelled',
+  'requires_action'
+])
 
 interface EnsembleAwaitDispatcher {
   awaitLanesForRun(
@@ -34,6 +55,9 @@ export interface DispatchEnsembleAwaitToolDeps {
   getChildChats(parentChatId: string): ReadonlyArray<AwaitableChildChat>
   getSubThreadMailbox(parentChatId: string): SubThreadMailbox | undefined
   isParentRunActive(runId: string, parentChatId: string): boolean
+  /** Executions whose owner thread is this parent chat. Ownership is the
+   * authorization boundary: a seat may only await what its thread owns. */
+  getOwnedExecutions(parentChatId: string): ReadonlyArray<AwaitableOwnedExecution>
   clampTimeoutSeconds(value: unknown): number
   now?: () => number
   delay?: (ms: number) => Promise<void>
@@ -117,6 +141,7 @@ async function awaitSubThreadTargets(
   deps: DispatchEnsembleAwaitToolDeps,
   subThreadIdsValue: unknown,
   waveIdsValue: unknown,
+  executionIdsValue: unknown,
   timeoutSecondsValue: unknown
 ): Promise<EnsembleAwaitResult> {
   const runId = input.runId?.trim()
@@ -139,10 +164,17 @@ async function awaitSubThreadTargets(
   if (waveIdsValue !== undefined && requestedWaveIds === null) {
     return invalid('invalid_wave', 'ensemble_await: waveIds must be an array of strings.')
   }
-  if (!requestedSubThreadIds && !requestedWaveIds) {
+  const requestedExecutionIds = normalizeTargetIds(executionIdsValue)
+  if (executionIdsValue !== undefined && requestedExecutionIds === null) {
+    return invalid(
+      'invalid_execution',
+      'ensemble_await: executionIds must be an array of strings.'
+    )
+  }
+  if (!requestedSubThreadIds && !requestedWaveIds && !requestedExecutionIds) {
     return invalid(
       'no_targets',
-      'ensemble_await: no valid sub-thread or wave targets were specified.'
+      'ensemble_await: no valid sub-thread, wave, or execution targets were specified.'
     )
   }
   if (requestedSubThreadIds?.includes(parentChatId)) {
@@ -171,6 +203,19 @@ async function awaitSubThreadTargets(
     return invalid(
       'invalid_wave',
       `ensemble_await: wave target(s) do not belong to this parent chat: ${unknownWaveIds.join(', ')}.`
+    )
+  }
+
+  // A seat may only await what its own thread owns. Ownership is the same
+  // boundary the dispatch gate enforces, read here rather than re-derived.
+  let ownedExecutions = deps.getOwnedExecutions(parentChatId)
+  const unknownExecutionIds = (requestedExecutionIds || []).filter(
+    (executionId) => !ownedExecutions.some((run) => run.executionId === executionId)
+  )
+  if (unknownExecutionIds.length > 0) {
+    return invalid(
+      'invalid_execution',
+      `ensemble_await: execution target(s) do not belong to this parent chat: ${unknownExecutionIds.join(', ')}.`
     )
   }
 
@@ -203,22 +248,38 @@ async function awaitSubThreadTargets(
       }
     })
 
+  const executionsReport = (): EnsembleAwaitExecutionStatus[] =>
+    (requestedExecutionIds || []).map((executionId) => {
+      const run = ownedExecutions.find((candidate) => candidate.executionId === executionId)
+      const state = run?.state || 'missing'
+      return {
+        executionId,
+        settled: SETTLED_EXECUTION_STATES.has(state),
+        state,
+        ...(run?.title ? { title: run.title } : {})
+      }
+    })
+
   const allSettled = (): boolean =>
     subThreadsReport().every((target) => target.settled) &&
-    wavesReport().every((target) => target.settled)
+    wavesReport().every((target) => target.settled) &&
+    executionsReport().every((target) => target.settled)
 
   while (!allSettled() && now() < deadline && deps.isParentRunActive(runId, parentChatId)) {
     await wait(SUBTHREAD_AWAIT_POLL_INTERVAL_MS)
     childChats = deps.getChildChats(parentChatId)
     mailbox = deps.getSubThreadMailbox(parentChatId)
+    ownedExecutions = deps.getOwnedExecutions(parentChatId)
   }
 
   const subThreads = subThreadsReport()
   const waves = wavesReport()
+  const executions = executionsReport()
   const settledCount =
     subThreads.filter((target) => target.settled).length +
-    waves.filter((target) => target.settled).length
-  const totalTargets = subThreads.length + waves.length
+    waves.filter((target) => target.settled).length +
+    executions.filter((target) => target.settled).length
+  const totalTargets = subThreads.length + waves.length + executions.length
   const pendingCount = totalTargets - settledCount
   const settled = pendingCount === 0
   const parentEnded = !deps.isParentRunActive(runId, parentChatId)
@@ -234,6 +295,7 @@ async function awaitSubThreadTargets(
         }. Re-invoke ensemble_await to keep waiting, or proceed with the settled targets.`,
     ...(subThreads.length > 0 ? { subThreads } : {}),
     ...(waves.length > 0 ? { waves } : {}),
+    ...(executions.length > 0 ? { executions } : {}),
     settledCount,
     pendingCount
   }
@@ -253,14 +315,26 @@ export async function dispatchEnsembleAwaitTool(
   const subThreadIds = input.args.subThreadIds ?? input.args.sub_thread_ids
   const waveIds = input.args.waveIds ?? input.args.wave_ids
   const timeoutSeconds = input.args.timeoutSeconds ?? input.args.timeout_seconds
-  const hasChildTargets = subThreadIds !== undefined || waveIds !== undefined
+  const executionIds = input.args.executionIds ?? input.args.execution_ids
+  const hasChildTargets =
+    subThreadIds !== undefined || waveIds !== undefined || executionIds !== undefined
   const unreturnableResult = hasChildTargets
     ? unreturnableSubThreadAwaitResult(input, deps, subThreadIds, waveIds)
     : null
   if (unreturnableResult) return unreturnableResult
 
   if (laneIds === undefined && hasChildTargets) {
-    return awaitSubThreadTargets(input, deps, subThreadIds, waveIds, timeoutSeconds)
+    return awaitSubThreadTargets(input, deps, subThreadIds, waveIds, executionIds, timeoutSeconds)
+  }
+  // The lane path is the Ensemble orchestrator's own implementation and has no
+  // execution-graph awareness. Refuse the combination rather than accept the
+  // argument and silently drop it — ultra_task is solo-only, so a lane target
+  // and an execution target together is already incoherent.
+  if (executionIds !== undefined) {
+    return invalid(
+      'invalid_execution',
+      'ensemble_await: executionIds cannot be combined with laneIds — await lanes and executions in separate calls.'
+    )
   }
 
   const awaitInput = {

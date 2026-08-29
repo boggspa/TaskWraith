@@ -1271,6 +1271,8 @@ export interface EnsembleAwaitInput {
   laneIds?: string[]
   subThreadIds?: string[]
   waveIds?: string[]
+  /** Durable execution graphs owned by this thread (e.g. an UltraTask). */
+  executionIds?: string[]
   timeoutSeconds?: number
 }
 
@@ -1298,6 +1300,18 @@ export interface EnsembleAwaitWaveStatus {
   childrenSettled: number
 }
 
+/**
+ * A durable execution the awaiting thread owns. `settled` is true for every
+ * state the graph will not leave on its own — including `requires_action`,
+ * which is stopped pending a human and must not hold the seat until timeout.
+ */
+export interface EnsembleAwaitExecutionStatus {
+  executionId: string
+  settled: boolean
+  state: string
+  title?: string
+}
+
 export interface EnsembleAwaitResult {
   ok: boolean
   tool: 'ensemble_await'
@@ -1305,10 +1319,11 @@ export interface EnsembleAwaitResult {
    * targets still running (partial results). */
   status?: 'settled' | 'timeout'
   message: string
-  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes' | 'invalid_sub_thread' | 'invalid_wave' | 'no_targets'
+  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes' | 'invalid_sub_thread' | 'invalid_wave' | 'invalid_execution' | 'no_targets'
   lanes?: EnsembleAwaitLaneStatus[]
   subThreads?: EnsembleAwaitSubThreadStatus[]
   waves?: EnsembleAwaitWaveStatus[]
+  executions?: EnsembleAwaitExecutionStatus[]
   settledCount?: number
   pendingCount?: number
 }
