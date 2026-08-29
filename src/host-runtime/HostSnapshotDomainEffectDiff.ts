@@ -251,7 +251,11 @@ export function diffHostSnapshotDomainEffects(
         })
         continue
       }
-      if (left !== undefined && right !== undefined && !deepEqualCanonical(left, right)) {
+      if (
+        left !== undefined &&
+        right !== undefined &&
+        !deepEqualCanonical(comparableProjection(family, left), comparableProjection(family, right))
+      ) {
         effects.push({
           kind: 'upsert',
           family,
@@ -520,6 +524,37 @@ function uniqueSortedIds(
 
 function clonePayload(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown
+}
+
+/**
+ * Elide LIVE CLOCK fields from the change comparison only — never from the
+ * emitted payload.
+ *
+ * `goal.wallMs` / `goal.activeMs` are recomputed against the wall clock every
+ * time the projection is built, so comparing them makes every re-projection a
+ * "change" and the diff publishes an upsert that carries no news. Measured on a
+ * live profile: four threads with an unfinished goal each republished every
+ * ~1.4s, forever, with nothing else different — the Host held 82% CPU and the
+ * delta cursor climbed without bound.
+ *
+ * The payload is untouched, so a delta emitted for any real change still
+ * carries the current numbers, as does every snapshot.
+ */
+function comparableProjection(family: HostDeltaFamily, value: unknown): unknown {
+  if (family !== 'thread' || !value || typeof value !== 'object' || Array.isArray(value)) {
+    return value
+  }
+  const record = value as Record<string, unknown>
+  const goal = record.goal
+  if (!goal || typeof goal !== 'object' || Array.isArray(goal)) return value
+  const goalRecord = goal as Record<string, unknown>
+  if (goalRecord.wallMs === undefined && goalRecord.activeMs === undefined) return value
+  const comparableGoal: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(goalRecord)) {
+    if (key === 'wallMs' || key === 'activeMs') continue
+    comparableGoal[key] = entry
+  }
+  return { ...record, goal: comparableGoal }
 }
 
 /** Stable deep equality via canonicalized JSON (sorted object keys). */

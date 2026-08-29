@@ -53,6 +53,58 @@ describe('diffHostSnapshotDomainEffects', () => {
     expect(result).toEqual({ kind: 'effects', effects: [] })
   })
 
+  it('ignores a ticking goal clock but still reports every other thread change', () => {
+    // `goal.wallMs` / `goal.activeMs` are recomputed against the wall clock on
+    // every projection, so comparing them makes every re-projection a change.
+    // Measured on a live profile: four threads with an unfinished goal published
+    // one upsert EACH every ~1.4s, forever, with nothing else different — the
+    // Host sat at 82% CPU and the delta cursor climbed without bound.
+    const before = baseSnapshot({
+      threads: [
+        {
+          id: 'th-goal',
+          workspaceId: null,
+          title: 'Long-running goal',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 1,
+          messageCount: 3,
+          goal: {
+            id: 'goal-1',
+            objective: 'Keep going',
+            status: 'active',
+            mode: 'build',
+            wallMs: 750_994_327,
+            activeMs: 750_994_327
+          }
+        }
+      ]
+    })
+
+    const onlyClockMoved = cloneSnapshot(before)
+    onlyClockMoved.threads[0]!.goal!.wallMs = 750_994_831
+    onlyClockMoved.threads[0]!.goal!.activeMs = 750_994_831
+    expect(diffHostSnapshotDomainEffects(before, onlyClockMoved)).toEqual({
+      kind: 'effects',
+      effects: []
+    })
+
+    // A real change still publishes, and carries the CURRENT clock with it.
+    const realChange = cloneSnapshot(onlyClockMoved)
+    realChange.threads[0]!.goal!.status = 'completed'
+    const result = diffHostSnapshotDomainEffects(before, realChange)
+    expect(result.kind).toBe('effects')
+    if (result.kind !== 'effects') return
+    expect(result.effects).toHaveLength(1)
+    expect(result.effects[0]).toMatchObject({
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'th-goal',
+      payload: { goal: { status: 'completed', wallMs: 750_994_831, activeMs: 750_994_831 } }
+    })
+  })
+
   it('does not mutate caller inputs', () => {
     const before = baseSnapshot({
       threads: [
