@@ -1,4 +1,15 @@
-import type { WebSiteLogin, WebSiteLoginAccess } from '../../shared/webSiteLogin'
+import {
+  partitionForWebSiteLogin,
+  type WebSiteLogin,
+  type WebSiteLoginAccess,
+  type WebSiteLoginStatus
+} from '../../shared/webSiteLogin'
+import {
+  classifyWebSiteLiveness,
+  livenessProbeUrl,
+  type WebSiteLivenessProbe,
+  type WebSiteLivenessResponse
+} from './WebSiteLoginLiveness'
 import type { WebSiteLoginStore } from './WebSiteLoginStore'
 import type { WebSiteProfileRegistry } from './WebSiteProfileRegistry'
 import type { WebLoginSignInWindowController } from './WebLoginSignInWindow'
@@ -19,6 +30,9 @@ export interface WebLoginServiceDeps {
   store: WebSiteLoginStore
   profiles: WebSiteProfileRegistry
   signInWindows: WebLoginSignInWindowController
+  /** Optional: without it every probe answers "unknown", which is the honest
+   *  degraded state rather than a guess. */
+  probe?: WebSiteLivenessProbe
   log?: (line: string) => void
 }
 
@@ -86,6 +100,37 @@ export class WebLoginService {
     return { ok: true }
   }
 
+  /**
+   * Ask the site whether its saved session still works.
+   *
+   * Advisory only, and never an authorization input (design section 8). Its one
+   * consequence is telling the user which site needs them - which is the whole
+   * answer to "TaskWraith cannot re-authenticate for you, so it had better be
+   * excellent at saying so".
+   */
+  async probeLiveness(id: string): Promise<WebSiteLoginStatus> {
+    const site = this.deps.store.get(id)
+    if (!site) return 'unknown'
+    let response: WebSiteLivenessResponse | null = null
+    if (this.deps.probe) {
+      try {
+        response = await this.deps.probe({
+          url: livenessProbeUrl(site),
+          partition: partitionForWebSiteLogin(site.id)
+        })
+      } catch (error) {
+        // An offline laptop is not an expired session. Saying so would send the
+        // user to re-authenticate for nothing, and a prompt that cries wolf is
+        // one they learn to dismiss.
+        this.deps.log?.(`[web-login] liveness probe failed for ${id}: ${String(error)}`)
+        response = null
+      }
+    }
+    const status = classifyWebSiteLiveness(site, response)
+    this.deps.store.setStatus(id, status)
+    return status
+  }
+
   async signIn(id: string): Promise<WebLoginSignInResult> {
     const site = this.deps.store.get(id)
     if (!site) return { ok: false, reason: 'That site is no longer saved.' }
@@ -99,11 +144,14 @@ export class WebLoginService {
             : `Could not open a sign-in window for ${site.label}.`
       }
     }
-    // Status is advisory and deliberately optimistic-free: closing the window is
-    // not proof of a session, so this records "unknown" until something actually
-    // makes a request. The liveness probe that upgrades it is a later slice.
-    const updated = this.deps.store.setStatus(id, 'unknown')
-    return { ok: true, suggestedOrigins: outcome.suggestedOrigins, site: updated }
+    // Closing the window is not proof of a session, so the status comes from a
+    // real request rather than from the window having been open.
+    await this.probeLiveness(id)
+    return {
+      ok: true,
+      suggestedOrigins: outcome.suggestedOrigins,
+      site: this.deps.store.get(id)
+    }
   }
 }
 

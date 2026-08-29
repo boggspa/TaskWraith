@@ -1383,6 +1383,7 @@ import { resolveWebSiteCanvasBinding } from './webLogin/WebSiteCanvasBinding'
 import { WebLoginSignInWindowController } from './webLogin/WebLoginSignInWindow'
 import { createSignInBrowserWindow } from './webLogin/WebLoginSignInWindowElectron'
 import { WebLoginService } from './webLogin/WebLoginService'
+import { createElectronWebSiteLivenessProbe } from './webLogin/WebSiteLivenessProbeElectron'
 import { registerWebLoginHandlers } from './ipc/webLoginHandlers'
 import {
   createWebLoginToolExecutors,
@@ -4592,7 +4593,8 @@ const webSiteProfiles = new WebSiteProfileRegistry({
 const webLoginService = new WebLoginService({
   store: webSiteLoginStore,
   profiles: webSiteProfiles,
-  signInWindows: new WebLoginSignInWindowController({ createWindow: createSignInBrowserWindow })
+  signInWindows: new WebLoginSignInWindowController({ createWindow: createSignInBrowserWindow }),
+  probe: createElectronWebSiteLivenessProbe()
 })
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {
@@ -4915,6 +4917,7 @@ function teardownCanvasSurfacesForWindowClose(): void {
 let canvasLaunchAttemptsSnapshot: (() => LaunchAttempt[]) | null = null
 const webLoginToolExecutors = createWebLoginToolExecutors({
   listSites: () => webLoginService.list(),
+  probeSite: (siteId) => webLoginService.probeLiveness(siteId),
   openBoundCanvas: async ({ siteId, url, context, provider }) => {
     const opened = await canvasService.open(
       { driver: 'web', siteId, ...(url ? { url } : {}) },

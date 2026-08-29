@@ -140,3 +140,52 @@ describe('web_login_open', () => {
     expect(result.text).toContain('not available to agents')
   })
 })
+
+describe('web_login_open re-authentication', () => {
+  it('refuses an expired session by name, with no retry and no self-help', async () => {
+    const openBoundCanvas = vi.fn(async () => ({ canvasId: 'canvas-1' }))
+    const { executeWebLoginTool } = createWebLoginToolExecutors({
+      listSites: () => [site()],
+      openBoundCanvas,
+      probeSite: async () => 'expired'
+    })
+    const result = await executeWebLoginTool(
+      'web_login_open',
+      { siteId: 'example-com' },
+      {},
+      'claude'
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('Do not retry')
+    expect(result.text).toContain('Work > Logins')
+    // The agent must not be told to sign in itself - it is structurally
+    // forbidden from typing the credential.
+    expect(result.text).toContain('do not attempt to sign in yourself')
+    expect(openBoundCanvas).not.toHaveBeenCalled()
+  })
+
+  it('proceeds on a live or unverified session', async () => {
+    for (const status of ['signed-in', 'unknown', 'never'] as const) {
+      const openBoundCanvas = vi.fn(async () => ({ canvasId: 'canvas-1' }))
+      const { executeWebLoginTool } = createWebLoginToolExecutors({
+        listSites: () => [site()],
+        openBoundCanvas,
+        probeSite: async () => status
+      })
+      const result = await executeWebLoginTool(
+        'web_login_open',
+        { siteId: 'example-com' },
+        {},
+        'claude'
+      )
+      expect(result.isError).toBeFalsy()
+      expect(openBoundCanvas).toHaveBeenCalled()
+    }
+  })
+
+  it('proceeds when no probe is wired rather than blocking', async () => {
+    const h = harness()
+    const result = await h.execute('web_login_open', { siteId: 'example-com' }, {}, 'claude')
+    expect(result.isError).toBeFalsy()
+  })
+})

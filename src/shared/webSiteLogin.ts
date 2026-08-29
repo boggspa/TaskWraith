@@ -35,6 +35,9 @@ export interface WebSiteLogin {
   createdAt: string
   lastSignedInAt?: string
   lastVerifiedAt?: string
+  /** Optional liveness target. Must be inside the site's own fence; a target
+   *  outside it is ignored rather than followed. */
+  verify?: { url: string }
 }
 
 /** The renderer- and agent-facing projection. Identical today, named separately
@@ -224,8 +227,15 @@ export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {
     status,
     createdAt: raw.createdAt,
     ...(typeof raw.lastSignedInAt === 'string' ? { lastSignedInAt: raw.lastSignedInAt } : {}),
-    ...(typeof raw.lastVerifiedAt === 'string' ? { lastVerifiedAt: raw.lastVerifiedAt } : {})
+    ...(typeof raw.lastVerifiedAt === 'string' ? { lastVerifiedAt: raw.lastVerifiedAt } : {}),
+    ...(parseVerifyTarget(raw.verify) ? { verify: parseVerifyTarget(raw.verify)! } : {})
   }
+}
+
+function parseVerifyTarget(value: unknown): { url: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const url = (value as { url?: unknown }).url
+  return typeof url === 'string' && url.trim() ? { url: url.trim() } : null
 }
 
 /** Derive a readable, collision-resistant id from an origin. The caller

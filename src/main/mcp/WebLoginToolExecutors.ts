@@ -1,5 +1,5 @@
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
-import type { WebSiteLogin } from '../../shared/webSiteLogin'
+import type { WebSiteLogin, WebSiteLoginStatus } from '../../shared/webSiteLogin'
 
 /**
  * Agent-facing tools for authorized site sessions.
@@ -41,6 +41,9 @@ export interface WebLoginToolExecutorDeps {
     context: WebLoginToolContext
     provider: string
   }) => Promise<{ canvasId: string; url?: string }>
+  /** Optional liveness check run before binding. Without it the tool proceeds
+   *  and the agent discovers a login wall the hard way. */
+  probeSite?: (siteId: string) => Promise<WebSiteLoginStatus>
 }
 
 export interface WebLoginToolExecutors {
@@ -118,6 +121,22 @@ export function createWebLoginToolExecutors(deps: WebLoginToolExecutorDeps): Web
           const siteId = asOptString(args.siteId)
           if (!siteId) {
             return fail(toolName, '`siteId` is required (from web_login_list).')
+          }
+          // Check the session BEFORE handing over a canvas. An agent that
+          // opens onto a login wall cannot fix it - it is structurally
+          // forbidden from typing the credential - so it would either retry or
+          // improvise. Refusing here, by name and without a retry, turns a
+          // dead end into a question for the user.
+          if (deps.probeSite) {
+            const status = await deps.probeSite(siteId)
+            if (status === 'expired') {
+              return fail(
+                toolName,
+                `The saved login "${siteId}" needs the user to sign in again. Do not retry and ` +
+                  `do not attempt to sign in yourself: ask the user to open Work > Logins and ` +
+                  `press Sign in for this site.`
+              )
+            }
           }
           const url = asOptString(args.url)
           const opened = await deps.openBoundCanvas({

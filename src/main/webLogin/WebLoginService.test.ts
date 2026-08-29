@@ -21,6 +21,10 @@ function harness(
   overrides: {
     clearBrowsingData?: () => Promise<void>
     signIn?: WebLoginSignInWindowController['signIn']
+    probe?: (input: {
+      url: string
+      partition: string
+    }) => Promise<{ finalUrl: string; status: number }>
   } = {}
 ): {
   service: WebLoginService
@@ -55,7 +59,16 @@ function harness(
     isOpen: () => false,
     closeAll: () => {}
   } as unknown as WebLoginSignInWindowController
-  return { service: new WebLoginService({ store, profiles, signInWindows }), store, order }
+  return {
+    service: new WebLoginService({
+      store,
+      profiles,
+      signInWindows,
+      ...(overrides.probe ? { probe: overrides.probe } : {})
+    }),
+    store,
+    order
+  }
 }
 
 describe('WebLoginService forget', () => {
@@ -145,5 +158,76 @@ describe('WebLoginService signIn', () => {
     const result = await h.service.signIn(id)
     expect(result.ok).toBe(false)
     expect(result.reason).toMatch(/already open/i)
+  })
+})
+
+describe('WebLoginService liveness', () => {
+  it('records signed-in when the probe settles on the site own origin', async () => {
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://example.com/account', status: 200 })
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    expect(await h.service.probeLiveness(id)).toBe('signed-in')
+    expect(h.store.get(id)?.status).toBe('signed-in')
+  })
+
+  it('records expired when the probe is bounced to the SSO hop', async () => {
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://sso.example-idp.com/authorize', status: 200 })
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    h.service.update(id, { extraOrigins: ['https://sso.example-idp.com'] })
+    expect(await h.service.probeLiveness(id)).toBe('expired')
+  })
+
+  it('probes the site OWN partition, not a shared one', async () => {
+    const seen: string[] = []
+    const h = harness({
+      probe: async ({ partition }) => {
+        seen.push(partition)
+        return { finalUrl: 'https://example.com/', status: 200 }
+      }
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    await h.service.probeLiveness(id)
+    expect(seen).toEqual(['persist:taskwraith-site-example-com'])
+  })
+
+  it('a thrown probe is UNKNOWN, never expired', async () => {
+    // An offline laptop is not an expired session; a prompt that cries wolf is
+    // one the user learns to dismiss.
+    const h = harness({
+      probe: async () => {
+        throw new Error('ERR_INTERNET_DISCONNECTED')
+      }
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    expect(await h.service.probeLiveness(id)).toBe('unknown')
+  })
+
+  it('answers unknown with no probe configured, rather than guessing', async () => {
+    const h = harness()
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    expect(await h.service.probeLiveness(id)).toBe('unknown')
+  })
+
+  it('sign-in takes its status from a real request, not from the window closing', async () => {
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://example.com/', status: 200 })
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    const result = await h.service.signIn(id)
+    expect(result.site?.status).toBe('signed-in')
+  })
+
+  it('sign-in that did not actually authenticate stays expired', async () => {
+    const h = harness({ probe: async () => ({ finalUrl: 'https://example.com/', status: 401 }) })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    expect((await h.service.signIn(id)).site?.status).toBe('expired')
+  })
+
+  it('probing a site that is gone is unknown, not a throw', async () => {
+    const h = harness()
+    expect(await h.service.probeLiveness('never-existed')).toBe('unknown')
   })
 })

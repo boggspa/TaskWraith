@@ -267,10 +267,18 @@ consequence of choosing option A in Section 10: TaskWraith cannot fix an expired
 session by itself, so it must be excellent at telling the user, in the moment,
 exactly which site needs them.
 
-Detecting a login wall is a heuristic - a redirect to an origin in
-`extraOrigins`, or the liveness probe failing. It is allowed to be a heuristic
-because its only consequence is asking the user a question. It must never be
-allowed to become an authorization input.
+Detecting a login wall is a heuristic: the probe runs on the site's OWN
+partition, so it carries exactly the cookies that site's canvases would, and it
+reads only where the request settled and what status came back. Settling on the
+site's own origin means signed-in; being handed to one of its SSO hops, or a
+401/403, means expired; **everything else is unknown**. An offline laptop is not
+an expired session, and a prompt that cries wolf is one the user learns to
+dismiss.
+
+It is allowed to be a heuristic because its only consequence is asking the user
+a question. It must never become an authorization input. A `verify` target
+outside the site's own fence is ignored rather than followed, so a hand-edited
+catalogue cannot aim a cookie-bearing request at an arbitrary host.
 
 ---
 
@@ -372,7 +380,7 @@ this index.
 | **P2** | Human-only sign-in window | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge. |
 | **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
 | **P4** | Agent surface | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
-| **P5** | Re-authentication signalling and the liveness probe | `signin_required`, the Work-tab prompt, optional per-site probe. |
+| **P5** | Re-authentication signalling and the liveness probe | Landed. A probe on the site's own partition classifies the session; `web_login_open` refuses an expired one by name, with no retry and an explicit instruction not to self-serve; sign-in takes its status from a real request rather than from the window closing. |
 
 P1 is the bulk of the work and the only slice that carries regression risk to
 the shipped Canvas Browser.
