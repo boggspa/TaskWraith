@@ -1005,6 +1005,16 @@ function defaultReasoningEffortForModel(
     if (ollamaDefault && enabled.includes(ollamaDefault)) return ollamaDefault
   }
 
+  // Pi needs the same branch. Without it the chain falls through to
+  // `enabled.includes('medium')` — and once each Pi model carries its own
+  // ladder, most no longer offer `medium`, so a fresh seat landed on
+  // `enabled[0]`, which is `off`. That would launch every Pi run with
+  // `--thinking off`.
+  if (provider === 'pi') {
+    const piDefault = resolvePiReasoningSupport(model).defaultEffort
+    if (piDefault && enabled.includes(piDefault)) return piDefault
+  }
+
   const providerDefault = resolveEnabledEffortToken(
     normalizeReasoningEffortToken(getDefaultEnsembleParticipantConfig(provider).reasoningEffort),
     enabled

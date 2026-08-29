@@ -47,6 +47,14 @@ describe('resolveOllamaReasoningSupport', () => {
     expect(resolveOllamaReasoningSupport({ modelId: 'ornith:9b' }).kind).toBe('toggle')
   })
 
+  // The curated matcher treats `<id>-<suffix>` as family, so listing the base
+  // tag as a toggle would swallow the one variant that cannot think.
+  it('lets a non-thinking variant outrank its thinking family', () => {
+    expect(resolveOllamaReasoningSupport({ modelId: 'qwen3:4b' }).kind).toBe('toggle')
+    expect(resolveOllamaReasoningSupport({ modelId: 'qwen3:4b-thinking' }).kind).toBe('toggle')
+    expect(resolveOllamaReasoningSupport({ modelId: 'qwen3:4b-instruct' }).kind).toBe('unsupported')
+  })
+
   it('recognizes quantized and alias forms without widening unrelated models', () => {
     expect(resolveOllamaReasoningSupport({ modelId: 'ornith:35b-q4_K_M' }).kind).toBe('toggle')
     // GPT-OSS always reasons, so its ladder carries no Off stop.
@@ -175,6 +183,22 @@ describe('normalizeOllamaReasoningEffort', () => {
   it('keeps GPT-OSS on its documented level-only surface', () => {
     const support = resolveOllamaReasoningSupport({ modelId: 'gpt-oss:20b' })
     expect(normalizeOllamaReasoningEffort('low', support)).toBe('low')
-    expect(normalizeOllamaReasoningEffort('off', support)).toBe('high')
+    // GPT-OSS cannot stop reasoning, so Off honours the INTENT — the least it
+    // will do — rather than answering "as little as possible" with its top.
+    expect(normalizeOllamaReasoningEffort('off', support)).toBe('low')
+    expect(normalizeOllamaReasoningEffort('minimal', support)).toBe('low')
+    expect(normalizeOllamaReasoningEffort('ultratask', support)).toBe('high')
+  })
+
+  it('rounds an unoffered level UP to the next stop the vendor honours', () => {
+    // DeepSeek documents `medium` and `xhigh` as aliases for `high`. Rounding
+    // DOWN would run the Local Scout profile (reasoningLevel 'medium') at
+    // DeepSeek's LOWEST effort.
+    const deepseek = resolveOllamaReasoningSupport({ modelId: 'deepseek-v4-pro:cloud' })
+    expect(normalizeOllamaReasoningEffort('medium', deepseek)).toBe('high')
+    // GLM 5.2 offers only High and Max, so anything below lands on High.
+    const glm52 = resolveOllamaReasoningSupport({ modelId: 'glm-5.2:cloud' })
+    expect(normalizeOllamaReasoningEffort('low', glm52)).toBe('high')
+    expect(normalizeOllamaReasoningEffort('off', glm52)).toBe('off')
   })
 })

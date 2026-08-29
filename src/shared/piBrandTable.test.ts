@@ -57,8 +57,12 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe('NVIDIA')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass).toBe('nvidia')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe(
+      'NVIDIA'
+    )
+    expect(
+      resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass
+    ).toBe('nvidia')
   })
 
   it('maps qwen-token-plan to the EXISTING qwen hue, not a new one', () => {
@@ -87,6 +91,16 @@ describe('resolvePiModelLabel', () => {
       'qwen-token-plan/qwen3.8-max'
     )
     expect(resolvePiModelLabel('qwen-token-plan/qwen3.8-max-preview')).toBe('Qwen3.8 Max')
+  })
+
+  it('canonicalizes the pre-rename OpenRouter Z.ai id', () => {
+    // OpenRouter's namespace is `z-ai`; the unhyphenated form we shipped 404s.
+    // A saved seat naming it must still find its brand and its ladder rather
+    // than falling through to the Pi default model.
+    expect(canonicalPiWireModelId('openrouter/zai/glm-5.2')).toBe('openrouter/z-ai/glm-5.2')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')).toEqual(
+      resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')
+    )
   })
 
   it('keeps the disambiguating suffix on models two upstreams both serve', () => {

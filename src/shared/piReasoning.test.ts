@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PI_FULL_LADDER, resolvePiReasoningSupport } from './piReasoning'
+import { PI_FULL_LADDER, defaultPiReasoningEffort, resolvePiReasoningSupport } from './piReasoning'
 import { PI_STATIC_MODELS } from '../host-shared/pi/PiModels'
 
 describe('resolvePiReasoningSupport', () => {
@@ -90,5 +90,45 @@ describe('resolvePiReasoningSupport', () => {
       'high',
       'xhigh'
     ])
+  })
+
+  // A saved seat still names the pre-rename id. Resolving it as "unlisted"
+  // would hand it the 7-stop fallback — including an Off that route does not
+  // have — while dispatch quietly sent the request somewhere else entirely.
+  it('resolves a historical wire id to the ladder it actually dispatches to', () => {
+    for (const [legacy, canonical] of [
+      ['openrouter/zai/glm-5.2', 'openrouter/z-ai/glm-5.2'],
+      ['qwen-token-plan/qwen3.8-max-preview', 'qwen-token-plan/qwen3.8-max']
+    ]) {
+      expect(resolvePiReasoningSupport(legacy), legacy).toEqual(
+        resolvePiReasoningSupport(canonical)
+      )
+    }
+  })
+})
+
+describe('defaultPiReasoningEffort', () => {
+  // Callers hardcoded 'medium'. Most Pi models no longer offer it, so the
+  // membership guard downstream rejected it and a fresh seat fell to the
+  // ladder's first stop — `off`. Every Pi run would have launched
+  // `--thinking off` without anyone asking for it.
+  it('starts a seat on a stop its own model offers', () => {
+    expect(defaultPiReasoningEffort('zai/glm-5.2')).toBe('max')
+    expect(defaultPiReasoningEffort('deepseek/deepseek-v4-pro')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/zai/glm-5.2')).toBe('high')
+    // No reasoning axis at all, so there is nothing to start on.
+    expect(defaultPiReasoningEffort('mistral/mistral-large-2512')).toBe('')
+    // Unset (seat-level) and unresearched both keep the historical default.
+    expect(defaultPiReasoningEffort('')).toBe('medium')
+    expect(defaultPiReasoningEffort('brand/new-model')).toBe('medium')
+  })
+
+  it('never starts a seat on a stop the model does not offer', () => {
+    for (const model of PI_STATIC_MODELS) {
+      const support = resolvePiReasoningSupport(model.wireId)
+      const start = defaultPiReasoningEffort(model.wireId)
+      if (support.efforts.length === 0) expect(start, model.wireId).toBe('')
+      else expect(support.efforts, model.wireId).toContain(start)
+    }
   })
 })

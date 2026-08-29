@@ -1166,6 +1166,22 @@ describe('mistral configurable reasoning support', () => {
     expect(values('mistral/ministral-8b-2512')).toEqual([])
   })
 
+  // Regression: the seat-change chain had no `pi` branch, so a fresh seat fell
+  // through to `enabled.includes('medium')`. Once each model carried its own
+  // ladder most no longer offered medium, and the seat landed on `enabled[0]`
+  // — `off`. Every Pi run would have launched with `--thinking off`.
+  it('seeds a fresh Pi seat on its model default, never on Off', () => {
+    const seat = (model: string): string | undefined =>
+      resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null })
+
+    expect(seat('zai/glm-5.2')).toBe('max')
+    expect(seat('deepseek/deepseek-v4-pro')).toBe('high')
+    expect(seat('openrouter/z-ai/glm-5.2')).toBe('high')
+    // Only where Off is the honest answer: a model with no reasoning axis
+    // resolves to no effort at all.
+    expect(seat('mistral/mistral-large-2512')).toBeUndefined()
+  })
+
   it('locks the ladder for Pi upstreams that always reason', () => {
     // Both accept a disable flag and ignore it, so an Off stop would be a
     // control that silently does nothing.

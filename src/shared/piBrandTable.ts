@@ -119,7 +119,12 @@ export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
  * pickers; dispatch and historical presentation canonicalize through here.
  */
 export const PI_MODEL_WIRE_ID_ALIASES: Readonly<Record<string, string>> = {
-  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max'
+  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max',
+  // OpenRouter's Z.ai namespace is `z-ai`; TaskWraith shipped the
+  // unhyphenated form, which 404s. Without this alias a saved seat pinned to
+  // the old id falls through `normalizePiWireModelId` to the Pi DEFAULT model
+  // — a different vendor, key and bill, with no error.
+  'openrouter/zai/glm-5.2': 'openrouter/z-ai/glm-5.2'
 }
 
 export function canonicalPiWireModelId(wireModelId: string): string {
@@ -152,7 +157,7 @@ export function splitPiWireModelId(wireId: string): { upstream: string; modelId:
 export function resolvePiUpstreamBrand(
   wireModelId: string | null | undefined
 ): PiUpstreamBrand | null {
-  const wire = String(wireModelId || '').trim()
+  const wire = canonicalPiWireModelId(String(wireModelId || '').trim())
   const split = splitPiWireModelId(wire)
   if (!split) return null
 

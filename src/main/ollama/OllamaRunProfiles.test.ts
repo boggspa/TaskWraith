@@ -161,7 +161,8 @@ describe('OllamaRunProfiles', () => {
         'off'
       )
     ).toBe(false)
-    // GLM 5.3 cannot stop reasoning, so Off must not become `think: false`.
+    // GLM 5.3 cannot stop reasoning, so Off must not become `think: false` —
+    // but it must land on the LEAST the model will do, not its default of max.
     expect(
       resolveOllamaThinkingLevel(
         'glm-5.3:cloud',
@@ -169,7 +170,7 @@ describe('OllamaRunProfiles', () => {
         undefined,
         'off'
       )
-    ).toBe('max')
+    ).toBe('low')
     expect(
       resolveOllamaThinkingLevel(
         'gpt-oss:20b',

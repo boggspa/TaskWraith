@@ -887,7 +887,11 @@ function normalizeOllamaControls(value: unknown): OllamaLaunchControls {
     reasoningLevel:
       typeof record.reasoningLevel === 'boolean'
         ? boolean(record.reasoningLevel, 'Ollama thinking toggle')
-        : nullableOneOf(record.reasoningLevel, ['low', 'medium', 'high'], 'Ollama reasoning level'),
+        : nullableOneOf(
+            record.reasoningLevel,
+            ['low', 'medium', 'high', 'max'],
+            'Ollama reasoning level'
+          ),
     contextCapTokens: positiveInteger(record.contextCapTokens, 'Ollama context cap'),
     protocolMode: oneOf(
       record.protocolMode,

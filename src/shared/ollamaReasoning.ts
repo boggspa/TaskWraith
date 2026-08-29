@@ -82,6 +82,10 @@ function levels(
 // Runtime launch still prefers exact `/api/show` capabilities, so a retagged or
 // upgraded model can override this table without waiting for a TaskWraith build.
 const KNOWN_TOGGLE_MODEL_IDS = [
+  // The base and `-thinking` siblings of the instruct variant below both
+  // think; only `qwen3:4b-instruct` does not.
+  'qwen3:4b',
+  'qwen3:4b-thinking',
   'qwen3.5:2b',
   'qwen3.5:4b',
   'qwen3.5:9b',
@@ -208,6 +212,9 @@ const FAMILY_LADDERS: readonly (readonly [string, OllamaReasoningSupport])[] = [
   ['kimi-k3', ALWAYS_ON],
   ['kimi-k2.7-code', ALWAYS_ON],
   ['kimi-k2.6', TOGGLE],
+  // Retired upstream on 2026-07-31, but saved chats still name it and an
+  // `unknown` renders as an affirmative "not configurable" denial.
+  ['kimi-k2.5', TOGGLE],
 
   // MiniMax M2.x: `thinking.type: "disabled"` is accepted and ignored.
   ['minimax-m2.7', ALWAYS_ON],
@@ -242,11 +249,15 @@ function staticOllamaReasoningSupport(modelId?: string | null): OllamaReasoningS
   if (!key) return UNKNOWN
   const ladder = familyLadder(key)
   if (ladder) return ladder
-  if (KNOWN_TOGGLE_MODEL_IDS.some((candidate) => matchesCuratedModel(key, candidate))) {
-    return TOGGLE
-  }
+  // Non-thinking is checked FIRST because its entries are the more specific
+  // statement. `qwen3:4b` thinks and `qwen3:4b-instruct` does not, and the
+  // curated matcher treats a `-` suffix as a family member — so the base tag
+  // would otherwise hand its sibling a control it cannot honour.
   if (KNOWN_NON_THINKING_MODEL_IDS.some((candidate) => matchesCuratedModel(key, candidate))) {
     return UNSUPPORTED
+  }
+  if (KNOWN_TOGGLE_MODEL_IDS.some((candidate) => matchesCuratedModel(key, candidate))) {
+    return TOGGLE
   }
   return UNKNOWN
 }
@@ -306,19 +317,28 @@ export function normalizeOllamaReasoningEffort(
     .trim()
     .toLowerCase()
 
+  const ladder = support.efforts.filter(isOllamaThinkingLevel)
+
   if (OFF_TOKENS.has(normalized)) {
-    return support.canDisable ? 'off' : support.defaultEffort
+    if (support.canDisable) return 'off'
+    // Cannot stop reasoning, so honour the INTENT: the least this model will
+    // do. Falling back to `defaultEffort` here would answer a request for as
+    // little as possible with GLM 5.3's `max` — worse than the boolean era
+    // this replaced.
+    return ladder.length > 0 ? ladder[0] : support.defaultEffort
   }
   if (support.kind === 'toggle') return 'on'
-
-  const ladder = support.efforts.filter(isOllamaThinkingLevel)
   if (ladder.length === 0) return support.defaultEffort
   if (TOP_TOKENS.has(normalized)) return ladder[ladder.length - 1]
   if (normalized === 'on' || normalized === 'true' || !normalized) return support.defaultEffort
   if (!isOllamaThinkingLevel(normalized)) return support.defaultEffort
   if (ladder.includes(normalized)) return normalized
 
+  // A level the model does not expose rounds UP to the next offered stop.
+  // That is what the vendors themselves document — DeepSeek and GLM both map
+  // `medium` onto `high` — and rounding DOWN would run Local Scout's `medium`
+  // at DeepSeek's LOWEST effort. Above the ladder, take its top.
   const requestedRank = LEVEL_ORDER.indexOf(normalized)
-  const atOrBelow = ladder.filter((level) => LEVEL_ORDER.indexOf(level) <= requestedRank)
-  return atOrBelow.length > 0 ? atOrBelow[atOrBelow.length - 1] : ladder[0]
+  const atOrAbove = ladder.filter((level) => LEVEL_ORDER.indexOf(level) >= requestedRank)
+  return atOrAbove.length > 0 ? atOrAbove[0] : ladder[ladder.length - 1]
 }

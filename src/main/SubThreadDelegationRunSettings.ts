@@ -18,6 +18,7 @@ import {
   normalizeOllamaReasoningEffort,
   resolveOllamaReasoningSupport
 } from '../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../shared/piReasoning'
 import { isMistralThinkingCapableModel } from '../shared/mistralModels'
 import { normalizeMistralThinkingLevel } from './mistral/MistralCliArgs'
 import { findPiStaticModel } from './pi/PiModels'
@@ -273,18 +274,17 @@ function normalizeReasoningEffort(
   }
 
   if (provider === 'pi') {
-    const normalized = piThinkingLevelForEffort(raw)
-    return normalized
-      ? { ok: true, value: normalized }
-      : invalidReasoningEffort(provider, raw, [
-          'off',
-          'minimal',
-          'low',
-          'medium',
-          'high',
-          'xhigh',
-          'max'
-        ])
+    // Validate against the MODEL's ladder, not pi's whole vocabulary. Without
+    // this a delegation could send `--thinking off` to an upstream that always
+    // reasons, or `minimal` to one where it means nothing.
+    const support = resolvePiReasoningSupport(modelId)
+    if (support.efforts.length === 0) return { ok: true }
+    const valid = new Set<string>([...support.efforts, ...TOP_TIER_REASONING_EFFORTS])
+    if (!valid.has(raw)) return invalidReasoningEffort(provider, raw, [...support.efforts])
+    const normalized = piThinkingLevelForEffort(
+      TOP_TIER_REASONING_EFFORTS.has(raw) ? support.efforts[support.efforts.length - 1] : raw
+    )
+    return normalized ? { ok: true, value: normalized } : { ok: true }
   }
 
   if (provider === 'muse') {
@@ -313,19 +313,16 @@ function normalizeReasoningEffort(
   if (provider === 'ollama') {
     const support = resolveOllamaReasoningSupport({ modelId })
     if (support.kind === 'unsupported' || support.kind === 'unknown') return { ok: true }
-    const valid =
-      support.kind === 'toggle'
-        ? new Set([
-            'off',
-            'false',
-            'on',
-            'true',
-            'low',
-            'medium',
-            'high',
-            ...TOP_TIER_REASONING_EFFORTS
-          ])
-        : new Set(['low', 'medium', 'high', ...TOP_TIER_REASONING_EFFORTS])
+    // Derived from the model's OWN ladder. Keying this on `kind` was correct
+    // while GPT-OSS was the only `levels` model and genuinely could not be
+    // disabled; now DeepSeek V4, GLM 5.2 and Mistral Medium 3.5 are `levels`
+    // WITH a real Off, and this rejected the very stop their picker offers.
+    const valid = new Set<string>([
+      ...support.efforts,
+      ...TOP_TIER_REASONING_EFFORTS,
+      ...(support.canDisable ? ['false'] : []),
+      ...(support.kind === 'toggle' ? ['true', 'low', 'medium', 'high'] : [])
+    ])
     if (!valid.has(raw)) return invalidReasoningEffort(provider, raw, [...valid])
     const normalized = normalizeOllamaReasoningEffort(raw, support)
     return normalized ? { ok: true, value: normalized } : { ok: true }

@@ -17,6 +17,8 @@
  * silently stripped of a control it may well support.
  */
 
+import { canonicalPiWireModelId } from './piBrandTable'
+
 export type PiReasoningEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface PiReasoningSupport {
@@ -148,7 +150,20 @@ const FULL: PiReasoningSupport = Object.freeze({
  * to nothing before a model is chosen.
  */
 export function resolvePiReasoningSupport(wireId?: string | null): PiReasoningSupport {
-  const id = String(wireId || '').trim()
-  if (!id) return FULL
-  return PI_MODEL_REASONING[id] ?? FULL
+  const raw = String(wireId || '').trim()
+  if (!raw) return FULL
+  // Through the alias table, so a seat still pinned to a historical id gets the
+  // ladder of the model it actually dispatches to rather than the 7-stop
+  // fallback — which would offer an Off the upstream does not have.
+  return PI_MODEL_REASONING[canonicalPiWireModelId(raw)] ?? FULL
+}
+
+/**
+ * The effort a Pi seat should start on for a given model, or '' when the model
+ * has no reasoning axis. Callers previously hardcoded 'medium', which is now
+ * off-ladder for most models — it would fail a membership guard and fall back
+ * to itself, dispatching a level the upstream does not honour.
+ */
+export function defaultPiReasoningEffort(wireId?: string | null): string {
+  return resolvePiReasoningSupport(wireId).defaultEffort ?? ''
 }

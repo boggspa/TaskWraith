@@ -67,6 +67,7 @@ import {
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { defaultPiReasoningEffort } from '../../shared/piReasoning'
 import {
   appliedChatUpdateBaseline,
   applyChatUpdateDelivery,
@@ -4587,7 +4588,8 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'pi'
         ? {
-            piReasoningEffort: participant.reasoningEffort || 'medium'
+            piReasoningEffort:
+              participant.reasoningEffort || defaultPiReasoningEffort(participant.model)
           }
         : {}),
       antigravityReasoningEffort:
@@ -6668,7 +6670,7 @@ function App(): React.JSX.Element {
         typeof metadata.piReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.piReasoningEffort)
           ? metadata.piReasoningEffort
-          : 'medium',
+          : defaultPiReasoningEffort(selected),
       ollamaReasoningEffort:
         typeof metadata.ollamaReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.ollamaReasoningEffort)
@@ -8317,7 +8319,10 @@ function App(): React.JSX.Element {
           provider === 'muse' ? nextReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT : undefined,
         mistralReasoningEffort:
           provider === 'mistral' ? nextReasoningEffort || 'medium' : undefined,
-        piReasoningEffort: provider === 'pi' ? nextReasoningEffort || 'medium' : undefined,
+        piReasoningEffort:
+          provider === 'pi'
+            ? nextReasoningEffort || defaultPiReasoningEffort(nextModel)
+            : undefined,
         ollamaReasoningEffort: provider === 'ollama' ? nextReasoningEffort || '' : undefined,
         cursorReasoningEffort: provider === 'cursor' ? nextReasoningEffort || '' : undefined,
         cursorFastMode:

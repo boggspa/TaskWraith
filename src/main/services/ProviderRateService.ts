@@ -1416,7 +1416,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
         freeModel: true,
-        sourceUrl: 'https://openrouter.ai/zai/glm-5.2',
+        sourceUrl: 'https://openrouter.ai/z-ai/glm-5.2',
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Free on OpenRouter (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
