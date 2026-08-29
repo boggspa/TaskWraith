@@ -1170,6 +1170,61 @@ every time.
   Full Access remains a separate process-lifetime, exact-lane receipt with
   its own acknowledgement and confirmation; a workspace grant never mints it.
 
+## v0.48 — workspace pane headers: de-pilled and width-budgeted (2026-08-29)
+
+The File Editor and Diff Studio detail panes share one chrome bar — back
+affordance, file identity, action run — and it had two faults on iPad.
+
+**Pills.** Every control was `.buttonStyle(.bordered)`, so the bar was a row of
+filled capsules that read louder than the source or the diff underneath it. The
+controls are now borderless: tint and weight only, no container. The bar is
+deliberately monochrome apart from its two ends — the back control and the
+pane's primary action (Save in the editor, Stage in the viewer) carry the
+accent, Delete carries `statusFailed`, and everything between is `textPrimary`.
+The chrome bar already supplies the plane these sit on; a container per control
+just restated it six times.
+
+**Wrapping — the same size-class trap as v0.13, one layer down.** An HStack of
+Labels has no compression policy, so when the six action buttons did not fit,
+SwiftUI shrank each toward its minimum and wrapped the TEXT: "Back to app"
+became "Back / to app" and "Stage" became a pill six lines tall, one character
+per line. The pane could not see this coming because it branches on a `compact`
+flag that is `false` for every iPad width — a split view's detail column reports
+a COMPACT size class, which is exactly why v0.13 made the flag explicit, and
+`false` then meant "spell everything out" at 570pt just as it did at 1016pt.
+
+`TWWorkspaceHeaderPolicy` (`WorkspaceHeaderChrome.swift`) budgets the bar
+against the MEASURED pane instead, read inline from a `GeometryReader` and never
+written back to state — the same shape as `ThreadInspectorColumnPolicy`. Two
+rules hold it up:
+
+- **Nothing in the bar wraps.** Every control is `.lineLimit(1)` and
+  `.fixedSize(horizontal:)`, so it holds its intrinsic width or drops to a
+  glyph; it never compresses into a character column. The TITLE is the single
+  flexible element and it truncates instead — the path in the MIDDLE, because a
+  path's tail is its filename and that is the half a reader needs when the head
+  is `src/renderer/src/components/...`.
+- **Order of sacrifice, cheapest first:** action wording, then the title's
+  comfortable width, then — last, because it is the pane's only escape — the
+  back control's wording. Collapsing never costs VoiceOver a name; the wording
+  survives as the accessibility label at every tier.
+
+Measured tiers for the editor's six actions: labels above ~801pt (13-inch
+landscape), glyphs with the way out still named from ~435pt (the reported
+570pt window, and 11-inch portrait), chevron-only below that. The Diff Studio
+bar is capability-GATED rather than fixed — a read-only workspace loses Stage
+and Unstage outright — so the same 570pt pane that cannot label six actions
+comfortably labels the one that remains.
+
+The phone loses no wording it had: `FilesModeCompactView` says "Files" rather
+than "Back to app", which is short enough that a 393pt iPhone still seats it
+beside all six glyphs.
+
+`WorkspaceHeaderPolicyTests` sweeps the budget rather than sampling it: every
+chosen layout fits, every refusal was genuinely unaffordable (without that
+second half the suite passes by always returning the narrowest bar), and the
+back control's wording outlives the action wording at every width.
+
 ## Current follow-ups
 
 **P0 distribution gate (established 2026-08-27):** Chris Izatt owns the
