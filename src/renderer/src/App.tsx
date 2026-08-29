@@ -32191,6 +32191,7 @@ function App(): React.JSX.Element {
           (typeof agentStatusByProvider.ollama?.modelCount !== 'number' ||
             agentStatusByProvider.ollama.modelCount > 0)
         }
+        ollamaStatus={agentStatusByProvider.ollama}
         usageSummary={usageSummary}
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}
