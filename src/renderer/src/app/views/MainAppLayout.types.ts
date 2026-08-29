@@ -10,6 +10,7 @@ import type {
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
 import type { ChatPopoutPresentation } from '../../../../shared/chatPopoutPresentation'
+import type { ExecutionGhostCardView } from '../../../../shared/executionGraphGhost'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -668,6 +669,10 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleRunCompleteNotice: any
   /** Threads still accountable for an unsettled durable execution. */
   liveOwnedExecutionThreads: Set<string>
+  /** Ghost-strip views for every owned execution, keyed by owning thread.
+   * Terminal graphs are included: a settled result card still shows how its
+   * graph fanned out. */
+  ownedExecutionViewsByThreadId: Map<string, ExecutionGhostCardView[]>
   pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
   welcomeFitLevel: any

@@ -12,6 +12,7 @@ import {
 } from '../../../shared/fleetWave'
 import { NativeOrchestrationCard } from './NativeOrchestrationCard'
 import { SeatChangeInlineStrip, SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { TASKWRAITH_GHOST_MONOLINE_PATHS } from './icons/TaskWraithGhostMark'
 import { composedSeatRole } from '../lib/transcriptSeat'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
@@ -65,17 +66,9 @@ const chipButtonStyle: CSSProperties = {
   lineHeight: 'inherit'
 }
 
-/** Paths from taskwraith-ghost-monoline.svg (viewBox 0 0 128 128). */
-const FLEET_WAVE_GHOST_PATHS = (
-  <>
-    <path d="M56 30H80L92 36L98 48V84H92L86 90L80 84L74 96L68 84L56 96L50 84H38V48L44 36Z" />
-    <path d="M50 84V104" />
-    <path d="M68 84V104" />
-    <path d="M86 90V104" />
-    <rect x="51" y="54" width="10" height="14" />
-    <rect x="75" y="54" width="10" height="14" />
-  </>
-)
+/** The shared monoline mark; the 128-unit viewBox is declared at each <svg>
+ * below, because the CSS stroke weight is calibrated against it. */
+const FLEET_WAVE_GHOST_PATHS = TASKWRAITH_GHOST_MONOLINE_PATHS
 
 function fleetWaveAgentStatus(agent: FleetWaveAgentState): {
   label: string

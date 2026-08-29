@@ -970,6 +970,7 @@ import {
   executionStackStepTitle,
   executionRunTimestamp,
   isTerminalExecutionRun,
+  ownedExecutionViewsByThread,
   liveOwnedExecutionThreadIds,
   mergeExecutionRunProjection,
   projectExecutionRun,
@@ -25791,6 +25792,13 @@ function App(): React.JSX.Element {
     () => liveOwnedExecutionThreadIds(executionRunsById),
     [executionRunsById]
   )
+  // Ghost-strip views for every OWNED execution, terminal included: live ones
+  // get their own transcript card, settled ones supply the matching result
+  // card's strip.
+  const ownedExecutionViewsByThreadId = useMemo(
+    () => ownedExecutionViewsByThread(executionRunsById),
+    [executionRunsById]
+  )
   const visibleRunCompleteNotice = deriveVisibleRunCompleteNotice({
     notice: runCompleteNotice,
     isChatRunning: isCurrentChatRunning
@@ -29870,6 +29878,8 @@ function App(): React.JSX.Element {
         isThinking={viewerIsRunning}
         runCompleteNotice={cachedPaneRunCompleteNotice(viewerChat, { isRunning: viewerIsRunning })}
         hasLiveOwnedExecution={liveOwnedExecutionThreads.has(viewerChatId)}
+        ownedExecutionViews={ownedExecutionViewsByThreadId.get(viewerChatId)}
+        onCancelOwnedExecution={handleCancelExecutionRun}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -31970,6 +31980,7 @@ function App(): React.JSX.Element {
     visibleGeminiTerminalLogs,
     visibleRunCompleteNotice,
     liveOwnedExecutionThreads,
+    ownedExecutionViewsByThreadId,
     welcomeDashboardCardEnabled,
     welcomeFitLevel,
     welcomeDashboardRegionRef,
