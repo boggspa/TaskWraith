@@ -937,6 +937,10 @@ export class TaskWraithTui {
       this.handleSeatsKey(key)
       return
     }
+    if (this.state.overlay === 'workspaces') {
+      this.handleWorkspacePickerKey(key)
+      return
+    }
     if (this.state.overlay !== 'none') {
       if (key.name === 'return' || key.name === 'enter') {
         this.state.overlay = 'none'
@@ -1293,6 +1297,93 @@ export class TaskWraithTui {
         threads.findIndex((thread) => thread.id === this.state.selectedThreadId)
       )
     }
+    if (overlay === 'workspaces' && this.state.overlay === 'workspaces') {
+      const workspaces = this.state.snapshot?.workspaces ?? []
+      const resolved = this.resolveWorkspaceId()
+      this.state.overlayIndex = Math.max(
+        0,
+        workspaces.findIndex((workspace) => workspace.id === resolved)
+      )
+    }
+    this.render()
+  }
+
+  /**
+   * Which workspace a new thread lands in. An explicit /workspace pick wins and
+   * keeps winning — that stickiness is the whole point of the lens. Without one
+   * we inherit the open thread's workspace, and only then fall back to the first
+   * registered workspace, which is raw registration order and therefore
+   * arbitrary. That silent last resort is what /workspace exists to make visible.
+   */
+  private resolveWorkspaceId(): string | undefined {
+    const workspaces = this.state.snapshot?.workspaces ?? []
+    const picked = workspaces.find((workspace) => workspace.id === this.state.activeWorkspaceId)
+    if (picked) return picked.id
+    return this.state.thread?.thread.workspaceId ?? workspaces[0]?.id
+  }
+
+  private handleWorkspacePickerKey(key: Keypress): void {
+    const workspaces = this.state.snapshot?.workspaces ?? []
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+    } else if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(
+        Math.max(0, workspaces.length - 1),
+        this.state.overlayIndex + 1
+      )
+    } else if (key.name === 'return' || key.name === 'enter') {
+      const workspace = workspaces[this.state.overlayIndex]
+      if (workspace) {
+        this.state.activeWorkspaceId = workspace.id
+        this.state.overlay = 'none'
+        this.setNotice(`New threads will use ${workspace.name}.`, 'neutral', 3_000)
+      }
+      this.render()
+      return
+    } else {
+      return
+    }
+    this.render()
+  }
+
+  /**
+   * `/workspace <absolute-path>` — the only route to workspace.register once a
+   * workspace already exists. The cold-start flow offers a path step, but only
+   * when no workspace resolves at all, so a profile with one registered
+   * workspace could never add a second from the CLI.
+   */
+  private async registerWorkspace(path: string): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot register workspaces.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('setup')) {
+      this.setNotice('Connected Host does not advertise workspace setup.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const command = buildWorkspaceRegisterCommand({ actor, path })
+    await this.runHostMutation(command, {
+      onSucceeded: async (receipt) => {
+        const registered =
+          receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : undefined
+        await this.refreshHostSnapshot()
+        if (registered) {
+          // Registering is an explicit act of intent, so adopt it immediately
+          // rather than making the user register and then pick it as well.
+          this.state.activeWorkspaceId = registered
+          this.setNotice(`Registered ${path}; new threads will use it.`, 'neutral', 4_000)
+        }
+        this.state.overlay = 'workspaces'
+      }
+    })
     this.render()
   }
 
@@ -1640,6 +1731,17 @@ export class TaskWraithTui {
     }
     if (command === '/threads') {
       this.toggleOverlay('threads')
+      return
+    }
+    if (command === '/workspace' || command === '/ws') {
+      // Re-join on spaces: workspace paths routinely contain them, and the
+      // dispatcher split the raw line on whitespace before we ever saw it.
+      const path = arguments_.join(' ').trim()
+      if (!path) {
+        this.toggleOverlay('workspaces')
+        return
+      }
+      await this.registerWorkspace(path)
       return
     }
     if (command === '/missions') {
@@ -2116,8 +2218,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    const workspaceId =
-      this.state.thread?.thread.workspaceId ?? this.state.snapshot?.workspaces[0]?.id
+    const workspaceId = this.resolveWorkspaceId()
     this.state.coldStart = workspaceId ? coldStartWorkspaceRegistered(workspaceId) : coldStartIdle()
     this.state.coldStartIntent = this.state.thread || workspaceId ? 'new-thread' : 'required'
     this.state.overlay = 'setup'
@@ -2228,8 +2329,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    const workspaceId =
-      this.state.thread?.thread.workspaceId ?? this.state.snapshot?.workspaces[0]?.id
+    const workspaceId = this.resolveWorkspaceId()
     const command = buildThreadCreateCommand({
       actor,
       scope: workspaceId ? 'workspace' : 'global',

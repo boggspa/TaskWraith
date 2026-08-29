@@ -35,6 +35,7 @@ export type TuiOverlay =
   | 'setup'
   | 'git'
   | 'seats'
+  | 'workspaces'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'
@@ -168,6 +169,12 @@ export interface TaskWraithTuiState {
   git?: TuiGitState
   /** The /seats lens state (ensemble seat control on the selected thread). */
   seats?: TuiSeatsState
+  /**
+   * Workspace chosen through /workspace. New threads land here, and the choice
+   * is sticky: it survives thread switches so a deliberate pick is never
+   * silently undone by opening a chat that lives somewhere else.
+   */
+  activeWorkspaceId?: string
 }
 
 function row(

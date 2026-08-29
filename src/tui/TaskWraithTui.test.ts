@@ -1165,6 +1165,66 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     ).toBe(true)
   }, 12_000)
 
+  it('sends a new thread to the workspace picked with /workspace, not the inherited one', async () => {
+    // Built from a char code so this file carries no literal control byte.
+    const DOWN = String.fromCharCode(27) + '[B'
+    const workspaces = [
+      { id: 'ws-1', name: 'GUIGemini', path: '/tmp/guigemini', pinned: false, updatedAt: 0 },
+      { id: 'ws-2', name: 'AGBench', path: '/tmp/agbench', pinned: true, updatedAt: 0 }
+    ]
+    let snapshot = makeHostSnapshot({ workspaces })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-workspace-pick-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => snapshot,
+      resultRef: (command) => {
+        if (command.name !== 'thread.create') return undefined
+        snapshot = makeHostSnapshot({
+          workspaces,
+          threads: [
+            ...snapshot.threads,
+            {
+              id: 'thread-new',
+              workspaceId: 'ws-2',
+              title: 'Fresh solo thread',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 11,
+              messageCount: 0,
+              providerId: 'claude',
+              latestPreview: 'Ready for a fresh prompt',
+              previewTruncated: false
+            }
+          ]
+        })
+        return { kind: 'thread', threadId: 'thread-new' }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+
+    // The open thread lives in ws-1, which is ALSO workspaces[0], so both silent
+    // fallbacks point at GUIGemini. Only an explicit pick can put the new thread
+    // anywhere else -- which is the whole reason /workspace exists.
+    feed(input, '/workspace\r')
+    await waitFor(() => output.lastFrame.includes('Workspaces'), 'workspace picker open')
+    feed(input, DOWN)
+    feed(input, '\r')
+    await waitFor(
+      () => output.lastFrame.includes('New threads will use AGBench'),
+      'workspace pick confirmed'
+    )
+
+    feed(input, '/new\r')
+    await waitFor(() => output.lastFrame.includes('Fresh solo thread'), 'new thread opened')
+    const create = [...host.commands].reverse().find((command) => command.name === 'thread.create')
+    expect(create?.arguments).toEqual({ scope: 'workspace', workspaceId: 'ws-2' })
+  }, 12_000)
+
   it('guides /new through provider selection before creating a solo thread', async () => {
     let configured = false
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-provider-host-'))

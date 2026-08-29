@@ -856,6 +856,64 @@ function renderMissionsOverlay(
   return [...lines.slice(0, Math.max(1, height - 2)), footer, bottom].slice(0, Math.max(1, height))
 }
 
+/**
+ * The /workspace picker. New threads inherit a workspace that was never chosen
+ * — the open thread's, else the FIRST registered one in raw file order — so the
+ * lens names the resolved target explicitly rather than leaving a silent pick
+ * to be discovered after a chat lands in the wrong repository.
+ */
+function renderWorkspacesOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const workspaces = state.snapshot?.workspaces ?? []
+  const lines = [borderTitle('Workspaces', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  if (!workspaces.length) {
+    lines.push(borderedLine(ansi.dim('No workspaces are registered.'), width, ansi, glyphs))
+    lines.push(
+      borderedLine(ansi.dim('/workspace <absolute-path> registers one.'), width, ansi, glyphs)
+    )
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+  // Mirrors resolveWorkspaceId in TaskWraithTui: an explicit pick wins, then the
+  // open thread's workspace, then the arbitrary first row. Kept in step so the
+  // marked row is always the one a new thread would actually use.
+  const activeId =
+    workspaces.find((workspace) => workspace.id === state.activeWorkspaceId)?.id ??
+    state.thread?.thread.workspaceId ??
+    workspaces[0]?.id
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, workspaces.length - 1))
+  const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+  for (
+    let index = windowStart;
+    index < Math.min(workspaces.length, windowStart + capacity);
+    index += 1
+  ) {
+    const workspace = workspaces[index]
+    const selected = index === safeIndex
+    const active = workspace.id === activeId
+    const name = truncateAnsi(terminalLabel(workspace.name), Math.max(8, width - 34))
+    const suffix = active ? ansi.dim('  new threads land here') : ''
+    const line = `${selected ? glyphs.selection : ' '} ${name}${suffix}`
+    lines.push(borderedLine(line, width, ansi, glyphs))
+  }
+  lines.push(
+    borderedLine(
+      ansi.dim('↑↓ choose · Enter set · /workspace <path> adds · Esc close'),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
 function renderHelpOverlay(
   width: number,
   height: number,
@@ -889,10 +947,12 @@ function renderHelpOverlay(
       ansi,
       glyphs
     ),
-    overlayValue('/new', `fresh solo thread${sep}/new <provider>`, width, ansi, glyphs),
+    // /new and /provider are the same handler, so they share one row. That keeps
+    // the overlay inside an 80x24 canvas, where a clipped bottom border reads as
+    // a broken frame.
     overlayValue(
-      '/provider',
-      `choose a provider for a new solo thread${sep}/provider <id>`,
+      '/new',
+      `fresh solo thread${sep}/new <provider>${sep}/provider <id>`,
       width,
       ansi,
       glyphs
@@ -910,6 +970,13 @@ function renderHelpOverlay(
     overlayValue(
       '/threads',
       `switch thread${sep}/context for workspace detail`,
+      width,
+      ansi,
+      glyphs
+    ),
+    overlayValue(
+      '/workspace',
+      `where new threads land${sep}/workspace <path> adds`,
       width,
       ansi,
       glyphs
@@ -1392,6 +1459,9 @@ function renderOverlay(
   }
   if (state.overlay === 'seats') {
     return renderSeatsOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'workspaces') {
+    return renderWorkspacesOverlay(state, width, height, ansi, glyphs)
   }
   return renderHelpOverlay(width, height, ansi, glyphs)
 }

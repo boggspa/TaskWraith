@@ -962,4 +962,29 @@ describe('TaskWraith TUI renderer', () => {
     expect(frame).toContain('Fetching offers from the Host')
     expect(frame).not.toContain('from the App')
   })
+  it('marks the workspace new threads will land in inside the /workspace picker', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'workspaces'
+    state.activeWorkspaceId = 'ws-2'
+    state.snapshot = {
+      ...state.snapshot!,
+      workspaces: [
+        { id: 'ws-1', name: 'GUIGemini', path: '/tmp/guigemini', pinned: false, updatedAt: 0 },
+        { id: 'ws-2', name: 'AGBench', path: '/tmp/agbench', pinned: true, updatedAt: 0 }
+      ]
+    }
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    // The marker must sit on the PICKED workspace, never the first registered
+    // one -- naming the wrong target is the failure this lens exists to prevent.
+    const marked = frame.split('\n').find((line) => line.includes('new threads land here'))
+    expect(marked).toContain('AGBench')
+    expect(marked).not.toContain('GUIGemini')
+  })
 })
