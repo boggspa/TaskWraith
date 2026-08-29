@@ -20,14 +20,21 @@ import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 
 const OLLAMA_OFFERS = hostProviderOffers('ollama', true)!
 const TARGET: HostRunEventTarget = { id: 'client-1' }
-const OLLAMA_MODEL_ID = OLLAMA_OFFERS.models[0].modelId
+// 696b2dc74 replaced the blanket reasoning table with per-model ladders derived
+// from resolveOllamaReasoningSupport, and models[0] (qwen3:4b-instruct) is a
+// known non-thinking model whose ladder is empty. Bind to a model that actually
+// offers one, so the reject-uncatalogued-reasoning assertion below stays
+// discriminating instead of passing because every id is refused.
+const OLLAMA_MODEL = OLLAMA_OFFERS.models.find((entry) => entry.reasoning.length > 0)!
+const OLLAMA_MODEL_ID = OLLAMA_MODEL.modelId
+const OLLAMA_REASONING_ID = OLLAMA_MODEL.reasoning[0].reasoningId
 
 function threadFixture(overrides: Partial<HostProviderRunThread> = {}): HostProviderRunThread {
   return {
     threadId: 'thread-1',
     providerId: 'ollama',
     modelId: OLLAMA_MODEL_ID,
-    reasoningId: 'high',
+    reasoningId: OLLAMA_REASONING_ID,
     workspace: { workspaceId: 'ws-1', canonicalPath: '/tmp/ws', canonical: true },
     posture: {
       postureId: 'posture-plan',
