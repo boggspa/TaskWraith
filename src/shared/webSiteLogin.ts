@@ -38,6 +38,16 @@ export interface WebSiteLogin {
   /** Optional liveness target. Must be inside the site's own fence; a target
    *  outside it is ignored rather than followed. */
   verify?: { url: string }
+  /**
+   * Cross-origin embeds this site tried to load and the fence refused.
+   *
+   * ADVISORY ONLY - a record of what broke, never an allowance. It exists so a
+   * fence that is default-closed for sub-frames does not present as an
+   * inexplicably broken page: the user is shown what the site wanted and
+   * decides whether to widen `extraOrigins`. Same loop as the SSO hops the
+   * sign-in window reports.
+   */
+  blockedEmbedOrigins?: string[]
 }
 
 /** The renderer- and agent-facing projection. Identical today, named separately
@@ -54,6 +64,8 @@ const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
 
 export const MAX_WEB_SITE_LOGIN_LABEL = 120
 export const MAX_WEB_SITE_LOGIN_EXTRA_ORIGINS = 8
+/** Advisory breakage record; bounded so a hostile page cannot grow the file. */
+export const MAX_WEB_SITE_BLOCKED_EMBEDS = 12
 /** Catalogue ceiling. Generous for humans, bounded against a runaway writer. */
 export const MAX_WEB_SITE_LOGINS = 256
 
@@ -227,6 +239,15 @@ export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {
       extraOrigins.push(normalized)
     }
   }
+  const blocked: string[] = []
+  if (Array.isArray(raw.blockedEmbedOrigins)) {
+    for (const entry of raw.blockedEmbedOrigins) {
+      const normalized = normalizeWebSiteOrigin(entry)
+      if (!normalized || blocked.includes(normalized)) continue
+      if (blocked.length >= MAX_WEB_SITE_BLOCKED_EMBEDS) break
+      blocked.push(normalized)
+    }
+  }
   return {
     id: raw.id,
     label,
@@ -237,7 +258,8 @@ export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {
     createdAt: raw.createdAt,
     ...(typeof raw.lastSignedInAt === 'string' ? { lastSignedInAt: raw.lastSignedInAt } : {}),
     ...(typeof raw.lastVerifiedAt === 'string' ? { lastVerifiedAt: raw.lastVerifiedAt } : {}),
-    ...(parseVerifyTarget(raw.verify) ? { verify: parseVerifyTarget(raw.verify)! } : {})
+    ...(parseVerifyTarget(raw.verify) ? { verify: parseVerifyTarget(raw.verify)! } : {}),
+    ...(blocked.length > 0 ? { blockedEmbedOrigins: blocked } : {})
   }
 }
 

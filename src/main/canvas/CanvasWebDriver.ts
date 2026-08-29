@@ -68,6 +68,7 @@ import {
 } from './CanvasBrowserProfile'
 import {
   isNavigationAllowedForOrigins,
+  normalizeWebSiteOrigin as webSiteOriginOf,
   partitionForWebSiteLogin,
   webSiteNavigationRefusal,
   type WebSiteBinding
@@ -780,6 +781,12 @@ export interface CanvasWebDriverDeps {
    * state the per-site split exists to prevent.
    */
   siteBinding?: WebSiteBinding
+  /**
+   * A cross-origin sub-frame this bound surface refused to load. Advisory: it
+   * lets the product explain a broken embed instead of leaving the user with an
+   * inexplicably blank box. Never an allowance.
+   */
+  onEmbedBlocked?: (origin: string) => void
 }
 
 type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
@@ -828,6 +835,9 @@ export class CanvasWebDriver implements CanvasDriver {
   private readonly onSurfaceClosed?: () => void
   private readonly browserProfile: CanvasBrowserProfileController
   private readonly siteBinding: WebSiteBinding | null
+  private readonly onEmbedBlocked?: (origin: string) => void
+  /** De-duped for this surface, so a frame retrying in a loop reports once. */
+  private readonly reportedBlockedEmbeds = new Set<string>()
   /** Set by the request-layer fence so a cancelled main-frame hop can be
    *  reported by name instead of as a bare network failure. */
   private fenceBlockedUrl: string | null = null
@@ -840,6 +850,7 @@ export class CanvasWebDriver implements CanvasDriver {
       deps.browserProfile ?? new CanvasBrowserProfile({ partition: `canvas-${sessionId}` })
     this.partition = this.browserProfile.partition
     this.siteBinding = deps.siteBinding ?? null
+    this.onEmbedBlocked = deps.onEmbedBlocked
     // A binding and its partition are ONE invariant, not two arguments. Passing
     // a binding alongside the shared app-wide profile yields a surface that
     // looks fenced, passes every fence test, and still carries every other
@@ -982,6 +993,30 @@ export class CanvasWebDriver implements CanvasDriver {
       }
       // In-page causes on a bound surface: a link, a script, a meta refresh.
       if (!this.allowsDocumentNavigation(url || '')) event.preventDefault()
+    })
+    // SUB-FRAME documents. `will-navigate` never fires for these, so without
+    // this an authorized page could embed any origin it liked and that document
+    // would render inside a bound surface - and its pixels would reach
+    // canvas_screenshot, which page script could never read.
+    //
+    // Default-closed, like every other widening here: the refused origin is
+    // reported so the user can allow it in Work > Logins if the site genuinely
+    // needs it (payment frames, captchas, SSO frames). The main frame is left
+    // to will-navigate and the request layer rather than handled twice.
+    wc.on('will-frame-navigate', (details) => {
+      const framed = details as unknown as {
+        url?: string
+        isMainFrame?: boolean
+        preventDefault: () => void
+      }
+      if (framed.isMainFrame) return
+      const target = framed.url || ''
+      if (this.allowsDocumentNavigation(target)) return
+      framed.preventDefault()
+      const origin = webSiteOriginOf(target)
+      if (!origin || this.reportedBlockedEmbeds.has(origin)) return
+      this.reportedBlockedEmbeds.add(origin)
+      this.onEmbedBlocked?.(origin)
     })
     this.hardenWebContents(wc)
     // The fixed metadata deny rule is enforced per request in attachNetwork.

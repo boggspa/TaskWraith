@@ -86,12 +86,18 @@ binds to exactly one site at construction and can **never** be re-bound.
 Cross-origin **document** navigation inside a bound surface is refused with a
 do-not-retry reason.
 
-The fence covers **main-frame** document navigation. Sub-resource requests are
-not origin-checked: third-party CDNs, fonts and analytics are how the web works,
-and an allowlist that breaks every real site gets turned off, which protects
-nothing. **Sub-FRAME documents fall on the sub-resource side of that cut** -
-fencing them would break payment iframes, SSO frames and captchas. That is a
-deliberate exemption with a real consequence, recorded in Section 11.4.
+The fence covers **document navigation in every frame**. Sub-resource requests
+(scripts, fonts, images, XHR) are not origin-checked: third-party CDNs are how
+the web works, and an allowlist that breaks every real site gets turned off,
+which protects nothing.
+
+**Sub-frames are fenced too, and default-closed**, via `will-frame-navigate` -
+`will-navigate` never fires for them. That would break payment frames, captchas
+and SSO frames, so the refused origin is RECORDED and offered to the user in
+Work > Logins, exactly like the SSO hops the sign-in window reports. Widening is
+still only ever the user's act; the record is advisory and is dropped the moment
+the origin becomes authorized. Bounded to 12 per site so a hostile page cannot
+grow the catalogue.
 
 `extraOrigins` exists for the identity-provider hop - a site whose sign-in
 bounces through `accounts.google.com` or an SSO host needs those origins in its
@@ -351,15 +357,11 @@ Added to design.md Section 10, not replacing it.
    be the exact punycode-safe origin, not a prettified one.
 3. **`extraOrigins` is a real widening.** An SSO host added for convenience
    grants document navigation to that host. It is user-visible for this reason.
-4. **A cross-origin SUB-FRAME renders inside a bound surface.** The fence is
-   main-frame only (I1), so a page on an authorized origin can embed any
-   origin it likes. Two consequences worth stating rather than discovering:
-   the embedded document loads in the site's partition, and its rendered
-   pixels reach an agent through `canvas_screenshot`, which captures
-   cross-origin frames that page script could never read. Bounded by the
-   per-site split (the jar holds one site's cookies, not every site's) and by
-   actuation being main-frame only. `will-frame-navigate` is the hook that
-   would close it if evidence says it should be closed.
+4. ~~**A cross-origin SUB-FRAME renders inside a bound surface.**~~ **CLOSED
+   2026-08-29** by fencing sub-frames through `will-frame-navigate` (I1). The
+   residual that replaces it is smaller and is a usability one: a site whose
+   embed the user has not yet allowed renders with that frame missing until
+   they do, and the only signal is the Work > Logins row.
 5. **Login-wall detection is heuristic** (Section 8). Bounded to asking a
    question; must never gate authorization.
 6. **Sub-resources are unfenced by design** (I1). A compromised third-party

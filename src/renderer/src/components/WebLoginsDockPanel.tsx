@@ -77,6 +77,7 @@ export interface WebLoginsDockPanelViewProps {
   onForget: (site: WebSiteLogin) => void
   onAcceptSuggestions: () => void
   onDismissSuggestions: () => void
+  onAllowBlockedEmbeds: (site: WebSiteLogin) => void
 }
 
 /** Pure view. There is no jsdom in this repo, so the testable surface is the
@@ -95,7 +96,8 @@ export function WebLoginsDockPanelView({
   onSignOut,
   onForget,
   onAcceptSuggestions,
-  onDismissSuggestions
+  onDismissSuggestions,
+  onAllowBlockedEmbeds
 }: WebLoginsDockPanelViewProps): JSX.Element {
   return (
     <section className="web-logins-dock" aria-label="Site logins">
@@ -188,6 +190,17 @@ export function WebLoginsDockPanelView({
                 </select>
               </label>
               <span className="web-logins-access-hint">{ACCESS_HINTS[site.agentAccess]}</span>
+              {site.blockedEmbedOrigins && site.blockedEmbedOrigins.length > 0 && (
+                <div className="web-logins-blocked-embeds" role="status">
+                  <span>
+                    This site tried to embed {site.blockedEmbedOrigins.join(', ')} and it was
+                    blocked. Allow it if the site needs it to work.
+                  </span>
+                  <button type="button" onClick={() => onAllowBlockedEmbeds(site)}>
+                    Allow embeds
+                  </button>
+                </div>
+              )}
               <div className="web-logins-row-actions">
                 <button type="button" disabled={busyId === site.id} onClick={() => onSignIn(site)}>
                   Sign in
@@ -314,6 +327,23 @@ export function WebLoginsDockPanel(): JSX.Element {
     [refresh]
   )
 
+  const allowBlockedEmbeds = useCallback(
+    async (site: WebSiteLogin): Promise<void> => {
+      const api = bridge()
+      if (!api?.updateWebSiteLogin || !site.blockedEmbedOrigins?.length) return
+      setError(null)
+      // Widening is the user's act, and it clears the warning as a side effect:
+      // an authorized origin is never recorded as blocked.
+      const result = await api.updateWebSiteLogin({
+        id: site.id,
+        extraOrigins: [...site.extraOrigins, ...site.blockedEmbedOrigins]
+      })
+      if (!result.ok) setError(result.error ?? 'Could not allow those embeds.')
+      await refresh()
+    },
+    [refresh]
+  )
+
   const acceptSuggestions = useCallback(async (): Promise<void> => {
     const api = bridge()
     if (!api?.updateWebSiteLogin || !suggestions) return
@@ -345,6 +375,7 @@ export function WebLoginsDockPanel(): JSX.Element {
       onForget={(site) => void handleForget(site)}
       onAcceptSuggestions={() => void acceptSuggestions()}
       onDismissSuggestions={() => setSuggestions(null)}
+      onAllowBlockedEmbeds={(site) => void allowBlockedEmbeds(site)}
     />
   )
 }

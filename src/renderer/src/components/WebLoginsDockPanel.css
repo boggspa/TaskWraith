@@ -196,3 +196,26 @@
   margin-left: auto;
   color: var(--danger, #d9534f);
 }
+
+.web-logins-blocked-embeds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--rightdock-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.web-logins-blocked-embeds button {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border: 1px solid var(--rightdock-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}

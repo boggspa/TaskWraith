@@ -22,6 +22,7 @@ type Listener = (...args: unknown[]) => void
 
 interface Harness {
   driver: CanvasWebDriver
+  blockedEmbeds: string[]
   emit: (event: string, ...args: unknown[]) => void
   shouldBlock: (details: { url: string; resourceType: string }) => boolean | Promise<boolean>
   windowOpen: (details: { url: string }) => { action: string }
@@ -88,15 +89,18 @@ function harness(
     destroy: vi.fn(),
     onClosed: vi.fn()
   }
+  const blockedEmbeds: string[] = []
   const driver = new CanvasWebDriver('canvas-site', {
     browserProfile: profile,
     createSurface: () => surface,
     resolveHost: async () => ['93.184.216.34'],
+    onEmbedBlocked: (origin) => blockedEmbeds.push(origin),
     ...(siteBinding ? { siteBinding } : {})
   })
   const preventedNavigations: string[] = []
   return {
     driver,
+    blockedEmbeds,
     emit: (event, ...args) => {
       for (const listener of listeners.get(event) ?? []) listener(...args)
     },
@@ -301,6 +305,84 @@ describe('CanvasWebDriver read-only site access', () => {
     await h.driver.open({ url: 'https://anything.example/' })
     const result = await h.driver.act({ kind: 'click', ref: 'e1' })
     expect(result.refusalReason).not.toBe('site_read_only')
+    await h.driver.close()
+  })
+})
+
+describe('CanvasWebDriver sub-frame fence', () => {
+  function frameEvent(
+    url: string,
+    isMainFrame = false
+  ): {
+    url: string
+    isMainFrame: boolean
+    preventDefault: ReturnType<typeof vi.fn>
+  } {
+    return { url, isMainFrame, preventDefault: vi.fn() }
+  }
+
+  it('refuses an out-of-fence EMBED and reports its origin', async () => {
+    // will-navigate never fires for a sub-frame, so without this an authorized
+    // page could embed any origin and its pixels would reach canvas_screenshot.
+    const h = harness(BOUND)
+    await h.driver.open({ url: 'https://example.com/' })
+    const event = frameEvent('https://tracker.elsewhere.net/pixel')
+    h.emit('will-frame-navigate', event)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(h.blockedEmbeds).toEqual(['https://tracker.elsewhere.net'])
+    await h.driver.close()
+  })
+
+  it('allows an embed the user widened the site to', async () => {
+    const h = harness({
+      siteId: 'example-com',
+      authorizedOrigins: ['https://example.com', 'https://pay.example-psp.com'],
+      agentAccess: 'act' as const
+    })
+    await h.driver.open({ url: 'https://example.com/' })
+    const event = frameEvent('https://pay.example-psp.com/checkout')
+    h.emit('will-frame-navigate', event)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(h.blockedEmbeds).toEqual([])
+    await h.driver.close()
+  })
+
+  it('allows a same-origin frame', async () => {
+    const h = harness(BOUND)
+    await h.driver.open({ url: 'https://example.com/' })
+    const event = frameEvent('https://example.com/widget')
+    h.emit('will-frame-navigate', event)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    await h.driver.close()
+  })
+
+  it('leaves the MAIN frame to will-navigate rather than handling it twice', async () => {
+    const h = harness(BOUND)
+    await h.driver.open({ url: 'https://example.com/' })
+    const event = frameEvent('https://evil.com/', true)
+    h.emit('will-frame-navigate', event)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(h.blockedEmbeds).toEqual([])
+    await h.driver.close()
+  })
+
+  it('reports a repeating frame ONCE, not once per retry', async () => {
+    const h = harness(BOUND)
+    await h.driver.open({ url: 'https://example.com/' })
+    for (let i = 0; i < 5; i += 1) {
+      h.emit('will-frame-navigate', frameEvent('https://ads.elsewhere.net/f'))
+    }
+    expect(h.blockedEmbeds).toEqual(['https://ads.elsewhere.net'])
+    await h.driver.close()
+  })
+
+  it('does not fence sub-frames on an UNBOUND canvas', async () => {
+    const h = harness()
+    await h.driver.open({ url: 'https://anything.example/' })
+    const event = frameEvent('https://third.example/frame')
+    h.emit('will-frame-navigate', event)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(h.blockedEmbeds).toEqual([])
     await h.driver.close()
   })
 })

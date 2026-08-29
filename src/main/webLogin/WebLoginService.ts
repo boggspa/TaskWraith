@@ -74,6 +74,11 @@ export class WebLoginService {
     return this.deps.store.update(id, patch)
   }
 
+  /** Note a refused embed so the panel can offer it. Never widens anything. */
+  recordBlockedEmbed(id: string, origin: string): void {
+    this.deps.store.recordBlockedEmbed(id, origin)
+  }
+
   /** Clear the jar, keep the row. */
   async signOut(id: string): Promise<WebLoginMutationResult> {
     if (!this.deps.store.get(id)) return { ok: false, error: 'That site is no longer saved.' }

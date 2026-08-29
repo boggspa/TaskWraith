@@ -193,3 +193,50 @@ describe('WebSiteLoginStore', () => {
     expect(mode).toBe(0o600)
   })
 })
+
+describe('WebSiteLoginStore blocked embeds', () => {
+  it('records a refused embed so the panel can offer it', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    subject.recordBlockedEmbed(id, 'https://pay.example-psp.com/checkout')
+    expect(subject.get(id)?.blockedEmbedOrigins).toEqual(['https://pay.example-psp.com'])
+  })
+
+  it('is idempotent, so a frame retrying in a loop does not grow the file', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    for (let i = 0; i < 20; i += 1) subject.recordBlockedEmbed(id, 'https://ads.example.net/x')
+    expect(subject.get(id)?.blockedEmbedOrigins).toEqual(['https://ads.example.net'])
+  })
+
+  it('caps the list rather than letting a hostile page grow it', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    for (let i = 0; i < 40; i += 1) subject.recordBlockedEmbed(id, `https://h${i}.example.net/x`)
+    expect(subject.get(id)?.blockedEmbedOrigins).toHaveLength(12)
+  })
+
+  it('never records an origin the site already authorizes', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    subject.update(id, { extraOrigins: ['https://idp.example.net'] })
+    subject.recordBlockedEmbed(id, 'https://idp.example.net/frame')
+    subject.recordBlockedEmbed(id, 'https://example.com/frame')
+    expect(subject.get(id)?.blockedEmbedOrigins).toBeUndefined()
+  })
+
+  it('recording is a NOTE, never an allowance', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    subject.recordBlockedEmbed(id, 'https://pay.example-psp.com')
+    expect(subject.get(id)?.extraOrigins).toEqual([])
+  })
+
+  it('ignores a site that is gone and an unparseable origin', () => {
+    const subject = store()
+    const id = subject.add({ origin: 'https://example.com' }).site!.id
+    subject.recordBlockedEmbed('never-existed', 'https://a.example')
+    subject.recordBlockedEmbed(id, 'file:///x')
+    expect(subject.get(id)?.blockedEmbedOrigins).toBeUndefined()
+  })
+})

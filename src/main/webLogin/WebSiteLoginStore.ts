@@ -4,6 +4,7 @@ import * as path from 'path'
 import {
   MAX_WEB_SITE_LOGINS,
   MAX_WEB_SITE_LOGIN_EXTRA_ORIGINS,
+  MAX_WEB_SITE_BLOCKED_EMBEDS,
   MAX_WEB_SITE_LOGIN_LABEL,
   isWebSiteLoginAccess,
   isWebSiteLoginId,
@@ -263,6 +264,30 @@ export class WebSiteLoginStore {
     state.sites[index] = next
     this.writeState(state)
     return next
+  }
+
+  /**
+   * Note that the fence refused an embed this site asked for.
+   *
+   * Advisory and idempotent. It never widens anything - only the user does that
+   * - and it drops silently if the origin is already authorized, so a race
+   * between the widening and a late block cannot resurrect a stale warning.
+   */
+  recordBlockedEmbed(id: string, origin: string): void {
+    const normalized = normalizeWebSiteOrigin(origin)
+    if (!normalized) return
+    const state = this.readState()
+    const index = state.sites.findIndex((site) => site.id === id)
+    if (index < 0) return
+    const site = state.sites[index]
+    if (site.origin === normalized || site.extraOrigins.includes(normalized)) return
+    const current = site.blockedEmbedOrigins ?? []
+    if (current.includes(normalized)) return
+    state.sites[index] = {
+      ...site,
+      blockedEmbedOrigins: [...current, normalized].slice(-MAX_WEB_SITE_BLOCKED_EMBEDS)
+    }
+    this.writeState(state)
   }
 
   private readState(): WebSiteLoginStateFile {

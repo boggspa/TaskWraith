@@ -4873,7 +4873,13 @@ const canvasService = new CanvasService({
         : null
       return new CanvasWebDriver(sessionId, {
         browserProfile: bound?.browserProfile ?? canvasBrowserProfile,
-        ...(bound ? { siteBinding: bound.siteBinding } : {}),
+        ...(bound
+          ? {
+              siteBinding: bound.siteBinding,
+              onEmbedBlocked: (origin) =>
+                webLoginService.recordBlockedEmbed(bound.siteBinding.siteId, origin)
+            }
+          : {}),
         ...(opts?.embedded
           ? { createSurface: canvasEmbedController.surfaceFor(sessionId, opts.surfaceHostId) }
           : {}),

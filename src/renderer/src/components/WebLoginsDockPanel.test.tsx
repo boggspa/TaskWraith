@@ -34,6 +34,7 @@ function render(overrides: Partial<WebLoginsDockPanelViewProps> = {}): string {
     onForget: () => {},
     onAcceptSuggestions: () => {},
     onDismissSuggestions: () => {},
+    onAllowBlockedEmbeds: () => {},
     ...overrides
   }
   return renderToStaticMarkup(<WebLoginsDockPanelView {...props} />)
@@ -122,5 +123,28 @@ describe('WebLoginsDockPanelView', () => {
     expect(render({ sites: [site({ status: 'signed-in' })] })).toContain('Signed in')
     expect(render({ sites: [site({ status: 'expired' })] })).toContain('Sign-in expired')
     expect(render({ sites: [site({ status: 'unknown' })] })).toContain('Sign-in not verified')
+  })
+})
+
+describe('WebLoginsDockPanelView blocked embeds', () => {
+  it('explains a blocked embed instead of leaving a page mysteriously broken', () => {
+    const html = render({
+      sites: [site({ blockedEmbedOrigins: ['https://pay.example-psp.com'] })]
+    })
+    expect(html).toContain('https://pay.example-psp.com')
+    expect(html).toContain('blocked')
+    expect(html).toContain('Allow embeds')
+  })
+
+  it('shows nothing when the site has no blocked embeds', () => {
+    expect(render({ sites: [site()] })).not.toContain('Allow embeds')
+  })
+
+  it('lists every blocked origin, not just the first', () => {
+    const html = render({
+      sites: [site({ blockedEmbedOrigins: ['https://a.example', 'https://b.example'] })]
+    })
+    expect(html).toContain('https://a.example')
+    expect(html).toContain('https://b.example')
   })
 })
