@@ -38,6 +38,7 @@ import {
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
 import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
+import { startupSettingsRequest } from '../lib/startupSettingsCache'
 
 const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
   agentAura: true,
@@ -219,8 +220,8 @@ export function useAppearance() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    window.api
-      .getSettings()
+    startupSettingsRequest
+      .request()
       .then((settings: AppSettings) => {
         const legacyFunFx = getLegacyFunFxSettingsFromLocalStorage()
         const funFxMode = isFunFxMode(settings.funFxMode)

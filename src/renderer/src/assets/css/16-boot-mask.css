@@ -85,8 +85,16 @@
   text-shadow: 0 1px 24px rgb(0 0 0 / 0.26);
 }
 
+/*
+ * Input is released the instant boot is ready, independently of the visual.
+ * The mask is a full-window overlay with `-webkit-app-region: drag`, and a drag
+ * region swallows mouse input regardless of `pointer-events`, so both have to
+ * be dropped together or the app stays unclickable for the whole wipe.
+ */
 .app-boot-mask.is-leaving {
   animation: taskwraith-boot-wipe 720ms cubic-bezier(0.66, 0, 0.18, 1) forwards;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
 }
 
 .app-boot-mask.is-leaving::after {

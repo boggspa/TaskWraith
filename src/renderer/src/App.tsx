@@ -512,6 +512,8 @@ import { BugReportSheet, type BugReportSubmission } from './components/BugReport
 import { ChangelogSheet } from './components/ChangelogSheet'
 import { ComposerScheduleButton } from './components/ComposerScheduleButton'
 import { AppBootMask } from './components/AppBootMask'
+import { bootMaskUnmountDelayMs, prefersReducedMotion } from './lib/bootMaskTiming'
+import { startupSettingsRequest } from './lib/startupSettingsCache'
 import { MainAppLayout } from './app/views/MainAppLayout'
 import { TerminalWorkbench } from './components/TerminalWorkbench'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
@@ -7296,9 +7298,12 @@ function App(): React.JSX.Element {
       return
     }
     setInitialRouteWasRevealed(true)
+    // Input is already released by `.is-leaving`; this only decides when the
+    // node leaves the tree, so it tracks the animation that is actually
+    // playing instead of a flat 760 ms (see lib/bootMaskTiming.ts).
     const timeout = window.setTimeout(() => {
       setBootMaskVisible(false)
-    }, 760)
+    }, bootMaskUnmountDelayMs(prefersReducedMotion()))
     return () => window.clearTimeout(timeout)
   }, [isBootReady])
 
@@ -7380,8 +7385,25 @@ function App(): React.JSX.Element {
   }, [runQueueJobs])
 
   const loadInitialData = async () => {
+    // These five are plain IPC reads with no dependency on settings or policy,
+    // so they are issued now and awaited below: two sequential round trips
+    // become one. Every state update below keeps its original order.
+    const initialLoads = Promise.allSettled([
+      window.api.getWorkspaces(),
+      loadChatList(),
+      typeof window.api.getRuntimeProfiles === 'function'
+        ? window.api.getRuntimeProfiles()
+        : Promise.resolve([]),
+      typeof window.api.getHandoffCards === 'function'
+        ? window.api.getHandoffCards()
+        : Promise.resolve([]),
+      typeof window.api.getPluginActivation === 'function'
+        ? window.api.getPluginActivation()
+        : Promise.resolve(null)
+    ])
     const [s, policyStatus] = await Promise.all([
-      window.api.getSettings(),
+      // Shared with useAppearance's mount effect: one IPC round trip, not two.
+      startupSettingsRequest.request(),
       isChatPopoutWindow
         ? Promise.resolve(null)
         : window.api.getManagedPolicyStatus().catch(() => null)
@@ -7471,19 +7493,7 @@ function App(): React.JSX.Element {
     // workspaces suddenly appeared. Use `Promise.allSettled` so each
     // load is independent, then apply whatever resolved.
     const [wsResult, chatsResult, profilesResult, handoffsResult, pluginActivationResult] =
-      await Promise.allSettled([
-        window.api.getWorkspaces(),
-        loadChatList(),
-        typeof window.api.getRuntimeProfiles === 'function'
-          ? window.api.getRuntimeProfiles()
-          : Promise.resolve([]),
-        typeof window.api.getHandoffCards === 'function'
-          ? window.api.getHandoffCards()
-          : Promise.resolve([]),
-        typeof window.api.getPluginActivation === 'function'
-          ? window.api.getPluginActivation()
-          : Promise.resolve(null)
-      ])
+      await initialLoads
     const wsList = wsResult.status === 'fulfilled' ? wsResult.value : []
     const allChats = chatsResult.status === 'fulfilled' ? chatsResult.value : []
     const profiles = profilesResult.status === 'fulfilled' ? profilesResult.value : []
