@@ -576,6 +576,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   visibleAuditRunNotice,
   visibleGeminiTerminalLogs,
   visibleRunCompleteNotice,
+  liveOwnedExecutionThreads,
   pluginWorkflowTemplates,
   welcomeDashboardCardEnabled,
   welcomeFitLevel,
@@ -2274,6 +2275,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onAgentQuestionDismiss={handleAgentQuestionDismiss}
                 runCompleteNotice={visibleRunCompleteNotice}
                 runCompleteDurationText={runCompleteDurationText}
+                hasLiveOwnedExecution={liveOwnedExecutionThreads.has(
+                  currentChat?.appChatId || ''
+                )}
                 currentChat={currentChat}
                 isGlobal={isGlobalChat(currentChat)}
                 currentRun={currentRun}
@@ -2657,6 +2661,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
+              hasLiveOwnedExecution={liveOwnedExecutionThreads.has(sideChat.appChatId)}
               currentChat={sideChat}
               isGlobal={isGlobalChat(sideChat)}
               currentRun={sideRun}

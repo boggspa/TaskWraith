@@ -969,6 +969,7 @@ import {
   executionStackStepTitle,
   executionRunTimestamp,
   isTerminalExecutionRun,
+  liveOwnedExecutionThreadIds,
   mergeExecutionRunProjection,
   projectExecutionRun,
   shouldAppendBusySendToExecutionStack,
@@ -25714,6 +25715,13 @@ function App(): React.JSX.Element {
     }
     return Object.keys(style).length > 0 ? style : undefined
   }, [ensembleBlendStyle])
+  // Threads still accountable for an unsettled durable execution. Suppresses
+  // the close-out card there: the provider turn may be over, but the task the
+  // user asked for is not.
+  const liveOwnedExecutionThreads = useMemo(
+    () => liveOwnedExecutionThreadIds(executionRunsById),
+    [executionRunsById]
+  )
   const visibleRunCompleteNotice = deriveVisibleRunCompleteNotice({
     notice: runCompleteNotice,
     isChatRunning: isCurrentChatRunning
@@ -29792,6 +29800,7 @@ function App(): React.JSX.Element {
         isWelcomeChat={viewerIsWelcomeChat}
         isThinking={viewerIsRunning}
         runCompleteNotice={cachedPaneRunCompleteNotice(viewerChat, { isRunning: viewerIsRunning })}
+        hasLiveOwnedExecution={liveOwnedExecutionThreads.has(viewerChatId)}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -31887,6 +31896,7 @@ function App(): React.JSX.Element {
     visibleAuditRunNotice,
     visibleGeminiTerminalLogs,
     visibleRunCompleteNotice,
+    liveOwnedExecutionThreads,
     welcomeDashboardCardEnabled,
     welcomeFitLevel,
     welcomeDashboardRegionRef,

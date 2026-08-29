@@ -37,6 +37,8 @@ export interface BuildChatViewPropsInput {
   pendingPlanChoice?: TranscriptPanelProps['pendingPlanChoice']
   pendingProposedPlan?: TranscriptPanelProps['pendingProposedPlan']
   runCompleteNotice: TranscriptPanelProps['runCompleteNotice']
+  /** True while this pane's thread owns an unsettled durable execution. */
+  hasLiveOwnedExecution?: TranscriptPanelProps['hasLiveOwnedExecution']
   pendingAgentQuestions: TranscriptPanelProps['pendingAgentQuestions']
   contextCompactionProgress?: TranscriptPanelProps['contextCompactionProgress']
   onAgentQuestionSubmit?: TranscriptPanelProps['onAgentQuestionSubmit']
@@ -297,6 +299,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
     onEnsemblePollVote: input.onEnsemblePollVote,
     runCompleteNotice: input.runCompleteNotice,
+    hasLiveOwnedExecution: input.hasLiveOwnedExecution,
     // Same derivation as the focused surface (App's runCompleteDurationText):
     // the pane's Task Complete card header reads "Worked for …" too.
     runCompleteDurationText: formatWorkDuration(

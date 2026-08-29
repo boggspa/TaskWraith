@@ -657,6 +657,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleAuditRunNotice: any
   visibleGeminiTerminalLogs: any
   visibleRunCompleteNotice: any
+  /** Threads still accountable for an unsettled durable execution. */
+  liveOwnedExecutionThreads: Set<string>
   pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
   welcomeFitLevel: any

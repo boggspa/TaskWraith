@@ -10,6 +10,30 @@ export function isTerminalExecutionRun(run: ExecutionRunProjection): boolean {
   return TERMINAL_EXECUTION_STATES.has(run.state)
 }
 
+/**
+ * Threads that still own an execution which has not settled.
+ *
+ * `requires_action` counts as live on purpose: a paused graph is unfinished
+ * work the thread is still accountable for, so its thread has not completed its
+ * task even though no provider run is going.
+ *
+ * Keyed on `owner.threadId`, never `rootChatId`. Association is not
+ * accountability — and an unowned legacy graph is permanently stuck by design,
+ * so letting it suppress a thread's close-out forever would be a bug, not
+ * caution. Those surface through the Execution Map instead.
+ */
+export function liveOwnedExecutionThreadIds(
+  runsById: Record<string, ExecutionRunProjection>
+): Set<string> {
+  const threadIds = new Set<string>()
+  for (const run of Object.values(runsById)) {
+    const threadId = run.owner?.threadId
+    if (!threadId || isTerminalExecutionRun(run)) continue
+    threadIds.add(threadId)
+  }
+  return threadIds
+}
+
 export function executionRunTimestamp(run: ExecutionRunProjection): number {
   const parsed = Date.parse(run.updatedAt || run.createdAt || '')
   return Number.isFinite(parsed) ? parsed : 0

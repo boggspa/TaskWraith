@@ -2539,6 +2539,68 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       expect(html).not.toContain('tone-danger')
     })
 
+    // The bug this exists to stop: an UltraTask can pause or fail minutes after
+    // the initiating turn ends, and a green "Task complete" over live work reads
+    // as an answer. The thread is still accountable, so it has not finished.
+    it('suppresses the close-out while the thread owns an unsettled execution', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            runCompleteNotice: notice,
+            hasLiveOwnedExecution: true
+          })}
+        />
+      )
+      expect(html).not.toContain('Task complete')
+    })
+
+    // Suppression is render-time, so the card must come back on its own the
+    // moment the last owned execution settles. Gating the authoring effects
+    // instead would have lost it permanently.
+    it('restores the close-out once no owned execution is live', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            runCompleteNotice: notice,
+            hasLiveOwnedExecution: false
+          })}
+        />
+      )
+      expect(html).toContain('Task complete')
+    })
+
+    it('renders a delivered execution result as its own graph-native card', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [
+              {
+                id: 'execution-result-1',
+                role: 'tool',
+                content: 'The reviewed synthesis.',
+                timestamp: new Date('2026-08-29T00:00:00.000Z').toISOString(),
+                metadata: {
+                  kind: 'executionResult',
+                  executionId: 'ultratask-1',
+                  executionMailboxEventId: 'execution-result-abc',
+                  executionOutcome: 'requires_action',
+                  executionTitle: 'UltraTask · gemini-3.1-pro',
+                  executionSeatId: 'antigravity:gemini-3.1-pro'
+                }
+              }
+            ]
+          })}
+        />
+      )
+      expect(html).toContain('execution-result-card')
+      expect(html).toContain('UltraTask · gemini-3.1-pro')
+      // A paused graph must not read as a failure: it is stopped for a person.
+      expect(html).toContain('Needs attention')
+    })
+
     it('replaces the title with the blocker in red when the round produced nothing', () => {
       const html = renderToStaticMarkup(
         <TranscriptPanel

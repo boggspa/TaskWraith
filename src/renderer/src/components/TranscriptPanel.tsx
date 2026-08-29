@@ -245,6 +245,8 @@ import {
 } from '../lib/fleetWavePendingApprovals'
 import { fleetWaveSeatFromWorker } from '../lib/fleetWaveSeat'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
+import { ExecutionResultCard } from './ExecutionResultCard'
+import { isExecutionResultMessage } from './ExecutionResultCardModel'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
 import { isThreadMessageTranscriptMessage } from './ThreadMessageTranscriptCardModel'
@@ -616,6 +618,13 @@ export type TranscriptPanelProps = {
    * doesn't carry an ensembleProvider in its metadata.
    */
   currentProvider: ProviderId
+  /** Opens the Execution Map for a graph delivered into this thread. Optional:
+   * absent in surfaces that have no route to the map. */
+  onOpenExecutionMapForThread?: (executionId: string) => void
+  /** True while this thread owns a graph that has not settled. Suppresses the
+   * close-out card, which would otherwise claim the task is finished while the
+   * thread is still accountable for running work. */
+  hasLiveOwnedExecution?: boolean
   /**
    * Slice B (1.0.3) — ensemble-aware "Thinking…" label. When an
    * ensemble round is mid-flight, this resolves to the active
@@ -2699,6 +2708,8 @@ export const TranscriptPanel = memo(
     currentRun,
     currentWorkspacePath,
     currentProviderLabel,
+  onOpenExecutionMapForThread,
+  hasLiveOwnedExecution,
     currentProvider,
     thinkingProviderLabel,
     thinkingProvider,
@@ -3138,8 +3149,23 @@ export const TranscriptPanel = memo(
       if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
       setMessageContextMenu(null)
     }, [messageContextMenu, visibleMessages])
+    // A thread that still owns an unsettled durable execution has NOT finished
+    // its task, whatever its provider run did. Announcing completion there is
+    // the exact failure this suppression exists to stop: an UltraTask can pause
+    // or fail minutes after the initiating turn ends, and a green "Task
+    // complete" over live work reads as an answer.
+    //
+    // Suppression is render-time on purpose. Gating the AUTHORING effects would
+    // lose the card permanently, because nothing re-triggers them once the
+    // graph settles; here the card reappears the moment the last owned
+    // execution reaches a terminal state.
     const shouldShowRunCompleteNotice =
-      Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
+      Boolean(
+        runCompleteNotice &&
+          !isWelcomeChat &&
+          !hasLiveOwnedExecution &&
+          !shouldSuppressRunCompleteSummary(runCompleteNotice)
+      )
     // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
     // changes. Those sections mount inside a persisted Task Complete card under
     // that message; the ephemeral footer only remains when the latest close-out
@@ -4838,6 +4864,7 @@ export const TranscriptPanel = memo(
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
+            const isExecutionResultCard = isExecutionResultMessage(msg)
             const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
             // Undefined unless the paired layout is on AND this row is a lane —
@@ -5457,6 +5484,13 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     onSetExpanded={setParallelResultViewportExpanded}
+                  />
+                ) : isExecutionResultCard ? (
+                  <ExecutionResultCard
+                    key={msg.id}
+                    message={msg}
+                    provider={currentProvider}
+                    onOpenExecutionMap={onOpenExecutionMapForThread}
                   />
                 ) : isFleetWaveCard ? (() => {
                   const workers = Array.isArray(msg.metadata?.workers) ? msg.metadata.workers : []
