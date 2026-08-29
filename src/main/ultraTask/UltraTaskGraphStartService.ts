@@ -8,6 +8,7 @@ import type {
 import type {
   ExecutionEffect,
   ExecutionGraphRevision,
+  ExecutionOwnerRef,
   ExecutionPermissionCeilingRef,
   JsonObject
 } from '../executionGraph/ExecutionGraphModel'
@@ -35,6 +36,9 @@ export interface StartUltraTaskGraphInput {
   parentPermissionPresetId: PermissionPresetId
   parentWorkflowMode?: ChatWorkflowMode
   workerEffect: Extract<ExecutionEffect, 'read_only' | 'workspace_write'>
+  /** Mandatory accountable thread/seat. Main resolves this from the live run;
+   * it is never provider-authored. */
+  owner: ExecutionOwnerRef
   /** Two to six independent scouts. Dispatch concurrency is a kernel concern. */
   scoutCount?: number
 }
@@ -117,8 +121,12 @@ function scoutCount(value: number | undefined): number {
 
 /**
  * Main-facing adapter that freezes every stage template before handing the
- * product workflow to `startUltraTaskWorkflow`. The returned graph has no
- * parent-run anchor, so natural provider terminalization cannot own its fate.
+ * product workflow to `startUltraTaskWorkflow`.
+ *
+ * The graph carries no parent-run ANCHOR — an anchor would make the graph wait
+ * on the initiating run, which is backwards here: the parent waits on its child
+ * graph, not the reverse. It does carry a mandatory OWNER, so the initiating
+ * thread and seat stay accountable and the graph pauses if they disappear.
  */
 export function startPreparedUltraTaskGraph(
   input: StartUltraTaskGraphInput,
@@ -168,7 +176,8 @@ export function startPreparedUltraTaskGraph(
       worker: { ...seat },
       reviewer: { ...seat },
       synthesis: { ...seat },
-      workerEffect: input.workerEffect
+      workerEffect: input.workerEffect,
+      owner: input.owner
     },
     {
       prepareStage,

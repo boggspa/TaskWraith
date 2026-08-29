@@ -2,6 +2,7 @@ import type { ProviderId } from '../store/types'
 import type {
   ExecutionEffect,
   ExecutionGraphRevision,
+  ExecutionOwnerRef,
   ExecutionPermissionCeilingRef,
   ExecutionPermissionRequestRef
 } from '../executionGraph/ExecutionGraphModel'
@@ -52,6 +53,8 @@ export interface StartUltraTaskWorkflowInput {
   reviewer: UltraTaskStageSeat
   synthesis: UltraTaskStageSeat
   workerEffect: Extract<ExecutionEffect, 'read_only' | 'workspace_write'>
+  /** Mandatory. A graph with no accountable thread/seat must never start. */
+  owner: ExecutionOwnerRef
 }
 
 export interface UltraTaskCoordinatorDeps {
@@ -179,6 +182,12 @@ export function startUltraTaskWorkflow(
   const task = text(input.task, 'task')
   text(input.workspaceId, 'workspace id')
   text(input.rootChatId, 'root chat id')
+  text(input.owner?.threadId || '', 'owner thread id')
+  text(input.owner?.initiatingRunId || '', 'owner initiating run id')
+  text(input.owner?.seatId || '', 'owner seat id')
+  if (input.owner.threadId !== input.rootChatId) {
+    throw new Error('UltraTask owner thread must be the execution root chat.')
+  }
   if (input.scouts.length < 2) throw new Error('UltraTask requires at least two scout seats.')
   input.scouts.forEach((seat, index) => validateSeat(seat, `scout ${index + 1}`))
   validateSeat(input.worker, 'worker')
@@ -256,6 +265,7 @@ export function startUltraTaskWorkflow(
     workspaceId: input.workspaceId,
     rootChatId: input.rootChatId,
     tenant: { kind: 'workflow', tenantId: workflowId },
+    owner: input.owner,
     revision,
     permissionCeilingRef: input.permissionCeilingRef
   })

@@ -4,6 +4,7 @@ import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import type {
   ExecutionEffect,
   ExecutionGraphRevision,
+  ExecutionOwnerRef,
   ExecutionPermissionCeilingRef,
   ExecutionStepDefinition,
   ExecutionStepResult,
@@ -103,6 +104,9 @@ export interface StartExecutionGraphInput {
   readonly revision: ExecutionGraphRevision
   readonly permissionCeilingRef: ExecutionPermissionCeilingRef
   readonly anchorRunRef?: string
+  /** The thread/seat answerable for this execution. Unowned graphs never
+   * dispatch — see the owner gate in `drainOne`. */
+  readonly owner?: ExecutionOwnerRef
 }
 
 /**
@@ -427,6 +431,7 @@ export class ExecutionGraphCoordinator {
         baseRevision,
         permissionCeilingRef: input.permissionCeilingRef,
         ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
+        ...(input.owner ? { owner: input.owner } : {}),
         timestamp
       },
       [

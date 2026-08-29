@@ -41544,6 +41544,14 @@ async function executeGeminiMcpTool(
           parentPermissionPresetId: context.effectivePermissions?.presetId || 'default',
           parentWorkflowMode: context.workflowMode,
           workerEffect: context.effectivePermissions?.readOnly ? 'read_only' : 'workspace_write',
+          // Main-resolved, never provider-authored: the thread that asked for
+          // the work, the run whose turn invoked the tool, and the accountable
+          // seat. The run may terminalize; the ownership does not.
+          owner: {
+            threadId: parentChat.appChatId,
+            initiatingRunId: context.appRunId,
+            seatId: `${parentProvider}:${context.model || capability.capability.modelId}`
+          },
           scoutCount: resolved.scoutCount
         })
       } catch (error) {

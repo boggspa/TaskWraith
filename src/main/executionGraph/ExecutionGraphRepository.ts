@@ -615,6 +615,19 @@ function validateEventEnvelope(
       if (event.anchorRunRef !== undefined && !isNonEmptyString(event.anchorRunRef)) {
         throw new Error('execution_created.anchorRunRef is invalid.')
       }
+      // Optional so pre-ownership ledgers stay readable, but never partial: a
+      // half-formed owner would read as accountable while naming nobody, and
+      // the dispatch gate would admit it.
+      if (event.owner !== undefined) {
+        if (
+          !isRecord(event.owner) ||
+          !isNonEmptyString(event.owner.threadId) ||
+          !isNonEmptyString(event.owner.initiatingRunId) ||
+          !isNonEmptyString(event.owner.seatId)
+        ) {
+          throw new Error('execution_created.owner is invalid.')
+        }
+      }
       if (event.baseRevision !== undefined) assertRevisionRef(event.baseRevision)
       validatePermissionCeilingRef(event.permissionCeilingRef)
       break

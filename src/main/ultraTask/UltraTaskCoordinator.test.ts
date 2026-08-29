@@ -14,6 +14,7 @@ function input(overrides: Partial<StartUltraTaskWorkflowInput> = {}): StartUltra
     task: 'Implement and verify the parser.',
     workspaceId: 'workspace-one',
     rootChatId: 'chat-one',
+    owner: { threadId: 'chat-one', initiatingRunId: 'run-parent-1', seatId: 'codex:gpt-5.6-sol' },
     permissionCeilingRef: {
       schemaVersion: 1,
       referenceId: 'parent-ceiling',

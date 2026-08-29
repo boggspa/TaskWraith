@@ -98,6 +98,7 @@ describe('startPreparedUltraTaskGraph', () => {
         workspaceId: 'workspace-one',
         workspacePath: '/workspace',
         rootChatId: 'chat-one',
+        owner: { threadId: 'chat-one', initiatingRunId: 'run-parent-1', seatId: 'codex:gpt-5.6-sol' },
         parentApprovalMode: 'auto_edit',
         parentPermissionPresetId: 'workspace_write',
         parentWorkflowMode: 'normal',
@@ -124,6 +125,7 @@ describe('startPreparedUltraTaskGraph', () => {
         workspaceId: 'workspace-one',
         workspacePath: '/workspace',
         rootChatId: 'chat-one',
+        owner: { threadId: 'chat-one', initiatingRunId: 'run-parent-1', seatId: 'codex:gpt-5.6-sol' },
         parentApprovalMode: 'auto_edit',
         parentPermissionPresetId: 'workspace_write',
         workerEffect: 'workspace_write'
@@ -160,6 +162,7 @@ describe('startPreparedUltraTaskGraph', () => {
           workspaceId: 'workspace-one',
           workspacePath: '/workspace',
           rootChatId: 'chat-one',
+          owner: { threadId: 'chat-one', initiatingRunId: 'run-parent-1', seatId: 'codex:gpt-5.6-sol' },
           parentApprovalMode: 'plan',
           parentPermissionPresetId: 'read_only',
           workerEffect: 'read_only',
@@ -189,6 +192,7 @@ describe('startPreparedUltraTaskGraph', () => {
           workspaceId: 'workspace-one',
           workspacePath: '/workspace',
           rootChatId: 'chat-one',
+          owner: { threadId: 'chat-one', initiatingRunId: 'run-parent-1', seatId: 'codex:gpt-5.6-sol' },
           parentApprovalMode: 'auto_edit',
           parentPermissionPresetId: 'workspace_write',
           workerEffect: 'workspace_write'
