@@ -7312,6 +7312,14 @@ public struct AgentIdentityBadge: View {
         .degrees(Double(twAgentIdenticonHash(slug ?? name) % 360))
     }
 
+    /// The baked catalog PNG for `slug`, or nil when the character has none.
+    /// Split out from `catalogImage` so the fixture's presence can be asserted
+    /// on platforms without UIKit, where `catalogImage` returns nil for every
+    /// slug and so cannot distinguish "no artwork" from "no UIKit".
+    static func catalogResourceURL(for slug: String) -> URL? {
+        Bundle.module.url(forResource: "identicon-\(slug)", withExtension: "png")
+    }
+
     /// Full hand-drawn catalog character (baked from the named SVGs into
     /// the package resources via qlmanage). Nil when the slug has no baked
     /// asset — the minimal ring badge below covers that.
@@ -7321,8 +7329,7 @@ public struct AgentIdentityBadge: View {
         guard let slug, !slug.isEmpty else { return nil }
         return BundledImageCache.image(forKey: "identicon:\(slug)") {
             #if canImport(UIKit)
-                if let url = Bundle.module.url(
-                    forResource: "identicon-\(slug)", withExtension: "png"),
+                if let url = catalogResourceURL(for: slug),
                     let data = try? Data(contentsOf: url),
                     let ui = UIImage(data: data)
                 {

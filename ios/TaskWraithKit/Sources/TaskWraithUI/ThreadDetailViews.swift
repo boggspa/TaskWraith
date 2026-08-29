@@ -170,8 +170,22 @@ extension View {
         #endif
     }
 
-    /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad touch
+    /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad scroll
     /// stamping stays one policy.
+    ///
+    /// TWO lanes, because no single recognizer sees both kinds of scroll. The
+    /// `DragGesture` covers direct touch. `transcriptIndirectScrollTracking`
+    /// covers pointer scrolls — trackpad and mouse wheel — which a
+    /// `DragGesture` structurally never reports, because it is itself a
+    /// direct-touch pan and those ship with an empty `allowedScrollTypesMask`.
+    ///
+    /// Both lanes feed the SAME stamp: the follow policy only ever asks when
+    /// the user last moved the transcript, never what they moved it with.
+    /// Before the second lane existed, a pointer scroll stamped nothing at all,
+    /// so `TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing` read
+    /// every scroll-up as pure layout and the sentinel's `onDisappear` re-pinned
+    /// the viewport to the tail — the transcript could not be scrolled up at
+    /// all with a trackpad, on any thread, running or idle.
     func transcriptTouchTracking(isPadInterface: Bool, onTouch: @escaping () -> Void) -> some View {
         self.simultaneousGesture(
             DragGesture(
@@ -180,6 +194,7 @@ extension View {
             )
             .onChanged { _ in onTouch() }
         )
+        .transcriptIndirectScrollTracking(onScroll: onTouch)
     }
 }
 

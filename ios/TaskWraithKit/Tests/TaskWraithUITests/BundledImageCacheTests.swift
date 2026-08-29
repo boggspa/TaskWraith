@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Testing
 
@@ -69,14 +70,37 @@ struct BundledImageCacheTests {
         #expect(BundledImageCache.loadCount == 1)
     }
 
+    /// Guards every `loadCount` assertion above against passing vacuously.
+    ///
+    /// Those tests count loads, not images, so every one of them would still
+    /// pass if `identicon-uno.png` were renamed out of the bundle and each
+    /// lookup silently became a miss. This asserts the fixtures are really
+    /// there — and it goes through `catalogResourceURL` rather than
+    /// `catalogImage` so it runs on macOS too, where `canImport(UIKit)` is
+    /// false and `catalogImage` returns nil for every slug, unable to tell
+    /// "no artwork" apart from "no UIKit".
+    @Test func theCatalogFixturesTheseTestsRelyOnAreRealBundledPNGs() throws {
+        let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+        for slug in ["uno", "volkarr"] {
+            let url = try #require(
+                AgentIdentityBadge.catalogResourceURL(for: slug),
+                "identicon-\(slug).png is missing — the loadCount tests above would pass vacuously"
+            )
+            let data = try Data(contentsOf: url)
+            #expect(data.prefix(pngSignature.count) == pngSignature)
+        }
+    }
+
+    /// The other half of that guard: a fixture that is present must actually
+    /// decode to an `Image`. Only meaningful where UIKit exists, so it runs on
+    /// an iOS destination rather than the macOS `swift test` build.
     #if canImport(UIKit)
-        @Test func bakedCatalogSlugStillResolvesToArtwork() {
+        @Test func bakedCatalogSlugsResolveToArtwork() {
             BundledImageCache.resetForTesting()
 
-            // Guards the tests above against passing vacuously: if "uno" stopped
-            // resolving, every loadCount assertion would still hold while the
-            // badge silently fell back to the ring.
             #expect(AgentIdentityBadge.catalogImage(for: "uno") != nil)
+            #expect(AgentIdentityBadge.catalogImage(for: "volkarr") != nil)
         }
     #endif
 }
