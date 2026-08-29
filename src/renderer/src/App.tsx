@@ -24070,6 +24070,40 @@ function App(): React.JSX.Element {
     [executionRunsById, rememberExecutionRun]
   )
   /**
+   * The other half of the killswitch. Until this existed, the only thing that
+   * re-evaluated a paused graph was recover() at app start, so a thread that
+   * came back inside the same session left its graph stopped with no route
+   * forward but restarting the app. Main refuses with a reason when the graph
+   * is terminal, not paused, or its owner is still gone; that reason is shown
+   * rather than swallowed, because a control that silently does nothing is
+   * worse than one that explains itself.
+   */
+  const handleResumeExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.resumeExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Resuming an execution is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .resumeExecutionRun(executionId, 'Resumed by user.')
+        .then((projection) => {
+          if (projection) rememberExecutionRun(projection)
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not resume the execution: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
+  /**
    * Work-tab listing of this workspace's durable executions, live first.
    * The Execution Map previously had no route from any surface the user looks
    * at, so a paused or failed graph pointed at nothing.
@@ -29906,6 +29940,7 @@ function App(): React.JSX.Element {
         hasLiveOwnedExecution={liveOwnedExecutionThreads.has(viewerChatId)}
         ownedExecutionViews={ownedExecutionViewsByThreadId.get(viewerChatId)}
         onCancelOwnedExecution={handleCancelExecutionRun}
+        onResumeOwnedExecution={handleResumeExecutionRun}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -31546,6 +31581,7 @@ function App(): React.JSX.Element {
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
     handleBackFromExecutionMap,
     handleCancelExecutionRun,
+    handleResumeExecutionRun,
     handleOpenExecutionMap,
     executionRunEntries,
     handleOpenExecutionRunFromWork,

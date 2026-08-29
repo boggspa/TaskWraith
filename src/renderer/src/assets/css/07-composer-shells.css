@@ -3214,6 +3214,23 @@
   font-size: 11px;
   cursor: pointer;
 }
+/* Resume appears only on a paused card, where it is the affirmative action —
+   so it carries the seat's accent while Cancel stays in the danger tone. */
+.execution-live-card-resume {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 42%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.execution-live-card-resume:hover {
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 70%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 18%, transparent);
+}
 .execution-live-card-cancel:hover {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);

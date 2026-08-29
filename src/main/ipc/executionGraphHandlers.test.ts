@@ -206,7 +206,8 @@ function createDeps(): ExecutionGraphHandlersDeps {
       resolveStackAppendReceipt: vi.fn(() => undefined),
       appendStackStep: vi.fn(() => current),
       cancelExecution: vi.fn(async () => {}),
-      cancelDormantStep: vi.fn(async () => current)
+      cancelDormantStep: vi.fn(async () => current),
+      resumeExecution: vi.fn(() => current)
     },
     now: () => '2026-07-18T12:00:00.000Z'
   }
@@ -229,6 +230,7 @@ describe('registerExecutionGraphHandlers', () => {
       'execution-runs:events',
       'execution-runs:append-stack-step',
       'execution-runs:cancel',
+      'execution-runs:resume',
       'execution-runs:cancel-step',
       'execution-runs:formalize',
       'execution-graphs:save-layout'

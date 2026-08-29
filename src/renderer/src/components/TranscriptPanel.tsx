@@ -636,6 +636,8 @@ export type TranscriptPanelProps = {
   ownedExecutionViews?: readonly ExecutionGhostCardView[]
   /** Cancels a whole owned execution from its live card. */
   onCancelOwnedExecution?: (executionId: string) => void
+  /** Brings a paused owned execution back into flight. */
+  onResumeOwnedExecution?: (executionId: string) => void
   /**
    * Slice B (1.0.3) — ensemble-aware "Thinking…" label. When an
    * ensemble round is mid-flight, this resolves to the active
@@ -2723,6 +2725,7 @@ export const TranscriptPanel = memo(
   hasLiveOwnedExecution,
   ownedExecutionViews,
   onCancelOwnedExecution,
+  onResumeOwnedExecution,
     currentProvider,
     thinkingProviderLabel,
     thinkingProvider,
@@ -6980,6 +6983,7 @@ export const TranscriptPanel = memo(
                   provider={currentProvider}
                   onOpenExecutionMap={onOpenExecutionMapForThread}
                   onCancelExecution={onCancelOwnedExecution}
+                  onResumeExecution={onResumeOwnedExecution}
                 />
               ))}
             </div>

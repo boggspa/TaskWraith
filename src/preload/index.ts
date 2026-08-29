@@ -2661,6 +2661,12 @@ const api = {
       executionId,
       reason
     ) as Promise<ExecutionRunProjection | null>,
+  resumeExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:resume',
+      executionId,
+      reason
+    ) as Promise<ExecutionRunProjection>,
   cancelExecutionRunStep: (command: ExecutionRunCancelStepCommand) =>
     ipcRenderer.invoke('execution-runs:cancel-step', command) as Promise<ExecutionRunProjection>,
   formalizeExecutionRun: (command: ExecutionRunFormalizeCommand) =>

@@ -81,6 +81,7 @@ describe('ExecutionLiveCard', () => {
         provider={'antigravity' as ProviderId}
         onOpenExecutionMap={() => {}}
         onCancelExecution={() => {}}
+        onResumeExecution={() => {}}
       />
     )
 
@@ -108,5 +109,20 @@ describe('ExecutionLiveCard', () => {
     expect(html).toContain('status-needs_action')
     expect(html).toContain('paused — needs a decision')
     expect(html).not.toContain('indeterminate')
+  })
+
+  // Resume is the other half of the killswitch. It is offered ONLY while the
+  // graph is paused: there is nothing to resume otherwise, and a control that
+  // refuses on click teaches the reader nothing.
+  it('offers Resume on a paused graph', () => {
+    const html = render(view([{ stepId: 'g', state: 'waiting_approval' }], 'requires_action'))
+    expect(html).toContain('execution-live-card-resume')
+    expect(html).toContain('>Resume<')
+  })
+
+  it('does not offer Resume while work is still in flight', () => {
+    const html = render(view([{ stepId: 's1', state: 'running' }], 'running'))
+    expect(html).not.toContain('execution-live-card-resume')
+    expect(html).toContain('execution-live-card-cancel')
   })
 })

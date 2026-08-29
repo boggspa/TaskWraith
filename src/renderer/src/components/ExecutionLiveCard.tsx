@@ -29,6 +29,9 @@ export interface ExecutionLiveCardProps {
   provider: ProviderId
   onOpenExecutionMap?: (executionId: string) => void
   onCancelExecution?: (executionId: string) => void
+  /** Offered only while the graph is paused — there is nothing to resume
+   * otherwise, and a control that refuses on click teaches nothing. */
+  onResumeExecution?: (executionId: string) => void
 }
 
 function liveStatusSlug(state: string): string {
@@ -45,7 +48,8 @@ export function ExecutionLiveCard({
   view,
   provider,
   onOpenExecutionMap,
-  onCancelExecution
+  onCancelExecution,
+  onResumeExecution
 }: ExecutionLiveCardProps): JSX.Element {
   const seatLink = executionSeatLink(view.seatId, view.executionId)
   const paused = view.state === 'requires_action'
@@ -75,6 +79,15 @@ export function ExecutionLiveCard({
               onClick={() => onOpenExecutionMap(view.executionId)}
             >
               Open map
+            </button>
+          ) : null}
+          {paused && onResumeExecution ? (
+            <button
+              type="button"
+              className="execution-live-card-resume"
+              onClick={() => onResumeExecution(view.executionId)}
+            >
+              Resume
             </button>
           ) : null}
           {onCancelExecution ? (

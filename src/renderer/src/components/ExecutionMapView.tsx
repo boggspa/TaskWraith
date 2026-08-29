@@ -14,6 +14,9 @@ export interface ExecutionMapViewProps {
   onSaveGraph?: (runId: string) => void
   /** Stop the whole execution. Absent when the caller has no cancel authority. */
   onCancelRun?: (runId: string) => void
+  /** Offered only for a PAUSED graph: resume is meaningless while work is
+   * already in flight, and refusing on click would teach the reader nothing. */
+  onResumeRun?: (runId: string) => void
 }
 
 function executionStepKindLabel(kind: ExecutionStepDefinition['kind']): string {
@@ -229,7 +232,8 @@ export function ExecutionMapView({
   onBack,
   onOpenThread,
   onSaveGraph,
-  onCancelRun
+  onCancelRun,
+  onResumeRun
 }: ExecutionMapViewProps): JSX.Element {
   const [internalSelectedStepId, setInternalSelectedStepId] = useState<string | null>(null)
   const mapRef = useRef<HTMLElement>(null)
@@ -308,6 +312,15 @@ export function ExecutionMapView({
               onClick={() => onSaveGraph(projection.runId)}
             >
               Save graph
+            </button>
+          )}
+          {onResumeRun && projection.runState === 'requires_action' && (
+            <button
+              type="button"
+              className="execution-map-resume-run"
+              onClick={() => onResumeRun(projection.runId)}
+            >
+              Resume execution
             </button>
           )}
           {onCancelRun &&

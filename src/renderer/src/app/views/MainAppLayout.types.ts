@@ -244,6 +244,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSelectExecutionMapStep: (stepId: string) => void
   handleOpenExecutionThread: (threadRef: string) => void
   handleCancelExecutionRun: (executionId: string) => void
+  handleResumeExecutionRun: (executionId: string) => void
   handleOpenExecutionMap: (executionId: string, stepId?: string) => void
   executionRunEntries: ReadonlyArray<{
     executionId: string
