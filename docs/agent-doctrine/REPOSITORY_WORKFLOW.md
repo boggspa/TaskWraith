@@ -164,8 +164,8 @@ the opaque IDs disambiguate similarly titled tasks and multi-participant runs.
 They are attribution metadata only: none grants authority, extends liveness, or
 changes claim scope. Older markers without them remain valid.
 
-**A lease may not exceed 15 minutes, and it is renewed by hand.** Anything
-longer is honoured only for its first 15 minutes, measured from `started` — a
+**A lease may not exceed 20 minutes, and it is renewed by hand.** Anything
+longer is honoured only for its first 20 minutes, measured from `started` — a
 claim is clamped, not voided, so a typo costs you the tail of a lease rather
 than all your protection. Renewing means re-stamping **both** `started` and
 `expires`; bumping `expires` alone changes nothing, because the ceiling is

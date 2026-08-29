@@ -64,8 +64,16 @@ const ORPHAN_WARN_MS = 45 * 60 * 1000
  * MAX_LEASE_SECONDS in `.githooks/pre-commit`: if these two drift, the hook
  * blocks on a claim this tool reports decayed, and a decayed claim is the one
  * AGENTS.md tells the next agent to harvest and delete.
+ *
+ * Raised 15m -> 20m on 2026-08-29. The ceiling has to outlast the work a
+ * session does between re-stamps, and the commonest such work is a full test
+ * run: `vitest run src/tui src/host-*` alone outlasts fifteen minutes, so any
+ * session that verified before committing was guaranteed a window where its
+ * own claim read decayed while it was still editing. Two sessions hit it the
+ * same afternoon, and a decayed claim is adoptable — the next agent is told to
+ * harvest its paths.
  */
-const MAX_LEASE_MS = 15 * 60 * 1000
+const MAX_LEASE_MS = 20 * 60 * 1000
 const SNAPSHOT_KEEP_MS = 7 * 24 * 60 * 60 * 1000
 const SNAPSHOT_KEEP_MAX = 300
 const SIDECAR_DIR = '.work-guard'

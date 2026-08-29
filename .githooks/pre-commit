@@ -79,24 +79,25 @@ marker_scalar() {
 }
 
 # ── lease ceiling ───────────────────────────────────────────────────────────
-# A lease may not exceed 15 minutes and must be renewed by hand (Chris,
-# 2026-08-06). Nothing bounded it before: `expires: 2099-…` held a path for 73
+# A lease may not exceed 20 minutes and must be renewed by hand (Chris,
+# 2026-08-06; raised from 15m on 2026-08-29 because a full test run outlasts
+# fifteen minutes, so verifying before committing decayed your own claim). Nothing bounded it before: `expires: 2099-…` held a path for 73
 # years, and an owner-id claim from a seat has no pid to decay it, so the lease
 # was its ONLY decay signal and that signal was unbounded.
 #
-# CLAMPED, never voided — an over-long lease still protects for its first 15
+# CLAMPED, never voided — an over-long lease still protects for its first 20
 # minutes. Punishing a typo with total loss of protection is the opposite of
 # what a ceiling is for. Anchored to `started`, because anchoring to "now" would
 # push the expiry forward on every evaluation and never expire at all.
-MAX_LEASE_SECONDS=900
+MAX_LEASE_SECONDS=1200
 
 # Fires only when the CEILING is what decayed a claim — i.e. it would still be
 # live on its own stated expiry. That is the one moment the owner needs to hear
 # it, and gating on it keeps a long-lease marker from nagging every commit by
 # everyone for the rest of its life.
 report_lease_capped() {
-  printf '  note: %s expired at its 15m ceiling, not its stated expires:.\n' "$1"
-  printf '        Leases cap at 15m and are renewed by hand — re-stamp started:\n'
+  printf '  note: %s expired at its 20m ceiling, not its stated expires:.\n' "$1"
+  printf '        Leases cap at 20m and are renewed by hand — re-stamp started:\n'
   printf '        and expires: if that work is still live.\n'
   warn=1
 }
@@ -430,7 +431,7 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
     fi
     eff_epoch="$(capped_expiry "$exp_epoch" "$(to_epoch "$(marker_scalar "$marker" started)")")"
     if [ -z "$eff_epoch" ]; then
-      printf '  note: %s claims more than 15m with no readable started:,\n' "$marker"
+      printf '  note: %s claims more than 20m with no readable started:,\n' "$marker"
       printf '        so its lease cannot be bounded — treating as decayed.\n'
       warn=1
       continue
@@ -584,7 +585,7 @@ for marker in .WORK-IN-PROGRESS-*.md; do
   fi
   eff_epoch="$(capped_expiry "$exp_epoch" "$(to_epoch "$(marker_scalar "$marker" started)")")"
   if [ -z "$eff_epoch" ]; then
-    printf '  note: %s claims more than 15m with no readable started:,\n' "$marker"
+    printf '  note: %s claims more than 20m with no readable started:,\n' "$marker"
     printf '        so its lease cannot be bounded — treating as decayed.\n'
     warn=1
     continue

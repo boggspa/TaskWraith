@@ -74,7 +74,7 @@ only promise future work.
 
 ### Marker format — it must self-expire
 
-A manual lease is capped at 15 minutes. Renew by re-stamping both `started`
+A manual lease is capped at 20 minutes. Renew by re-stamping both `started`
 and `expires`; if it carries `lockOwnerId`, re-read and re-stamp the exact
 current `TASKWRAITH_LOCK_OWNER_ID` too. Never invent an owner id. Read
 [Marker format](docs/agent-doctrine/REPOSITORY_WORKFLOW.md#marker-format--it-must-self-expire)

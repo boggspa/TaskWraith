@@ -290,14 +290,14 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
     expect(liveness(seat, {}, NOW).live).toBe(false)
   })
 
-  it('caps a lease at 15 minutes from started, however far off expires is', () => {
+  it('caps a lease at 20 minutes from started, however far off expires is', () => {
     const root = makeRepo()
     const stale = markerFor(
       root,
       writeMarker(root, 'seat-2099', {
         pid: null,
         lockOwnerId: 'seat-owner-5',
-        started: iso(NOW - 20 * 60_000),
+        started: iso(NOW - 25 * 60_000),
         expires: '2099-01-01T00:00:00Z',
         paths: ['src/']
       })
