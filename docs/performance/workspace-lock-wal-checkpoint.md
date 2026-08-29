@@ -23,29 +23,29 @@ rather than merely summarizing them.
 
 `WorkspaceLockWalState` is not a cache; each field is an invariant.
 
-| Field | Invariant | Treatment |
-| --- | --- | --- |
-| `sequence` | contiguity: every event is `previous + 1` | stored exactly |
-| `lastDigest` | hash-chain anchor | stored exactly; also the tail-authentication link |
-| `lastTransitionId` | last-transition anchor | stored exactly |
-| `transitionIds` | request-level idempotency; a repeated id is refused | stored **complete**, never truncated |
-| `leaseIds` | lease ids are never reusable, including after release | stored **complete**, never truncated |
-| `maxGeneration` | boot generation monotonicity | stored exactly |
-| `activeLeases` | the live authority; a lost lease is a lost lock | stored verbatim |
-| `recoveredLeases` | audit of retired leases (already capped at 100) | stored verbatim |
-| `knownMarkers` | pending derived-marker cleanup inventory | stored verbatim |
-| `events` | exact committed-operation replay (`replayedAcquire`, `historicalWorkspaceLockWalEvent`) | **bounded retention window; see below** |
+| Field              | Invariant                                                                               | Treatment                                         |
+| ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `sequence`         | contiguity: every event is `previous + 1`                                               | stored exactly                                    |
+| `lastDigest`       | hash-chain anchor                                                                       | stored exactly; also the tail-authentication link |
+| `lastTransitionId` | last-transition anchor                                                                  | stored exactly                                    |
+| `transitionIds`    | request-level idempotency; a repeated id is refused                                     | stored **complete**, never truncated              |
+| `leaseIds`         | lease ids are never reusable, including after release                                   | stored **complete**, never truncated              |
+| `maxGeneration`    | boot generation monotonicity                                                            | stored exactly                                    |
+| `activeLeases`     | the live authority; a lost lease is a lost lock                                         | stored verbatim                                   |
+| `recoveredLeases`  | audit of retired leases (already capped at 100)                                         | stored verbatim                                   |
+| `knownMarkers`     | pending derived-marker cleanup inventory                                                | stored verbatim                                   |
+| `events`           | exact committed-operation replay (`replayedAcquire`, `historicalWorkspaceLockWalEvent`) | **bounded retention window; see below**           |
 
 ### The explicit decision on old event payloads
 
 `events` is the only unbounded field, and it is the whole 128 MB. It is read by
-exactly two families of caller, both of them *idempotent-retry* paths:
+exactly two families of caller, both of them _idempotent-retry_ paths:
 
 - `replayedAcquire` / `replayedTransfer` — a caller re-issued a stable
   `transitionId` for an acquisition that already committed.
 - `replayedDirectRelease` / `replayedAcquisitionRelease` / `replayedRunRelease`
   via `historicalWorkspaceLockWalEvent` — the same, for releases. These need the
-  event *and the state immediately before it*.
+  event _and the state immediately before it_.
 
 Nothing retries a transition committed tens of thousands of events ago. So:
 
@@ -87,18 +87,28 @@ newline-terminated, torn final fragment ignored). A v1 authority root has no
 ```jsonc
 {
   "schema": "taskwraith.workspace-lock.checkpoint.v1",
-  "sequence": 82438,             // B: last event compacted into this checkpoint
+  "sequence": 82438, // B: last event compacted into this checkpoint
   "lastDigest": "<sha256 of event B>",
   "lastTransitionId": "<transition id of event B>",
-  "transitionIds": ["…"],        // complete, length === sequence
-  "leaseIds": ["…"],             // complete, sorted
+  "transitionIds": ["…"], // complete, length === sequence
+  "leaseIds": ["…"], // complete, sorted
   "maxGeneration": 4127,
-  "activeLeases": [ /* WorkspaceLockLease */ ],
-  "recoveredLeases": [ /* WorkspaceLockLease */ ],
-  "knownMarkers": [ /* WorkspaceLockWalMarker */ ],
+  "activeLeases": [
+    /* WorkspaceLockLease */
+  ],
+  "recoveredLeases": [
+    /* WorkspaceLockLease */
+  ],
+  "knownMarkers": [
+    /* WorkspaceLockWalMarker */
+  ],
   "archivedSegments": [
-    { "sequence": 82438, "filename": "events-…jsonl", "byteLength": 133_000_000,
-      "digest": "<sha256 of segment bytes>" }
+    {
+      "sequence": 82438,
+      "filename": "events-…jsonl",
+      "byteLength": 133_000_000,
+      "digest": "<sha256 of segment bytes>"
+    }
   ],
   "previousCheckpointDigest": "<sha256 of the checkpoint this supersedes, or ''>",
   "createdAt": "2026-08-29T02:00:00.000Z",
@@ -141,12 +151,12 @@ All steps run while the caller holds the existing O_EXCL instance fence
 
 ### Crash behaviour at each step
 
-| Crash after | On-disk state | Boot outcome |
-| --- | --- | --- |
-| 1 | unchanged | v1 replay; unchanged behaviour |
-| 2 | orphan archive segment, no checkpoint | v1 replay; the segment is inert and is overwritten byte-identically by the next attempt at the same `B` |
-| 3 | checkpoint at `B`, `events.jsonl` still holds frames `1..N` | first frame has `sequence === 1 !== B + 1` → **checkpoint ignored, full v1 replay**. Slow but exactly correct; the next compaction re-publishes |
-| 4 | checkpoint at `B`, tail holds frames `> B` | steady state: checkpoint + short tail |
+| Crash after | On-disk state                                               | Boot outcome                                                                                                                                    |
+| ----------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1           | unchanged                                                   | v1 replay; unchanged behaviour                                                                                                                  |
+| 2           | orphan archive segment, no checkpoint                       | v1 replay; the segment is inert and is overwritten byte-identically by the next attempt at the same `B`                                         |
+| 3           | checkpoint at `B`, `events.jsonl` still holds frames `1..N` | first frame has `sequence === 1 !== B + 1` → **checkpoint ignored, full v1 replay**. Slow but exactly correct; the next compaction re-publishes |
+| 4           | checkpoint at `B`, tail holds frames `> B`                  | steady state: checkpoint + short tail                                                                                                           |
 
 Step 4 is the only step that removes bytes, and it removes only bytes already
 sealed in step 2 and summarized in step 3. There is no window in which a frame
@@ -182,7 +192,7 @@ decode(tail, checkpoint):
 
 The decision is O(1) — one line parsed — and every branch either produces a
 state identical to the full replay or refuses. A checkpoint can never produce a
-*weaker* state than v1: it either chains exactly, or it is ignored, or boot
+_weaker_ state than v1: it either chains exactly, or it is ignored, or boot
 fails.
 
 The one unrecoverable case is deliberate: a tail that starts at `B+1` with no
