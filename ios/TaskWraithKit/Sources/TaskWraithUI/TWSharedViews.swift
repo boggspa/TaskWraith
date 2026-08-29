@@ -18,7 +18,7 @@ public struct GhostMarkView: View {
 
     public var body: some View {
         Group {
-            if let image = Self.loadImage() {
+            if let image = Self.cachedImage {
                 image
                     .resizable()
                     .scaledToFit()
@@ -31,7 +31,9 @@ public struct GhostMarkView: View {
         .frame(width: size, height: size)
     }
 
-    private static func loadImage() -> Image? {
+    /// Loaded once (disk read + decode), not per `body` — this mark is the
+    /// identity badge's fallback, so it re-resolves with every agent row.
+    private static let cachedImage: Image? = {
         #if canImport(UIKit)
         if let url = Bundle.module.url(forResource: "ghost-mark", withExtension: "png"),
             let data = try? Data(contentsOf: url),
@@ -44,7 +46,7 @@ public struct GhostMarkView: View {
         }
         #endif
         return nil
-    }
+    }()
 }
 
 public struct GhostMonolineMarkView: View {
@@ -4184,6 +4186,13 @@ public struct ProviderGlyphIcon: View {
             provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 == "ensemble"
         else { return nil }
+        return cachedEnsembleGlyph
+    }
+
+    /// Resolved once. `UIImage(named:)` is backed by the system asset cache,
+    /// but the bundle fallback beneath it is not — and that fallback is the
+    /// live path in the SwiftPM build, where the glyph is a package resource.
+    private static let cachedEnsembleGlyph: Image? = {
         #if canImport(UIKit)
             if let ui = UIImage(named: "provider-glyph-ensemble") {
                 return Image(uiImage: ui)
@@ -4196,7 +4205,7 @@ public struct ProviderGlyphIcon: View {
             }
         #endif
         return nil
-    }
+    }()
 
     static func bundledResourceURL(for provider: String?) -> URL? {
         guard
@@ -4296,19 +4305,22 @@ public struct ProviderLogoIcon: View {
         self.size = size
     }
 
+    @MainActor
     private static func logoImage(named assetName: String) -> Image? {
-        #if canImport(UIKit)
-            if let url = ProviderLogoAssetResolver.resourceURL(for: assetName),
-                let data = try? Data(contentsOf: url),
-                let ui = UIImage(data: data)
-            {
-                return Image(uiImage: ui)
-            }
-            if let ui = UIImage(named: assetName) {
-                return Image(uiImage: ui)
-            }
-        #endif
-        return nil
+        BundledImageCache.image(forKey: "provider-logo:\(assetName)") {
+            #if canImport(UIKit)
+                if let url = ProviderLogoAssetResolver.resourceURL(for: assetName),
+                    let data = try? Data(contentsOf: url),
+                    let ui = UIImage(data: data)
+                {
+                    return Image(uiImage: ui)
+                }
+                if let ui = UIImage(named: assetName) {
+                    return Image(uiImage: ui)
+                }
+            #endif
+            return nil
+        }
     }
 
     public var body: some View {
@@ -7304,21 +7316,24 @@ public struct AgentIdentityBadge: View {
     /// the package resources via qlmanage). Nil when the slug has no baked
     /// asset — the minimal ring badge below covers that.
     /// Internal (not private) so the transcript satellite can reuse it.
+    @MainActor
     static func catalogImage(for slug: String?) -> Image? {
         guard let slug, !slug.isEmpty else { return nil }
-        #if canImport(UIKit)
-            if let url = Bundle.module.url(
-                forResource: "identicon-\(slug)", withExtension: "png"),
-                let data = try? Data(contentsOf: url),
-                let ui = UIImage(data: data)
-            {
-                return Image(uiImage: ui)
-            }
-            if let ui = UIImage(named: "identicon-\(slug)") {
-                return Image(uiImage: ui)
-            }
-        #endif
-        return nil
+        return BundledImageCache.image(forKey: "identicon:\(slug)") {
+            #if canImport(UIKit)
+                if let url = Bundle.module.url(
+                    forResource: "identicon-\(slug)", withExtension: "png"),
+                    let data = try? Data(contentsOf: url),
+                    let ui = UIImage(data: data)
+                {
+                    return Image(uiImage: ui)
+                }
+                if let ui = UIImage(named: "identicon-\(slug)") {
+                    return Image(uiImage: ui)
+                }
+            #endif
+            return nil
+        }
     }
 
     public var body: some View {
