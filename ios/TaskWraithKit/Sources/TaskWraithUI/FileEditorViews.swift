@@ -853,6 +853,8 @@ private struct FileEditorPane: View {
     let onShowSelectedDiff: (String) -> Void
     let compact: Bool
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+    @Environment(\.appScale) private var appScale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var canvasFill: Color {
         glassSheetHosted ? Color.clear : TWTheme.appBg
@@ -868,8 +870,29 @@ private struct FileEditorPane: View {
     }
 
     var body: some View {
+        // The header's wording is budgeted against the PANE, never the size
+        // class — a split view's detail column reports COMPACT (DESIGN.md
+        // v0.13), so the iPad pane was handed full-width labels at 570pt and
+        // wrapped them character by character. `pane.size` is read and used
+        // inline, never written back to @State, so this cannot oscillate.
+        GeometryReader { pane in
+            paneBody(
+                TWWorkspaceHeaderPolicy.layout(
+                    paneWidth: pane.size.width,
+                    backTitle: backTitle,
+                    actionTitles: Self.actionTitles,
+                    scale: appScale,
+                    typeSize: dynamicTypeSize)
+            )
+            // Load-bearing: GeometryReader gives its child no size proposal
+            // and pins it top-leading.
+            .frame(width: pane.size.width, height: pane.size.height)
+        }
+    }
+
+    private func paneBody(_ layout: TWWorkspaceHeaderLayout) -> some View {
         VStack(spacing: 0) {
-            header
+            header(layout)
             Divider().overlay(TWTheme.border)
             if state.selectedPath == nil {
                 VStack(spacing: 10) {
@@ -939,44 +962,48 @@ private struct FileEditorPane: View {
         }
     }
 
-    private var header: some View {
+    private var backTitle: String { compact ? "Files" : "Back to app" }
+
+    /// Every action the bar can carry, in bar order. The budget is taken over
+    /// the FULL vocabulary rather than the currently-enabled subset, so the
+    /// wording does not reflow as buttons enable and disable underneath the
+    /// reader — they are disabled here, never removed.
+    private static let actionTitles = [
+        "Delete", "Show Diff", "Stage", "Unstage", "Commit", "Save"
+    ]
+
+    private func header(_ layout: TWWorkspaceHeaderLayout) -> some View {
         HStack(spacing: 10) {
-            Button {
+            TWChromeBackButton(title: backTitle, showsLabel: layout.backShowsLabel) {
                 if compact {
                     _ = state.requestClearSelection()
                 } else if state.requestClose() {
                     onBack()
                 }
-            } label: {
-                Label(compact ? "Files" : "Back to app", systemImage: compact ? "chevron.left" : "arrow.uturn.backward")
             }
-            .buttonStyle(.bordered)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(state.selectedName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    if state.isDirty {
-                        Circle()
-                            .fill(TWTheme.statusAttention)
-                            .frame(width: 7, height: 7)
-                    }
+            TWWorkspaceHeaderTitle(
+                name: state.selectedName,
+                subtitle: state.selectedPath ?? "No file selected"
+            ) {
+                if state.isDirty {
+                    Circle()
+                        .fill(TWTheme.statusAttention)
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("Unsaved changes")
                 }
-                Text(state.selectedPath ?? "No file selected")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textMuted)
-                    .lineLimit(1)
             }
-            Spacer()
-            HStack(spacing: 8) {
+
+            // Fixed-size: the run holds its intrinsic width or drops to
+            // glyphs. It must never be the thing that compresses — that is
+            // what stacked "S/t/a/g/e" was.
+            HStack(spacing: 0) {
                 Button {
                     state.showDeleteConfirm = true
                 } label: {
-                    actionLabel("Delete", systemImage: "trash")
+                    actionLabel("Delete", systemImage: "trash", layout: layout)
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .destructive))
                 .disabled(state.selectedPath == nil || state.isDirty || state.isLoading)
 
                 Button {
@@ -984,9 +1011,9 @@ private struct FileEditorPane: View {
                         onShowSelectedDiff(selectedPath)
                     }
                 } label: {
-                    actionLabel("Show Diff", systemImage: "plus.forwardslash.minus")
+                    actionLabel("Show Diff", systemImage: "plus.forwardslash.minus", layout: layout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
                 .disabled(
                     state.selectedPath == nil || state.isDirty || state.isLoading
                         || !model.workspaceCanReviewDiffs(state.selectedWorkspaceId))
@@ -994,9 +1021,9 @@ private struct FileEditorPane: View {
                 Button {
                     Task { await state.stageSelected(model: model) }
                 } label: {
-                    actionLabel("Stage", systemImage: "plus.circle")
+                    actionLabel("Stage", systemImage: "plus.circle", layout: layout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
                 .disabled(
                     state.selectedPath == nil || state.isDirty || state.isLoading
                         || !selectedHasUnstagedChanges)
@@ -1004,27 +1031,28 @@ private struct FileEditorPane: View {
                 Button {
                     Task { await state.unstageSelected(model: model) }
                 } label: {
-                    actionLabel("Unstage", systemImage: "minus.circle")
+                    actionLabel("Unstage", systemImage: "minus.circle", layout: layout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
                 .disabled(state.selectedPath == nil || state.isLoading || !selectedHasStagedChanges)
 
                 Button {
                     state.showCommitDialog = true
                 } label: {
-                    actionLabel("Commit", systemImage: "checkmark.circle")
+                    actionLabel("Commit", systemImage: "checkmark.circle", layout: layout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
                 .disabled(stagedCount == 0 || state.isLoading)
 
                 Button {
                     Task { await state.save(model: model) }
                 } label: {
-                    actionLabel("Save", systemImage: "square.and.arrow.down")
+                    actionLabel("Save", systemImage: "square.and.arrow.down", layout: layout)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(TWChromeActionButtonStyle(tone: .prominent))
                 .disabled(!state.isDirty || state.selectedPath == nil || state.isLoading)
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -1037,14 +1065,11 @@ private struct FileEditorPane: View {
         return "\(base), \(MobileFileEditorState.languageLabel(for: selectedPath)), \(selectedPath)"
     }
 
-    @ViewBuilder
-    private func actionLabel(_ title: String, systemImage: String) -> some View {
-        if compact {
-            Image(systemName: systemImage)
-                .accessibilityLabel(title)
-        } else {
-            Label(title, systemImage: systemImage)
-        }
+    private func actionLabel(
+        _ title: String, systemImage: String, layout: TWWorkspaceHeaderLayout
+    ) -> some View {
+        TWChromeActionLabel(
+            title: title, systemImage: systemImage, showsLabel: layout.actionsShowLabels)
     }
 
     private var gitSnapshot: GitWorkspaceSnapshot? {
