@@ -16,6 +16,7 @@ import {
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition,
   runCombinedModelPickerConfirmAction,
+  shouldScrollHighlightedRowIntoView,
   toggleExpandedProviderGroup
 } from './CombinedModelPicker'
 import type { ProviderId } from '../../../main/store/types'
@@ -479,6 +480,45 @@ describe('CombinedModelPicker', () => {
       'codex',
       'claude'
     ])
+  })
+
+  it('never scrolls the row the cursor is already resting on', () => {
+    // Hover-scrolling moves the list under a stationary pointer. When it lands
+    // between mousedown and mouseup the two events hit different rows, so the
+    // browser dispatches click on their common ancestor and no row handler
+    // runs: the pick is dropped and the jump reads as a refusing picker.
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'pointer', modelHighlight: 4 })
+    ).toBe(false)
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: 4 })
+    ).toBe(true)
+    // A collapsed group parks the highlight at -1; there is no row to reveal.
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: -1 })
+    ).toBe(false)
+  })
+
+  it('marks every hover-driven highlight move as pointer-sourced', () => {
+    const source = readFileSync(new URL('./CombinedModelPicker.tsx', import.meta.url), 'utf8')
+
+    // The reveal effect is only as safe as its callers: a hover handler that
+    // moves a highlight without stamping the source reopens the swallowed
+    // click, and nothing else in the suite would notice.
+    const hoverHandlers = source.match(/onMouseEnter=\{\(\) => \{[\s\S]*?\n\s*\}\}/g) || []
+    expect(hoverHandlers.length).toBe(3)
+    for (const handler of hoverHandlers) {
+      expect(handler).toMatch(/setModelHighlight|setProviderHighlight/)
+      expect(handler).toContain("highlightSourceRef.current = 'pointer'")
+    }
+
+    // ...and the effect must actually consult the guard rather than scroll
+    // unconditionally.
+    const revealEffect = source.match(
+      /if \(!open \|\| !isUnifiedProviderPicker \|\| focusedColumn !== 'model'\) return[\s\S]*?scrollIntoView/
+    )?.[0]
+    expect(revealEffect).toBeDefined()
+    expect(revealEffect).toContain('shouldScrollHighlightedRowIntoView')
   })
 
   it('renders provider headers as accessible disclosure buttons', () => {

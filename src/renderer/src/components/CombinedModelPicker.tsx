@@ -343,6 +343,32 @@ export type UnifiedModelEntry = {
   option: CombinedModelPickerModelOption
 }
 
+/**
+ * What moved the model highlight. The pointer already sits on the row it
+ * highlighted, so scrolling that row into view drags the list out from under a
+ * stationary cursor; everything else (arrow keys, opening the popover) moves
+ * the highlight to a row the user cannot see yet, which does need revealing.
+ */
+export type CombinedModelPickerHighlightSource = 'pointer' | 'navigation'
+
+/**
+ * Whether a highlight move should scroll its row into view.
+ *
+ * Hover-driven scrolling is not a cosmetic wobble: it moves the row out from
+ * under the cursor mid-click, so `mousedown` and `mouseup` land on different
+ * rows and the browser dispatches `click` on their common ancestor instead of
+ * either row. No row handler runs, the pick is silently dropped, and the list
+ * jump reads as the picker refusing the selection.
+ */
+export function shouldScrollHighlightedRowIntoView(params: {
+  highlightSource: CombinedModelPickerHighlightSource
+  modelHighlight: number
+}): boolean {
+  // A collapsed group parks the highlight at -1; there is no row to reveal.
+  if (params.modelHighlight < 0) return false
+  return params.highlightSource !== 'pointer'
+}
+
 const NO_COLLAPSED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
 const NO_EXPANDED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
 const NO_UNIFIED_PROVIDER_GROUPS: readonly CombinedModelPickerProviderGroup[] = []
@@ -1268,6 +1294,9 @@ export function CombinedModelPicker({
   const [providerHighlight, setProviderHighlight] = useState(0)
   const [modelHighlight, setModelHighlight] = useState(0)
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
+  // Why the highlight last moved, so the reveal effect below can tell a row the
+  // user navigated to from the row their cursor is already resting on.
+  const highlightSourceRef = useRef<CombinedModelPickerHighlightSource>('navigation')
   // No explicit expansions means every provider starts collapsed. This state
   // belongs to the mounted picker rather than an individual open cycle, so
   // closing and reopening preserves exactly the disclosure state the user left.
@@ -1326,6 +1355,14 @@ export function CombinedModelPicker({
 
   useEffect(() => {
     if (!open || !isUnifiedProviderPicker || focusedColumn !== 'model') return
+    if (
+      !shouldScrollHighlightedRowIntoView({
+        highlightSource: highlightSourceRef.current,
+        modelHighlight
+      })
+    ) {
+      return
+    }
     const frame = window.requestAnimationFrame(() => {
       unifiedModelRowRefs.current
         .get(modelHighlight)
@@ -1611,6 +1648,10 @@ export function CombinedModelPicker({
       selectedModelId
     })
     if (resetSignatureRef.current === resetSignature) return
+    // Only the first run of an open cycle is navigation: later runs come from a
+    // committed selection, and when the mouse committed it the row is already
+    // under the cursor.
+    if (resetSignatureRef.current === null) highlightSourceRef.current = 'navigation'
     resetSignatureRef.current = resetSignature
     const resetState = isUnifiedProviderPicker
       ? {
@@ -1713,6 +1754,7 @@ export function CombinedModelPicker({
         // as well as the existing confirm and Fast buttons.
         return
       }
+      highlightSourceRef.current = 'navigation'
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (focusedColumn === 'provider') {
@@ -1853,11 +1895,13 @@ export function CombinedModelPicker({
                 } as React.CSSProperties}
                 disabled={disabled}
                 onMouseEnter={() => {
+                  highlightSourceRef.current = 'pointer'
                   setFocusedColumn('provider')
                   setProviderHighlight(idx)
                 }}
                 onClick={() => {
                   if (disabled) return
+                  highlightSourceRef.current = 'navigation'
                   setActiveOllamaProviderId(group.id)
                   setProviderHighlight(idx)
                   setModelHighlight(0)
@@ -1975,6 +2019,7 @@ export function CombinedModelPicker({
                       aria-pressed={selected}
                       title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
                       onMouseEnter={() => {
+                        highlightSourceRef.current = 'pointer'
                         setFocusedColumn('model')
                         setModelHighlight(rowIndex)
                       }}
@@ -2068,6 +2113,7 @@ export function CombinedModelPicker({
                   aria-pressed={option.id === selectedModelId}
                   title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
                   onMouseEnter={() => {
+                    highlightSourceRef.current = 'pointer'
                     setFocusedColumn('model')
                     setModelHighlight(idx)
                   }}
