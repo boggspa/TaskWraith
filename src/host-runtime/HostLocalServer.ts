@@ -94,6 +94,16 @@ const MAX_LINE_BYTES = 256_000
 // participants. The projection client already accepts this same bounded large
 // response envelope for snapshots and compact exports.
 const MAX_LARGE_RESPONSE_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
+// Drain ceiling for ONE client socket. It is deliberately a property of the
+// socket rather than of whichever frame is next in line: the per-frame line
+// budget bounds a single message, but the write backlog is shared by every
+// message the server has already chosen to send. Deriving the ceiling from the
+// frame being written let a ~1.7 KB delta event — budgeted at MAX_LINE_BYTES —
+// judge a backlog that a legal multi-megabyte `snapshot.get` response had just
+// created, and evict a reader that was draining perfectly well. Measured on a
+// live profile: a 725 KB snapshot poll plus the next routine delta killed the
+// TUI's connection every few seconds, forever.
+const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
 
 // ---------------------------------------------------------------------------
 // Options
@@ -188,7 +198,7 @@ function socketWrite(
       return false
     }
   }
-  if (socket.writableLength + bytes > lineBudget * 2) {
+  if (socket.writableLength + bytes > MAX_SOCKET_WRITE_BACKLOG_BYTES) {
     socket.destroy(new Error('Host local client is not draining responses.'))
     return false
   }

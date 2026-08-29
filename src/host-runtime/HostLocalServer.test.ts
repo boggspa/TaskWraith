@@ -388,6 +388,7 @@ function connectClient(socketPath: string): Promise<{
   writeLine: (line: string) => void
   readFrame: () => Promise<HostLocalTransportHostFrame>
   pause: () => void
+  resume: () => void
   close: () => void
 }> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -425,6 +426,7 @@ function connectClient(socketPath: string): Promise<{
             resolver = res
           }),
         pause: () => socket.pause(),
+        resume: () => socket.resume(),
         close: () => socket.destroy()
       })
     })
@@ -1638,6 +1640,86 @@ describe('HostLocalServer', () => {
 
       slowClient.close()
       healthyClient.close()
+    })
+
+    it('keeps a draining client whose socket still holds the Host own large snapshot response', async () => {
+      // A `snapshot.get` response may legally be megabytes; a delta event frame
+      // may not. The drain check must still be a property of the SOCKET, not of
+      // whichever frame happens to be next in line — otherwise the Host writes a
+      // large snapshot it authorised itself and then evicts the reader for the
+      // backlog that snapshot created. Measured against a live profile: a 725 KB
+      // snapshot poll plus a routine delta broadcast killed the TUI every few
+      // seconds, forever.
+      const deltaListeners: Array<(delta: HostDeltaEnvelope) => void> = []
+      const subscribeDeltas = vi.fn((listener: (delta: HostDeltaEnvelope) => void) => {
+        deltaListeners.push(listener)
+        return vi.fn()
+      })
+      const largeSnapshot = {
+        ...makeEmptySnapshot(),
+        threads: [{ id: 'thread-large', title: 'x'.repeat(700_000) }]
+      } as unknown as HostSnapshot
+      const largeAuthority = mockHostAuthority({
+        snapshot: vi.fn().mockResolvedValue({ ok: true, value: largeSnapshot })
+      } as unknown as Partial<HostAuthority>)
+      server = new HostLocalServer({
+        userDataPath,
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: largeAuthority as unknown as HostAuthority,
+        maxClients: 4,
+        subscribeDeltas,
+        now: () => 1754300000000
+      })
+      await server.start()
+
+      const token = readFileSync(server.tokenPath, 'utf8').trim()
+      const client = await connectClient(server.socketPath)
+      client.writeLine(
+        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health']))
+      )
+      expect((await client.readFrame()).type).toBe('welcome')
+
+      // Stop reading only long enough for the large response to sit unflushed in
+      // the socket's write buffer, exactly as it does mid-transfer in production.
+      client.pause()
+      client.writeLine(JSON.stringify(makeRequest('snapshot.get' as never, 'big-snapshot')))
+      await vi.waitFor(() => expect(largeAuthority.snapshot).toHaveBeenCalledTimes(1))
+      await new Promise((settle) => setTimeout(settle, 100))
+
+      const publish = deltaListeners[0]
+      if (!publish) throw new Error('delta subscription was not installed')
+      publish({
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        projectionVersion: HOST_PROJECTION_VERSION,
+        generation: 1,
+        cursor: 9,
+        previousCursor: 8,
+        kind: 'upsert',
+        family: 'thread',
+        entityId: 'thread-live',
+        payload: { id: 'thread-live', title: 'Live' },
+        at: '2026-08-09T20:00:00.000Z'
+      })
+
+      // `drop` runs on the socket's close event, so give an eviction a beat to
+      // land rather than reading the count while the socket is still closing.
+      await new Promise((settle) => setTimeout(settle, 150))
+      expect(server.clientCount()).toBe(1)
+
+      client.resume()
+      const response = await client.readFrame()
+      expect(response.type).toBe('response')
+      if (response.type === 'response') {
+        expect(response.id).toBe('big-snapshot')
+        expect(response.ok).toBe(true)
+      }
+      const event = await client.readFrame()
+      expect(event.type).toBe('event')
+      if (event.type === 'event') expect(event.event).toBe('deltas')
+
+      client.close()
     })
   })
 
