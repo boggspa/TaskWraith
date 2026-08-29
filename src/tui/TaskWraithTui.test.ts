@@ -813,6 +813,10 @@ function startTui(
   const tui = new TaskWraithTui({
     clientVersion: '0.1.0-test',
     userDataPath,
+    // These tests are about what happens once a thread is open, so they ask for
+    // one the way `--thread` does. The TUI only auto-opens a REQUESTED thread;
+    // an unrequested reader rests on the home frame, which is covered on its own.
+    initialThreadId: 'thread-1',
     colorMode: 'none',
     animationEnabled: false,
     ...options,
@@ -1698,6 +1702,51 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     cleanup.push(() => tui.stop())
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Other'), 'falls back to available thread')
+  })
+
+  it('rests on the home frame when no thread was requested', async () => {
+    // Landing anywhere is a choice, and `updatedAt` is not the reader's choice:
+    // the newest thread is whichever one some other surface touched last, so an
+    // unrequested auto-open teleports the reader — on first connect and again on
+    // every reconnect. With no `--thread` and nothing selected this session, the
+    // home frame is the answer.
+    const { host, userDataPath } = await setupHost()
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      colorMode: 'none',
+      animationEnabled: false,
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    await tui.start()
+
+    await waitFor(
+      () => output.lastFrame.includes('No thread selected'),
+      'home frame after connecting'
+    )
+    expect(output.lastFrame).not.toContain('Hello TaskWraith')
+    expect(host.commands.filter((command) => command.name === 'thread.select')).toHaveLength(0)
+  })
+
+  it('opens the requested thread on connect when one was asked for', async () => {
+    const { userDataPath } = await setupHost()
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      initialThreadId: 'thread-1',
+      colorMode: 'none',
+      animationEnabled: false,
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'requested thread opened')
+    expect(output.lastFrame).not.toContain('No thread selected')
   })
 
   it('accepts bracketed-paste text as a single composer insertion including embedded line breaks', async () => {

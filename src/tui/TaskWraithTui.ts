@@ -547,12 +547,22 @@ export class TaskWraithTui {
       if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
       this.state.connection = 'connected'
       this.everConnected = true
-      const threadId = preferredThread(
-        mapped,
-        this.state.selectedThreadId ?? this.options.initialThreadId
-      )
+      // A thread opens on connect only when one was actually ASKED FOR: `--thread`,
+      // or a thread this session already selected. Falling back to "newest" for an
+      // unasked reader picks whichever thread some other surface touched last, so
+      // the home frame gets replaced a beat after it paints — and every reconnect
+      // repeats the jump. Requesting a thread that has since gone still falls back
+      // to an available one; that is an answer to a question the reader asked.
+      const requestedThreadId = this.state.selectedThreadId ?? this.options.initialThreadId
+      const threadId = requestedThreadId ? preferredThread(mapped, requestedThreadId) : undefined
+      const hasOpenableThread = mapped.threads.some((thread) => !thread.archived)
       if (threadId) {
         await this.openThread(threadId)
+      } else if (hasOpenableThread) {
+        // Threads exist and the reader has not chosen one: rest on the home frame
+        // rather than entering setup, which is for a profile with nothing to open.
+        this.state.selectedThreadId = undefined
+        this.state.thread = undefined
       } else {
         this.state.selectedThreadId = undefined
         this.state.thread = undefined
