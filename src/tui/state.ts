@@ -10,6 +10,7 @@ import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
+  TaskWraithControlThread,
   TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
   TaskWraithControlTranscriptRow
@@ -170,11 +171,26 @@ export interface TaskWraithTuiState {
   /** The /seats lens state (ensemble seat control on the selected thread). */
   seats?: TuiSeatsState
   /**
+   * Whether the /threads picker reveals archived chats. Off by default: the
+   * picker is for switching, and an archived chat cannot be selected.
+   */
+  showArchivedThreads?: boolean
+  /**
    * Workspace chosen through /workspace. New threads land here, and the choice
    * is sticky: it survives thread switches so a deliberate pick is never
    * silently undone by opening a chat that lives somewhere else.
    */
   activeWorkspaceId?: string
+}
+
+/**
+ * Rows the /threads picker shows. Archived chats appear only when explicitly
+ * revealed, and the picker, its key handling and its renderer all read this one
+ * rule so a revealed row can never be at a different index in two of them.
+ */
+export function visibleThreadRows(state: TaskWraithTuiState): readonly TaskWraithControlThread[] {
+  const threads = state.snapshot?.threads ?? []
+  return state.showArchivedThreads ? threads : threads.filter((thread) => !thread.archived)
 }
 
 function row(

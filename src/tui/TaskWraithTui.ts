@@ -37,6 +37,7 @@ import {
   buildHostCommand,
   buildProviderAuthBeginCommand,
   buildThreadConfigureCommand,
+  buildThreadArchiveCommand,
   buildThreadCreateCommand,
   buildWorkspaceRegisterCommand,
   describeHostReceipt,
@@ -66,6 +67,7 @@ import {
 import {
   createTaskWraithTuiDemoState,
   tuiSeatsRoster,
+  visibleThreadRows,
   type TaskWraithTuiState,
   type TuiOverlay,
   type TuiPendingHostMutation
@@ -1291,7 +1293,7 @@ export class TaskWraithTui {
   private toggleOverlay(overlay: Exclude<TuiOverlay, 'none'>): void {
     this.state.overlay = this.state.overlay === overlay ? 'none' : overlay
     if (overlay === 'threads' && this.state.overlay === 'threads') {
-      const threads = (this.state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+      const threads = visibleThreadRows(this.state)
       this.state.overlayIndex = Math.max(
         0,
         threads.findIndex((thread) => thread.id === this.state.selectedThreadId)
@@ -1388,7 +1390,7 @@ export class TaskWraithTui {
   }
 
   private handleThreadPickerKey(key: Keypress): void {
-    const threads = (this.state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+    const threads = visibleThreadRows(this.state)
     if (key.name === 'up') {
       this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
     } else if (key.name === 'down') {
@@ -1396,13 +1398,82 @@ export class TaskWraithTui {
         Math.max(0, threads.length - 1),
         this.state.overlayIndex + 1
       )
+    } else if (key.name === 'a') {
+      // Revealing archived chats is what keeps /archive from being a one-way
+      // door: this CLI must not need the desktop app to undo its own action.
+      this.state.showArchivedThreads = !this.state.showArchivedThreads
+      this.state.overlayIndex = 0
     } else if (key.name === 'return' || key.name === 'enter') {
       const thread = threads[this.state.overlayIndex]
-      if (thread) void this.openThread(thread.id)
+      if (!thread) return
+      // An archived thread cannot be selected — the Host refuses thread.select
+      // for one — so Enter restores it instead of failing in the user's face.
+      if (thread.archived) {
+        void this.setThreadArchived(thread.id, false, thread.title)
+        return
+      }
+      void this.openThread(thread.id)
       return
     } else {
       return
     }
+    this.render()
+  }
+
+  /** `/archive` retires the open thread; the picker's `a` reveal restores it. */
+  private async archiveOpenThread(): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    const title = this.state.thread?.thread.title
+    if (!threadId || !title) {
+      this.setNotice('Open a thread before archiving.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    await this.setThreadArchived(threadId, true, title)
+  }
+
+  private async setThreadArchived(
+    threadId: string,
+    archived: boolean,
+    title: string
+  ): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot archive threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    // Setup mutations travel the command channel, exactly as thread.create does
+    // in createSoloThread. Gating on the `setup` capability would refuse on a
+    // Host that advertises commands and would have accepted this happily.
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread commands.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const command = buildThreadArchiveCommand({ actor, threadId, archived })
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (!archived) {
+          this.setNotice(`Restored ${title}.`, 'neutral', 3_000)
+          await this.openThread(threadId)
+          return
+        }
+        this.setNotice(`Archived ${title} · /threads then a reveals it.`, 'neutral', 4_000)
+        // The archived thread can no longer be selected, so land somewhere real
+        // rather than leaving the transcript pointed at a thread that is gone.
+        const next = [...(this.state.snapshot?.threads ?? [])]
+          .filter((thread) => !thread.archived)
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0]
+        if (next) await this.openThread(next.id)
+      }
+    })
     this.render()
   }
 
@@ -1758,6 +1829,10 @@ export class TaskWraithTui {
     }
     if (command === '/cancel') {
       await this.cancelRun()
+      return
+    }
+    if (command === '/archive') {
+      await this.archiveOpenThread()
       return
     }
     if (command === '/dismiss') {

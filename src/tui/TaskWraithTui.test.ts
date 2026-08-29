@@ -1239,6 +1239,58 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(output.lastFrame).not.toContain('Unknown command')
   }, 12_000)
 
+  it('archives the open thread with /archive and restores it from the picker', async () => {
+    let archivedFlag = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-archive-host-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => {
+        const base = makeHostSnapshot()
+        return {
+          ...base,
+          threads: base.threads.map((thread) => ({ ...thread, archived: archivedFlag }))
+        }
+      },
+      resultRef: (command) => {
+        if (command.name !== 'thread.archive') return undefined
+        archivedFlag = command.arguments.archived === true
+        return { kind: 'thread', threadId: String(command.target.threadId) }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+
+    feed(input, '/archive\r')
+    await waitFor(() => output.lastFrame.includes('Archived Solo thread'), 'archive notice')
+    const archived = [...host.commands].reverse().find((c) => c.name === 'thread.archive')
+    expect(archived?.arguments).toEqual({ archived: true })
+
+    // Archived chats are hidden, so the picker is empty until they are revealed.
+    feed(input, '/threads\r')
+    await waitFor(() => output.lastFrame.includes('No active threads.'), 'archived chat hidden')
+
+    // The fake TTY's arrow sequences are unreliable in this harness, so drive
+    // the overlay's real key handler directly.
+    const picker = tui as unknown as {
+      handleThreadPickerKey: (key: { name?: string }) => void
+      state: { showArchivedThreads?: boolean }
+    }
+    picker.handleThreadPickerKey({ name: 'a' })
+    expect(picker.state.showArchivedThreads).toBe(true)
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'archived chat revealed')
+
+    // Enter restores rather than selecting: the Host refuses thread.select for
+    // an archived thread, so /archive must not be a one-way door.
+    picker.handleThreadPickerKey({ name: 'return' })
+    await waitFor(
+      () =>
+        host.commands.some((c) => c.name === 'thread.archive' && c.arguments.archived === false),
+      'restore issued'
+    )
+  }, 12_000)
+
   it('guides /new through provider selection before creating a solo thread', async () => {
     let configured = false
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-provider-host-'))

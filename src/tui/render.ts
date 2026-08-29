@@ -16,7 +16,7 @@ import {
   wrapPlainText
 } from './ansi'
 import { resolveGhostBanner } from './ghostBanner'
-import { tuiSeatsRoster, type TaskWraithTuiState } from './state'
+import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import {
   TUI_GLYPHS_UNICODE,
   TUI_LAYOUT,
@@ -673,7 +673,7 @@ function renderThreadsOverlay(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
-  const threads = (state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+  const threads = visibleThreadRows(state)
   const lines = [borderTitle('Threads', width, ansi, glyphs)]
   const capacity = Math.max(1, height - 3)
   if (!threads.length) {
@@ -688,7 +688,7 @@ function renderThreadsOverlay(
     ) {
       const thread = threads[index]
       const selected = index === safeIndex
-      const marker = threadStatusMark(thread, glyphs)
+      const marker = thread.archived ? glyphs.statusSkipped : threadStatusMark(thread, glyphs)
       const provider = ansi.provider(
         terminalLabel(thread.provider.shortCode),
         thread.provider.accent
@@ -703,7 +703,18 @@ function renderThreadsOverlay(
       lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
     }
   }
-  lines.push(borderedLine(ansi.dim('↑↓ choose · Enter open · Esc close'), width, ansi, glyphs))
+  lines.push(
+    borderedLine(
+      ansi.dim(
+        state.showArchivedThreads
+          ? '↑↓ choose · Enter restores an archived chat · a hides · Esc close'
+          : '↑↓ choose · Enter open · a reveals archived · Esc close'
+      ),
+      width,
+      ansi,
+      glyphs
+    )
+  )
   lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
@@ -969,7 +980,7 @@ function renderHelpOverlay(
     overlayValue('/seats', `ensemble seat lens${sep}Enter toggles a seat`, width, ansi, glyphs),
     overlayValue(
       '/threads',
-      `switch thread${sep}/context for workspace detail`,
+      `switch thread${sep}/archive retires one${sep}/context for detail`,
       width,
       ansi,
       glyphs
