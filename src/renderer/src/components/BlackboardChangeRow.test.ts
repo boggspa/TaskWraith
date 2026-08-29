@@ -101,7 +101,7 @@ describe('BlackboardChangeRow', () => {
     expect(html).toContain('blackboard-change-stat-unit" aria-hidden="true">Entries</span>')
   })
 
-  it('promotes exact legacy update and cleanup sentences without trusted attribution', () => {
+  it('promotes exact legacy update, poll, and cleanup sentences without trusted attribution', () => {
     const updated = renderToStaticMarkup(
       createElement(BlackboardChangeRow, {
         message: {
@@ -124,11 +124,39 @@ describe('BlackboardChangeRow', () => {
         }
       })
     )
+    const poll = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: {
+          id: 'legacy-poll',
+          role: 'system',
+          content: 'Blackboard poll opened: ship-or-hold (3 choices).',
+          timestamp: '2026-08-29T22:07:00.000Z',
+          metadata: { kind: 'ensembleRoundStatus' }
+        }
+      })
+    )
     expect(updated).toContain('Blackboard updated')
     expect(updated).toContain('+1 Entries')
     expect(updated).not.toContain(' by System')
     expect(cleaned).toContain('Blackboard cleaned')
     expect(cleaned).toContain('-3 Entries')
+    expect(poll).toContain('Blackboard poll opened')
+    expect(poll).toContain('3 choices')
+    expect(poll).toContain('+1 Entries')
+  })
+
+  it('requires a system carrier with the Blackboard metadata kind', () => {
+    const wrongRole = messageWithChange('updated')
+    wrongRole.role = 'assistant'
+    const wrongKind = messageWithChange('updated')
+    if (wrongKind.metadata) wrongKind.metadata.kind = 'ensembleRoundStatus'
+
+    expect(renderToStaticMarkup(createElement(BlackboardChangeRow, { message: wrongRole }))).toBe(
+      ''
+    )
+    expect(renderToStaticMarkup(createElement(BlackboardChangeRow, { message: wrongKind }))).toBe(
+      ''
+    )
   })
 
   it('rejects malformed metadata so the plain system fallback remains available', () => {

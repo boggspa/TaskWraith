@@ -81,6 +81,7 @@ export function ContinuationHopsChangeRow({
   message: ChatMessage
 }): JSX.Element | null {
   const payload = resolveContinuationHopsChangePayload(message)
+  const hasPayload = payload !== null
   const [phase, setPhase] = useState<'before' | 'after'>('before')
   const [expanded, setExpanded] = useState(false)
   const [fresh] = useState(() =>
@@ -88,13 +89,13 @@ export function ContinuationHopsChangeRow({
   )
 
   useEffect(() => {
-    if (!payload || phase === 'after') return
+    if (!hasPayload || phase === 'after') return
     const timer = window.setTimeout(
       () => setPhase('after'),
       CONTINUATION_HOPS_CHANGE_REVEAL_DELAY_MS
     )
     return () => window.clearTimeout(timer)
-  }, [payload, phase])
+  }, [hasPayload, message.id, phase])
 
   if (!payload) return null
 

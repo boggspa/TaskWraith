@@ -117,6 +117,8 @@ describe('ContinuationHopsChangeRow', () => {
     expect(rowSource).toContain("phase === 'before' ? payload.before : payload.after")
     expect(rowSource).toContain('<ContinuationHopsValue')
     expect(rowSource).toContain('value={currentValue}')
+    expect(rowSource).toContain('[hasPayload, message.id, phase]')
+    expect(rowSource).not.toContain('[payload, phase]')
   })
 
   it('reuses paired DigitOdometers for the advancing n/max fraction', () => {

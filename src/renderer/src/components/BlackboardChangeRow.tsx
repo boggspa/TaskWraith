@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type JSX } from 'react'
 import type { ChatMessage } from '../../../main/store/types'
 import {
+  BLACKBOARD_CHANGE_KIND,
   BLACKBOARD_CHANGE_FRESH_WINDOW_MS,
   isBlackboardChangePayload,
   type BlackboardChangePayload
@@ -17,6 +18,7 @@ export type LegacyBlackboardChangePresentation =
       changedAt: string
     }
   | { action: 'cleaned'; removedCount: number; changedAt: string }
+  | { action: 'pollOpened'; key: string; optionCount: number; changedAt: string }
 
 export type BlackboardChangePresentation =
   | BlackboardChangePayload
@@ -25,6 +27,7 @@ export type BlackboardChangePresentation =
 const LEGACY_BLACKBOARD_UPDATED =
   /^Blackboard updated: (decision|fact|risk|do-not-repeat|note) \/ (.{1,80})\.$/
 const LEGACY_BLACKBOARD_CLEANED = /^Blackboard cleaned: removed (\d{1,2}) (entry|entries)\.$/
+const LEGACY_BLACKBOARD_POLL = /^Blackboard poll opened: (.{1,80}) \((\d) choices\)\.$/
 
 function hasControlCharacters(value: string): boolean {
   return [...value].some((character) => {
@@ -39,6 +42,7 @@ export function resolveBlackboardChangePresentation(
 ): BlackboardChangePresentation | null {
   const candidate = message.metadata?.blackboardChange
   if (candidate !== undefined) {
+    if (message.role !== 'system' || message.metadata?.kind !== BLACKBOARD_CHANGE_KIND) return null
     return isBlackboardChangePayload(candidate) ? candidate : null
   }
   if (
@@ -58,6 +62,17 @@ export function resolveBlackboardChangePresentation(
       action: 'updated',
       category: updated[1] as Extract<BlackboardChangePayload, { action: 'updated' }>['category'],
       key: updated[2],
+      changedAt: message.timestamp
+    }
+  }
+  const poll = message.content.match(LEGACY_BLACKBOARD_POLL)
+  if (poll) {
+    const optionCount = Number(poll[2])
+    if (hasControlCharacters(poll[1]) || optionCount < 2 || optionCount > 6) return null
+    return {
+      action: 'pollOpened',
+      key: poll[1],
+      optionCount,
       changedAt: message.timestamp
     }
   }
