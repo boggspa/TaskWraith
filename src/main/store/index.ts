@@ -350,6 +350,7 @@ import {
   type ChatComposerSelectionPatchRequest
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatListIndexStore } from './ChatListIndexStore'
+import { collectOrphanSubThreadCandidates } from './OrphanSubThreadScan'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
@@ -6462,13 +6463,33 @@ export class AppStore {
     this.orphanSubThreadsReaped = true
     try {
       if (!fs.existsSync(chatsDir)) return
-      for (const file of fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))) {
-        const chatId = path.basename(file, '.json')
-        const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
-        if (!chat?.parentChatId) continue
-        if (!fs.existsSync(chatPathForId(chatsDir, chat.parentChatId))) {
-          this.orphanSubThreadReapCandidates.add(chat.appChatId)
-        }
+      // Reading each ChatRecord here replays that chat's journal, so this scan
+      // used to cost seconds of every boot to answer one field. The chat-list
+      // index carries parentChatId with the mtime/size it was built from; a
+      // stat decides whether that cheap answer is still true, and anything it
+      // cannot vouch for still takes the full read below.
+      const chatListIndex = chatListIndexStore.readAll()
+      const { candidates } = collectOrphanSubThreadCandidates({
+        listChatIds: () =>
+          fs
+            .readdirSync(chatsDir)
+            .filter((f) => f.endsWith('.json'))
+            .map((f) => path.basename(f, '.json')),
+        statChatFile: (chatId) => {
+          try {
+            const stat = fs.statSync(path.join(chatsDir, `${chatId}.json`))
+            return { mtimeMs: stat.mtimeMs, size: stat.size }
+          } catch {
+            return null
+          }
+        },
+        indexEntry: (chatId) => chatListIndex[chatId],
+        readChatRecord: (chatId) =>
+          this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`)) ?? null,
+        parentChatExists: (parentChatId) => fs.existsSync(chatPathForId(chatsDir, parentChatId))
+      })
+      for (const candidate of candidates) {
+        this.orphanSubThreadReapCandidates.add(candidate)
       }
     } catch {
       // best-effort cleanup; never block reads
