@@ -201,6 +201,29 @@ readability during incident review for no threat it actually answers.
    `signed-in` with `lastSignedInAt` stamped.
 
 No polling, no cookie export, no renderer projection of anything but status.
+There is deliberately no success signal to detect: whether a session was
+actually established is a question only a real request answers, so the caller
+probes afterwards rather than guessing from cookie names. The provider
+importer's first cut resolved on any cookie with "session" in its name, which
+the login page sets before any credentials are entered.
+
+**The sign-in window is NOT origin-fenced, and that is deliberate.** It has to
+follow whatever redirect the user's identity provider chooses, and a human is
+driving. The origins passed through are reported back as *suggestions* so the UI
+can offer to widen the site's fence; nothing widens automatically, because an
+origin in the fence is authority and authority is the user's to grant. Only
+origins are retained, never URLs - a sign-in flow's query string is exactly
+where one-time codes live.
+
+**Known interaction, stated rather than discovered:** `CanvasBrowserProfile`
+installs its session hooks once per Electron session and they are permanent, so
+a site whose canvas has already bound has all browser permissions denied
+session-wide - and the sign-in window shares that session. A login needing
+camera, microphone or geolocation will therefore fail on such a site while
+succeeding on one whose canvas has never been opened. Ordinary password and
+2FA-code logins are unaffected. If evidence says it matters, the fix is a
+narrow per-webContents exemption on the profile, not relaxing the canvas
+default.
 
 ---
 
@@ -346,7 +369,7 @@ this index.
 |---|---|---|
 | **P0** | This document, plus the design.md pointers | Closes Section 13 Q3 as re-proposed rather than moot. |
 | **P1** | Per-site partitions and the navigation fence | The security spine, no UI. `webSiteLogin` model, main-owned catalogue store, `siteId` threaded through the canvas stack, document-navigation origin fence. Unbound surfaces keep today's behaviour. |
-| **P2** | Human-only sign-in window | Plus the Section 6a-style invariant test: no canvas executor can resolve its `webContents`. |
+| **P2** | Human-only sign-in window | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge. |
 | **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
 | **P4** | Agent surface | `web_login_list` and `web_login_open`; a **new** gateway profile generation; auto-allow and profile membership; approval preview; regenerated tool docs. |
 | **P5** | Re-authentication signalling and the liveness probe | `signin_required`, the Work-tab prompt, optional per-site probe. |
