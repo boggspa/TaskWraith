@@ -78,4 +78,95 @@ struct TranscriptFollowStateStoreTests {
         // to track a live run.
         #expect(store.autoFollow(for: "never-seen"))
     }
+
+    // MARK: - The inspector's mini transcript (MiniThreadView)
+
+    @Test func theMiniTranscriptDoesNotShareAPinWithTheMainPane() {
+        let store = TranscriptFollowStateStore()
+
+        // Expand puts the same thread in both surfaces at once. A shared pin
+        // is a shared `scheduled` coalescing flag, so one view's pending pin
+        // would swallow the other's.
+        let mainPane = store.pin(for: "thread-a")
+        let mini = store.pin(for: TranscriptFollowStateStore.miniThreadKey("thread-a"))
+
+        #expect(mainPane !== mini)
+    }
+
+    @Test func aMiniRemountKeepsTheUsersScrollPosition() {
+        let store = TranscriptFollowStateStore()
+        let key = TranscriptFollowStateStore.miniThreadKey("thread-a")
+
+        store.noteMiniThreadOpened("thread-a")
+        #expect(
+            store.shouldArmOnOpen(
+                threadId: key,
+                selectionGeneration: store.miniThreadOpenGeneration("thread-a")))
+
+        // The user scrolls up in the side-chat panel.
+        store.setAutoFollow(false, for: key)
+
+        // Reconnect → remount. Arming here is the reported bug: it clears the
+        // latch, sets autoFollow and force-pins the panel back to the tail.
+        #expect(
+            !store.shouldArmOnOpen(
+                threadId: key,
+                selectionGeneration: store.miniThreadOpenGeneration("thread-a")))
+        #expect(!store.autoFollow(for: key))
+    }
+
+    @Test func reopeningAMiniTranscriptArmsAgain() {
+        let store = TranscriptFollowStateStore()
+        let key = TranscriptFollowStateStore.miniThreadKey("thread-a")
+
+        store.noteMiniThreadOpened("thread-a")
+        _ = store.shouldArmOnOpen(
+            threadId: key,
+            selectionGeneration: store.miniThreadOpenGeneration("thread-a"))
+        store.setAutoFollow(false, for: key)
+
+        // Back to the list and in again: a deliberate open, so the panel
+        // should snap to the latest message.
+        store.noteMiniThreadOpened("thread-a")
+        #expect(
+            store.shouldArmOnOpen(
+                threadId: key,
+                selectionGeneration: store.miniThreadOpenGeneration("thread-a")))
+        #expect(store.autoFollow(for: key))
+    }
+
+    @Test func openingAnotherMiniTranscriptDoesNotRearmThisOne() {
+        let store = TranscriptFollowStateStore()
+        let key = TranscriptFollowStateStore.miniThreadKey("thread-a")
+
+        store.noteMiniThreadOpened("thread-a")
+        _ = store.shouldArmOnOpen(
+            threadId: key,
+            selectionGeneration: store.miniThreadOpenGeneration("thread-a"))
+        store.setAutoFollow(false, for: key)
+
+        // A different side chat is opened. With ONE global counter this would
+        // advance thread-a's generation too, and its next remount would read
+        // as an open — which is why the count is per thread.
+        store.noteMiniThreadOpened("thread-b")
+
+        #expect(
+            !store.shouldArmOnOpen(
+                threadId: key,
+                selectionGeneration: store.miniThreadOpenGeneration("thread-a")))
+        #expect(!store.autoFollow(for: key))
+    }
+
+    @Test func aMiniTranscriptWithNoRecordedOpenStillArmsOnFirstMount() {
+        let store = TranscriptFollowStateStore()
+        let key = TranscriptFollowStateStore.miniThreadKey("thread-a")
+
+        // Guards a panel nobody instrumented: it should fail towards following
+        // the tail, never towards a transcript that silently refuses to track
+        // a live run.
+        #expect(
+            store.shouldArmOnOpen(
+                threadId: key,
+                selectionGeneration: store.miniThreadOpenGeneration("thread-a")))
+    }
 }

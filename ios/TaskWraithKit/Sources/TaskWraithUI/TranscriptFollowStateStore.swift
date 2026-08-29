@@ -30,6 +30,9 @@ final class TranscriptFollowStateStore {
     private var autoFollowByThread: [String: Bool] = [:]
     /// The selection generation each thread was last armed for.
     private var armedGenerations: [String: Int] = [:]
+    /// Opens counted per thread for the inspector's mini transcript, which has
+    /// no model-level selection to derive a generation from (below).
+    private var miniOpenGenerations: [String: Int] = [:]
 
     init() {}
 
@@ -68,11 +71,48 @@ final class TranscriptFollowStateStore {
         autoFollowByThread[threadId] = isFollowing
     }
 
+    // MARK: - The inspector's mini transcript
+
+    /// Key for MiniThreadView's entry, deliberately NOT the bare thread id.
+    ///
+    /// The inspector's mini transcript and the main pane can be showing the
+    /// SAME thread at once — the side-chat panel's Expand button puts one in
+    /// both. A shared entry would hand them a shared `TranscriptFollowPin`,
+    /// and that pin's `scheduled` flag is a coalescer: whichever view asked
+    /// for a pin first would swallow the other's. Two transcripts, two
+    /// entries, per this type's keying rule.
+    static func miniThreadKey(_ threadId: String) -> String {
+        "mini-thread:\(threadId)"
+    }
+
+    /// Records a genuine user open of `threadId` in a mini transcript.
+    ///
+    /// `ThreadDetailView` derives its discriminator from
+    /// `RemoteSessionModel.threadSelectionGeneration`, because the main pane's
+    /// selection lives in the model. The mini transcript has no equivalent:
+    /// its selection is `@State` on the panel presenting it, which SwiftUI
+    /// destroys on exactly the remounts this store exists to survive — so
+    /// reading it back could never tell an open from a rebuild. The panels
+    /// call this at the point they set that selection instead, which is the
+    /// one moment the intent is unambiguous.
+    func noteMiniThreadOpened(_ threadId: String) {
+        miniOpenGenerations[threadId, default: 0] &+= 1
+    }
+
+    /// The generation to hand `shouldArmOnOpen` for a mini transcript. Counted
+    /// per thread rather than globally: a single counter would advance when
+    /// some OTHER thread was opened, and the next remount of this one would
+    /// then read as an open.
+    func miniThreadOpenGeneration(_ threadId: String) -> Int {
+        miniOpenGenerations[threadId] ?? 0
+    }
+
     /// Drops everything. Tests only — the store is process-wide, so a test that
     /// did not reset it would inherit whichever threads an earlier test armed.
     func resetForTesting() {
         pins.removeAll()
         autoFollowByThread.removeAll()
         armedGenerations.removeAll()
+        miniOpenGenerations.removeAll()
     }
 }
