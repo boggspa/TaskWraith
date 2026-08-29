@@ -6762,11 +6762,9 @@ export class EnsembleOrchestrator {
           remaining.unshift(moved)
         }
         if (idx >= 0) {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            yieldRouteSuccessStatusLine(pending.action, displayName)
-          )
+          // The completed ensemble_yield tool activity and the routed seat's
+          // response already make this successful handoff visible. Avoid
+          // adding a duplicate system-message row for every routine route.
           runtime.yieldReturnStack ??= []
           runtime.yieldReturnStack.push({
             returnParticipantId: run.participant.id,

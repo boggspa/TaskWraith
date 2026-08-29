@@ -14033,6 +14033,13 @@ Next action:
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       expect(harness.dispatched[1].provider).toBe('codex')
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            message.metadata?.kind === 'ensembleRoundStatus' &&
+            message.content.startsWith('Routed next:')
+        )
+      ).toBe(false)
 
       const idxZeroHarness = makeHarness()
       idxZeroHarness.chat.ensemble!.bossmanParticipantId = 'claude'
