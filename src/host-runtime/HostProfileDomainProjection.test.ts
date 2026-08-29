@@ -342,6 +342,53 @@ it('projects the App-authored goal, bounding the objective and flagging the clip
   if (decoded.ok) expect(decoded.value.threads[0]?.goal?.id).toBe('goal-1')
 })
 
+it('stops an open goal interval at the thread last activity', () => {
+  // Nothing closes a goal interval but an explicit pause / block / complete, so
+  // a goal left `active` on an abandoned thread counted forever. Measured on a
+  // live profile: four such goals, one reading 18.8 days of "active" time on a
+  // thread idle for 17.7 days, and one reading 12.8 days on a thread that had
+  // never had a single run.
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-goal-zombie-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-goal-zombie-workspace-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-zombie-goal'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Thread'
+  })
+  const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
+  const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+  raw.updatedAt = Date.parse('2026-08-11T10:30:00.000Z')
+  raw.activeGoal = {
+    id: 'goal-zombie',
+    objective: 'Keep going',
+    status: 'active',
+    mode: 'taskwraith_steered',
+    runtimeLedger: {
+      startedAt: '2026-08-11T10:00:00.000Z',
+      intervals: [{ status: 'active', startedAt: '2026-08-11T10:00:00.000Z' }]
+    }
+  }
+  writeFileSync(chatFile, JSON.stringify(raw))
+  chmodSync(chatFile, 0o600)
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+  const goal = donor.threads[0]?.goal
+  expect(goal?.status).toBe('active')
+  expect(goal?.wallMs).toBe(30 * 60 * 1000)
+  expect(goal?.activeMs).toBe(30 * 60 * 1000)
+})
+
 it('omits a goal the decoder would reject rather than poisoning the thread row', () => {
   const profile = mkdtempSync(join(tmpdir(), 'host-profile-goal-bad-'))
   const workspace = mkdtempSync(join(tmpdir(), 'host-profile-goal-bad-workspace-'))

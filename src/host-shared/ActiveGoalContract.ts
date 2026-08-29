@@ -99,6 +99,16 @@ function hostGoalTimestamp(value: HostGoalTimestampInput): string {
   return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString()
 }
 
+/** The latest moment an OPEN interval may run to: now, or the thread's last activity. */
+function hostGoalLiveEndAt(nowAt: string, lastActivityAt?: HostGoalTimestampInput): string {
+  if (lastActivityAt === undefined) return nowAt
+  const lastAt = hostGoalTimestamp(lastActivityAt)
+  const lastMs = Date.parse(lastAt)
+  const nowMs = Date.parse(nowAt)
+  if (!Number.isFinite(lastMs) || !Number.isFinite(nowMs)) return nowAt
+  return lastMs < nowMs ? lastAt : nowAt
+}
+
 function hostGoalDurationMs(startedAt: string, endedAt: string): number {
   const startMs = Date.parse(startedAt)
   const endMs = Date.parse(endedAt)
@@ -106,17 +116,38 @@ function hostGoalDurationMs(startedAt: string, endedAt: string): number {
   return endMs - startMs
 }
 
+export interface HostGoalRuntimeTimingOptions {
+  /**
+   * When the goal's thread last did anything. An OPEN interval is only extended
+   * this far, never to `now`.
+   *
+   * Nothing closes an interval except an explicit pause / block / complete, so
+   * a goal left `active` on an abandoned thread otherwise counts forever.
+   * Measured on a live profile: four such goals, one reading 18.8 days of
+   * "active" time on a thread idle for 17.7 days, and one reading 12.8 days on
+   * a thread that had never had a single run. A goal cannot have been working
+   * after its thread stopped changing, so that is the ceiling.
+   *
+   * Omitted means "no last-activity fact available", which leaves the old
+   * unbounded behaviour rather than silently freezing a live goal at zero.
+   */
+  readonly lastActivityAt?: HostGoalTimestampInput
+}
+
 /** Durable wall-clock accounting for a goal's active/paused/blocked intervals. */
 export function hostComputeGoalRuntimeTiming(
   ledger: HostGoalRuntimeLedgerFacts | null | undefined,
-  now: HostGoalTimestampInput = new Date()
+  now: HostGoalTimestampInput = new Date(),
+  options: HostGoalRuntimeTimingOptions = {}
 ): HostGoalRuntimeTiming {
   if (!ledger) {
     return { activeMs: 0, wallMs: 0, pausedMs: 0, blockedMs: 0 }
   }
 
   const timestamp = hostGoalTimestamp(now)
-  const effectiveEndAt = ledger.endedAt || timestamp
+  // The clamp is a ceiling on the LIVE tail only. A closed interval and a ledger
+  // that recorded its own `endedAt` are durable facts and are never rewritten.
+  const effectiveEndAt = ledger.endedAt || hostGoalLiveEndAt(timestamp, options.lastActivityAt)
   const timing: HostGoalRuntimeTiming = {
     activeMs: 0,
     wallMs: hostGoalDurationMs(ledger.startedAt, effectiveEndAt),

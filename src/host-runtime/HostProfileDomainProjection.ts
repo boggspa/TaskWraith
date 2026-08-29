@@ -29,7 +29,10 @@ import {
  * put kilobytes per thread on the wire for a field most threads do not have.
  * A clipped objective is flagged rather than passed off as the whole objective.
  */
-function projectThreadGoal(value: unknown): HostThreadGoalProjection | undefined {
+function projectThreadGoal(
+  value: unknown,
+  lastActivityAt: number
+): HostThreadGoalProjection | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
   const { id, objective, status, mode } = record
@@ -72,7 +75,11 @@ function projectThreadGoal(value: unknown): HostThreadGoalProjection | undefined
   if (ledger && typeof ledger === 'object' && !Array.isArray(ledger)) {
     const facts = ledger as unknown as HostGoalRuntimeLedgerFacts
     if (typeof facts.startedAt === 'string' && Array.isArray(facts.intervals)) {
-      const timing = hostComputeGoalRuntimeTiming(facts)
+      // The thread's own last-activity stamp is the ceiling on an open interval:
+      // a goal cannot have been working after its thread stopped changing.
+      const timing = hostComputeGoalRuntimeTiming(facts, new Date(), {
+        ...(Number.isFinite(lastActivityAt) ? { lastActivityAt } : {})
+      })
       goal.wallMs = timing.wallMs
       goal.activeMs = timing.activeMs
     }
@@ -286,7 +293,7 @@ export function projectHostProfileDomainSnapshot(
     health,
     workspaces,
     threads: threads.map((thread) => {
-      const goal = projectThreadGoal(thread.activeGoal)
+      const goal = projectThreadGoal(thread.activeGoal, thread.updatedAt)
       return {
         id: thread.appChatId,
         workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,

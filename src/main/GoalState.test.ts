@@ -125,6 +125,18 @@ describe('GoalState', () => {
     expect(goal.objective).toHaveLength(MAX_ACTIVE_GOAL_OBJECTIVE_CHARS)
   })
 
+  it('forwards a thread last-activity ceiling so an abandoned goal stops counting', () => {
+    // The App's helper is the renderer's only route to this computation, so a
+    // clamp it drops is a clamp the composer popover and close-out card never
+    // get. RED at HEAD: the third argument did not exist.
+    const ledger = createGoalRuntimeLedger('2026-06-13T12:00:00.000Z')
+    expect(
+      computeGoalRuntimeTiming(ledger, '2026-06-27T12:00:00.000Z', {
+        lastActivityAt: '2026-06-13T12:30:00.000Z'
+      })
+    ).toEqual({ activeMs: 30 * MINUTE, wallMs: 30 * MINUTE, pausedMs: 0, blockedMs: 0 })
+  })
+
   it('tracks active, paused, resumed, blocked, and completed goal runtime', () => {
     let ledger = createGoalRuntimeLedger('2026-06-13T12:00:00.000Z')
 

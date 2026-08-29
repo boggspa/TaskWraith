@@ -1329,7 +1329,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     () => Date.now(),
     [scheduledNowTick, hasVisibleScheduledCountdown, hasGoalRuntimeTicker]
   )
-  const goalRuntimeLabel = formatGoalRuntimePopoverLabel(currentActiveGoal, scheduledNowMs)
+  const goalRuntimeLabel = formatGoalRuntimePopoverLabel(
+    currentActiveGoal,
+    scheduledNowMs,
+    currentChat?.updatedAt
+  )
 
   // Second row of the roster-presets above-row section — Orchestration /
   // Fan-Out / Shared History Budget / Turn Budget. These controls used to
@@ -6329,10 +6333,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   )
 }
 
-function formatGoalRuntimePopoverLabel(goal: any, nowMs: number): string | null {
+function formatGoalRuntimePopoverLabel(
+  goal: any,
+  nowMs: number,
+  lastActivityAt?: number | string
+): string | null {
   if (!goal?.runtimeLedger) return null
   const now = Number.isFinite(nowMs) ? new Date(nowMs) : new Date()
-  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now)
+  // An open interval stops at the thread's last activity, so reopening a thread
+  // whose goal was left `active` shows the time actually worked, not the days
+  // since it was created.
+  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now, {
+    ...(lastActivityAt === undefined ? {} : { lastActivityAt })
+  })
   const parts = [
     `wall ${formatGoalRuntimeDuration(timing.wallMs)}`,
     timing.activeMs > 0 ? `active ${formatGoalRuntimeDuration(timing.activeMs)}` : '',

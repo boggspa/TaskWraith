@@ -158,7 +158,11 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, runIds))
   appendCloseoutProse(
     lines,
-    goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
+    goalSummarySentence(
+      resolveCloseoutGoal(chat.activeGoal, run.activeGoalId),
+      input.now,
+      chat.updatedAt
+    )
   )
   // Commits + File Changes + Sub-threads render in the Task-complete epic stack
   // from metadata — keep the close-out bubble to Worked-for + prose.
@@ -251,7 +255,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   appendCloseoutProse(lines, closeoutReceiptSentence(closeoutReceipt))
   appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, roundRunIds))
-  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now))
+  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now, chat.updatedAt))
   // Participants + Sub-threads + Commits + File Changes render in the
   // Task-complete epic stack. The close-out bubble keeps Worked-for + prose.
 
@@ -2661,7 +2665,11 @@ function resolveCloseoutGoal(
   return activeGoal?.id === runGoalId ? activeGoal : undefined
 }
 
-function goalSummarySentence(goal: ActiveGoal | undefined, now?: Date): string | null {
+function goalSummarySentence(
+  goal: ActiveGoal | undefined,
+  now?: Date,
+  lastActivityAt?: number | string
+): string | null {
   if (!goal) return null
   const statusPhrase =
     goal.status === 'completed'
@@ -2672,7 +2680,11 @@ function goalSummarySentence(goal: ActiveGoal | undefined, now?: Date): string |
           ? 'was paused'
           : 'remained active'
   if (!goal.runtimeLedger) return `The linked goal ${statusPhrase}.`
-  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now || new Date())
+  // An open interval stops at the thread's last activity: a goal left `active`
+  // on a thread nobody has touched is not still working.
+  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now || new Date(), {
+    ...(lastActivityAt === undefined ? {} : { lastActivityAt })
+  })
   const details = [
     `wall ${formatCompactDuration(timing.wallMs)}`,
     timing.activeMs > 0 ? `active ${formatCompactDuration(timing.activeMs)}` : '',

@@ -1,6 +1,7 @@
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import {
   hostComputeGoalRuntimeTiming,
+  type HostGoalRuntimeTimingOptions,
   hostFormatActiveGoalPromptBlock,
   hostShouldInjectActiveGoal
 } from '../host-shared/ActiveGoalContract'
@@ -155,9 +156,10 @@ export function transitionGoalRuntimeLedger(
 
 export function computeGoalRuntimeTiming(
   ledger: GoalRuntimeLedger | null | undefined,
-  now: GoalRuntimeTimestampInput = new Date()
+  now: GoalRuntimeTimestampInput = new Date(),
+  options: HostGoalRuntimeTimingOptions = {}
 ): GoalRuntimeTiming {
-  return hostComputeGoalRuntimeTiming(ledger, now)
+  return hostComputeGoalRuntimeTiming(ledger, now, options)
 }
 
 export function createActiveGoal(

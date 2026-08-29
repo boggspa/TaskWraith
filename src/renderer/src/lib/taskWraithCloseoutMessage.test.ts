@@ -127,6 +127,43 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).not.toContain('- Commits:')
   })
 
+  it('reports goal runtime up to the thread last activity, not the days since', () => {
+    // The goal is left `active` and nothing ever closes its interval, so the
+    // close-out used to report the wall-clock age of the goal. Measured on a
+    // live profile: 18.8 days of "active" time on a thread idle for 17.7 days.
+    const run: ChatRun = {
+      runId: 'run-goal',
+      provider: 'codex',
+      startedAt: '2026-08-11T10:00:00.000Z',
+      endedAt: '2026-08-11T10:30:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        updatedAt: Date.parse('2026-08-11T10:30:00.000Z'),
+        messages: [{ ...message('a1', 'assistant', 'Worked on it.'), runId: 'run-goal' }],
+        runs: [run],
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Keep going',
+          status: 'active',
+          mode: 'taskwraith_steered',
+          runtimeLedger: {
+            startedAt: '2026-08-11T10:00:00.000Z',
+            intervals: [{ status: 'active', startedAt: '2026-08-11T10:00:00.000Z' }]
+          }
+        }
+      } as never),
+      run,
+      completedAt: '2026-08-29T10:00:00.000Z',
+      exitCode: 0,
+      now: new Date('2026-08-29T10:00:00.000Z')
+    } as never)
+
+    expect(closeout.content).toContain('The linked goal remained active (wall 30m')
+    expect(closeout.content).not.toMatch(/wall \d+d/)
+  })
+
   it('tombstones slim fileChanges in metadata and keeps them out of bubble prose', () => {
     const run: ChatRun = {
       runId: 'run-file-changes',
