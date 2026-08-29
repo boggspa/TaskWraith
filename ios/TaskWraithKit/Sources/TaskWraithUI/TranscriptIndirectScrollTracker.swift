@@ -7,81 +7,100 @@ import SwiftUI
     import UIKit
 #endif
 
-/// How the indirect-scroll recognizer must be configured, expressed without
-/// UIKit types so the invariant can be asserted on any platform.
+/// Locates the scroll container a probe view belongs to.
 ///
-/// The three flags are the whole contract, and each one is load-bearing:
+/// Written against closures rather than `UIView` so the search itself — the
+/// part that was wrong the first time — is exercisable on any platform,
+/// including the macOS `swift test` build where UIKit does not exist.
 ///
-/// - `acceptsIndirectScrolls` is the fix. A `UIPanGestureRecognizer` ships with
-///   an **empty** `allowedScrollTypesMask`, and SwiftUI's `DragGesture` is
-///   backed by exactly such a recognizer — which is why no amount of trackpad
-///   or wheel scrolling ever reached the transcript's intent signal.
-/// - `acceptsDirectTouches` stays false. Touch stamping is already
-///   `DragGesture`'s job in `transcriptTouchTracking`; a second recognizer
-///   contending for the same touches would risk starving the scroll view's own
-///   pan, which is the bug `TranscriptTouchTrackingPolicy.dragMinimumDistance`
-///   already had to work around once on iPad.
-/// - `cancelsTouchesInView` stays false so a pure observer can never swallow a
-///   tap on a transcript control.
-struct TranscriptIndirectScrollRecognizerSpec: Equatable {
-    var acceptsIndirectScrolls: Bool
-    var acceptsDirectTouches: Bool
-    var cancelsTouchesInView: Bool
-}
-
-enum TranscriptIndirectScrollPolicy {
-    static let recognizerSpec = TranscriptIndirectScrollRecognizerSpec(
-        acceptsIndirectScrolls: true,
-        acceptsDirectTouches: false,
-        cancelsTouchesInView: false)
-
-    #if canImport(UIKit)
-        static func configure(_ pan: UIPanGestureRecognizer) {
-            let spec = recognizerSpec
-            pan.allowedScrollTypesMask = spec.acceptsIndirectScrolls ? .all : []
-            pan.allowedTouchTypes = spec.acceptsDirectTouches ? [NSNumber(value: 0)] : []
-            pan.cancelsTouchesInView = spec.cancelsTouchesInView
-            pan.delaysTouchesBegan = false
-            pan.delaysTouchesEnded = false
+/// **Ancestors are not enough.** The probe is installed with `.background()`
+/// on the `ScrollView`, and a background is layered *behind* the view it
+/// decorates, not inside it. So the scroll view is a **sibling** of the probe,
+/// never an ancestor, and a superview-only walk finds nothing and silently
+/// attaches to nothing. Measured 2026-08-29: the first version of this file did
+/// exactly that and was completely inert in the running app while every one of
+/// its unit tests passed.
+enum TranscriptScrollViewSearch {
+    /// Nearest enclosing scroll container, else the nearest one reachable from
+    /// an ancestor's subtree (the sibling case), else nil.
+    ///
+    /// `maxHops` bounds the climb so a probe that somehow lands outside the
+    /// transcript cannot walk to the window and attach to unrelated scrolling.
+    static func find<Node: AnyObject>(
+        from start: Node,
+        parent: (Node) -> Node?,
+        children: (Node) -> [Node],
+        isScrollContainer: (Node) -> Bool,
+        maxHops: Int = 6
+    ) -> Node? {
+        // Ancestors first: cheapest, and correct when the probe really is
+        // inside the scrolled content.
+        var current = parent(start)
+        var hops = 0
+        while let candidate = current, hops < maxHops {
+            if isScrollContainer(candidate) { return candidate }
+            current = parent(candidate)
+            hops += 1
         }
 
-        /// Reads a configured recognizer back into the platform-independent
-        /// shape, so a test can assert what was actually applied rather than
-        /// re-stating the constant.
-        static func spec(of pan: UIPanGestureRecognizer) -> TranscriptIndirectScrollRecognizerSpec {
-            TranscriptIndirectScrollRecognizerSpec(
-                acceptsIndirectScrolls: pan.allowedScrollTypesMask.contains(.continuous)
-                    && pan.allowedScrollTypesMask.contains(.discrete),
-                acceptsDirectTouches: !pan.allowedTouchTypes.isEmpty,
-                cancelsTouchesInView: pan.cancelsTouchesInView)
+        // Then each ancestor's subtree, nearest ancestor first — this is the
+        // branch that finds a `.background()` probe's sibling scroll view.
+        current = parent(start)
+        hops = 0
+        while let candidate = current, hops < maxHops {
+            if let found = firstScrollContainer(
+                in: candidate, children: children, isScrollContainer: isScrollContainer)
+            {
+                return found
+            }
+            current = parent(candidate)
+            hops += 1
         }
-    #endif
+        return nil
+    }
+
+    private static func firstScrollContainer<Node: AnyObject>(
+        in node: Node,
+        children: (Node) -> [Node],
+        isScrollContainer: (Node) -> Bool
+    ) -> Node? {
+        for child in children(node) {
+            if isScrollContainer(child) { return child }
+            if let found = firstScrollContainer(
+                in: child, children: children, isScrollContainer: isScrollContainer)
+            {
+                return found
+            }
+        }
+        return nil
+    }
 }
 
 #if canImport(UIKit)
 
     /// Reports trackpad and mouse-wheel scrolls over the transcript.
     ///
-    /// The transcript decides whether the user has left the bottom deliberately
-    /// by asking when they last touched it (`TranscriptFollowPolicy`). That
-    /// signal had exactly one producer: a SwiftUI `DragGesture`, which is a
-    /// direct-touch pan and does not recognize indirect scrolls. On an iPad with
-    /// a trackpad or mouse — and on every Mac running the iPad app, where there
-    /// is no other way to scroll — `lastUserTouchAt` therefore stayed at
-    /// `.distantPast` forever.
+    /// The transcript decides whether the user left the bottom deliberately by
+    /// asking when they last touched it (`TranscriptFollowPolicy`). That signal
+    /// had one producer: a SwiftUI `DragGesture`, which is a direct-touch pan.
+    /// UIKit pans ship with an **empty** `allowedScrollTypesMask`, so a trackpad
+    /// two-finger scroll or a mouse wheel never reaches one. On an iPad with a
+    /// pointer — and on a Mac running the iPad app, where there is no other way
+    /// to scroll — `lastUserTouchAt` therefore stayed at `.distantPast` and a
+    /// scroll-up was read as pure layout rather than intent.
     ///
-    /// Every consequence followed from that one gap.
-    /// `sentinelDisappearanceEndsFollowing` read each scroll-up as pure layout,
-    /// so the bottom sentinel's `onDisappear` took its repair branch and pinned
-    /// straight back to the tail; `shouldScroll` never suppressed a pin either.
-    /// Scrolling up was impossible even on an idle thread, and because
-    /// `autoFollow` never went false the jump-to-latest pill — the one advertised
-    /// way out — never appeared.
+    /// Rather than add a second recognizer and try to configure it correctly,
+    /// this hangs a target off the scroll view's **own** `panGestureRecognizer`.
+    /// That recognizer already handles indirect scrolls — it is why a
+    /// `UIScrollView` scrolls with a trackpad when a bare `DragGesture` does not
+    /// — so there is no `allowedScrollTypesMask`, `allowedTouchTypes` or
+    /// simultaneous-recognition policy to get wrong, and nothing new that could
+    /// starve the scroll view's panning or swallow a tap.
     ///
-    /// A recognizer rather than iOS 18's `onScrollPhaseChange` for two reasons:
-    /// this package deploys to iOS 17, and a phase callback also fires for the
-    /// transcript's OWN programmatic pins, which would stamp user intent on a
-    /// scroll the user did not perform and suppress the follow it had just done.
+    /// Deliberately not iOS 18's `onScrollPhaseChange`: this package deploys to
+    /// iOS 17, and that callback also fires for the transcript's OWN
+    /// programmatic pins, which would stamp user intent for a scroll the user
+    /// never made and suppress the follow it had just performed.
     struct TranscriptIndirectScrollTracker: UIViewRepresentable {
         let onScroll: () -> Void
 
@@ -91,11 +110,11 @@ enum TranscriptIndirectScrollPolicy {
             let probe = ScrollProbeView(frame: .zero)
             probe.isUserInteractionEnabled = false
             probe.backgroundColor = .clear
-            // The enclosing scroll view is an ancestor that does not exist yet
-            // at make time. `didMoveToWindow` is the first moment the chain is
-            // real, and it is deterministic — no dispatch hop to race.
+            // The scroll view does not exist in the tree yet at make time.
+            // `didMoveToWindow` is the first moment the hierarchy is real, and
+            // it is deterministic — no dispatch hop to race with layout.
             probe.onEnterWindow = { [weak coordinator = context.coordinator] view in
-                coordinator?.attach(startingFrom: view)
+                coordinator?.attach(from: view)
             }
             return probe
         }
@@ -103,16 +122,17 @@ enum TranscriptIndirectScrollPolicy {
         func updateUIView(_ uiView: ScrollProbeView, context: Context) {
             context.coordinator.onScroll = onScroll
             // Idempotent, and it matters: a pane that re-hosts its content gets
-            // a new scroll view, and a tracker still attached to the old one
-            // would go quiet without ever reporting an error.
-            context.coordinator.attach(startingFrom: uiView)
+            // a new scroll view, and a tracker still bound to the old one would
+            // go quiet without ever reporting an error.
+            context.coordinator.attach(from: uiView)
         }
 
         static func dismantleUIView(_ uiView: ScrollProbeView, coordinator: Coordinator) {
             coordinator.detach()
         }
 
-        /// Zero-sized, non-interactive: it exists only to find the scroll view.
+        /// Zero-sized and non-interactive: it exists only to locate the scroll
+        /// view, and must never take a hit or affect layout.
         final class ScrollProbeView: UIView {
             var onEnterWindow: ((UIView) -> Void)?
 
@@ -123,53 +143,41 @@ enum TranscriptIndirectScrollPolicy {
             }
         }
 
-        final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        final class Coordinator: NSObject {
             var onScroll: () -> Void
             private weak var attachedTo: UIScrollView?
-            private var pan: UIPanGestureRecognizer?
 
             init(onScroll: @escaping () -> Void) {
                 self.onScroll = onScroll
             }
 
-            func attach(startingFrom view: UIView) {
-                guard let scrollView = Self.enclosingScrollView(of: view) else { return }
+            func attach(from view: UIView) {
+                guard let scrollView = Self.scrollView(near: view) else { return }
                 guard attachedTo !== scrollView else { return }
                 detach()
-                let recognizer = UIPanGestureRecognizer(
-                    target: self, action: #selector(handleScroll(_:)))
-                TranscriptIndirectScrollPolicy.configure(recognizer)
-                recognizer.delegate = self
-                scrollView.addGestureRecognizer(recognizer)
-                pan = recognizer
+                scrollView.panGestureRecognizer.addTarget(
+                    self, action: #selector(handleScroll(_:)))
                 attachedTo = scrollView
             }
 
             func detach() {
-                if let pan, let attachedTo { attachedTo.removeGestureRecognizer(pan) }
-                pan = nil
+                attachedTo?.panGestureRecognizer.removeTarget(
+                    self, action: #selector(handleScroll(_:)))
                 attachedTo = nil
             }
 
-            static func enclosingScrollView(of view: UIView) -> UIScrollView? {
-                var current = view.superview
-                while let candidate = current {
-                    if let scrollView = candidate as? UIScrollView { return scrollView }
-                    current = candidate.superview
-                }
-                return nil
+            static func scrollView(near view: UIView) -> UIScrollView? {
+                TranscriptScrollViewSearch.find(
+                    from: view,
+                    parent: { $0.superview },
+                    children: { $0.subviews },
+                    isScrollContainer: { $0 is UIScrollView }
+                ) as? UIScrollView
             }
 
             @objc func handleScroll(_ recognizer: UIPanGestureRecognizer) {
                 onScroll()
             }
-
-            /// Observe only — never take the gesture away from the scroll view's
-            /// own pan, or the scroll this is reporting would stop happening.
-            func gestureRecognizer(
-                _ gestureRecognizer: UIGestureRecognizer,
-                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-            ) -> Bool { true }
         }
     }
 #endif

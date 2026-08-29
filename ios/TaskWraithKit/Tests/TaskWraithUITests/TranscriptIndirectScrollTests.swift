@@ -9,70 +9,120 @@ import Testing
 
 @Suite("Transcript indirect scroll")
 struct TranscriptIndirectScrollTests {
-    /// Runs everywhere, because `configure(_:)` derives every flag from this
-    /// spec rather than hard-coding them — so flipping a value here is exactly
-    /// as breaking as mis-configuring the recognizer, and reds the same test.
-    @Test func pointerScrollsAreRecognizedWithoutClaimingTouches() {
-        let spec = TranscriptIndirectScrollPolicy.recognizerSpec
+    /// Stand-in for a view tree, so the search is exercised on every platform
+    /// rather than only where UIKit exists.
+    private final class FakeNode {
+        let isScroll: Bool
+        private(set) var children: [FakeNode] = []
+        weak var parent: FakeNode?
 
-        // The entire defect in one flag. With this false the pointer lane
-        // reports nothing, `lastUserTouchAt` stays at `.distantPast`, and the
-        // bottom sentinel's `onDisappear` re-pins the transcript to the tail on
-        // every scroll-up.
-        #expect(spec.acceptsIndirectScrolls)
+        init(isScroll: Bool = false) { self.isScroll = isScroll }
 
-        // Direct touch already has a producer in `transcriptTouchTracking`'s
-        // DragGesture. A second recognizer contending for the same touches
-        // risks starving the scroll view's own pan — the failure
-        // `TranscriptTouchTrackingPolicy.dragMinimumDistance` already had to
-        // work around once on iPad.
-        #expect(!spec.acceptsDirectTouches)
+        @discardableResult
+        func adding(_ child: FakeNode) -> FakeNode {
+            child.parent = self
+            children.append(child)
+            return self
+        }
+    }
 
-        // A pure observer must never swallow a tap on a transcript control.
-        #expect(!spec.cancelsTouchesInView)
+    private func find(from start: FakeNode, maxHops: Int = 6) -> FakeNode? {
+        TranscriptScrollViewSearch.find(
+            from: start,
+            parent: { $0.parent },
+            children: { $0.children },
+            isScrollContainer: { $0.isScroll },
+            maxHops: maxHops)
+    }
+
+    @Test func findsAScrollContainerAmongAncestors() {
+        let scroll = FakeNode(isScroll: true)
+        let middle = FakeNode()
+        let probe = FakeNode()
+        scroll.adding(middle)
+        middle.adding(probe)
+
+        // SwiftUI seats several hosting views between a view and its scroll
+        // view, so the walk has to climb rather than check its parent.
+        #expect(find(from: probe) === scroll)
+    }
+
+    @Test func findsAScrollContainerThatIsASibling() {
+        // THE regression this file exists for. `.background()` on a ScrollView
+        // layers the probe BEHIND the scroll view, making them siblings under a
+        // shared parent — so an ancestors-only walk finds nothing and the
+        // tracker attaches to nothing at all, silently.
+        let container = FakeNode()
+        let probe = FakeNode()
+        let scroll = FakeNode(isScroll: true)
+        container.adding(probe)
+        container.adding(scroll)
+
+        #expect(find(from: probe) === scroll)
+    }
+
+    @Test func findsAScrollContainerNestedUnderASibling() {
+        // The sibling is usually a hosting view with the scroll view inside it,
+        // not the scroll view itself.
+        let container = FakeNode()
+        let probe = FakeNode()
+        let host = FakeNode()
+        let scroll = FakeNode(isScroll: true)
+        container.adding(probe)
+        container.adding(host)
+        host.adding(scroll)
+
+        #expect(find(from: probe) === scroll)
+    }
+
+    @Test func prefersTheEnclosingContainerOverASiblingOne() {
+        // A probe genuinely inside one scroll view must not bind to an
+        // unrelated scroll view sitting beside its ancestor.
+        let outer = FakeNode()
+        let enclosing = FakeNode(isScroll: true)
+        let unrelated = FakeNode(isScroll: true)
+        let probe = FakeNode()
+        outer.adding(enclosing)
+        outer.adding(unrelated)
+        enclosing.adding(probe)
+
+        #expect(find(from: probe) === enclosing)
+    }
+
+    @Test func reportsNothingWhenThereIsNoScrollContainer() {
+        let root = FakeNode()
+        let probe = FakeNode()
+        root.adding(probe)
+
+        #expect(find(from: probe) == nil)
+    }
+
+    @Test func doesNotClimbBeyondTheHopBudget() {
+        // Bounded so a probe outside the transcript can never reach the window
+        // and start stamping intent for unrelated scrolling.
+        let scroll = FakeNode(isScroll: true)
+        var node = scroll
+        for _ in 0..<9 {
+            let child = FakeNode()
+            node.adding(child)
+            node = child
+        }
+
+        #expect(find(from: node, maxHops: 3) == nil)
+        #expect(find(from: node, maxHops: 12) === scroll)
     }
 
     #if canImport(UIKit)
         @MainActor
-        @Test func configuringARecognizerAppliesTheSpec() {
-            let pan = UIPanGestureRecognizer()
-
-            // A stock recognizer ships with an empty `allowedScrollTypesMask`.
-            // That default IS the bug this file exists to fix: SwiftUI's
-            // DragGesture is one of these, which is why it never saw a wheel.
-            #expect(!TranscriptIndirectScrollPolicy.spec(of: pan).acceptsIndirectScrolls)
-
-            TranscriptIndirectScrollPolicy.configure(pan)
-
-            #expect(
-                TranscriptIndirectScrollPolicy.spec(of: pan)
-                    == TranscriptIndirectScrollPolicy.recognizerSpec)
-        }
-
-        @MainActor
-        @Test func theProbeFindsTheScrollViewAboveIt() {
+        @Test func bindsToARealSiblingScrollView() {
+            let container = UIView()
+            let probe = UIView()
             let scrollView = UIScrollView()
-            let intermediate = UIView()
-            let probe = UIView()
-            scrollView.addSubview(intermediate)
-            intermediate.addSubview(probe)
-
-            // SwiftUI puts several hosting views between the background probe
-            // and the transcript's scroll view, so the walk has to climb rather
-            // than check its immediate parent.
-            #expect(
-                TranscriptIndirectScrollTracker.Coordinator.enclosingScrollView(of: probe)
-                    === scrollView)
-        }
-
-        @MainActor
-        @Test func theProbeReportsNothingOutsideAScrollView() {
-            let root = UIView()
-            let probe = UIView()
-            root.addSubview(probe)
+            container.addSubview(probe)
+            container.addSubview(scrollView)
 
             #expect(
-                TranscriptIndirectScrollTracker.Coordinator.enclosingScrollView(of: probe) == nil)
+                TranscriptIndirectScrollTracker.Coordinator.scrollView(near: probe) === scrollView)
         }
     #endif
 }
