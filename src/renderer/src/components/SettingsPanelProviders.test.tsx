@@ -296,13 +296,73 @@ describe('SettingsPanel provider cards', () => {
   it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
-    // Ollama now has a sign-in card (filling the retired-Gemini slot) offering the
-    // optional ollama.com cloud auth — local models still need no account.
-    expect(html).toContain('settings-provider-auth-card-partial provider-ollama')
+    // Ollama's sign-in card (filling the retired-Gemini slot) reports the
+    // ollama.com account in the same vocabulary as every other provider —
+    // before any status lands, that is the shared "not checked yet", never the
+    // retired amber "setup optional".
+    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(html).not.toContain('settings-provider-auth-card-partial provider-ollama')
+    expect(html).not.toContain('Local setup optional')
     expect(html).toContain('ollama signin')
     expect(html).toContain('sign in or add a key for Ollama Cloud')
     expect(html).toContain('Open Terminal to sign in')
     expect(html).toContain('Ollama Cloud API key')
+  })
+
+  it('reads a running but signed-out Ollama as ready, not as optional setup', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: true,
+            localAvailable: true,
+            setupRequired: false,
+            modelCount: 1,
+            localModelCount: 1,
+            cloudModelCount: 0,
+            cloud: { supported: true, enabled: true, authenticated: false, models: [] },
+            models: [{ id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)', source: 'local' }]
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
+    expect(html).toContain('Running · not signed in')
+    expect(html).not.toContain('Local runtime ready')
+    expect(html).not.toContain('Cloud sign-in optional')
+    // The Local / Ollama group keeps the runtime signal, without amber.
+    const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
+    expect(localGroup).toContain('Local service reachable')
+    expect(localGroup).toContain('Cloud not signed in')
+    expect(localGroup).not.toContain('--color-warning')
+  })
+
+  it('keeps an Ollama with neither server nor account neutral, not red', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: false,
+            localAvailable: false,
+            setupRequired: true,
+            modelCount: 0,
+            localModelCount: 0,
+            cloudModelCount: 0,
+            cloud: { supported: false, enabled: true, authenticated: null, models: [] }
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(html).not.toContain('settings-provider-auth-card-not-available provider-ollama')
+    expect(html).toContain('Ollama not running')
+    expect(html).not.toContain('Local setup optional')
+    const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
+    expect(localGroup).toContain('Local service not reachable')
+    expect(localGroup).not.toContain('--color-warning')
+    expect(localGroup).not.toContain('--color-danger')
   })
 
   it('separates authenticated Ollama Cloud models from installed local models', () => {
@@ -345,7 +405,7 @@ describe('SettingsPanel provider cards', () => {
     )
 
     expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
-    expect(html).toContain('Cloud connected · pro')
+    expect(html).toContain('Signed in (pro)')
     expect(html).toContain('Ollama Cloud</span>')
     expect(html).toContain('Local models')
     expect(html).toContain('glm-5.2:cloud')
@@ -385,7 +445,7 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('Cloud API key configured')
+    expect(html).toContain('Cloud API key saved')
     expect(html).toContain('Cloud models use Ollama’s direct API')
     expect(html).toContain('Local service not reachable')
   })
