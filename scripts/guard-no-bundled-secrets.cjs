@@ -26,7 +26,7 @@
  * metadata in app.asar. That was not a private OAuth secret, but it showed how
  * build-time credential-looking material can drift into shipped bundles. The
  * APNs .p8 / configured fingerprints are real secrets, so this guard makes the
- * boundary explicit. See docs/ios-push-gateway-design.md §4.4.
+ * boundary explicit. See the APNs gateway design §4.4.
  *
  * Fingerprints (optional) come from TASKWRAITH_SECRET_FINGERPRINTS (comma-
  * separated); the gateway key id is added there once Tier-2 ships.
@@ -329,7 +329,7 @@ function main() {
     console.error('[guard-no-bundled-secrets] FAILED — potential secret leak / boundary violation:')
     for (const problem of problems) console.error(`  ✗ ${problem}`)
     console.error(
-      '\nSee docs/ios-push-gateway-design.md §4. The shared .p8 + gateway impl must never reach the embedded relay bundle.'
+      '\nSee the APNs gateway design §4. The shared .p8 + gateway impl must never reach the embedded relay bundle.'
     )
     process.exit(1)
   }

@@ -145,7 +145,7 @@ export interface BuildEnsemblePromptInput {
    */
   scoutBriefs?: ScoutBriefRecord[]
   /**
-   * Spike 5 (docs/ensemble-posture-fanout-preamble-design.md) — emit the
+   * Spike 5 (the staged fan-out design) — emit the
    * slim resumed-turn prompt instead of the full ~5.5k-char shell. Callers
    * must only set this when (a) the participant's provider session will
    * genuinely resume, and (b) the participant's persisted
@@ -2121,7 +2121,7 @@ export function formatToolTraceSummary(activities: readonly ToolActivity[] | und
 }
 
 /**
- * Spike 3 (docs/ensemble-posture-fanout-preamble-design.md) — compact
+ * Spike 3 (the staged fan-out design) — compact
  * per-file change digest for the tagged transcript.
  *
  * The tool-trace line above collapses peers' edits into
@@ -2315,7 +2315,7 @@ function projectTaggedTranscript(
         message.metadata?.ensembleRoundId === options?.excludeEnsembleRoundPromptRoundId
       )
   )
-  // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
+  // Spike 6 (the staged fan-out design) — "since your
   // last turn" widening. A fixed window (12 messages by default) means a
   // writer late in a large round can lose everything since its previous turn
   // — including its OWN prior contribution. When the caller identifies the

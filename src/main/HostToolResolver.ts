@@ -16,7 +16,7 @@ import { cliBinaryNameCandidates, getCliSearchDirs } from './providers/CliSearch
  * (Finder-launched apps get the minimal launchd PATH, which has no
  * /opt/homebrew/bin). This is that one layer.
  *
- * Policy, inherited from the ffmpeg precedent (docs/audio-video-pipeline-design.md §6):
+ * Policy, inherited from the ffmpeg precedent (§6):
  * we never bundle these, and we never auto-install them (auto-download would
  * flip the licensing posture we deliberately hold). A missing tool is a
  * RECOVERABLE capability gap — surfaced to the agent as a tool error carrying an

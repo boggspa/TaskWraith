@@ -3,7 +3,7 @@ import type { EnsembleStageRole } from '../../../main/store/types'
 /**
  * Shared copy for the stage-role pickers (participant chip popover +
  * Settings → Roster editor). Semantics live in the orchestrator (spike 4,
- * docs/ensemble-posture-fanout-preamble-design.md; permission-agnostic since
+ * the staged fan-out design; permission-agnostic since
  * 2026-08-04): a stage is a pure dispatch role any seat can hold on any
  * permission preset. Scouts join the round-start parallel pass, workers
  * always take a serial implementation turn, reviewers wait until every

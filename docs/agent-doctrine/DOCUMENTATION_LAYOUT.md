@@ -4,9 +4,9 @@ Read this file in full before adding, moving, renaming, or deciding the publicat
 
 ## Why this file exists
 
-`.gitignore:35` ignores `docs/` wholesale, and 147 of the 171 `docs/**/*.md`
+`.gitignore:41` ignores `docs/` wholesale, and 143 of the 162 `docs/**/*.md`
 files present in this checkout are force-added past that line individually.
-Until this document existed there was no written rule deciding which 147.
+Until this document existed there was no written rule deciding which 143.
 Publication status was set by whoever last ran `git add -f`, and the two failure
 directions are not symmetric: an unpublished doc that source cites dangles on
 every fresh clone, and a published doc that should have stayed private cannot be
@@ -50,20 +50,10 @@ recalled from a public repository. Both have already happened here.
 This is the load-bearing rule in this file. A `docs/…` path in a source comment
 is a promise to whoever clones the repository. When the doc is not tracked, the
 promise breaks on the first fresh clone, and it breaks silently — no compiler,
-no test, and no linter reads a path out of a comment. Five references in tracked
-source name docs that are not in `git ls-files` today:
-
-- `src/main/ProviderQuotaWallClassifier.ts:11` →
-  `docs/auto-failover-killswitch-spec.md`
-- `src/main/services/EnsembleBackgroundDispatch.ts:67` →
-  `docs/bg-user-mention-posture-design.md`
-- `relay/src/server.ts:76` and seven more source files →
-  `docs/ios-push-gateway-design.md`
-- `src/main/HostToolResolver.ts` and `src/main/documents/PdfTextExtractor.ts` →
-  `docs/audio-video-pipeline-design.md`
-- twelve source files, including `src/main/index.ts`,
-  `src/main/EnsemblePrompt.ts`, and `src/main/services/EnsembleOrchestrator.ts` →
-  `docs/ensemble-posture-fanout-preamble-design.md`
+no test, and no linter reads a path out of a comment. The 2026-08-29 paperwork
+refresh removed the tracked-source references that named private or missing
+documents. Keep that executable-source count at zero; synthetic paths inside
+tests and examples are not publication promises.
 
 Two ways to satisfy the test, and you must pick one deliberately:
 
@@ -83,13 +73,13 @@ the next agent tidying up the tree has to guess.
 
 Two files already do this correctly and are the templates:
 
-- `docs/competitive-popularity-analysis.md` opens with an HTML comment naming
-  the gitignore line, stating the file is not in `git ls-files`, and instructing
-  that it must **never** be force-added.
-- `docs/privacy-data-flow-statement.md` records the opposite state: publication
-  approved on a named date by a named person, with the exact preconditions that
-  must land first, and an explicit note that publishing is a deliberate
-  `git add -f` on that file only.
+- A competitive analysis file opens with an HTML comment naming the gitignore
+  line, stating the file is not in `git ls-files`, and instructing that it must
+  **never** be force-added.
+- A privacy data-flow draft records the opposite state: publication approved on
+  a named date by a named person, with the exact preconditions that must land
+  first, and an explicit note that publishing is a deliberate `git add -f` on
+  that file only.
 
 Note that the second one also names its sibling and forbids force-adding it.
 That is the shape to copy: say what the state is, who decided, and what would
@@ -102,13 +92,12 @@ force-add against a wholesale ignore.
 
 The incident: `758b47e14` ("chore: keep security ledger local-only") deliberately
 made the Security Engineering Ledger private by adding a **root-anchored**
-`/SECURITY_ENGINEERING_LEDGER.md` rule and deleting 2,139 tracked lines.
-Thirteen days later `298f9c2b0` ("chore(docs): move internal paperwork to docs
-directory") moved that file to `docs/SECURITY_ENGINEERING_LEDGER.md` — a path
-the anchored rule cannot match — and it re-entered the tracked tree as 2,176
-added lines. Fifteen of that commit's sixteen entries were pure renames showing
-`0` changed lines, so the one entry that was actually a publication did not look
-like one in review.
+ignore rule and deleting 2,139 tracked lines. Thirteen days later `298f9c2b0`
+("chore(docs): move internal paperwork to docs directory") moved that file
+below the ignored documentation directory, where the anchored rule could not
+match, and it re-entered the tracked tree as 2,176 added lines. Fifteen of that
+commit's sixteen entries were pure renames showing `0` changed lines, so the one
+entry that was actually a publication did not look like one in review.
 
 Two rules follow:
 

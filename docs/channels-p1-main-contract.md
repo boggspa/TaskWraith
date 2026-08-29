@@ -1,8 +1,8 @@
 # Channels P1 — bounded main-side contract and completed proof
 
 **Status:** implemented and process-proven on `master` on 2026-08-09. The user
-recorded that the [two-Mac test](human-collaboration-two-mac-test.md) passed on
-two real Macs across unrelated networks, satisfying P0. The P1 implementation
+recorded that the private two-Mac runbook passed on two real Macs across
+unrelated networks, satisfying P0. The P1 implementation
 and repeatable three-instance evidence are recorded in
 [`channels-p1-proof.md`](channels-p1-proof.md).
 

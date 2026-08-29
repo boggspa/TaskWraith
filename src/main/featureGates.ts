@@ -14,7 +14,7 @@ export function concurrentWriteLanesEnabled(): boolean {
 }
 
 /**
- * Spike 5 (docs/ensemble-posture-fanout-preamble-design.md) — slim ensemble
+ * Spike 5 (the staged fan-out design) — slim ensemble
  * turn prompts for seats whose provider session natively resumes
  * (claude/codex): the full ~5.5k-char shell re-sent every turn
  * duplicates history those sessions already hold. Default ON (user opt-in,

@@ -1,8 +1,6 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-08-27 against the 2026-07-18 latest-source capture pass: **61 of 88 captured; 27 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 captures against 88 guide pages — of which one
-(`chats-and-threads__chat-types`) is known stale rather than current, so 60 are
-trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 88-shot baseline.
+Inventory reconciled 2026-08-29 against the 2026-07-18 latest-source capture pass: **61 of 87 captured; 26 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 named captures against 87 feature guide pages — of which one (`chats-and-threads__chat-types`) is known stale rather than current, so 60 are trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 87-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 

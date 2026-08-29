@@ -73,7 +73,7 @@ export interface RelayOptions {
    * those 404 every gateway path and stay blind forwarders. This is a TYPE-ONLY
    * import, so the implementation (relay/src/apnsGateway.ts) and the .p8 it
    * loads never bundle into Electron main. Enforced by
-   * scripts/guard-no-bundled-secrets.cjs + docs/ios-push-gateway-design.md §4.
+   * scripts/guard-no-bundled-secrets.cjs + the APNs gateway design §4.
    */
   apnsGateway?: ApnsGateway
 }

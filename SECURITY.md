@@ -87,7 +87,8 @@ affected component and contact request.
   The gateway exists only on the standalone relay (`relay/src/cli.ts`); a
   shipped app cannot construct one — enforced in CI by
   `scripts/guard-no-bundled-secrets.cjs`, and the signing key reaches the
-  relay only as a runtime-mounted secret (see `relay/DEPLOY.md`).
+  relay only as a runtime-mounted secret; consult the private deployment runbook
+  when operating the standalone gateway.
 - Ordinary alert/wake APNs bodies must remain generic and routing-only: reason,
   pair/device, and thread/run identifiers are acceptable, and any richer
   notification content must stay inside the existing per-device encrypted

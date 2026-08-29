@@ -14590,7 +14590,7 @@ export class EnsembleOrchestrator {
     if (!runtime) return
     if (!runtime.scoutBriefs) runtime.scoutBriefs = []
     runtime.scoutBriefs.push(brief)
-    // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — durable
+    // Spike 6 (the staged fan-out design) — durable
     // copy on the shared blackboard. `runtime.scoutBriefs` dies with the
     // round runtime, so pre-spike a brief was invisible to every subsequent
     // round even though it often carries exactly the hand-off context a

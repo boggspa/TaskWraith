@@ -21466,7 +21466,7 @@ async function tryRunClaudeSdk(
         options: {
           cwd: payload.workspace!,
           model: model === 'default' ? undefined : model,
-          // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
+          // Spike 8 (the staged fan-out design) —
           // Ask seats run in DEFAULT permission mode instead of
           // Claude Code's native plan mode: plan mode installs a plan-shaped
           // system prompt (+ ExitPlanMode) that turns review/recon turns into

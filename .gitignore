@@ -38,6 +38,9 @@ papercuts/*
 # Measurement output. Was only in this checkout's private .git/info/exclude, so
 # every other clone saw it as untracked noise.
 perf-artifacts/
+# Synthetic userData profiles contain chat/checkpoint fixtures and belong with
+# local measurement output, never in a public checkout's untracked surface.
+perf-homes/
 docs/
 RELEASING.md
 scripts/publish-clean.sh

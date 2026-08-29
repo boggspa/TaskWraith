@@ -191,6 +191,14 @@ profiles, or used to make automated decisions about a person.
   creative-app control, external MCP servers, and web or browser tools connect
   only when configured or invoked. Their visible setup and approval surfaces
   describe the relevant access, and the selected third party's terms apply.
+- **Authorized Site Sessions (source-ahead).** The current development checkout
+  can keep a user-selected site signed in across restarts in a separate,
+  browser-managed per-site partition. That partition may contain the site's
+  cookies and storage, but TaskWraith does not store or receive the site's
+  plaintext password: sign-in remains a human-only browser action. Agent access
+  starts off and is a separate user choice (read-only or actuation), bounded to
+  the approved site origins. This is not a v1.9.6 released guarantee and must
+  be re-reviewed before the surface is included in a tagged release.
 
 ## Storage and retention
 

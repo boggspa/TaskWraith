@@ -1,5 +1,5 @@
 // Phase 2 (P2a) — durable, BOUNDED collaboration audit log
-// (docs/human-collaboration-phase-2-spec.md §5 "Audit").
+// (the Phase 2 collaboration contract §5 "Audit").
 //
 // Every host-visible collaboration event (rules changed, invites, admission,
 // contributions received/rejected, drafts inserted, revocations) gets a small

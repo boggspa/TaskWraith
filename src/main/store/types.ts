@@ -849,7 +849,7 @@ export type EnsembleFanoutPolicy =
   | 'locked_writers_user_preflight'
 
 /**
- * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4;
+ * Staged fan-out (the staged fan-out design, spike 4;
  * permission-agnostic since 2026-08-04) — optional per-participant dispatch
  * stage. A stage is a pure fan-out dispatch role with preferred tooling and
  * NEVER a permission requirement: any seat, on any permission preset, can

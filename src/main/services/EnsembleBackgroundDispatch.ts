@@ -64,7 +64,7 @@ export type BackgroundDispatchPosture =
 
 /**
  * Decides how a background lane is permissioned
- * (docs/bg-user-mention-posture-design.md). `honorSeatPosture` is set ONLY by
+ * (the background-seat posture design). `honorSeatPosture` is set ONLY by
  * the user-origin round path — composer @mention or DM chip target; every
  * beginRound prompt is user-authored by construction. Peer mentions and yield
  * routes never set it, so they always take the silent read-only clamp. The

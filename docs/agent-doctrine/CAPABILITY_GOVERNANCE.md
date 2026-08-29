@@ -12,13 +12,13 @@ agent that acts without consent. The 2026-07-19 overnight incident is the
 canonical precedent: an autonomous security session unilaterally removed a live
 provider and gated another, and the cleanup took days (see
 [`papercuts/2026-07-19-retro.md`](../../papercuts/2026-07-19-retro.md) and the
-local-only, gitignored `SECURITY_ENGINEERING_LEDGER.md`).
+local-only, gitignored Security Engineering Ledger).
 
 Rules, in priority order:
 
 1. **Security work proposes; the user disposes.** If you identify a risk in a
    provider, tool, grant, permission tier, or transport: record the finding in
-   the local-only `SECURITY_ENGINEERING_LEDGER.md` (gitignored, repo root), propose
+   the local-only, gitignored Security Engineering Ledger, propose
    a bounded mitigation, and stop. Do not land code, config, CI, or doctrine
    that narrows user-facing capability without the user approving that exact
    narrowing in the current session. "The user would surely want this blocked"

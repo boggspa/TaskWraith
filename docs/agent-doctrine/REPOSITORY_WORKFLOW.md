@@ -435,8 +435,8 @@ nothing.
 it rather than deleting someone's marker.
 
 `TW_ALLOW_IGNORED_ADD=1 git commit …` overrides the gitignored-add block. This
-is not exotic: `docs/` is ignore-by-default with 212 paths force-tracked
-individually, 147 of them `.md` (`git ls-files -- docs` counts both), so a plain
+is not exotic: `docs/` is ignore-by-default with 208 paths force-tracked
+individually, 143 of them `.md` (`git ls-files -- docs` counts both), so a plain
 `git mv` of an already-tracked doc trips it — the destination reads as a
 brand-new ignored path. Before overriding, prove you are not publishing
 anything new (`git show HEAD:<oldpath>` should match the new file, and the old

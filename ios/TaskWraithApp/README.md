@@ -99,8 +99,8 @@ outbox, media-annotation, or git-action deltas.
 
 Closing the gate requires one checked-in release record naming the reviewed
 commit and artifact, reviewer, review date, findings, disposition of every
-CRITICAL/HIGH finding, accepted residual risk, and confirmation that
-`AppStorePrivacyNotes.md` plus export-compliance answers still describe the
+CRITICAL/HIGH finding, accepted residual risk, and confirmation that the local
+App Store privacy notes plus export-compliance answers still describe the
 artifact that will ship. Feature completion never overrides this gate.
 
 The generated Xcode project has a shared `TaskWraith` scheme and a Release
@@ -130,8 +130,8 @@ Before upload:
 2. Complete the App Store Connect export-compliance questionnaire. This project
    sets `ITSAppUsesNonExemptEncryption=false`: the app's CryptoKit E2EE uses
    standard algorithms that qualify for the export-compliance exemption.
-3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
-   the selected distribution model.
+3. Read the local App Store privacy notes and make the App Store privacy answers
+   match the selected distribution model.
 
 Archive/export and upload are separate. After verifying the exported IPA, use
 Transporter or upload it with the same App Store Connect API credentials:
@@ -200,7 +200,7 @@ Without these the Mac uses a no-op pusher (pairing + manual reconnect still
 work; no pushes delivered). APNs device tokens are local routing identifiers
 stored by the paired Mac. The relay does not send push. For a consumer App Store
 listing, don't market push as a hero feature unless the Mac ships with push
-pre-configured — see `AppStorePrivacyNotes.md`.
+pre-configured — see the local App Store privacy notes in the release packet.
 
 On supported iOS versions, Live Activities are enabled by default for paired
 runs. The user can switch them off in the Mac's Notifications settings or in

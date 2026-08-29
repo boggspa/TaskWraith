@@ -13,7 +13,7 @@
  * shipped app stays a blind forwarder that 404s every gateway path.
  *
  * Enforced by scripts/guard-no-bundled-secrets.cjs. See
- * docs/ios-push-gateway-design.md §4.
+ * the APNs gateway design §4.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http'

@@ -23,8 +23,8 @@ const host = process.env.HOST || undefined
 // never ship in the app. OFF unless explicitly enabled on this standalone
 // deployment. The .p8 loads HERE from a runtime secret (a mounted file via
 // systemd LoadCredential / Docker secret — never an image COPY layer, never
-// an env-var PEM). See docs/ios-push-gateway-design.md §4 and
-// relay/DEPLOY.md.
+// an env-var PEM). See the APNs gateway design §4 and
+// the private deployment runbook.
 const options: RelayOptions = { port, ...(host ? { host } : {}) }
 if (process.env.TASKWRAITH_RELAY_APNS_GATEWAY === '1') {
   // Shared resolve-directory state: the SAME registrations + single-use

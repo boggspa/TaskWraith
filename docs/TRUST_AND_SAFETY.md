@@ -66,7 +66,9 @@ TaskWraith's authority is centered on the desktop app:
   (`src/shared/closeoutReceipt.ts`) built from TaskWraith's own structured
   records, never from model text. Any generated close-out narrative containing
   a numeral — digits or spelled-out words — is rejected rather than trimmed.
-  This is **source-ahead of v1.9.5** and carries no released guarantee yet.
+  This protection shipped in **v1.9.6**. The source-ahead checkout may extend
+  the same boundary, but the receipt-backed rule itself is part of the current
+  public baseline.
 
   The rejection is enforced independently at each layer that can produce or
   render such prose, so no single bypass silently reinstates a model-authored
@@ -80,9 +82,9 @@ TaskWraith's authority is centered on the desktop app:
   asserts about its own work is unverifiable, and the telemetry it reads to
   produce one is attacker-influenceable.
 
-The tagged v1.9.5 release is the current public baseline. This repository can
+The tagged v1.9.6 release is the current public baseline. This repository can
 also contain source-ahead work that is not a released guarantee until it is
-named in later release notes. The changelog's **1.9.5** section is the newest
+named in later release notes. The changelog's **1.9.6** section is the newest
 released section; anything in this tree beyond it is source-ahead and carries
 no released guarantee.
 

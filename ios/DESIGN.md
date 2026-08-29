@@ -39,7 +39,11 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   thread's Plan / Ask / Accept Edits / Full WS Access / Full Access
   posture stays a separate per-thread choice.
 
-## Current state (iOS 0.1.0 build 82; desktop 1.8.8 baseline)
+## Current state (iOS 0.1.0 build 97; desktop v1.9.6 source-ahead checkout)
+
+The public desktop baseline is v1.9.6. The current checkout is source-ahead of
+that tag; the companion build number below is the latest source-tree value, not
+a claim that build 97 has been uploaded or released.
 
 - App icon: current variants are regular, WWDC26, monoline, and glass, backed by
   the checked-in `AppIcon-*` asset sets.
@@ -858,7 +862,7 @@ CRITICAL). All CRITICAL + HIGH fixed and verified:
   reject, registerApnsToken replay-guarded, Swift epoch parity, phone QR
   expiresAt + un-importable-key rejection.
 
-Full findings (fixed + residual) in docs/security/e2ee-review-findings.md
+Full findings (fixed + residual) are kept in the private E2EE review record.
 (local-only; docs/ is gitignored). Residual MED — silent identity
 regeneration on safeStorage-unavailable / Keychain-write-failure — is the
 one item flagged before submission; needs a surfaced-error UX pass.

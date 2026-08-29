@@ -6,11 +6,12 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 13 August 2026.** Your actual picker is still governed by the
+> **Snapshot: 29 August 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
-> standard options it presents.
+> standard options it presents. Rows added or corrected after v1.9.6 describe
+> the current source-ahead checkout and are not a v1.9.6 release guarantee.
 
 ## Reading the catalogue
 
@@ -273,7 +274,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **GLM-4.7 (Cerebras)** `cerebras/zai-glm-4.7`              | —            | —    | 131K context via Cerebras. **Retired 2026-08-17**; no longer offered for new runs, kept here so older transcripts still decode. |
 | **GPT-OSS 120B (Cerebras)** `cerebras/gpt-oss-120b`        | —            | —    | 131K context via Cerebras.                  |
 | **Ox Alpha** `openrouter/stealth/ox-alpha`                 | —            | —    | **Retired 2026-08-28** after OpenRouter withdrew it; no longer offered for new runs, kept here so older chats and saved ensemble seats still decode. |
-| **GLM 5.2** `openrouter/zai/glm-5.2`                       | —            | —    | 256K context via OpenRouter.                |
+| **GLM 5.2** `openrouter/z-ai/glm-5.2`                     | —            | —    | 256K context via OpenRouter.                |
 | **Laguna S 2.1** `openrouter/poolside/laguna-s-2.1`        | —            | —    | 256K context via OpenRouter.                |
 | **Nemotron 3 Ultra** `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | — | — | 1M context via OpenRouter.                  |
 
@@ -317,6 +318,7 @@ tool, vision, and thinking capabilities remain model-specific.
 | Qwen 3.5 (9B)              | `qwen3.5:9b`         | 262K local context.                             |
 | Qwen 3.6 (35B-A3B)         | `qwen3.6:35b`        | 262K; vision, tools, thinking.                  |
 | Qwen 3.8 (27B-MLX)         | `qwen3.8:27b-mlx`    | 262K; vision, tools, thinking.                  |
+| Qwen 3.8 Flash Next (125B-MLX) | `qwen3.8-flash-next:125b-mlx` | 262K; vision, tools, thinking; 6B active. |
 | Gemma 3 (4B Param)         | `gemma3:4b`          | 131K; vision.                                   |
 | Gemma 4 (12B)              | `gemma4:12b`         | 262K local context.                             |
 | Gemma 4 (31B-MLX)          | `gemma4:31b-mlx`     | 262K local context.                             |
@@ -332,10 +334,14 @@ tool, vision, and thinking capabilities remain model-specific.
 | Granite 4.0 (3B Param)     | `granite4:3b`        | 131K; tools.                                    |
 | Granite 4.1 (3B)           | `granite4.1:3b`      | 131K; tools.                                    |
 | Granite 4.1 (30B)          | `granite4.1:30b`     | 131K; tools.                                    |
+| Granite 4.2 (3B)           | `granite4.2:3b`      | 131K; tools, thinking.                          |
+| Granite 4.2 (8B)           | `granite4.2:8b`      | 131K; tools, thinking.                          |
+| Granite 4.2 (30B)          | `granite4.2:30b`     | 131K; tools, thinking.                          |
 | Nemotron 3 Nano (4B Param) | `nemotron-3-nano:4b` | 262K; tools, thinking.                          |
 | Nemotron 3 Nano Omni (33B) | `nemotron3:33b`      | 131K; vision, tools, thinking.                  |
 | Nemotron 3.5 Lightning (30B-MLX) | `nemotron-3.5-lightning:30b-mlx` | 262K; tools, thinking; 3B active. |
 | Devstral Small 2 (24B Param) | `devstral-small-2:24b` | 393K; vision, tools; agentic coding.        |
+| Mistral Medium 3.5 (128B Param) | `mistral-medium-3.5:128b` | 262K; vision, tools, thinking; agentic coding. |
 | Ministral 3 (3B Param)     | `ministral-3:3b`     | 262K; vision, tools.                            |
 | Ministral 3 (14B Param)    | `ministral-3:14b`    | 262K; vision, tools.                            |
 | Muse Glimmer (30B-MLX)     | `muse-glimmer:30b-mlx` | 131K; vision, tools, thinking.                |

@@ -479,7 +479,7 @@ export function ollamaLocalToolSystemPrompt(
  *   - 'recon' — findings-shaped hint: search/read, then report findings in
  *     place. Correct for Ask posture, which is review posture,
  *     not plan ownership (spike 2 of
- *     docs/ensemble-posture-fanout-preamble-design.md — the plan-drafting
+ *     staged fan-out design — the plan-drafting
  *     hint on read-only tiers was TaskWraith's own self-inflicted source of
  *     plan-shaped recon output for local models).
  *

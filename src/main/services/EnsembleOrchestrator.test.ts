@@ -22818,7 +22818,7 @@ describe('parseSelfReflectivePrefix', () => {
 })
 
 /*
- * Spike 4 (docs/ensemble-posture-fanout-preamble-design.md) — staged
+ * Spike 4 (the staged fan-out design) — staged
  * fan-out. Stage-role reviewers are excluded from the round-start read
  * pass and deferred behind every non-reviewer turn; once only reviewers
  * remain, eligible ones run as one parallel read-only "Review wave".

@@ -8,6 +8,11 @@ context needed to answer.
 
 ## 1.9.7 - Unreleased
 
+> **Source-ahead refresh — 2026-08-29.** The audit snapshot immediately before
+> this paperwork commit was `e46e1d6e4`, 847 commits after the shipped v1.9.6
+> boundary. The highlights below describe that source-ahead work only; they are
+> not a release or artifact claim.
+
 ### Provider setup and run control
 
 - **Kimi K3 routes are distinct and plan-aware.** K3 now offers the regular
@@ -27,6 +32,57 @@ context needed to answer.
   home to reopen visible or running threads and launch independent Charts,
   Browser, Mesh, Sketch, Media, or Simulator surfaces without changing the
   inspector dock.
+
+### Authorized site sessions
+
+- **Saved web sessions have a named boundary.** Work → Logins keeps each user-
+  selected site in its own persistent browser partition, with explicit Off,
+  Read only, or Can act access. TaskWraith stores the site catalogue and
+  encrypted browser-managed session state, never a site password.
+- **Sign-in remains human-only.** A dedicated sign-in window keeps credentials
+  outside agent tools, while site-bound Canvas surfaces refuse navigation,
+  snapshots, and actuation outside the user's approved origins. Expired sessions
+  are named in the transcript instead of being retried blindly.
+- **Web-login tools are narrowly scoped.** `web_login_list` and
+  `web_login_open` use the selected site's partition and expiring access lease;
+  read-only sites cannot be turned into actuation by a tool call. Cross-origin
+  subframes are fenced to the site's explicitly allowed origins.
+
+### Durable work and Host startup
+
+- **Execution Graphs now have an accountable owner.** Durable graph work binds
+  to its owning thread, pauses instead of dispatching when ownership is absent,
+  and delivers settled results to that thread exactly once. Work exposes the
+  execution list and route to the graph map without treating ordinary chat sends
+  as graph steps.
+- **Startup explains degraded authority.** Workspace-lock checkpoints, WAL
+  recovery, persistence-revision rebasing, and record quarantine keep one bad
+  or oversized chat from disabling the rest of the launch. Startup milestones
+  and the degraded-authority banner identify what the Host could and could not
+  recover.
+- **The Host and Thread Home stay in control.** Host-backed persistence, live
+  mission/round projections, and Thread Home surface the available terminal,
+  Mission Control, and other work surfaces without silently respawning a stopped
+  Host or treating stale records as live work.
+
+### Provider and local-model currency
+
+- **Ollama reports the model it can actually run.** Cloud discovery, remembered
+  CLI sign-in, provider-owned reasoning ladders, capacity admission, and paid
+  cloud spend now stay distinct from local model state; a model that cannot
+  think at a requested level is not promised that control.
+- **The local catalogue grows with its real families.** Qwen 3.8 Flash Next,
+  Granite 4.2, and Mistral Medium 3.5 128B receive model-aware context and
+  reasoning profiles, while Pi's OpenRouter namespace and per-route reasoning
+  metadata are canonicalised before dispatch.
+
+### iOS companion parity
+
+- **The companion follows current Host state.** iOS projection and presentation
+  now reconcile Host liveness, active terminal runs, feedback actions, and
+  recovered transcript state without retaining retired surfaces. The current
+  source tree carries companion build 97; App Store/TestFlight distribution
+  remains separately gated by the release and cryptography-review process.
 
 ## 1.9.6 - 2026-08-19
 

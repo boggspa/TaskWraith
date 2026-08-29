@@ -46,7 +46,7 @@ export function grokReadOnlyMcpAdvertiseEnabled(): boolean {
 }
 
 /**
- * Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — sub-gate for
+ * Spike 7 (the staged fan-out design) — sub-gate for
  * persistent per-seat Grok ACP sessions in ensembles. When ON, a TOOLLESS
  * read-only ensemble Grok seat keeps one `grok agent stdio` process + ACP
  * session alive across its turns (GrokSeatSession), giving it provider-native

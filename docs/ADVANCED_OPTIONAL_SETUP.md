@@ -168,8 +168,8 @@ APNs credentials let the Mac update or end it after the relay drops and
 push-start one after a grace period while the companion is closed. ActivityKit
 must read that card state, so it is not end-to-end encrypted; it is restricted
 to the non-sensitive allowlist and hard privacy boundary in
-[`PRIVACY.md`](PRIVACY.md) and
-[`ios/TaskWraithApp/AppStorePrivacyNotes.md`](../ios/TaskWraithApp/AppStorePrivacyNotes.md).
+[`PRIVACY.md`](PRIVACY.md). App Store-specific answers are maintained in the
+private local release packet and are not part of the public source tree.
 
 ## Screen Watch
 

@@ -8,7 +8,7 @@ import type { ProviderId } from './store/types'
  * Modeled on SandboxFallback.ts — a pure, fully-unit-tested string classifier
  * with no side effects.
  *
- * DESIGN — a four-stage funnel (see docs/auto-failover-killswitch-spec.md and
+ * DESIGN — a four-stage funnel (see the auto-failover design and
  * the recon notes). This module owns stages 2-3; the caller owns 1 + 4:
  *   1. (caller) Only classify on a TERMINAL non-zero exit. A 429 in a run that
  *      ultimately SUCCEEDED is noise — both the Anthropic and OpenAI SDKs

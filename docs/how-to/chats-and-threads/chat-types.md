@@ -10,6 +10,10 @@ Use the sidebar's **Chat** surface for General chats, **Code** for workspace-sco
 
 ![Chat surface showing the Chat, Code, and Work switcher plus chat, Channels, and Ensemble sections](../images/chats-and-threads__chat-types.png)
 
+> **Screenshot refresh pending:** this capture predates the Channels rename and
+> still shows the retired “Shared” sidebar label. The written guidance below is
+> current; use the image only as a layout reference until it is recaptured.
+
 ## How to use it
 1. Choose **Chat** for a General chat or **Code** for a workspace thread, then click **+ New**. Code also exposes workspace Workflows and Workspace Boards.
 2. To start an Ensemble, create a draft and enable **Ensemble** before the first send, use the **+** button in the Ensembles section, or convert an eligible idle top-level chat from the composer.

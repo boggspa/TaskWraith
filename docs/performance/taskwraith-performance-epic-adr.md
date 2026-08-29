@@ -599,10 +599,10 @@ checkout**, which sits against invariant 6 above ("No epic source work in the
 shared dirty checkout — writer lanes use isolated worktrees only") and against
 the closing line of §2 ("Production source tranches remain locked until Boss
 authorizes them after T1/T2 artifacts exist") — the more so because the T1/T2
-artifacts that precondition names are themselves now missing from disk (see
-`t2-baseline-artifact-index.md`). Whether that authorization was given out of
-band is not recorded anywhere in this repo. This note states the position; it
-does not adjudicate it.
+artifacts that precondition names are themselves now missing from disk; the
+private T2 baseline artifact record documents this. Whether that authorization
+was given out of band is not recorded anywhere in this repo. This note states
+the position; it does not adjudicate it.
 
 **Amendment (2026-08-16, T5 substantially landed — and the label is wrong):**
 three commits landed the tool-detail tranche a few hours after the amendment

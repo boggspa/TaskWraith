@@ -17,8 +17,9 @@
 > env keys; Pi is env-only with no begin-able login. Operator contract:
 > [`README.md`](./README.md) Current boundary,
 > [`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts),
-> and [`DESIGN.md`](./DESIGN.md). Arc status:
-> [`docs/host-arc/HOST_ARC_STATUS.md`](../../docs/host-arc/HOST_ARC_STATUS.md).
+> and [`DESIGN.md`](./DESIGN.md). Detailed Host-arc history is maintained in a
+> private local-only tracker; this document and `DESIGN.md` are the public TUI
+> operator contract.
 >
 > App-side posture handling still exists
 > ([`TuiHeadlessHostSession`](../main/TuiHeadlessHostSession.ts), wired

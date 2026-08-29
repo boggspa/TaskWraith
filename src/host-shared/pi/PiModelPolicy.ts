@@ -63,7 +63,7 @@ export const PI_ALLOWED_UPSTREAMS: readonly PiUpstreamId[] = [
   'openrouter'
 ]
 
-/** Upstream → the env var pi reads its API key from (docs/providers.md). */
+/** Upstream → the env var pi reads its API key from the upstream provider docs. */
 export const PI_UPSTREAM_KEY_ENV: Readonly<Record<PiUpstreamId, string>> = {
   deepseek: 'DEEPSEEK_API_KEY',
   zai: 'ZAI_API_KEY',

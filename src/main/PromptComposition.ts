@@ -321,7 +321,7 @@ export function sanitizeTaskWraithMcpPromptClaims(
 
 /**
  * Ask posture steer (spike 2 of
- * docs/ensemble-posture-fanout-preamble-design.md). Plan-mode runs skip the
+ * staged fan-out design). Plan-mode runs skip the
  * runtime preamble entirely, which previously left a solo Ask
  * turn with ZERO posture text — while several providers' native plan personas
  * (activated because both presets share `approvalMode: 'plan'`) pushed

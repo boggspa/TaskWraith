@@ -3,7 +3,7 @@ import { shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
 
 /**
  * Per-tier shell-command policy classifiers (behavior-alignment slices D/E —
- * docs/refactors/PermissionTierBehaviorAlignment.md, owner directive
+ * the owner-approved permission-tier alignment record, owner directive
  * 2026-08-04). Two POLARITIES live here and must never be mixed up:
  *
  *  - `isInspectionShellCommand` is an ALLOW-list (it widens automation), so it

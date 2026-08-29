@@ -4,7 +4,7 @@ import { resolveBackgroundDispatchPosture } from './EnsembleBackgroundDispatch'
 
 /*
  * User-directed background lanes honor the seat's own posture
- * (docs/bg-user-mention-posture-design.md). The pure resolver carries the
+ * (the background-seat posture design). The pure resolver carries the
  * decision + status wording; the source invariants pin the orchestrator
  * wiring — exactly one user-origin call site sets honorSeatPosture, and the
  * peer paths keep the silent read-only clamp.

@@ -1,8 +1,8 @@
 # How-To Manual — Screenshot Shot List
 
-88 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+87 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-08-27 against the 2026-07-18 latest-source capture pass: **61 captured, 27 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 88 guide pages minus the 27 with no capture on disk.
+Current inventory, reconciled 2026-08-29 against the 2026-07-18 latest-source capture pass: **61 captured, 26 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 87 feature guide pages minus the 26 with no capture on disk. One captured page is explicitly stale and is not trustworthy until recaptured.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
