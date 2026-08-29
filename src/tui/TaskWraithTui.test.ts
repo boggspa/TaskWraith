@@ -1225,6 +1225,20 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(create?.arguments).toEqual({ scope: 'workspace', workspaceId: 'ws-2' })
   }, 12_000)
 
+  it('answers /dismiss with an empty queue rather than Unknown command', async () => {
+    const { userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
+
+    // /help advertises /dismiss, and a pending question is intercepted upstream
+    // of the dispatcher -- so an advertised command must not read as unknown
+    // merely because there is nothing queued to dismiss.
+    feed(input, '/dismiss\r')
+    await waitFor(() => output.lastFrame.includes('Nothing to dismiss'), 'empty-queue notice')
+    expect(output.lastFrame).not.toContain('Unknown command')
+  }, 12_000)
+
   it('guides /new through provider selection before creating a solo thread', async () => {
     let configured = false
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-new-provider-host-'))

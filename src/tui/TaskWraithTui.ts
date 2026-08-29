@@ -1760,6 +1760,15 @@ export class TaskWraithTui {
       await this.cancelRun()
       return
     }
+    if (command === '/dismiss') {
+      // A pending question is intercepted before the dispatcher, so reaching
+      // here means there is nothing to dismiss. /help advertises the command,
+      // and answering an advertised command with "Unknown command" reads as a
+      // broken CLI rather than an empty queue.
+      this.setNotice('Nothing to dismiss - no Host question is pending.', 'neutral', 3_000)
+      this.render()
+      return
+    }
     if (command === '/clear') {
       this.state.scrollOffset = 0
       this.setNotice('Scrollback reset for this TUI session.', 'neutral', 2_000)
