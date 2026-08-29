@@ -46,6 +46,7 @@ public enum OllamaDisplayBrands {
         "gemma4": "Gemma 4",
         "gemma4:31b": "Gemma 4 (31B Param)",
         "glm-5.3-flash": "GLM 5.3 Flash",
+        "glm-5.3": "GLM 5.3",
         "glm-5.1": "GLM 5.1",
         "glm-5.2": "GLM 5.2",
         "gpt-oss:20b": "GPT OSS (20B Param)",
