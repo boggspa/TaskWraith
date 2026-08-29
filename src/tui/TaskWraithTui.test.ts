@@ -1024,8 +1024,11 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
     await revived.start()
     cleanup.push(() => revived.stop())
+    // The revived Host's own preview is the proof of reattachment. A reconnect
+    // no longer re-announces "Opened <title>": it is the same thread the reader
+    // never left, and re-announcing it every drop is the noise this fixed.
     await waitFor(
-      () => output.lastFrame.includes('Solo thread (revived)'),
+      () => output.lastFrame.includes('Hello again'),
       'reconnected to the revived Host',
       5_000
     )
@@ -1749,6 +1752,74 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(output.lastFrame).not.toContain('No thread selected')
   })
 
+  it('keeps the reader overlay open across a Host reconnect', async () => {
+    // A reconnect re-attaches the same thread, and re-attaching used to run the
+    // full open path: overlay closed, scroll snapped to the bottom, seat lens
+    // dropped. On a Host that drops the connection every few seconds that reads
+    // as "every time I try to go somewhere it pulls me back".
+    const { host, userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath, { reconnectBaseDelayMs: 10 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread open')
+
+    feed(input, '\u000b')
+    await waitFor(() => output.lastFrame.includes('Threads'), 'thread picker open')
+
+    const welcomesBefore = host.welcomeCount
+    host.dropAllClients()
+    await waitFor(() => host.welcomeCount > welcomesBefore, 'Host reconnect', 4_000)
+    await waitFor(() => output.lastFrame.includes('Threads'), 'picker survived reconnect', 4_000)
+    expect(output.lastFrame).toContain('Threads')
+  }, 10_000)
+
+  it('keeps the reader scroll position across a Host reconnect', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-reattach-scroll-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts',
+        'history'
+      ],
+      threadHistory: (request) => ({
+        threadId: request.threadId,
+        generation: 3,
+        cursor: 11,
+        entries: Array.from({ length: 60 }, (_unused, index) => ({
+          entryId: `history-${index}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          createdAt: index + 1,
+          text: `Transcript line ${index}`
+        }))
+      })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+
+    const { tui, input, output } = startTui(userDataPath, { reconnectBaseDelayMs: 10 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Transcript line 59'), 'transcript at the end')
+
+    feed(input, '\u001b[5~')
+    await waitFor(
+      () => !output.lastFrame.includes('Transcript line 59'),
+      'scrolled back from the end'
+    )
+
+    const welcomesBefore = host.welcomeCount
+    host.dropAllClients()
+    await waitFor(() => host.welcomeCount > welcomesBefore, 'Host reconnect', 4_000)
+    await waitFor(() => output.lastFrame.includes('Transcript line'), 'transcript re-read', 4_000)
+    await new Promise((settle) => setTimeout(settle, 150))
+
+    expect(output.lastFrame).not.toContain('Transcript line 59')
+  }, 10_000)
+
   it('accepts bracketed-paste text as a single composer insertion including embedded line breaks', async () => {
     const { userDataPath } = await setupHost()
     const { tui, input, output } = startTui(userDataPath)
@@ -2144,8 +2215,10 @@ describe('TaskWraithTui reconnect revival', () => {
     host.dropAllClients()
     await host.stop()
 
+    // Same as above: the relaunched Host's own preview proves the reattachment,
+    // and a reconnect deliberately no longer re-announces the thread title.
     await waitFor(
-      () => output.lastFrame.includes('Solo thread (relaunched)'),
+      () => output.lastFrame.includes('Back online'),
       'reconnected to the relaunched Host',
       10_000
     )

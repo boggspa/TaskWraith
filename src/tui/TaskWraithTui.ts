@@ -557,7 +557,7 @@ export class TaskWraithTui {
       const threadId = requestedThreadId ? preferredThread(mapped, requestedThreadId) : undefined
       const hasOpenableThread = mapped.threads.some((thread) => !thread.archived)
       if (threadId) {
-        await this.openThread(threadId)
+        await this.openThread(threadId, { reattach: threadId === this.state.selectedThreadId })
       } else if (hasOpenableThread) {
         // Threads exist and the reader has not chosen one: rest on the home frame
         // rather than entering setup, which is for a profile with nothing to open.
@@ -673,8 +673,16 @@ export class TaskWraithTui {
     this.projectionRefreshTimer.unref?.()
   }
 
-  private async openThread(threadId: string): Promise<void> {
+  /**
+   * `reattach` marks the re-open a reconnect performs on the thread that is
+   * already on screen. It is not a navigation, so it must not close the
+   * reader's overlay, drop the seat lens, scroll them back, or re-announce a
+   * thread they never left.
+   */
+  private async openThread(threadId: string, options: { reattach?: boolean } = {}): Promise<void> {
     if (!threadId || this.selectingThread || this.mutationInFlight) return
+    const reattach = options.reattach === true && threadId === this.state.selectedThreadId
+    const preservedScrollOffset = this.state.scrollOffset
     if (threadId !== this.state.selectedThreadId) {
       // Offers and staged selections are per-thread state.
       this.state.offers = undefined
@@ -702,8 +710,9 @@ export class TaskWraithTui {
       return
     }
     if (!this.client.supports('commands')) {
-      this.applyLocalThread(threadId, { previewNotice: true })
+      this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
       await this.loadThreadHistory(threadId)
+      if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
       this.render()
       return
     }
@@ -714,8 +723,9 @@ export class TaskWraithTui {
       await this.runHostMutation(command, {
         onSucceeded: async () => {
           await this.refreshHostSnapshot()
-          this.applyLocalThread(threadId, { previewNotice: true })
+          this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
           await this.loadThreadHistory(threadId)
+          if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
         }
       })
     } finally {
@@ -724,17 +734,23 @@ export class TaskWraithTui {
     }
   }
 
-  private applyLocalThread(threadId: string, options: { previewNotice?: boolean } = {}): void {
+  private applyLocalThread(
+    threadId: string,
+    options: { previewNotice?: boolean; preserveView?: boolean } = {}
+  ): void {
     const host = this.hostSnapshot
     if (!host) return
     const detail = mapHostSnapshotToThreadDetail(host, threadId)
     if (!detail) return
+    const preserveView = options.preserveView === true && this.state.selectedThreadId === threadId
     this.state.selectedThreadId = threadId
     this.state.thread = detail.thread
-    this.state.overlay = 'none'
-    // The seat lens is keyed to the thread it was opened for.
-    this.state.seats = undefined
-    this.state.scrollOffset = 0
+    if (!preserveView) {
+      this.state.overlay = 'none'
+      // The seat lens is keyed to the thread it was opened for.
+      this.state.seats = undefined
+      this.state.scrollOffset = 0
+    }
     if (!this.client?.supports('history')) {
       this.state.history = {
         threadId,
@@ -754,6 +770,12 @@ export class TaskWraithTui {
         1_800
       )
     }
+  }
+
+  /** Puts a re-attached reader back where they were reading, never at the end. */
+  private restoreScrollOffset(threadId: string, scrollOffset: number): void {
+    if (this.state.selectedThreadId !== threadId) return
+    this.state.scrollOffset = scrollOffset
   }
 
   /**
