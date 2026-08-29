@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
   }
 }))
 
+import { ipcChannelRequiresMainRenderer } from '../RendererIpcPolicy'
 import {
   registerStartupAuthorityHandlers,
   STARTUP_AUTHORITY_GET_CHANNEL,
@@ -77,5 +78,14 @@ describe('registerStartupAuthorityHandlers', () => {
     })
     broadcast(degraded)
     expect(sent).toEqual([[STARTUP_AUTHORITY_STATE_CHANNEL, degraded]])
+  })
+
+  it('keeps both channels reachable from a secondary renderer, on purpose', () => {
+    // A workspace popout whose edits are about to fail closed needs the banner
+    // as much as the main window does. The retry is not a force-release: it
+    // re-runs the same fenced open the boot path runs and cannot take a lease
+    // from anyone, so restricting it would only leave a dead button.
+    expect(ipcChannelRequiresMainRenderer(STARTUP_AUTHORITY_GET_CHANNEL)).toBe(false)
+    expect(ipcChannelRequiresMainRenderer(STARTUP_AUTHORITY_RETRY_CHANNEL)).toBe(false)
   })
 })

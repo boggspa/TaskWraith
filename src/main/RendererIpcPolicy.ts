@@ -201,6 +201,19 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'work-locks:list',
   'work-locks:subscribe',
   'work-locks:unsubscribe',
+  // Workspace-lock startup health. A popout whose edits are about to fail
+  // closed has as much need to know as the main window, and the payload is
+  // main-owned health only - no paths, chats, or identities.
+  //
+  // The retry is deliberately NOT in the same class as
+  // 'work-locks:force-release-recovery' below. That one takes a lease away
+  // from another owner on a human's say-so; this one re-runs the same
+  // WorkspaceLockRuntime.open the boot path runs, under the same fence, and
+  // concurrent calls coalesce in the supervisor. It cannot release anyone's
+  // lease or bypass fencing, so restricting it would only produce a dead
+  // button in a popout that is already showing the banner.
+  'startup-authority:get',
+  'startup-authority:retry',
   'github:ci-status',
   'github:create-commit-group-pr',
   'github:manage-pr',
