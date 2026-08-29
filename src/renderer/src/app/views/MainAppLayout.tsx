@@ -199,6 +199,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSaveExecutionGraph,
   handleCancelExecutionRun,
   handleOpenExecutionMap,
+  executionRunEntries,
+  handleOpenExecutionRunFromWork,
   copiedId,
   copy,
   currentBlackboardEntries,
@@ -1428,6 +1430,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
                 onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
+                executionRunEntries={executionRunEntries}
+                onOpenExecutionRun={handleOpenExecutionRunFromWork}
                 projectGraphEntries={projectGraphEntries}
                 activeThreadGraphProjectId={activeProjectGraphId}
                 onOpenChatInSidePanel={(chat, presentation) =>

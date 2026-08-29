@@ -964,6 +964,7 @@ import {
 } from './lib/chatSurfacePendingApprovals'
 import { createPaneTopLeftChromeComposer } from './lib/paneTopLeftChrome'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
+import { executionRunStatusLabel } from './lib/executionGraphProjection'
 import {
   executionAppendSubmissionKey,
   executionStackStepTitle,
@@ -24063,6 +24064,39 @@ function App(): React.JSX.Element {
     },
     [executionRunsById, rememberExecutionRun]
   )
+  /**
+   * Work-tab listing of this workspace's durable executions, live first.
+   * The Execution Map previously had no route from any surface the user looks
+   * at, so a paused or failed graph pointed at nothing.
+   */
+  const executionRunEntries = useMemo(
+    () =>
+      sortExecutionRunHistory(Object.values(executionRunsById)).map((run) => ({
+        executionId: run.executionId,
+        title: run.title || 'Durable execution',
+        statusLabel: executionRunStatusLabel(run.state),
+        isLive: !isTerminalExecutionRun(run)
+      })),
+    [executionRunsById]
+  )
+  /**
+   * Opening from the Work tab has to select the owning thread first: an effect
+   * closes the map whenever the run's root chat is not the focused composer
+   * chat, so opening it directly would flicker straight back shut.
+   */
+  const handleOpenExecutionRunFromWork = useCallback(
+    (executionId: string): void => {
+      const run = executionRunsById[executionId]
+      const rootChatId = run?.owner?.threadId || run?.rootChatId
+      const chat = rootChatId
+        ? chatByIdRef.current.get(rootChatId) ||
+          chats.find((candidate) => candidate.appChatId === rootChatId)
+        : undefined
+      if (chat) void handleSelectChatRef.current(chat)
+      handleOpenExecutionMap(executionId)
+    },
+    [chats, executionRunsById, handleOpenExecutionMap]
+  )
   const handleOpenExecutionThread = useCallback(
     (threadRef: string): void => {
       const chat =
@@ -31477,6 +31511,8 @@ function App(): React.JSX.Element {
     handleBackFromExecutionMap,
     handleCancelExecutionRun,
     handleOpenExecutionMap,
+    executionRunEntries,
+    handleOpenExecutionRunFromWork,
     handleSelectExecutionMapStep: (stepId: string) =>
       setOpenExecutionMap((current) =>
         current ? { ...current, selectedStepId: stepId } : current

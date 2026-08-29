@@ -243,6 +243,13 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleOpenExecutionThread: (threadRef: string) => void
   handleCancelExecutionRun: (executionId: string) => void
   handleOpenExecutionMap: (executionId: string, stepId?: string) => void
+  executionRunEntries: ReadonlyArray<{
+    executionId: string
+    title: string
+    statusLabel: string
+    isLive: boolean
+  }>
+  handleOpenExecutionRunFromWork: (executionId: string) => void
   handleSaveExecutionGraph: (runId: string) => void
   copiedId: any
   copy: any

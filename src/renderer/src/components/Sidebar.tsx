@@ -211,6 +211,18 @@ interface SidebarProps {
   /** Open the References dock panel for a project (Work panel pass-through). */
   onOpenReferencesLibrary?: (projectId: string) => void
   onOpenThreadGraph?: (projectId: string) => void
+  /**
+   * Durable executions this workspace owns, newest first. Surfaced here because
+   * the Execution Map had no route from anywhere the user actually looks: a
+   * graph could pause or fail with nothing pointing at it.
+   */
+  executionRunEntries?: ReadonlyArray<{
+    executionId: string
+    title: string
+    statusLabel: string
+    isLive: boolean
+  }>
+  onOpenExecutionRun?: (executionId: string) => void
   projectGraphEntries?: { id: string; name: string; memberCount: number }[]
   activeThreadGraphProjectId?: string | null
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
@@ -3039,6 +3051,8 @@ export function Sidebar({
   onSelectedProjectChange,
   onOpenReferencesLibrary,
   onOpenThreadGraph,
+  executionRunEntries,
+  onOpenExecutionRun,
   projectGraphEntries,
   activeThreadGraphProjectId,
   onOpenChatInSidePanel,
@@ -5247,6 +5261,41 @@ export function Sidebar({
                 onSearchResultCountChange={setProjectsSearchResultCount}
                 initialSelectedProjectId={initialSelectedWorkProjectId}
               />
+              {onOpenExecutionRun && executionRunEntries && executionRunEntries.length > 0 && (
+                <section
+                  className="sidebar-execution-runs-section"
+                  aria-label="Durable executions"
+                >
+                  <div className="sidebar-project-graphs-header">
+                    <span className="sidebar-project-graphs-title">Executions</span>
+                    <span className="sidebar-project-graphs-hint">Open the execution map</span>
+                  </div>
+                  <div className="sidebar-project-graphs-list">
+                    {executionRunEntries.map((entry) => (
+                      <div
+                        key={entry.executionId}
+                        role="button"
+                        tabIndex={0}
+                        className={`sidebar-project-graph-item ${entry.isLive ? 'is-live' : ''}`}
+                        onClick={() => onOpenExecutionRun(entry.executionId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onOpenExecutionRun(entry.executionId)
+                          }
+                        }}
+                        title={`Open ${entry.title} execution map`}
+                      >
+                        <span className="sidebar-project-graph-glyph" aria-hidden="true">
+                          ⌘
+                        </span>
+                        <span className="sidebar-project-graph-name">{entry.title}</span>
+                        <span className="sidebar-project-graph-count">{entry.statusLabel}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               {onOpenThreadGraph && projectGraphEntries && projectGraphEntries.length > 0 && (
                 <section className="sidebar-project-graphs-section" aria-label="Node graphs">
                   <div className="sidebar-project-graphs-header">
