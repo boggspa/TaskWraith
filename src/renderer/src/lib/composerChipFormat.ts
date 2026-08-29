@@ -14,10 +14,7 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
-import {
-  isMistralThinkingCapableModel,
-  isPiMistralThinkingCapableModel
-} from '../../../shared/mistralModels'
+import { isMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   cursorGrokBaseModelId,
   isCursorGrokModelId,
@@ -438,10 +435,6 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   if (provider === 'mistral' && isMistralThinkingCapableModel(modelId)) {
     return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
-  if (provider === 'pi' && isPiMistralThinkingCapableModel(modelId)) {
-    return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
-  }
-
   // General Pi API-key models: configurable thinking level (off, minimal,
   // low, medium, high, xhigh, max) surfaced from piReasoningEffort.
   if (provider === 'pi') {

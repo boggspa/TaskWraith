@@ -47,6 +47,7 @@ import {
   summariseCodexStatus,
   summariseMistralVibeStatus,
   summariseMuseCodeStatus,
+  summariseOllamaStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
@@ -2458,6 +2459,8 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_eval',
     'canvas_navigate',
     'canvas_close',
+    'web_login_list',
+    'web_login_open',
     'mesh_scene_create',
     'mesh_scene_list',
     'mesh_scene_inspect',
@@ -5005,34 +5008,11 @@ export function SettingsPanel({
   const ollamaCloudApiKeyConfigured = ollamaStatus?.cloud?.apiKeyConfigured === true
   const ollamaCloudDisabled = ollamaStatus?.cloud?.enabled === false
   const ollamaCloudPlan = String(ollamaStatus?.cloud?.plan || '').trim()
-  // The local daemon remains the provider transport in both modes. Its account
-  // state is shown separately so a green local-runtime signal cannot imply that
-  // Cloud models are authenticated when only local tags are runnable.
-  const ollamaAuthSummary: ProviderAuthSummary = ollamaStatus?.available
-    ? ollamaCloudAuthenticated
-      ? {
-          variant: 'signed-in',
-          statusText: ollamaCloudApiKeyConfigured
-            ? 'Cloud API key configured'
-            : `Cloud connected${ollamaCloudPlan ? ` · ${ollamaCloudPlan}` : ''}`,
-          hint: ollamaCloudApiKeyConfigured
-            ? 'Cloud models use Ollama’s direct API; local models remain on the local daemon.'
-            : 'Local and Ollama Cloud models are available through the local Ollama daemon.'
-        }
-      : {
-          variant: 'partial',
-          statusText: ollamaCloudDisabled
-            ? 'Local runtime ready · Cloud disabled'
-            : 'Local runtime ready · Cloud sign-in optional',
-          hint: ollamaCloudDisabled
-            ? 'Local models remain available; this Ollama daemon has Cloud features disabled.'
-            : 'Local models need no account. Run `ollama signin` to unlock the separate Cloud catalog.'
-        }
-    : {
-        variant: 'partial',
-        statusText: 'Local setup optional',
-        hint: 'Install Ollama, then pull a local model or sign in to use Ollama Cloud models.'
-      }
+  // Ollama reports through the shared provider vocabulary: green once the
+  // server can run something (account or not), neutral when there is neither a
+  // server nor an account. The account half is spelled out in the label and in
+  // the Local / Ollama group below.
+  const ollamaAuthSummary: ProviderAuthSummary = summariseOllamaStatus(ollamaStatus)
 
   const renderOllamaModelOption = (model: any): React.JSX.Element => {
     const modelId = String(model.id || '')
@@ -5840,7 +5820,7 @@ export function SettingsPanel({
               </div>
 
               <div className="settings-group settings-shared-accent-group">
-                <label className="settings-label">Accent &amp; chat bubble</label>
+                <label className="settings-label">Message bubble</label>
                 <SettingsSharedAccentControl
                   color={themeAccentColor}
                   cornerStyle={themeCornerStyle}
@@ -5849,8 +5829,8 @@ export function SettingsPanel({
                   onCornerStyleChange={(themeCornerStyle) => onChange({ themeCornerStyle })}
                 />
                 <p className="settings-hint">
-                  One shared color drives the interface accent, your message bubble, and its “You”
-                  label.
+                  This color is your message bubble and its “You” label. Buttons, focus rings, and
+                  the rest of the interface accent follow your operating system’s accent color.
                 </p>
               </div>
 
@@ -8370,7 +8350,7 @@ export function SettingsPanel({
                       ● Local service reachable
                     </span>
                   ) : (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                       ● Local service not reachable
                     </span>
                   )}
@@ -8390,16 +8370,18 @@ export function SettingsPanel({
                     <span
                       style={{
                         fontSize: '0.75rem',
+                        // Not signed in is a neutral state here, not a warning —
+                        // the same read every other provider gets.
                         color: ollamaCloudAuthenticated
                           ? 'var(--color-success, #3fb950)'
-                          : 'var(--color-warning, #d29922)'
+                          : 'var(--text-tertiary)'
                       }}
                     >
                       {ollamaCloudAuthenticated
                         ? ollamaCloudApiKeyConfigured
                           ? 'Cloud API key configured'
                           : `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
-                        : 'Cloud sign-in required'}
+                        : 'Cloud not signed in'}
                     </span>
                   )}
                   <PillButton

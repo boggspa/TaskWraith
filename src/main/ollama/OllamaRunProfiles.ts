@@ -1,12 +1,10 @@
-import type {
-  OllamaReasoningLevel,
-  OllamaRunProfile,
-  OllamaRunProfileId
-} from '../store/types'
+import type { OllamaRunProfile, OllamaRunProfileId } from '../store/types'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import {
+  isOllamaThinkingLevel,
   normalizeOllamaReasoningEffort,
-  resolveOllamaReasoningSupport
+  resolveOllamaReasoningSupport,
+  type OllamaThinkingLevel
 } from '../../shared/ollamaReasoning'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 
@@ -204,7 +202,7 @@ export function resolveOllamaTurnNumPredict(input: {
     : input.profile.numPredictTool
 }
 
-export type OllamaThinkingSetting = boolean | OllamaReasoningLevel
+export type OllamaThinkingSetting = boolean | OllamaThinkingLevel
 
 export function resolveOllamaThinkingLevel(
   modelId: string,
@@ -223,8 +221,10 @@ export function resolveOllamaThinkingLevel(
     requestedReasoning || profile.reasoningLevel,
     support
   )
-  if (support.kind === 'toggle') return effort !== 'off'
-  return effort === 'low' || effort === 'medium' || effort === 'high'
-    ? effort
-    : support.defaultEffort
+  // `off` only ever survives normalization for a model that can actually stop
+  // reasoning, so it is safe to send `think: false` here without re-checking.
+  if (effort === 'off') return false
+  if (support.kind === 'toggle') return true
+  if (isOllamaThinkingLevel(effort)) return effort
+  return isOllamaThinkingLevel(support.defaultEffort) ? support.defaultEffort : true
 }

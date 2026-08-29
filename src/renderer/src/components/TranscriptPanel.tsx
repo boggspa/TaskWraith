@@ -246,7 +246,12 @@ import {
 import { fleetWaveSeatFromWorker } from '../lib/fleetWaveSeat'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { ExecutionResultCard } from './ExecutionResultCard'
-import { isExecutionResultMessage } from './ExecutionResultCardModel'
+import {
+  executionResultExecutionId,
+  isExecutionResultMessage
+} from './ExecutionResultCardModel'
+import { ExecutionLiveCard } from './ExecutionLiveCard'
+import type { ExecutionGhostCardView } from '../../../shared/executionGraphGhost'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
 import { isThreadMessageTranscriptMessage } from './ThreadMessageTranscriptCardModel'
@@ -625,6 +630,14 @@ export type TranscriptPanelProps = {
    * close-out card, which would otherwise claim the task is finished while the
    * thread is still accountable for running work. */
   hasLiveOwnedExecution?: boolean
+  /** Ghost-strip views for every execution this thread OWNS, terminal ones
+   * included. Live graphs get their own card; a settled one supplies the
+   * matching result card's strip. */
+  ownedExecutionViews?: readonly ExecutionGhostCardView[]
+  /** Cancels a whole owned execution from its live card. */
+  onCancelOwnedExecution?: (executionId: string) => void
+  /** Brings a paused owned execution back into flight. */
+  onResumeOwnedExecution?: (executionId: string) => void
   /**
    * Slice B (1.0.3) — ensemble-aware "Thinking…" label. When an
    * ensemble round is mid-flight, this resolves to the active
@@ -2710,6 +2723,9 @@ export const TranscriptPanel = memo(
     currentProviderLabel,
   onOpenExecutionMapForThread,
   hasLiveOwnedExecution,
+  ownedExecutionViews,
+  onCancelOwnedExecution,
+  onResumeOwnedExecution,
     currentProvider,
     thinkingProviderLabel,
     thinkingProvider,
@@ -3166,6 +3182,19 @@ export const TranscriptPanel = memo(
           !hasLiveOwnedExecution &&
           !shouldSuppressRunCompleteSummary(runCompleteNotice)
       )
+    // Indexed for the settled result cards, which look their own execution up
+    // by id rather than being handed a shape that could disagree with it.
+    const executionViewsById = useMemo(
+      () => new Map((ownedExecutionViews || []).map((view) => [view.executionId, view])),
+      [ownedExecutionViews]
+    )
+    // The graphs still moving. `requires_action` is NOT settled, so a paused
+    // graph keeps its card — that card is the only place the blocker, the map
+    // and the killswitch are reachable while the thread waits.
+    const liveExecutionViews = useMemo(
+      () => (ownedExecutionViews || []).filter((view) => !view.settled),
+      [ownedExecutionViews]
+    )
     // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
     // changes. Those sections mount inside a persisted Task Complete card under
     // that message; the ephemeral footer only remains when the latest close-out
@@ -5490,6 +5519,7 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     provider={currentProvider}
+                    view={executionViewsById.get(executionResultExecutionId(msg) || '')}
                     onOpenExecutionMap={onOpenExecutionMapForThread}
                   />
                 ) : isFleetWaveCard ? (() => {
@@ -6939,6 +6969,23 @@ export const TranscriptPanel = memo(
                   )
                 })
               )}
+            </div>
+          )}
+          {/* Graphs this thread owns that have not settled. These sit where the
+              close-out would be, because they are the reason it is suppressed:
+              the turn is over, the task is not. */}
+          {liveExecutionViews.length > 0 && (
+            <div className="execution-live-card-stack">
+              {liveExecutionViews.map((view) => (
+                <ExecutionLiveCard
+                  key={view.executionId}
+                  view={view}
+                  provider={currentProvider}
+                  onOpenExecutionMap={onOpenExecutionMapForThread}
+                  onCancelExecution={onCancelOwnedExecution}
+                  onResumeExecution={onResumeOwnedExecution}
+                />
+              ))}
             </div>
           )}
           {/* When the latest close-out already hosts a Task Complete card with

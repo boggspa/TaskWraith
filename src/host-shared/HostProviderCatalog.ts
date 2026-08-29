@@ -13,6 +13,8 @@
 import { createHash } from 'node:crypto'
 
 import { isPiModelRetired } from '../shared/piModelLifecycle'
+import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../shared/piReasoning'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 import {
   KIMI_K27_MODEL_ID,
@@ -96,6 +98,55 @@ const POSTURES: readonly HostPermissionPostureOffer[] = [
     ceiling: 'workspace_write'
   }
 ]
+
+const EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  on: 'On',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max'
+}
+
+/**
+ * Ollama and Pi reasoning offers are DERIVED, not restated.
+ *
+ * Both were hand-listed as `STANDARD_REASONING` — low/medium/high/xhigh for
+ * every model — which offered four levels to models that cannot think at all,
+ * and offered `xhigh`, which Ollama's `think` validator rejects outright. This
+ * surface feeds the Host and the iOS remote picker, so the drift was invisible
+ * to the desktop tests. Deriving keeps the three surfaces in lockstep by
+ * construction.
+ */
+function derivedReasoning(
+  efforts: readonly string[]
+): readonly { reasoningId: string; label: string; available: boolean }[] {
+  return efforts.map((reasoningId) => ({
+    reasoningId,
+    label: EFFORT_LABELS[reasoningId] || reasoningId,
+    available: true
+  }))
+}
+
+function ollamaModel(modelId: string, label: string, isDefault = false): HostProviderModelOffer {
+  return model(
+    modelId,
+    label,
+    derivedReasoning(resolveOllamaReasoningSupport({ modelId }).efforts),
+    isDefault
+  )
+}
+
+function piModel(wireId: string, label: string, isDefault = false): HostProviderModelOffer {
+  return model(
+    wireId,
+    label,
+    derivedReasoning(resolvePiReasoningSupport(wireId).efforts),
+    isDefault
+  )
+}
 
 function model(
   modelId: string,
@@ -199,32 +250,32 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Ollama',
       shortCode: 'OLLAMA',
       models: [
-        model('qwen3:4b-instruct', 'Qwen 3 (4B Param)', STANDARD_REASONING, true),
-        model('qwen3.5:2b', 'Qwen 3.5 (2B Param)', STANDARD_REASONING),
-        model('qwen3.5:4b', 'Qwen 3.5 (4B Param)', STANDARD_REASONING),
-        model('qwen3.5:9b', 'Qwen 3.5 (9B Param)', STANDARD_REASONING),
-        model('qwen3.6:35b', 'Qwen 3.6 (35B-A3B)', STANDARD_REASONING),
-        model('qwen3.8:27b-mlx', 'Qwen 3.8 (27B-MLX)', STANDARD_REASONING),
-        model('qwen3.8-flash-next:125b-mlx', 'Qwen 3.8 Flash Next (125B-MLX)', STANDARD_REASONING),
-        model('gemma3:4b', 'Gemma 3 (4B Param)', STANDARD_REASONING),
-        model('gemma4:12b', 'Gemma 4 (12B Param)', STANDARD_REASONING),
-        model('gemma4:31b-mlx', 'Gemma 4 (31B-MLX)', STANDARD_REASONING),
-        model('ornith:9b', 'Ornith 1.0 (9B Param)', STANDARD_REASONING),
-        model('ornith:35b', 'Ornith 1.0 (35B Param)', STANDARD_REASONING),
-        model('ornith-1.5:9b', 'Ornith 1.5 (9B Param)', STANDARD_REASONING),
-        model('ornith-1.5:35b', 'Ornith 1.5 (35B Param)', STANDARD_REASONING),
-        model('laguna-xs-2.1:q8_0', 'Laguna XS 2.1 (33B-A3B Q8)', STANDARD_REASONING),
-        model('gpt-oss:20b', 'GPT OSS (20B Param)', STANDARD_REASONING),
-        model('lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)', STANDARD_REASONING),
-        model('lfm2.5:8b', 'LFM 2.5 (8B-A1B)', STANDARD_REASONING),
-        model('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)', STANDARD_REASONING),
-        model('granite4:3b', 'Granite 4.0 (3B Param)', STANDARD_REASONING),
-        model('granite4.1:3b', 'Granite 4.1 (3B Param)', STANDARD_REASONING),
-        model('granite4.1:30b', 'Granite 4.1 (30B Param)', STANDARD_REASONING),
-        model('granite4.2:3b', 'Granite 4.2 (3B Param)', STANDARD_REASONING),
-        model('granite4.2:8b', 'Granite 4.2 (8B Param)', STANDARD_REASONING),
-        model('granite4.2:30b', 'Granite 4.2 (30B Param)', STANDARD_REASONING),
-        model('mistral-medium-3.5:128b', 'Mistral Medium 3.5 (128B Param)', STANDARD_REASONING)
+        ollamaModel('qwen3:4b-instruct', 'Qwen 3 (4B Param)', true),
+        ollamaModel('qwen3.5:2b', 'Qwen 3.5 (2B Param)'),
+        ollamaModel('qwen3.5:4b', 'Qwen 3.5 (4B Param)'),
+        ollamaModel('qwen3.5:9b', 'Qwen 3.5 (9B Param)'),
+        ollamaModel('qwen3.6:35b', 'Qwen 3.6 (35B-A3B)'),
+        ollamaModel('qwen3.8:27b-mlx', 'Qwen 3.8 (27B-MLX)'),
+        ollamaModel('qwen3.8-flash-next:125b-mlx', 'Qwen 3.8 Flash Next (125B-MLX)'),
+        ollamaModel('gemma3:4b', 'Gemma 3 (4B Param)'),
+        ollamaModel('gemma4:12b', 'Gemma 4 (12B Param)'),
+        ollamaModel('gemma4:31b-mlx', 'Gemma 4 (31B-MLX)'),
+        ollamaModel('ornith:9b', 'Ornith 1.0 (9B Param)'),
+        ollamaModel('ornith:35b', 'Ornith 1.0 (35B Param)'),
+        ollamaModel('ornith-1.5:9b', 'Ornith 1.5 (9B Param)'),
+        ollamaModel('ornith-1.5:35b', 'Ornith 1.5 (35B Param)'),
+        ollamaModel('laguna-xs-2.1:q8_0', 'Laguna XS 2.1 (33B-A3B Q8)'),
+        ollamaModel('gpt-oss:20b', 'GPT OSS (20B Param)'),
+        ollamaModel('lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'),
+        ollamaModel('lfm2.5:8b', 'LFM 2.5 (8B-A1B)'),
+        ollamaModel('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)'),
+        ollamaModel('granite4:3b', 'Granite 4.0 (3B Param)'),
+        ollamaModel('granite4.1:3b', 'Granite 4.1 (3B Param)'),
+        ollamaModel('granite4.1:30b', 'Granite 4.1 (30B Param)'),
+        ollamaModel('granite4.2:3b', 'Granite 4.2 (3B Param)'),
+        ollamaModel('granite4.2:8b', 'Granite 4.2 (8B Param)'),
+        ollamaModel('granite4.2:30b', 'Granite 4.2 (30B Param)'),
+        ollamaModel('mistral-medium-3.5:128b', 'Mistral Medium 3.5 (128B Param)')
       ],
       authFlows: []
     },
@@ -232,45 +283,45 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Pi',
       shortCode: 'PI',
       models: [
-        model('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro', STANDARD_REASONING, true),
-        model('deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash', STANDARD_REASONING),
-        model('zai/glm-5.2', 'GLM-5.2', STANDARD_REASONING),
-        model('zai/glm-5.1', 'GLM-5.1', STANDARD_REASONING),
-        model('zai/glm-4.7', 'GLM-4.7', STANDARD_REASONING),
-        model('qwen-token-plan/qwen3.7-max', 'Qwen3.7 Max', STANDARD_REASONING),
-        model('qwen-token-plan/qwen3.7-plus', 'Qwen3.7 Plus', STANDARD_REASONING),
-        model('qwen-token-plan/qwen3.8-max', 'Qwen3.8 Max', STANDARD_REASONING),
-        model('minimax/MiniMax-M3', 'MiniMax M3', STANDARD_REASONING),
-        model('minimax/MiniMax-M2.7', 'MiniMax M2.7', STANDARD_REASONING),
-        model('xiaomi-token-plan-cn/mimo-v2-pro', 'MiMo V2 Pro (CN)', STANDARD_REASONING),
-        model('xiaomi-token-plan-cn/mimo-v2.5', 'MiMo V2.5 (CN)', STANDARD_REASONING),
-        model('xiaomi-token-plan-cn/mimo-v2.5-pro', 'MiMo V2.5 Pro (CN)', STANDARD_REASONING),
-        model('xiaomi-token-plan-sgp/mimo-v2-pro', 'MiMo V2 Pro (SGP)', STANDARD_REASONING),
-        model('xiaomi-token-plan-sgp/mimo-v2.5', 'MiMo V2.5 (SGP)', STANDARD_REASONING),
-        model('xiaomi-token-plan-sgp/mimo-v2.5-pro', 'MiMo V2.5 Pro (SGP)', STANDARD_REASONING),
-        model('xiaomi-token-plan-ams/mimo-v2-pro', 'MiMo V2 Pro (AMS)', STANDARD_REASONING),
-        model('xiaomi-token-plan-ams/mimo-v2.5', 'MiMo V2.5 (AMS)', STANDARD_REASONING),
-        model('xiaomi-token-plan-ams/mimo-v2.5-pro', 'MiMo V2.5 Pro (AMS)', STANDARD_REASONING),
-        model('mistral/zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
-        model('mistral/mistral-medium-3.5', 'Mistral Medium 3.5', STANDARD_REASONING),
-        model('mistral/mistral-medium-latest', 'Mistral Medium (Latest)', STANDARD_REASONING),
-        model('mistral/mistral-small-2603', 'Mistral Small 4', STANDARD_REASONING),
-        model('mistral/mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
-        model('mistral/devstral-2512', 'Devstral 2', STANDARD_REASONING),
-        model('mistral/codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),
-        model('mistral/labs-leanstral-1-5', 'Leanstral 1.5 (Labs)', STANDARD_REASONING),
-        model('mistral/mistral-medium-2508', 'Mistral Medium 3.1', STANDARD_REASONING),
-        model('mistral/mistral-medium-2505', 'Mistral Medium 3', STANDARD_REASONING),
-        model('mistral/ministral-14b-2512', 'Ministral 3 (14B)', STANDARD_REASONING),
-        model('mistral/ministral-8b-2512', 'Ministral 3 (8B)', STANDARD_REASONING),
-        model('mistral/ministral-3b-2512', 'Ministral 3 (3B)', STANDARD_REASONING),
-        model('groq/openai/gpt-oss-120b', 'GPT-OSS 120B (Groq)', STANDARD_REASONING),
-        model('groq/qwen/qwen3-32b', 'Qwen3 32B (Groq)', STANDARD_REASONING),
-        model('cerebras/zai-glm-4.7', 'GLM-4.7 (Cerebras)', STANDARD_REASONING),
-        model('cerebras/gpt-oss-120b', 'GPT-OSS 120B (Cerebras)', STANDARD_REASONING),
-        model('openrouter/stealth/ox-alpha', 'Ox Alpha', STANDARD_REASONING),
-        model('openrouter/zai/glm-5.2', 'GLM 5.2', STANDARD_REASONING),
-        model('openrouter/poolside/laguna-s-2.1', 'Laguna S 2.1', STANDARD_REASONING)
+        piModel('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro', true),
+        piModel('deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash'),
+        piModel('zai/glm-5.2', 'GLM-5.2'),
+        piModel('zai/glm-5.1', 'GLM-5.1'),
+        piModel('zai/glm-4.7', 'GLM-4.7'),
+        piModel('qwen-token-plan/qwen3.7-max', 'Qwen3.7 Max'),
+        piModel('qwen-token-plan/qwen3.7-plus', 'Qwen3.7 Plus'),
+        piModel('qwen-token-plan/qwen3.8-max', 'Qwen3.8 Max'),
+        piModel('minimax/MiniMax-M3', 'MiniMax M3'),
+        piModel('minimax/MiniMax-M2.7', 'MiniMax M2.7'),
+        piModel('xiaomi-token-plan-cn/mimo-v2-pro', 'MiMo V2 Pro (CN)'),
+        piModel('xiaomi-token-plan-cn/mimo-v2.5', 'MiMo V2.5 (CN)'),
+        piModel('xiaomi-token-plan-cn/mimo-v2.5-pro', 'MiMo V2.5 Pro (CN)'),
+        piModel('xiaomi-token-plan-sgp/mimo-v2-pro', 'MiMo V2 Pro (SGP)'),
+        piModel('xiaomi-token-plan-sgp/mimo-v2.5', 'MiMo V2.5 (SGP)'),
+        piModel('xiaomi-token-plan-sgp/mimo-v2.5-pro', 'MiMo V2.5 Pro (SGP)'),
+        piModel('xiaomi-token-plan-ams/mimo-v2-pro', 'MiMo V2 Pro (AMS)'),
+        piModel('xiaomi-token-plan-ams/mimo-v2.5', 'MiMo V2.5 (AMS)'),
+        piModel('xiaomi-token-plan-ams/mimo-v2.5-pro', 'MiMo V2.5 Pro (AMS)'),
+        piModel('mistral/zai-glm-5-2', 'GLM-5.2 (via Mistral)'),
+        piModel('mistral/mistral-medium-3.5', 'Mistral Medium 3.5'),
+        piModel('mistral/mistral-medium-latest', 'Mistral Medium (Latest)'),
+        piModel('mistral/mistral-small-2603', 'Mistral Small 4'),
+        piModel('mistral/mistral-large-2512', 'Mistral Large 3'),
+        piModel('mistral/devstral-2512', 'Devstral 2'),
+        piModel('mistral/codestral-2508', 'Codestral (Aug 2025)'),
+        piModel('mistral/labs-leanstral-1-5', 'Leanstral 1.5 (Labs)'),
+        piModel('mistral/mistral-medium-2508', 'Mistral Medium 3.1'),
+        piModel('mistral/mistral-medium-2505', 'Mistral Medium 3'),
+        piModel('mistral/ministral-14b-2512', 'Ministral 3 (14B)'),
+        piModel('mistral/ministral-8b-2512', 'Ministral 3 (8B)'),
+        piModel('mistral/ministral-3b-2512', 'Ministral 3 (3B)'),
+        piModel('groq/openai/gpt-oss-120b', 'GPT-OSS 120B (Groq)'),
+        piModel('groq/qwen/qwen3-32b', 'Qwen3 32B (Groq)'),
+        piModel('cerebras/zai-glm-4.7', 'GLM-4.7 (Cerebras)'),
+        piModel('cerebras/gpt-oss-120b', 'GPT-OSS 120B (Cerebras)'),
+        piModel('openrouter/stealth/ox-alpha', 'Ox Alpha'),
+        piModel('openrouter/z-ai/glm-5.2', 'GLM 5.2'),
+        piModel('openrouter/poolside/laguna-s-2.1', 'Laguna S 2.1')
       ],
       authFlows: []
     },

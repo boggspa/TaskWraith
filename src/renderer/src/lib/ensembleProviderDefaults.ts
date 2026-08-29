@@ -31,10 +31,7 @@ import {
   claudeReasoningDisplayLabel,
   mistralReasoningDisplayLabel
 } from './composerChipFormat'
-import {
-  isMistralThinkingCapableModel,
-  isPiMistralThinkingCapableModel
-} from '../../../shared/mistralModels'
+import { isMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   CLAUDE_DEFAULT_MODELS,
   CODEX_DEFAULT_MODELS,
@@ -42,6 +39,7 @@ import {
   type CodexModelOption
 } from './providerModelDefaults'
 import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
@@ -175,29 +173,64 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: mistralReasoningDisplayLabel('max') }
 ]
 
-// General Pi API-key models (DeepSeek, ZAI, Qwen, MiniMax, Groq, Cerebras,
-// OpenRouter upstreams): full thinking-level ladder surfaced via
-// piReasoningEffort and dispatched as Pi thinkingLevel. Mirrors the display
-// labels in composerChipFormat's provider === 'pi' branch.
-const PI_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'max', label: 'Max' }
-]
+// Pi effort labels, surfaced via piReasoningEffort and dispatched as Pi's
+// `--thinking` level. Mirrors composerChipFormat's provider === 'pi' branch.
+// The stops OFFERED are per-model (see shared/piReasoning.ts): the upstreams
+// behind this one seat range from a four-tier effort ladder to a plain
+// boolean to a token budget with no ladder at all.
+const PI_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max'
+}
 
-const OLLAMA_TOGGLE_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'on', label: 'On' }
-]
-const OLLAMA_LEVEL_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' }
-]
+function piReasoningOptions(modelId?: string | null): CombinedModelPickerReasoningOption[] {
+  const support = resolvePiReasoningSupport(modelId)
+  if (support.efforts.length === 0) return []
+  const lockedReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: PI_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && lockedReason ? { disabledReason: lockedReason } : {})
+  }))
+}
+
+const OLLAMA_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  on: 'On',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  max: 'Max'
+}
+
+/**
+ * Project the resolved Ollama surface into picker stops.
+ *
+ * The ladder is derived rather than picked from two fixed arrays because it is
+ * genuinely per-model: GPT-OSS has no Off, GLM 5.3 has no Medium, and a model
+ * that always reasons gets a single locked stop instead of an Off that the
+ * daemon would accept and ignore.
+ */
+function ollamaReasoningOptions(
+  support: ReturnType<typeof resolveOllamaReasoningSupport>
+): CombinedModelPickerReasoningOption[] {
+  if (support.efforts.length === 0) return []
+  const alwaysOnReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: OLLAMA_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && alwaysOnReason ? { disabledReason: alwaysOnReason } : {})
+  }))
+}
 
 /** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
  *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
@@ -418,7 +451,7 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
   { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
   { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
-  { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' },
+  { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' },
   { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
   { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' }
 ]
@@ -596,21 +629,17 @@ export function getEnsembleReasoningOptions(
     case 'mistral': {
       return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
-    case 'pi': {
-      if (isPiMistralThinkingCapableModel(modelId)) return MISTRAL_THINKING_REASONING
-      return PI_REASONING
-    }
-    case 'ollama': {
-      const support = resolveOllamaReasoningSupport({
-        modelId,
-        ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
-          ? { capabilities: modelMetadata.capabilities }
-          : {})
-      })
-      if (support.kind === 'toggle') return OLLAMA_TOGGLE_REASONING
-      if (support.kind === 'levels') return OLLAMA_LEVEL_REASONING
-      return []
-    }
+    case 'pi':
+      return piReasoningOptions(modelId)
+    case 'ollama':
+      return ollamaReasoningOptions(
+        resolveOllamaReasoningSupport({
+          modelId,
+          ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
+            ? { capabilities: modelMetadata.capabilities }
+            : {})
+        })
+      )
     case 'muse':
       return MUSE_REASONING
     default:
@@ -974,6 +1003,16 @@ function defaultReasoningEffortForModel(
         : {})
     }).defaultEffort
     if (ollamaDefault && enabled.includes(ollamaDefault)) return ollamaDefault
+  }
+
+  // Pi needs the same branch. Without it the chain falls through to
+  // `enabled.includes('medium')` — and once each Pi model carries its own
+  // ladder, most no longer offer `medium`, so a fresh seat landed on
+  // `enabled[0]`, which is `off`. That would launch every Pi run with
+  // `--thinking off`.
+  if (provider === 'pi') {
+    const piDefault = resolvePiReasoningSupport(model).defaultEffort
+    if (piDefault && enabled.includes(piDefault)) return piDefault
   }
 
   const providerDefault = resolveEnabledEffortToken(
@@ -1416,7 +1455,9 @@ export function getEnsembleModelDefaults(
     case 'pi':
       return {
         modelOptions: activePiModelRows(PI_MODELS, now),
-        reasoningOptions: PI_REASONING,
+        // Model-agnostic default for the seat; the per-model ladder narrows it
+        // as soon as a model is known (getEnsembleReasoningOptions).
+        reasoningOptions: piReasoningOptions(null),
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'deepseek/deepseek-v4-flash'

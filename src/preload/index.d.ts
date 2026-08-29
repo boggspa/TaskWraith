@@ -168,6 +168,7 @@ import type {
   ProjectReferenceExtractConsent
 } from '../shared/projectReferenceExtract'
 import type { ProjectStudioCompanionMeta, ProjectStudioKind } from '../shared/projectStudio'
+import type { WebSiteLogin, WebSiteLoginAccess } from '../shared/webSiteLogin'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,
@@ -2341,6 +2342,31 @@ declare global {
         | { ok: true; text: string; truncated: boolean; charCount: number }
         | { ok: false; code: string; message: string }
       >
+      onWebSiteLoginsChanged: (callback: (site: WebSiteLogin) => void) => () => void
+      listWebSiteLogins: () => Promise<WebSiteLogin[]>
+      listWebSiteLoginMigrationCandidates: () => Promise<Array<{ origin: string; host: string }>>
+      dismissWebSiteLoginMigrationCandidate: (input: {
+        origin: string
+      }) => Promise<{ ok: boolean; error?: string }>
+      clearSharedBrowserData: () => Promise<{ ok: boolean; error?: string }>
+      addWebSiteLogin: (input: {
+        origin: string
+        label?: string
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      updateWebSiteLogin: (input: {
+        id: string
+        label?: string
+        extraOrigins?: string[]
+        agentAccess?: WebSiteLoginAccess
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      removeWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
+      signInWebSiteLogin: (input: { id: string }) => Promise<{
+        ok: boolean
+        reason?: string
+        suggestedOrigins?: string[]
+        site?: WebSiteLogin | null
+      }>
+      signOutWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
       generateProjectStudioDraft: (input: {
         projectId: string
         kind: ProjectStudioKind
@@ -2815,6 +2841,10 @@ declare global {
         executionId: string,
         reason?: string
       ) => Promise<ExecutionRunProjection | null>
+      resumeExecutionRun: (
+        executionId: string,
+        reason?: string
+      ) => Promise<ExecutionRunProjection>
       cancelExecutionRunStep: (
         command: ExecutionRunCancelStepCommand
       ) => Promise<ExecutionRunProjection>
@@ -3131,6 +3161,13 @@ declare global {
       ackChatUpdated: (ack: ChatUpdateAck) => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */
       onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => () => void
+      /**
+       * The host OS accent colour (macOS/Windows "accent"), or null where the
+       * platform reports none — the value `--accent` follows.
+       */
+      getSystemAccentColor: () => Promise<string | null>
+      /** The user changed their OS accent; re-apply without a reload. */
+      onSystemAccentColorChanged: (callback: (color: string | null) => void) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void

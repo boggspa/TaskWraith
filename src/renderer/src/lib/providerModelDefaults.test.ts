@@ -282,11 +282,15 @@ describe('Ollama provider model defaults', () => {
     const classifications = OLLAMA_DEFAULT_MODELS.filter((model) => model.id !== 'custom').map(
       (model) => [model.id, resolveOllamaReasoningSupport({ modelId: model.id }).kind] as const
     )
-    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(29)
+    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(21)
     expect(classifications.filter(([, kind]) => kind === 'levels')).toEqual([
-      ['gpt-oss:20b', 'levels']
+      ['gpt-oss:20b', 'levels'],
+      ['mistral-medium-3.5:128b', 'levels']
     ])
-    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(10)
+    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(17)
+    // The invariant that actually matters: an `unknown` row renders as
+    // "Reasoning is not configurable for this model", so a curated row must
+    // never land there.
     expect(classifications.filter(([, kind]) => kind === 'unknown')).toEqual([])
   })
 })

@@ -144,6 +144,10 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import {
+  SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL,
+  SYSTEM_ACCENT_COLOR_CHANNEL
+} from '../shared/systemAccentColor'
 import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
@@ -2232,6 +2236,27 @@ const api = {
     ipcRenderer.invoke('projects:studio-discard', input),
   listProjectStudioArtifacts: (input: { projectId: string; includeDiscarded?: boolean }) =>
     ipcRenderer.invoke('projects:studio-list', input),
+  onWebSiteLoginsChanged: (callback: (site: unknown) => void) => {
+    const wrapped = (_event: unknown, site: unknown): void => callback(site)
+    ipcRenderer.on('web-login:changed', wrapped)
+    return () => ipcRenderer.removeListener('web-login:changed', wrapped)
+  },
+  listWebSiteLogins: () => ipcRenderer.invoke('web-login:list'),
+  listWebSiteLoginMigrationCandidates: () => ipcRenderer.invoke('web-login:migration-candidates'),
+  dismissWebSiteLoginMigrationCandidate: (input: { origin: string }) =>
+    ipcRenderer.invoke('web-login:migration-dismiss', input),
+  clearSharedBrowserData: () => ipcRenderer.invoke('web-login:clear-shared-jar'),
+  addWebSiteLogin: (input: { origin: string; label?: string }) =>
+    ipcRenderer.invoke('web-login:add', input),
+  updateWebSiteLogin: (input: {
+    id: string
+    label?: string
+    extraOrigins?: string[]
+    agentAccess?: 'off' | 'read' | 'act'
+  }) => ipcRenderer.invoke('web-login:update', input),
+  removeWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:remove', input),
+  signInWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-in', input),
+  signOutWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-out', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>
@@ -2656,6 +2681,12 @@ const api = {
       executionId,
       reason
     ) as Promise<ExecutionRunProjection | null>,
+  resumeExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:resume',
+      executionId,
+      reason
+    ) as Promise<ExecutionRunProjection>,
   cancelExecutionRunStep: (command: ExecutionRunCancelStepCommand) =>
     ipcRenderer.invoke('execution-runs:cancel-step', command) as Promise<ExecutionRunProjection>,
   formalizeExecutionRun: (command: ExecutionRunFormalizeCommand) =>
@@ -3030,6 +3061,19 @@ const api = {
     const wrapped = (_event: unknown, tokens: Record<string, string>): void => callback(tokens)
     ipcRenderer.on('agent-theme-tokens-changed', wrapped)
     return () => ipcRenderer.removeListener('agent-theme-tokens-changed', wrapped)
+  },
+  /**
+   * The host OS accent colour (macOS/Windows "accent"), or null where the
+   * platform reports none. `systemPreferences` is main-only, so this is the
+   * renderer's only route to the value `--accent` follows.
+   */
+  getSystemAccentColor: (): Promise<string | null> =>
+    ipcRenderer.invoke(SYSTEM_ACCENT_COLOR_CHANNEL),
+  /** The user changed their OS accent; re-apply without a reload. */
+  onSystemAccentColorChanged: (callback: (color: string | null) => void) => {
+    const wrapped = (_event: unknown, color: string | null): void => callback(color)
+    ipcRenderer.on(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
   },
   onProjectsChanged: (callback: (projects: unknown) => void) => {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)

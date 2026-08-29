@@ -267,6 +267,17 @@
   text-align: left;
 }
 
+/* A surface that is not on screen is waiting on the user. Deliberately a dot
+   and not a count: the number belongs on the surface it names, inside the
+   picker, and a rim that shouts a total teaches people to ignore the rim. */
+.right-dock-switcher-pending {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .right-dock-switcher-caret {
   flex: 0 0 auto;
   width: 15px;

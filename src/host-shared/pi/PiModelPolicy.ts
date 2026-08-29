@@ -112,7 +112,9 @@ export const XIAOMI_TOKEN_PLAN_UPSTREAMS: readonly PiUpstreamId[] = [
  * route in Pi's picker.
  */
 export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
-  'zai/glm-5.2',
+  // OpenRouter's Z.ai namespace is `z-ai`, hyphenated. There is no `zai`
+  // namespace at all, so the unhyphenated form 404s at dispatch.
+  'z-ai/glm-5.2',
   'poolside/laguna-s-2.1',
   'nvidia/nemotron-3-ultra-550b-a55b:free'
 ] as const

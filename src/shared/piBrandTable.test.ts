@@ -53,12 +53,16 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')
     expect(resolvePiUpstreamBrand('minimax/MiniMax-M3')?.label).toBe('MiniMax')
     expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('OpenRouter')
-    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.label).toBe('Z.ai')
-    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.hueClass).toBe('zai')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.label).toBe('Z.ai')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe('NVIDIA')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass).toBe('nvidia')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe(
+      'NVIDIA'
+    )
+    expect(
+      resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass
+    ).toBe('nvidia')
   })
 
   it('maps qwen-token-plan to the EXISTING qwen hue, not a new one', () => {
@@ -89,6 +93,16 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('qwen-token-plan/qwen3.8-max-preview')).toBe('Qwen3.8 Max')
   })
 
+  it('canonicalizes the pre-rename OpenRouter Z.ai id', () => {
+    // OpenRouter's namespace is `z-ai`; the unhyphenated form we shipped 404s.
+    // A saved seat naming it must still find its brand and its ladder rather
+    // than falling through to the Pi default model.
+    expect(canonicalPiWireModelId('openrouter/zai/glm-5.2')).toBe('openrouter/z-ai/glm-5.2')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')).toEqual(
+      resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')
+    )
+  })
+
   it('keeps the disambiguating suffix on models two upstreams both serve', () => {
     // GPT-OSS 120B is served by BOTH groq and cerebras; in the flat picker the
     // rows are otherwise identical.
@@ -99,7 +113,7 @@ describe('resolvePiModelLabel', () => {
   it('drops the redundant upstream prefix for an uncatalogued model', () => {
     // The upstream is already rendered beside the label as the brand name.
     expect(resolvePiModelLabel('mistral/some-future-model')).toBe('some-future-model')
-    expect(resolvePiModelLabel('openrouter/zai/some-future-model')).toBe('some-future-model')
+    expect(resolvePiModelLabel('openrouter/z-ai/some-future-model')).toBe('some-future-model')
   })
 
   it.each([null, undefined, '', 'noslash', 'anthropic/claude-opus'])(

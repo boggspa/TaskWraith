@@ -3176,6 +3176,65 @@
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 55%, transparent);
 }
+/* Caller seat + density strip, above the result body. The seat is the shared
+   presentation element (composer / Task Complete / seat-change row), so an
+   execution names its caller exactly the way the rest of the transcript does. */
+.execution-result-card-attribution,
+.execution-live-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 6px;
+}
+.execution-result-card-attribution {
+  margin-bottom: 2px;
+}
+.execution-live-card-seat {
+  display: flex;
+  min-width: 0;
+}
+.execution-live-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.execution-live-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.execution-live-card-cancel {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+/* Resume appears only on a paused card, where it is the affirmative action —
+   so it carries the seat's accent while Cancel stays in the danger tone. */
+.execution-live-card-resume {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 42%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.execution-live-card-resume:hover {
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 70%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 18%, transparent);
+}
+.execution-live-card-cancel:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
 
 .claude-workflow-card-header {
   appearance: none;
@@ -3587,6 +3646,68 @@
 }
 .fleet-wave-card-cell.status-failed {
   color: var(--danger);
+}
+
+/* Execution graph density strip — one ghost per work-bearing step.
+ *
+ * Its own rules rather than a grouped selector on .fleet-wave-card-cell:
+ * fleetWaveGhostStripCss.test.ts matches that selector EXACTLY, and grouping
+ * it would red the pin that stops the strip regressing to a hairline. The
+ * stroke maths is identical and deliberately so — same 128-unit mark, same
+ * 20px cell, so 12 → ≈1.88px and 16 → 2.5px. executionGhostStripCss.test.ts
+ * asserts both rule sets agree, so the duplication cannot drift. */
+.execution-ghost-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.execution-ghost-strip.is-header {
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  max-width: 70%;
+  margin-left: auto;
+}
+.execution-ghost-cell {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: block;
+  color: color-mix(in srgb, var(--text-primary) 26%, transparent);
+  fill: none;
+  stroke: currentColor;
+  /* USER SPACE against the 128-unit viewBox: effective px = 12 × 20 / 128. */
+  stroke-width: 12;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  overflow: visible;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 72%, transparent));
+}
+/* Proposed is the base treatment: defined, never activated. It stays the muted
+   outline rather than gaining a colour, so the strip's filled proportion reads
+   as progress at a glance. */
+.execution-ghost-cell.status-working {
+  color: var(--accent);
+}
+.execution-ghost-cell.status-needs_action {
+  color: var(--tool-warning);
+  stroke-width: 16;
+}
+.execution-ghost-cell.status-completed,
+.execution-ghost-cell.status-failed,
+.execution-ghost-cell.status-skipped {
+  fill: currentColor;
+  stroke: none;
+}
+.execution-ghost-cell.status-completed {
+  color: color-mix(in srgb, var(--success) 82%, transparent);
+}
+.execution-ghost-cell.status-failed {
+  color: var(--danger);
+}
+/* Cancelled or skipped: it stopped without an answer. Filled, so it reads as
+   settled rather than still pending, but muted so it never claims success. */
+.execution-ghost-cell.status-skipped {
+  color: color-mix(in srgb, var(--text-primary) 30%, transparent);
 }
 
 /* Exact participant rows. The left cell mounts SeatChangeInlineStrip — the

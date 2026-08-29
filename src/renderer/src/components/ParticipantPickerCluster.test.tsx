@@ -384,7 +384,7 @@ describe('ParticipantPickerCluster', () => {
       <ParticipantPickerCluster
         participant={participant({
           provider: 'ollama',
-          model: 'ornith-1.5:35b',
+          model: 'ornith:35b',
           reasoningEffort: 'on'
         })}
         composerStyle="default"
@@ -396,7 +396,7 @@ describe('ParticipantPickerCluster', () => {
 
     expect(html).toContain('data-selected-reasoning="on"')
     expect(html).toContain('composer-combined-picker-trigger-suffix">Thinking</span>')
-    expect(html).toContain('Ornith 1.5 (35B Param)')
+    expect(html).toContain('Ornith 1.0 (35B Param)')
   })
 
   it('uses AntiGravity model variants as its selected reasoning tier', () => {

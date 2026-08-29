@@ -130,6 +130,7 @@ export interface ExecutionGraphHandlersDeps {
     | 'appendStackStep'
     | 'cancelExecution'
     | 'cancelDormantStep'
+    | 'resumeExecution'
   >
   now?: () => string
 }
@@ -598,6 +599,19 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
       optionalString(reason, 512) || 'Cancelled by user.'
     )
     return deps.coordinator.getExecution(canonicalId) ?? null
+  })
+
+  ipcMain.handle('execution-runs:resume', (event, id: unknown, reason?: unknown) => {
+    deps.assertMainRendererSender(event)
+    const canonicalId = executionId(id)
+    requireOwnedExecution(deps, canonicalId)
+    // Throws with the reason when the graph is terminal, not paused, or its
+    // owner is still gone. The renderer surfaces that text rather than leaving
+    // a control that appears to do nothing.
+    return deps.coordinator.resumeExecution(
+      canonicalId,
+      optionalString(reason, 512) || 'Resumed by user.'
+    )
   })
 
   ipcMain.handle('execution-runs:cancel-step', async (event, raw: unknown) => {

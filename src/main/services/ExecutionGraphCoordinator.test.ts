@@ -1675,6 +1675,116 @@ describe('ExecutionGraphCoordinator owner accountability', () => {
     expect(h.materializePausedQueueJob.mock.calls.length).toBe(dispatchesBefore)
     expect(h.coordinator.getExecution('owner-lost-midflight')?.state).toBe('requires_action')
   })
+
+  // Until now the ONLY thing that re-evaluated a paused graph was recover() at
+  // app start, so a thread that came back in the same session left its graph
+  // stopped with no way forward but a restart.
+  it('resumes a paused graph once its owner is back, and dispatches again', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'resume-me',
+      title: 'Resume me',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    expect(h.coordinator.getExecution('resume-me')?.state).toBe('requires_action')
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+
+    h.ownerStatuses.set('chat-one', 'live')
+    h.coordinator.resumeExecution('resume-me', 'Resumed by user.')
+
+    const resumed = h.coordinator.getExecution('resume-me')!
+    expect(resumed.state).toBe('running')
+    expect(h.materializePausedQueueJob).toHaveBeenCalled()
+  })
+
+  // Proven necessary by mutation: with the graph paused at START, no activation
+  // has reached `requires_action` yet, so asserting "none are parked" there is
+  // vacuously true and deleting the un-pause loop still passed. This pauses an
+  // activation for real first.
+  it('brings a parked activation back to ready so the next drain can claim it', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    const gated = h.coordinator.requireActionForProviderRun(
+      runId,
+      'Host-process reruns are not replay-safe for Stack attempts.'
+    )
+    expect(gated?.state).toBe('requires_action')
+    expect(Object.values(gated?.activations ?? {})[0]?.state).toBe('requires_action')
+
+    const resumed = h.coordinator.resumeExecution(started.executionId, 'Resumed by user.')
+
+    expect(resumed.state).toBe('running')
+    expect(
+      Object.values(resumed.activations).some(
+        (activation) => activation.state === 'requires_action'
+      )
+    ).toBe(false)
+  })
+
+  // Resuming into a missing owner would re-pause on the very next drain. Saying
+  // why is more use than a button that appears to do nothing.
+  it('refuses to resume while the owning thread is still gone', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'still-orphaned',
+      title: 'Still orphaned',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(() => h.coordinator.resumeExecution('still-orphaned')).toThrow(
+      /owning thread is no longer available/i
+    )
+    expect(h.coordinator.getExecution('still-orphaned')?.state).toBe('requires_action')
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('refuses to resume an execution that is not paused', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'already-running',
+      title: 'Already running',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    expect(h.coordinator.getExecution('already-running')?.state).toBe('running')
+    expect(() => h.coordinator.resumeExecution('already-running')).toThrow(/not paused/i)
+  })
+
+  it('refuses to resume an execution that has already finished', async () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'finished-graph',
+      title: 'Finished graph',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    await h.coordinator.cancelExecution('finished-graph', 'Cancelled by user.')
+    expect(h.coordinator.getExecution('finished-graph')?.state).toBe('cancelled')
+    expect(() => h.coordinator.resumeExecution('finished-graph')).toThrow(/already finished/i)
+  })
 })
 
 describe('ExecutionGraphCoordinator structured graph scheduling', () => {

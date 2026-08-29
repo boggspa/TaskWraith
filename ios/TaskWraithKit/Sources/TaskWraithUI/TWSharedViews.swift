@@ -9288,6 +9288,18 @@ public func twBannerSeverity(for message: String) -> TWBannerSeverity {
     {
         return .error
     }
+    // Foundation's Codable/JSON copy ("The data couldn't be read because it
+    // isn't in the correct format.") names no actor and trips none of the
+    // keywords above, so an unreadable payload rendered as a calm blue notice
+    // that auto-faded. Matched on apostrophe-free fragments on purpose:
+    // Foundation localizes with a TYPOGRAPHIC apostrophe (U+2019), so
+    // "couldn't" written with an ASCII quote would never match. Covers the
+    // `PairedHostSessionError.invalidResponse` wrapper too.
+    if lower.contains("be read because") || lower.contains("correct format")
+        || lower.contains("invalid response") || lower.contains("unreadable")
+    {
+        return .error
+    }
     if lower.contains("timeout") || lower.contains("timed out") || lower.contains("lost")
         || lower.contains("reconnect") || lower.contains("retry")
     {
@@ -9299,6 +9311,21 @@ public func twBannerSeverity(for message: String) -> TWBannerSeverity {
         return .success
     }
     return .info
+}
+
+/// Whether a banner's auto-dismiss timer should dismiss when it wakes.
+///
+/// Extracted so the wake decision can be pinned without driving a SwiftUI
+/// `.task`. `waitCancelled` is true when the wait was interrupted rather than
+/// completed.
+public func twBannerShouldAutoDismiss(severity: TWBannerSeverity, waitCancelled: Bool) -> Bool {
+    // Cancellation means SUPERSEDED — SwiftUI restarts `.task(id:)` when the
+    // message changes, i.e. when a DIFFERENT banner replaced this one. The old
+    // `try? await Task.sleep` swallowed that and dismissed anyway, erasing the
+    // banner that had just arrived: two banners in quick succession lost the
+    // second. It never means "time is up".
+    guard !waitCancelled else { return false }
+    return severity == .success || severity == .info
 }
 
 /// Posts a VoiceOver announcement for transient status banners and feedback.
@@ -9364,8 +9391,10 @@ public struct StatusBanner: View {
         .task(id: message) {
             // Non-error feedback fades on its own; errors stay until read.
             let sev = severity
-            if sev == .success || sev == .info {
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
+            guard sev == .success || sev == .info else { return }
+            var waitCancelled = false
+            do { try await Task.sleep(nanoseconds: 3_500_000_000) } catch { waitCancelled = true }
+            if twBannerShouldAutoDismiss(severity: sev, waitCancelled: waitCancelled) {
                 onDismiss()
             }
         }

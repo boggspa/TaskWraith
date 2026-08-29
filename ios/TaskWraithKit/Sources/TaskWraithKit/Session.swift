@@ -13,6 +13,17 @@
 import Foundation
 import CryptoKit
 
+/// Same gate and same deferred-evaluation contract as RelayTransportClient's
+/// `dbg` (which is private to that actor). `@autoclosure` is load-bearing, not
+/// style: the gate is checked INSIDE, so an eager `String` parameter would make
+/// every caller build its message even in production.
+private let twkSessionDebugEnabled =
+    ProcessInfo.processInfo.environment["TWK_DEBUG"] == "1"
+
+private func dbg(_ line: @autoclosure () -> String) {
+    if twkSessionDebugEnabled { FileHandle.standardError.write(Data("[twk] \(line())\n".utf8)) }
+}
+
 public final class E2eeSession {
     public enum SessionError: Error, Sendable {
         case macIdentityMismatch
@@ -382,8 +393,23 @@ public final class E2eeSession {
         lastRecvSeq = frame.seq
         if let ack = frame.ack { trimReplayBuffer(ack) }
 
-        guard let obj = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
-            let method = obj["method"] as? String
+        // The ONLY site in the transport that can throw Foundation's
+        // "isn't in the correct format" — and it sits AFTER `TWCipher.open`, so
+        // the bytes are authenticated: a throw here means the Mac sealed
+        // something this build cannot parse, not that the wire corrupted it.
+        // Breadcrumb the payload so a repeating throw identifies itself instead
+        // of surfacing as an unattributed banner (gated on TWK_DEBUG, like the
+        // rest of `dbg`).
+        let obj: [String: Any]?
+        do {
+            obj = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any]
+        } catch {
+            dbg(
+                "onEncrypted PARSE-FAIL seq=\(frame.seq) bytes=\(plaintext.count) "
+                    + "head=\(String(data: plaintext.prefix(120), encoding: .utf8) ?? "<non-utf8>")")
+            throw error
+        }
+        guard let obj, let method = obj["method"] as? String
         else { return }
         let msgId = obj["msgId"] as? Int ?? 0
 

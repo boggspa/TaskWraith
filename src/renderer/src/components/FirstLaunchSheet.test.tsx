@@ -269,6 +269,8 @@ describe('FirstLaunchSheet', () => {
         'first-launch-sheet-provider-status-dot-signed-in'
       )
     }
+    // Ollama's green means runnable, not signed in — so it still offers Sign in.
+    expect(providerCardMarkup(html, 'ollama')).toContain('aria-label="Sign in to Ollama"')
     expect(providerCardMarkup(html, 'cursor')).toContain('Sign in')
     expect(html).toContain('Needs setup or sign-in')
     expect(html).not.toContain('stay amber')
@@ -351,7 +353,7 @@ describe('FirstLaunchSheet', () => {
     expect(card).toContain('Open Settings')
   })
 
-  it('renders Ollama as a local provider; no sign-in shown without a login handler', () => {
+  it('reads a running Ollama as ready even before an ollama.com account exists', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -363,17 +365,20 @@ describe('FirstLaunchSheet', () => {
         ollamaProviderAvailable={true}
       />
     )
-    expect(html).toContain('Local runtime ready')
-    expect(providerCardMarkup(html, 'ollama')).toContain(
-      'first-launch-sheet-provider-status-dot-signed-in'
-    )
+    const card = providerCardMarkup(html, 'ollama')
+    // The retired amber "setup optional" state must not come back: a
+    // permanently-warning dot is what made this card unreadable.
+    expect(card).toContain('Running · not signed in')
+    expect(card).not.toContain('setup optional')
+    expect(card).not.toContain('first-launch-sheet-provider-status-dot-partial')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
     expect(html).toContain('no cloud account needed')
-    // Without an onProviderLogin handler the optional cloud sign-in is not shown.
-    expect(html).not.toContain('aria-label="Sign in to Ollama Cloud"')
-    expect(html).not.toContain('aria-label="Sign out of Ollama"')
+    // Without an onProviderLogin handler no sign-in action is offered.
+    expect(card).not.toContain('aria-label="Sign in to Ollama"')
+    expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('does not show the optional ollama.com cloud Sign in once local Ollama is ready', () => {
+  it('offers Sign in — never Sign out — while a running Ollama has no account', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -387,13 +392,45 @@ describe('FirstLaunchSheet', () => {
       />
     )
     const card = providerCardMarkup(html, 'ollama')
-    expect(card).toContain('Local runtime ready')
-    expect(card).not.toContain('aria-label="Sign in to Ollama Cloud"')
+    // Green dot, but the account axis still drives the actions — a signed-out
+    // user must not be handed a sign-out.
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
+    expect(card).toContain('Running · not signed in')
+    expect(card).toContain('aria-label="Sign in to Ollama"')
+    expect(card).toContain('Open Settings')
+    // The de-emphasised cloud-only affordance is gone with the optional framing.
     expect(card).not.toContain('Sign in to Cloud')
     expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('exposes the optional ollama.com cloud Sign in while local Ollama still needs setup', () => {
+  it('reports a remembered ollama.com sign-in as signed in, with a sign-out action', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        ollamaProviderAvailable={true}
+        ollamaStatus={{
+          available: true,
+          localAvailable: true,
+          cloud: { supported: true, enabled: true, authenticated: true, plan: 'pro', models: [] }
+        }}
+      />
+    )
+    const card = providerCardMarkup(html, 'ollama')
+    expect(card).toContain('Signed in (pro)')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
+    expect(card).toContain('aria-label="Sign out of Ollama"')
+    expect(card).toContain('Manage in Settings')
+    expect(card).not.toContain('aria-label="Sign in to Ollama"')
+  })
+
+  it('leaves a runtime with neither server nor account neutral, not red', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -407,9 +444,15 @@ describe('FirstLaunchSheet', () => {
       />
     )
     const card = providerCardMarkup(html, 'ollama')
-    expect(card).toContain('Local setup optional')
-    expect(card).toContain('aria-label="Sign in to Ollama Cloud"')
-    expect(card).toContain('Sign in to Cloud')
+    expect(card).toContain('Ollama not running')
+    expect(card).not.toContain('setup optional')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-not-signed-in')
+    // Ollama is opt-in — nothing is broken, so it must not borrow the red
+    // "CLI not found · install it" treatment.
+    expect(card).not.toContain('first-launch-sheet-provider-status-dot-not-available')
+    // Onboarding keeps its own install copy for this one state.
+    expect(card).toContain('Rnj-1 needs Ollama 0.13.3+')
+    expect(card).toContain('aria-label="Sign in to Ollama"')
     expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 

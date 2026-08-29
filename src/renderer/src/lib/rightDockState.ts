@@ -8,6 +8,7 @@ export type RightDockTab =
   | 'appdrive'
   | 'media'
   | 'references'
+  | 'logins'
   | 'pins'
   | 'terminal'
 
@@ -24,6 +25,7 @@ export interface RightDockTabAvailabilityInput {
   hasWorkspaceContext: boolean
   isChatMediaPanelOpen: boolean
   isProjectReferencesPanelOpen: boolean
+  isWebSiteLoginsPanelOpen: boolean
   isPinnedMessagesPanelOpen: boolean
   isTerminalDockAvailable: boolean
 }
@@ -38,6 +40,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'chat',
   'media',
   'references',
+  'logins',
   'pins',
   'files',
   'office',
@@ -77,6 +80,11 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       id: 'references' as const,
       label: 'Refs',
       available: input.isProjectReferencesPanelOpen
+    },
+    {
+      id: 'logins' as const,
+      label: 'Logins',
+      available: input.isWebSiteLoginsPanelOpen
     },
     { id: 'pins' as const, label: 'Notes', available: input.isPinnedMessagesPanelOpen },
     { id: 'terminal' as const, label: 'Term', available: input.isTerminalDockAvailable }

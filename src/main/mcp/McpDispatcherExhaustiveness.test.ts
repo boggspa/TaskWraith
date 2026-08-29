@@ -11,6 +11,7 @@ import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
 import { AUDIO_MCP_TOOL_NAMES } from './AudioToolExecutors'
 import { AUDIT_MCP_TOOL_NAMES } from './AuditToolExecutors'
 import { CANVAS_MCP_TOOL_NAMES } from './CanvasToolExecutors'
+import { WEB_LOGIN_MCP_TOOL_NAMES } from './WebLoginToolExecutors'
 import { DESKTOP_MCP_TOOL_NAMES } from './DesktopToolExecutors'
 import { APPSHOTS_MCP_TOOL_NAMES } from './AppshotsToolExecutors'
 import { DOCUMENT_MCP_TOOL_NAMES } from './DocumentToolExecutors'
@@ -84,6 +85,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
     ['browser_open', 'browser_click', 'browser_screenshot', 'browser_console'],
     'browser-tools'
   ),
+  branch('isWebLoginMcpToolName(toolName)', WEB_LOGIN_MCP_TOOL_NAMES, 'web-login'),
   branch('isCanvasMcpToolName(toolName)', CANVAS_MCP_TOOL_NAMES, 'canvas'),
   branch('isMeshMcpToolName(toolName)', MESH_MCP_TOOL_NAMES, 'mesh-canvas'),
   branch('isSimulatorMcpToolName(toolName)', SIMULATOR_MCP_TOOL_NAMES, 'simulator-canvas'),

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   authorizedOriginsForSite,
+  countWebSiteLoginsNeedingAttention,
+  MAX_SHARED_JAR_CANDIDATES,
+  proposeSharedJarMigration,
   isNavigationAllowedForSite,
   isWebSiteLoginId,
   normalizeWebSiteOrigin,
@@ -198,7 +201,11 @@ describe('proposeWebSiteLoginId', () => {
 })
 
 describe('webSiteNavigationRefusal', () => {
-  const binding = { siteId: 'example-com', authorizedOrigins: ['https://example.com'] }
+  const binding = {
+    siteId: 'example-com',
+    authorizedOrigins: ['https://example.com'],
+    agentAccess: 'act' as const
+  }
 
   it('names the site and the allowed origins so the refusal is actionable', () => {
     const message = webSiteNavigationRefusal(binding, 'https://evil.com/x')
@@ -220,5 +227,134 @@ describe('webSiteNavigationRefusal', () => {
     const message = webSiteNavigationRefusal(binding, 'javascript:alert(document.cookie)')
     expect(message).not.toContain('javascript:')
     expect(message).toContain('that address')
+  })
+})
+
+describe('countWebSiteLoginsNeedingAttention', () => {
+  it('counts only expired sites', () => {
+    expect(
+      countWebSiteLoginsNeedingAttention([
+        { status: 'expired' },
+        { status: 'expired' },
+        { status: 'signed-in' }
+      ])
+    ).toBe(2)
+  })
+
+  it('does NOT count unknown — that is offline, 5xx and never-verified', () => {
+    // Badging those would make the signal mean "something happened" rather than
+    // "you are needed", which is how a notification becomes noise.
+    expect(
+      countWebSiteLoginsNeedingAttention([
+        { status: 'unknown' },
+        { status: 'never' },
+        { status: 'signed-in' }
+      ])
+    ).toBe(0)
+  })
+
+  it('is zero for an empty catalogue', () => {
+    expect(countWebSiteLoginsNeedingAttention([])).toBe(0)
+  })
+})
+
+describe('proposeSharedJarMigration', () => {
+  const cookie = (
+    domain: string,
+    over: Partial<{ httpOnly: boolean; secure: boolean }> = {}
+  ): { domain: string; httpOnly: boolean; secure: boolean } => ({
+    domain,
+    httpOnly: true,
+    secure: true,
+    ...over
+  })
+
+  it('offers a first-party session cookie as a candidate', () => {
+    expect(
+      proposeSharedJarMigration({ cookies: [cookie('mail.example.com')], savedOrigins: [] })
+    ).toEqual([{ origin: 'https://mail.example.com', host: 'mail.example.com' }])
+  })
+
+  it('drops analytics and ad cookies, which are not httpOnly', () => {
+    // Without this the prompt lists forty tracker domains, the user learns to
+    // dismiss it, and the two rows that mattered go with it.
+    expect(
+      proposeSharedJarMigration({
+        cookies: [
+          cookie('.doubleclick.net', { httpOnly: false }),
+          cookie('.google-analytics.com', { httpOnly: false })
+        ],
+        savedOrigins: []
+      })
+    ).toEqual([])
+  })
+
+  it('drops a cookie that is not https-only', () => {
+    expect(
+      proposeSharedJarMigration({
+        cookies: [cookie('example.com', { secure: false })],
+        savedOrigins: []
+      })
+    ).toEqual([])
+  })
+
+  it('does NOT collapse www into the bare host', () => {
+    // The fence is exact-origin. Widening the host here would hand the user a
+    // saved login whose authorized origin is not the one they signed into.
+    expect(
+      proposeSharedJarMigration({
+        cookies: [cookie('www.example.com'), cookie('example.com')],
+        savedOrigins: []
+      }).map((candidate) => candidate.origin)
+    ).toEqual(['https://example.com', 'https://www.example.com'])
+  })
+
+  it('strips the leading dot of a domain cookie', () => {
+    expect(
+      proposeSharedJarMigration({ cookies: [cookie('.example.com')], savedOrigins: [] })
+    ).toEqual([{ origin: 'https://example.com', host: 'example.com' }])
+  })
+
+  it('skips a site that is already saved', () => {
+    expect(
+      proposeSharedJarMigration({
+        cookies: [cookie('example.com')],
+        savedOrigins: ['https://example.com']
+      })
+    ).toEqual([])
+  })
+
+  it('skips a candidate the user already dismissed', () => {
+    expect(
+      proposeSharedJarMigration({
+        cookies: [cookie('example.com')],
+        savedOrigins: [],
+        dismissedOrigins: ['https://example.com']
+      })
+    ).toEqual([])
+  })
+
+  it('skips a host with no dot, which no user would recognize', () => {
+    expect(proposeSharedJarMigration({ cookies: [cookie('localhost')], savedOrigins: [] })).toEqual(
+      []
+    )
+  })
+
+  it('dedupes the many cookies one site sets', () => {
+    expect(
+      proposeSharedJarMigration({
+        cookies: [cookie('example.com'), cookie('example.com'), cookie('.example.com')],
+        savedOrigins: []
+      })
+    ).toHaveLength(1)
+  })
+
+  it('caps the list rather than offering a page of rows', () => {
+    const cookies = Array.from({ length: MAX_SHARED_JAR_CANDIDATES + 6 }, (_unused, index) =>
+      cookie(`site${String(index).padStart(2, '0')}.example.com`)
+    )
+    expect(proposeSharedJarMigration({ cookies, savedOrigins: [] })).toHaveLength(
+      MAX_SHARED_JAR_CANDIDATES
+    )
   })
 })

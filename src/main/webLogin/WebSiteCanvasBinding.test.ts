@@ -44,7 +44,8 @@ describe('resolveWebSiteCanvasBinding', () => {
     expect(resolved.browserProfile.partition).toBe('persist:taskwraith-site-example-com')
     expect(resolved.siteBinding).toEqual({
       siteId: 'example-com',
-      authorizedOrigins: ['https://example.com']
+      authorizedOrigins: ['https://example.com'],
+      agentAccess: 'read'
     })
   })
 
@@ -111,5 +112,18 @@ describe('resolveWebSiteCanvasBinding agent access', () => {
         requireAgentAccess: false
       }).siteBinding.siteId
     ).toBe('example-com')
+  })
+})
+
+describe('resolveWebSiteCanvasBinding carries the access level', () => {
+  it('hands the driver the level the user chose, not just the origins', () => {
+    // The driver refuses actuation on `read`, so the level has to travel with
+    // the binding - a fence without it would let a read-only site be acted in.
+    for (const level of ['read', 'act'] as const) {
+      expect(
+        resolveWebSiteCanvasBinding(deps(site({ agentAccess: level })), 'example-com').siteBinding
+          .agentAccess
+      ).toBe(level)
+    }
   })
 })

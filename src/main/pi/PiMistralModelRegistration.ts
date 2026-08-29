@@ -26,7 +26,7 @@ export const PI_MISTRAL_CUSTOM_MODELS: readonly PiMistralCustomModelRegistration
   {
     modelId: 'zai-glm-5-2',
     label: 'GLM-5.2 (via Mistral)',
-    reasoning: false,
+    reasoning: true,
     input: ['text'],
     contextWindow: 1_000_000,
     maxTokens: 131_072,

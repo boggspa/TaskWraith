@@ -913,6 +913,60 @@ export class ExecutionGraphCoordinator {
     return operation
   }
 
+  /**
+   * Bring a paused graph back into flight.
+   *
+   * Until this existed, the ONLY thing that re-evaluated a `requires_action`
+   * execution was `recover()` at app start — so a thread that came back inside
+   * the same session left its graph stopped with no route forward but an app
+   * restart. The owner's acceptance test asks for a graph that "can be
+   * cancelled or resumed by the user"; cancel already had a control and this is
+   * the other half.
+   *
+   * Ownership is re-checked FIRST, and refusal is loud rather than silent:
+   * resuming into a missing owner would simply re-pause on the very next drain,
+   * and a control that appears to do nothing is worse than one that says why.
+   *
+   * Paused activations go back to `ready` (the only non-terminal transition out
+   * of `requires_action`), which is what lets the next drain claim them and, for
+   * a step that failed, create a fresh attempt.
+   */
+  resumeExecution(executionId: string, reason = 'Resumed by user.'): ExecutionRunProjection {
+    const projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) {
+      throw new Error(`Execution ${executionId} has already finished.`)
+    }
+    if (projection.state !== 'requires_action') {
+      throw new Error(`Execution ${executionId} is not paused.`)
+    }
+    const ownerBlock = this.ownerDispatchBlock(projection)
+    if (ownerBlock) throw new Error(ownerBlock)
+
+    const events: ExecutionRunEventInput[] = []
+    for (const activation of Object.values(projection.activations)) {
+      if (activation.state !== 'requires_action') continue
+      events.push({
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'ready',
+        reason,
+        timestamp: this.now()
+      })
+    }
+    events.push({
+      executionId,
+      kind: 'execution_state_changed',
+      state: 'running',
+      reason,
+      timestamp: this.now()
+    })
+    this.append(projection, events)
+    this.changed(this.requireExecution(executionId), 'execution-progressed')
+    this.drain(executionId)
+    return this.requireExecution(executionId)
+  }
+
   private async cancelExecutionOnce(executionId: string, reason: string): Promise<void> {
     let projection = this.requireExecution(executionId)
     if (isExecutionRunTerminal(projection.state)) return

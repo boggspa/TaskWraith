@@ -326,6 +326,12 @@ export type CanvasActRefusalReason =
    * Native target appears consequential and no content-bound confirmation
    * receipt exists. Nothing was dispatched.
    */
+  /**
+   * The canvas is bound to a saved site login the user granted READ access to.
+   * Never retried and never worked around: the user chose to be signed in
+   * there without being acted for, and only they can widen it.
+   */
+  | 'site_read_only'
   | 'consequential_confirmation_required'
 
 /**

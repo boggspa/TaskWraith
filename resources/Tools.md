@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 216 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 218 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1419,6 +1419,23 @@ Close a Canvas session and free its preview window. Gated.
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: canvasId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_close","arguments":{"canvasId":"text"}}}}`
+
+## web_login_list
+
+List the websites the user has saved a login for and opened to agents, so you can act on a site they are already signed into without ever handling a credential. Returns siteId, label, origin, any additional authorized origins, the access level ('read' = you may open and read, 'act' = you may also click and type under an approved lease), and the last known sign-in status. Sites the user has kept at no-agent-access are NOT listed at all. NEVER returns a cookie, a session token, or a partition name. Pass a siteId to web_login_open. Adding a site, signing in, granting access and forgetting a site are the user's alone, in Work > Logins - there is no tool for any of them, and asking the user to paste a password is never the answer.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"web_login_list","arguments":{}}}}`
+
+## web_login_open
+
+Open a Canvas Browser bound to one saved site login, using that site's own signed-in browser profile. Requires a `siteId` from web_login_list, and an optional `url` to land on. The surface is FENCED: it may only navigate documents to that site's authorized origins, and any other origin is refused with a do-not-retry reason - open a separate canvas for a different site rather than trying to navigate there. Read the page with canvas_snapshot; click and type with canvas_click / canvas_fill, which still require their own approved AppDrive lease and still refuse credential fields outright. A site the user has not opened to agents is refused. You are acting AS THE USER in a real account on this surface: prefer reading over acting, and never enter a credential.
+
+- Access: governed by your run permission role
+- Required args: siteId
+- Optional args: url
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"web_login_open","arguments":{"siteId":"text"}}}}`
 
 ## mesh_scene_create
 

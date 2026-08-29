@@ -9,9 +9,11 @@ import type {
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
+  isOllamaAccountSignedIn,
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseMistralVibeStatus,
+  summariseOllamaStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
@@ -101,9 +103,13 @@ export interface FirstLaunchSheetProps {
    * read Vibe's private credential store, so this only drives truthful setup
    * guidance rather than a guessed sign-in state. */
   mistralStatus?: unknown
-  /** Ollama local mode has no sign-in; this only reflects whether
-   * TaskWraith can see a local Ollama runtime/service. */
+  /** Whether TaskWraith can see a local Ollama runtime/service. Used only as
+   * the fallback when the full `ollamaStatus` snapshot isn't wired. */
   ollamaProviderAvailable?: boolean
+  /** Full Ollama status snapshot (runtime reachability + remembered ollama.com
+   * account state). Ollama reports sign-in like every other provider now, so
+   * the card needs the account answer, not just local reachability. */
+  ollamaStatus?: unknown
   /**
    * AntiGravity stays absent until the host's authoritative conditional-offer
    * snapshot includes it. This reporting prop does not grant admission.
@@ -159,10 +165,12 @@ interface ProviderRowSpec {
   /** The provider has no bounded CLI logout command. Keep the setup action
    * visible without promising a sign-out operation TaskWraith cannot perform. */
   logoutUnsupported?: boolean
-  /** Local Ollama rows that still expose an OPTIONAL cloud sign-in
-   * button (e.g. `ollama signin` for ollama.com) without the generic sign-out
-   * (which is driven by run status, not cloud auth). */
-  cloudSignIn?: boolean
+  /** Whether an account is actually attached, when that is NOT the same
+   * question as the green dot. Ollama is green whenever its server can run
+   * something, signed in or not — so the sign-in / sign-out actions read this
+   * instead, or a signed-out user is offered a sign-out. Defaults to the
+   * variant, which is the right answer for every other provider. */
+  accountSignedIn?: boolean
   /** Set when the provider is signed in but its quota window is at
    * ~100% — drives the "out of usage" card treatment + progress bar. */
   usage?: { fraction: number; resetAt?: string }
@@ -262,6 +270,7 @@ export function FirstLaunchSheet({
   grokProviderAvailable = false,
   mistralStatus,
   ollamaProviderAvailable = false,
+  ollamaStatus,
   antigravityProviderOffered = false,
   usageSummary: usageSummaryFallback,
   themeAppearance = 'system',
@@ -363,6 +372,11 @@ export function FirstLaunchSheet({
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
   const mistralSummary = summariseMistralVibeStatus(mistralStatus)
+  // Hosts that only pass the reachability boolean still get a truthful
+  // runtime answer; the account half simply stays "not signed in".
+  const ollamaSnapshot =
+    ollamaStatus ?? { available: ollamaProviderAvailable, localAvailable: ollamaProviderAvailable }
+  const ollamaSummary = summariseOllamaStatus(ollamaSnapshot)
 
   const baseProviderRows: ProviderRowSpec[] = [
     {
@@ -409,15 +423,17 @@ export function FirstLaunchSheet({
       label: 'Ollama',
       description:
         'Local models running through Ollama. Best for Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
-      variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
-      statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
-      hint: ollamaProviderAvailable
-        ? 'Pick Local / Ollama in the provider picker, then choose an installed model in Settings or the composer.'
-        : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, North Mini Code 1.0 needs 0.30.10+, and Qwen 3.8 needs 0.32.12+.',
+      ...ollamaSummary,
+      // Only the nothing-running case earns onboarding-specific copy: the
+      // commands are right below this grid, and the model version floors are
+      // what actually trip a first pull.
+      hint:
+        ollamaSummary.variant === 'signed-in'
+          ? ollamaSummary.hint
+          : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, North Mini Code 1.0 needs 0.30.10+, and Qwen 3.8 needs 0.32.12+.',
+      accountSignedIn: isOllamaAccountSignedIn(ollamaSnapshot),
       deemphasised: true,
-      optional: true,
-      localOnly: true,
-      cloudSignIn: true
+      optional: true
     },
     {
       id: 'mistral',
@@ -612,9 +628,10 @@ export function FirstLaunchSheet({
             </li>
           </ul>
           <p className="first-launch-sheet-section-helper">
-            Most providers sign in through their own CLI in Terminal; Claude signs in in-app, and
-            Pi and Ollama run on keys or local models you set up in Settings. Each card shows what,
-            if anything, its provider still needs.
+            Most providers sign in through their own CLI in Terminal; Claude signs in in-app, and Pi
+            runs on keys you set up in Settings. Ollama signs in to ollama.com like the rest, and
+            additionally runs local models with no account at all. Each card shows what, if
+            anything, its provider still needs.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
@@ -631,7 +648,8 @@ export function FirstLaunchSheet({
             <summary>Don&apos;t have a CLI yet? Official install commands</summary>
             <p className="first-launch-sheet-section-helper">
               Run one in your terminal, then come back and sign in. (npm commands need Node 20+; the
-              curl installers are self-contained. Ollama is local: install it, then pull a model.)
+              curl installers are self-contained. Install Ollama, then pull a local model or sign in
+              for its Cloud catalog.)
             </p>
             <ProviderInstallCommands />
           </details>
@@ -1033,19 +1051,15 @@ function ProviderCard({
     (row.id === 'cursor' || row.id === 'grok') && row.variant === 'partial'
       ? 'signed-in'
       : row.variant
+  // The green dot answers "can this run?", which for Ollama is true before any
+  // account exists. Sign-in / sign-out actions follow the account instead.
+  const accountSignedIn = row.accountSignedIn ?? row.variant === 'signed-in'
   const showSignInAction =
     !row.reportingOnly &&
     Boolean(onProviderLogin) &&
-    row.variant !== 'signed-in' &&
+    !accountSignedIn &&
     row.variant !== 'out-of-usage' &&
-    (!row.localOnly || row.cloudSignIn)
-  const signInClass = [
-    'segmented-control-action',
-    'segmented-control-action--compact',
-    row.cloudSignIn ? '' : 'segmented-control-action--primary'
-  ]
-    .filter(Boolean)
-    .join(' ')
+    !row.localOnly
   return (
     <div className={classes} data-provider={row.id}>
       <div className="first-launch-sheet-provider-card-header">
@@ -1079,37 +1093,25 @@ function ProviderCard({
           {showSignInAction && onProviderLogin && (
             <button
               type="button"
-              // Ollama rows prioritize the local runtime — the cloud sign-in is
-              // optional, so it's a ghost button, not the primary "you must sign
-              // in" CTA the cloud providers use.
-              className={signInClass}
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
               onClick={() => onProviderLogin(row.id)}
-              aria-label={
-                row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`
-              }
-              title={
-                row.cloudSignIn
-                  ? `Open the ${row.label} cloud sign-in flow. Local ${row.label} runs still work without this.`
-                  : `Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`
-              }
+              aria-label={`Sign in to ${row.label}`}
+              title={`Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`}
             >
-              {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
+              Sign in
             </button>
           )}
-          {row.variant === 'signed-in' &&
-            !row.localOnly &&
-            !row.logoutUnsupported &&
-            onProviderLogout && (
-              <button
-                type="button"
-                className="segmented-control-action segmented-control-action--compact"
-                onClick={() => onProviderLogout(row.id)}
-                aria-label={`Sign out of ${row.label}`}
-                title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
-              >
-                Sign out
-              </button>
-            )}
+          {accountSignedIn && !row.localOnly && !row.logoutUnsupported && onProviderLogout && (
+            <button
+              type="button"
+              className="segmented-control-action segmented-control-action--compact"
+              onClick={() => onProviderLogout(row.id)}
+              aria-label={`Sign out of ${row.label}`}
+              title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
+            >
+              Sign out
+            </button>
+          )}
           <button
             type="button"
             className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
@@ -1117,7 +1119,7 @@ function ProviderCard({
             aria-label={`Open settings for ${row.label}`}
             title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}
           >
-            {row.variant === 'signed-in' ? 'Manage in Settings' : 'Open Settings'}
+            {accountSignedIn ? 'Manage in Settings' : 'Open Settings'}
           </button>
         </div>
       )}

@@ -35,6 +35,19 @@ export interface WebSiteLogin {
   createdAt: string
   lastSignedInAt?: string
   lastVerifiedAt?: string
+  /** Optional liveness target. Must be inside the site's own fence; a target
+   *  outside it is ignored rather than followed. */
+  verify?: { url: string }
+  /**
+   * Cross-origin embeds this site tried to load and the fence refused.
+   *
+   * ADVISORY ONLY - a record of what broke, never an allowance. It exists so a
+   * fence that is default-closed for sub-frames does not present as an
+   * inexplicably broken page: the user is shown what the site wanted and
+   * decides whether to widen `extraOrigins`. Same loop as the SSO hops the
+   * sign-in window reports.
+   */
+  blockedEmbedOrigins?: string[]
 }
 
 /** The renderer- and agent-facing projection. Identical today, named separately
@@ -51,8 +64,14 @@ const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
 
 export const MAX_WEB_SITE_LOGIN_LABEL = 120
 export const MAX_WEB_SITE_LOGIN_EXTRA_ORIGINS = 8
+/** Advisory breakage record; bounded so a hostile page cannot grow the file. */
+export const MAX_WEB_SITE_BLOCKED_EMBEDS = 12
 /** Catalogue ceiling. Generous for humans, bounded against a runaway writer. */
 export const MAX_WEB_SITE_LOGINS = 256
+
+/** How many shared-jar candidates the migration prompt will ever offer at
+ *  once. A list long enough to scroll is a list nobody reads. */
+export const MAX_SHARED_JAR_CANDIDATES = 12
 
 export function isWebSiteLoginId(value: unknown): value is string {
   return typeof value === 'string' && SITE_ID_PATTERN.test(value)
@@ -174,6 +193,15 @@ export function isNavigationAllowedForOrigins(
 export interface WebSiteBinding {
   siteId: string
   authorizedOrigins: readonly string[]
+  /**
+   * How much authority the user granted over this site. Snapshotted with the
+   * origins at bind time for the same reason: a live read would silently
+   * re-scope a canvas an agent is already working in.
+   *
+   * `read` is not advisory. It refuses every actuation verb at the driver, so a
+   * user who set a bank to "agents can read" gets exactly that.
+   */
+  agentAccess: WebSiteLoginAccess
 }
 
 /** The refusal a bound surface returns. Deliberately names the site and the
@@ -190,6 +218,23 @@ export function webSiteNavigationRefusal(binding: WebSiteBinding, url: string): 
     `navigate to ${allowed}. Refusing ${target}. Open a separate canvas for that ` +
     `site, or add the origin to this site's allowed list in Work > Logins.`
   )
+}
+
+/**
+ * How many saved sites need the user to sign in again.
+ *
+ * ONLY `expired` counts. `unknown` deliberately does not: it is what an offline
+ * probe, a 5xx, or a site that has never been verified all produce, and badging
+ * those would make the signal mean "something happened" instead of "you are
+ * needed" - which is how a notification becomes noise.
+ */
+export function countWebSiteLoginsNeedingAttention(
+  // `status` is optional because the caller is reading it back across IPC,
+  // where a row from an older schema may not carry one. A missing status is
+  // not attention.
+  sites: readonly { status?: WebSiteLoginStatus }[]
+): number {
+  return sites.filter((site) => site.status === 'expired').length
 }
 
 /** Read-back guard for the durable catalogue. Returns null rather than throwing
@@ -215,6 +260,15 @@ export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {
       extraOrigins.push(normalized)
     }
   }
+  const blocked: string[] = []
+  if (Array.isArray(raw.blockedEmbedOrigins)) {
+    for (const entry of raw.blockedEmbedOrigins) {
+      const normalized = normalizeWebSiteOrigin(entry)
+      if (!normalized || blocked.includes(normalized)) continue
+      if (blocked.length >= MAX_WEB_SITE_BLOCKED_EMBEDS) break
+      blocked.push(normalized)
+    }
+  }
   return {
     id: raw.id,
     label,
@@ -224,8 +278,16 @@ export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {
     status,
     createdAt: raw.createdAt,
     ...(typeof raw.lastSignedInAt === 'string' ? { lastSignedInAt: raw.lastSignedInAt } : {}),
-    ...(typeof raw.lastVerifiedAt === 'string' ? { lastVerifiedAt: raw.lastVerifiedAt } : {})
+    ...(typeof raw.lastVerifiedAt === 'string' ? { lastVerifiedAt: raw.lastVerifiedAt } : {}),
+    ...(parseVerifyTarget(raw.verify) ? { verify: parseVerifyTarget(raw.verify)! } : {}),
+    ...(blocked.length > 0 ? { blockedEmbedOrigins: blocked } : {})
   }
+}
+
+function parseVerifyTarget(value: unknown): { url: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const url = (value as { url?: unknown }).url
+  return typeof url === 'string' && url.trim() ? { url: url.trim() } : null
 }
 
 /** Derive a readable, collision-resistant id from an origin. The caller
@@ -249,4 +311,68 @@ export function proposeWebSiteLoginId(
     if (!taken.includes(candidate)) return candidate
   }
   return null
+}
+
+/**
+ * ONE origin the user is probably already signed into inside the old shared
+ * Canvas Browser jar, offered for promotion to a partition of its own.
+ */
+export interface SharedJarCandidate {
+  /** Canonical https origin, the thing the fence will be built from. */
+  origin: string
+  /** Host alone, which is what a person recognizes in a list. */
+  host: string
+}
+
+/** The subset of an Electron cookie this decision actually turns on. */
+export interface SharedJarCookie {
+  domain?: string
+  httpOnly?: boolean
+  secure?: boolean
+}
+
+/**
+ * Which origins in the old shared jar look like real sign-ins worth promoting.
+ *
+ * The filter is `httpOnly && secure`, and it is doing real work: a shared jar
+ * that has seen any browsing at all holds hundreds of analytics and ad-network
+ * cookies, and a migration prompt listing forty tracker domains is worse than
+ * no prompt at all - the user learns to dismiss it, along with the two rows
+ * that mattered. Session cookies are set by the server and marked httpOnly
+ * precisely so page script cannot read them; `_ga`-class cookies are set by
+ * page script and cannot be. It is a heuristic, not proof, which is why the
+ * surface offers rather than migrates.
+ *
+ * Note what this deliberately does NOT do: it never collapses `www.x.com` into
+ * `x.com`. The fence is exact-origin, so quietly widening a host here would
+ * hand the user a saved login whose authorized origin is not the one they were
+ * actually signed into.
+ */
+export function proposeSharedJarMigration(input: {
+  cookies: readonly SharedJarCookie[]
+  savedOrigins: readonly string[]
+  dismissedOrigins?: readonly string[]
+}): SharedJarCandidate[] {
+  const excluded = new Set<string>()
+  for (const origin of [...input.savedOrigins, ...(input.dismissedOrigins ?? [])]) {
+    const normalized = normalizeWebSiteOrigin(origin)
+    if (normalized) excluded.add(normalized)
+  }
+  const byOrigin = new Map<string, SharedJarCandidate>()
+  for (const cookie of input.cookies) {
+    if (!cookie || cookie.httpOnly !== true || cookie.secure !== true) continue
+    const domain = typeof cookie.domain === 'string' ? cookie.domain.trim() : ''
+    // A leading dot means "and every subdomain". The cookie is still ON the
+    // bare host, which is the origin a person would name.
+    const host = domain.replace(/^\./, '').toLowerCase()
+    // A host with no dot is a bare intranet name or something malformed; either
+    // way it is not a site the user recognizes in a list.
+    if (!host || !host.includes('.')) continue
+    const origin = normalizeWebSiteOrigin(`https://${host}`)
+    if (!origin || excluded.has(origin) || byOrigin.has(origin)) continue
+    byOrigin.set(origin, { origin, host })
+  }
+  return [...byOrigin.values()]
+    .sort((a, b) => a.host.localeCompare(b.host))
+    .slice(0, MAX_SHARED_JAR_CANDIDATES)
 }

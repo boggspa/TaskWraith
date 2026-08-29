@@ -326,6 +326,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'session-checkpoints:accept',
   'session-checkpoints:dismiss',
   'session-checkpoints:latest',
+  'appearance:get-system-accent-color',
   'set-appearance-mode',
   'set-chat-kind',
   'set-workflow-unattended-elevation',
@@ -532,6 +533,17 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:studio-save',
   'projects:studio-discard',
   'projects:studio-list',
+  // Site logins grant and revoke the authority an agent has over a real
+  // account. Main renderer only; a popout has no business reaching them.
+  'web-login:list',
+  'web-login:add',
+  'web-login:update',
+  'web-login:remove',
+  'web-login:sign-in',
+  'web-login:sign-out',
+  'web-login:migration-candidates',
+  'web-login:migration-dismiss',
+  'web-login:clear-shared-jar',
   'projects:extract-reference',
   'projects:get-reference-extract',
   'projects:revoke-reference-extract',
@@ -549,6 +561,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'execution-runs:events',
   'execution-runs:append-stack-step',
   'execution-runs:cancel',
+  'execution-runs:resume',
   'execution-runs:cancel-step',
   'execution-runs:formalize',
 

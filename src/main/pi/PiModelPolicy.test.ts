@@ -46,7 +46,7 @@ describe('piModelPolicyVerdict', () => {
       expect(verdict.reason).toMatch(/GLM|Laguna|Nemotron/)
     }
     expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual([
-      'zai/glm-5.2',
+      'z-ai/glm-5.2',
       'poolside/laguna-s-2.1',
       'nvidia/nemotron-3-ultra-550b-a55b:free'
     ])
@@ -64,7 +64,9 @@ describe('piModelPolicyVerdict', () => {
     expect(piModelPolicyVerdict('deepseek', 'deepseek-v4-pro').allowed).toBe(true)
     expect(piModelPolicyVerdict('zai', 'glm-5.2').allowed).toBe(true)
     expect(piModelPolicyVerdict('groq', 'openai/gpt-oss-120b').allowed).toBe(true)
-    expect(piModelPolicyVerdict('openrouter', 'zai/glm-5.2').allowed).toBe(true)
+    expect(piModelPolicyVerdict('openrouter', 'z-ai/glm-5.2').allowed).toBe(true)
+    // The unhyphenated namespace does not exist on OpenRouter.
+    expect(piModelPolicyVerdict('openrouter', 'zai/glm-5.2').allowed).toBe(false)
   })
 
   it('refuses Cerebras GLM-4.7 from its sunset without affecting Z.ai or GPT-OSS', () => {
@@ -127,7 +129,7 @@ describe('catalog/policy lockstep', () => {
         (model) => model.wireId
       )
     ).toEqual([
-      'openrouter/zai/glm-5.2',
+      'openrouter/z-ai/glm-5.2',
       'openrouter/poolside/laguna-s-2.1',
       'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free'
     ])

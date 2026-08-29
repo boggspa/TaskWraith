@@ -43,7 +43,7 @@ public enum PiBrandTable {
         "cerebras": Brand(label: "Cerebras", hueClass: "cerebras"),
         "openrouter": Brand(label: "OpenRouter", hueClass: "openrouter"),
         // OpenRouter-specific overrides for models that should display with their original brand
-        "openrouter/zai": Brand(label: "Z.ai", hueClass: "zai"),
+        "openrouter/z-ai": Brand(label: "Z.ai", hueClass: "zai"),
         "openrouter/poolside": Brand(label: "Poolside", hueClass: "poolside"),
         "openrouter/nvidia": Brand(label: "NVIDIA", hueClass: "nvidia"),
     ]
@@ -96,7 +96,7 @@ public enum PiBrandTable {
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
         "openrouter/stealth/ox-alpha": "Ox Alpha",
-        "openrouter/zai/glm-5.2": "GLM 5.2",
+        "openrouter/z-ai/glm-5.2": "GLM 5.2",
         "openrouter/poolside/laguna-s-2.1": "Laguna S 2.1",
         "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra",
     ]
@@ -120,7 +120,7 @@ public enum PiBrandTable {
     /// seat rather than guessing.
     ///
     /// Special case: OpenRouter models that are resold from other providers (e.g.,
-    /// `openrouter/zai/glm-5.2`) should display with the original provider's brand
+    /// `openrouter/z-ai/glm-5.2`) should display with the original provider's brand
     /// rather than the generic OpenRouter brand.
     public static func brand(forWireModelId wireId: String?) -> Brand? {
         guard let split = splitWireModelId(wireId) else { return nil }

@@ -67,6 +67,7 @@ import {
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { defaultPiReasoningEffort } from '../../shared/piReasoning'
 import {
   appliedChatUpdateBaseline,
   applyChatUpdateDelivery,
@@ -526,6 +527,7 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   LinkCircleSymbolIcon,
+  SiteLoginSymbolIcon,
   CanvasSurfaceSymbolIcon,
   OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
@@ -804,6 +806,7 @@ import {
   type ProjectReferenceCitationOpenRequest
 } from './lib/projectReferenceCitationOpen'
 import type { ProjectReferenceCitationOpenTarget } from './lib/projectReferenceCitations'
+import { countWebSiteLoginsNeedingAttention, type WebSiteLogin } from '../../shared/webSiteLogin'
 import {
   readDockSurface,
   resolveDockSurfaceContext,
@@ -973,6 +976,7 @@ import {
   executionStackStepTitle,
   executionRunTimestamp,
   isTerminalExecutionRun,
+  ownedExecutionViewsByThread,
   liveOwnedExecutionThreadIds,
   mergeExecutionRunProjection,
   projectExecutionRun,
@@ -2223,6 +2227,35 @@ function App(): React.JSX.Element {
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
+  const [isWebSiteLoginsPanelOpen, setIsWebSiteLoginsPanelOpen] = useState(false)
+  // Saved sessions that have gone stale. TaskWraith cannot re-authenticate for
+  // the user, so the one thing it owes them is saying which site needs them -
+  // surfaced as a badged Work > Logins tab rather than a modal, because this is
+  // never urgent enough to interrupt what they are doing.
+  const [webSiteLoginAttention, setWebSiteLoginAttention] = useState(0)
+  useEffect(() => {
+    const api = window.api as unknown as {
+      listWebSiteLogins?: () => Promise<Array<{ status?: WebSiteLogin['status'] }>>
+      onWebSiteLoginsChanged?: (callback: () => void) => () => void
+    }
+    if (!api?.listWebSiteLogins) return
+    let active = true
+    const refreshAttention = (): void => {
+      void api
+        .listWebSiteLogins?.()
+        .then((sites) => {
+          if (!active) return
+          setWebSiteLoginAttention(countWebSiteLoginsNeedingAttention(sites))
+        })
+        .catch(() => {})
+    }
+    refreshAttention()
+    const unsubscribe = api.onWebSiteLoginsChanged?.(refreshAttention)
+    return () => {
+      active = false
+      unsubscribe?.()
+    }
+  }, [])
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
@@ -3645,6 +3678,8 @@ function App(): React.JSX.Element {
         return isChatMediaPanelOpen
       case 'references':
         return isProjectReferencesPanelOpen
+      case 'logins':
+        return isWebSiteLoginsPanelOpen
       case 'pins':
         return isPinnedMessagesPanelOpen
       case 'files':
@@ -4556,7 +4591,8 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'pi'
         ? {
-            piReasoningEffort: participant.reasoningEffort || 'medium'
+            piReasoningEffort:
+              participant.reasoningEffort || defaultPiReasoningEffort(participant.model)
           }
         : {}),
       antigravityReasoningEffort:
@@ -6637,7 +6673,7 @@ function App(): React.JSX.Element {
         typeof metadata.piReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.piReasoningEffort)
           ? metadata.piReasoningEffort
-          : 'medium',
+          : defaultPiReasoningEffort(selected),
       ollamaReasoningEffort:
         typeof metadata.ollamaReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.ollamaReasoningEffort)
@@ -8294,7 +8330,10 @@ function App(): React.JSX.Element {
           provider === 'muse' ? nextReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT : undefined,
         mistralReasoningEffort:
           provider === 'mistral' ? nextReasoningEffort || 'medium' : undefined,
-        piReasoningEffort: provider === 'pi' ? nextReasoningEffort || 'medium' : undefined,
+        piReasoningEffort:
+          provider === 'pi'
+            ? nextReasoningEffort || defaultPiReasoningEffort(nextModel)
+            : undefined,
         ollamaReasoningEffort: provider === 'ollama' ? nextReasoningEffort || '' : undefined,
         cursorReasoningEffort: provider === 'cursor' ? nextReasoningEffort || '' : undefined,
         cursorFastMode:
@@ -24076,6 +24115,40 @@ function App(): React.JSX.Element {
     [executionRunsById, rememberExecutionRun]
   )
   /**
+   * The other half of the killswitch. Until this existed, the only thing that
+   * re-evaluated a paused graph was recover() at app start, so a thread that
+   * came back inside the same session left its graph stopped with no route
+   * forward but restarting the app. Main refuses with a reason when the graph
+   * is terminal, not paused, or its owner is still gone; that reason is shown
+   * rather than swallowed, because a control that silently does nothing is
+   * worse than one that explains itself.
+   */
+  const handleResumeExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.resumeExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Resuming an execution is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .resumeExecutionRun(executionId, 'Resumed by user.')
+        .then((projection) => {
+          if (projection) rememberExecutionRun(projection)
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not resume the execution: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
+  /**
    * Work-tab listing of this workspace's durable executions, live first.
    * The Execution Map previously had no route from any surface the user looks
    * at, so a paused or failed graph pointed at nothing.
@@ -25802,6 +25875,13 @@ function App(): React.JSX.Element {
     () => liveOwnedExecutionThreadIds(executionRunsById),
     [executionRunsById]
   )
+  // Ghost-strip views for every OWNED execution, terminal included: live ones
+  // get their own transcript card, settled ones supply the matching result
+  // card's strip.
+  const ownedExecutionViewsByThreadId = useMemo(
+    () => ownedExecutionViewsByThread(executionRunsById),
+    [executionRunsById]
+  )
   const visibleRunCompleteNotice = deriveVisibleRunCompleteNotice({
     notice: runCompleteNotice,
     isChatRunning: isCurrentChatRunning
@@ -26299,6 +26379,9 @@ function App(): React.JSX.Element {
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
+    // The tab also appears unopened when a site needs re-authentication, so the
+    // notification and the fix are one click apart.
+    isWebSiteLoginsPanelOpen: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
     isPinnedMessagesPanelOpen,
     isTerminalDockAvailable
   })
@@ -26376,6 +26459,15 @@ function App(): React.JSX.Element {
       hint: 'Reusable Project reference library'
     },
     {
+      id: 'logins',
+      label: 'Logins',
+      icon: <SiteLoginSymbolIcon />,
+      enabled: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
+      badge: webSiteLoginAttention,
+      group: 'work',
+      hint: webSiteLoginAttention > 0 ? 'A saved sign-in needs you' : 'Sites you stay signed into'
+    },
+    {
       id: 'pins',
       label: 'Notes',
       icon: <PinnedMessagesIcon />,
@@ -26448,6 +26540,9 @@ function App(): React.JSX.Element {
           setIsProjectReferencesPanelOpen(false)
         }
         break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(false)
+        break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
         break
@@ -26481,6 +26576,9 @@ function App(): React.JSX.Element {
         break
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(true)
+        break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(true)
         break
       case 'references':
         setIsProjectReferencesPanelOpen(true)
@@ -26670,6 +26768,10 @@ function App(): React.JSX.Element {
   const handleOpenProjectReferencesLibrary = (projectId: string): void => {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
+  }
+  /** Work tab -> Logins. App-global, so unlike Refs it needs no Project. */
+  const handleOpenWebSiteLogins = (): void => {
+    activateRightDockTab('logins')
   }
   /** Transcript citation chip → Work Refs extract viewer. Only when the
    * focused chat belongs to exactly one Project (same ownership rule as
@@ -29543,6 +29645,9 @@ function App(): React.JSX.Element {
         case 'media':
           setChatMediaPanelOpenPreservingTranscript(true)
           break
+        case 'logins':
+          setIsWebSiteLoginsPanelOpen(true)
+          break
         case 'references':
           setIsProjectReferencesPanelOpen(true)
           if (activeWorkProject) {
@@ -29881,6 +29986,9 @@ function App(): React.JSX.Element {
         isThinking={viewerIsRunning}
         runCompleteNotice={cachedPaneRunCompleteNotice(viewerChat, { isRunning: viewerIsRunning })}
         hasLiveOwnedExecution={liveOwnedExecutionThreads.has(viewerChatId)}
+        ownedExecutionViews={ownedExecutionViewsByThreadId.get(viewerChatId)}
+        onCancelOwnedExecution={handleCancelExecutionRun}
+        onResumeOwnedExecution={handleResumeExecutionRun}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -31521,6 +31629,7 @@ function App(): React.JSX.Element {
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
     handleBackFromExecutionMap,
     handleCancelExecutionRun,
+    handleResumeExecutionRun,
     handleOpenExecutionMap,
     executionRunEntries,
     handleOpenExecutionRunFromWork,
@@ -31687,6 +31796,7 @@ function App(): React.JSX.Element {
       }
     },
     handleOpenProjectReferencesLibrary,
+    handleOpenWebSiteLogins,
     handleSelectedProjectChange: setActiveWorkProjectId,
     workProjectHeader,
     handleSidebarPrimarySurfaceSelect,
@@ -31729,6 +31839,7 @@ function App(): React.JSX.Element {
     isOldVersion,
     isPinnedMessagesPanelOpen,
     isProjectReferencesPanelOpen,
+    isWebSiteLoginsPanelOpen,
     isWorkRouteReferencesPinned,
     isSideChatProviderLocked,
     isSideChatRunning,
@@ -31981,6 +32092,7 @@ function App(): React.JSX.Element {
     visibleGeminiTerminalLogs,
     visibleRunCompleteNotice,
     liveOwnedExecutionThreads,
+    ownedExecutionViewsByThreadId,
     welcomeDashboardCardEnabled,
     welcomeFitLevel,
     welcomeDashboardRegionRef,
@@ -32099,6 +32211,7 @@ function App(): React.JSX.Element {
           (typeof agentStatusByProvider.ollama?.modelCount !== 'number' ||
             agentStatusByProvider.ollama.modelCount > 0)
         }
+        ollamaStatus={agentStatusByProvider.ollama}
         usageSummary={usageSummary}
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}

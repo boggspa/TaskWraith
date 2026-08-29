@@ -1376,10 +1376,19 @@ import { resolveAppshotsTargetOwnership } from './AppshotsTargetOwnership'
 import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
-import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
+import { CANVAS_BROWSER_PARTITION, CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { WebSiteLoginStore } from './webLogin/WebSiteLoginStore'
 import { WebSiteProfileRegistry } from './webLogin/WebSiteProfileRegistry'
 import { resolveWebSiteCanvasBinding } from './webLogin/WebSiteCanvasBinding'
+import { WebLoginSignInWindowController } from './webLogin/WebLoginSignInWindow'
+import { createSignInBrowserWindow } from './webLogin/WebLoginSignInWindowElectron'
+import { WebLoginService } from './webLogin/WebLoginService'
+import { createElectronWebSiteLivenessProbe } from './webLogin/WebSiteLivenessProbeElectron'
+import { registerWebLoginHandlers } from './ipc/webLoginHandlers'
+import {
+  createWebLoginToolExecutors,
+  isWebLoginMcpToolName
+} from './mcp/WebLoginToolExecutors'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
@@ -1997,6 +2006,8 @@ import {
 } from './ScopedPathAccess'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
+import { systemAccentColorSource } from './SystemAccentColor'
+import { SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL } from '../shared/systemAccentColor'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
@@ -4599,6 +4610,30 @@ const webSiteProfiles = new WebSiteProfileRegistry({
       resolveSession: (name) => session.fromPartition(name)
     })
 })
+const webLoginService = new WebLoginService({
+  store: webSiteLoginStore,
+  profiles: webSiteProfiles,
+  signInWindows: new WebLoginSignInWindowController({ createWindow: createSignInBrowserWindow }),
+  probe: createElectronWebSiteLivenessProbe(),
+  // A saved session going stale is the one thing TaskWraith cannot fix for the
+  // user, so it has to be excellent at saying so. Fan the change out; the
+  // renderer badges the Work > Logins tab.
+  onStatusChanged: (site) => {
+    safeSendToWebContents(mainWindow, 'web-login:changed', site)
+  },
+  // The OLD shared Canvas Browser jar - one cookie store every site and every
+  // canvas shared. Existing users are sitting in it right now, so the feature
+  // has to offer a way out rather than only being correct for new ones.
+  sharedJarCookies: async () => {
+    const cookies = await session.fromPartition(CANVAS_BROWSER_PARTITION).cookies.get({})
+    return cookies.map((cookie) => ({
+      domain: cookie.domain,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure
+    }))
+  },
+  clearSharedJar: () => canvasBrowserProfile.clearBrowsingData()
+})
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {
     if (hostId !== undefined) {
@@ -4876,7 +4911,13 @@ const canvasService = new CanvasService({
         : null
       return new CanvasWebDriver(sessionId, {
         browserProfile: bound?.browserProfile ?? canvasBrowserProfile,
-        ...(bound ? { siteBinding: bound.siteBinding } : {}),
+        ...(bound
+          ? {
+              siteBinding: bound.siteBinding,
+              onEmbedBlocked: (origin) =>
+                webLoginService.recordBlockedEmbed(bound.siteBinding.siteId, origin)
+            }
+          : {}),
         ...(opts?.embedded
           ? { createSurface: canvasEmbedController.surfaceFor(sessionId, opts.surfaceHostId) }
           : {}),
@@ -4918,6 +4959,23 @@ function teardownCanvasSurfacesForWindowClose(): void {
     })
 }
 let canvasLaunchAttemptsSnapshot: (() => LaunchAttempt[]) | null = null
+const webLoginToolExecutors = createWebLoginToolExecutors({
+  listSites: () => webLoginService.list(),
+  probeSite: (siteId) => webLoginService.probeLiveness(siteId),
+  openBoundCanvas: async ({ siteId, url, context, provider }) => {
+    const opened = await canvasService.open(
+      { driver: 'web', siteId, ...(url ? { url } : {}) },
+      {
+        provider,
+        chatId: context.appChatId,
+        runId: context.appRunId,
+        workspacePath: context.workspacePath,
+        ...(context.participantId ? { participantId: context.participantId } : {})
+      }
+    )
+    return { canvasId: opened.canvasId, ...(url ? { url } : {}) }
+  }
+})
 const canvasToolExecutors = createCanvasToolExecutors({
   controller: canvasService,
   launchAttempts: () => canvasLaunchAttemptsSnapshot?.() ?? [],
@@ -39175,6 +39233,11 @@ async function executeGeminiMcpTool(
     ) {
       markDispatchHandled('browser-tools')
       applyRichResult(await executeBrowserTool(toolName, args, context))
+    } else if (isWebLoginMcpToolName(toolName)) {
+      markDispatchHandled('web-login')
+      applyRichResult(
+        await webLoginToolExecutors.executeWebLoginTool(toolName, args, context, parentProvider)
+      )
     } else if (isCanvasMcpToolName(toolName)) {
       markDispatchHandled('canvas')
       const canvasResult = await canvasToolExecutors.executeCanvasTool(
@@ -55257,6 +55320,18 @@ if (isGeminiMcpBridgeProcess) {
     })
     projectReferenceExtracts.registerHandlers(assertMainRendererSender)
     projectStudio.registerHandlers(assertMainRendererSender)
+    registerWebLoginHandlers({
+      assertSenderCanManageWebLogins: assertMainRendererSender,
+      listSites: () => webLoginService.list(),
+      addSite: (input) => webLoginService.add(input),
+      updateSite: (id, patch) => webLoginService.update(id, patch),
+      removeSite: (id) => webLoginService.forget(id),
+      signOutSite: (id) => webLoginService.signOut(id),
+      signInSite: (id) => webLoginService.signIn(id),
+      listMigrationCandidates: () => webLoginService.migrationCandidates(),
+      dismissMigrationCandidate: (origin) => webLoginService.dismissMigrationCandidate(origin),
+      clearSharedJar: () => webLoginService.clearSharedJar()
+    })
     // Authoritative project changes fan out to the main window; the renderer
     // facade reconciles its optimistic snapshot from this event. The payload
     // is the full registry state: { projects, workProfiles }.
@@ -56473,7 +56548,18 @@ if (isGeminiMcpBridgeProcess) {
       },
       applyNativeGlassToWindow,
       getCachedHostWeather,
-      getNativeCapabilitySnapshot
+      getNativeCapabilitySnapshot,
+      getSystemAccentColor: () => systemAccentColorSource.read()
+    })
+
+    // `--accent` follows the DESKTOP's accent, not the in-app message-bubble
+    // colour, so an OS accent change has to reach every open window the same
+    // way an agent restyle does. The source only calls back on an actual
+    // change; see SystemAccentColor.ts for why that de-duplication matters.
+    systemAccentColorSource.watch((color) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, color)
+      }
     })
 
     registerFileIconHandlers({

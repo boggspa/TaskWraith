@@ -10,6 +10,7 @@ import type {
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
 import type { ChatPopoutPresentation } from '../../../../shared/chatPopoutPresentation'
+import type { ExecutionGhostCardView } from '../../../../shared/executionGraphGhost'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -98,6 +99,7 @@ type MainAppLayoutSidebarProps = {
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
   handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
   handleOpenProjectReferencesLibrary: NonNullable<SidebarProps['onOpenReferencesLibrary']>
+  handleOpenWebSiteLogins: NonNullable<SidebarProps['onOpenWebSiteLogins']>
   workProjectHeader: Omit<
     import('../../components/ProjectHomeHeader').ProjectHomeHeaderProps,
     'onOpenLibrary'
@@ -242,6 +244,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSelectExecutionMapStep: (stepId: string) => void
   handleOpenExecutionThread: (threadRef: string) => void
   handleCancelExecutionRun: (executionId: string) => void
+  handleResumeExecutionRun: (executionId: string) => void
   handleOpenExecutionMap: (executionId: string, stepId?: string) => void
   executionRunEntries: ReadonlyArray<{
     executionId: string
@@ -283,6 +286,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   dockChatPopoutWindow: any
   dockPresence: any
   dockTabDefs: RightDockSurfaceDef[]
+  /** Work > Logins dock visibility. */
+  isWebSiteLoginsPanelOpen: boolean
   effectiveInspectorWidth: any
   effectiveIsThinking: any
   ensembleEnabledParticipantsForCurrent: any
@@ -668,6 +673,10 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleRunCompleteNotice: any
   /** Threads still accountable for an unsettled durable execution. */
   liveOwnedExecutionThreads: Set<string>
+  /** Ghost-strip views for every owned execution, keyed by owning thread.
+   * Terminal graphs are included: a settled result card still shows how its
+   * graph fanned out. */
+  ownedExecutionViewsByThreadId: Map<string, ExecutionGhostCardView[]>
   pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
   welcomeFitLevel: any

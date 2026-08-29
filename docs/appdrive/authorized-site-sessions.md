@@ -86,12 +86,18 @@ binds to exactly one site at construction and can **never** be re-bound.
 Cross-origin **document** navigation inside a bound surface is refused with a
 do-not-retry reason.
 
-The fence covers **main-frame** document navigation. Sub-resource requests are
-not origin-checked: third-party CDNs, fonts and analytics are how the web works,
-and an allowlist that breaks every real site gets turned off, which protects
-nothing. **Sub-FRAME documents fall on the sub-resource side of that cut** -
-fencing them would break payment iframes, SSO frames and captchas. That is a
-deliberate exemption with a real consequence, recorded in Section 11.4.
+The fence covers **document navigation in every frame**. Sub-resource requests
+(scripts, fonts, images, XHR) are not origin-checked: third-party CDNs are how
+the web works, and an allowlist that breaks every real site gets turned off,
+which protects nothing.
+
+**Sub-frames are fenced too, and default-closed**, via `will-frame-navigate` -
+`will-navigate` never fires for them. That would break payment frames, captchas
+and SSO frames, so the refused origin is RECORDED and offered to the user in
+Work > Logins, exactly like the SSO hops the sign-in window reports. Widening is
+still only ever the user's act; the record is advisory and is dropped the moment
+the origin becomes authorized. Bounded to 12 per site so a hostile page cannot
+grow the catalogue.
 
 `extraOrigins` exists for the identity-provider hop - a site whose sign-in
 bounces through `accounts.google.com` or an SSO host needs those origins in its
@@ -201,6 +207,29 @@ readability during incident review for no threat it actually answers.
    `signed-in` with `lastSignedInAt` stamped.
 
 No polling, no cookie export, no renderer projection of anything but status.
+There is deliberately no success signal to detect: whether a session was
+actually established is a question only a real request answers, so the caller
+probes afterwards rather than guessing from cookie names. The provider
+importer's first cut resolved on any cookie with "session" in its name, which
+the login page sets before any credentials are entered.
+
+**The sign-in window is NOT origin-fenced, and that is deliberate.** It has to
+follow whatever redirect the user's identity provider chooses, and a human is
+driving. The origins passed through are reported back as *suggestions* so the UI
+can offer to widen the site's fence; nothing widens automatically, because an
+origin in the fence is authority and authority is the user's to grant. Only
+origins are retained, never URLs - a sign-in flow's query string is exactly
+where one-time codes live.
+
+**Known interaction, stated rather than discovered:** `CanvasBrowserProfile`
+installs its session hooks once per Electron session and they are permanent, so
+a site whose canvas has already bound has all browser permissions denied
+session-wide - and the sign-in window shares that session. A login needing
+camera, microphone or geolocation will therefore fail on such a site while
+succeeding on one whose canvas has never been opened. Ordinary password and
+2FA-code logins are unaffected. If evidence says it matters, the fix is a
+narrow per-webContents exemption on the profile, not relaxing the canvas
+default.
 
 ---
 
@@ -218,9 +247,13 @@ No polling, no cookie export, no renderer projection of anything but status.
     `agentAccess`, status. **Never a cookie, never a header, never a secret.**
   - `web_login_open` - open a canvas bound to that site. Refuses a site whose
     `agentAccess` is `off` or one outside the run's lease set.
-- `agentAccess: 'read'` refuses every actuation verb at the executor, not at the
-  driver, so the refusal is uniform across every verb rather than re-derived per
-  driver method.
+- `agentAccess: 'read'` refuses every actuation verb in `CanvasWebDriver.act()`,
+  which is the single entry click / fill / key / scroll / hover / select all
+  pass through - so one check covers them and any verb added later. `wait_for`
+  is bounded read-only and stays allowed. The refusal is `site_read_only`,
+  do-not-retry, and it names the only way out: the USER widening the site.
+  (An earlier draft of this document said "at the executor"; the executor does
+  not know about bindings, and the driver does.)
 - Tool placement: the highest minted generation is **v17** (plus its `-mesh`
   twin), and existing generations are immutable, pinned by exact-membership and
   sha256 tests. The established route for a tool that does not need to be
@@ -244,10 +277,18 @@ consequence of choosing option A in Section 10: TaskWraith cannot fix an expired
 session by itself, so it must be excellent at telling the user, in the moment,
 exactly which site needs them.
 
-Detecting a login wall is a heuristic - a redirect to an origin in
-`extraOrigins`, or the liveness probe failing. It is allowed to be a heuristic
-because its only consequence is asking the user a question. It must never be
-allowed to become an authorization input.
+Detecting a login wall is a heuristic: the probe runs on the site's OWN
+partition, so it carries exactly the cookies that site's canvases would, and it
+reads only where the request settled and what status came back. Settling on the
+site's own origin means signed-in; being handed to one of its SSO hops, or a
+401/403, means expired; **everything else is unknown**. An offline laptop is not
+an expired session, and a prompt that cries wolf is one the user learns to
+dismiss.
+
+It is allowed to be a heuristic because its only consequence is asking the user
+a question. It must never become an authorization input. A `verify` target
+outside the site's own fence is ignored rather than followed, so a hand-edited
+catalogue cannot aim a cookie-bearing request at an arbitrary host.
 
 ---
 
@@ -268,8 +309,11 @@ A row shows label, origin, status pill, and the access selector
   costs one orphaned directory on disk instead of handing a re-added site a
   cookie jar the user believes they deleted.
 
-The panel is also where a `signin_required` prompt lands, so the notification
-and the fix are one click apart.
+**Not yet built:** the panel shows an expired status when you look at it, and
+`web_login_open` refuses an expired session by name, but nothing proactively
+surfaces "this site needs you". A run that stops for this reason therefore
+reports the refusal in its transcript rather than raising a prompt. Closing that
+means an event channel from main plus a renderer surface, and is its own slice.
 
 ---
 
@@ -313,15 +357,11 @@ Added to design.md Section 10, not replacing it.
    be the exact punycode-safe origin, not a prettified one.
 3. **`extraOrigins` is a real widening.** An SSO host added for convenience
    grants document navigation to that host. It is user-visible for this reason.
-4. **A cross-origin SUB-FRAME renders inside a bound surface.** The fence is
-   main-frame only (I1), so a page on an authorized origin can embed any
-   origin it likes. Two consequences worth stating rather than discovering:
-   the embedded document loads in the site's partition, and its rendered
-   pixels reach an agent through `canvas_screenshot`, which captures
-   cross-origin frames that page script could never read. Bounded by the
-   per-site split (the jar holds one site's cookies, not every site's) and by
-   actuation being main-frame only. `will-frame-navigate` is the hook that
-   would close it if evidence says it should be closed.
+4. ~~**A cross-origin SUB-FRAME renders inside a bound surface.**~~ **CLOSED
+   2026-08-29** by fencing sub-frames through `will-frame-navigate` (I1). The
+   residual that replaces it is smaller and is a usability one: a site whose
+   embed the user has not yet allowed renders with that frame missing until
+   they do, and the only signal is the Work > Logins row.
 5. **Login-wall detection is heuristic** (Section 8). Bounded to asking a
    question; must never gate authorization.
 6. **Sub-resources are unfenced by design** (I1). A compromised third-party
@@ -333,6 +373,16 @@ Added to design.md Section 10, not replacing it.
 7. **Sign-out is best-effort against server-side sessions.** Clearing the
    partition ends the client's session; a token the site already minted
    elsewhere is beyond TaskWraith's reach.
+8. **The old shared jar is offered, not migrated.** Sessions already sitting in
+   `persist:taskwraith-canvas-browser-v1` keep their pre-feature ambient
+   authority until the user acts. The prompt that surfaces them (Section 12,
+   R2) deliberately copies no cookies, so the residual is that a user who
+   ignores the offer is no better off than before - which is the same position
+   they were in, not a new exposure.
+9. **The candidate filter is a heuristic.** `httpOnly && secure` is a good
+   proxy for a first-party session cookie and not a proof of one: a site whose
+   sign-in cookie is neither will not be offered, and an occasional non-login
+   domain will be. It is an offer, so both errors cost a row in a list.
 
 ---
 
@@ -346,10 +396,14 @@ this index.
 |---|---|---|
 | **P0** | This document, plus the design.md pointers | Closes Section 13 Q3 as re-proposed rather than moot. |
 | **P1** | Per-site partitions and the navigation fence | The security spine, no UI. `webSiteLogin` model, main-owned catalogue store, `siteId` threaded through the canvas stack, document-navigation origin fence. Unbound surfaces keep today's behaviour. |
-| **P2** | Human-only sign-in window | Plus the Section 6a-style invariant test: no canvas executor can resolve its `webContents`. |
+| **P2** | Human-only sign-in window | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge. |
 | **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
-| **P4** | Agent surface | `web_login_list` and `web_login_open`; a **new** gateway profile generation; auto-allow and profile membership; approval preview; regenerated tool docs. |
-| **P5** | Re-authentication signalling and the liveness probe | `signin_required`, the Work-tab prompt, optional per-site probe. |
+| **P4** | Agent surface | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
+| **P5** | Re-authentication signalling and the liveness probe | Landed. A probe on the site's own partition classifies the session; `web_login_open` refuses an expired one by name, with no retry and an explicit instruction not to self-serve; sign-in takes its status from a real request rather than from the window closing. |
+
+| **R1** | Proactive expiry surface | Landed. `onStatusChanged` fires only on an actual change, main fans it out on `web-login:changed`, and the Logins tab carries the count of expired sites. The dock's per-surface counts live inside a picker that is closed by default, so the switcher header also carries a dot whenever some surface other than the one on screen is waiting. |
+| **R2** | Shared-jar migration | Landed. Sign-ins still in the old shared Canvas Browser jar are offered for promotion, one per row. No cookie is copied: the user re-authenticates into the new partition, because moving a live credential without the user authenticating is the one thing this feature exists to avoid. The clear-shared-jar action refuses while candidates remain - the jar is the only copy. |
+| **R3** | Sub-frame fence | Landed. See Residual 4. |
 
 P1 is the bulk of the work and the only slice that carries regression risk to
 the shipped Canvas Browser.
@@ -358,11 +412,14 @@ the shipped Canvas Browser.
 
 ## 13. Open questions
 
-1. Should a site be promotable to `act` at all for a class of high-value
-   origins - banking, and email-as-identity in particular, since email is the
-   password-reset root for everything else? A hard "never `act`" class is
-   cheap to add and impossible to add later without breaking someone's
-   workflow.
+1. ~~Should a site be promotable to `act` at all for a class of high-value
+   origins - banking, and email-as-identity in particular?~~ **ANSWERED
+   2026-08-29 by the owner: no hard class. It stays user-driven.** Some people
+   will want an agent helping with banking and email, and that is their call to
+   make at their own risk; the product should not decide it for them. What the
+   product owes them instead is that the dial is honest - which is why `read`
+   now refuses actuation at the driver rather than being advisory, and why a new
+   site still starts at no access.
 2. Should `web_login_list` be visible to a run whose lease names no sites?
    Listing is not acting, but it is reconnaissance, and it tells a model which
    accounts exist.

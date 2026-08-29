@@ -4843,6 +4843,44 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'web_login_list',
+      description:
+        "List the websites the user has saved a login for and opened to agents, so you can act on a site they are already signed into without ever handling a credential. Returns siteId, label, origin, any additional authorized origins, the access level ('read' = you may open and read, 'act' = you may also click and type under an approved lease), and the last known sign-in status. Sites the user has kept at no-agent-access are NOT listed at all. NEVER returns a cookie, a session token, or a partition name. Pass a siteId to web_login_open. Adding a site, signing in, granting access and forgetting a site are the user's alone, in Work > Logins - there is no tool for any of them, and asking the user to paste a password is never the answer.",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'web_login_open',
+      description:
+        "Open a Canvas Browser bound to one saved site login, using that site's own signed-in browser profile. Requires a `siteId` from web_login_list, and an optional `url` to land on. The surface is FENCED: it may only navigate documents to that site's authorized origins, and any other origin is refused with a do-not-retry reason - open a separate canvas for a different site rather than trying to navigate there. Read the page with canvas_snapshot; click and type with canvas_click / canvas_fill, which still require their own approved AppDrive lease and still refuse credential fields outright. A site the user has not opened to agents is refused. You are acting AS THE USER in a real account on this surface: prefer reading over acting, and never enter a credential.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          siteId: {
+            type: 'string',
+            description: 'Saved site login id, from web_login_list.'
+          },
+          url: {
+            type: 'string',
+            description:
+              "Absolute http(s) URL to open. Must be inside the site's authorized origins; omit to land on the site's own origin."
+          }
+        },
+        required: ['siteId']
+      }
+    },
+    {
       name: 'canvas_navigate',
       description:
         "Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically in the active chat's Canvas dock — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing use canvas_click / canvas_fill (Canvas interaction), and scripts use canvas_eval. Accept Edits and higher authorize ordinary navigation; Ask prompts on every call and Plan denies. Public, loopback, and private-network hosts are supported; link-local/cloud-metadata targets remain blocked.",

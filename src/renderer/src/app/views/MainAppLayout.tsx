@@ -74,6 +74,7 @@ import {
   XSymbolIcon
 } from '../../components/AppChromeSymbols'
 import { PinnedMessagesPanel } from '../../components/PinnedMessagesPanel'
+import { WebLoginsDockPanel } from '../../components/WebLoginsDockPanel'
 import {
   ChatMediaDockPanel,
   ChatMediaPreviewOverlay
@@ -198,6 +199,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenExecutionThread,
   handleSaveExecutionGraph,
   handleCancelExecutionRun,
+  handleResumeExecutionRun,
   handleOpenExecutionMap,
   executionRunEntries,
   handleOpenExecutionRunFromWork,
@@ -303,6 +305,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenSideChatFromRunResult,
   handleOpenPluginWorkflowTemplate,
   handleOpenProjectReferencesLibrary,
+  handleOpenWebSiteLogins,
   workProjectHeader,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
@@ -372,6 +375,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isLinkedChatPopout,
   isMultiviewSplit,
   isPinnedMessagesPanelOpen,
+  isWebSiteLoginsPanelOpen,
   isProjectReferencesPanelOpen,
   isWorkRouteReferencesPinned,
   isSideChatProviderLocked,
@@ -581,6 +585,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   visibleGeminiTerminalLogs,
   visibleRunCompleteNotice,
   liveOwnedExecutionThreads,
+  ownedExecutionViewsByThreadId,
   pluginWorkflowTemplates,
   welcomeDashboardCardEnabled,
   welcomeFitLevel,
@@ -1429,6 +1434,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onStartProjectHome={handleStartProjectHome}
                 onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
+                onOpenWebSiteLogins={handleOpenWebSiteLogins}
                 onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
                 executionRunEntries={executionRunEntries}
                 onOpenExecutionRun={handleOpenExecutionRunFromWork}
@@ -1921,6 +1927,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       onOpenThread={handleOpenExecutionThread}
                       onSaveGraph={handleSaveExecutionGraph}
                       onCancelRun={handleCancelExecutionRun}
+                      onResumeRun={handleResumeExecutionRun}
                     />
                   )
                 }
@@ -2285,6 +2292,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 hasLiveOwnedExecution={liveOwnedExecutionThreads.has(
                   currentChat?.appChatId || ''
                 )}
+                ownedExecutionViews={ownedExecutionViewsByThreadId.get(
+                  currentChat?.appChatId || ''
+                )}
+                onCancelOwnedExecution={handleCancelExecutionRun}
+                onResumeOwnedExecution={handleResumeExecutionRun}
                 onOpenExecutionMapForThread={handleOpenExecutionMap}
                 currentChat={currentChat}
                 isGlobal={isGlobalChat(currentChat)}
@@ -2670,6 +2682,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
               hasLiveOwnedExecution={liveOwnedExecutionThreads.has(sideChat.appChatId)}
+              ownedExecutionViews={ownedExecutionViewsByThreadId.get(sideChat.appChatId)}
+              onCancelOwnedExecution={handleCancelExecutionRun}
+              onResumeOwnedExecution={handleResumeExecutionRun}
               currentChat={sideChat}
               isGlobal={isGlobalChat(sideChat)}
               currentRun={sideRun}
@@ -2813,6 +2828,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   ) : (
                     <WorkProjectReferencesEmptyShell />
                   )
+                )}
+
+                {activeRightDockTab === 'logins' && isWebSiteLoginsPanelOpen && (
+                  <WebLoginsDockPanel />
                 )}
 
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (

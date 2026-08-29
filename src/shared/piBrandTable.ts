@@ -41,7 +41,9 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
   openrouter: { label: 'OpenRouter', hueClass: 'openrouter' },
   // OpenRouter-specific overrides for models that should display with their original brand
-  'openrouter/zai': { label: 'Z.ai', hueClass: 'zai' },
+  // Keyed by OpenRouter's own namespace, which is `z-ai` (hyphenated) —
+  // NOT Z.ai's direct-route `zai`. Keep the two spellings apart.
+  'openrouter/z-ai': { label: 'Z.ai', hueClass: 'zai' },
   'openrouter/poolside': { label: 'Poolside', hueClass: 'poolside' },
   'openrouter/nvidia': { label: 'NVIDIA', hueClass: 'nvidia' }
 }
@@ -98,7 +100,7 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
   'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)',
   'openrouter/stealth/ox-alpha': 'Ox Alpha',
-  'openrouter/zai/glm-5.2': 'GLM 5.2',
+  'openrouter/z-ai/glm-5.2': 'GLM 5.2',
   'openrouter/poolside/laguna-s-2.1': 'Laguna S 2.1',
   'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 'Nemotron 3 Ultra'
 }
@@ -117,7 +119,12 @@ export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
  * pickers; dispatch and historical presentation canonicalize through here.
  */
 export const PI_MODEL_WIRE_ID_ALIASES: Readonly<Record<string, string>> = {
-  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max'
+  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max',
+  // OpenRouter's Z.ai namespace is `z-ai`; TaskWraith shipped the
+  // unhyphenated form, which 404s. Without this alias a saved seat pinned to
+  // the old id falls through `normalizePiWireModelId` to the Pi DEFAULT model
+  // — a different vendor, key and bill, with no error.
+  'openrouter/zai/glm-5.2': 'openrouter/z-ai/glm-5.2'
 }
 
 export function canonicalPiWireModelId(wireModelId: string): string {
@@ -144,13 +151,13 @@ export function splitPiWireModelId(wireId: string): { upstream: string; modelId:
  * hue, so an unknown upstream degrades to the seat colour rather than throwing.
  *
  * Special case: OpenRouter models that are resold from other providers (e.g.,
- * `openrouter/zai/glm-5.2`) should display with the original provider's brand
+ * `openrouter/z-ai/glm-5.2`) should display with the original provider's brand
  * rather than the generic OpenRouter brand.
  */
 export function resolvePiUpstreamBrand(
   wireModelId: string | null | undefined
 ): PiUpstreamBrand | null {
-  const wire = String(wireModelId || '').trim()
+  const wire = canonicalPiWireModelId(String(wireModelId || '').trim())
   const split = splitPiWireModelId(wire)
   if (!split) return null
 
