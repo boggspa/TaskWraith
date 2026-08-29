@@ -567,6 +567,7 @@ export class HostProfileDomainStore {
   private readonly now: () => number
   private readonly idFactory: () => string
   private readonly beforeAtomicPublish?: (targetPath: string) => void
+  private readonly quarantinedThreads = new Set<string>()
 
   constructor(options: HostProfileDomainStoreOptions) {
     if (!options?.authority || typeof options.authority.assertProfileAuthority !== 'function') {
@@ -768,6 +769,27 @@ export class HostProfileDomainStore {
     return thread
   }
 
+  /** Threads listThreads() skipped because the record exceeds the read cap.
+   *  This layer takes no logger by design, so the set is exposed instead. */
+  get quarantinedThreadIds(): readonly string[] {
+    return [...this.quarantinedThreads].sort()
+  }
+
+  /** Size is checked from the directory entry rather than through the read, so
+   *  an oversized record never reaches readOptionalJson's throw. */
+  private exceedsRecordCap(threadId: string): boolean {
+    try {
+      return lstatSync(this.chatPath(threadId)).size > MAX_CHAT_BYTES
+    } catch {
+      // Deliberate deferral, not a swallow: a record that vanished between
+      // readdir and here makes getThread's readOptionalJson return null, so
+      // the entry is skipped anyway. Throwing here would fail the whole
+      // listing for a race. Not reachable from a test through the public
+      // API, since readdir only names entries that exist.
+      return false
+    }
+  }
+
   listThreads(): readonly HostProfileThread[] {
     this.assertAuthority()
     this.ensureDirectory(this.chatsPath)
@@ -782,6 +804,16 @@ export class HostProfileDomainStore {
       if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Unsafe chat directory entry')
       const id = entry.name.slice(0, -'.json'.length)
       if (!safeId(id)) throw new Error('Unsafe chat filename')
+      if (this.exceedsRecordCap(id)) {
+        // A record too large to read is a capacity problem, not tampering —
+        // every structural guard above still fails closed. Quarantine THIS
+        // thread rather than the whole listing: one oversized chat previously
+        // took the entire Host down, which silently forced the app onto the
+        // in-process Host for every launch.
+        this.quarantinedThreads.add(id)
+        continue
+      }
+      this.quarantinedThreads.delete(id)
       const thread = this.getThread(id)
       if (thread) records.push(thread)
     }

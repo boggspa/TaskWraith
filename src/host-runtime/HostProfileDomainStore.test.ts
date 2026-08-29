@@ -7,6 +7,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -832,5 +833,60 @@ describe('HostProfileDomainStore', () => {
     expect(Buffer.byteLength(JSON.stringify(persisted), 'utf8')).toBeGreaterThan(256_000)
     const reloaded = store.getThread('id-big')
     expect(reloaded?.messages[0].content).toHaveLength(300_000)
+  })
+
+  it('skips a record past the read cap instead of failing the whole listing', () => {
+    const { profile, store } = open()
+    const kept = store.createThread({ scope: 'global', title: 'kept' })
+    const oversized = store.createThread({ scope: 'global', title: 'oversized' })
+    // Sparse: far past the cap at no disk cost, and its contents are no longer
+    // parseable JSON — so any pass that actually READ it would throw.
+    truncateSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${oversized.appChatId}.json`),
+      65 * 1024 * 1024
+    )
+
+    const listed = store.listThreads()
+
+    expect(listed.map((thread) => thread.appChatId)).toEqual([kept.appChatId])
+  })
+
+  it('reports a skipped oversized record rather than dropping it silently', () => {
+    const { profile, store } = open()
+    const oversized = store.createThread({ scope: 'global' })
+    truncateSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${oversized.appChatId}.json`),
+      65 * 1024 * 1024
+    )
+
+    store.listThreads()
+
+    expect(store.quarantinedThreadIds).toEqual([oversized.appChatId])
+  })
+
+  it('still fails closed on a structurally unsafe entry rather than quarantining it', () => {
+    const { profile, store } = open()
+    store.createThread({ scope: 'global' })
+    writeFileSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, 'not-a-chat.txt'), 'x', {
+      mode: 0o600
+    })
+
+    expect(() => store.listThreads()).toThrow('Unsafe')
+    expect(store.quarantinedThreadIds).toEqual([])
+  })
+
+  it('stops quarantining a record once it is back under the cap', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const original = readFileSync(chatPath, 'utf8')
+    truncateSync(chatPath, 65 * 1024 * 1024)
+    expect(store.listThreads()).toEqual([])
+    expect(store.quarantinedThreadIds).toEqual([thread.appChatId])
+
+    writeFileSync(chatPath, original, { mode: 0o600 })
+
+    expect(store.listThreads().map((item) => item.appChatId)).toEqual([thread.appChatId])
+    expect(store.quarantinedThreadIds).toEqual([])
   })
 })
