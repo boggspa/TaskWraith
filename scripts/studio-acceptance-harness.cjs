@@ -228,6 +228,29 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_APP_OUTPUT',
   'TASKWRAITH_STUDIO_ARCH'
 ])
+/**
+ * Provenance binding, not a drift detector. Do not "sync" it to the workspace.
+ *
+ * One frozen object carries both halves of a single claim: `sourceDigest` /
+ * `sourceCount` describe a source tree, and `companionSha256` /
+ * `bridgeDaemonSha256` describe binaries. `assertStudioAcceptanceCustody`
+ * checks the source half in its `source` phase and the binary half in its
+ * `after-run` phase against this same object, so together they assert
+ * "these binaries were built from that source".
+ *
+ * `sourceCount` therefore reads far below the current tree on purpose — it is
+ * the count at the moment the pinned companion and bridge daemon were built,
+ * not a stale measurement. Re-pinning the source half alone would keep the old
+ * binary hashes while claiming a newer tree produced them, which is precisely
+ * the false provenance this receipt exists to catch. Update all four together,
+ * from one rebuild, or leave every one of them alone.
+ *
+ * The similarly-shaped pin in `studio-acceptance-harness.test.ts` is a
+ * different instrument and moves independently: it measures with
+ * `buildReady: false`, which nulls every binary hash, so it detects workspace
+ * drift and asserts nothing about provenance. Whoever lands last re-pins that
+ * one. The two numbers disagreeing is the expected state, not a bug.
+ */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
   sourceDigest: '9d000306f0aa7313865bc29b383cd98d151068268338687de02dd4caecc3416d',
   sourceCount: 2294,
