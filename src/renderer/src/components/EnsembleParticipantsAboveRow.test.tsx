@@ -859,9 +859,9 @@ describe('EnsembleParticipantsAboveRow', () => {
         fastModeEnabled: false,
         serviceTier: 'standard'
       })
-      expect(createEnsembleParticipantAddConfiguration('ollama', 'ornith-1.5:35b')).toMatchObject({
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'ornith:35b')).toMatchObject({
         provider: 'ollama',
-        model: 'ornith-1.5:35b',
+        model: 'ornith:35b',
         reasoningEffort: 'on'
       })
       expect(createEnsembleParticipantAddConfiguration('ollama', 'gpt-oss:20b')).toMatchObject({

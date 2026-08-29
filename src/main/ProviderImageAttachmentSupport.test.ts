@@ -29,7 +29,7 @@ describe('providerDeliversImageAttachments', () => {
     expect(providerDeliversImageAttachments('antigravity', 'claude-sonnet-4')).toBe(false)
     expect(providerDeliversImageAttachments('antigravity', 'gemini-api:claude-3')).toBe(false)
     expect(providerDeliversImageAttachments('antigravity')).toBe(false)
-    expect(providerDeliversImageAttachments('pi', 'openrouter/zai/glm-5.2')).toBe(false)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/z-ai/glm-5.2')).toBe(false)
   })
 
   it('fails closed for unknown provider strings', () => {
@@ -75,7 +75,7 @@ describe('resolveImagePathsForProvider', () => {
       'pi',
       ['/tmp/a.png', '/tmp/b.png'],
       'Pi',
-      'openrouter/zai/glm-5.2'
+      'openrouter/z-ai/glm-5.2'
     )
     expect(resolved.imagePaths).toEqual([])
     expect(resolved.warning).toContain(

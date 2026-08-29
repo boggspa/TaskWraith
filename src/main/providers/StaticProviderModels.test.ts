@@ -81,7 +81,7 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
     )
     expect(oxAlphaRetired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
     expect(oxAlphaRetired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
-    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/zai/glm-5.2')).toBe(true)
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/z-ai/glm-5.2')).toBe(true)
   })
 })
 

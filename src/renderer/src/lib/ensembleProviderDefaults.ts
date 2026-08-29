@@ -31,10 +31,7 @@ import {
   claudeReasoningDisplayLabel,
   mistralReasoningDisplayLabel
 } from './composerChipFormat'
-import {
-  isMistralThinkingCapableModel,
-  isPiMistralThinkingCapableModel
-} from '../../../shared/mistralModels'
+import { isMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   CLAUDE_DEFAULT_MODELS,
   CODEX_DEFAULT_MODELS,
@@ -42,6 +39,7 @@ import {
   type CodexModelOption
 } from './providerModelDefaults'
 import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
@@ -175,19 +173,33 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: mistralReasoningDisplayLabel('max') }
 ]
 
-// General Pi API-key models (DeepSeek, ZAI, Qwen, MiniMax, Groq, Cerebras,
-// OpenRouter upstreams): full thinking-level ladder surfaced via
-// piReasoningEffort and dispatched as Pi thinkingLevel. Mirrors the display
-// labels in composerChipFormat's provider === 'pi' branch.
-const PI_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'max', label: 'Max' }
-]
+// Pi effort labels, surfaced via piReasoningEffort and dispatched as Pi's
+// `--thinking` level. Mirrors composerChipFormat's provider === 'pi' branch.
+// The stops OFFERED are per-model (see shared/piReasoning.ts): the upstreams
+// behind this one seat range from a four-tier effort ladder to a plain
+// boolean to a token budget with no ladder at all.
+const PI_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max'
+}
+
+function piReasoningOptions(modelId?: string | null): CombinedModelPickerReasoningOption[] {
+  const support = resolvePiReasoningSupport(modelId)
+  if (support.efforts.length === 0) return []
+  const lockedReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: PI_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && lockedReason ? { disabledReason: lockedReason } : {})
+  }))
+}
 
 const OLLAMA_EFFORT_LABELS: Readonly<Record<string, string>> = {
   off: 'Off',
@@ -439,7 +451,7 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
   { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
   { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
-  { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' },
+  { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' },
   { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
   { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' }
 ]
@@ -617,10 +629,8 @@ export function getEnsembleReasoningOptions(
     case 'mistral': {
       return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
-    case 'pi': {
-      if (isPiMistralThinkingCapableModel(modelId)) return MISTRAL_THINKING_REASONING
-      return PI_REASONING
-    }
+    case 'pi':
+      return piReasoningOptions(modelId)
     case 'ollama':
       return ollamaReasoningOptions(
         resolveOllamaReasoningSupport({
@@ -1435,7 +1445,9 @@ export function getEnsembleModelDefaults(
     case 'pi':
       return {
         modelOptions: activePiModelRows(PI_MODELS, now),
-        reasoningOptions: PI_REASONING,
+        // Model-agnostic default for the seat; the per-model ladder narrows it
+        // as soon as a model is known (getEnsembleReasoningOptions).
+        reasoningOptions: piReasoningOptions(null),
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'deepseek/deepseek-v4-flash'

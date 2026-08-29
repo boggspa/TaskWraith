@@ -396,6 +396,18 @@ describe('reasoningDisplayLabel', () => {
         mistralReasoningEffort: 'medium'
       })
     ).toBe('Medium')
+    // A Pi seat stores its effort in piReasoningEffort. The chip used to read
+    // mistralReasoningEffort for Pi-Mistral ids — a field only the Mistral seat
+    // ever sets — so these three models rendered no reasoning suffix at all.
+    expect(
+      reasoningDisplayLabel({
+        provider: 'pi',
+        composerStyle: 'claude',
+        modelId: 'mistral/mistral-medium-3.5',
+        modelLabel: 'Mistral Medium 3.5',
+        piReasoningEffort: 'high'
+      })
+    ).toBe('High')
     expect(
       reasoningDisplayLabel({
         provider: 'pi',
@@ -404,7 +416,7 @@ describe('reasoningDisplayLabel', () => {
         modelLabel: 'Mistral Medium 3.5',
         mistralReasoningEffort: 'high'
       })
-    ).toBe('High')
+    ).toBe('')
     expect(
       reasoningDisplayLabel({
         provider: 'mistral',

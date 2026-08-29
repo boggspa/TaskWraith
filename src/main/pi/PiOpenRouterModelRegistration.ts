@@ -34,9 +34,9 @@ export interface PiOpenRouterCustomModelRegistration {
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
   {
-    modelId: 'zai/glm-5.2',
+    modelId: 'z-ai/glm-5.2',
     label: 'GLM 5.2',
-    reasoning: false,
+    reasoning: true,
     input: ['text'],
     contextWindow: 256_000,
     maxTokens: 131_072,
@@ -45,7 +45,7 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
   {
     modelId: 'poolside/laguna-s-2.1',
     label: 'Laguna S 2.1',
-    reasoning: false,
+    reasoning: true,
     input: ['text'],
     contextWindow: 256_000,
     maxTokens: 131_072,

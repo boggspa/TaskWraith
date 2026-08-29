@@ -98,7 +98,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'cerebras/zai-glm-4.7': 131_072,
   'cerebras/gpt-oss-120b': 131_072,
   'openrouter/stealth/ox-alpha': 1_048_576,
-  'openrouter/zai/glm-5.2': 256_000,
+  'openrouter/z-ai/glm-5.2': 256_000,
   'openrouter/poolside/laguna-s-2.1': 256_000,
   'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 1_000_000,
   // Codex

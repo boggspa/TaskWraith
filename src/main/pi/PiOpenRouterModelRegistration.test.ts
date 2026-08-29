@@ -46,8 +46,8 @@ describe('writePiOpenRouterModelRegistration', () => {
 
   it('maps OpenRouter resold models to their original provider brands', () => {
     // Test that Zai, Poolside, and NVIDIA models get their original branding
-    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.label).toBe('Z.ai')
-    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')?.hueClass).toBe('zai')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.label).toBe('Z.ai')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
     expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe('NVIDIA')
@@ -119,7 +119,7 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(() =>
       writePiOpenRouterModelRegistration({
         isolatedHomeDir: home,
-        modelId: 'zai/glm-5.2'
+        modelId: 'z-ai/glm-5.2'
       })
     ).toThrow()
     expect(readFileSync(join(home, 'models.json'), 'utf8')).toBe('{}')

@@ -12,7 +12,7 @@ describe('Pi model lifecycle', () => {
     expect(piModelRetiresAt('openrouter/stealth/ox-alpha')).toBe('2026-08-28')
     expect(piModelRetiresAt('zai/glm-4.7')).toBeUndefined()
     expect(piModelRetiresAt('cerebras/gpt-oss-120b')).toBeUndefined()
-    expect(piModelRetiresAt('openrouter/zai/glm-5.2')).toBeUndefined()
+    expect(piModelRetiresAt('openrouter/z-ai/glm-5.2')).toBeUndefined()
   })
 
   it('takes the date-only sunset at the start of the local calendar day', () => {
@@ -39,7 +39,7 @@ describe('Pi model lifecycle', () => {
       { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
       { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
       { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
-      { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' }
+      { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' }
     ]
 
     expect(activePiModelRows(rows, new Date(2026, 7, 16))).toEqual([
@@ -55,7 +55,7 @@ describe('Pi model lifecycle', () => {
         label: 'Ox Alpha',
         retiresAt: '2026-08-28'
       },
-      { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' }
+      { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' }
     ])
     expect(activePiModelRows(rows, new Date(2026, 7, 17))).toEqual([
       { id: 'zai/glm-4.7', label: 'GLM-4.7' },
@@ -65,12 +65,12 @@ describe('Pi model lifecycle', () => {
         label: 'Ox Alpha',
         retiresAt: '2026-08-28'
       },
-      { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' }
+      { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' }
     ])
     expect(activePiModelRows(rows, new Date(2026, 7, 28))).toEqual([
       { id: 'zai/glm-4.7', label: 'GLM-4.7' },
       { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
-      { id: 'openrouter/zai/glm-5.2', label: 'GLM 5.2' }
+      { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' }
     ])
   })
 })

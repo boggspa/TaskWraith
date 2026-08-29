@@ -252,7 +252,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     label: 'GLM-5.2 (via Mistral)',
     contextWindow: 1_000_000,
     maxOutputTokens: 131_072,
-    thinking: false,
+    thinking: true,
     images: false
   },
   {
@@ -434,13 +434,13 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: true
   },
   {
-    wireId: 'openrouter/zai/glm-5.2',
+    wireId: 'openrouter/z-ai/glm-5.2',
     upstream: 'openrouter',
-    modelId: 'zai/glm-5.2',
+    modelId: 'z-ai/glm-5.2',
     label: 'GLM 5.2',
     contextWindow: 256_000,
     maxOutputTokens: 131_072,
-    thinking: false,
+    thinking: true,
     images: false
   },
   {
@@ -450,7 +450,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     label: 'Laguna S 2.1',
     contextWindow: 256_000,
     maxOutputTokens: 131_072,
-    thinking: false,
+    thinking: true,
     images: false
   },
   {

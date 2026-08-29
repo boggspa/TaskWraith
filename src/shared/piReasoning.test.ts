@@ -1,0 +1,83 @@
+import { describe, expect, it } from 'vitest'
+import { PI_FULL_LADDER, resolvePiReasoningSupport } from './piReasoning'
+
+describe('resolvePiReasoningSupport', () => {
+  // Each row is sourced to the upstream's own API docs. The point of the table
+  // is that one Pi seat fronts upstreams whose controls are genuinely
+  // different shapes — a four-tier ladder, a two-tier ladder, a boolean, and a
+  // token budget with no ladder at all.
+  const CASES: readonly (readonly [string, readonly string[]])[] = [
+    // DeepSeek: medium and xhigh are documented aliases for high.
+    ['deepseek/deepseek-v4-pro', ['off', 'low', 'high', 'max']],
+    ['deepseek/deepseek-v4-flash', ['off', 'low', 'high', 'max']],
+    // Z.ai collapses seven efforts onto two outcomes plus off.
+    ['zai/glm-5.2', ['off', 'high', 'max']],
+    // `reasoning_effort` is "GLM-5.2 and above".
+    ['zai/glm-5.1', ['off', 'high']],
+    // Qwen exposes `enable_thinking` plus a token budget, never a level.
+    ['qwen-token-plan/qwen3.8-max', ['off', 'high']],
+    ['minimax/MiniMax-M3', ['off', 'high']],
+    ['xiaomi-token-plan-sgp/mimo-v2.5-pro', ['off', 'high']],
+    // Mistral documents `high` and `none` only.
+    ['mistral/mistral-medium-3.5', ['off', 'high']],
+    ['mistral/zai-glm-5-2', ['off', 'high']],
+    // OpenRouter's GLM copy advertises a different pair from Z.ai's own.
+    ['openrouter/z-ai/glm-5.2', ['off', 'high', 'xhigh']],
+    ['openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', ['off', 'medium', 'high']],
+    ['openrouter/poolside/laguna-s-2.1', ['off', 'high']]
+  ]
+
+  it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {
+    expect(resolvePiReasoningSupport(wireId).efforts).toEqual(efforts)
+  })
+
+  it('offers no control for a model with no reasoning at all', () => {
+    for (const wireId of [
+      'mistral/mistral-large-2512',
+      'mistral/devstral-2512',
+      'mistral/codestral-2508',
+      'mistral/ministral-3b-2512'
+    ]) {
+      expect(resolvePiReasoningSupport(wireId).kind, wireId).toBe('unsupported')
+      expect(resolvePiReasoningSupport(wireId).efforts, wireId).toEqual([])
+    }
+  })
+
+  it('locks the ladder for upstreams that reason on every turn', () => {
+    // Both accept a disable flag and ignore it, so an Off stop would be a
+    // control that silently does nothing.
+    for (const wireId of ['zai/glm-4.7', 'minimax/MiniMax-M2.7', 'cerebras/zai-glm-4.7']) {
+      const support = resolvePiReasoningSupport(wireId)
+      expect(support.canDisable, wireId).toBe(false)
+      expect(support.efforts, wireId).toEqual(['high'])
+    }
+    // Neither GPT-OSS host's enum carries a `none`.
+    for (const wireId of ['groq/openai/gpt-oss-120b', 'cerebras/gpt-oss-120b']) {
+      const support = resolvePiReasoningSupport(wireId)
+      expect(support.canDisable, wireId).toBe(false)
+      expect(support.efforts, wireId).toEqual(['low', 'medium', 'high'])
+    }
+  })
+
+  it('keeps the full ladder for an unlisted or unset model', () => {
+    // A newly registered upstream must not be silently stripped of a control
+    // it may well support, and the seat-level question ("what can Pi do?")
+    // stays the union until a model is chosen.
+    expect(resolvePiReasoningSupport('openrouter/stealth/ox-alpha').efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport('brand-new/model-1').efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport(undefined).efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport('').efforts).toEqual(PI_FULL_LADDER)
+  })
+
+  it('routes the same model differently per upstream', () => {
+    // GLM-5.2 direct, via Mistral, and via OpenRouter are three different
+    // controls for one model — which is why the table is keyed by wire id.
+    expect(resolvePiReasoningSupport('zai/glm-5.2').efforts).toEqual(['off', 'high', 'max'])
+    expect(resolvePiReasoningSupport('mistral/zai-glm-5-2').efforts).toEqual(['off', 'high'])
+    expect(resolvePiReasoningSupport('openrouter/z-ai/glm-5.2').efforts).toEqual([
+      'off',
+      'high',
+      'xhigh'
+    ])
+  })
+})

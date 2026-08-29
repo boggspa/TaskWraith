@@ -9,6 +9,49 @@ import {
   hostProviderStatus
 } from './HostProviderCatalog'
 
+describe('derived reasoning offers', () => {
+  const efforts = (providerId: string, modelId: string): string[] =>
+    (hostProviderCatalogEntry(providerId)?.models ?? [])
+      .find((offer) => offer.modelId === modelId)
+      ?.reasoning.map((option) => option.reasoningId) ?? []
+
+  // This surface feeds the Host and the iOS remote picker, so drift from the
+  // desktop tables was invisible to every desktop test. Both providers now
+  // derive from the same resolvers the desktop uses.
+  it('never offers Ollama an effort its daemon rejects', () => {
+    const offered = new Set(
+      (hostProviderCatalogEntry('ollama')?.models ?? []).flatMap((offer) =>
+        offer.reasoning.map((option) => option.reasoningId)
+      )
+    )
+    // `think` accepts high/medium/low/max, true, or false — never `xhigh`.
+    expect(offered.has('xhigh')).toBe(false)
+    expect([...offered].sort()).toEqual(['high', 'low', 'medium', 'off', 'on'])
+  })
+
+  it('offers no reasoning at all for models that cannot think', () => {
+    for (const modelId of ['gemma3:4b', 'granite4:3b', 'granite4.1:30b', 'granite4.2:8b']) {
+      expect(efforts('ollama', modelId), modelId).toEqual([])
+    }
+    for (const wireId of ['mistral/mistral-large-2512', 'mistral/ministral-8b-2512']) {
+      expect(efforts('pi', wireId), wireId).toEqual([])
+    }
+  })
+
+  it('keeps each Pi route on its own upstream ladder', () => {
+    expect(efforts('pi', 'deepseek/deepseek-v4-pro')).toEqual(['off', 'low', 'high', 'max'])
+    expect(efforts('pi', 'zai/glm-5.2')).toEqual(['off', 'high', 'max'])
+    expect(efforts('pi', 'openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
+    // GPT-OSS cannot be switched off on either host.
+    expect(efforts('pi', 'groq/openai/gpt-oss-120b')).toEqual(['low', 'medium', 'high'])
+  })
+
+  it('gives GPT-OSS the level ladder Ollama documents for it', () => {
+    expect(efforts('ollama', 'gpt-oss:20b')).toEqual(['low', 'medium', 'high'])
+    expect(efforts('ollama', 'qwen3.5:9b')).toEqual(['off', 'on'])
+  })
+})
+
 describe('HostProviderCatalog', () => {
   it('exposes entries for all nine live providers', () => {
     const ids = hostProviderCatalogIds()
@@ -167,7 +210,7 @@ describe('HostProviderCatalog', () => {
       'openrouter/stealth/ox-alpha'
     )
     expect(offers!.models.map((model) => model.modelId)).toEqual(
-      expect.arrayContaining(['openrouter/zai/glm-5.2', 'openrouter/poolside/laguna-s-2.1'])
+      expect.arrayContaining(['openrouter/z-ai/glm-5.2', 'openrouter/poolside/laguna-s-2.1'])
     )
   })
 })

@@ -803,7 +803,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(
       true
     )
-    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/zai/glm-5.2')).toBe(
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/z-ai/glm-5.2')).toBe(
       true
     )
   })
@@ -1093,22 +1093,24 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   })
 
   it('distinguishes Ollama boolean thinking, GPT-OSS levels, unsupported, and live models', () => {
-    expect(getEnsembleReasoningOptions('ollama', 'ornith-1.5:35b').map((o) => o.value)).toEqual([
+    expect(getEnsembleReasoningOptions('ollama', 'ornith:35b').map((o) => o.value)).toEqual([
       'off',
       'on'
     ])
+    // Ornith 1.5 ships without 1.0's thinking parser, and Granite 4.2's
+    // packaging exposes none at all.
+    expect(getEnsembleReasoningOptions('ollama', 'ornith-1.5:35b')).toEqual([])
     expect(getEnsembleReasoningOptions('ollama', 'gpt-oss:20b').map((o) => o.value)).toEqual([
       'low',
       'medium',
       'high'
     ])
     expect(getEnsembleReasoningOptions('ollama', 'gemma3:4b')).toEqual([])
+    // Only `high` maps through Mistral Medium 3.5's `.ThinkLevel` branch.
     expect(
       getEnsembleReasoningOptions('ollama', 'mistral-medium-3.5:128b').map((o) => o.value)
-    ).toEqual(['off', 'on'])
-    expect(
-      getEnsembleReasoningOptions('ollama', 'granite4.2:8b').map((o) => o.value)
-    ).toEqual(['off', 'on'])
+    ).toEqual(['off', 'high'])
+    expect(getEnsembleReasoningOptions('ollama', 'granite4.2:8b')).toEqual([])
     expect(
       getEnsembleReasoningOptions('ollama', 'custom-thinking:latest', {
         capabilities: ['completion', 'thinking']
@@ -1141,17 +1143,42 @@ describe('mistral configurable reasoning support', () => {
     ])
   })
 
-  it('mirrors the Mistral-hosted lock on the Pi BYOK lane and gives general Pi models the full thinking ladder', () => {
-    // Pi-Mistral-hosted ids keep their known model-specific ladder; general
-    // Pi API-key models (DeepSeek, ZAI, Cerebras, OpenRouter…) now surface
-    // the piReasoningEffort ladder dispatched as Pi thinkingLevel.
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-3.5')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
+  it('offers each Pi model only the stops its own upstream honours', () => {
+    const values = (modelId?: string | null): string[] =>
+      getEnsembleReasoningOptions('pi', modelId).map((option) => option.value)
+
+    // Mistral documents `high` and `none`; the wider schema enum has no
+    // defined semantics, so the honest surface is off-or-high.
+    expect(values('mistral/mistral-medium-3.5')).toEqual(['off', 'high'])
+    // DeepSeek V4: medium and xhigh are documented aliases for high.
+    expect(values('deepseek/deepseek-v4-pro')).toEqual(['off', 'low', 'high', 'max'])
+    // Z.ai collapses seven efforts onto High and Max.
+    expect(values('zai/glm-5.2')).toEqual(['off', 'high', 'max'])
+    // GLM 5.1 predates `reasoning_effort` entirely.
+    expect(values('zai/glm-5.1')).toEqual(['off', 'high'])
+    // Qwen has no ladder at all — a boolean plus a token budget.
+    expect(values('qwen-token-plan/qwen3.8-max')).toEqual(['off', 'high'])
+    // OpenRouter's GLM copy advertises a DIFFERENT pair from Z.ai's own.
+    expect(values('openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
+    // Non-reasoning models get no control rather than a ladder that does
+    // nothing.
+    expect(values('mistral/mistral-large-2512')).toEqual([])
+    expect(values('mistral/ministral-8b-2512')).toEqual([])
+  })
+
+  it('locks the ladder for Pi upstreams that always reason', () => {
+    // Both accept a disable flag and ignore it, so an Off stop would be a
+    // control that silently does nothing.
+    for (const modelId of ['zai/glm-4.7', 'minimax/MiniMax-M2.7']) {
+      const options = getEnsembleReasoningOptions('pi', modelId)
+      expect(options.map((option) => option.value), modelId).toEqual(['high'])
+      expect(options[0]?.disabledReason, modelId).toMatch(/always reasons/i)
+    }
+    // GPT-OSS reasoning cannot be switched off on Groq or Cerebras either —
+    // neither enum carries a `none`.
+    expect(getEnsembleReasoningOptions('pi', 'groq/openai/gpt-oss-120b').map((o) => o.value)).toEqual(
+      ['low', 'medium', 'high']
+    )
   })
 
   it('unlocks Devstral Small in both live and Pi BYOK lanes', () => {
@@ -1162,16 +1189,14 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/devstral-small')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
+    // `mistral/devstral-small` is not a catalogued Pi row, so it keeps the
+    // full ladder rather than being silently stripped of a control.
+    expect(
+      getEnsembleReasoningOptions('pi', 'mistral/devstral-small').map((option) => option.value)
+    ).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('gives general Pi API-key models the full piReasoningEffort ladder', () => {
+  it('keeps the full ladder for a model no one has researched yet', () => {
     const PI_LADDER = [
       { value: 'off', label: 'Off' },
       { value: 'minimal', label: 'Minimal' },
@@ -1181,11 +1206,9 @@ describe('mistral configurable reasoning support', () => {
       { value: 'xhigh', label: 'Extra High' },
       { value: 'max', label: 'Max' }
     ]
-    expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual(PI_LADDER)
-    expect(getEnsembleReasoningOptions('pi', 'zai/glm-5.2')).toEqual(PI_LADDER)
-    expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual(PI_LADDER)
+    // An uncatalogued or unset model keeps the full ladder: a newly registered
+    // upstream must not be stripped of a control it may well support.
     expect(getEnsembleReasoningOptions('pi', 'openrouter/stealth/ox-alpha')).toEqual(PI_LADDER)
-    // Unset model still resolves to the provider-level Pi ladder.
     expect(getEnsembleReasoningOptions('pi', undefined)).toEqual(PI_LADDER)
   })
 
@@ -1225,20 +1248,14 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-latest')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-small-2603')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
+    // Through the Pi lane these are the Mistral API, where only `high` and
+    // `none` have documented semantics — narrower than the Vibe seat above.
+    for (const modelId of ['mistral/mistral-medium-latest', 'mistral/mistral-small-2603']) {
+      expect(
+        getEnsembleReasoningOptions('pi', modelId).map((option) => option.value),
+        modelId
+      ).toEqual(['off', 'high'])
+    }
   })
 
   it('keeps unsupported models on an empty reasoning set', () => {

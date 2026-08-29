@@ -1412,7 +1412,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Retired 2026-08-28; retained only so historical Pi chats and ensemble seats keep their cost records.'
       },
       {
-        modelId: 'openrouter/zai/glm-5.2',
+        modelId: 'openrouter/z-ai/glm-5.2',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
         freeModel: true,
