@@ -12,6 +12,8 @@ export interface ExecutionMapViewProps {
   onBack?: () => void
   onOpenThread?: (threadRef: string) => void
   onSaveGraph?: (runId: string) => void
+  /** Stop the whole execution. Absent when the caller has no cancel authority. */
+  onCancelRun?: (runId: string) => void
 }
 
 function executionStepKindLabel(kind: ExecutionStepDefinition['kind']): string {
@@ -226,7 +228,8 @@ export function ExecutionMapView({
   onSelectStep,
   onBack,
   onOpenThread,
-  onSaveGraph
+  onSaveGraph,
+  onCancelRun
 }: ExecutionMapViewProps): JSX.Element {
   const [internalSelectedStepId, setInternalSelectedStepId] = useState<string | null>(null)
   const mapRef = useRef<HTMLElement>(null)
@@ -305,6 +308,18 @@ export function ExecutionMapView({
               onClick={() => onSaveGraph(projection.runId)}
             >
               Save graph
+            </button>
+          )}
+          {onCancelRun &&
+            projection.runState !== 'succeeded' &&
+            projection.runState !== 'failed' &&
+            projection.runState !== 'cancelled' && (
+            <button
+              type="button"
+              className="execution-map-cancel-run"
+              onClick={() => onCancelRun(projection.runId)}
+            >
+              Cancel execution
             </button>
           )}
         </span>

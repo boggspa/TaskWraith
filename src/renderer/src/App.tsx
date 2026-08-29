@@ -24028,6 +24028,41 @@ function App(): React.JSX.Element {
     },
     [executionRunsById, rememberExecutionRun]
   )
+  /**
+   * Stop a whole durable execution from the thread that owns it.
+   *
+   * Distinct from `handleCancelExecutionStackStep`, which despite its name is
+   * also a full-graph cancel but is gated on a dormant frontier step — it
+   * cannot stop a graph whose current stage is actually running. This is the
+   * killswitch: it revokes every non-terminal lease and cancels the live
+   * provider transport. It existed in preload with no caller at all, which is
+   * why a running UltraTask could not be stopped from the UI.
+   */
+  const handleCancelExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.cancelExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Execution cancellation is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .cancelExecutionRun(executionId, 'Cancelled by user.')
+        .then((projection) => {
+          if (projection) rememberExecutionRun(projection)
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not cancel the execution: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
   const handleOpenExecutionThread = useCallback(
     (threadRef: string): void => {
       const chat =
@@ -31440,6 +31475,8 @@ function App(): React.JSX.Element {
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
     handleBackFromExecutionMap,
+    handleCancelExecutionRun,
+    handleOpenExecutionMap,
     handleSelectExecutionMapStep: (stepId: string) =>
       setOpenExecutionMap((current) =>
         current ? { ...current, selectedStepId: stepId } : current

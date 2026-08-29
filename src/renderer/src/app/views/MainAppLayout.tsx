@@ -197,6 +197,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSelectExecutionMapStep,
   handleOpenExecutionThread,
   handleSaveExecutionGraph,
+  handleCancelExecutionRun,
+  handleOpenExecutionMap,
   copiedId,
   copy,
   currentBlackboardEntries,
@@ -1914,6 +1916,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       onBack={handleBackFromExecutionMap}
                       onOpenThread={handleOpenExecutionThread}
                       onSaveGraph={handleSaveExecutionGraph}
+                      onCancelRun={handleCancelExecutionRun}
                     />
                   )
                 }
@@ -2278,6 +2281,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 hasLiveOwnedExecution={liveOwnedExecutionThreads.has(
                   currentChat?.appChatId || ''
                 )}
+                onOpenExecutionMapForThread={handleOpenExecutionMap}
                 currentChat={currentChat}
                 isGlobal={isGlobalChat(currentChat)}
                 currentRun={currentRun}

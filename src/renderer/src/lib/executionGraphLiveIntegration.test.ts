@@ -149,11 +149,15 @@ describe('live execution graph integration', () => {
     expect(queueCounts.match(/!job\.executionGraph/g)).toHaveLength(2)
   })
 
-  it('strips Electron invoke framing from all three Stack error surfaces', () => {
-    expect(appSource.match(/stripElectronInvokeErrorFraming\(error\)/g)).toHaveLength(3)
+  // The invariant is that EVERY Stack/execution error surface strips the
+  // framing; the count is how that is enforced. A fourth surface was added with
+  // the whole-execution killswitch (2026-08-29), which is why the count moved.
+  it('strips Electron invoke framing from all four Stack error surfaces', () => {
+    expect(appSource.match(/stripElectronInvokeErrorFraming\(error\)/g)).toHaveLength(4)
     expect(appSource).toContain('Could not add this message to the Stack:')
     expect(appSource).toContain('Could not save graph:')
     expect(appSource).toContain('Could not cancel the remaining Stack:')
+    expect(appSource).toContain('Could not cancel the execution:')
   })
 
   it('uses Execution Map as the focused primary-pane alternative to the transcript', () => {
