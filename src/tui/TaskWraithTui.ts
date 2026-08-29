@@ -1835,6 +1835,10 @@ export class TaskWraithTui {
       await this.cancelRun()
       return
     }
+    if (command === '/goal') {
+      this.toggleOverlay('goal')
+      return
+    }
     if (command === '/archive') {
       await this.archiveOpenThread()
       return

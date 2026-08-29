@@ -15,6 +15,7 @@ import {
   visibleWidth,
   wrapPlainText
 } from './ansi'
+import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import { resolveGhostBanner } from './ghostBanner'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import {
@@ -925,6 +926,103 @@ function renderWorkspacesOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+/** `26h 14m` / `3m` — goal ledgers routinely span days, so hours never roll up. */
+function goalDuration(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || ms <= 0) return undefined
+  const minutes = Math.floor(ms / 60_000)
+  const hours = Math.floor(minutes / 60)
+  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/**
+ * The /goal lens. The App authors goals; this Host reads them, so the lens is
+ * read-only by construction and says so rather than implying the CLI can steer
+ * a goal it cannot author.
+ */
+function renderGoalOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const lines = [borderTitle('Goal', width, ansi, glyphs)]
+  const threadId = state.selectedThreadId
+  const goal = threadId
+    ? state.hostProjection?.threads.find((candidate) => candidate.id === threadId)?.goal
+    : undefined
+  if (!threadId) {
+    lines.push(borderedLine(ansi.dim('Open a thread to see its goal.'), width, ansi, glyphs))
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+  if (!goal) {
+    lines.push(
+      borderedLine(ansi.dim('This thread has no durable goal.'), width, ansi, glyphs),
+      borderedLine(
+        ansi.dim('Goals are authored in the TaskWraith app; the CLI reads them.'),
+        width,
+        ansi,
+        glyphs
+      ),
+      borderBottom(width, ansi, glyphs)
+    )
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  const tone =
+    goal.status === 'blocked'
+      ? TUI_TONE.warning
+      : goal.status === 'active'
+        ? TUI_TONE.good
+        : undefined
+  lines.push(overlayValue('status', terminalLabel(goal.status), width, ansi, glyphs, tone))
+  lines.push(
+    overlayValue(
+      'mode',
+      terminalLabel(activeGoalModeLabel(goal.mode as never)),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  const wall = goalDuration(goal.wallMs)
+  const active = goalDuration(goal.activeMs)
+  if (wall) {
+    const value = active && active !== wall ? `${wall} ${glyphs.separator} active ${active}` : wall
+    lines.push(overlayValue('elapsed', value, width, ansi, glyphs))
+  }
+  if (goal.blockedReason) {
+    lines.push(overlayValue('blocked', terminalLabel(goal.blockedReason), width, ansi, glyphs))
+  }
+
+  const density = resolveTuiDensity(width)
+  const bodyWidth = Math.max(8, width - density.overlayLabelWidth - 4)
+  lines.push(overlayValue('objective', '', width, ansi, glyphs))
+  for (const line of wrapPlainText(goal.objective, bodyWidth)) {
+    lines.push(borderedLine(`  ${line}`, width, ansi, glyphs))
+  }
+  if (goal.objectiveTruncated) {
+    // A clipped objective must never read as the whole objective.
+    lines.push(
+      borderedLine(ansi.dim(`  ${glyphs.ellipsis} truncated by the Host`), width, ansi, glyphs)
+    )
+  }
+  if (goal.acceptanceCriteria?.length) {
+    lines.push(overlayValue('acceptance', '', width, ansi, glyphs))
+    for (const criterion of goal.acceptanceCriteria) {
+      for (const [index, line] of wrapPlainText(criterion, bodyWidth - 2).entries()) {
+        lines.push(borderedLine(`  ${index === 0 ? '- ' : '  '}${line}`, width, ansi, glyphs))
+      }
+    }
+  }
+  lines.push(
+    borderedLine(ansi.dim('read-only · authored in the app · Esc close'), width, ansi, glyphs)
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
 function renderHelpOverlay(
   width: number,
   height: number,
@@ -968,7 +1066,13 @@ function renderHelpOverlay(
       ansi,
       glyphs
     ),
-    overlayValue('/status', 'Host, connection, and thread detail', width, ansi, glyphs),
+    overlayValue(
+      '/status',
+      `Host and thread detail${sep}/goal shows the thread objective`,
+      width,
+      ansi,
+      glyphs
+    ),
     overlayValue('/clear', 'clear the local transcript view', width, ansi, glyphs),
     overlayValue(
       '/git',
@@ -1473,6 +1577,9 @@ function renderOverlay(
   }
   if (state.overlay === 'workspaces') {
     return renderWorkspacesOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'goal') {
+    return renderGoalOverlay(state, width, height, ansi, glyphs)
   }
   return renderHelpOverlay(width, height, ansi, glyphs)
 }

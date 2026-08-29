@@ -14,6 +14,8 @@ import {
   encodeHostParticipantEntityId,
   HOST_PROTOCOL_MAX_CHANNEL_MEMBERS,
   HOST_PROTOCOL_MAX_COLLECTION,
+  HOST_PROTOCOL_MAX_GOAL_CRITERIA,
+  HOST_PROTOCOL_MAX_GOAL_OBJECTIVE,
   HOST_PROTOCOL_MAX_ID,
   HOST_PROTOCOL_MAX_SHORT,
   HOST_PROTOCOL_MAX_STRING,
@@ -30,6 +32,7 @@ import {
   type HostMissionProjection,
   type HostMissionOutcome,
   type HostParticipantProjection,
+  type HostThreadGoalProjection,
   type HostProjectionFreshness,
   type HostProviderModelProjection,
   type HostProviderTerminalOutcome,
@@ -638,6 +641,70 @@ function projectThread(
     out.usage = usage.value
   }
 
+  if (raw.goal !== undefined) {
+    const goal = projectThreadGoal(raw.goal, `${label}.goal`)
+    if (!goal.ok) return goal
+    out.goal = goal.value
+  }
+
+  return { ok: true, value: out }
+}
+
+const THREAD_GOAL_STATUSES: ReadonlySet<string> = new Set([
+  'active',
+  'paused',
+  'blocked',
+  'completed'
+])
+
+/**
+ * Presentation-truncate the donor goal. The projector rebuilds every thread row
+ * field by field, so a family that is not copied here reaches no client at all
+ * however faithfully the donor projected it.
+ */
+function projectThreadGoal(
+  raw: HostThreadGoalProjection,
+  label: string
+): HostDecodeResult<HostThreadGoalProjection> {
+  if (!isValidId(raw.id)) return { ok: false, error: `${label}.id is invalid` }
+  if (typeof raw.objective !== 'string' || raw.objective.length === 0) {
+    return { ok: false, error: `${label}.objective is required` }
+  }
+  if (typeof raw.status !== 'string' || !THREAD_GOAL_STATUSES.has(raw.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isValidId(raw.mode)) return { ok: false, error: `${label}.mode is invalid` }
+
+  const objective = truncatePresentation(raw.objective, HOST_PROTOCOL_MAX_GOAL_OBJECTIVE)
+  const out: HostThreadGoalProjection = {
+    id: raw.id,
+    objective: objective.text,
+    status: raw.status,
+    mode: raw.mode
+  }
+  if (objective.truncated || raw.objectiveTruncated === true) out.objectiveTruncated = true
+  if (raw.blockedReason !== undefined) {
+    if (typeof raw.blockedReason !== 'string') {
+      return { ok: false, error: `${label}.blockedReason must be a string` }
+    }
+    out.blockedReason = truncatePresentation(raw.blockedReason, HOST_PROTOCOL_MAX_SHORT).text
+  }
+  if (raw.acceptanceCriteria !== undefined) {
+    if (!Array.isArray(raw.acceptanceCriteria)) {
+      return { ok: false, error: `${label}.acceptanceCriteria must be an array` }
+    }
+    const criteria = raw.acceptanceCriteria
+      .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+      .slice(0, HOST_PROTOCOL_MAX_GOAL_CRITERIA)
+      .map((entry) => truncatePresentation(entry, HOST_PROTOCOL_MAX_SHORT).text)
+    if (criteria.length) out.acceptanceCriteria = criteria
+  }
+  for (const key of ['wallMs', 'activeMs'] as const) {
+    const value = raw[key]
+    if (value === undefined) continue
+    if (!isNonNegativeInt(value)) return { ok: false, error: `${label}.${key} is invalid` }
+    out[key] = value
+  }
   return { ok: true, value: out }
 }
 

@@ -4,6 +4,7 @@ import {
   decodeHostSnapshot,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_ID,
+  HOST_PROTOCOL_MAX_GOAL_OBJECTIVE,
   HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
   HOST_PROTOCOL_MAX_WARNING,
   HOST_PROTOCOL_VERSION,
@@ -402,6 +403,46 @@ describe('HostSnapshotProjector', () => {
     const preview = result.value.threads[0]?.latestPreview ?? ''
     expect(preview.length).toBeLessThanOrEqual(HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW)
     expect(result.value.threads[0]?.previewTruncated).toBe(true)
+    expect(assertHostSnapshotFamilies(result.value).ok).toBe(true)
+  })
+
+  it('carries the thread goal through, bounding the objective and its criteria', () => {
+    const long = 'g'.repeat(HOST_PROTOCOL_MAX_GOAL_OBJECTIVE + 50)
+    const result = projectHostSnapshot(
+      baseInput({
+        threads: [
+          {
+            id: 'thread-goal',
+            workspaceId: null,
+            title: 'Goal',
+            chatKind: 'single',
+            archived: false,
+            pinned: false,
+            updatedAt: 1,
+            messageCount: 1,
+            goal: {
+              id: 'goal-1',
+              objective: long,
+              status: 'active',
+              mode: 'taskwraith_steered',
+              acceptanceCriteria: ['Ship it.'],
+              wallMs: 1_000,
+              activeMs: 500
+            }
+          }
+        ]
+      })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // This projector rebuilds every thread row field by field, so a family it
+    // forgets to copy reaches no client however faithfully the donor sent it.
+    const goal = result.value.threads[0]?.goal
+    expect(goal?.id).toBe('goal-1')
+    expect(goal?.objective.length).toBeLessThanOrEqual(HOST_PROTOCOL_MAX_GOAL_OBJECTIVE)
+    expect(goal?.objectiveTruncated).toBe(true)
+    expect(goal?.acceptanceCriteria).toEqual(['Ship it.'])
+    expect(goal?.wallMs).toBe(1_000)
     expect(assertHostSnapshotFamilies(result.value).ok).toBe(true)
   })
 

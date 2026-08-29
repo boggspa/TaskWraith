@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { HostParticipantProjection } from '../shared/hostProtocol'
+import {
+  createEmptyHostSnapshot,
+  type HostParticipantProjection,
+  type HostThreadGoalProjection
+} from '../shared/hostProtocol'
 import { Ansi, stripAnsi, visibleWidth } from './ansi'
 import {
   GHOST_BANNER_COLUMNS,
@@ -986,5 +990,71 @@ describe('TaskWraith TUI renderer', () => {
     const marked = frame.split('\n').find((line) => line.includes('new threads land here'))
     expect(marked).toContain('AGBench')
     expect(marked).not.toContain('GUIGemini')
+  })
+  it('shows the thread goal read-only and flags a Host-truncated objective', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const goal: HostThreadGoalProjection = {
+      id: 'goal-1',
+      objective: 'Ship the standalone goal lens.',
+      status: 'blocked',
+      mode: 'taskwraith_steered',
+      blockedReason: 'waiting on review',
+      acceptanceCriteria: ['The TUI shows the objective.'],
+      wallMs: 94_440_000,
+      activeMs: 94_440_000,
+      objectiveTruncated: true
+    }
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'goal'
+    state.selectedThreadId = 'thread-goal'
+    state.hostProjection = {
+      ...createEmptyHostSnapshot({
+        generation: 1,
+        cursor: 1,
+        freshness: 'live',
+        generatedAt: new Date(0).toISOString()
+      }),
+      threads: [
+        {
+          id: 'thread-goal',
+          workspaceId: null,
+          title: 'Goal thread',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 0,
+          messageCount: 0,
+          goal
+        }
+      ]
+    }
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    expect(frame).toContain('Ship the standalone goal lens.')
+    expect(frame).toContain('waiting on review')
+    expect(frame).toContain('The TUI shows the objective.')
+    expect(frame).toContain('Guided by TaskWraith')
+    // Ledgers span days, so hours must never roll up into a bare minute count.
+    expect(frame).toContain('26h 14m')
+    // A clipped objective must never read as the whole objective.
+    expect(frame).toContain('truncated by the Host')
+    // The App authors goals; the lens must not imply the CLI can steer one.
+    expect(frame).toContain('read-only')
+
+    state.hostProjection.threads[0] = { ...state.hostProjection.threads[0], goal: undefined }
+    const empty = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    expect(empty).toContain('no durable goal')
+    expect(empty).not.toContain('Ship the standalone goal lens.')
   })
 })

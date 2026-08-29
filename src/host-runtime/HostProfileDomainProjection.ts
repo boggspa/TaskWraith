@@ -6,11 +6,79 @@ import { basename } from 'node:path'
 import {
   createEmptyHostSnapshot,
   decodeHostSnapshot,
+  HOST_PROTOCOL_MAX_GOAL_CRITERIA,
+  HOST_PROTOCOL_MAX_GOAL_OBJECTIVE,
+  HOST_PROTOCOL_MAX_SHORT,
   type HostHealthProjection,
   type HostParticipantProjection,
   type HostProviderModelProjection,
+  type HostThreadGoalProjection,
   type HostWarningProjection
 } from '../shared/hostProtocol'
+import {
+  hostComputeGoalRuntimeTiming,
+  type HostGoalRuntimeLedgerFacts
+} from '../host-shared/ActiveGoalContract'
+
+/**
+ * Project the goal the App already wrote onto this record.
+ *
+ * Read-only by construction: this Host never authors a goal, so the projection
+ * can only narrow what the App stored. Everything is bounded because the thread
+ * list ships in every snapshot — an unbounded objective on a busy profile would
+ * put kilobytes per thread on the wire for a field most threads do not have.
+ * A clipped objective is flagged rather than passed off as the whole objective.
+ */
+function projectThreadGoal(value: unknown): HostThreadGoalProjection | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const { id, objective, status, mode } = record
+  if (typeof id !== 'string' || id.length === 0 || id.length > 512) return undefined
+  if (typeof objective !== 'string' || objective.length === 0) return undefined
+  if (typeof mode !== 'string' || mode.length === 0 || mode.length > 512) return undefined
+  if (
+    status !== 'active' &&
+    status !== 'paused' &&
+    status !== 'blocked' &&
+    status !== 'completed'
+  ) {
+    return undefined
+  }
+
+  const goal: HostThreadGoalProjection = {
+    id,
+    objective: objective.slice(0, HOST_PROTOCOL_MAX_GOAL_OBJECTIVE),
+    status,
+    mode
+  }
+  if (objective.length > HOST_PROTOCOL_MAX_GOAL_OBJECTIVE) goal.objectiveTruncated = true
+  if (typeof record.blockedReason === 'string' && record.blockedReason.length > 0) {
+    goal.blockedReason = record.blockedReason.slice(0, HOST_PROTOCOL_MAX_SHORT)
+  }
+
+  const specification = record.specification
+  if (specification && typeof specification === 'object' && !Array.isArray(specification)) {
+    const criteria = (specification as Record<string, unknown>).acceptanceCriteria
+    if (Array.isArray(criteria)) {
+      const bounded = criteria
+        .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+        .slice(0, HOST_PROTOCOL_MAX_GOAL_CRITERIA)
+        .map((entry) => entry.slice(0, HOST_PROTOCOL_MAX_SHORT))
+      if (bounded.length) goal.acceptanceCriteria = bounded
+    }
+  }
+
+  const ledger = record.runtimeLedger
+  if (ledger && typeof ledger === 'object' && !Array.isArray(ledger)) {
+    const facts = ledger as unknown as HostGoalRuntimeLedgerFacts
+    if (typeof facts.startedAt === 'string' && Array.isArray(facts.intervals)) {
+      const timing = hostComputeGoalRuntimeTiming(facts)
+      goal.wallMs = timing.wallMs
+      goal.activeMs = timing.activeMs
+    }
+  }
+  return goal
+}
 
 export type HostProfileDomainSnapshotFamilies = Omit<
   HostSnapshotProjectorInput,
@@ -217,18 +285,22 @@ export function projectHostProfileDomainSnapshot(
   return {
     health,
     workspaces,
-    threads: threads.map((thread) => ({
-      id: thread.appChatId,
-      workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
-      title: thread.title,
-      chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
-      archived: thread.archived,
-      pinned: thread.pinned === true,
-      updatedAt: thread.updatedAt,
-      messageCount: thread.messages.length,
-      ...(safePreview(thread.messages) ? { latestPreview: safePreview(thread.messages) } : {}),
-      ...(thread.provider ? { providerId: thread.provider } : {})
-    })),
+    threads: threads.map((thread) => {
+      const goal = projectThreadGoal(thread.activeGoal)
+      return {
+        id: thread.appChatId,
+        workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
+        title: thread.title,
+        chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
+        archived: thread.archived,
+        pinned: thread.pinned === true,
+        updatedAt: thread.updatedAt,
+        messageCount: thread.messages.length,
+        ...(safePreview(thread.messages) ? { latestPreview: safePreview(thread.messages) } : {}),
+        ...(thread.provider ? { providerId: thread.provider } : {}),
+        ...(goal ? { goal } : {})
+      }
+    }),
     runs: threads.flatMap((thread) =>
       (thread.runs ?? []).map((run) => ({
         runId: run.runId,

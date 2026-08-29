@@ -37,6 +37,7 @@ export type TuiOverlay =
   | 'git'
   | 'seats'
   | 'workspaces'
+  | 'goal'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'

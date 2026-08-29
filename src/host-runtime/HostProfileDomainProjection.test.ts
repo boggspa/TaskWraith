@@ -270,3 +270,104 @@ it('omits decoder-invalid seats so one malformed row cannot poison the snapshot'
     ])
   }
 })
+
+it('projects the App-authored goal, bounding the objective and flagging the clip', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-goal-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-goal-workspace-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-goal'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Thread'
+  })
+  const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
+  const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+  // The App writes the goal onto this record; the Host only ever reads it.
+  raw.activeGoal = {
+    id: 'goal-1',
+    objective: 'o'.repeat(2_500),
+    status: 'blocked',
+    mode: 'taskwraith_steered',
+    blockedReason: 'waiting on review',
+    specification: { kind: 'prompt', acceptanceCriteria: ['Ship it.', ''] },
+    runtimeLedger: {
+      startedAt: '2026-08-29T10:00:00.000Z',
+      endedAt: '2026-08-29T11:00:00.000Z',
+      intervals: [
+        {
+          status: 'active',
+          startedAt: '2026-08-29T10:00:00.000Z',
+          endedAt: '2026-08-29T10:30:00.000Z'
+        }
+      ]
+    }
+  }
+  writeFileSync(chatFile, JSON.stringify(raw))
+  chmodSync(chatFile, 0o600)
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+  const goal = donor.threads[0]?.goal
+  expect(goal?.id).toBe('goal-1')
+  expect(goal?.status).toBe('blocked')
+  expect(goal?.blockedReason).toBe('waiting on review')
+  // Bounded: the thread list ships in every snapshot, so an unbounded
+  // objective would put kilobytes per thread on the wire.
+  expect(goal?.objective).toHaveLength(2_000)
+  expect(goal?.objectiveTruncated).toBe(true)
+  expect(goal?.acceptanceCriteria).toEqual(['Ship it.'])
+  expect(goal?.wallMs).toBe(60 * 60 * 1000)
+  expect(goal?.activeMs).toBe(30 * 60 * 1000)
+
+  // The projection must survive the wire decoder, not merely the projector.
+  const decoded = decodeHostSnapshot({
+    ...createEmptyHostSnapshot({
+      generation: 1,
+      cursor: 1,
+      freshness: 'live',
+      generatedAt: new Date(0).toISOString()
+    }),
+    ...donor
+  })
+  expect(decoded.ok).toBe(true)
+  if (decoded.ok) expect(decoded.value.threads[0]?.goal?.id).toBe('goal-1')
+})
+
+it('omits a goal the decoder would reject rather than poisoning the thread row', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-goal-bad-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-goal-bad-workspace-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-bad-goal'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Thread'
+  })
+  const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
+  const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+  raw.activeGoal = { id: 'goal-1', objective: 'x', status: 'nonsense', mode: 'taskwraith_steered' }
+  writeFileSync(chatFile, JSON.stringify(raw))
+  chmodSync(chatFile, 0o600)
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+  expect(donor.threads).toHaveLength(1)
+  expect(donor.threads[0]?.goal).toBeUndefined()
+})

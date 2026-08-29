@@ -34,6 +34,9 @@ export const HOST_PROTOCOL_MAX_COLLECTION = 2_000
 export const HOST_PROTOCOL_MAX_DELTAS = 500
 export const HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW = 2_000
 export const HOST_PROTOCOL_MAX_WARNING = 1_000
+/** Goal objectives are bounded display summaries; the App holds the source. */
+export const HOST_PROTOCOL_MAX_GOAL_OBJECTIVE = 2_000
+export const HOST_PROTOCOL_MAX_GOAL_CRITERIA = 24
 /** Channels currently cap live/pending seats at eight members. */
 export const HOST_PROTOCOL_MAX_CHANNEL_MEMBERS = 8
 /** Lowercase SHA-256 hex digest length for command fingerprints on the wire. */
@@ -273,6 +276,30 @@ export interface HostMissionProjection {
   activeRoundId?: string
 }
 
+export type HostThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
+
+/**
+ * Bounded projection of a thread's durable goal.
+ *
+ * The App owns goal authorship and writes it onto the chat record; this is a
+ * read-only view of what is already stored, never a second source of truth.
+ * `objective` is a bounded display summary - the App holds the untruncated
+ * source - and `objectiveTruncated` says so, rather than letting a clipped
+ * objective read as the whole objective.
+ */
+export interface HostThreadGoalProjection {
+  id: string
+  objective: string
+  objectiveTruncated?: boolean
+  status: HostThreadGoalStatus
+  mode: string
+  blockedReason?: string
+  acceptanceCriteria?: string[]
+  /** Wall-clock accounting from the goal's runtime ledger, at snapshot time. */
+  wallMs?: number
+  activeMs?: number
+}
+
 export interface HostThreadProjection {
   id: string
   workspaceId: string | null
@@ -290,6 +317,7 @@ export interface HostThreadProjection {
   missionOutcome?: HostMissionOutcome
   activeRoundId?: string
   usage?: HostUsageObservation
+  goal?: HostThreadGoalProjection
 }
 
 export interface HostQuestionProjection {
@@ -2317,6 +2345,12 @@ function decodeHostThreadProjection(
     if (!decodedUsage.ok) return decodedUsage
     usage = decodedUsage.value
   }
+  let goal: HostThreadGoalProjection | undefined
+  if (value.goal !== undefined) {
+    const decodedGoal = decodeHostThreadGoalProjection(value.goal, label)
+    if (!decodedGoal.ok) return decodedGoal
+    goal = decodedGoal.value
+  }
   const thread: HostThreadProjection = {
     id: value.id,
     workspaceId: value.workspaceId as string | null,
@@ -2336,7 +2370,69 @@ function decodeHostThreadProjection(
   }
   if (value.activeRoundId !== undefined) thread.activeRoundId = value.activeRoundId
   if (usage !== undefined) thread.usage = usage
+  if (goal !== undefined) thread.goal = goal
   return { ok: true, value: thread }
+}
+
+const HOST_THREAD_GOAL_STATUSES: ReadonlySet<string> = new Set([
+  'active',
+  'paused',
+  'blocked',
+  'completed'
+])
+
+function decodeHostThreadGoalProjection(
+  value: unknown,
+  parentLabel: string
+): HostDecodeResult<HostThreadGoalProjection> {
+  const label = `${parentLabel}.goal`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.id is required` }
+  }
+  if (!isNonEmptyString(value.objective, HOST_PROTOCOL_MAX_GOAL_OBJECTIVE)) {
+    return { ok: false, error: `${label}.objective is invalid` }
+  }
+  if (typeof value.status !== 'string' || !HOST_THREAD_GOAL_STATUSES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isNonEmptyString(value.mode, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.mode is invalid` }
+  }
+  if (value.objectiveTruncated !== undefined && typeof value.objectiveTruncated !== 'boolean') {
+    return { ok: false, error: `${label}.objectiveTruncated must be boolean` }
+  }
+  if (!isOptionalString(value.blockedReason, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.blockedReason is invalid` }
+  }
+  if (value.acceptanceCriteria !== undefined) {
+    if (
+      !Array.isArray(value.acceptanceCriteria) ||
+      value.acceptanceCriteria.length > HOST_PROTOCOL_MAX_GOAL_CRITERIA ||
+      !value.acceptanceCriteria.every((entry) => isNonEmptyString(entry, HOST_PROTOCOL_MAX_SHORT))
+    ) {
+      return { ok: false, error: `${label}.acceptanceCriteria is invalid` }
+    }
+  }
+  for (const key of ['wallMs', 'activeMs'] as const) {
+    if (value[key] !== undefined && !isNonNegativeInt(value[key])) {
+      return { ok: false, error: `${label}.${key} is invalid` }
+    }
+  }
+  const goal: HostThreadGoalProjection = {
+    id: value.id,
+    objective: value.objective,
+    status: value.status as HostThreadGoalStatus,
+    mode: value.mode
+  }
+  if (value.objectiveTruncated !== undefined) goal.objectiveTruncated = value.objectiveTruncated
+  if (value.blockedReason !== undefined) goal.blockedReason = value.blockedReason
+  if (value.acceptanceCriteria !== undefined) {
+    goal.acceptanceCriteria = value.acceptanceCriteria as string[]
+  }
+  if (value.wallMs !== undefined) goal.wallMs = value.wallMs as number
+  if (value.activeMs !== undefined) goal.activeMs = value.activeMs as number
+  return { ok: true, value: goal }
 }
 
 function decodeHostRunProjection(
