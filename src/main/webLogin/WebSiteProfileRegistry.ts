@@ -54,9 +54,12 @@ export class WebSiteProfileRegistry {
    *  page leaves the page authenticated in memory and the jar empty, which
    *  reads to the user as "sign out did nothing". */
   async clearSite(siteId: string): Promise<void> {
-    const profile = this.profiles.get(siteId)
-    if (!profile) return
-    await profile.clearBrowsingData()
+    // MATERIALIZE rather than `profiles.get`. The map is populated only when a
+    // canvas binds, so after a restart it is empty — and a `get`-and-return-early
+    // made "Sign out" resolve successfully while clearing nothing, leaving the
+    // persisted cookies intact. That is the same "sign out did nothing" failure
+    // the open-surface check below guards against, reached by another route.
+    await this.profileFor(siteId).clearBrowsingData()
   }
 
   /** Forget: clear, then drop the profile so a later sign-in starts clean. */

@@ -97,7 +97,13 @@ export function normalizeWebSiteOrigin(input: unknown): string | null {
   if (typeof input !== 'string') return null
   const trimmed = input.trim()
   if (!trimmed) return null
-  const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`
+  // Only a scheme FOLLOWED BY "//" counts. Without the slashes, "localhost:3000"
+  // and "example.com:8080" parse as scheme + opaque path and are rejected — which
+  // silently made every dev-server origin unaddable, in a product whose Canvas
+  // Browser is pointed at dev servers constantly.
+  const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+    ? trimmed
+    : `https://${trimmed.replace(/^\/\//, '')}`
   let url: URL
   try {
     url = new URL(candidate)
@@ -138,9 +144,52 @@ export function authorizedOriginsForSite(site: WebSiteLogin): string[] {
  * gets switched off, which protects nothing.
  */
 export function isNavigationAllowedForSite(site: WebSiteLogin, url: unknown): boolean {
+  return isNavigationAllowedForOrigins(authorizedOriginsForSite(site), url)
+}
+
+/**
+ * The same fence, over a bare origin list.
+ *
+ * The canvas layer binds to a resolved origin set rather than a catalogue row,
+ * so a driver never has to know what a `WebSiteLogin` is and cannot be handed a
+ * stale one. Same rules: exact equality, http(s) only, no wildcards.
+ */
+export function isNavigationAllowedForOrigins(
+  authorizedOrigins: readonly string[],
+  url: unknown
+): boolean {
   const target = normalizeWebSiteOrigin(typeof url === 'string' ? url : '')
   if (!target) return false
-  return authorizedOriginsForSite(site).includes(target)
+  for (const allowed of authorizedOrigins) {
+    if (normalizeWebSiteOrigin(allowed) === target) return true
+  }
+  return false
+}
+
+/**
+ * What a canvas surface is bound to. Absent means an UNBOUND surface: the
+ * pre-existing shared-profile behaviour, with no fence. Present means the
+ * surface may only navigate documents to these origins.
+ */
+export interface WebSiteBinding {
+  siteId: string
+  authorizedOrigins: readonly string[]
+}
+
+/** The refusal a bound surface returns. Deliberately names the site and the
+ *  blocked origin: a fence that fails anonymously reads as a broken browser. */
+export function webSiteNavigationRefusal(binding: WebSiteBinding, url: string): string {
+  // ORIGIN ONLY, never the raw URL. This message is persisted verbatim into the
+  // canvas session record's `error` field, which is exactly what redactUrlQuery
+  // exists to keep `?token=` out of. An unnormalizable target is named
+  // generically rather than echoed.
+  const target = normalizeWebSiteOrigin(url) ?? 'that address'
+  const allowed = binding.authorizedOrigins.join(', ')
+  return (
+    `This canvas is bound to the saved login "${binding.siteId}" and may only ` +
+    `navigate to ${allowed}. Refusing ${target}. Open a separate canvas for that ` +
+    `site, or add the origin to this site's allowed list in Work > Logins.`
+  )
 }
 
 /** Read-back guard for the durable catalogue. Returns null rather than throwing

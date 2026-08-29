@@ -83,9 +83,15 @@ describe('WebSiteProfileRegistry', () => {
     ).not.toHaveBeenCalled()
   })
 
-  it('clearing an unmaterialized site is a no-op, not a throw', async () => {
-    const { registry } = harness()
-    await expect(registry.clearSite('never-opened')).resolves.toBeUndefined()
+  it('CLEARS a site whose profile was never materialized this session', async () => {
+    // After a restart the map is empty, so a get-and-return-early made "Sign
+    // out" resolve successfully while leaving the persisted cookies intact.
+    const { registry, profiles, created } = harness()
+    await registry.clearSite('never-opened-this-session')
+    expect(created).toEqual(['persist:taskwraith-site-never-opened-this-session'])
+    expect(
+      profiles.get('persist:taskwraith-site-never-opened-this-session')?.clearBrowsingData
+    ).toHaveBeenCalled()
   })
 
   it('forgetting drops the profile so the next sign-in starts clean', async () => {

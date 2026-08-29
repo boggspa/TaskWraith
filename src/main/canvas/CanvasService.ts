@@ -95,6 +95,9 @@ export interface CanvasServiceDeps {
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+      /** Saved site login this web canvas is bound to. The composition root
+       *  turns it into that site's own partition plus a navigation fence. */
+      siteId?: string
       /** Live browser-chrome state stream for the web driver (ephemeral). */
       onNavState?: (state: CanvasNavState) => void
       /** Committed main-frame / in-page navigation (url settled). */
@@ -710,6 +713,8 @@ export class CanvasService implements CanvasController {
       }
     }
 
+    // Site binding is web-only: no other driver kind has a cookie jar to fence.
+    const siteId = driverKind === 'web' ? (input.siteId || '').trim() || undefined : undefined
     const canvasId = this.deps.uuid()
     this.canvasGenerations.set(canvasId, generation)
     const nowIso = this.deps.now()
@@ -728,6 +733,7 @@ export class CanvasService implements CanvasController {
       chatId: ctx.chatId,
       runId: ctx.runId,
       workspacePath: ctx.workspacePath,
+      ...(siteId ? { siteId } : {}),
       createdAt: nowIso,
       updatedAt: nowIso
     }
@@ -753,6 +759,7 @@ export class CanvasService implements CanvasController {
     try {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
+        ...(siteId ? { siteId } : {}),
         appChatId:
           imageAppChatId ?? windowAppChatId ?? deviceAppChatId ?? canonicalAuthority(ctx.chatId),
         ...(Number.isSafeInteger(ctx.surfaceHostId) ? { surfaceHostId: ctx.surfaceHostId } : {}),
@@ -779,7 +786,11 @@ export class CanvasService implements CanvasController {
           this.open(
             {
               driver: 'web',
-              viewport
+              viewport,
+              // A "+" inside a site-bound browser must not silently drop to the
+              // shared any-origin profile: the authority would widen with
+              // nothing on screen to say so.
+              ...(siteId ? { siteId } : {})
             },
             ctx
           ).then(() => undefined),

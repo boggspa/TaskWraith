@@ -7,6 +7,7 @@ import {
   parseWebSiteLogin,
   partitionForWebSiteLogin,
   proposeWebSiteLoginId,
+  webSiteNavigationRefusal,
   type WebSiteLogin
 } from './webSiteLogin'
 
@@ -57,6 +58,17 @@ describe('normalizeWebSiteOrigin', () => {
   it('leaves IDN in punycode so a homograph stays visible in the row', () => {
     // U+0430 is Cyrillic "a"; the ASCII form is what the user must be shown.
     expect(normalizeWebSiteOrigin('https://exаmple.com')).toBe('https://xn--exmple-4nf.com')
+  })
+
+  it('accepts a host:port dev server rather than reading it as a scheme', () => {
+    // Regression: the old scheme test matched "localhost:3000" as scheme+opaque
+    // path, which made every dev-server origin unaddable.
+    // https is the default for a bare input: never silently downgrade. An http
+    // dev server is typed with its scheme.
+    expect(normalizeWebSiteOrigin('localhost:3000')).toBe('https://localhost:3000')
+    expect(normalizeWebSiteOrigin('http://localhost:3000')).toBe('http://localhost:3000')
+    expect(normalizeWebSiteOrigin('example.com:8443')).toBe('https://example.com:8443')
+    expect(normalizeWebSiteOrigin('127.0.0.1:8080')).toBe('https://127.0.0.1:8080')
   })
 
   it('returns null for junk and non-strings', () => {
@@ -182,5 +194,31 @@ describe('proposeWebSiteLoginId', () => {
 
   it('encodes a non-default port into the id so two ports never share a partition', () => {
     expect(proposeWebSiteLoginId('https://example.com:8443')).toBe('example-com-8443')
+  })
+})
+
+describe('webSiteNavigationRefusal', () => {
+  const binding = { siteId: 'example-com', authorizedOrigins: ['https://example.com'] }
+
+  it('names the site and the allowed origins so the refusal is actionable', () => {
+    const message = webSiteNavigationRefusal(binding, 'https://evil.com/x')
+    expect(message).toContain('example-com')
+    expect(message).toContain('https://example.com')
+    expect(message).toContain('https://evil.com')
+  })
+
+  it('carries the ORIGIN only — this message is persisted durably', () => {
+    // The canvas session record stores it verbatim in `error`, which is exactly
+    // what redactUrlQuery exists to keep credentials out of.
+    const message = webSiteNavigationRefusal(binding, 'https://evil.com/cb?token=SECRET&a=b')
+    expect(message).not.toContain('SECRET')
+    expect(message).not.toContain('token')
+    expect(message).not.toContain('/cb')
+  })
+
+  it('never echoes an unnormalizable target back', () => {
+    const message = webSiteNavigationRefusal(binding, 'javascript:alert(document.cookie)')
+    expect(message).not.toContain('javascript:')
+    expect(message).toContain('that address')
   })
 })

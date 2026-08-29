@@ -1377,6 +1377,9 @@ import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasServi
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
+import { WebSiteLoginStore } from './webLogin/WebSiteLoginStore'
+import { WebSiteProfileRegistry } from './webLogin/WebSiteProfileRegistry'
+import { resolveWebSiteCanvasBinding } from './webLogin/WebSiteCanvasBinding'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
@@ -4567,6 +4570,17 @@ const desktopToolExecutors = createDesktopToolExecutors({
 const canvasBrowserProfile = new CanvasBrowserProfile({
   resolveSession: (partition) => session.fromPartition(partition)
 })
+// Authorized site sessions: one persistent partition per saved login, kept
+// entirely separate from the shared profile above so an unbound canvas keeps
+// its existing behaviour. See docs/appdrive/authorized-site-sessions.md.
+const webSiteLoginStore = new WebSiteLoginStore({ userDataPath: app.getPath('userData') })
+const webSiteProfiles = new WebSiteProfileRegistry({
+  createProfile: (partition) =>
+    new CanvasBrowserProfile({
+      partition,
+      resolveSession: (name) => session.fromPartition(name)
+    })
+})
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {
     if (hostId !== undefined) {
@@ -4733,6 +4747,7 @@ const canvasService = new CanvasService({
       deviceTarget?: { udid: string; bundleId: string }
       provider?: string
       windowTarget?: CanvasWindowOpenTarget
+      siteId?: string
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
       onNavState?: (state: CanvasNavState) => void
@@ -4832,8 +4847,18 @@ const canvasService = new CanvasService({
       })
     }
     if (kind === 'web') {
+      // A site-bound canvas swaps the shared profile for that site's own and
+      // carries a navigation fence. An unknown site id throws rather than
+      // falling back to the shared jar.
+      const bound = opts?.siteId
+        ? resolveWebSiteCanvasBinding(
+            { getSite: (id) => webSiteLoginStore.get(id), profiles: webSiteProfiles },
+            opts.siteId
+          )
+        : null
       return new CanvasWebDriver(sessionId, {
-        browserProfile: canvasBrowserProfile,
+        browserProfile: bound?.browserProfile ?? canvasBrowserProfile,
+        ...(bound ? { siteBinding: bound.siteBinding } : {}),
         ...(opts?.embedded
           ? { createSurface: canvasEmbedController.surfaceFor(sessionId, opts.surfaceHostId) }
           : {}),

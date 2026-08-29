@@ -66,6 +66,12 @@ import {
   CanvasBrowserProfile,
   type CanvasBrowserProfileController
 } from './CanvasBrowserProfile'
+import {
+  isNavigationAllowedForOrigins,
+  partitionForWebSiteLogin,
+  webSiteNavigationRefusal,
+  type WebSiteBinding
+} from '../../shared/webSiteLogin'
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
@@ -760,6 +766,20 @@ export interface CanvasWebDriverDeps {
   onSurfaceClosed?: () => void
   /** Shared in production; injectable so driver tests stay session-local. */
   browserProfile?: CanvasBrowserProfileController
+  /**
+   * Bind this surface to ONE authorized site
+   * (docs/appdrive/authorized-site-sessions.md).
+   *
+   * Present: main-frame document navigation is fenced to the site's origins,
+   * and the profile handed in above is that site's own partition.
+   * Absent: the pre-existing unbound surface on the shared app-wide profile,
+   * with no fence - every already-shipped canvas keeps its exact behaviour.
+   *
+   * Fixed at construction and never re-assigned. Re-binding a live surface
+   * would let one canvas carry two sites' cookies in sequence, which is the
+   * state the per-site split exists to prevent.
+   */
+  siteBinding?: WebSiteBinding
 }
 
 type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
@@ -807,6 +827,10 @@ export class CanvasWebDriver implements CanvasDriver {
   private readonly onNewTabRequest?: () => void | Promise<void>
   private readonly onSurfaceClosed?: () => void
   private readonly browserProfile: CanvasBrowserProfileController
+  private readonly siteBinding: WebSiteBinding | null
+  /** Set by the request-layer fence so a cancelled main-frame hop can be
+   *  reported by name instead of as a bare network failure. */
+  private fenceBlockedUrl: string | null = null
   private releaseProfileRegistration: (() => void) | null = null
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
@@ -815,6 +839,18 @@ export class CanvasWebDriver implements CanvasDriver {
     this.browserProfile =
       deps.browserProfile ?? new CanvasBrowserProfile({ partition: `canvas-${sessionId}` })
     this.partition = this.browserProfile.partition
+    this.siteBinding = deps.siteBinding ?? null
+    // A binding and its partition are ONE invariant, not two arguments. Passing
+    // a binding alongside the shared app-wide profile yields a surface that
+    // looks fenced, passes every fence test, and still carries every other
+    // site's cookies - precisely the state the per-site split removes. Refuse
+    // the mismatch here, where both halves are in scope.
+    if (this.siteBinding && this.partition !== partitionForWebSiteLogin(this.siteBinding.siteId)) {
+      throw new Error(
+        `Canvas site binding "${this.siteBinding.siteId}" does not match the profile partition ` +
+          `"${this.partition}". A bound canvas must use that site's own partition.`
+      )
+    }
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
     this.resolveHost = deps.resolveHost
     this.onNavState = deps.onNavState
@@ -823,6 +859,25 @@ export class CanvasWebDriver implements CanvasDriver {
     this.onDockRequest = deps.onDockRequest
     this.onNewTabRequest = deps.onNewTabRequest
     this.onSurfaceClosed = deps.onSurfaceClosed
+  }
+
+  /**
+   * THE FENCE. True when this surface may commit a document navigation to `url`.
+   *
+   * Always true for an unbound surface, so nothing that shipped before site
+   * binding changes behaviour. Sub-resources never reach here: fencing them
+   * would break every site that uses a CDN, and a control that breaks the
+   * product gets switched off, which protects nothing.
+   */
+  private allowsDocumentNavigation(url: string): boolean {
+    if (!this.siteBinding) return true
+    return isNavigationAllowedForOrigins(this.siteBinding.authorizedOrigins, url)
+  }
+
+  /** Throwing form, for the paths that owe the caller a reason. */
+  private assertDocumentNavigationAllowed(url: string): void {
+    if (!this.siteBinding || this.allowsDocumentNavigation(url)) return
+    throw new Error(webSiteNavigationRefusal(this.siteBinding, url))
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -871,6 +926,7 @@ export class CanvasWebDriver implements CanvasDriver {
       if (!verdict.ok || !verdict.normalizedUrl) {
         throw new Error(verdict.reason || 'Canvas URL was rejected.')
       }
+      this.assertDocumentNavigationAllowed(verdict.normalizedUrl)
       await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
       initialUrl = verdict.normalizedUrl
     }
@@ -900,7 +956,15 @@ export class CanvasWebDriver implements CanvasDriver {
     // expects from a one-pane browser. A rejected URL is simply dropped.
     wc.setWindowOpenHandler((details) => {
       const verdict = validateCanvasUrl(details.url || '')
-      if (verdict.ok && verdict.normalizedUrl && !this.closeRequested) {
+      // A bound surface drops an out-of-fence popup exactly like a rejected
+      // URL. Loading it in place would be the fence's widest hole: the page
+      // chooses the target and nothing else on this path asks.
+      if (
+        verdict.ok &&
+        verdict.normalizedUrl &&
+        !this.closeRequested &&
+        this.allowsDocumentNavigation(verdict.normalizedUrl)
+      ) {
         void wc.loadURL(verdict.normalizedUrl).catch(() => {
           // Load failures surface through did-fail-load / nav-state; never throw here.
         })
@@ -912,7 +976,12 @@ export class CanvasWebDriver implements CanvasDriver {
     // http(s) requests, but only will-navigate can refuse a scheme change
     // (file:, chrome:, custom protocols) before Chromium commits it.
     wc.on('will-navigate', (event, url) => {
-      if (!validateCanvasUrl(url || '').ok) event.preventDefault()
+      if (!validateCanvasUrl(url || '').ok) {
+        event.preventDefault()
+        return
+      }
+      // In-page causes on a bound surface: a link, a script, a meta refresh.
+      if (!this.allowsDocumentNavigation(url || '')) event.preventDefault()
     })
     this.hardenWebContents(wc)
     // The fixed metadata deny rule is enforced per request in attachNetwork.
@@ -945,6 +1014,7 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   private loadUrl(wc: WebContents, url: string): Promise<void> {
+    this.fenceBlockedUrl = null
     return new Promise<void>((resolvePromise, reject) => {
       let settled = false
       const finish = (err?: Error): void => {
@@ -968,6 +1038,11 @@ export class CanvasWebDriver implements CanvasDriver {
         // browser path, which only logs did-fail-load) and let did-finish-load
         // or the timeout settle.
         if (isMainFrame && errorCode !== -3) {
+          const fenced = this.fenceBlockedUrl
+          if (fenced && this.siteBinding) {
+            finish(new Error(webSiteNavigationRefusal(this.siteBinding, fenced)))
+            return
+          }
           finish(new Error(`Navigation failed (${errorCode}): ${errorDescription} [${validatedURL}]`))
         }
       }
@@ -1121,6 +1196,7 @@ export class CanvasWebDriver implements CanvasDriver {
       if (!verdict.ok || !verdict.normalizedUrl) {
         throw new Error(verdict.reason || 'Canvas URL was rejected.')
       }
+      this.assertDocumentNavigationAllowed(verdict.normalizedUrl)
       await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
       if (this.closeRequested) {
         throw new Error('Canvas navigation was cancelled because the driver was closed.')
@@ -1210,6 +1286,19 @@ export class CanvasWebDriver implements CanvasDriver {
         // Egress-cut during eval takes precedence over the metadata deny rule:
         // while a script is running, NOTHING leaves this canvas.
         if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url)) {
+          return true
+        }
+        // The site fence, at the request layer. This is the backstop that
+        // catches what will-navigate cannot see: a 30x from an authorized
+        // origin to an unauthorized one issues a fresh main-frame request and
+        // never fires will-navigate. Sub-resources are deliberately exempt.
+        if (details.resourceType === 'mainFrame' && !this.allowsDocumentNavigation(details.url)) {
+          // Remember it: a cancelled request surfaces as ERR_BLOCKED_BY_CLIENT,
+          // and the one gate that exists BECAUSE will-navigate cannot see it
+          // would otherwise be the only gate that cannot explain itself. An
+          // agent given a bare network error retries; one given the refusal
+          // does not.
+          this.fenceBlockedUrl = details.url
           return true
         }
         return this.dnsBlocked(details.url).catch(() => true)

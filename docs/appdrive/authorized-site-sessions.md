@@ -86,10 +86,12 @@ binds to exactly one site at construction and can **never** be re-bound.
 Cross-origin **document** navigation inside a bound surface is refused with a
 do-not-retry reason.
 
-Sub-resource requests are **not** origin-checked. Third-party CDNs, fonts and
-analytics are how the web works, and an allowlist that breaks every real site
-gets turned off, which protects nothing. The cut is: navigations are fenced,
-sub-resources are not.
+The fence covers **main-frame** document navigation. Sub-resource requests are
+not origin-checked: third-party CDNs, fonts and analytics are how the web works,
+and an allowlist that breaks every real site gets turned off, which protects
+nothing. **Sub-FRAME documents fall on the sub-resource side of that cut** -
+fencing them would break payment iframes, SSO frames and captchas. That is a
+deliberate exemption with a real consequence, recorded in Section 11.4.
 
 `extraOrigins` exists for the identity-provider hop - a site whose sign-in
 bounces through `accounts.google.com` or an SSO host needs those origins in its
@@ -219,9 +221,15 @@ No polling, no cookie export, no renderer projection of anything but status.
 - `agentAccess: 'read'` refuses every actuation verb at the executor, not at the
   driver, so the refusal is uniform across every verb rather than re-derived per
   driver method.
-- New verbs mean a **new gateway profile generation**. Section 12 of design.md
-  is explicit that existing generations are immutable and pinned by
-  exact-membership tests; mint the next unused one rather than extending v1-v10.
+- Tool placement: the highest minted generation is **v17** (plus its `-mesh`
+  twin), and existing generations are immutable, pinned by exact-membership and
+  sha256 tests. The established route for a tool that does not need to be
+  directly advertised is a **FULL-only placement** - add the name to
+  `FULL_MCP_ADVERTISE_TOOLS` and nothing else, since every hidden generation is
+  a `filter()` off FULL and therefore picks it up on every generation ever
+  shipped. That also keeps the two new schemas out of `*_DIRECT_TOOLS`, where
+  they would count against the 40,000-char fresh-gateway transport budget.
+  Re-pinning the affected length + hash assertions is part of the slice.
 
 ---
 
@@ -253,7 +261,12 @@ A row shows label, origin, status pill, and the access selector
 
 - **Sign in** - Section 6.
 - **Sign out** - clear that partition's cookies, keep the catalogue row.
-- **Forget site** - `clearStorageData()` on the partition, then drop the row.
+- **Forget site** - `clearStorageData()` on the partition, **then** drop the row.
+  That order is load-bearing and the store cannot enforce it, because the store
+  owns no profile. The id is retired on removal as the backstop: a re-added site
+  gets a fresh id and therefore a fresh partition, so getting the order wrong
+  costs one orphaned directory on disk instead of handing a re-added site a
+  cookie jar the user believes they deleted.
 
 The panel is also where a `signin_required` prompt lands, so the notification
 and the fix are one click apart.
@@ -300,12 +313,24 @@ Added to design.md Section 10, not replacing it.
    be the exact punycode-safe origin, not a prettified one.
 3. **`extraOrigins` is a real widening.** An SSO host added for convenience
    grants document navigation to that host. It is user-visible for this reason.
-4. **Login-wall detection is heuristic** (Section 8). Bounded to asking a
+4. **A cross-origin SUB-FRAME renders inside a bound surface.** The fence is
+   main-frame only (I1), so a page on an authorized origin can embed any
+   origin it likes. Two consequences worth stating rather than discovering:
+   the embedded document loads in the site's partition, and its rendered
+   pixels reach an agent through `canvas_screenshot`, which captures
+   cross-origin frames that page script could never read. Bounded by the
+   per-site split (the jar holds one site's cookies, not every site's) and by
+   actuation being main-frame only. `will-frame-navigate` is the hook that
+   would close it if evidence says it should be closed.
+5. **Login-wall detection is heuristic** (Section 8). Bounded to asking a
    question; must never gate authorization.
-5. **Sub-resources are unfenced by design** (I1). A compromised third-party
+6. **Sub-resources are unfenced by design** (I1). A compromised third-party
    script inside an authorized origin remains inside that origin's authority.
-   This is the ordinary web threat model and is not made worse here.
-6. **Sign-out is best-effort against server-side sessions.** Clearing the
+   This is the ordinary web threat model and is not made worse here. Note that
+   a service worker an authorized origin registered persists in that site's
+   partition and can keep making unfenced cross-origin sub-resource fetches
+   after the canvas closes - the exemption outlives the surface.
+7. **Sign-out is best-effort against server-side sessions.** Clearing the
    partition ends the client's session; a token the site already minted
    elsewhere is beyond TaskWraith's reach.
 
@@ -341,6 +366,11 @@ the shipped Canvas Browser.
 2. Should `web_login_list` be visible to a run whose lease names no sites?
    Listing is not acting, but it is reconnaissance, and it tells a model which
    accounts exist.
-3. Does the fence belong at the navigation gate only, or also at
-   `CanvasBrowserProfile.shouldBlock` for the main-frame request? Belt and
-   braces cost little here and the two paths fail differently.
+3. ~~Does the fence belong at the navigation gate only, or also at
+   `CanvasBrowserProfile.shouldBlock` for the main-frame request?~~
+   **ANSWERED in P1: both.** They fail differently and neither covers the
+   other - `will-navigate` is the only hook that can refuse an in-page cause
+   before Chromium commits it, and the request layer is the only one that sees
+   a 30x hop at all, because a redirect never fires `will-navigate`. The
+   request-layer block records the refused URL so the cancelled load reports
+   the named refusal instead of a bare `ERR_BLOCKED_BY_CLIENT`.

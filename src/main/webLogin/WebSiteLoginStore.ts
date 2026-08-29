@@ -6,6 +6,7 @@ import {
   MAX_WEB_SITE_LOGIN_EXTRA_ORIGINS,
   MAX_WEB_SITE_LOGIN_LABEL,
   isWebSiteLoginAccess,
+  isWebSiteLoginId,
   normalizeWebSiteOrigin,
   parseWebSiteLogin,
   proposeWebSiteLoginId,
@@ -62,9 +63,24 @@ export interface UpdateWebSiteLoginInput {
 interface WebSiteLoginStateFile {
   schemaVersion: 1
   sites: WebSiteLogin[]
+  /**
+   * Ids that have been used and removed. NEVER handed out again.
+   *
+   * The partition is derived deterministically from the id, and the id is
+   * derived deterministically from the host — so without this, removing
+   * example.com and re-adding it produced the SAME id, the same
+   * `persist:taskwraith-site-example-com` directory, and a row that reads
+   * "never signed in" while the browser is still logged in. Clearing the
+   * partition on removal is the primary fix and belongs to the caller that owns
+   * the profile registry; this list is the backstop for when that ordering is
+   * got wrong, which costs one directory on disk instead of a live session the
+   * user believes they deleted.
+   */
+  retiredIds: string[]
 }
 
-const EMPTY_STATE: WebSiteLoginStateFile = { schemaVersion: 1, sites: [] }
+const EMPTY_STATE: WebSiteLoginStateFile = { schemaVersion: 1, sites: [], retiredIds: [] }
+const MAX_RETIRED_IDS = 1024
 
 function readJson<T>(filePath: string, fallback: T, log: (line: string) => void): T {
   try {
@@ -104,7 +120,16 @@ function normalizeState(value: unknown): WebSiteLoginStateFile {
     seenIds.add(parsed.id)
     sites.push(parsed)
   }
-  return { schemaVersion: 1, sites }
+  const rawRetired = (value as Partial<WebSiteLoginStateFile>).retiredIds
+  const retiredIds: string[] = []
+  if (Array.isArray(rawRetired)) {
+    for (const entry of rawRetired) {
+      if (!isWebSiteLoginId(entry) || retiredIds.includes(entry)) continue
+      if (retiredIds.length >= MAX_RETIRED_IDS) break
+      retiredIds.push(entry)
+    }
+  }
+  return { schemaVersion: 1, sites, retiredIds }
 }
 
 function cleanExtraOrigins(input: unknown, siteOrigin: string): string[] | null {
@@ -152,10 +177,10 @@ export class WebSiteLoginStore {
     if (state.sites.some((site) => site.origin === origin)) {
       return { ok: false, error: `${origin} is already saved.` }
     }
-    const id = proposeWebSiteLoginId(
-      origin,
-      state.sites.map((site) => site.id)
-    )
+    const id = proposeWebSiteLoginId(origin, [
+      ...state.sites.map((site) => site.id),
+      ...state.retiredIds
+    ])
     if (!id) {
       return { ok: false, error: 'Could not derive an id for that site.' }
     }
@@ -203,11 +228,22 @@ export class WebSiteLoginStore {
     return { ok: true, site: next }
   }
 
+  /**
+   * Drop the catalogue row and retire its id.
+   *
+   * ORDERING IS LOAD-BEARING: the caller must clear that site's partition FIRST
+   * (`WebSiteProfileRegistry.forgetSite`). This method cannot do it — the store
+   * owns no profile — and retiring the id is what keeps a wrong order from
+   * silently handing the old cookie jar to a re-added site.
+   */
   remove(id: string): boolean {
     const state = this.readState()
     const next = state.sites.filter((site) => site.id !== id)
     if (next.length === state.sites.length) return false
-    this.writeState({ schemaVersion: 1, sites: next })
+    const retiredIds = state.retiredIds.includes(id)
+      ? state.retiredIds
+      : [...state.retiredIds, id].slice(-MAX_RETIRED_IDS)
+    this.writeState({ schemaVersion: 1, sites: next, retiredIds })
     return true
   }
 

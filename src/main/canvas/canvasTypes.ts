@@ -97,6 +97,15 @@ export interface CanvasOpenInput {
   driver?: CanvasDriverKind
   url?: string
   viewport?: CanvasViewport
+  /**
+   * Bind this canvas to one saved site login (web driver only).
+   *
+   * The surface then uses that site's OWN persistent partition and may only
+   * navigate documents to origins the user authorized for it. Omitted means the
+   * pre-existing unbound surface on the shared app-wide profile.
+   * See docs/appdrive/authorized-site-sessions.md.
+   */
+  siteId?: string
   // --- device driver (iOS simulator; P4) ---
   /** Target simulator. Omit → the currently-booted sim. */
   device?: CanvasDeviceTarget
@@ -630,6 +639,8 @@ export interface CanvasSessionRecord {
   chatId?: string
   runId?: string
   workspacePath?: string
+  /** The saved site login this canvas was bound to, when it was site-bound. */
+  siteId?: string
   createdAt: string
   updatedAt: string
   closedAt?: string

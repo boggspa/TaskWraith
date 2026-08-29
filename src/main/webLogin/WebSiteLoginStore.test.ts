@@ -157,6 +157,27 @@ describe('WebSiteLoginStore', () => {
     expect(subject.list()).toEqual([])
   })
 
+  it('never re-issues a removed id, so a re-add cannot inherit the old cookie jar', () => {
+    // The partition is derived from the id and the id from the host, so without
+    // retirement, remove + re-add lands on the SAME persist: directory and the
+    // "never signed in" row is still logged in.
+    const subject = store()
+    const first = subject.add({ origin: 'https://example.com' }).site!.id
+    expect(subject.remove(first)).toBe(true)
+    const second = subject.add({ origin: 'https://example.com' }).site!.id
+    expect(second).not.toBe(first)
+  })
+
+  it('retires ids across store instances', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-web-login-'))
+    tempDirs.push(dir)
+    const first = new WebSiteLoginStore({ userDataPath: dir })
+    const id = first.add({ origin: 'https://example.com' }).site!.id
+    first.remove(id)
+    const reopened = new WebSiteLoginStore({ userDataPath: dir })
+    expect(reopened.add({ origin: 'https://example.com' }).site!.id).not.toBe(id)
+  })
+
   it('stamps lastSignedInAt only when the status is signed-in', () => {
     const subject = store()
     const id = subject.add({ origin: 'https://example.com' }).site!.id
