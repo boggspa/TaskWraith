@@ -2265,6 +2265,8 @@ import {
 } from './DelegationApprovalBudgetGuard'
 import { classifyShellOpenTarget } from './ShellOpenPolicy'
 import { createSubThreadMailboxEventId } from './SubThreadMailbox'
+import { deliverExecutionResult } from './ExecutionResultDelivery'
+import { evaluateExecutionResultWake } from './ExecutionResultWake'
 import {
   buildLinkedChildReturnContent,
   decideLinkedChildReturn,
@@ -44318,6 +44320,104 @@ if (isGeminiMcpBridgeProcess) {
           ...(anchorRunRef ? { anchorRunRef } : {})
         }
       }
+      /**
+       * Hand a settled graph's result to the thread that owns it.
+       *
+       * Ordering mirrors the sub-thread return path: durable record first, then
+       * the transcript row, then a wake if the seat's turn has already ended. A
+       * crash between them can lose presentation, never delivery.
+       */
+      const deliverSettledExecutionResult = (executionId: string): void => {
+        try {
+          const projection = executionGraphRepository.getExecution(executionId)
+          if (!projection) return
+          const outcome = deliverExecutionResult(projection, {
+            enqueueResult: (input) => AppStore.enqueueExecutionResultMailboxEvent(input),
+            hasDeliveredCard: (threadId, mailboxEventId) =>
+              (AppStore.getChat(threadId)?.messages ?? []).some(
+                (message) => message.metadata?.executionMailboxEventId === mailboxEventId
+              ),
+            appendResultCard: (card) => {
+              const thread = AppStore.getChat(card.threadId)
+              if (!thread) return
+              const updated: ChatRecord = {
+                ...thread,
+                messages: [
+                  ...thread.messages,
+                  {
+                    id: randomUUID(),
+                    // Tool role keeps graph output out of system authority, the
+                    // same choice the sub-thread return card makes.
+                    role: 'tool',
+                    content: card.content,
+                    timestamp: new Date().toISOString(),
+                    metadata: {
+                      // Graph-native kind. Deliberately NOT subThreadReturn: a
+                      // graph stage is not a sub-thread, and borrowing that kind
+                      // would make closeout harvesting and attribution describe
+                      // this execution as something it is not.
+                      kind: 'executionResult',
+                      executionId: card.executionId,
+                      executionMailboxEventId: card.mailboxEventId,
+                      executionOutcome: card.outcome,
+                      ...(card.title ? { executionTitle: card.title } : {}),
+                      ...(card.seatId ? { executionSeatId: card.seatId } : {}),
+                      resultTrust: 'untrusted-graph-output',
+                      providerContextVisibility: 'projection-only'
+                    }
+                  }
+                ],
+                updatedAt: Date.now()
+              }
+              AppStore.saveChat(updated)
+              broadcastChatUpdated(updated)
+            },
+            isOwnerTurnActive: (threadId) =>
+              AppStore.getRunQueueJobs({ includeTerminal: false }).some(
+                (job) => job.chatId === threadId
+              ),
+            requestOwnerWake: (request) => {
+              const thread = AppStore.getChat(request.threadId)
+              if (!thread) return
+              if (!thread.provider) return
+              const decision = evaluateExecutionResultWake({
+                target: {
+                  chatId: request.threadId,
+                  provider: thread.provider,
+                  archived: thread.archived === true,
+                  busy: AppStore.getRunQueueJobs({ includeTerminal: false }).some(
+                    (job) => job.chatId === request.threadId
+                  ),
+                  workspacePath: thread.workspacePath ?? null,
+                  providerSessionId: thread.linkedProviderSessionId ?? null
+                },
+                executionId: request.executionId,
+                outcome: request.outcome,
+                delivered: true
+              })
+              if (!decision.wake) return
+              void dispatchRunWithProviderPause(
+                { ...decision.payload, appRunId: randomUUID() } as AgentRunPayload,
+                { sender: mainWindow?.webContents as Electron.WebContents }
+              ).catch((error) => {
+                console.warn(
+                  '[execution-result] owner wake dispatch failed:',
+                  error instanceof Error ? error.message : String(error)
+                )
+              })
+            }
+          })
+          if (!outcome.delivered && outcome.reason) {
+            console.log(`[execution-result] ${executionId}: ${outcome.reason}`)
+          }
+        } catch (error) {
+          console.warn(
+            '[execution-result] delivery failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      }
+
       const executionGraphCoordinator = new ExecutionGraphCoordinator({
         repository: executionGraphRepository,
         materializePausedQueueJob: (input) => {
@@ -44506,6 +44606,13 @@ if (isGeminiMcpBridgeProcess) {
               executionGraphDispatchesInFlight.delete(attempt.providerRunRef)
               executionGraphAdapterAdmissions.delete(attempt.providerRunRef)
             }
+          }
+          // A graph settles into requires_action through 'execution-progressed',
+          // not 'execution-terminal', so both kinds are offered here and the
+          // delivery decides. A paused graph owes its owner the blocker just as
+          // much as a finished one owes its answer.
+          if (notice.kind === 'execution-terminal' || notice.kind === 'execution-progressed') {
+            deliverSettledExecutionResult(notice.executionId)
           }
           safeSendToWebContents(mainWindow, 'execution-graph-changed', notice)
           requestThrottledRemoteProjectionSnapshot()

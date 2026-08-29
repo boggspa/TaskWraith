@@ -3613,6 +3613,18 @@ export interface ChatMessage {
      * Must not affect PromptComposition / mailbox delivery.
      */
     parallelResultWaveId?: string
+    /**
+     * Durable execution-graph result delivery. Graph-native and deliberately
+     * distinct from the subThreadReturn family: a graph stage is not a
+     * sub-thread, so reusing those keys would make closeout harvesting,
+     * attribution and viewport grouping describe the execution incorrectly.
+     */
+    executionId?: string
+    /** Idempotency link to the ExecutionResultMailbox record. */
+    executionMailboxEventId?: string
+    executionOutcome?: 'succeeded' | 'failed' | 'cancelled' | 'requires_action'
+    executionTitle?: string
+    executionSeatId?: string
     providerContextVisibility?: 'projection-only'
     subThreadOutcome?: 'done' | 'requires_action' | 'failed' | 'cancelled'
     /** Relationship of the linked child that produced this return. Missing on
