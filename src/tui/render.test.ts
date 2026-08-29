@@ -889,7 +889,7 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatEnabled)
     expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatDisabled)
     // NO_COLOR: the renderer was given Ansi('none'), so no escape may appear.
-    expect(output).not.toContain('')
+    expect(output).not.toContain('\u001b')
     // The overlay region (box-bordered lines at column 0) is pure ASCII:
     // every separator and glyph came from the ASCII ladder.
     const overlayLines = lines.filter((line) => line.startsWith('+') || line.startsWith('|'))
