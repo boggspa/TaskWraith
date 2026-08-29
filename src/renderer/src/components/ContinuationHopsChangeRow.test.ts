@@ -97,6 +97,9 @@ describe('ContinuationHopsChangeRow', () => {
 
     expect(markup).toContain('Handoff turns')
     expect(markup).toContain('aria-label="Handoff turns 48 of 124"')
+    expect(markup).toContain(
+      'aria-label="Handoff turns advanced from 48 to 49 of 124. Target Boss. Source @-mention. Show the previous handoff count."'
+    )
     expect(markup).toContain('>Boss</span>')
     expect(markup).toContain('>@-mention</span>')
     expect(markup).toContain('Show the previous handoff count')

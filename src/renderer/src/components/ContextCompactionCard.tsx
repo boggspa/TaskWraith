@@ -141,7 +141,14 @@ export function ContextCompactionCard({
   }
 
   const title = failed ? 'Context compaction failed' : 'Compacted context'
-  const ariaLabel = [title, detailParts.join(' · ')].filter(Boolean).join(' — ')
+  const ariaLabel = [
+    metaLabel,
+    title,
+    detailParts.join(' · '),
+    failed ? telemetry.error : undefined
+  ]
+    .filter(Boolean)
+    .join(' — ')
 
   return (
     <div

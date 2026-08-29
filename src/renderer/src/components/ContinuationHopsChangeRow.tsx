@@ -110,6 +110,24 @@ export function ContinuationHopsChangeRow({
   const time = formatChangeTime(message.timestamp)
   const rowLabel = isAdvance ? 'Handoff turns' : 'Max handoff turns'
   const previousTitle = isAdvance ? 'handoff count' : 'turn limit'
+  const toggleLabel = `${expanded ? 'Hide' : 'Show'} the previous ${previousTitle}`
+  const accessibilityLabel = isAdvance
+    ? [
+        `Handoff turns advanced from ${payload.before} to ${payload.after} of ${payload.maxHops}.`,
+        payload.targetLabel ? `Target ${payload.targetLabel}.` : '',
+        payload.sourceLabel ? `Source ${payload.sourceLabel}.` : '',
+        `${toggleLabel}.`
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : [
+        `Max handoff turns changed from ${payload.before} to ${payload.after}.`,
+        changedBy ? `Changed by ${changedBy}.` : '',
+        payload.reason ? `Reason: ${payload.reason}.` : '',
+        `${toggleLabel}.`
+      ]
+        .filter(Boolean)
+        .join(' ')
 
   return (
     <div
@@ -122,7 +140,8 @@ export function ContinuationHopsChangeRow({
         className="seat-change-row continuation-hops-change-row"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        title={`${expanded ? 'Hide' : 'Show'} the previous ${previousTitle}`}
+        aria-label={accessibilityLabel}
+        title={toggleLabel}
       >
         <span className="seat-change-icon continuation-hops-change-icon" aria-hidden>
           <ContinuationHopsIcon />

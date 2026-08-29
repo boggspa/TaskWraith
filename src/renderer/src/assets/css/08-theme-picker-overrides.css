@@ -12010,6 +12010,11 @@
   color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
 }
 
+.continuation-hops-change-actor.is-advance,
+.continuation-hops-change-actor.is-advance + .continuation-hops-change-reason {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
 .continuation-hops-change-reason {
   min-width: 0;
   overflow: hidden;

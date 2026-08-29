@@ -69,7 +69,7 @@
 }
 
 .blackboard-change-stat-unit {
-  color: color-mix(in srgb, var(--text-primary) 48%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
   font-size: var(--font-size-xs);
   font-weight: 500;
 }

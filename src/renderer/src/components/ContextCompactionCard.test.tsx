@@ -46,6 +46,9 @@ describe('ContextCompactionCard', () => {
     // not as a logo pill — the row must read as transcript, not chrome.
     expect(html).toContain('provider-claude')
     expect(html).toContain('context-compaction-row-meta')
+    expect(html).toContain(
+      'aria-label="Claude — Compacted context — 24k → 1k tokens · manual · 12s"'
+    )
     expect(html).not.toContain('provider-brand-logo-image')
   })
 
@@ -67,6 +70,9 @@ describe('ContextCompactionCard', () => {
     expect(html).toContain('is-failed')
     expect(html).toContain('Context compaction failed')
     expect(html).toContain('Not enough messages to compact.')
+    expect(html).toContain(
+      'aria-label="Claude — Context compaction failed — Not enough messages to compact."'
+    )
   })
 
   it('prefers the frozen participant label over the live provider name', () => {
