@@ -117,6 +117,10 @@ export interface HostProfileDomainStoreOptions {
   readonly idFactory?: () => string
   /** Fault seam after durable temp fsync and before authoritative rename. */
   readonly beforeAtomicPublish?: (targetPath: string) => void
+  /** Called once per newly quarantined thread. This layer carries no logger, so
+   *  a skipped record is announced through the caller — without it the skip is
+   *  as silent as the whole-Host failure it replaced. */
+  readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
 }
 
 type StoredEnsembleParticipant = Record<string, unknown> & {
@@ -568,6 +572,7 @@ export class HostProfileDomainStore {
   private readonly idFactory: () => string
   private readonly beforeAtomicPublish?: (targetPath: string) => void
   private readonly quarantinedThreads = new Set<string>()
+  private readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
 
   constructor(options: HostProfileDomainStoreOptions) {
     if (!options?.authority || typeof options.authority.assertProfileAuthority !== 'function') {
@@ -580,6 +585,7 @@ export class HostProfileDomainStore {
     this.now = options.now ?? Date.now
     this.idFactory = options.idFactory ?? randomUUID
     this.beforeAtomicPublish = options.beforeAtomicPublish
+    this.onThreadQuarantined = options.onThreadQuarantined
     this.ensureDirectory(this.chatsPath)
   }
 
@@ -810,7 +816,10 @@ export class HostProfileDomainStore {
         // thread rather than the whole listing: one oversized chat previously
         // took the entire Host down, which silently forced the app onto the
         // in-process Host for every launch.
-        this.quarantinedThreads.add(id)
+        if (!this.quarantinedThreads.has(id)) {
+          this.quarantinedThreads.add(id)
+          this.onThreadQuarantined?.(id, 'record-too-large')
+        }
         continue
       }
       this.quarantinedThreads.delete(id)

@@ -56,10 +56,7 @@ import {
   ChatUpdateProjectionTracker,
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
-import {
-  rebaseChatRecordUpdate,
-  type AuthoredChatTranscriptMutation
-} from './ChatRecordMutation'
+import { rebaseChatRecordUpdate, type AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 import {
   runLegacyStoreWriteAdmission,
@@ -637,7 +634,8 @@ async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promis
     if (outcome === 'drained') {
       hostPersistUnconfirmedChatIds.clear()
       return
-    }    console.error(
+    }
+    console.error(
       `[persist] Host chat persistence did not fully drain before shutdown ` +
         `(${outcome}); ${hostPersistUnconfirmedChatIds.size} chat(s) may have transcript ` +
         `that was not persisted:`,
@@ -678,6 +676,10 @@ const projectRegistry = createProjectRegistry({
 let settingsFileCache: { value: AppSettings; mtimeMs: number; size: number } | null = null
 
 function invalidateSettingsFileCache(): void {
+  // Chat-list rows are settings-derived (normalizeChatRecord resolves an
+  // ensemble roster through getSettings), so a settings write must drop rows
+  // this process memoised under the old settings.
+  chatListRebuildMemo.clear()
   settingsFileCache = null
 }
 
@@ -6202,15 +6204,22 @@ export class AppStore {
         // mtime+size identity the index entry is judged by.
         const memoised = chatListRebuildMemo.get(chatId, sourceStat)
         if (memoised) {
-          item = memoised
+          // A copy, because every neighbouring seam hands out a fresh object
+          // and this is the only place a row would otherwise be aliased across
+          // calls. It also does NOT rejoin dirtyChatIds: the fresh read below
+          // already offered this row to the index write, and toChatListItem
+          // reads mutable settings (normalizeChatRecord resolves an ensemble
+          // roster through getSettings), so re-offering a memoised row could
+          // persist a settings-stale one.
+          item = { ...memoised }
         } else {
           const chat = readJson<ChatRecord | null>(chatPath, null)
           if (chat) {
             item = this.toChatListItem(chat, sourceStat)
             chatListRebuildMemo.set(chatId, sourceStat, item)
+            dirtyChatIds.add(chatId)
           }
         }
-        if (item) dirtyChatIds.add(chatId)
       }
       if (!item) continue
       nextIndex[chatId] = item
@@ -6503,7 +6512,17 @@ export class AppStore {
         indexEntry: (chatId) => chatListIndex[chatId],
         readChatRecord: (chatId) =>
           this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`)) ?? null,
-        parentChatExists: (parentChatId) => fs.existsSync(chatPathForId(chatsDir, parentChatId))
+        parentChatExists: (parentChatId) => {
+          try {
+            return fs.existsSync(chatPathForId(chatsDir, parentChatId))
+          } catch {
+            // chatPathForId rejects an unsafe id. Treat the parent as PRESENT:
+            // the candidate set drives a real subtree deletion, so a corrupt
+            // parentChatId must never reap, and must not abort the scan and
+            // discard every candidate found before it.
+            return true
+          }
+        }
       })
       for (const candidate of candidates) {
         this.orphanSubThreadReapCandidates.add(candidate)
@@ -6921,7 +6940,7 @@ export class AppStore {
           }
         }
         return result
-    })
+      })
     this.chatComposerSelectionWriteTails.set(request.chatId, operation)
     const clearTail = (): void => {
       if (this.chatComposerSelectionWriteTails.get(request.chatId) === operation) {
@@ -7516,7 +7535,9 @@ export class AppStore {
           ? { lifecycle: args.lifecycle }
           : {}),
         ...(typeof args.role === 'string' && args.role.trim() ? { role: args.role.trim() } : {}),
-        ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {}),
+        ...(typeof args.label === 'string' && args.label.trim()
+          ? { label: args.label.trim() }
+          : {}),
         ...(typeof args.spawnedBy === 'string' && args.spawnedBy.trim()
           ? { spawnedBy: args.spawnedBy.trim() }
           : {}),
@@ -7663,8 +7684,7 @@ export class AppStore {
     const normalizedChat = this.normalizeChatRecord(chatWithMainOwnedFields)
     normalizedChat.updatedAt = Date.now()
     const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
-    normalizedChat.persistenceRevision =
-      previousChatForFeedback === null ? 0 : expectedRevision + 1
+    normalizedChat.persistenceRevision = previousChatForFeedback === null ? 0 : expectedRevision + 1
     // Tombstone guard: a deleted chat must never be re-saved. The Host-routed
     // delete is an async round trip, so unlike the legacy path (where the
     // unlink is synchronous) the window cannot be narrowed by a stat — honor
@@ -7790,9 +7810,12 @@ export class AppStore {
       )
       const checkpoints = detailWriter.commit()
       for (const checkpoint of checkpoints) {
-        this.appendRunEvent(toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint), {
-          durability: 'strict'
-        })
+        this.appendRunEvent(
+          toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint),
+          {
+            durability: 'strict'
+          }
+        )
       }
       externalizedChat = externalization.chat
       externalizedActivitiesById = externalization.strippedActivitiesById
@@ -8829,9 +8852,7 @@ export class AppStore {
     }
   }
 
-  private static async executeHostChatRecordErasure(
-    intent: HistoryDeletionIntent
-  ): Promise<void> {
+  private static async executeHostChatRecordErasure(intent: HistoryDeletionIntent): Promise<void> {
     if (intent.kind === 'truncate') {
       const chatId = intent.rootChatId!
       const chatPath = chatPathForId(chatsDir, chatId)
@@ -8862,9 +8883,7 @@ export class AppStore {
       hostPersistRebaseByChatId.delete(chatId)
       const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
       if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
-        throw new Error(
-          'Truncated chat still contains a durable history or orchestration source.'
-        )
+        throw new Error('Truncated chat still contains a durable history or orchestration source.')
       }
       return
     }
@@ -9688,7 +9707,9 @@ export class AppStore {
     }
     if (!this.getChat(chatId)) return Promise.resolve(null)
     const settled = this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
-    return settled ? settled.then(() => this.getChat(chatId)) : Promise.resolve(this.getChat(chatId))
+    return settled
+      ? settled.then(() => this.getChat(chatId))
+      : Promise.resolve(this.getChat(chatId))
   }
 
   static clearChats(workspaceId?: string): void {

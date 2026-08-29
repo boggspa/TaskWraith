@@ -889,4 +889,31 @@ describe('HostProfileDomainStore', () => {
     expect(store.listThreads().map((item) => item.appChatId)).toEqual([thread.appChatId])
     expect(store.quarantinedThreadIds).toEqual([])
   })
+
+  it('announces a quarantined record once, not on every listing', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-quarantine-'))
+    profiles.push(profile)
+    const onThreadQuarantined = vi.fn()
+    const store = new HostProfileDomainStore({
+      profilePath: profile,
+      authority: { assertProfileAuthority: vi.fn() },
+      now: () => 100,
+      idFactory: () => 'id-1',
+      onThreadQuarantined
+    })
+    const thread = store.createThread({ scope: 'global' })
+    truncateSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`),
+      65 * 1024 * 1024
+    )
+
+    store.listThreads()
+    store.listThreads()
+    store.listThreads()
+
+    // Silent skips are what made the original whole-Host failure invisible, so
+    // the skip must announce itself — but once, not once per reconciler tick.
+    expect(onThreadQuarantined).toHaveBeenCalledTimes(1)
+    expect(onThreadQuarantined).toHaveBeenCalledWith(thread.appChatId, 'record-too-large')
+  })
 })

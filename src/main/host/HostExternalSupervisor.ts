@@ -202,12 +202,27 @@ export class HostExternalSupervisor {
       // Typed Readable, but a piped stdio stream is a Socket at runtime.
       ;(stderrStream as unknown as { unref?: () => void }).unref?.()
     }
-    const releaseStderr = (): void => {
+    // Two different releases. The child is DETACHED and outlives readiness, so
+    // destroying the read end after a successful launch would EPIPE the Host's
+    // next stderr write — trading blindness for a crash. Drain instead, and
+    // only close the pipe on paths where the child is already gone or being
+    // abandoned.
+    const drainStderr = (): void => {
+      if (!stderrStream) return
+      stderrStream.removeAllListeners('data')
+      stderrStream.on('error', () => {})
+      stderrStream.resume()
+    }
+    const closeStderr = (): void => {
       stderrStream?.destroy()
     }
     const withStderr = (message: string): string =>
       stderrTail.trim().length > 0 ? `${message} stderr: ${stderrTail.trim()}` : message
     let childError: Error | null = null
+    // Read through a call: control-flow narrowing cannot see an assignment made
+    // inside the 'error' callback below, and a const would inherit the narrowed
+    // (null) type even with a wider annotation.
+    const spawnFailure = (): Error | null => childError
     let childExit: number | null = null
     let childExited = false
     child.once('error', (error) => {
@@ -223,36 +238,46 @@ export class HostExternalSupervisor {
       this.options.delay ??
       ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
     const deadline = now() + (this.options.timeoutMs ?? 120_000)
-    while (now() < deadline) {
-      await Promise.race([delay(this.options.pollMs ?? 250), this.closeSignal])
-      assertOpen()
-      if (childError) {
-        this.statusValue = 'failed'
-        throw childError
-      }
-      if (childExited) {
-        this.statusValue = 'failed'
-        releaseStderr()
-        throw new Error(
-          withStderr(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
-        )
-      }
-      try {
-        const welcome = await probe(probeTimeout)
-        assertProduction(welcome)
+    // Every abnormal exit closes the pipe, including the assertOpen() throws
+    // that fire when the supervisor is closed mid-launch. Only the success
+    // path leaves it open, drained.
+    try {
+      while (now() < deadline) {
+        await Promise.race([delay(this.options.pollMs ?? 250), this.closeSignal])
         assertOpen()
-        this.statusValue = 'attached-launched'
-        releaseStderr()
-        return { kind: 'launched', pid: child.pid ?? null, welcome }
-      } catch (error) {
-        if (error instanceof HostProjectionIncompatibleProtocolError) {
+        const failure = spawnFailure()
+        if (failure) {
           this.statusValue = 'failed'
-          throw error
+          closeStderr()
+          throw new Error(withStderr(failure.message))
+        }
+        if (childExited) {
+          this.statusValue = 'failed'
+          closeStderr()
+          throw new Error(
+            withStderr(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
+          )
+        }
+        try {
+          const welcome = await probe(probeTimeout)
+          assertProduction(welcome)
+          assertOpen()
+          this.statusValue = 'attached-launched'
+          drainStderr()
+          return { kind: 'launched', pid: child.pid ?? null, welcome }
+        } catch (error) {
+          if (error instanceof HostProjectionIncompatibleProtocolError) {
+            this.statusValue = 'failed'
+            throw error
+          }
         }
       }
+    } catch (error) {
+      closeStderr()
+      throw error
     }
     this.statusValue = 'failed'
-    releaseStderr()
+    closeStderr()
     throw new Error(withStderr('Timed out waiting for external Host production readiness.'))
   }
 }

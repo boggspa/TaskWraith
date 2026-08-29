@@ -219,4 +219,43 @@ describe('chats directory host hygiene', () => {
     expect(chatsDirectoryHygieneChangedAnything(report)).toBe(false)
     expect(report.unrepairableEntries).toEqual([])
   })
+
+  it('surfaces an overlay conflict, because it leaves the Host broken', () => {
+    const { deps } = fakeFs({
+      [CHATS]: { kind: 'dir', mode: 0o700 },
+      [OVERLAY]: { kind: 'dir', mode: 0o700 },
+      [`${OVERLAY}/one.json`]: { kind: 'file', mode: 0o600 },
+      [`${CHATS}/.composer-selections`]: { kind: 'dir', mode: 0o700 },
+      [`${CHATS}/.composer-selections/one.json`]: { kind: 'file', mode: 0o600 }
+    })
+
+    const report = run(deps)
+
+    expect(report.overlayConflicts).toBe(1)
+    expect(report.unrepairableEntries).toEqual(['.composer-selections/one.json'])
+  })
+
+  it('judges chat ids by the Host rule, not merely the .json suffix', () => {
+    const { deps, nodes } = fakeFs({
+      [CHATS]: { kind: 'dir', mode: 0o700 },
+      [`${CHATS}/ leading-space.json`]: { kind: 'file', mode: 0o644 }
+    })
+
+    const report = run(deps)
+
+    // safeId rejects an untrimmed id, so the Host throws 'Unsafe chat filename'
+    // on it — the report must say so rather than quietly chmod-ing it.
+    expect(report.unrepairableEntries).toEqual([' leading-space.json'])
+    expect(report.tightenedFileModes).toBe(0)
+    expect(nodes.get(`${CHATS}/ leading-space.json`)!.mode).toBe(0o644)
+  })
+
+  it('does not tolerate a temp name whose embedded id is unsafe', () => {
+    const { deps } = fakeFs({
+      [CHATS]: { kind: 'dir', mode: 0o700 },
+      [`${CHATS}/ spaced.json.12.aB-c.tmp`]: { kind: 'file', mode: 0o600 }
+    })
+
+    expect(run(deps).unrepairableEntries).toEqual([' spaced.json.12.aB-c.tmp'])
+  })
 })

@@ -75,6 +75,7 @@ export interface HostNodeProductionServerOptions {
   readonly createStore?: (input: {
     profilePath: string
     authority: { assertProfileAuthority(): void }
+    onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
   }) => HostProfileDomainStore
   readonly createDomain?: (options: HostNodeDomainPortsOptions) => HostNodeDomainPorts
   readonly createComposition?: (input: HostStandaloneCompositionInput) => HostStandaloneComposition
@@ -199,7 +200,12 @@ export class HostNodeProductionServer {
       }
       const store = (this.options.createStore ?? ((input) => new HostProfileDomainStore(input)))({
         profilePath: this.lease.path,
-        authority: { assertProfileAuthority: () => this.lease!.assertHeld() }
+        authority: { assertProfileAuthority: () => this.lease!.assertHeld() },
+        onThreadQuarantined: (threadId, reason) => {
+          // The Host previously refused to start over one bad record; it now
+          // skips it, so the skip has to be as loud as the refusal was.
+          process.stderr.write(`taskwraith-host: chat ${threadId} skipped (${reason})\n`)
+        }
       })
       const events = {
         publish: () => this.queueReconciliation()

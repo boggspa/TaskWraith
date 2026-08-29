@@ -60,11 +60,25 @@ const EMPTY_REPORT: ChatsDirectoryHygieneReport = {
   unrepairableEntries: []
 }
 
+/** Mirrors HostProfileDomainStore.safeId. The report promises to name entries
+ *  "the Host will still reject", so it has to judge ids by the Host's rule, not
+ *  a looser one. */
+function safeId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 512 &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- mirrors the Host predicate.
+    !/[\u0000-\u001f\u007f]/.test(value)
+  )
+}
+
 /** Mirrors HostProfileDomainStore.isRecognizedTemp — the Host tolerates these,
  *  so neither may this repair treat them as foreign. */
 function isRecognizedTemp(name: string): boolean {
   if (name.startsWith('.') && name.endsWith('.tmp')) return true
-  return /^(.+)\.json\.(\d+)\.([A-Za-z0-9_-]+)\.tmp$/.test(name)
+  const match = /^(.+)\.json\.(\d+)\.([A-Za-z0-9_-]+)\.tmp$/.exec(name)
+  return match !== null && safeId(match[1])
 }
 
 export function repairChatsDirectoryForHost(options: {
@@ -101,6 +115,10 @@ export function repairChatsDirectoryForHost(options: {
           // newer by construction, so keep it and leave the legacy file for a
           // human rather than destroying either.
           report.overlayConflicts += 1
+          // The legacy directory cannot be cleared while this file remains, so
+          // the Host stays broken — this has to reach the operator, not sit in
+          // a counter no caller reads.
+          report.unrepairableEntries.push(deps.join(entry.name, overlayEntry.name))
           continue
         }
         deps.rename(from, to)
@@ -120,7 +138,9 @@ export function repairChatsDirectoryForHost(options: {
       report.unrepairableEntries.push(entry.name)
       continue
     }
-    if (!entry.name.endsWith('.json') && !isRecognizedTemp(entry.name)) {
+    const isChatRecord =
+      entry.name.endsWith('.json') && safeId(entry.name.slice(0, -'.json'.length))
+    if (!isChatRecord && !isRecognizedTemp(entry.name)) {
       report.unrepairableEntries.push(entry.name)
       continue
     }
