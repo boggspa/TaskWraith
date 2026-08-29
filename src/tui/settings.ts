@@ -19,6 +19,15 @@ import { dirname, join } from 'node:path'
 export interface TuiSettings {
   /** Theme name or alias, exactly as the user chose it. `auto` is preserved. */
   theme?: string
+  /** Startup memory is scoped to the resolved Host profile, never shared across profiles. */
+  profiles?: Record<string, TuiProfileSettings>
+}
+
+export interface TuiProfileSettings {
+  workspaceId?: string
+  providerId?: string
+  modelId?: string
+  reasoningId?: string
 }
 
 /**
@@ -77,4 +86,58 @@ export function writeTuiSettings(changes: TuiSettings, path = tuiSettingsPath())
   } catch {
     return false
   }
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim()
+  return normalized || undefined
+}
+
+/** Read one Host profile's best-effort startup memory. Invalid fields are ignored independently. */
+export function readTuiProfileSettings(
+  profilePath: string,
+  path = tuiSettingsPath()
+): TuiProfileSettings {
+  const profile = readTuiSettings(path).profiles?.[profilePath]
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return {}
+  const record = profile as Record<string, unknown>
+  const workspaceId = nonEmptyString(record.workspaceId)
+  const providerId = nonEmptyString(record.providerId)
+  const modelId = nonEmptyString(record.modelId)
+  const reasoningId = nonEmptyString(record.reasoningId)
+  return {
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(providerId ? { providerId } : {}),
+    ...(modelId ? { modelId } : {}),
+    ...(reasoningId ? { reasoningId } : {})
+  }
+}
+
+/** Merge startup memory for one Host profile without disturbing another profile or future keys. */
+export function writeTuiProfileSettings(
+  profilePath: string,
+  changes: TuiProfileSettings,
+  path = tuiSettingsPath()
+): boolean {
+  const settings = readTuiSettings(path)
+  const profiles =
+    settings.profiles && typeof settings.profiles === 'object' && !Array.isArray(settings.profiles)
+      ? settings.profiles
+      : {}
+  const current =
+    profiles[profilePath] &&
+    typeof profiles[profilePath] === 'object' &&
+    !Array.isArray(profiles[profilePath])
+      ? profiles[profilePath]
+      : {}
+  return writeTuiSettings(
+    {
+      profiles: {
+        ...profiles,
+        [profilePath]: { ...current, ...changes }
+      }
+    },
+    path
+  )
 }

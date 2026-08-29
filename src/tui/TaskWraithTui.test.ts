@@ -987,7 +987,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
     expect(output.lastFrame).not.toMatch(/read-only|Wave 4\.2b/i)
 
-    feed(input, '/cancel\r')
+    feed(input, '/cancel\r\r')
     await waitFor(
       () => output.lastFrame.includes('Host accepted run.cancel'),
       'run.cancel succeeded',
@@ -1241,7 +1241,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     // /help advertises /dismiss, and a pending question is intercepted upstream
     // of the dispatcher -- so an advertised command must not read as unknown
     // merely because there is nothing queued to dismiss.
-    feed(input, '/dismiss\r')
+    feed(input, '/dismiss\r\r')
     await waitFor(() => output.lastFrame.includes('Nothing to dismiss'), 'empty-queue notice')
     expect(output.lastFrame).not.toContain('Unknown command')
   }, 12_000)
@@ -1269,7 +1269,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial thread selected')
 
-    feed(input, '/archive\r')
+    feed(input, '/archive\r\r')
     await waitFor(() => output.lastFrame.includes('Archived Solo thread'), 'archive notice')
     const archived = [...host.commands].reverse().find((c) => c.name === 'thread.archive')
     expect(archived?.arguments).toEqual({ archived: true })
@@ -1641,6 +1641,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
     feed(input, '/dismiss')
     feed(input, '\r')
+    feed(input, '\r')
     await waitFor(
       () => host.commands.filter((command) => command.name === 'question.answer').length === 2,
       'question dismiss command'
@@ -1734,15 +1735,192 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(host.commands.filter((command) => command.name === 'thread.select')).toHaveLength(0)
   })
 
+  it('lazily creates a remembered default thread and sends the first ordinary prompt', async () => {
+    const workspaces = [
+      {
+        id: 'ws-remembered',
+        name: 'Remembered',
+        path: '/tmp/remembered',
+        pinned: false,
+        updatedAt: 1
+      },
+      { id: 'ws-newer', name: 'Newer', path: '/tmp/newer', pinned: false, updatedAt: 20 }
+    ]
+    let configured = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-lazy-default-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces,
+          threads: configured
+            ? [
+                {
+                  id: 'thread-lazy',
+                  workspaceId: 'ws-remembered',
+                  title: 'New Chat',
+                  chatKind: 'single',
+                  archived: false,
+                  pinned: false,
+                  updatedAt: 30,
+                  messageCount: 0,
+                  providerId: 'claude',
+                  latestPreview: '',
+                  previewTruncated: false
+                }
+              ]
+            : []
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        { providerId: 'codex', status: 'ready', label: 'Codex' },
+        { providerId: 'claude', status: 'ready', label: 'Claude' }
+      ],
+      providerOffers: () => ({
+        providerId: 'claude',
+        offerRevision: 'claude-offers-1',
+        models: [
+          { modelId: 'first-model', label: 'First', available: true, reasoning: [] },
+          {
+            modelId: 'remembered-model',
+            label: 'Remembered',
+            available: true,
+            default: true,
+            reasoning: [{ reasoningId: 'medium', label: 'Medium', available: true }]
+          }
+        ],
+        postures: [
+          {
+            postureId: 'read_only',
+            label: 'Read only',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          }
+        ]
+      }),
+      resultRef: (command) => {
+        if (command.name === 'thread.create') {
+          return { kind: 'thread', threadId: 'thread-lazy' }
+        }
+        if (command.name === 'thread.configure') {
+          configured = true
+          return { kind: 'thread', threadId: 'thread-lazy' }
+        }
+        return undefined
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const persisted: Array<Record<string, unknown>> = []
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      colorMode: 'none',
+      animationEnabled: false,
+      profileSettings: {
+        workspaceId: 'ws-remembered',
+        providerId: 'claude',
+        modelId: 'remembered-model'
+      },
+      persistProfileSettings: (changes) => {
+        persisted.push({ ...changes })
+        return true
+      },
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+
+    feed(input, 'send this without choosing a chat\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'lazy first prompt sent',
+      8_000
+    )
+
+    expect(host.commands.slice(0, 3).map((command) => command.name)).toEqual([
+      'thread.create',
+      'thread.configure',
+      'composer.send'
+    ])
+    expect(host.commands[0].arguments).toEqual({
+      scope: 'workspace',
+      workspaceId: 'ws-remembered'
+    })
+    expect(host.commands[1].arguments).toEqual({
+      providerId: 'claude',
+      modelId: 'remembered-model',
+      postureId: 'default',
+      offerRevision: 'claude-offers-1'
+    })
+    expect(host.commands[2].arguments).toMatchObject({
+      text: 'send this without choosing a chat'
+    })
+    expect(persisted).toContainEqual({ workspaceId: 'ws-remembered' })
+    expect(persisted).toContainEqual({
+      providerId: 'claude',
+      modelId: 'remembered-model',
+      reasoningId: undefined
+    })
+  }, 12_000)
+
+  it('keeps the first draft and opens guided setup when no provider is ready', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-lazy-auth-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [{ providerId: 'claude', status: 'auth_required', label: 'Claude' }],
+      providerAuthStatus: () => ({ providerId: 'claude', state: 'unauthenticated' }),
+      providerAuthFlows: () => [
+        { flowId: 'claude:login', kind: 'manual', label: 'Sign in', available: true }
+      ]
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      colorMode: 'none',
+      animationEnabled: false,
+      profileSettings: { providerId: 'claude' },
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+
+    feed(input, 'keep this draft\r')
+    await waitFor(() => output.lastFrame.includes('Sign in'), 'guided auth setup')
+    expect((tui as unknown as { state: { input: string } }).state.input).toBe('keep this draft')
+    expect(host.commands.some((command) => command.name === 'thread.create')).toBe(false)
+  })
+
   it('opens the requested thread on connect when one was asked for', async () => {
     const { userDataPath } = await setupHost()
     const { input, output } = makeTty()
+    const persisted: Array<Record<string, unknown>> = []
     const tui = new TaskWraithTui({
       clientVersion: '0.1.0-test',
       userDataPath,
       initialThreadId: 'thread-1',
       colorMode: 'none',
       animationEnabled: false,
+      persistProfileSettings: (changes) => {
+        persisted.push({ ...changes })
+        return true
+      },
       input: input as unknown as ReadStream,
       output: output as unknown as WriteStream
     })
@@ -1750,6 +1928,82 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'requested thread opened')
     expect(output.lastFrame).not.toContain('No thread selected')
+    expect(persisted).toContainEqual({ workspaceId: 'ws-1' })
+  })
+
+  it('opens, filters, navigates and completes the slash-command palette', async () => {
+    const { userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, '/')
+    await waitFor(() => output.lastFrame.includes('Commands'), 'slash palette opened')
+    feed(input, '\u001b[B')
+    await waitFor(
+      () => (tui as unknown as { state: { overlayIndex: number } }).state.overlayIndex === 1,
+      'slash palette arrow navigation'
+    )
+    feed(input, '\u001b[6~')
+    await waitFor(
+      () => (tui as unknown as { state: { overlayIndex: number } }).state.overlayIndex > 1,
+      'slash palette page navigation'
+    )
+    feed(input, 'mo')
+    await waitFor(
+      () => output.lastFrame.includes('/model [id]') && !output.lastFrame.includes('/workspace'),
+      'slash palette filtered'
+    )
+    feed(input, '\t')
+    await waitFor(
+      () => !output.lastFrame.includes('Commands') && output.lastFrame.includes('/model'),
+      'slash command completed'
+    )
+    expect(output.lastFrame).not.toContain('Model (preview)')
+
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Model (preview)'), 'completed command executed')
+  })
+
+  it('keeps destructive palette selections inert and closes on arguments or clear keys', async () => {
+    const { host, userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, '/archive\r')
+    await waitFor(
+      () => !output.lastFrame.includes('Commands') && output.lastFrame.includes('/archive'),
+      'destructive command completed without executing'
+    )
+    expect(host.commands.some((command) => command.name === 'thread.archive')).toBe(false)
+
+    feed(input, '\u0015')
+    await waitFor(() => !output.lastFrame.includes('/archive'), 'Ctrl+U cleared completion')
+    feed(input, '/git ')
+    await waitFor(
+      () => !output.lastFrame.includes('Commands') && output.lastFrame.includes('/git'),
+      'argument whitespace closed palette'
+    )
+    feed(input, '\u0015')
+    feed(input, '/')
+    await waitFor(() => output.lastFrame.includes('Commands'), 'palette reopened')
+    feed(input, '\u007f')
+    await waitFor(() => !output.lastFrame.includes('Commands'), 'backspace removed slash')
+
+    feed(input, 'ordinary draft')
+    feed(input, '\u0010')
+    await waitFor(
+      () => output.lastFrame.includes('Commands') && output.lastFrame.includes('/model [id]'),
+      'Ctrl+P opened the unfiltered palette'
+    )
+    expect((tui as unknown as { state: { input: string } }).state.input).toBe('ordinary draft')
+    feed(input, '\u0010')
+    await waitFor(() => !output.lastFrame.includes('Commands'), 'Ctrl+P closed palette')
+    expect((tui as unknown as { state: { input: string } }).state.input).toBe('ordinary draft')
+    feed(input, '\u0015')
+    feed(input, '/help\r')
+    await waitFor(() => output.lastFrame.includes('Commands'), '/help opened palette')
   })
 
   it('keeps the reader overlay open across a Host reconnect', async () => {
@@ -1758,9 +2012,17 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     // dropped. On a Host that drops the connection every few seconds that reads
     // as "every time I try to go somewhere it pulls me back".
     const { host, userDataPath } = await setupHost()
-    const { tui, input, output } = startTui(userDataPath, { reconnectBaseDelayMs: 10 })
+    const persisted: Array<Record<string, unknown>> = []
+    const { tui, input, output } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 10,
+      persistProfileSettings: (changes) => {
+        persisted.push({ ...changes })
+        return true
+      }
+    })
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread open')
+    const persistedBeforeReconnect = persisted.length
 
     feed(input, '\u000b')
     await waitFor(() => output.lastFrame.includes('Threads'), 'thread picker open')
@@ -1770,6 +2032,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await waitFor(() => host.welcomeCount > welcomesBefore, 'Host reconnect', 4_000)
     await waitFor(() => output.lastFrame.includes('Threads'), 'picker survived reconnect', 4_000)
     expect(output.lastFrame).toContain('Threads')
+    expect(persisted).toHaveLength(persistedBeforeReconnect)
   }, 10_000)
 
   it('keeps the reader scroll position across a Host reconnect', async () => {

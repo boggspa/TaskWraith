@@ -19,7 +19,12 @@ import {
   type TuiTheme
 } from './palette'
 import { resolveTuiAppearance, type TuiAppearanceProbeIo } from './appearance'
-import { readTuiSettings, writeTuiSettings } from './settings'
+import {
+  readTuiProfileSettings,
+  readTuiSettings,
+  writeTuiProfileSettings,
+  writeTuiSettings
+} from './settings'
 import { TaskWraithTui } from './TaskWraithTui'
 import {
   parseTaskWraithTuiArgs,
@@ -350,6 +355,13 @@ async function main(): Promise<void> {
     theme: await resolveCliTheme(options),
     ...(resolveCliThemeName(options) ? { themeName: resolveCliThemeName(options) as string } : {}),
     persistTheme: (name: string) => writeTuiSettings({ theme: name }),
+    ...(options.userDataPath
+      ? {
+          profileSettings: readTuiProfileSettings(options.userDataPath),
+          persistProfileSettings: (changes) =>
+            writeTuiProfileSettings(options.userDataPath as string, changes)
+        }
+      : {}),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
     ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
     ...(!options.demo && options.startHost && options.userDataPath

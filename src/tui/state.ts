@@ -140,6 +140,8 @@ export interface TaskWraithTuiState {
   inputCursor: number
   overlay: TuiOverlay
   overlayIndex: number
+  /** Palette-only filter text. Manual Ctrl+P keeps the composer draft separate. */
+  commandPaletteQuery?: string
   /**
    * The committed theme name, which may be `auto`. Distinct from the theme the
    * frame is currently painted in: the `/theme` picker previews by repainting,
@@ -185,9 +187,8 @@ export interface TaskWraithTuiState {
    */
   showArchivedThreads?: boolean
   /**
-   * Workspace chosen through /workspace. New threads land here, and the choice
-   * is sticky: it survives thread switches so a deliberate pick is never
-   * silently undone by opening a chat that lives somewhere else.
+   * Last successful workspace target. Explicit /workspace choices, registration,
+   * and opening an existing thread all update where the next fresh thread lands.
    */
   activeWorkspaceId?: string
 }

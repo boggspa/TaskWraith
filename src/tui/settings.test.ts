@@ -2,7 +2,13 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readTuiSettings, tuiSettingsPath, writeTuiSettings } from './settings'
+import {
+  readTuiProfileSettings,
+  readTuiSettings,
+  tuiSettingsPath,
+  writeTuiProfileSettings,
+  writeTuiSettings
+} from './settings'
 
 function scratch(): string {
   return join(mkdtempSync(join(tmpdir(), 'taskwraith-tui-settings-')), 'tui.json')
@@ -58,5 +64,68 @@ describe('TaskWraith TUI settings', () => {
     mkdirSync(`${path}.tmp`)
     expect(writeTuiSettings({ theme: 'wraith-day' }, path)).toBe(false)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ theme: 'tokyo-night' })
+  })
+
+  it('keeps startup defaults isolated by resolved Host profile', () => {
+    const path = scratch()
+    expect(
+      writeTuiProfileSettings(
+        '/profiles/production',
+        { workspaceId: 'workspace-a', providerId: 'claude', modelId: 'sonnet-5' },
+        path
+      )
+    ).toBe(true)
+    expect(
+      writeTuiProfileSettings(
+        '/profiles/development',
+        { workspaceId: 'workspace-b', providerId: 'codex', modelId: 'gpt-5.5' },
+        path
+      )
+    ).toBe(true)
+
+    expect(readTuiProfileSettings('/profiles/production', path)).toEqual({
+      workspaceId: 'workspace-a',
+      providerId: 'claude',
+      modelId: 'sonnet-5'
+    })
+    expect(readTuiProfileSettings('/profiles/development', path)).toEqual({
+      workspaceId: 'workspace-b',
+      providerId: 'codex',
+      modelId: 'gpt-5.5'
+    })
+  })
+
+  it('ignores malformed profile fields and preserves future nested settings', () => {
+    const path = scratch()
+    writeFileSync(
+      path,
+      JSON.stringify({
+        theme: 'terminal',
+        profiles: {
+          '/profiles/production': {
+            workspaceId: 42,
+            providerId: ' claude ',
+            futureProfileSetting: { enabled: true }
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    expect(readTuiProfileSettings('/profiles/production', path)).toEqual({ providerId: 'claude' })
+    expect(writeTuiProfileSettings('/profiles/production', { modelId: 'sonnet-5' }, path)).toBe(
+      true
+    )
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
+      theme: 'terminal',
+      profiles: {
+        '/profiles/production': {
+          workspaceId: 42,
+          providerId: ' claude ',
+          modelId: 'sonnet-5',
+          futureProfileSetting: { enabled: true }
+        }
+      }
+    })
   })
 })

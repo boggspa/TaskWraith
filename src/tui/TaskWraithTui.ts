@@ -19,7 +19,10 @@ import {
   type HostSnapshot
 } from '../shared/hostProtocol'
 import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
-import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
+import type {
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import {
   defaultTaskWraithUserDataPath,
@@ -54,6 +57,7 @@ import {
   coldStartOffers,
   coldStartPending,
   coldStartSelectProvider,
+  coldStartThreadCreated,
   coldStartWorkspaceRegistered,
   selectColdStartConfiguration,
   type ColdStartPendingCommand
@@ -70,6 +74,19 @@ import {
 } from './palette'
 import { resolveTuiAppearanceWithoutProbe } from './appearance'
 import { renderTaskWraithTui } from './render'
+import type { TuiProfileSettings } from './settings'
+import {
+  filterTuiSlashCommands,
+  parseLeadingTuiSlashToken,
+  resolveTuiSlashCommand
+} from './slashCommands'
+import {
+  resolveStartupModel,
+  resolveStartupPosture,
+  resolveStartupProvider,
+  resolveStartupReasoning,
+  resolveStartupWorkspaceId
+} from './startupDefaults'
 import {
   mapHostHistoryEntriesToTranscriptRows,
   mapHostSnapshotToControlSnapshot,
@@ -126,6 +143,10 @@ export interface TaskWraithTuiOptions {
   themeName?: string
   /** Persist a confirmed theme. Omitted in tests and in one-shot renders. */
   persistTheme?: (name: string) => boolean
+  /** Best-effort startup memory for the resolved Host profile. */
+  profileSettings?: TuiProfileSettings
+  /** Persist startup memory for this Host profile. Omitted in tests unless under test. */
+  persistProfileSettings?: (changes: TuiProfileSettings) => boolean
   input?: ReadStream
   output?: WriteStream
   now?: () => number
@@ -271,6 +292,7 @@ export class TaskWraithTui {
   private theme: TuiTheme
   /** The theme to restore if the picker is dismissed rather than confirmed. */
   private themeBeforePreview: TuiTheme | undefined
+  private profileSettings: TuiProfileSettings
   private readonly client: HostProjectionClient | null
   private state: TaskWraithTuiState
   private stopped = false
@@ -284,6 +306,9 @@ export class TaskWraithTui {
   private mutationInFlight = false
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
+  private commandPaletteAutomatic = false
+  /** Retained across reconnect so an accepted lazy setup command is never reminted. */
+  private unresolvedLazySetupCommand: HostCommand | undefined
   private lastError = ''
   /** Serialises full snapshots and push deltas into one atomic apply lane. */
   private projectionQueue: Promise<void> = Promise.resolve()
@@ -312,8 +337,10 @@ export class TaskWraithTui {
     this.ansi = new Ansi(this.options.colorMode)
     this.glyphs = options.glyphs ?? resolveTuiGlyphs(detectTuiUnicode())
     this.theme = options.theme ?? TUI_UNPAINTED_THEME
+    this.profileSettings = { ...(options.profileSettings ?? {}) }
     this.state = options.demo ? createTaskWraithTuiDemoState(this.options.now()) : emptyState()
     this.state.themeName = options.themeName ?? this.theme.name
+    this.state.activeWorkspaceId = this.profileSettings.workspaceId
     this.client = options.demo
       ? null
       : new HostProjectionClient({
@@ -563,6 +590,12 @@ export class TaskWraithTui {
         // rather than entering setup, which is for a profile with nothing to open.
         this.state.selectedThreadId = undefined
         this.state.thread = undefined
+      } else if (mapped.workspaces.length > 0 && !this.state.coldStart) {
+        // A registered workspace is enough for a fresh lazy draft. Provider,
+        // model and posture are validated only when the first prompt is sent.
+        this.state.selectedThreadId = undefined
+        this.state.thread = undefined
+        this.state.overlay = 'none'
       } else {
         this.state.selectedThreadId = undefined
         this.state.thread = undefined
@@ -582,6 +615,9 @@ export class TaskWraithTui {
           this.state.overlay = 'setup'
           this.setNotice('Host setup capability is unavailable · read-only legacy mode.', 'warning')
         }
+      }
+      if (this.unresolvedLazySetupCommand) {
+        this.setNotice('Connection restored · press Enter to resume the first prompt.', 'neutral')
       }
       this.render()
     } catch (error) {
@@ -713,6 +749,9 @@ export class TaskWraithTui {
       this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
       await this.loadThreadHistory(threadId)
       if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
+      else if (this.state.thread?.thread.workspaceId) {
+        this.rememberWorkspaceId(this.state.thread.thread.workspaceId)
+      }
       this.render()
       return
     }
@@ -726,6 +765,9 @@ export class TaskWraithTui {
           this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
           await this.loadThreadHistory(threadId)
           if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
+          else if (this.state.thread?.thread.workspaceId) {
+            this.rememberWorkspaceId(this.state.thread.thread.workspaceId)
+          }
         }
       })
     } finally {
@@ -898,6 +940,7 @@ export class TaskWraithTui {
         this.bracketedPaste = false
         this.insertComposerText(this.bracketedPasteBuffer)
         this.bracketedPasteBuffer = ''
+        this.syncCommandPaletteAfterInput()
         this.render()
       } else {
         this.bracketedPasteBuffer += input
@@ -905,9 +948,10 @@ export class TaskWraithTui {
       return
     }
     if (key.ctrl && key.name === 'c') {
-      if (this.state.input) {
+      if (this.state.input || this.state.overlay === 'help') {
         this.state.input = ''
         this.state.inputCursor = 0
+        this.dismissCommandPalette()
         this.render()
       } else {
         this.stop()
@@ -970,6 +1014,7 @@ export class TaskWraithTui {
     if (key.ctrl && key.name === 'u') {
       this.state.input = ''
       this.state.inputCursor = 0
+      this.dismissCommandPalette()
       this.render()
       return
     }
@@ -996,7 +1041,16 @@ export class TaskWraithTui {
       return
     }
     if (key.ctrl && key.name === 'p') {
-      this.toggleOverlay('help')
+      if (this.state.overlay === 'help') {
+        this.dismissCommandPalette()
+        this.render()
+      } else {
+        this.state.overlay = 'help'
+        this.state.overlayIndex = 0
+        this.state.commandPaletteQuery = ''
+        this.commandPaletteAutomatic = false
+        this.render()
+      }
       return
     }
     if (key.ctrl && key.name === 'g') {
@@ -1021,6 +1075,12 @@ export class TaskWraithTui {
         this.dismissThemePreview()
         return
       }
+      if (this.state.overlay === 'help') {
+        this.dismissCommandPalette()
+        this.render()
+        return
+      }
+      this.commandPaletteAutomatic = false
       this.state.overlay = 'none'
       this.render()
       return
@@ -1062,6 +1122,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'theme') {
       this.handleThemePickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'help') {
+      this.handleCommandPaletteKey(input, key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -1146,6 +1210,7 @@ export class TaskWraithTui {
     }
     if (!key.ctrl && !key.meta && input) {
       this.insertComposerText(input.replace(/\r?\n/g, ' '))
+      this.syncCommandPaletteAfterInput()
       this.render()
     }
   }
@@ -1160,6 +1225,153 @@ export class TaskWraithTui {
     characters.splice(this.state.inputCursor, 0, ...inserted)
     this.state.input = characters.join('')
     this.state.inputCursor = Math.min(characters.length, this.state.inputCursor + inserted.length)
+  }
+
+  private dismissCommandPalette(): void {
+    if (this.state.overlay === 'help') this.state.overlay = 'none'
+    this.state.commandPaletteQuery = undefined
+    this.commandPaletteAutomatic = false
+  }
+
+  private commandPaletteFilterText(): string {
+    return this.state.commandPaletteQuery ?? (this.commandPaletteAutomatic ? this.state.input : '')
+  }
+
+  private syncCommandPaletteAfterInput(): void {
+    const leadingTokenOnly = /^\s*\/[^\s]*$/.test(this.state.input)
+    if (leadingTokenOnly) {
+      this.state.overlay = 'help'
+      this.state.overlayIndex = 0
+      this.state.commandPaletteQuery = this.state.input
+      this.commandPaletteAutomatic = true
+      return
+    }
+    const slashWithArguments = Boolean(parseLeadingTuiSlashToken(this.state.input))
+    if (this.commandPaletteAutomatic || (this.state.overlay === 'help' && slashWithArguments)) {
+      this.dismissCommandPalette()
+    }
+  }
+
+  private handleCommandPaletteKey(input: string, key: Keypress): void {
+    const commands = filterTuiSlashCommands(this.commandPaletteFilterText())
+    const lastIndex = Math.max(0, commands.length - 1)
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(lastIndex, this.state.overlayIndex + 1)
+      this.render()
+      return
+    }
+    if (key.name === 'pageup' || key.name === 'pagedown') {
+      const page = Math.max(1, (this.options.output.rows || 24) - 4)
+      this.state.overlayIndex = Math.max(
+        0,
+        Math.min(lastIndex, this.state.overlayIndex + (key.name === 'pageup' ? -page : page))
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
+      const selected = commands[Math.max(0, Math.min(this.state.overlayIndex, lastIndex))]
+      if (!selected) {
+        this.dismissCommandPalette()
+        this.render()
+        return
+      }
+      const resolved = this.commandPaletteAutomatic
+        ? resolveTuiSlashCommand(this.state.input)
+        : null
+      const exactSelection =
+        resolved?.command.name === selected.name && resolved.argumentText.length === 0
+      if (
+        (key.name === 'return' || key.name === 'enter') &&
+        exactSelection &&
+        !selected.destructive
+      ) {
+        this.dismissCommandPalette()
+        void this.submit()
+        return
+      }
+      this.state.input = selected.name
+      this.state.inputCursor = Array.from(selected.name).length
+      this.dismissCommandPalette()
+      this.render()
+      return
+    }
+    if (key.name === 'left') {
+      this.state.inputCursor = Math.max(0, this.state.inputCursor - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'right') {
+      this.state.inputCursor = Math.min(
+        Array.from(this.state.input).length,
+        this.state.inputCursor + 1
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'home') {
+      this.state.inputCursor = 0
+      this.render()
+      return
+    }
+    if (key.name === 'end') {
+      this.state.inputCursor = Array.from(this.state.input).length
+      this.render()
+      return
+    }
+    if (key.name === 'backspace') {
+      if (!this.commandPaletteAutomatic) {
+        const query = Array.from(this.state.commandPaletteQuery ?? '')
+        query.pop()
+        this.state.commandPaletteQuery = query.join('')
+        this.state.overlayIndex = 0
+        this.render()
+        return
+      }
+      const characters = Array.from(this.state.input)
+      if (this.state.inputCursor > 0) {
+        characters.splice(this.state.inputCursor - 1, 1)
+        this.state.input = characters.join('')
+        this.state.inputCursor -= 1
+      }
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+      return
+    }
+    if (key.name === 'delete') {
+      if (!this.commandPaletteAutomatic) return
+      const characters = Array.from(this.state.input)
+      if (this.state.inputCursor < characters.length) {
+        characters.splice(this.state.inputCursor, 1)
+        this.state.input = characters.join('')
+      }
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+      return
+    }
+    if (!key.ctrl && !key.meta && input) {
+      if (!this.commandPaletteAutomatic) {
+        const appended = sanitizeTerminalText(input.replace(/\r?\n/g, ' '))
+        this.state.commandPaletteQuery = `${this.state.commandPaletteQuery ?? ''}${appended}`.slice(
+          0,
+          256
+        )
+        this.state.overlayIndex = 0
+        this.render()
+        return
+      }
+      this.insertComposerText(input.replace(/\r?\n/g, ' '))
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+    }
   }
 
   private async handleColdStartKey(input: string, key: Keypress): Promise<void> {
@@ -1337,8 +1549,10 @@ export class TaskWraithTui {
       },
       onSucceeded: async () => {
         const cold = this.state.coldStart
-        if (cold?.kind === 'workspace')
+        if (cold?.kind === 'workspace') {
+          this.rememberWorkspaceId(cold.workspaceId)
           this.setNotice('Workspace registered · choose provider', 'good')
+        }
         if (cold?.kind === 'thread') this.setNotice('Thread created · configure it', 'good')
         if (cold?.kind === 'auth' && cold.operationId) await this.pollColdStartAuth(cold.providerId)
         if (cold?.kind === 'ready') {
@@ -1348,6 +1562,20 @@ export class TaskWraithTui {
           await this.refreshHostSnapshot()
           this.applyLocalThread(cold.threadId, { previewNotice: true })
           await this.loadThreadHistory(cold.threadId)
+          const workspaceId = this.state.thread?.thread.workspaceId
+          if (workspaceId) this.rememberWorkspaceId(workspaceId)
+          if (command.name === 'thread.configure') {
+            const providerId = command.arguments.providerId
+            const modelId = command.arguments.modelId
+            const reasoningId = command.arguments.reasoningId
+            if (typeof providerId === 'string' && typeof modelId === 'string') {
+              this.rememberProfileSettings({
+                providerId,
+                modelId,
+                ...(typeof reasoningId === 'string' ? { reasoningId } : { reasoningId: undefined })
+              })
+            }
+          }
         }
       }
     })
@@ -1395,9 +1623,37 @@ export class TaskWraithTui {
   }
 
   private resetColdStartConfigureIndices(): void {
-    this.state.coldStartModelIndex = 0
-    this.state.coldStartReasoningIndex = 0
-    this.state.coldStartPostureIndex = 0
+    const cold = this.state.coldStart
+    const offers =
+      cold?.kind === 'offers' || cold?.kind === 'thread' || cold?.kind === 'configure'
+        ? cold.offers
+        : undefined
+    const models = offers?.models.filter((candidate) => candidate.available) ?? []
+    const savedForProvider = this.profileSettings.providerId === offers?.providerId
+    const model = offers
+      ? resolveStartupModel(offers, savedForProvider ? this.profileSettings.modelId : undefined)
+      : undefined
+    this.state.coldStartModelIndex = Math.max(
+      0,
+      model ? models.findIndex((candidate) => candidate.modelId === model.modelId) : 0
+    )
+    const reasoning = resolveStartupReasoning(
+      model,
+      savedForProvider ? this.profileSettings.reasoningId : undefined
+    )
+    const reasoningOffers = model?.reasoning.filter((candidate) => candidate.available) ?? []
+    this.state.coldStartReasoningIndex = Math.max(
+      0,
+      reasoning
+        ? reasoningOffers.findIndex((candidate) => candidate.reasoningId === reasoning.reasoningId)
+        : 0
+    )
+    const postures = offers?.postures.filter((candidate) => candidate.available) ?? []
+    const posture = offers ? resolveStartupPosture(offers) : undefined
+    this.state.coldStartPostureIndex = Math.max(
+      0,
+      posture ? postures.findIndex((candidate) => candidate.postureId === posture.postureId) : 0
+    )
   }
 
   private async resumeColdStartPending(): Promise<void> {
@@ -1437,17 +1693,27 @@ export class TaskWraithTui {
   }
 
   /**
-   * Which workspace a new thread lands in. An explicit /workspace pick wins and
-   * keeps winning — that stickiness is the whole point of the lens. Without one
-   * we inherit the open thread's workspace, and only then fall back to the first
-   * registered workspace, which is raw registration order and therefore
-   * arbitrary. That silent last resort is what /workspace exists to make visible.
+   * Which workspace a new thread lands in. Profile-scoped last-open memory wins,
+   * then the current thread, then the most recently updated registered workspace.
+   * Every remembered id is revalidated against the current Host projection.
    */
   private resolveWorkspaceId(): string | undefined {
     const workspaces = this.state.snapshot?.workspaces ?? []
-    const picked = workspaces.find((workspace) => workspace.id === this.state.activeWorkspaceId)
-    if (picked) return picked.id
-    return this.state.thread?.thread.workspaceId ?? workspaces[0]?.id
+    return resolveStartupWorkspaceId({
+      workspaces,
+      savedWorkspaceId: this.state.activeWorkspaceId ?? this.profileSettings.workspaceId,
+      currentThreadWorkspaceId: this.state.thread?.thread.workspaceId
+    })
+  }
+
+  private rememberProfileSettings(changes: TuiProfileSettings): void {
+    this.profileSettings = { ...this.profileSettings, ...changes }
+    this.options.persistProfileSettings?.(changes)
+  }
+
+  private rememberWorkspaceId(workspaceId: string): void {
+    this.state.activeWorkspaceId = workspaceId
+    this.rememberProfileSettings({ workspaceId })
   }
 
   private handleWorkspacePickerKey(key: Keypress): void {
@@ -1462,7 +1728,7 @@ export class TaskWraithTui {
     } else if (key.name === 'return' || key.name === 'enter') {
       const workspace = workspaces[this.state.overlayIndex]
       if (workspace) {
-        this.state.activeWorkspaceId = workspace.id
+        this.rememberWorkspaceId(workspace.id)
         this.state.overlay = 'none'
         this.setNotice(`New threads will use ${workspace.name}.`, 'neutral', 3_000)
       }
@@ -1599,7 +1865,7 @@ export class TaskWraithTui {
         if (registered) {
           // Registering is an explicit act of intent, so adopt it immediately
           // rather than making the user register and then pick it as well.
-          this.state.activeWorkspaceId = registered
+          this.rememberWorkspaceId(registered)
           this.setNotice(`Registered ${path}; new threads will use it.`, 'neutral', 4_000)
         }
         this.state.overlay = 'workspaces'
@@ -1956,14 +2222,32 @@ export class TaskWraithTui {
       await this.answerProjectedQuestion(question, original, 'answer', text)
       return
     }
-    const threadId = this.state.selectedThreadId
-    if (!threadId) {
-      this.setNotice('Choose a thread with Ctrl+K before sending.', 'warning', 3_000)
+    if (this.sendingPrompt || this.mutationInFlight) {
+      this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
       this.render()
       return
     }
-    if (this.sendingPrompt || this.mutationInFlight) {
-      this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
+    let threadId = this.state.selectedThreadId
+    if (!threadId && this.client) {
+      this.sendingPrompt = true
+      try {
+        threadId = await this.prepareDefaultThreadForPrompt(original)
+      } finally {
+        if (!threadId) this.sendingPrompt = false
+      }
+      if (!threadId) return
+      if (this.state.input !== original) {
+        this.sendingPrompt = false
+        this.setNotice(
+          'Draft changed while the thread was prepared · press Enter to send.',
+          'neutral'
+        )
+        this.render()
+        return
+      }
+    }
+    if (!threadId) {
+      this.setNotice('Choose a thread with Ctrl+K before sending.', 'warning', 3_000)
       this.render()
       return
     }
@@ -1980,6 +2264,7 @@ export class TaskWraithTui {
     if (selection?.reasoningEffort) args.reasoningEffort = selection.reasoningEffort
     const command = this.buildMutation('composer.send', { threadId }, args)
     if (!command) {
+      this.sendingPrompt = false
       this.restoreComposerText(original)
       this.render()
       return
@@ -2002,6 +2287,205 @@ export class TaskWraithTui {
     }
   }
 
+  private async prepareDefaultThreadForPrompt(original: string): Promise<string | undefined> {
+    if (!this.client || !this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return undefined
+    }
+    if (
+      !this.client.supports('commands') ||
+      !this.client.supports('setup') ||
+      !this.client.supports('provider-catalog')
+    ) {
+      this.setNotice(
+        'This Host cannot prepare a fresh default thread · choose one with Ctrl+K.',
+        'warning',
+        4_000
+      )
+      this.render()
+      return undefined
+    }
+    const actor = this.actorIdentity()
+    if (!actor) return undefined
+    let workspaceId = this.resolveWorkspaceId()
+    if (!workspaceId) {
+      await this.startNewSoloThread()
+      return undefined
+    }
+
+    let recoveredCreatedThreadId: string | undefined
+    const unresolved = this.unresolvedLazySetupCommand
+    if (unresolved) {
+      let recovered: HostCommandReceipt | undefined
+      try {
+        recovered = await this.client.lookupReceipt({ commandId: unresolved.commandId })
+      } catch {
+        recovered = undefined
+      }
+      if (!recovered || !isTerminalHostReceiptStatus(recovered.status)) {
+        this.setNotice('The first prompt setup is still being recovered from the Host.', 'warning')
+        this.render()
+        return undefined
+      }
+      this.unresolvedLazySetupCommand = undefined
+      if (recovered.status === 'succeeded' && unresolved.name === 'thread.configure') {
+        const recoveredThreadId = unresolved.target.threadId
+        await this.refreshHostSnapshot()
+        this.applyLocalThread(recoveredThreadId, { previewNotice: true })
+        await this.loadThreadHistory(recoveredThreadId)
+        const recoveredWorkspaceId = this.state.thread?.thread.workspaceId
+        if (recoveredWorkspaceId) this.rememberWorkspaceId(recoveredWorkspaceId)
+        const providerId = unresolved.arguments.providerId
+        const modelId = unresolved.arguments.modelId
+        const reasoningId = unresolved.arguments.reasoningId
+        if (typeof providerId === 'string' && typeof modelId === 'string') {
+          this.rememberProfileSettings({
+            providerId,
+            modelId,
+            ...(typeof reasoningId === 'string' ? { reasoningId } : { reasoningId: undefined })
+          })
+        }
+        return recoveredThreadId
+      }
+      if (
+        recovered.status === 'succeeded' &&
+        unresolved.name === 'thread.create' &&
+        recovered.resultRef?.kind === 'thread'
+      ) {
+        recoveredCreatedThreadId = recovered.resultRef.threadId
+        if (typeof unresolved.arguments.workspaceId === 'string') {
+          workspaceId = unresolved.arguments.workspaceId
+        }
+      }
+    }
+
+    let status: HostProviderStatusProjection | undefined
+    try {
+      status = resolveStartupProvider(
+        await this.client.getProviderStatuses(),
+        this.profileSettings.providerId
+      )
+    } catch {
+      status = undefined
+    }
+    if (!status) {
+      await this.startNewSoloThread(this.profileSettings.providerId)
+      return undefined
+    }
+
+    let offers: HostProviderOffersProjection
+    try {
+      offers = await this.client.getProviderOffers(status.providerId)
+    } catch {
+      await this.startNewSoloThread(status.providerId)
+      return undefined
+    }
+    const savedForProvider = this.profileSettings.providerId === status.providerId
+    const model = resolveStartupModel(
+      offers,
+      savedForProvider ? this.profileSettings.modelId : undefined
+    )
+    const posture = resolveStartupPosture(offers)
+    const reasoning = resolveStartupReasoning(
+      model,
+      savedForProvider ? this.profileSettings.reasoningId : undefined
+    )
+    if (!model || !posture) {
+      await this.startNewSoloThread(status.providerId)
+      return undefined
+    }
+
+    let createdThreadId = recoveredCreatedThreadId
+    if (!createdThreadId) {
+      const createCommand = buildThreadCreateCommand({
+        actor,
+        scope: 'workspace',
+        workspaceId
+      })
+      this.unresolvedLazySetupCommand = createCommand
+      await this.runHostMutation(createCommand, {
+        composerRestore: original,
+        onTerminalReceipt: () => {
+          this.unresolvedLazySetupCommand = undefined
+        },
+        onSucceeded: (receipt) => {
+          createdThreadId =
+            receipt.resultRef?.kind === 'thread' ? receipt.resultRef.threadId : undefined
+        }
+      })
+    }
+    if (!createdThreadId) return undefined
+    const newThreadId = createdThreadId
+
+    const selection = {
+      threadId: newThreadId,
+      providerId: status.providerId,
+      modelId: model.modelId,
+      postureId: posture.postureId,
+      offerRevision: offers.offerRevision,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {})
+    }
+    let configured = false
+    const configureCommand = buildThreadConfigureCommand({ actor, selection })
+    this.unresolvedLazySetupCommand = configureCommand
+    await this.runHostMutation(configureCommand, {
+      composerRestore: original,
+      onTerminalReceipt: () => {
+        this.unresolvedLazySetupCommand = undefined
+      },
+      onSucceeded: async () => {
+        configured = true
+        await this.refreshHostSnapshot()
+        this.applyLocalThread(newThreadId, { previewNotice: true })
+        await this.loadThreadHistory(newThreadId)
+      }
+    })
+    if (!configured) {
+      let refreshedStatus: HostProviderStatusProjection | undefined
+      let refreshedOffers: HostProviderOffersProjection | undefined
+      try {
+        refreshedStatus = (await this.client.getProviderStatuses()).find(
+          (candidate) => candidate.providerId === status.providerId && candidate.status === 'ready'
+        )
+        if (refreshedStatus) {
+          refreshedOffers = await this.client.getProviderOffers(refreshedStatus.providerId)
+        }
+      } catch {
+        refreshedStatus = undefined
+        refreshedOffers = undefined
+      }
+      if (!refreshedStatus || !refreshedOffers) {
+        this.setNotice(
+          'Could not refresh current Host defaults · the first draft is still in the composer.',
+          'warning'
+        )
+        this.render()
+        return undefined
+      }
+      const selectedProvider = coldStartSelectProvider(
+        coldStartWorkspaceRegistered(workspaceId),
+        refreshedStatus
+      )
+      const withOffers = coldStartOffers(selectedProvider, refreshedOffers)
+      this.state.coldStart = coldStartConfigure(coldStartThreadCreated(withOffers, newThreadId))
+      this.state.coldStartIntent = 'new-thread'
+      this.state.overlay = 'setup'
+      this.resetColdStartConfigureIndices()
+      this.setNotice('Host defaults changed · review the current setup choices.', 'warning')
+      this.render()
+      return undefined
+    }
+
+    this.rememberWorkspaceId(workspaceId)
+    this.rememberProfileSettings({
+      providerId: status.providerId,
+      modelId: model.modelId,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
+    })
+    return newThreadId
+  }
+
   private restoreComposerText(value: string): void {
     if (this.state.input) return
     this.state.input = value
@@ -2009,8 +2493,10 @@ export class TaskWraithTui {
   }
 
   private async runCommand(raw: string): Promise<void> {
-    const [name = '', ...arguments_] = raw.trim().slice(1).split(/\s+/)
-    const command = `/${name.toLowerCase()}`
+    const parsed = parseLeadingTuiSlashToken(raw)
+    const resolved = resolveTuiSlashCommand(raw)
+    const arguments_ = [...(parsed?.arguments ?? [])]
+    const command = resolved?.command.name ?? parsed?.normalizedToken ?? '/'
     if (command === '/quit' || command === '/q') {
       this.stop()
       return
@@ -2026,7 +2512,7 @@ export class TaskWraithTui {
     if (command === '/workspace' || command === '/ws') {
       // Re-join on spaces: workspace paths routinely contain them, and the
       // dispatcher split the raw line on whitespace before we ever saw it.
-      const path = arguments_.join(' ').trim()
+      const path = parsed?.argumentText ?? arguments_.join(' ').trim()
       if (!path) {
         this.toggleOverlay('workspaces')
         return
@@ -2035,7 +2521,7 @@ export class TaskWraithTui {
       return
     }
     if (command === '/theme') {
-      const requested = arguments_.join(' ').trim()
+      const requested = parsed?.argumentText ?? arguments_.join(' ').trim()
       if (!requested) {
         this.toggleOverlay('theme')
         return
@@ -2052,6 +2538,8 @@ export class TaskWraithTui {
       return
     }
     if (command === '/help') {
+      this.commandPaletteAutomatic = false
+      this.state.commandPaletteQuery = ''
       this.toggleOverlay('help')
       return
     }
@@ -2581,7 +3069,22 @@ export class TaskWraithTui {
     this.state.coldStartProviderChoices = (await this.client.getProviderStatuses()).filter(
       (candidate) => candidate.status === 'ready' || candidate.status === 'auth_required'
     )
-    this.state.coldStartProviderIndex = 0
+    const preferred =
+      resolveStartupProvider(
+        this.state.coldStartProviderChoices,
+        this.profileSettings.providerId
+      ) ??
+      this.state.coldStartProviderChoices.find(
+        (candidate) => candidate.providerId === this.profileSettings.providerId
+      )
+    this.state.coldStartProviderIndex = Math.max(
+      0,
+      preferred
+        ? this.state.coldStartProviderChoices.findIndex(
+            (candidate) => candidate.providerId === preferred.providerId
+          )
+        : 0
+    )
   }
 
   private matchColdStartProvider(requested: string) {

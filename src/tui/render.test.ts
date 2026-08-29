@@ -630,14 +630,14 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).not.toContain('Start TaskWraith to compose')
   })
 
-  it('documents the inline-argument slash commands in the help overlay', () => {
+  it('renders the slash-command registry as a bounded selectable palette', () => {
     const lines = renderedLines(80, 24, 'help')
     const output = lines.join('\n')
 
     for (const entry of [
-      '/model <id>',
+      '/model [id]',
       '/m',
-      '/think <level>',
+      '/think [level]',
       '/reasoning',
       '/new',
       '/provider',
@@ -647,8 +647,7 @@ describe('TaskWraith TUI renderer', () => {
       '/tune',
       '/missions',
       '/seats',
-      '/cancel',
-      '/quit'
+      '/cancel'
     ]) {
       expect(output).toContain(entry)
     }
@@ -658,6 +657,41 @@ describe('TaskWraith TUI renderer', () => {
     expect(lines.some((line) => line.startsWith('└'))).toBe(true)
     expect(output).not.toContain('Electron')
     expect(output).not.toContain('sidecar')
+  })
+
+  it('filters and scrolls the command palette to its final destructive rows', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const filtered = createTaskWraithTuiDemoState(now)
+    filtered.overlay = 'help'
+    filtered.input = '/mo'
+    filtered.inputCursor = filtered.input.length
+    const filteredOutput = stripAnsi(
+      renderTaskWraithTui(filtered, {
+        width: 80,
+        height: 16,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(filteredOutput).toContain('/model [id]')
+    expect(filteredOutput).not.toContain('/workspace [path]')
+
+    const scrolled = createTaskWraithTuiDemoState(now)
+    scrolled.overlay = 'help'
+    scrolled.overlayIndex = 19
+    const scrolledLines = renderTaskWraithTui(scrolled, {
+      width: 80,
+      height: 12,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    }).split('\n')
+    const scrolledOutput = stripAnsi(scrolledLines.join('\n'))
+    expect(scrolledOutput).toContain('/quit')
+    expect(scrolledOutput).toContain('confirm after completion')
+    expect(scrolledLines).toHaveLength(12)
+    expect(scrolledLines.every((line) => visibleWidth(line) <= 80)).toBe(true)
   })
 
   it('renders the git overlay status rows, branch and scope tabs within 80 columns', () => {

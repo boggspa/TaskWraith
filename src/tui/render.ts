@@ -18,6 +18,7 @@ import {
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import { resolveGhostBanner } from './ghostBanner'
 import { sweepGhostBanner } from './ghostBannerSweep'
+import { filterTuiSlashCommands } from './slashCommands'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import {
   TUI_AUTO_THEME_NAME,
@@ -1114,105 +1115,55 @@ function renderThemeOverlay(
 }
 
 function renderHelpOverlay(
+  state: TaskWraithTuiState,
   width: number,
   height: number,
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
-  // Separators come from the glyph set: this overlay is one of the surfaces
-  // the packaged `--ascii` smoke renders, and a hard-coded `·`/`—` mojibakes
-  // on a terminal that never advertised UTF-8.
   const sep = ` ${glyphs.separator} `
-  const lines = [
-    borderTitle('Commands', width, ansi, glyphs),
-    overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
-    overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
-    overlayValue('Ctrl+R', 'live and historical missions', width, ansi, glyphs),
-    overlayValue('Ctrl+G · /tune', `tune lens${sep}model/reasoning`, width, ansi, glyphs),
-    overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
-    overlayValue('Enter', 'send prompt / choose item', width, ansi, glyphs),
-    overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
-    overlayValue(
-      '/model',
-      `stage a model for the next send${sep}/model <id>${sep}/m`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue(
-      '/think',
-      `stage reasoning effort${sep}/think <level>${sep}/reasoning`,
-      width,
-      ansi,
-      glyphs
-    ),
-    // /new and /provider are the same handler, so they share one row. That keeps
-    // the overlay inside an 80x24 canvas, where a clipped bottom border reads as
-    // a broken frame.
-    overlayValue(
-      '/new',
-      `fresh solo thread${sep}/new <provider>${sep}/provider <id>`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue(
-      '/status',
-      `Host and thread detail${sep}/goal shows the thread objective`,
-      width,
-      ansi,
-      glyphs
-    ),
-    // /clear and /theme are the two commands that change only this client's view
-    // and never Host state, so they share a row — same reason /new and /provider
-    // do. An 80x24 canvas has no spare row, and a clipped bottom border reads as
-    // a broken frame.
-    overlayValue(
-      '/clear',
-      `clear the local transcript view${sep}/theme recolours it`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue(
-      '/git',
-      `workspace git status/diff/log lens${sep}/git diff [path]`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue('/seats', `ensemble seat lens${sep}Enter toggles a seat`, width, ansi, glyphs),
-    overlayValue(
-      '/threads',
-      `switch thread${sep}/archive retires one${sep}/context for detail`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue(
-      '/workspace',
-      `where new threads land${sep}/workspace <path> adds`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue(
-      '/missions',
-      `mission control${sep}/history for completed runs`,
-      width,
-      ansi,
-      glyphs
-    ),
-    overlayValue('/cancel', `stop the active run${sep}/dismiss a question`, width, ansi, glyphs),
-    overlayValue('/quit', 'leave the CLI; the Host keeps running', width, ansi, glyphs),
+  const commands = filterTuiSlashCommands(state.commandPaletteQuery ?? state.input)
+  const capacity = Math.max(1, height - 4)
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, Math.max(0, commands.length - 1)))
+  const windowStart = Math.max(
+    0,
+    Math.min(Math.max(0, commands.length - capacity), safeIndex - Math.floor(capacity / 2))
+  )
+  const lines = [borderTitle('Commands', width, ansi, glyphs)]
+  if (!commands.length) {
+    lines.push(borderedLine(ansi.dim('No matching slash commands.'), width, ansi, glyphs))
+  } else {
+    for (
+      let index = windowStart;
+      index < Math.min(commands.length, windowStart + capacity);
+      index += 1
+    ) {
+      const command = commands[index]
+      const label = command.aliases.length
+        ? `${command.usage}${sep}${command.aliases.join(` ${glyphs.separator} `)}`
+        : command.usage
+      const caution = command.destructive ? `${sep}confirm after completion` : ''
+      const row = overlayValue(label, `${command.description}${caution}`, width, ansi, glyphs)
+      lines.push(index === safeIndex ? ansi.inverse(row) : row)
+    }
+  }
+  lines.push(
     borderedLine(
-      ansi.dim(`Esc close${sep}Ctrl+P reopen${sep}the TaskWraith Host owns thread state`),
+      ansi.dim(`↑↓ / PgUp/PgDn choose${sep}Enter/Tab complete${sep}Esc close`),
       width,
       ansi,
       glyphs
-    ),
-    borderBottom(width, ansi, glyphs)
-  ]
+    )
+  )
+  lines.push(
+    borderedLine(
+      ansi.dim(`Ctrl+P reopens${sep}the TaskWraith Host owns thread state`),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
 
@@ -1684,7 +1635,7 @@ function renderOverlay(
   if (state.overlay === 'goal') {
     return renderGoalOverlay(state, width, height, ansi, glyphs)
   }
-  return renderHelpOverlay(width, height, ansi, glyphs)
+  return renderHelpOverlay(state, width, height, ansi, glyphs)
 }
 
 function renderHud(
