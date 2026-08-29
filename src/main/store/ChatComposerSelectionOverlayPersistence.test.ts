@@ -66,10 +66,10 @@ describe('ChatComposerSelectionOverlayStore', () => {
       selectedModelType: 'claude-opus-5',
       claudeReasoningEffort: 'high'
     })
-    const files = fs.readdirSync(path.join(testRoot, 'chats', '.composer-selections'))
+    const files = fs.readdirSync(path.join(testRoot, 'chat-composer-selections'))
     expect(files).toEqual(['chat-1.json'])
     expect(
-      fs.statSync(path.join(testRoot, 'chats', '.composer-selections', 'chat-1.json')).size
+      fs.statSync(path.join(testRoot, 'chat-composer-selections', 'chat-1.json')).size
     ).toBeLessThan(2_000)
   })
 
@@ -172,7 +172,7 @@ describe('ChatComposerSelectionOverlayStore', () => {
 
     store.delete('chat-1')
 
-    expect(fs.existsSync(path.join(testRoot, 'chats', '.composer-selections', 'chat-1.json'))).toBe(
+    expect(fs.existsSync(path.join(testRoot, 'chat-composer-selections', 'chat-1.json'))).toBe(
       false
     )
   })

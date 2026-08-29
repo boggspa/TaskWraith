@@ -11,6 +11,12 @@ import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
 import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
 import { bootstrapMainProcess, type SecondInstanceEventArguments } from './MainProcessBootstrap'
 import { isDesktopExternalHostEnabled } from './host/DesktopExternalHostPolicy'
+import { composerSelectionOverlayDirectory } from './store/ChatComposerSelectionOverlayPersistence'
+import {
+  chatsDirectoryHygieneChangedAnything,
+  nodeChatsDirectoryHygieneDeps,
+  repairChatsDirectoryForHost
+} from './store/ChatsDirectoryHostHygiene'
 import {
   createHostExternalPreparation,
   type HostExternalPreparation
@@ -178,6 +184,31 @@ void bootstrapMainProcess({
     })
     if (migration.state === 'failed' || migration.state === 'invalid_profile') {
       throw new Error('Legacy userData migration did not complete safely.')
+    }
+
+    // `chats/` is the Host's domain and HostProfileDomainStore fail-closes on
+    // any entry that is not an owner-only chat record, so legacy residue is
+    // repaired BEFORE either Host is selected. Never fatal: a repair that
+    // cannot run must not stop the app from booting.
+    try {
+      const chatsDir = resolve(profilePath, 'chats')
+      const hygiene = repairChatsDirectoryForHost({
+        chatsDir,
+        overlayDir: composerSelectionOverlayDirectory(chatsDir),
+        deps: nodeChatsDirectoryHygieneDeps()
+      })
+      if (chatsDirectoryHygieneChangedAnything(hygiene)) {
+        console.info(
+          `[chats-hygiene] repaired for the Host: ${hygiene.relocatedOverlayFiles} overlay file(s) relocated, ${hygiene.tightenedFileModes} file mode(s) tightened`
+        )
+      }
+      if (hygiene.unrepairableEntries.length > 0) {
+        console.warn(
+          `[chats-hygiene] ${hygiene.unrepairableEntries.length} entr(y/ies) the Host will still reject: ${hygiene.unrepairableEntries.slice(0, 5).join(', ')}`
+        )
+      }
+    } catch (error) {
+      console.warn(`[chats-hygiene] repair skipped: ${boundedBootstrapError(error)}`)
     }
     if (!isDesktopExternalHostEnabled()) {
       await prepareInProcessHost(profilePath)

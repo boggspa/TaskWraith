@@ -10,6 +10,12 @@ import {
 import type { HostCapability, HostBootstrapWelcome } from '../../shared/hostProtocol'
 import type { HostExternalLaunchCommand } from './HostExternalLaunchResolver'
 
+/** The Host used to be spawned with stdio:'ignore', so a refusal to start was
+ *  invisible and the app silently fell back to the in-process Host — whose
+ *  projection reconciler then re-reads the chat list on a 1s main-process
+ *  timer. Keep a bounded tail so the failure can name itself. */
+const STDERR_TAIL_LIMIT = 2_000
+
 const FLOOR: readonly HostCapability[] = [
   'commands',
   'receipts',
@@ -176,13 +182,31 @@ export class HostExternalSupervisor {
         cwd: command.cwd,
         env: command.env,
         detached: true,
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'pipe'],
         windowsHide: true
       })
     } catch (error) {
       if (!this.closed) this.statusValue = 'failed'
       throw error
     }
+    let stderrTail = ''
+    const stderrStream = child.stderr
+    if (stderrStream) {
+      stderrStream.setEncoding('utf8')
+      stderrStream.on('data', (chunk: string) => {
+        stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT)
+      })
+      // A dead pipe must never surface as an unhandled error, and it must not
+      // hold the parent's event loop open for a detached child.
+      stderrStream.on('error', () => {})
+      // Typed Readable, but a piped stdio stream is a Socket at runtime.
+      ;(stderrStream as unknown as { unref?: () => void }).unref?.()
+    }
+    const releaseStderr = (): void => {
+      stderrStream?.destroy()
+    }
+    const withStderr = (message: string): string =>
+      stderrTail.trim().length > 0 ? `${message} stderr: ${stderrTail.trim()}` : message
     let childError: Error | null = null
     let childExit: number | null = null
     let childExited = false
@@ -208,13 +232,17 @@ export class HostExternalSupervisor {
       }
       if (childExited) {
         this.statusValue = 'failed'
-        throw new Error(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
+        releaseStderr()
+        throw new Error(
+          withStderr(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
+        )
       }
       try {
         const welcome = await probe(probeTimeout)
         assertProduction(welcome)
         assertOpen()
         this.statusValue = 'attached-launched'
+        releaseStderr()
         return { kind: 'launched', pid: child.pid ?? null, welcome }
       } catch (error) {
         if (error instanceof HostProjectionIncompatibleProtocolError) {
@@ -224,6 +252,7 @@ export class HostExternalSupervisor {
       }
     }
     this.statusValue = 'failed'
-    throw new Error('Timed out waiting for external Host production readiness.')
+    releaseStderr()
+    throw new Error(withStderr('Timed out waiting for external Host production readiness.'))
   }
 }

@@ -18,7 +18,17 @@ import { writeJsonAtomically } from './ThreadWorktreeBindingPersistence'
 import type { ChatRecord, ChatWorkflowMode } from './types'
 
 const OVERLAY_SCHEMA_VERSION = 1
-const OVERLAY_DIRECTORY_NAME = '.composer-selections'
+const OVERLAY_DIRECTORY_NAME = 'chat-composer-selections'
+
+/** `chats/` belongs to the Host: HostProfileDomainStore.listThreads() treats
+ *  every entry as a chat record and throws on anything else, so an overlay
+ *  directory inside it stops the external Host from starting at all and the
+ *  app silently falls back to the in-process Host. The overlay therefore lives
+ *  BESIDE chats/, never within it. Exported so the boot repair that relocates
+ *  the legacy `chats/.composer-selections` directory resolves the same path. */
+export function composerSelectionOverlayDirectory(chatsDir: string): string {
+  return path.join(path.dirname(chatsDir), OVERLAY_DIRECTORY_NAME)
+}
 
 interface StoredComposerSelectionOverlay {
   schemaVersion: typeof OVERLAY_SCHEMA_VERSION
@@ -142,7 +152,7 @@ export class ChatComposerSelectionOverlayStore {
   private readonly overlayDir: string
 
   constructor(chatsDir: string) {
-    this.overlayDir = path.join(chatsDir, OVERLAY_DIRECTORY_NAME)
+    this.overlayDir = composerSelectionOverlayDirectory(chatsDir)
   }
 
   apply(chat: ChatRecord): ChatRecord {
