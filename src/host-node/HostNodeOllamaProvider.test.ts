@@ -208,6 +208,48 @@ describe('HostNodeOllamaProvider selection validation', () => {
       HostNodeOllamaValidationError
     )
   })
+
+  // 696b2dc74 replaced the blanket low/medium/high/xhigh table with ladders
+  // derived from each model's real capabilities, which narrowed 25 of the 26
+  // Ollama rows under selections users had already persisted. Forwarding one
+  // unchanged threw here, and the caller turns that into failed(
+  // 'run_not_started') — every send on such a chat, permanently.
+  it('folds a stale persisted effort onto a stop the narrowed ladder still offers', () => {
+    const instance = provider()
+    const toggle = OLLAMA_OFFERS.models.find(
+      (entry) => entry.reasoning.map((r) => r.reasoningId).join() === 'off,on'
+    )!
+    // `medium` is off the boolean ladder, but it plainly means "think".
+    expect(
+      instance.validateThread(threadFixture({ modelId: toggle.modelId, reasoningId: 'medium' }))
+        .reasoningId
+    ).toBe('on')
+
+    const levels = OLLAMA_OFFERS.models.find(
+      (entry) => entry.reasoning.map((r) => r.reasoningId).join() === 'low,medium,high'
+    )!
+    // `xhigh` sat above every stop this model kept, so it takes the ladder top.
+    expect(
+      instance.validateThread(threadFixture({ modelId: levels.modelId, reasoningId: 'xhigh' }))
+        .reasoningId
+    ).toBe('high')
+  })
+
+  it('drops a persisted effort for a model the ladder proved cannot think', () => {
+    const mute = OLLAMA_OFFERS.models.find((entry) => entry.reasoning.length === 0)!
+    const resolved = provider().validateThread(
+      threadFixture({ modelId: mute.modelId, reasoningId: 'high' })
+    )
+    expect(resolved.reasoningId).toBeUndefined()
+    expect(resolved.modelId).toBe(mute.modelId)
+  })
+
+  it('still refuses an effort that was never a ladder stop, on any model', () => {
+    const mute = OLLAMA_OFFERS.models.find((entry) => entry.reasoning.length === 0)!
+    expect(() =>
+      provider().validateThread(threadFixture({ modelId: mute.modelId, reasoningId: 'ludicrous' }))
+    ).toThrow(HostNodeOllamaValidationError)
+  })
 })
 
 describe('HostNodeOllamaProvider run path', () => {

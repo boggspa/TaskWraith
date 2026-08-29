@@ -256,6 +256,17 @@ describe('HostNodePiProvider selection validation', () => {
     )
   })
 
+  // 696b2dc74 gave each Pi route its own ladder in place of one shared
+  // seven-stop list, so stops seats had already persisted went off-ladder.
+  // Throwing here reaches the caller as failed('run_not_started'), stranding
+  // the chat; `medium` is DeepSeek's own documented alias for `high` anyway.
+  it('folds a stop the per-route ladder retired onto that route default', () => {
+    const provider = providerWith(new FakeRunPort(), scriptedSpawn({}).spawn)
+    const resolved = provider.validateThread(threadFixture({ reasoningId: 'medium' }))
+    expect(resolved.thread.reasoningId).toBe('high')
+    expect(resolved.modelId).toBe('deepseek-v4-pro')
+  })
+
   it('rejects a shipped-catalog-absent bare model id as not offered', () => {
     const shipped = hostProviderOffers('pi', true)!
     expect(shipped.models.length).toBeGreaterThan(0)

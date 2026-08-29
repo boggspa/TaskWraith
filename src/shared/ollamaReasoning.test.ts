@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isOllamaGptOssModel,
+  isOllamaReasoningToken,
   normalizeOllamaReasoningEffort,
   resolveOllamaReasoningSupport
 } from './ollamaReasoning'
@@ -200,5 +201,23 @@ describe('normalizeOllamaReasoningEffort', () => {
     const glm52 = resolveOllamaReasoningSupport({ modelId: 'glm-5.2:cloud' })
     expect(normalizeOllamaReasoningEffort('low', glm52)).toBe('high')
     expect(normalizeOllamaReasoningEffort('off', glm52)).toBe('off')
+  })
+})
+
+describe('isOllamaReasoningToken', () => {
+  it('accepts every stop the folder knows how to place', () => {
+    for (const token of ['off', 'none', 'minimal', 'false', 'on', 'true']) {
+      expect(isOllamaReasoningToken(token)).toBe(true)
+    }
+    for (const token of ['low', 'medium', 'high', 'max', 'xhigh', 'ultratask']) {
+      expect(isOllamaReasoningToken(token)).toBe(true)
+    }
+    expect(isOllamaReasoningToken(' HIGH ')).toBe(true)
+  })
+
+  it('rejects junk, so a persisted value the folder would silently place fails closed', () => {
+    for (const token of ['ludicrous', '', '   ', undefined, null, 7]) {
+      expect(isOllamaReasoningToken(token)).toBe(false)
+    }
   })
 })

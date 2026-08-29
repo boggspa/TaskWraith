@@ -51,6 +51,11 @@ import {
 } from '../host-shared/pi/PiCliArgs'
 import { createPiIsolatedHome, type PiIsolatedHomeLease } from '../host-shared/pi/PiIsolatedHome'
 import {
+  PI_FULL_LADDER,
+  defaultPiReasoningEffort,
+  type PiReasoningEffort
+} from '../shared/piReasoning'
+import {
   PI_UPSTREAM_KEY_ENV,
   buildPiCredentialEnv,
   isPiUpstreamAllowed,
@@ -399,11 +404,25 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
     if (!model) {
       throw new HostNodePiValidationError('Pi model is not offered by the Host catalog.')
     }
+    let effective = normalized
     if (
       normalized.reasoningId !== undefined &&
       !model.reasoning.some((entry) => entry.reasoningId === normalized.reasoningId)
     ) {
-      throw new HostNodePiValidationError('Pi reasoning is not offered for this model.')
+      // Per-route ladders replaced one shared seven-stop list, so a stop a seat
+      // legitimately chose earlier can no longer be on its model's ladder.
+      // Refusing the run would strand the chat, and forwarding the stale stop
+      // dispatches a `--thinking` level the upstream does not honour; fall back
+      // to the route's own declared default instead. Only a stop Pi ever offers
+      // is treated as stale — anything else was never a selection, so it throws.
+      if (!PI_FULL_LADDER.includes(normalized.reasoningId as PiReasoningEffort)) {
+        throw new HostNodePiValidationError('Pi reasoning is not offered for this model.')
+      }
+      const fallback = defaultPiReasoningEffort(normalized.modelId)
+      const offered =
+        fallback !== '' && model.reasoning.some((entry) => entry.reasoningId === fallback)
+      const { reasoningId: _stale, ...rest } = normalized
+      effective = offered ? { ...rest, reasoningId: fallback } : rest
     }
     const split = splitPiWireModelId(normalized.modelId)
     if (!split) {
@@ -414,7 +433,7 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
     if (!isPiUpstreamAllowed(split.upstream)) {
       throw new HostNodePiValidationError('Pi upstream is not allowlisted.')
     }
-    return { thread: normalized, upstream: split.upstream as PiUpstreamId, modelId: split.modelId }
+    return { thread: effective, upstream: split.upstream as PiUpstreamId, modelId: split.modelId }
   }
 
   async run(request: HostNodePiRunRequest): Promise<HostNodeProviderRunResult> {

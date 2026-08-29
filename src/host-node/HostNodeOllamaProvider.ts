@@ -13,6 +13,11 @@
 
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import {
+  isOllamaReasoningToken,
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../shared/ollamaReasoning'
+import {
   fetchOllamaModelCatalog,
   unloadOllamaModel,
   type OllamaChatMessage,
@@ -206,7 +211,24 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       normalized.reasoningId !== undefined &&
       !model.reasoning.some((entry) => entry.reasoningId === normalized.reasoningId)
     ) {
-      throw new HostNodeOllamaValidationError('Ollama reasoning is not offered for this model.')
+      // A persisted effort is a HISTORICAL selection, not a fresh claim: the
+      // ladder it was chosen from can narrow under it when this model's real
+      // capabilities are corrected. Refusing the run turns every such chat into
+      // a permanent `run_not_started`, so fold the stored intent onto a stop
+      // this model actually offers — the same clamp the desktop seat applies.
+      // Only a RECOGNISED token folds; junk still fails closed, because the
+      // normalizer answers for any string and would otherwise launder it.
+      if (!isOllamaReasoningToken(normalized.reasoningId)) {
+        throw new HostNodeOllamaValidationError('Ollama reasoning is not offered for this model.')
+      }
+      const folded = normalizeOllamaReasoningEffort(
+        normalized.reasoningId,
+        resolveOllamaReasoningSupport({ modelId: normalized.modelId })
+      )
+      const offered =
+        folded !== null && model.reasoning.some((entry) => entry.reasoningId === folded)
+      const { reasoningId: _stale, ...rest } = normalized
+      return offered ? { ...rest, reasoningId: folded } : rest
     }
     return normalized
   }

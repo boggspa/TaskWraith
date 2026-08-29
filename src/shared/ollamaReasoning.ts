@@ -299,6 +299,29 @@ const OFF_TOKENS = new Set(['off', 'false', 'none', 'minimal'])
 const TOP_TOKENS = new Set(['xhigh', 'max', 'maximum', 'ultra', 'ultracode', 'ultratask'])
 
 /**
+ * True when `value` is a ladder token this module knows how to fold.
+ *
+ * `normalizeOllamaReasoningEffort` is total — it answers for any string — so a
+ * caller healing a PERSISTED effort cannot use it to tell a stop that a
+ * narrowed ladder left behind from a value that was never a stop at all. This
+ * predicate draws that line, so stale selections can be folded while genuine
+ * junk still fails closed.
+ */
+export function isOllamaReasoningToken(value: unknown): boolean {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (!normalized) return false
+  return (
+    OFF_TOKENS.has(normalized) ||
+    TOP_TOKENS.has(normalized) ||
+    normalized === 'on' ||
+    normalized === 'true' ||
+    isOllamaThinkingLevel(normalized)
+  )
+}
+
+/**
  * Fold a TaskWraith ladder token onto the exact stop this model offers.
  *
  * Two rules earn their place. `minimal`/`none` sit at the FLOOR of the shared
