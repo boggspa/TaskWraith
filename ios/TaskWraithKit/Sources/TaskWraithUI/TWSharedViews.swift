@@ -5936,6 +5936,9 @@ struct SubAgentsPanel: View {
             model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
         }
         model.requestThreadSnapshot(child.id)
+        // A genuine open — the one signal that distinguishes this from the
+        // remounts MiniThreadView must survive. See noteMiniThreadOpened.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(child.id)
         inlineThreadId = child.id
     }
 
@@ -11050,6 +11053,9 @@ struct SideChatsPanel: View {
                         navigateOnAck: false
                     ) { threadId in
                         if let threadId, threadId != card.threadId {
+                            // Freshly created and opened straight away.
+                            TranscriptFollowStateStore.shared
+                                .noteMiniThreadOpened(threadId)
                             selectedSideChatId = threadId
                             if let workspaceId = card.workspaceId {
                                 model.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
@@ -11151,6 +11157,8 @@ struct SideChatsPanel: View {
             model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
         }
         model.requestThreadSnapshot(child.id)
+        // A genuine open — see noteMiniThreadOpened.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(child.id)
         selectedSideChatId = child.id
     }
 
@@ -11175,6 +11183,10 @@ struct SideChatsPanel: View {
         guard let target = model.inspectorSideChatTarget,
             selectedSideChatCard(target) != nil
         else { return }
+        // Guarded on a non-nil `inspectorSideChatTarget` that is consumed
+        // below, so a remount's `onAppear` cannot re-run this and forge an
+        // open the user did not perform.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(target)
         selectedSideChatId = target
         model.inspectorSideChatTarget = nil
         model.requestThreadSnapshot(target)
@@ -11239,9 +11251,19 @@ struct MiniThreadView: View {
     /// all: a bare ScrollView, so new messages never scrolled into view and
     /// nothing disengaged on a manual scroll either.
     @State private var autoFollow = true
+    /// Placeholder only — the real pin is adopted from
+    /// `TranscriptFollowStateStore` in the arming `.task` below, the same way
+    /// ThreadDetailView does it. `@State` cannot reach `card` in its
+    /// initializer, and the sentinel handlers need a non-optional pin in the
+    /// window before `.task` runs.
     @State private var followPin = TranscriptFollowPin()
 
     private var threadId: String { card.id }
+    /// This panel's entry in the follow store — namespaced away from the main
+    /// pane's entry for the same thread. See `miniThreadKey`.
+    private var followStoreKey: String {
+        TranscriptFollowStateStore.miniThreadKey(threadId)
+    }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[threadId] }
     private var transcriptBottomInset: CGFloat { composerOverlayHeight + 12 }
     private var isPadInterface: Bool {
@@ -11274,10 +11296,43 @@ struct MiniThreadView: View {
             }
             .task(id: threadId) {
                 model.requestThreadSnapshot(threadId)
+
+                // Adopt this panel's DURABLE follow state. `@State` dies when
+                // the view's STRUCTURAL identity changes, not merely when its
+                // body re-evaluates, and this panel is torn down by things the
+                // user never asked for and cannot see: AppShell rebuilds the
+                // whole shell on every `model.phase` transition, and the
+                // presenting panel swaps to its "opening…" branch whenever the
+                // side chat's card is momentarily absent from
+                // `model.taskCards` during a resync. A freshly constructed pin
+                // plus the unconditional arm below is what discarded the
+                // scroll position the user had chosen. Same defect and same
+                // fix as the main transcript — see dc00cfb7e.
+                let store = TranscriptFollowStateStore.shared
+                followPin = store.pin(for: followStoreKey)
+
+                guard store.shouldArmOnOpen(
+                    threadId: followStoreKey,
+                    selectionGeneration: store.miniThreadOpenGeneration(threadId))
+                else {
+                    // A remount, not an open. Restore what the user chose and
+                    // do NOT pin — pinning here is what yanked them back to
+                    // the tail.
+                    autoFollow = store.autoFollow(for: followStoreKey)
+                    return
+                }
+
                 followPin.userLatchedOff = false
                 autoFollow = true
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 requestFollowPin(proxy, force: true)
+            }
+            .onChange(of: autoFollow) { _, isFollowing in
+                // Mirror intent into the store on every transition, so a
+                // remount that lands between here and the next open restores
+                // the truth rather than the last armed value.
+                TranscriptFollowStateStore.shared.setAutoFollow(
+                    isFollowing, for: followStoreKey)
             }
         }
     }
