@@ -770,6 +770,52 @@ describe('EnsembleOrchestrator', () => {
     }
   })
 
+  it('titles an ensemble thread whose placeholder came from a solo chat', async () => {
+    // AppStore.setChatKind converts chatKind and never touches the title, so a
+    // solo chat promoted to an ensemble keeps the 'New Chat' placeholder. The
+    // first-prompt title gate used to demand exactly 'New Ensemble', which left
+    // those threads reading "New Chat" in the sidebar forever. Measured on a
+    // live profile: two such ensembles, 75 and 48 messages deep.
+    const harness = makeHarness()
+    harness.chat.title = 'New Chat'
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Explain the barrier',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(harness.chat.title).toBe('Explain the barrier')
+  })
+
+  it('still titles an ensemble thread carrying its own create-factory placeholder', async () => {
+    const harness = makeHarness()
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Explain the barrier',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(harness.chat.title).toBe('Explain the barrier')
+  })
+
+  it('never overwrites a title the user authored', async () => {
+    const harness = makeHarness()
+    harness.chat.title = 'Persistence review'
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Explain the barrier',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(harness.chat.title).toBe('Persistence review')
+  })
+
   it('rotates a wave-less resumable participant before an exact UltraTask dispatch', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [

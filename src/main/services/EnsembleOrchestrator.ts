@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
+import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
 import { plainDataEqual } from '../../shared/chatUpdateTransport'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
 import type {
@@ -16261,7 +16262,13 @@ export class EnsembleOrchestrator {
     const updated: ChatRecord = {
       ...chat,
       title:
-        chat.messages.length === 0 && chat.title === 'New Ensemble'
+        // Any placeholder may be overwritten by the first prompt, not just this
+        // factory's own. `setChatKind` converts chatKind and never retitles, so
+        // a solo chat promoted to an ensemble arrives carrying 'New Chat' and
+        // used to keep it permanently. A user-authored title still wins.
+        chat.messages.length === 0 &&
+        prompt.trim().length > 0 &&
+        isPlaceholderThreadTitle(chat.title)
           ? prompt.length > 30
             ? `${prompt.slice(0, 30)}...`
             : prompt
