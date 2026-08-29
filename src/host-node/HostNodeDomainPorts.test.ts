@@ -836,6 +836,55 @@ describe('HostNodeDomainPorts', () => {
     ).resolves.toEqual({ status: 'failed', errorCode: 'setup_execution_failed' })
   })
 
+  it('admits thread.select for a live workspace thread and refuses unknown or archived threads', async () => {
+    const { domain, workspace } = open()
+    const workspaceResult = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-select-workspace', {}, { path: workspace }),
+      { id: 'tui-target' }
+    )
+    const workspaceId = (workspaceResult.resultRef as { workspaceId: string }).workspaceId
+    const threadResult = await domain.executeCommand(
+      context,
+      command('thread.create', 'cmd-select-thread', {}, { scope: 'workspace', workspaceId }),
+      { id: 'tui-target' }
+    )
+    const threadId = (threadResult.resultRef as { threadId: string }).threadId
+    console.log('DBG threadResult', JSON.stringify(threadResult))
+
+    // The TUI acknowledges every thread switch with thread.select. The Host holds
+    // no watched-thread state, so this validates and succeeds without mutating.
+    expect(
+      domain.evaluateAuthority(context, command('thread.select', 'cmd-select', { threadId }, {}))
+    ).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(context, command('thread.select', 'cmd-select', { threadId }, {}), {
+        id: 'tui-target'
+      })
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command('thread.select', 'cmd-select-missing', { threadId: 'id-absent' }, {})
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_thread_required' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command('thread.archive', 'cmd-select-archive', { threadId }, { archived: true }),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command('thread.select', 'cmd-select-archived', { threadId }, {})
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_thread_required' })
+  })
+
   it('waits for tracked provider completion during shutdown before reporting stopped', async () => {
     const { domain, store, workspace, releaseRun } = open({ killReleases: false })
     const registered = store.registerWorkspace({ path: workspace })

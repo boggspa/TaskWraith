@@ -560,7 +560,8 @@ export class HostNodeDomainPorts {
     if (
       command.name !== 'composer.send' &&
       command.name !== 'run.cancel' &&
-      command.name !== 'ensemble.seat.toggle'
+      command.name !== 'ensemble.seat.toggle' &&
+      command.name !== 'thread.select'
     ) {
       return { decision: 'deny', reason: 'standalone_command_unsupported' }
     }
@@ -568,6 +569,13 @@ export class HostNodeDomainPorts {
     if (!profileThread || profileThread.archived || profileThread.scope !== 'workspace') {
       return { decision: 'deny', reason: 'standalone_thread_required' }
     }
+
+    // Selecting a thread is a view acknowledgement, not a run, so it stops at the
+    // profile gate above. It must NOT fall through to the runPort check below:
+    // that port only knows configured threads, and the TUI opens a chat the moment
+    // thread.create returns — before any provider is bound. Requiring a run-capable
+    // thread here would make every freshly created chat unopenable.
+    if (command.name === 'thread.select') return { decision: 'allow' }
 
     if (command.name === 'ensemble.seat.toggle') {
       const ensemble = ensembleForSeatControl(profileThread)
@@ -660,6 +668,16 @@ export class HostNodeDomainPorts {
 
     if (command.name === 'ensemble.seat.toggle') {
       return this.toggleEnsembleSeat(decoded.value)
+    }
+
+    // thread.select acknowledges a client-side thread switch. Unlike the desktop
+    // Host — where it maps to setWatchedThread — this Host holds no watched-thread
+    // state: its projection is whole-profile and history is fetched by explicit
+    // threadId. Authority above already proved the thread is live, unarchived and
+    // workspace-scoped, so there is nothing left to mutate. It must stay a no-op:
+    // adopting a selection here would let one client move every other client's view.
+    if (command.name === 'thread.select') {
+      return { status: 'succeeded', resultSummary: 'thread_selected' }
     }
 
     if (command.name !== 'composer.send') return failed('command_unsupported')
