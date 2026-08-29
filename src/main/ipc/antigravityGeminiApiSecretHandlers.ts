@@ -41,15 +41,17 @@ const RECOGNIZED_MUTATION_ERRORS = new Set([
 export function registerAntigravityGeminiApiSecretHandlers(
   deps: AntigravityGeminiApiSecretHandlerDeps
 ): void {
-  const secretHandlers = createProviderSecretStoreHandlers<AntigravityGeminiApiSecretMutationError>({
-    secretStore: deps.secretStore,
-    isMainRendererSender: deps.isMainRendererSender,
-    onMutationSuccess: deps.onSecretMutationSuccess,
-    recognizedErrors: RECOGNIZED_MUTATION_ERRORS,
-    defaultError: 'writeFailed',
-    assertMainRendererError: 'Only the main renderer can manage the Gemini API key.',
-    statusProjection: { allowNoMillis: false, requireRoundTrip: true }
-  })
+  const secretHandlers = createProviderSecretStoreHandlers<AntigravityGeminiApiSecretMutationError>(
+    {
+      secretStore: deps.secretStore,
+      isMainRendererSender: deps.isMainRendererSender,
+      onMutationSuccess: deps.onSecretMutationSuccess,
+      recognizedErrors: RECOGNIZED_MUTATION_ERRORS,
+      defaultError: 'writeFailed',
+      assertMainRendererError: 'Only the main renderer can manage the Gemini API key.',
+      statusProjection: { allowNoMillis: false, requireRoundTrip: true }
+    }
+  )
 
   const discoveryOutcomeHandler = createDiscoveryOutcomeHandler({
     getDiscoveryOutcome: deps.getDiscoveryOutcome,

@@ -30,12 +30,7 @@ interface AwaitableOwnedExecution {
 /** States a graph will not leave without help. `requires_action` counts: the
  * graph is stopped for a human, so continuing to block the seat would just
  * burn the timeout on work that cannot progress. */
-const SETTLED_EXECUTION_STATES = new Set([
-  'succeeded',
-  'failed',
-  'cancelled',
-  'requires_action'
-])
+const SETTLED_EXECUTION_STATES = new Set(['succeeded', 'failed', 'cancelled', 'requires_action'])
 
 interface EnsembleAwaitDispatcher {
   awaitLanesForRun(
@@ -166,10 +161,7 @@ async function awaitSubThreadTargets(
   }
   const requestedExecutionIds = normalizeTargetIds(executionIdsValue)
   if (executionIdsValue !== undefined && requestedExecutionIds === null) {
-    return invalid(
-      'invalid_execution',
-      'ensemble_await: executionIds must be an array of strings.'
-    )
+    return invalid('invalid_execution', 'ensemble_await: executionIds must be an array of strings.')
   }
   if (!requestedSubThreadIds && !requestedWaveIds && !requestedExecutionIds) {
     return invalid(

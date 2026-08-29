@@ -874,9 +874,7 @@ describe('MainSanitizers settings patches', () => {
     // the settings round-trip: a sanitizer ceiling below the renderer's resize
     // max silently snapped every wide drag back on the next hydrate.
     expect(sanitizeSettingsPatch({ inspectorWidth: 2000 }).inspectorWidth).toBe(2000)
-    expect(sanitizeSettingsPatch({ inspectorWidth: 9000 }).inspectorWidth).toBe(
-      MAX_INSPECTOR_WIDTH
-    )
+    expect(sanitizeSettingsPatch({ inspectorWidth: 9000 }).inspectorWidth).toBe(MAX_INSPECTOR_WIDTH)
     expect(sanitizeSettingsPatch({ inspectorWidth: 50 }).inspectorWidth).toBe(MIN_INSPECTOR_WIDTH)
   })
 

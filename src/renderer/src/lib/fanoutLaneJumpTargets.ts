@@ -74,8 +74,8 @@ export function buildFanoutLaneJumpTargets(
       const currentLane = currentLaneByParticipant.get(participantId)
       const matchesCurrentLane = Boolean(
         currentLane &&
-          message.metadata?.ensembleLaneId === currentLane.laneId &&
-          (!currentLane.runId || !message.runId || message.runId === currentLane.runId)
+        message.metadata?.ensembleLaneId === currentLane.laneId &&
+        (!currentLane.runId || !message.runId || message.runId === currentLane.runId)
       )
       if (!matchesCurrentLane) continue
     }

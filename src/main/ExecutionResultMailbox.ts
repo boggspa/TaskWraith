@@ -136,9 +136,7 @@ function normalizeEvent(value: unknown): ExecutionResultMailboxEvent | null {
     payload: {
       content: typeof payload.content === 'string' ? payload.content : '',
       ...(payload.truncated === true ? { truncated: true } : {}),
-      ...(typeof payload.originalChars === 'number'
-        ? { originalChars: payload.originalChars }
-        : {})
+      ...(typeof payload.originalChars === 'number' ? { originalChars: payload.originalChars } : {})
     }
   }
 }
@@ -188,11 +186,7 @@ export function enqueueExecutionResultMailboxEvent(
   const mailbox = normalizeExecutionResultMailbox(current, input.threadId)
   const id =
     nonEmptyString(input.id) ||
-    createExecutionResultMailboxEventId(
-      input.threadId,
-      input.executionId,
-      input.outputAttemptId
-    )
+    createExecutionResultMailboxEventId(input.threadId, input.executionId, input.outputAttemptId)
   const existing = mailbox.events.find((event) => event.id === id)
   if (existing) return { mailbox, event: existing, inserted: false }
 

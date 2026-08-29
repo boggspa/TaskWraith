@@ -125,7 +125,8 @@ export function signRunPermissionPosture(
   effectivePermissions: EffectiveRunPermissions | null | undefined,
   context?: RunPermissionPostureContext | null
 ): string {
-  return nodeCrypto.createHmac('sha256', secret)
+  return nodeCrypto
+    .createHmac('sha256', secret)
     .update(canonicalRunPermissionPosture(approvalMode, effectivePermissions, context))
     .digest('hex')
 }

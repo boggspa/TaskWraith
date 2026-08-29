@@ -55,7 +55,9 @@ describe('execution ghost strip matches the fleet strip it is derived from', () 
     const css = readCss()
     expect(
       declaration(ruleBody(css, '.execution-ghost-cell.status-needs_action'), 'stroke-width')
-    ).toBe(declaration(ruleBody(css, '.fleet-wave-card-cell.status-needs_approval'), 'stroke-width'))
+    ).toBe(
+      declaration(ruleBody(css, '.fleet-wave-card-cell.status-needs_approval'), 'stroke-width')
+    )
   })
 
   it('never regresses to a sub-viewBox hairline on any execution cell rule', () => {

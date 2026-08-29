@@ -25,10 +25,12 @@ vi.mock('electron', () => ({
 
 function createStore() {
   return {
-    getStatus: vi.fn((): { configured: boolean; encryptionAvailable: boolean; updatedAt?: string } => ({
-      configured: false,
-      encryptionAvailable: true
-    })),
+    getStatus: vi.fn(
+      (): { configured: boolean; encryptionAvailable: boolean; updatedAt?: string } => ({
+        configured: false,
+        encryptionAvailable: true
+      })
+    ),
     setApiKey: vi.fn((value: string) => ({
       ok: true,
       status: { configured: true, encryptionAvailable: true },

@@ -1089,7 +1089,10 @@ export function resolveReasoningEffortForSeatChange(options: {
   const fallbackMetadata = fallbackModelSelectionMetadata(provider, model)
   const metadata = modelMetadata ? { ...fallbackMetadata, ...modelMetadata } : fallbackMetadata
   const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
-  if (normalizedPrevious === 'ultratask' && destinationSupportsUltraTask(provider, model, metadata)) {
+  if (
+    normalizedPrevious === 'ultratask' &&
+    destinationSupportsUltraTask(provider, model, metadata)
+  ) {
     return 'ultraTask'
   }
 

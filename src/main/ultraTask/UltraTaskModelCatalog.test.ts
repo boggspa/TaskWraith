@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  isUltraTaskSupported,
-  resolveUltraTaskReasoningEffort
-} from './UltraTaskReasoningResolver'
+import { isUltraTaskSupported, resolveUltraTaskReasoningEffort } from './UltraTaskReasoningResolver'
 import {
   buildUltraTaskModelCapabilityCatalog,
   materializeDiscoveredUltraTaskSupport,

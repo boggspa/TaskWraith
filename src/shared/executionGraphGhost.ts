@@ -82,9 +82,7 @@ const IN_FLIGHT = new Set(['claimed', 'queued', 'running', 'waiting_retry'])
 const AWAITING_A_PERSON = new Set(['waiting_input', 'waiting_approval', 'requires_action'])
 const ABANDONED = new Set(['cancelled', 'skipped'])
 
-export function executionGhostStatusForActivation(
-  state: string | undefined
-): ExecutionGhostStatus {
+export function executionGhostStatusForActivation(state: string | undefined): ExecutionGhostStatus {
   if (!state || NOT_YET_STARTED.has(state)) return 'proposed'
   if (IN_FLIGHT.has(state)) return 'working'
   if (AWAITING_A_PERSON.has(state)) return 'needs_action'

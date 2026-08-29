@@ -236,9 +236,7 @@ const ENSEMBLE_SEAT_CONFIGURATION_KEYS = [
 ] as const satisfies readonly (keyof EnsembleParticipant)[]
 
 function seatConfigurationSignature(participant: EnsembleParticipant): string {
-  return JSON.stringify(
-    ENSEMBLE_SEAT_CONFIGURATION_KEYS.map((key) => participant[key] ?? null)
-  )
+  return JSON.stringify(ENSEMBLE_SEAT_CONFIGURATION_KEYS.map((key) => participant[key] ?? null))
 }
 
 /** Delivered seat + the live seat's user-editable configuration. An absent

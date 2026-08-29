@@ -6,10 +6,7 @@ import * as nodePath from 'node:path'
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
-import {
-  MIN_INSPECTOR_PANEL_WIDTH,
-  MAX_INSPECTOR_PANEL_WIDTH
-} from '../../shared/panelWidthLimits'
+import { MIN_INSPECTOR_PANEL_WIDTH, MAX_INSPECTOR_PANEL_WIDTH } from '../../shared/panelWidthLimits'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'

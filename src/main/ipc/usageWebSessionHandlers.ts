@@ -1,5 +1,8 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
-import type { UsageWebSessionProviderId, UsageWebSessionReading } from '../../shared/usageWebSession'
+import type {
+  UsageWebSessionProviderId,
+  UsageWebSessionReading
+} from '../../shared/usageWebSession'
 import type { CapturedWebSession } from '../providers/WebSessionBrowser'
 import { importUsageWebSession } from '../providers/WebSessionBrowser'
 import type { UsageWebSessionStore } from '../providers/UsageWebSessionStore'

@@ -151,8 +151,7 @@ export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {
     looksWriteLike(inputs.toolName) ||
     mayDeriveToolDiffStats(inputs.toolName, parameters, inputs.category)
   const providedSummary =
-    inputs.diffSummary &&
-    (editLike || !ESTIMATOR_ONLY_SOURCES.has(inputs.diffSummary.source))
+    inputs.diffSummary && (editLike || !ESTIMATOR_ONLY_SOURCES.has(inputs.diffSummary.source))
       ? inputs.diffSummary
       : undefined
   const diffSummary =

@@ -41,9 +41,7 @@ describe('canonicalIsoTimestamp', () => {
   })
 
   it('rejects non-round-trippable timestamps when required', () => {
-    expect(
-      canonicalIsoTimestamp('2026-02-30T12:00:00.000Z', { requireRoundTrip: true })
-    ).toBeNull()
+    expect(canonicalIsoTimestamp('2026-02-30T12:00:00.000Z', { requireRoundTrip: true })).toBeNull()
   })
 })
 

@@ -16,17 +16,17 @@ that had no cookies, this one protects a surface that has all of them.
 
 ## 1. What already shipped, so nobody rebuilds it
 
-| Capability | Where |
-|---|---|
-| Durable browser profile - cookies and sign-ins survive restart | `CANVAS_BROWSER_PARTITION` = `persist:taskwraith-canvas-browser-v1`, [CanvasBrowserProfile.ts](../../src/main/canvas/CanvasBrowserProfile.ts) |
-| Session hardening on that profile - all permissions denied, downloads blocked, per-surface request routing | `installSessionHooks`, same file |
-| Agent actuation verbs under an expiring exact lease | `canvas_click` / `fill` / `key` / `scroll` / `hover` / `select` / `wait_for`, `AppDriveLeaseRegistry` |
-| Secret-field refusal - `fill` hard-refuses password, `autocomplete=*password*`, `one-time-code`, `[data-tw-secret]` | [CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts) - S6 |
-| Screenshot secret protection - refuse on focused secret field, paint over visible ones | same file, `capturePage` path |
-| Snapshot value redaction for password and hidden inputs | same file |
-| Consequential-verb confirmation on destructive and financial labels | [CanvasConsequentialTarget.ts](../../src/main/canvas/CanvasConsequentialTarget.ts) - S12 |
-| Human-only sign-in window with a validated capture and a wiped ephemeral partition | [WebSessionBrowser.ts](../../src/main/providers/WebSessionBrowser.ts) - provider usage import |
-| A safeStorage envelope with fail-closed behaviour when encryption is unavailable | [ExtensionSecretStore.ts](../../src/main/ExtensionSecretStore.ts) |
+| Capability                                                                                                          | Where                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Durable browser profile - cookies and sign-ins survive restart                                                      | `CANVAS_BROWSER_PARTITION` = `persist:taskwraith-canvas-browser-v1`, [CanvasBrowserProfile.ts](../../src/main/canvas/CanvasBrowserProfile.ts) |
+| Session hardening on that profile - all permissions denied, downloads blocked, per-surface request routing          | `installSessionHooks`, same file                                                                                                              |
+| Agent actuation verbs under an expiring exact lease                                                                 | `canvas_click` / `fill` / `key` / `scroll` / `hover` / `select` / `wait_for`, `AppDriveLeaseRegistry`                                         |
+| Secret-field refusal - `fill` hard-refuses password, `autocomplete=*password*`, `one-time-code`, `[data-tw-secret]` | [CanvasWebDriver.ts](../../src/main/canvas/CanvasWebDriver.ts) - S6                                                                           |
+| Screenshot secret protection - refuse on focused secret field, paint over visible ones                              | same file, `capturePage` path                                                                                                                 |
+| Snapshot value redaction for password and hidden inputs                                                             | same file                                                                                                                                     |
+| Consequential-verb confirmation on destructive and financial labels                                                 | [CanvasConsequentialTarget.ts](../../src/main/canvas/CanvasConsequentialTarget.ts) - S12                                                      |
+| Human-only sign-in window with a validated capture and a wiped ephemeral partition                                  | [WebSessionBrowser.ts](../../src/main/providers/WebSessionBrowser.ts) - provider usage import                                                 |
+| A safeStorage envelope with fail-closed behaviour when encryption is unavailable                                    | [ExtensionSecretStore.ts](../../src/main/ExtensionSecretStore.ts)                                                                             |
 
 **Persistent web login is therefore already half-shipped, by accident.** A user
 who signs in inside the Canvas Browser today stays signed in across restarts.
@@ -124,16 +124,16 @@ policy check that has to run inside a page the site controls.
 
 A site carries `agentAccess`, set by the user:
 
-| Value | Meaning |
-|---|---|
-| `off` | Default for a newly added site. The session exists for the human; no agent verb may bind to it. |
-| `read` | Agents may open and snapshot. `click` / `fill` / `key` / `scroll` / `select` are refused. |
-| `act` | Agents may actuate, still requiring the ordinary AppDrive lease and the Section 7 consequential check. |
+| Value  | Meaning                                                                                                |
+| ------ | ------------------------------------------------------------------------------------------------------ |
+| `off`  | Default for a newly added site. The session exists for the human; no agent verb may bind to it.        |
+| `read` | Agents may open and snapshot. `click` / `fill` / `key` / `scroll` / `select` are refused.              |
+| `act`  | Agents may actuate, still requiring the ordinary AppDrive lease and the Section 7 consequential check. |
 
 **`off` is the default, and promotion is a separate deliberate action.** The
 alternative - "added means drivable" - re-creates the ambient-authority problem
-inside a smaller boundary, and the user's act of signing in is consent to *be
-signed in*, not consent to be acted for.
+inside a smaller boundary, and the user's act of signing in is consent to _be
+signed in_, not consent to be acted for.
 
 A run's lease names its site set. Binding a surface to a site outside that set
 fails closed, before any navigation.
@@ -147,16 +147,16 @@ fails closed, before any navigation.
 
 ```ts
 export interface WebSiteLogin {
-  id: string                       // opaque, stable; names the partition
-  label: string                    // user-editable display name
-  origin: string                   // scheme + host + optional port
-  extraOrigins: string[]           // IdP / SSO hops, user-visible
+  id: string // opaque, stable; names the partition
+  label: string // user-editable display name
+  origin: string // scheme + host + optional port
+  extraOrigins: string[] // IdP / SSO hops, user-visible
   agentAccess: 'off' | 'read' | 'act'
   status: 'never' | 'signed-in' | 'expired' | 'unknown'
   createdAt: string
   lastSignedInAt?: string
   lastVerifiedAt?: string
-  verify?: { url: string; okSelector: string }   // optional liveness probe
+  verify?: { url: string; okSelector: string } // optional liveness probe
 }
 ```
 
@@ -166,7 +166,7 @@ which is precisely the state I1 exists to prevent.
 
 **Scope is app-global, not per-Project.** A login is an account, not a project
 asset - the same reasoning that makes the Canvas Browser profile app-wide. A
-Project may later *reference* a login (a `ProjectReferenceKind` of `'login'` is
+Project may later _reference_ a login (a `ProjectReferenceKind` of `'login'` is
 the natural join), but the catalogue is owned by main and lives once.
 
 ---
@@ -215,7 +215,7 @@ the login page sets before any credentials are entered.
 
 **The sign-in window is NOT origin-fenced, and that is deliberate.** It has to
 follow whatever redirect the user's identity provider chooses, and a human is
-driving. The origins passed through are reported back as *suggestions* so the UI
+driving. The origins passed through are reported back as _suggestions_ so the UI
 can offer to widen the site's fence; nothing widens automatically, because an
 origin in the fence is authority and authority is the user's to grant. Only
 origins are retained, never URLs - a sign-in flow's query string is exactly
@@ -341,7 +341,7 @@ a user asks where their password goes.
 
 **A per-site "always allow" that outlives the lease.** Not proposed. The lease
 is the mechanism that makes actuation bounded in time and steps; `agentAccess`
-widens *which* sites a lease may cover, never how long one lasts.
+widens _which_ sites a lease may cover, never how long one lasts.
 
 ---
 
@@ -392,14 +392,14 @@ Each slice is independently shippable with gates green. Stage by explicit path
 and commit in slices - no `stash`, no bulk `git add`; concurrent sessions share
 this index.
 
-| # | Slice | Notes |
-|---|---|---|
-| **P0** | This document, plus the design.md pointers | Closes Section 13 Q3 as re-proposed rather than moot. |
-| **P1** | Per-site partitions and the navigation fence | The security spine, no UI. `webSiteLogin` model, main-owned catalogue store, `siteId` threaded through the canvas stack, document-navigation origin fence. Unbound surfaces keep today's behaviour. |
-| **P2** | Human-only sign-in window | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge. |
-| **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
-| **P4** | Agent surface | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
-| **P5** | Re-authentication signalling and the liveness probe | Landed. A probe on the site's own partition classifies the session; `web_login_open` refuses an expired one by name, with no retry and an explicit instruction not to self-serve; sign-in takes its status from a real request rather than from the window closing. |
+| #      | Slice                                               | Notes                                                                                                                                                                                                                                                                                                |
+| ------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P0** | This document, plus the design.md pointers          | Closes Section 13 Q3 as re-proposed rather than moot.                                                                                                                                                                                                                                                |
+| **P1** | Per-site partitions and the navigation fence        | The security spine, no UI. `webSiteLogin` model, main-owned catalogue store, `siteId` threaded through the canvas stack, document-navigation origin fence. Unbound surfaces keep today's behaviour.                                                                                                  |
+| **P2** | Human-only sign-in window                           | Landed with the Section 6a structural test: the import edge from any canvas or canvas-tool module to the sign-in window does not exist, and the window handle never leaves the controller. Proven red by adding the edge.                                                                            |
+| **P3** | Work-tab panel and IPC                              | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel.                                                                                                                                                                                                  |
+| **P4** | Agent surface                                       | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
+| **P5** | Re-authentication signalling and the liveness probe | Landed. A probe on the site's own partition classifies the session; `web_login_open` refuses an expired one by name, with no retry and an explicit instruction not to self-serve; sign-in takes its status from a real request rather than from the window closing.                                  |
 
 | **R1** | Proactive expiry surface | Landed. `onStatusChanged` fires only on an actual change, main fans it out on `web-login:changed`, and the Logins tab carries the count of expired sites. The dock's per-surface counts live inside a picker that is closed by default, so the switcher header also carries a dot whenever some surface other than the one on screen is waiting. |
 | **R2** | Shared-jar migration | Landed. Sign-ins still in the old shared Canvas Browser jar are offered for promotion, one per row. No cookie is copied: the user re-authenticates into the new partition, because moving a live credential without the user authenticating is the one thing this feature exists to avoid. The clear-shared-jar action refuses while candidates remain - the jar is the only copy. |

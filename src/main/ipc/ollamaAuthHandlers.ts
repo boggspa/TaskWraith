@@ -1,9 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { WebSessionCookieStore } from '../providers/WebSessionCookieStore'
-import {
-  importOllamaWebSession,
-  type CapturedWebSession
-} from '../providers/WebSessionBrowser'
+import { importOllamaWebSession, type CapturedWebSession } from '../providers/WebSessionBrowser'
 import type { OllamaWebSubscriptionResult } from '../ollama/OllamaWebSubscriptionClient'
 import {
   createProviderApiKeyHandlers,

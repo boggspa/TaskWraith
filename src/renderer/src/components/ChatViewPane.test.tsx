@@ -449,9 +449,7 @@ describe('ChatViewPane shared composer', () => {
 
     expect(html).toContain('data-has-workspace-stats-opener="true"')
     expect(html).toContain('data-has-compact-chat-opener="true"')
-    expect(paneSource).toContain(
-      'const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)'
-    )
+    expect(paneSource).toContain('const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)')
     expect(paneSource).toContain('actionPillRef={paneActionPillRef}')
     expect(paneSource).toContain(
       'canOpenPaneWorkspaceStats ? requestPaneWorkspaceStats : undefined'
@@ -539,15 +537,7 @@ describe('ChatViewPane chrome actions', () => {
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
       (match) => match[1]
     )
-    expect(actionIds).toEqual([
-      'fx',
-      'info',
-      'workspace-stats',
-      'popout',
-      'run',
-      'home',
-      'close'
-    ])
+    expect(actionIds).toEqual(['fx', 'info', 'workspace-stats', 'popout', 'run', 'home', 'close'])
     expect(html).toContain('title="Hide workspace sidebar"')
     expect(html).toContain('sidebar-toggle')
     expect(html).toContain('id="multiview-pane-1-fx-trigger"')

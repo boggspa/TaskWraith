@@ -6,10 +6,7 @@ import type {
   MistralApiKeyStore
 } from '../mistral/MistralApiKeyStore'
 import type { WebSessionCookieStore } from '../providers/WebSessionCookieStore'
-import {
-  importMistralWebSession,
-  type CapturedWebSession
-} from '../providers/WebSessionBrowser'
+import { importMistralWebSession, type CapturedWebSession } from '../providers/WebSessionBrowser'
 import type { MistralWebSubscriptionResult } from '../mistral/MistralWebSubscriptionClient'
 import {
   createProviderSecretStoreHandlers,
@@ -92,8 +89,9 @@ export function registerMistralApiKeyHandlers(deps: MistralApiKeyHandlerDeps): v
     }
   )
 
-  ipcMain.handle(MISTRAL_API_KEY_CLEAR_CHANNEL, (event): MistralApiKeyMutationResult =>
-    secretHandlers.clearSecret(event)
+  ipcMain.handle(
+    MISTRAL_API_KEY_CLEAR_CHANNEL,
+    (event): MistralApiKeyMutationResult => secretHandlers.clearSecret(event)
   )
 
   ipcMain.handle(MISTRAL_WEB_SESSION_IMPORT_CHANNEL, webSessionHandlers.importWebSession)

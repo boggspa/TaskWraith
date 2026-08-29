@@ -1344,10 +1344,7 @@ type SideChatTypePickerOption = {
   chatId?: string
   agentIdentity?: ReturnType<typeof assignAgentIdentityFromSeed>
 }
-type InspectorRightTab =
-  | 'diff'
-  | 'commits'
-  | 'raw'
+type InspectorRightTab = 'diff' | 'commits' | 'raw'
 type SideChatSeedContext = {
   originMessageId?: string
   originRunId?: string
@@ -1541,8 +1538,7 @@ function App(): React.JSX.Element {
   const [chatPopoutPresentation, setChatPopoutPresentation] = useState(
     getInitialChatPopoutPresentation
   )
-  const isCompactChatCompanion =
-    isChatPopoutWindow && chatPopoutPresentation === 'compact'
+  const isCompactChatCompanion = isChatPopoutWindow && chatPopoutPresentation === 'compact'
   const trustedSessionMutationDisabledReason = chatPopoutAuthorityDisabledReason(
     isChatPopoutWindow,
     'trusted-session'
@@ -1554,10 +1550,7 @@ function App(): React.JSX.Element {
   const isDockingChatPopoutRef = useRef(false)
   const skipCloseSideChatPresentationIdRef = useRef<string | null>(null)
   useEffect(() => {
-    if (
-      !isChatPopoutWindow ||
-      typeof window.api.onChatPopoutPresentationChanged !== 'function'
-    ) {
+    if (!isChatPopoutWindow || typeof window.api.onChatPopoutPresentationChanged !== 'function') {
       return undefined
     }
     return window.api.onChatPopoutPresentationChanged(({ presentation }) => {
@@ -3888,8 +3881,7 @@ function App(): React.JSX.Element {
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogRingBuffer>>(new Map())
   const rawLogPresentationVisibleRef = useRef(false)
-  rawLogPresentationVisibleRef.current =
-    rightTab === 'raw' || showGeminiTerminal
+  rawLogPresentationVisibleRef.current = rightTab === 'raw' || showGeminiTerminal
   const rawLogPresentationQueueRef = useRef<RawLogPresentationQueue | null>(null)
   if (!rawLogPresentationQueueRef.current) {
     rawLogPresentationQueueRef.current = new RawLogPresentationQueue({
@@ -12533,9 +12525,7 @@ function App(): React.JSX.Element {
     }
 
     if (typeof window.api.onAgentApprovalRequest === 'function') {
-      addIpcSubscription(
-        window.api.onAgentApprovalRequest(presentLiveApprovalRequest)
-      )
+      addIpcSubscription(window.api.onAgentApprovalRequest(presentLiveApprovalRequest))
     }
 
     if (typeof window.api.onAgentApprovalTimeout === 'function') {
@@ -12651,9 +12641,8 @@ function App(): React.JSX.Element {
           const recovered = requests
             .filter((request): request is AgentApprovalRequest => Boolean(request?.id))
             .map((request) => ({ chatId: resolveApprovalChatId(request), approval: request }))
-            .filter(
-              (entry): entry is { chatId: string; approval: AgentApprovalRequest } =>
-                Boolean(entry.chatId)
+            .filter((entry): entry is { chatId: string; approval: AgentApprovalRequest } =>
+              Boolean(entry.chatId)
             )
           const merged = approvalRecovery?.reconcile(recovered)
           if (!merged) return

@@ -20,9 +20,7 @@ function sourceSlice(source: string, start: string, end: string): string {
 describe('chat popout presentation handoff integration', () => {
   it('routes sidebar thread pop-outs through the handoff-aware launcher', () => {
     expect(mainAppLayoutSource).toContain('onOpenChatPopout={(chat, presentation) =>')
-    expect(mainAppLayoutSource).toContain(
-      'popOutLinkedChat(chat, undefined, presentation)'
-    )
+    expect(mainAppLayoutSource).toContain('popOutLinkedChat(chat, undefined, presentation)')
   })
 
   it('keeps collaboration Channel chrome out of the compact companion only', () => {

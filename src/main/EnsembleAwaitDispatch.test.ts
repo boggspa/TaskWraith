@@ -108,9 +108,7 @@ describe('dispatchEnsembleAwaitTool execution targets', () => {
   // that is never going to progress on its own.
   it('settles a paused execution so the seat can report the blockage', async () => {
     const d = deps({
-      getOwnedExecutions: vi.fn(() => [
-        { executionId: 'ultratask-1', state: 'requires_action' }
-      ])
+      getOwnedExecutions: vi.fn(() => [{ executionId: 'ultratask-1', state: 'requires_action' }])
     })
     const result = await dispatchEnsembleAwaitTool(
       {

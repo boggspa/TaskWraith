@@ -2841,10 +2841,7 @@ declare global {
         executionId: string,
         reason?: string
       ) => Promise<ExecutionRunProjection | null>
-      resumeExecutionRun: (
-        executionId: string,
-        reason?: string
-      ) => Promise<ExecutionRunProjection>
+      resumeExecutionRun: (executionId: string, reason?: string) => Promise<ExecutionRunProjection>
       cancelExecutionRunStep: (
         command: ExecutionRunCancelStepCommand
       ) => Promise<ExecutionRunProjection>

@@ -251,9 +251,7 @@ describe('ThreadHome', () => {
 
   it('centres the launcher and heatmap as a scroll-safe lightweight group', () => {
     const css = readFileSync(new URL('../assets/css/43-thread-home.css', import.meta.url), 'utf8')
-    expect(css).toContain(
-      '.thread-home-scroll--with-overview > .thread-home-section:first-child {'
-    )
+    expect(css).toContain('.thread-home-scroll--with-overview > .thread-home-section:first-child {')
     expect(css).toContain('margin-top: auto')
     expect(css).toContain('margin: clamp(36px, 5vh, 64px) auto auto')
     expect(css).not.toContain('thread-home-dashboard-region')

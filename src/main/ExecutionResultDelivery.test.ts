@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { deliverExecutionResult } from './ExecutionResultDelivery'
-import { emptyExecutionResultMailbox, enqueueExecutionResultMailboxEvent } from './ExecutionResultMailbox'
+import {
+  emptyExecutionResultMailbox,
+  enqueueExecutionResultMailboxEvent
+} from './ExecutionResultMailbox'
 
 function projection(overrides: Record<string, unknown> = {}) {
   return {
@@ -131,9 +134,9 @@ describe('deliverExecutionResult', () => {
       })
 
     expect(deliverExecutionResult(pause('Dispatch failed.', 21), d as never).delivered).toBe(true)
-    expect(
-      deliverExecutionResult(pause('Reviewer needs input.', 44), d as never).delivered
-    ).toBe(true)
+    expect(deliverExecutionResult(pause('Reviewer needs input.', 44), d as never).delivered).toBe(
+      true
+    )
     expect(d.appendResultCard).toHaveBeenCalledTimes(2)
     expect(d.appendResultCard.mock.calls[1][0].content).toMatch(/reviewer needs input/i)
 
@@ -178,10 +181,7 @@ describe('deliverExecutionResult', () => {
 
   it('still delivers when the graph has no output-stage result to read', () => {
     const d = deps()
-    const result = deliverExecutionResult(
-      projection({ attempts: {}, activations: {} }),
-      d as never
-    )
+    const result = deliverExecutionResult(projection({ attempts: {}, activations: {} }), d as never)
 
     expect(result.delivered).toBe(true)
     expect(d.appendResultCard.mock.calls[0][0].content).toBeTruthy()

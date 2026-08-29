@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import {
-  ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
-  registerChatHandlers
-} from './chatHandlers'
+import { ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS, registerChatHandlers } from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
 import { queuePendingWorkspaceRebind } from '../pendingWorkspaceRebind'

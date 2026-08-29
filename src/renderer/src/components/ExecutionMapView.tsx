@@ -327,14 +327,14 @@ export function ExecutionMapView({
             projection.runState !== 'succeeded' &&
             projection.runState !== 'failed' &&
             projection.runState !== 'cancelled' && (
-            <button
-              type="button"
-              className="execution-map-cancel-run"
-              onClick={() => onCancelRun(projection.runId)}
-            >
-              Cancel execution
-            </button>
-          )}
+              <button
+                type="button"
+                className="execution-map-cancel-run"
+                onClick={() => onCancelRun(projection.runId)}
+              >
+                Cancel execution
+              </button>
+            )}
         </span>
       </header>
 

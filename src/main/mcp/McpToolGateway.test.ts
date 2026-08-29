@@ -329,8 +329,16 @@ describe('searchGatewayCapabilities', () => {
   })
 
   it('returns direct tools when exact-matched, adding direct=true annotation without widening eligibility', () => {
-    const directTool = { name: 'run_command', description: 'Run a shell command', inputSchema: { type: 'object' } }
-    const eligibleTool = { name: 'read_file', description: 'Read a file', inputSchema: { type: 'object' } }
+    const directTool = {
+      name: 'run_command',
+      description: 'Run a shell command',
+      inputSchema: { type: 'object' }
+    }
+    const eligibleTool = {
+      name: 'read_file',
+      description: 'Read a file',
+      inputSchema: { type: 'object' }
+    }
 
     const directResult = searchGatewayCapabilities({
       query: 'run_command',

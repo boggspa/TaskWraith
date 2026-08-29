@@ -99,7 +99,7 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     description: 'Read provider and tool event output',
     group: 'inspect',
     target: { surface: 'inspector', inspectorTab: 'raw' }
-  },
+  }
 ]
 
 const RIGHT_DOCK_HOME_GROUPS = [
@@ -126,11 +126,7 @@ interface HomeCardProps {
   badge?: number
 }
 
-function HomeGlyph({
-  kind
-}: {
-  kind: 'diff' | 'commits' | 'raw'
-}) {
+function HomeGlyph({ kind }: { kind: 'diff' | 'commits' | 'raw' }) {
   const path = {
     diff: 'M3 5h7M3 9h10M3 13h6',
     commits: 'M4 3.5h8M4 8h8M4 12.5h8M2.5 3.5h.1M2.5 8h.1M2.5 12.5h.1',
@@ -161,15 +157,7 @@ function destinationIcon(id: string): ReactNode {
   return <HomeGlyph kind={id as 'diff' | 'commits' | 'raw'} />
 }
 
-function HomeCard({
-  id,
-  label,
-  description,
-  icon,
-  onClick,
-  disabled,
-  badge
-}: HomeCardProps) {
+function HomeCard({ id, label, description, icon, onClick, disabled, badge }: HomeCardProps) {
   return (
     <PillCard
       data-right-dock-home-destination={id}

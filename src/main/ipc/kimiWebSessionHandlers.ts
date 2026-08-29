@@ -1,9 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { WebSessionCookieStore, WebSessionStatus } from '../providers/WebSessionCookieStore'
-import {
-  importKimiWebSession,
-  type CapturedWebSession
-} from '../providers/WebSessionBrowser'
+import { importKimiWebSession, type CapturedWebSession } from '../providers/WebSessionBrowser'
 import {
   createProviderWebSessionHandlers,
   webSessionStatusOf
