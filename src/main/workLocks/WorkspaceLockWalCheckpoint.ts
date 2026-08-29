@@ -2,6 +2,7 @@ import {
   canonicalWorkspaceLockWalJson,
   decodeWorkspaceLockWal,
   validateWorkspaceLockWalCheckpointBaseline,
+  workspaceLockWalContentDigest,
   workspaceLockWalDigest,
   type WorkspaceLockWalCheckpointBaseline,
   type WorkspaceLockWalState
@@ -26,6 +27,7 @@ export interface WorkspaceLockWalArchiveSegment {
   sequence: number
   filename: string
   byteLength: number
+  /** SHA-256 of the segment's exact bytes, so `shasum -a 256` verifies it. */
   digest: string
 }
 
@@ -281,7 +283,7 @@ export function planWorkspaceLockWalCompaction(
     knownMarkers: boundaryState.knownMarkers
   }
   const archiveFilename = workspaceLockWalArchiveFilename(boundarySequence)
-  const archiveDigest = workspaceLockWalDigest(archivedFrames)
+  const archiveDigest = workspaceLockWalContentDigest(archivedFrames)
   const archivedSegments = [
     ...(input.previousCheckpoint?.archivedSegments ?? []),
     {

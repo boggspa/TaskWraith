@@ -664,6 +664,19 @@ export function workspaceLockWalDigest(value: unknown): string {
 }
 
 /**
+ * Digest of exact UTF-8 content, NOT of its canonical-JSON encoding.
+ *
+ * Archive segments are audit evidence a person may want to verify with
+ * `shasum -a 256 events-<seq>.jsonl`. Running them through `canonicalJson`
+ * first would hash the quoted, escaped string and silently make that
+ * impossible.
+ */
+export function workspaceLockWalContentDigest(text: string): string {
+  if (typeof text !== 'string') throw new Error('Workspace-lock content digest requires text.')
+  return createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+/**
  * Validates an untrusted checkpoint projection with the same fail-closed
  * validators replay uses. A checkpoint stands in for events that are no longer
  * on the boot path, so it may not be trusted any further than one of them.

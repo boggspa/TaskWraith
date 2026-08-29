@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -158,6 +159,25 @@ describe('workspace-lock WAL checkpoint', () => {
     expect(resolved.state.events.length).toBeLessThan(resolved.state.sequence)
     authority.dispose()
     reopened.dispose()
+  }, 60_000)
+
+  it('records an archive digest a person can verify with shasum on the file', async () => {
+    const h = harness()
+    const authority = await buildHistory(h, 8)
+    const outcome = await authority.compactIfNeeded({ byteThreshold: 0, retainedTailEvents: 2 })
+    expect(outcome.compacted).toBe(true)
+    if (!outcome.compacted) throw new Error('expected compaction')
+
+    const checkpoint = decodeWorkspaceLockWalCheckpoint(fs.readFileSync(h.checkpointPath, 'utf8'))
+    const segment = checkpoint.archivedSegments[checkpoint.archivedSegments.length - 1]
+    const bytes = fs.readFileSync(path.join(h.archiveDir, segment.filename))
+
+    // Not the digest of its canonical-JSON encoding: audit evidence has to be
+    // checkable against the file itself.
+    expect(segment.digest).toBe(createHash('sha256').update(bytes).digest('hex'))
+    expect(segment.byteLength).toBe(bytes.byteLength)
+    expect(segment.sequence).toBe(outcome.boundarySequence)
+    authority.dispose()
   }, 60_000)
 
   it('does not compact below its byte threshold or when there is nothing to seal', async () => {
