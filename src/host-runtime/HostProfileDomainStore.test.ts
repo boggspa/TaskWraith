@@ -20,6 +20,7 @@ import {
   HOST_PROFILE_WORKSPACES_FILENAME,
   HostProfileDomainStore
 } from './HostProfileDomainStore'
+import { isPlaceholderThreadTitle } from '../shared/threadTitles'
 
 const profiles: string[] = []
 
@@ -176,6 +177,19 @@ describe('HostProfileDomainStore', () => {
     expect(adopted.id).toBe(registered.id)
     expect(adopted.realPath).toBe(registered.realPath)
     expect(adopted.pinned).toBe(false)
+  })
+
+  it('gives an untitled thread a default the shared placeholder predicate recognises', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    // The invariant, not the spelling: a Host-created thread must be a title the
+    // first-prompt gates and the repair pass are allowed to overwrite. The
+    // predicate is case-sensitive after whitespace collapse, so a lowercase
+    // default silently made every TUI-born thread keep its title forever.
+    expect(isPlaceholderThreadTitle(thread.title)).toBe(true)
+    // An explicit title still wins and is never treated as a placeholder.
+    const named = store.createThread({ scope: 'global', title: 'Persistence review' })
+    expect(isPlaceholderThreadTitle(named.title)).toBe(false)
   })
 
   it('fences setup/archive while a run is active and supports bounded history pages', () => {

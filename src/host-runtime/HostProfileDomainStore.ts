@@ -878,7 +878,12 @@ export class HostProfileDomainStore {
       appChatId: this.newId(),
       scope,
       ...(scope === 'workspace' ? this.workspaceThreadFields(input.workspaceId) : {}),
-      title: input.title === undefined ? 'New chat' : this.requireText(input.title, 200),
+      // Must stay a title `isPlaceholderThreadTitle` recognises: that predicate
+      // is case-sensitive after whitespace collapse, so the lowercase 'New chat'
+      // this used to stamp made every Host-created thread invisible to both
+      // first-prompt title gates and to the placeholder repair pass. A thread
+      // born here would keep its default title for its whole life.
+      title: input.title === undefined ? 'New Chat' : this.requireText(input.title, 200),
       archived: false,
       messages: [],
       persistenceRevision: 0,
