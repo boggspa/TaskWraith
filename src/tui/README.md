@@ -124,9 +124,10 @@ remain inside `tw --ascii --width 80`.
 
 ### Controls and layout
 
-`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
-`--no-animation` change presentation only. Threads use compact HUD plus
-composer. There is no ensemble baton, seat lens, or mission-cast chrome.
+`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`,
+`--no-animation`, and `--theme` change presentation only. Threads use compact
+HUD plus composer. There is no ensemble baton, seat lens, or mission-cast
+chrome.
 Opening a Host-projected ensemble thread is view-compatible, not
 controllable: HUD uses that thread's primary provider. Provider identity
 carries colour, while transcript prose stays neutral and detail remains in
@@ -173,6 +174,46 @@ command with capability, actor, offer, and receipt validation.
 Approval/question actions are available only when the connected Host actually
 negotiates those capabilities. Muse standalone production currently does not
 advertise them (see Current boundary).
+
+### Themes (`/theme`)
+
+`/theme` opens a picker; moving the cursor repaints the whole frame in the
+hovered theme, `Enter` keeps it, `Esc` puts back what you had. `/theme <name>`
+sets one directly. A confirmed choice is saved to
+`$XDG_CONFIG_HOME/taskwraith/tui.json` (or `~/.config/...`) and applies to every
+later run.
+
+| Theme            |                                                      |
+| ---------------- | ---------------------------------------------------- |
+| `wraith-night`   | House dark. Neutral ground with the ensemble mauve   |
+| `wraith-day`     | House light, for bright terminal profiles            |
+| `tokyo-night`    | Dark, blue-tinted                                    |
+| `rose-pine-moon` | Muted dark with iris accents                         |
+| `terminal`       | Paints nothing; inherits your terminal's own colours |
+| `auto`           | Follows the terminal's own light or dark appearance  |
+
+Names and aliases are case-insensitive, and an unrecognised one falls back to
+the default rather than refusing to start.
+
+Precedence: `--theme` > `TASKWRAITH_TUI_THEME` > the saved choice > the default.
+The environment deliberately outranks the saved choice — a variable is how a
+script or terminal profile states what it needs.
+
+`auto` asks the terminal before it asks the OS, because a light-mode desktop
+running a dark terminal profile is common and the OS answers wrongly for it. The
+order is `TASKWRAITH_APPEARANCE` / `LC_TASKWRAITH_APPEARANCE` (the `LC_` form
+survives SSH, since OpenSSH forwards `LC_*` by default) → `COLORFGBG` → an
+OSC 11 background query → OS appearance → dark. The OSC 11 query runs once at
+startup, is skipped inside tmux/screen/zellij, and is skipped when input is
+already queued rather than swallowing a keystroke.
+
+Themes whose depth needs 24-bit colour give up their ground on a 256-colour
+terminal — three near-black surfaces quantise to one flat block — and keep their
+state tones. `NO_COLOR` drops colour entirely, as before.
+
+Provider accents are never re-tinted by a theme. They are cross-surface identity
+shared with the desktop app and iOS, so a theme may shift an accent's luminance
+to keep it legible on its ground, but never its hue.
 
 ### Workspace git (`/git`)
 

@@ -14,8 +14,11 @@ overview lives in [`README.md`](./README.md).
 ## Token authority
 
 **`theme.ts` is the sole source of every design decision** the TUI makes:
-colour tones, glyph sets, status mapping, density affordances, layout
-constants, and motion parameters.
+glyph sets, status mapping, density affordances, layout constants, and motion
+parameters. **`palette.ts` owns colour** — the grounds, inks and state tones a
+theme is made of, plus theme resolution and provider-accent adaptation. The
+split is by concern, not by convenience: `theme.ts` is the vocabulary, and
+`palette.ts` is what the vocabulary is drawn in.
 
 Rules:
 
@@ -24,8 +27,20 @@ Rules:
 2. Glyph slots are named by **meaning**, not by shape. Two slots may resolve
    to the same character; they must not share a slot when the meanings differ.
 3. Provider identity carries colour; transcript prose stays neutral. Semantic
-   tones (`TUI_TONE` / `tuiToneHex`) are for _state_, never for message bodies.
-4. If an affordance cannot be expressed in a static cell grid, it does not
+   tones are for _state_, never for message bodies.
+4. **A theme owns the ground and the state tones. It never owns provider hue.**
+   Provider accents are cross-surface identity, pinned by
+   `taskWraithProviderPresentation.test.ts` to the desktop `theme.css` and
+   mirrored in iOS `Theme.swift`. `adaptProviderAccent` may move an accent's
+   luminance toward a contrast floor against the active ground — mixing toward
+   black or white preserves hue exactly — but a theme that recolours a provider
+   breaks the one thing the TUI shares with every other TaskWraith surface.
+5. **Painting a ground obliges setting an ink.** A theme that fills a background
+   and leaves the foreground to the terminal renders unreadably wherever the two
+   disagree — a light theme under a light terminal profile writes white on
+   near-white. `Ansi.paint` takes both, and rewrites every foreground reset
+   inside the line so no stretch escapes back to the terminal's own colour.
+6. If an affordance cannot be expressed in a static cell grid, it does not
    get a token — and therefore does not belong in the TUI.
 
 ## Ghost banner
@@ -94,14 +109,40 @@ History: three independent ladders previously disagreed and all collided on
 `◌` (queued thread, next seat, running tool). Unification is load-bearing;
 reintroducing a parallel status map is a regression.
 
+## Themes
+
+Five built-in themes plus `auto`, resolved by name or alias, case-insensitively.
+`terminal` paints nothing and inherits the user's own palette — a supported
+design, not a degraded one, and the honest answer for a 256-colour terminal.
+
+Precedence: `--theme` > `TASKWRAITH_TUI_THEME` > the saved preference
+(`settings.ts`) > the default theme. The environment outranks the saved
+preference deliberately: a variable is how a script or terminal profile states
+what it needs, and an interactive choice should not override it.
+
+`auto` measures rather than guesses, and asks the terminal before it asks the
+OS — a user in light mode running a dark profile is common, and the OS gets that
+user the wrong answer. The ladder lives in `appearance.ts`:
+declared env (`LC_TASKWRAITH_APPEARANCE` survives SSH) → `COLORFGBG` → an OSC 11
+background query → OS appearance → dark. Every rung may answer "I don't know".
+
+**The OSC 11 probe runs exactly once, at startup.** It takes ownership of
+terminal input while it runs, which is safe before the interactive reader
+attaches and never safe afterwards; it is skipped inside tmux/screen/zellij,
+which answer for themselves, and skipped when input is already queued rather
+than eating a keystroke. `/theme` previewing `auto` therefore uses the
+synchronous rungs only.
+
 ## Degradation ladder
 
 Presentation degrades in this order:
 
 1. **TrueColor ANSI** — default when the terminal supports it.
-2. **`NO_COLOR`** — colour off; glyphs and layout unchanged. Meaning survives
+2. **256-colour** — themes whose depth needs 24 bits give up their ground rather
+   than painting three surfaces that quantise to one flat block. Tones survive.
+3. **`NO_COLOR`** — colour off; glyphs and layout unchanged. Meaning survives
    through glyph + weight.
-3. **ASCII glyph set** — when Unicode chrome cannot be trusted.
+4. **ASCII glyph set** — when Unicode chrome cannot be trusted.
 
 ASCII selection (`resolveTuiGlyphs(detectTuiUnicode())`, overridable):
 

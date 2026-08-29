@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
@@ -10,6 +11,15 @@ import {
 } from '../host-shared/twmission'
 import type { HostSnapshot } from '../shared/hostProtocol'
 import { Ansi } from './ansi'
+import {
+  isAutoThemeName,
+  resolveAutoTheme,
+  resolveTuiTheme,
+  tuiThemeForColorMode,
+  type TuiTheme
+} from './palette'
+import { resolveTuiAppearance, type TuiAppearanceProbeIo } from './appearance'
+import { readTuiSettings, writeTuiSettings } from './settings'
 import { TaskWraithTui } from './TaskWraithTui'
 import {
   parseTaskWraithTuiArgs,
@@ -43,6 +53,107 @@ function pickThread(
 
 function resolveCliGlyphs(options: TaskWraithTuiCliOptions): TuiGlyphSet {
   return resolveTuiGlyphs(options.ascii ? false : detectTuiUnicode())
+}
+
+/**
+ * The theme this run paints in.
+ *
+ * Two steps, and the second is the one that matters: the named theme is chosen
+ * first, then reconciled with what the terminal can actually render. A theme
+ * whose depth needs 24-bit colour gives its ground up on a 256-colour terminal
+ * rather than painting three surfaces that quantise to the same flat block.
+ */
+/**
+ * Terminal I/O for the OSC 11 probe, or `undefined` when there is no tty to ask.
+ *
+ * Deliberately built fresh and used exactly once, at startup, before the
+ * interactive TUI attaches its own input handling. Raw mode and the resume/pause
+ * pair below would fight the TUI's reader if this ran any later.
+ */
+function nodeAppearanceProbe(): TuiAppearanceProbeIo | undefined {
+  const input = process.stdin
+  const output = process.stdout
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') return undefined
+  return {
+    isTty: true,
+    hasPendingInput: () => input.readableLength > 0,
+    setRawMode: (raw) => {
+      input.setRawMode(raw)
+    },
+    write: (data) => {
+      output.write(data)
+    },
+    read: (timeoutMs) =>
+      new Promise((resolve) => {
+        let buffer = ''
+        const finish = (): void => {
+          clearTimeout(timer)
+          input.off('data', onData)
+          input.pause()
+          resolve(buffer)
+        }
+        const onData = (chunk: Buffer): void => {
+          // latin1 keeps every byte addressable: the reply is ASCII, but a
+          // multi-byte decode would mangle any keystroke that arrives with it.
+          buffer += chunk.toString('latin1')
+          if (buffer.includes(OSC_REPLY_BEL) || buffer.includes(OSC_REPLY_ST)) finish()
+        }
+        const timer = setTimeout(finish, timeoutMs)
+        input.on('data', onData)
+        input.resume()
+      })
+  }
+}
+
+const OSC_REPLY_BEL = String.fromCharCode(7)
+const OSC_REPLY_ST = `${String.fromCharCode(27)}\\`
+
+/**
+ * The theme this run paints in.
+ *
+ * Three steps, and the last is the one that matters: `auto` is measured, the
+ * named theme is looked up, and either way the result is reconciled with what
+ * the terminal can actually render. A theme whose depth needs 24-bit colour
+ * gives its ground up on a 256-colour terminal rather than painting three
+ * surfaces that quantise to the same flat block.
+ */
+async function resolveCliTheme(options: TaskWraithTuiCliOptions): Promise<TuiTheme> {
+  const requested = resolveCliThemeName(options)
+  let chosen: TuiTheme
+  if (isAutoThemeName(requested)) {
+    const probe = nodeAppearanceProbe()
+    chosen = resolveAutoTheme(
+      await resolveTuiAppearance({
+        env: process.env,
+        platform: process.platform,
+        run: runForStdout,
+        ...(probe ? { probe } : {})
+      })
+    )
+  } else {
+    chosen = resolveTuiTheme(requested)
+  }
+  return tuiThemeForColorMode(chosen, options.colorMode)
+}
+
+/**
+ * Which theme this run was asked for: flag, then environment, then the saved
+ * preference, then nothing — which downstream reads as "the default theme".
+ *
+ * The saved preference sits below the environment on purpose. `TASKWRAITH_TUI_THEME`
+ * is how a script or a terminal profile states what it needs, and a preference
+ * saved from an interactive session should not override the environment the
+ * next session is launched into.
+ */
+function resolveCliThemeName(options: TaskWraithTuiCliOptions): string | undefined {
+  return options.themeName ?? readTuiSettings().theme
+}
+
+/** Runs a probe command, treating any failure as "this source has no answer". */
+function runForStdout(command: string, args: string[]): string | undefined {
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 1000 })
+  if (result.error || result.status !== 0) return undefined
+  return result.stdout
 }
 
 function stateFromHostSnapshot(
@@ -128,13 +239,18 @@ async function loadReplay(
   }
 }
 
-function renderSnapshotState(state: TaskWraithTuiState, options: TaskWraithTuiCliOptions): void {
+function renderSnapshotState(
+  state: TaskWraithTuiState,
+  options: TaskWraithTuiCliOptions,
+  theme: TuiTheme
+): void {
   const output = renderTaskWraithTui(state, {
     width: options.width,
     height: options.height,
     ansi: new Ansi(options.colorMode),
     animationEnabled: options.animationEnabled,
-    glyphs: resolveCliGlyphs(options)
+    glyphs: resolveCliGlyphs(options),
+    theme
   })
   process.stdout.write(`${output}\n`)
 }
@@ -195,7 +311,7 @@ async function main(): Promise<void> {
   if (options.replayPath) {
     const replay = await loadReplay(options)
     if (options.json) printJsonProjection(replay.state, 'twmission-replay', replay.manifest)
-    else renderSnapshotState(replay.state, options)
+    else renderSnapshotState(replay.state, options, await resolveCliTheme(options))
     return
   }
   const interactive = !options.exportPath && !options.json && !options.snapshot
@@ -222,7 +338,7 @@ async function main(): Promise<void> {
   }
   if (options.snapshot) {
     const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
-    renderSnapshotState(state, options)
+    renderSnapshotState(state, options, await resolveCliTheme(options))
     return
   }
   activeTui = new TaskWraithTui({
@@ -231,6 +347,9 @@ async function main(): Promise<void> {
     colorMode: options.colorMode,
     animationEnabled: options.animationEnabled,
     glyphs: resolveCliGlyphs(options),
+    theme: await resolveCliTheme(options),
+    ...(resolveCliThemeName(options) ? { themeName: resolveCliThemeName(options) as string } : {}),
+    persistTheme: (name: string) => writeTuiSettings({ theme: name }),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
     ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
     ...(!options.demo && options.startHost && options.userDataPath

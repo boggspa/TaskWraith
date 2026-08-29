@@ -38,6 +38,7 @@ export type TuiOverlay =
   | 'seats'
   | 'workspaces'
   | 'goal'
+  | 'theme'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'
@@ -139,6 +140,13 @@ export interface TaskWraithTuiState {
   inputCursor: number
   overlay: TuiOverlay
   overlayIndex: number
+  /**
+   * The committed theme name, which may be `auto`. Distinct from the theme the
+   * frame is currently painted in: the `/theme` picker previews by repainting,
+   * so during a preview those two deliberately disagree, and this is the one
+   * the picker marks as current and the one that gets persisted.
+   */
+  themeName?: string
   /** Mission lens filter. Missing on older injected fixtures means active. */
   missionFilter?: TuiMissionFilter
   /** First participant row shown in the selected mission cast. */

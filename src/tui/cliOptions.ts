@@ -21,6 +21,12 @@ export interface TaskWraithTuiCliOptions {
   hostLaunchProfile: TuiHostLaunchProfile
   /** Force ASCII chrome; TASKWRAITH_TUI_ASCII is handled by detectTuiUnicode. */
   ascii: boolean
+  /**
+   * Requested colour theme, by name or alias. `undefined` means "unspecified",
+   * which resolves to the default theme — not to "no theme". An unrecognised
+   * name resolves to the default too rather than refusing to start.
+   */
+  themeName?: string
   threadId?: string
   userDataPath?: string
   exportPath?: string
@@ -52,6 +58,8 @@ Options:
   --no-color             Disable ANSI colour
   --color <mode>         truecolor, ansi256, or none
   --ascii                Force ASCII chrome (also: TASKWRAITH_TUI_ASCII=1)
+  --theme <name>         Colour theme, or 'auto' to follow the terminal
+                         (also: TASKWRAITH_TUI_THEME)
   --no-animation         Use the static working indicator
   --version              Print the TUI version
   --help                 Show this help
@@ -107,6 +115,8 @@ export function parseTaskWraithTuiArgs(
     help: false,
     version: false
   }
+  const envTheme = String(env.TASKWRAITH_TUI_THEME || '').trim()
+  if (envTheme) options.themeName = envTheme
   let explicitUserData = Boolean(String(env.TASKWRAITH_USER_DATA || '').trim())
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
@@ -127,6 +137,10 @@ export function parseTaskWraithTuiArgs(
     else if (flag === '--width' || flag === '--height') {
       const [value, consumed] = inline ? [inline, index] : takeValue(args, index, flag)
       options[flag === '--width' ? 'width' : 'height'] = positiveInteger(value, flag)
+      index = consumed
+    } else if (flag === '--theme') {
+      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--theme')
+      options.themeName = value
       index = consumed
     } else if (flag === '--color') {
       const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--color')

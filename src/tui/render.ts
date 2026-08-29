@@ -19,14 +19,21 @@ import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import { resolveGhostBanner } from './ghostBanner'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import {
+  TUI_AUTO_THEME_NAME,
+  TUI_DEFAULT_THEME_NAME,
+  TUI_UNPAINTED_THEME,
+  resolveTuiTheme,
+  tuiThemeNames,
+  type TuiTheme,
+  type TuiThemeTone
+} from './palette'
+import {
   TUI_GLYPHS_UNICODE,
   TUI_LAYOUT,
   TUI_MOTION,
-  TUI_TONE,
   resolveTuiDensity,
   tuiGlyphsAreUnicode,
   tuiStatusGlyph,
-  tuiToneHex,
   type TuiGlyphSet,
   type TuiRunStatus,
   type TuiSemanticTone
@@ -40,6 +47,12 @@ export interface TaskWraithTuiRenderOptions {
   animationEnabled?: boolean
   /** Glyph vocabulary to draw with. Defaults to the Unicode set. */
   glyphs?: TuiGlyphSet
+  /**
+   * Palette to paint the frame in. Defaults to the unpainted theme, which
+   * inherits the terminal's own colours and renders byte-identically to the
+   * pre-theme surface.
+   */
+  theme?: TuiTheme
 }
 
 function terminalLabel(value: unknown): string {
@@ -120,7 +133,7 @@ function reasoningLadder(
   return [0, 1, 2]
     .map((index) =>
       index < level
-        ? ansi.color(glyphs.reasoningOn, mixHex(accent, TUI_TONE.highlight, index * 0.12))
+        ? ansi.color(glyphs.reasoningOn, mixHex(accent, tones(ansi).highlight, index * 0.12))
         : ansi.dim(glyphs.reasoningOff)
     )
     .join('')
@@ -143,8 +156,28 @@ function currentWallTime(thread: TaskWraithControlThread): number | undefined {
   return Number(projected)
 }
 
+/**
+ * The active theme's state tones.
+ *
+ * `renderTaskWraithTui` hands every helper a toned `Ansi`, so the fallback only
+ * covers a helper reached some other way. It resolves to the unpainted theme's
+ * tones — the house palette — which is what these sites read before themes
+ * existed, and keeps the literals in `palette.ts` where they belong.
+ */
+function tones(ansi: Ansi): TuiThemeTone {
+  return ansi.tones ?? TUI_UNPAINTED_THEME.tone
+}
+
 function tone(ansi: Ansi, text: string, value: TuiSemanticTone): string {
-  const hex = tuiToneHex(value)
+  const palette = tones(ansi)
+  const hex =
+    value === 'good'
+      ? palette.good
+      : value === 'warning'
+        ? palette.warning
+        : value === 'error'
+          ? palette.error
+          : undefined
   return hex ? ansi.color(text, hex) : text
 }
 
@@ -183,7 +216,7 @@ function transcriptSpeaker(row: TaskWraithControlTranscriptRow, ansi: Ansi): str
   const speaker = terminalLabel(row.speaker)
   if (row.role === 'user') return ansi.bold(speaker || 'You')
   if (row.provider) return ansi.provider(speaker, row.provider.accent)
-  if (row.role === 'error') return ansi.provider(speaker || 'Error', TUI_TONE.error)
+  if (row.role === 'error') return ansi.provider(speaker || 'Error', tones(ansi).error)
   if (row.role === 'tool') return ansi.dim(speaker || 'Tool')
   return ansi.bold(speaker || 'TaskWraith')
 }
@@ -202,10 +235,10 @@ function renderToolLine(
         : glyphs.toolDone
   const accent =
     tool.status === 'running'
-      ? TUI_TONE.warning
+      ? tones(ansi).warning
       : tool.status === 'error'
-        ? TUI_TONE.error
-        : TUI_TONE.good
+        ? tones(ansi).error
+        : tones(ansi).good
   const delta =
     tool.additions !== undefined || tool.deletions !== undefined
       ? `  +${tool.additions ?? 0} -${tool.deletions ?? 0}`
@@ -232,7 +265,7 @@ function renderTranscriptRow(
     row.role === 'system' || row.role === 'tool'
       ? (value: string) => ansi.dim(value)
       : row.role === 'error'
-        ? (value: string) => ansi.color(value, TUI_TONE.error)
+        ? (value: string) => ansi.color(value, tones(ansi).error)
         : (value: string) => value
   for (const line of wrapPlainText(row.text || '', bodyWidth)) {
     lines.push(fitAnsiLine(`${gutter}${bodyTone(line)}`, width))
@@ -242,7 +275,7 @@ function renderTranscriptRow(
       row.thinking.status === 'running' ? glyphs.thinkingRunning : glyphs.thinkingSettled
     lines.push(
       fitAnsiLine(
-        `${detailGutter}${ansi.color(status, row.provider?.accent ?? TUI_TONE.ensemble)} ${ansi.dim(
+        `${detailGutter}${ansi.color(status, row.provider?.accent ?? tones(ansi).ensemble)} ${ansi.dim(
           terminalLabel(row.thinking.title)
         )}`,
         width
@@ -287,7 +320,7 @@ function shimmerWorking(
           : distance === TUI_MOTION.shimmerFalloff
             ? TUI_MOTION.shimmerMid
             : 0
-      return ansi.color(character, mixHex(accent, TUI_TONE.highlight, amount))
+      return ansi.color(character, mixHex(accent, tones(ansi).highlight, amount))
     })
     .join('')
 }
@@ -376,7 +409,7 @@ function renderHome(
   // Every banner row shares one visible width, so centring each row by its own
   // width centres the block. `place` must not be given a per-row offset here.
   const block = [
-    ...banner.lines.map((line) => ansi.provider(line, TUI_TONE.ensemble)),
+    ...banner.lines.map((line) => ansi.provider(line, tones(ansi).ensemble)),
     '',
     ansi.bold('TaskWraith'),
     '',
@@ -752,7 +785,7 @@ function renderMissionsOverlay(
         width,
         ansi,
         glyphs,
-        projection.freshness === 'live' ? TUI_TONE.good : TUI_TONE.warning
+        projection.freshness === 'live' ? tones(ansi).good : tones(ansi).warning
       )
     )
     const missions = [...projection.missions]
@@ -852,7 +885,7 @@ function renderMissionsOverlay(
             width,
             ansi,
             glyphs,
-            TUI_TONE.good
+            tones(ansi).good
           )
         )
       }
@@ -972,9 +1005,9 @@ function renderGoalOverlay(
 
   const tone =
     goal.status === 'blocked'
-      ? TUI_TONE.warning
+      ? tones(ansi).warning
       : goal.status === 'active'
-        ? TUI_TONE.good
+        ? tones(ansi).good
         : undefined
   lines.push(overlayValue('status', terminalLabel(goal.status), width, ansi, glyphs, tone))
   lines.push(
@@ -1019,6 +1052,53 @@ function renderGoalOverlay(
   lines.push(
     borderedLine(ansi.dim('read-only · authored in the app · Esc close'), width, ansi, glyphs)
   )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+/**
+ * The /theme picker.
+ *
+ * Selection previews by repainting the whole frame, which is why there is no
+ * sample swatch here: the surrounding chrome IS the swatch, and a small colour
+ * chip beside a name is a worse preview than the thing itself. Vibe debounces
+ * its preview by 100ms because a Textual theme change rebuilds a stylesheet;
+ * ours rebuilds a string, so it repaints on the keystroke.
+ */
+function renderThemeOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+  const committed = state.themeName ?? TUI_DEFAULT_THEME_NAME
+  const lines = [borderTitle('Theme', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, names.length - 1))
+  const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+  const labelWidth = Math.max(...names.map((name) => visibleWidth(name)))
+  for (
+    let index = windowStart;
+    index < Math.min(names.length, windowStart + capacity);
+    index += 1
+  ) {
+    const name = names[index]
+    const selected = index === safeIndex
+    const isCommitted = name === committed
+    const theme = name === TUI_AUTO_THEME_NAME ? undefined : resolveTuiTheme(name)
+    // Grok flags which of its themes need 24-bit colour. Worth surfacing at the
+    // moment of choice rather than after the ground silently fails to appear.
+    const unavailable = theme?.requiresTruecolor && ansi.mode !== 'truecolor'
+    const summary = theme ? theme.summary : 'Follow the terminal’s own light or dark appearance.'
+    const note = unavailable ? ' (needs truecolor)' : ''
+    const label = `${name}${' '.repeat(Math.max(0, labelWidth - visibleWidth(name)))}`
+    const marked = isCommitted ? ansi.bold(label) : label
+    const line = `${selected ? glyphs.selection : ' '} ${marked}  ${ansi.dim(`${summary}${note}`)}`
+    lines.push(borderedLine(line, width, ansi, glyphs))
+  }
+  lines.push(borderedLine(ansi.dim('↑↓ preview · Enter keep · Esc revert'), width, ansi, glyphs))
   lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
@@ -1073,7 +1153,17 @@ function renderHelpOverlay(
       ansi,
       glyphs
     ),
-    overlayValue('/clear', 'clear the local transcript view', width, ansi, glyphs),
+    // /clear and /theme are the two commands that change only this client's view
+    // and never Host state, so they share a row — same reason /new and /provider
+    // do. An 80x24 canvas has no spare row, and a clipped bottom border reads as
+    // a broken frame.
+    overlayValue(
+      '/clear',
+      `clear the local transcript view${sep}/theme recolours it`,
+      width,
+      ansi,
+      glyphs
+    ),
     overlayValue(
       '/git',
       `workspace git status/diff/log lens${sep}/git diff [path]`,
@@ -1578,6 +1668,9 @@ function renderOverlay(
   if (state.overlay === 'workspaces') {
     return renderWorkspacesOverlay(state, width, height, ansi, glyphs)
   }
+  if (state.overlay === 'theme') {
+    return renderThemeOverlay(state, width, height, ansi, glyphs)
+  }
   if (state.overlay === 'goal') {
     return renderGoalOverlay(state, width, height, ansi, glyphs)
   }
@@ -1696,7 +1789,7 @@ function renderComposer(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string {
-  const accent = state.thread?.thread.provider.accent ?? TUI_TONE.ensemble
+  const accent = state.thread?.thread.provider.accent ?? tones(ansi).ensemble
   const prompt = ansi.provider(glyphs.promptCaret, accent)
   const density = resolveTuiDensity(width)
   const pendingApproval = selectedPendingApproval(state)
@@ -1775,21 +1868,44 @@ export function renderTaskWraithTui(
   const now = options.now ?? Date.now()
   const animationEnabled = options.animationEnabled !== false
   const glyphs = options.glyphs ?? TUI_GLYPHS_UNICODE
+  const theme = options.theme ?? TUI_UNPAINTED_THEME
+  // One toned clone per frame, handed to every helper in place of the caller's
+  // bare instance. This is how the theme's state tones reach thirteen colour
+  // sites without a new argument on sixteen internal signatures.
+  const ansi = options.ansi.withTones(theme.tone)
   const thread = state.thread?.thread
   const footerRows = TUI_LAYOUT.soloFooterRows
   const canvasHeight = Math.max(1, height - footerRows)
   let canvas =
     state.overlay === 'none'
-      ? renderTranscriptCanvas(state, width, canvasHeight, options.ansi, animationEnabled, glyphs)
-      : renderOverlay(state, width, canvasHeight, options.ansi, glyphs)
+      ? renderTranscriptCanvas(state, width, canvasHeight, ansi, animationEnabled, glyphs)
+      : renderOverlay(state, width, canvasHeight, ansi, glyphs)
   if (canvas.length > canvasHeight) canvas = canvas.slice(0, canvasHeight)
   if (canvas.length < canvasHeight) {
     canvas = [...canvas, ...Array.from({ length: canvasHeight - canvas.length }, () => '')]
   }
   const footer: string[] = []
-  footer.push(renderHud(state, thread, width, options.ansi, now, glyphs))
-  footer.push(renderComposer(state, width, options.ansi, glyphs))
+  footer.push(renderHud(state, thread, width, ansi, now, glyphs))
+  footer.push(renderComposer(state, width, ansi, glyphs))
+
+  // Region grounds, deepest first. An overlay raises the canvas to `surface`
+  // rather than drawing a floating panel over `background`: the TUI has no
+  // z-order to cast a shadow with, so depth has to be carried by the fill the
+  // overlay replaces the canvas with.
+  const ground = theme.ground
+  const ink = theme.ink?.primary
+  const canvasGround = state.overlay === 'none' ? ground?.background : ground?.surface
+
   const lines = [...canvas, ...footer].slice(0, height)
-  while (lines.length < height) lines.push('')
-  return lines.map((line) => fitAnsiLine(line, width)).join('\n')
+  const grounds = [...canvas.map(() => canvasGround), ground?.panel, ground?.surface].slice(
+    0,
+    height
+  )
+  while (lines.length < height) {
+    lines.push('')
+    grounds.push(canvasGround)
+  }
+  return lines
+    .map((line, index) => ansi.paint(fitAnsiLine(line, width), grounds[index], ink))
+    .join('\n')
 }

@@ -58,6 +58,17 @@ import {
   selectColdStartConfiguration,
   type ColdStartPendingCommand
 } from './coldStartFlow'
+import {
+  TUI_AUTO_THEME_NAME,
+  TUI_UNPAINTED_THEME,
+  isAutoThemeName,
+  resolveAutoTheme,
+  resolveTuiTheme,
+  tuiThemeForColorMode,
+  tuiThemeNames,
+  type TuiTheme
+} from './palette'
+import { resolveTuiAppearanceWithoutProbe } from './appearance'
 import { renderTaskWraithTui } from './render'
 import {
   mapHostHistoryEntriesToTranscriptRows,
@@ -102,6 +113,19 @@ export interface TaskWraithTuiOptions {
   animationEnabled?: boolean
   /** Override glyph set; defaults to env/locale detection via detectTuiUnicode. */
   glyphs?: TuiGlyphSet
+  /**
+   * Palette to paint in. Defaults to the unpainted theme so the class stays a
+   * library: choosing to paint is a product decision, and `cli.ts` makes it.
+   */
+  theme?: TuiTheme
+  /**
+   * The name the theme was chosen by, which `auto` cannot be recovered from the
+   * resolved theme alone. Carried so the picker marks the right row and so
+   * `auto` persists as `auto` rather than as whatever it resolved to today.
+   */
+  themeName?: string
+  /** Persist a confirmed theme. Omitted in tests and in one-shot renders. */
+  persistTheme?: (name: string) => boolean
   input?: ReadStream
   output?: WriteStream
   now?: () => number
@@ -213,6 +237,10 @@ export class TaskWraithTui {
     >
   private readonly ansi: Ansi
   private readonly glyphs: TuiGlyphSet
+  /** Mutable: the /theme picker previews by repainting in the hovered theme. */
+  private theme: TuiTheme
+  /** The theme to restore if the picker is dismissed rather than confirmed. */
+  private themeBeforePreview: TuiTheme | undefined
   private readonly client: HostProjectionClient | null
   private state: TaskWraithTuiState
   private stopped = false
@@ -253,7 +281,9 @@ export class TaskWraithTui {
     }
     this.ansi = new Ansi(this.options.colorMode)
     this.glyphs = options.glyphs ?? resolveTuiGlyphs(detectTuiUnicode())
+    this.theme = options.theme ?? TUI_UNPAINTED_THEME
     this.state = options.demo ? createTaskWraithTuiDemoState(this.options.now()) : emptyState()
+    this.state.themeName = options.themeName ?? this.theme.name
     this.client = options.demo
       ? null
       : new HostProjectionClient({
@@ -904,6 +934,14 @@ export class TaskWraithTui {
         this.render()
         return
       }
+      // Escape is handled globally, ahead of every per-overlay key handler, so
+      // an overlay that needs teardown has to be named here. The theme picker
+      // has already repainted the frame by the time Escape arrives: closing it
+      // without reverting would silently apply the theme the user backed out of.
+      if (this.state.overlay === 'theme') {
+        this.dismissThemePreview()
+        return
+      }
       this.state.overlay = 'none'
       this.render()
       return
@@ -941,6 +979,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'workspaces') {
       this.handleWorkspacePickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'theme') {
+      this.handleThemePickerKey(key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -1299,6 +1341,11 @@ export class TaskWraithTui {
         threads.findIndex((thread) => thread.id === this.state.selectedThreadId)
       )
     }
+    if (overlay === 'theme' && this.state.overlay === 'theme') {
+      const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+      this.themeBeforePreview = this.theme
+      this.state.overlayIndex = Math.max(0, names.indexOf(this.state.themeName ?? this.theme.name))
+    }
     if (overlay === 'workspaces' && this.state.overlay === 'workspaces') {
       const workspaces = this.state.snapshot?.workspaces ?? []
       const resolved = this.resolveWorkspaceId()
@@ -1345,6 +1392,95 @@ export class TaskWraithTui {
     } else {
       return
     }
+    this.render()
+  }
+
+  /**
+   * Resolve a theme name and paint in it.
+   *
+   * `auto` resolves from the synchronous appearance rungs only. The OSC 11
+   * probe owns terminal input while it runs, which is safe once at startup and
+   * never safe here — the reader is attached and would lose the keystroke.
+   */
+  private resolveThemeByName(name: string): TuiTheme {
+    const chosen = isAutoThemeName(name)
+      ? resolveAutoTheme(
+          resolveTuiAppearanceWithoutProbe(process.env, process.platform, () => undefined)
+        )
+      : resolveTuiTheme(name)
+    return tuiThemeForColorMode(chosen, this.options.colorMode)
+  }
+
+  /** Repaint in `name` without committing it. Used for picker previews. */
+  private previewTheme(name: string): void {
+    this.theme = this.resolveThemeByName(name)
+  }
+
+  /**
+   * Commit a theme.
+   *
+   * An unknown name is answered rather than swallowed: `resolveTuiTheme` falls
+   * back silently by design so a stale config cannot block startup, but a name
+   * the user just typed deserves to be told it did not land.
+   */
+  private applyTheme(name: string, options: { persist: boolean }): void {
+    const known = isAutoThemeName(name) || tuiThemeNames().includes(name.trim().toLowerCase())
+    const resolved = this.resolveThemeByName(name)
+    if (!known && resolved.name !== name.trim().toLowerCase()) {
+      this.setNotice(
+        `Unknown theme "${name}". Try: ${[TUI_AUTO_THEME_NAME, ...tuiThemeNames()].join(', ')}`,
+        'warning',
+        5_000
+      )
+      this.render()
+      return
+    }
+    const canonical = isAutoThemeName(name) ? TUI_AUTO_THEME_NAME : resolved.name
+    this.theme = resolved
+    this.state.themeName = canonical
+    this.themeBeforePreview = undefined
+    this.state.overlay = 'none'
+    if (options.persist && this.options.persistTheme) {
+      const stored = this.options.persistTheme(canonical)
+      this.setNotice(
+        stored
+          ? `Theme set to ${canonical}.`
+          : `Theme set to ${canonical} for this session — could not save it.`,
+        stored ? 'neutral' : 'warning',
+        3_000
+      )
+    } else {
+      this.setNotice(`Theme set to ${canonical}.`, 'neutral', 3_000)
+    }
+    this.render()
+  }
+
+  /** Close the picker and put back the theme the preview replaced. */
+  private dismissThemePreview(): void {
+    if (this.themeBeforePreview) this.theme = this.themeBeforePreview
+    this.themeBeforePreview = undefined
+    this.state.overlay = 'none'
+    this.render()
+  }
+
+  private handleThemePickerKey(key: Keypress): void {
+    const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+    } else if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(names.length - 1, this.state.overlayIndex + 1)
+    } else if (key.name === 'return' || key.name === 'enter') {
+      this.applyTheme(names[this.state.overlayIndex] as string, { persist: true })
+      return
+    } else if (key.name === 'escape') {
+      // Unreachable while the global Escape branch runs first; kept so the
+      // handler stays correct on its own terms if that ordering ever changes.
+      this.dismissThemePreview()
+      return
+    } else {
+      return
+    }
+    this.previewTheme(names[this.state.overlayIndex] as string)
     this.render()
   }
 
@@ -1817,6 +1953,15 @@ export class TaskWraithTui {
         return
       }
       await this.registerWorkspace(path)
+      return
+    }
+    if (command === '/theme') {
+      const requested = arguments_.join(' ').trim()
+      if (!requested) {
+        this.toggleOverlay('theme')
+        return
+      }
+      this.applyTheme(requested, { persist: true })
       return
     }
     if (command === '/missions') {
@@ -2859,7 +3004,8 @@ export class TaskWraithTui {
       ansi: this.ansi,
       now: this.options.now(),
       animationEnabled: this.options.animationEnabled,
-      glyphs: this.glyphs
+      glyphs: this.glyphs,
+      theme: this.theme
     })
     this.options.output.write(`\u001b[H${frame}`)
   }

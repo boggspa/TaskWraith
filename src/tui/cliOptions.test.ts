@@ -63,4 +63,21 @@ describe('TaskWraith TUI CLI options', () => {
     expect(usage).toContain('Ctrl+R missions')
     expect(usage).toContain('detached replay')
   })
+  it('takes a theme from the flag, either spelling, and from the environment', () => {
+    expect(parseTaskWraithTuiArgs(['--theme', 'tokyo-night'])).toMatchObject({
+      themeName: 'tokyo-night'
+    })
+    expect(parseTaskWraithTuiArgs(['--theme=rosepine'])).toMatchObject({ themeName: 'rosepine' })
+    expect(parseTaskWraithTuiArgs([], { TASKWRAITH_TUI_THEME: 'wraith-day' })).toMatchObject({
+      themeName: 'wraith-day'
+    })
+    // Unspecified is not the same as "no theme": it means the default theme,
+    // which is resolved downstream. Carrying `undefined` here keeps the flag
+    // and the environment able to disagree without one of them inventing a name.
+    expect(parseTaskWraithTuiArgs([]).themeName).toBeUndefined()
+  })
+
+  it('advertises the theme flag in the usage text', () => {
+    expect(taskWraithTuiUsage('1.0.0')).toContain('--theme')
+  })
 })
