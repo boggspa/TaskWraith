@@ -286,12 +286,19 @@ export interface ExecutionTenantRef {
  * the owner-liveness gate in ExecutionGraphCoordinator.drainOne.
  */
 export interface ExecutionOwnerRef {
-  /** Top-level chat that asked for the work and receives the result. */
+  /**
+   * Top-level chat that asked for the work and receives the result. This is
+   * the identity liveness is judged on: the thread outlives any single turn.
+   */
   readonly threadId: string
-  /** The provider run whose turn invoked the tool. May end; ownership does not. */
-  readonly initiatingRunId: string
   /** Seat identity (`provider` or `provider:model`) accountable for the task. */
   readonly seatId: string
+  /**
+   * The provider run whose turn invoked the tool, when an agent invoked it.
+   * Absent for user-authored graphs, which have an owning thread but no
+   * initiating agent turn. Its terminalization is never an ownership loss.
+   */
+  readonly initiatingRunId?: string
 }
 
 export type StepActivationState =

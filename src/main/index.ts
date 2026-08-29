@@ -44463,6 +44463,14 @@ if (isGeminiMcpBridgeProcess) {
           return job?.runId === runId ? runQueueService.transitionJob(runId, status, partial) : null
         },
         resolveAnchorRunStatus,
+        // Ownership liveness is a property of the THREAD, not the turn. The
+        // initiating run ending is the normal case for a durable graph; what
+        // must stop the graph is the thread ceasing to exist or being archived,
+        // because then nothing can receive the result or answer for the work.
+        resolveOwnerStatus: (owner) => {
+          const chat = AppStore.getChat(owner.threadId)
+          return chat && !chat.archived ? 'live' : 'missing'
+        },
         cancelActiveRun: async (runId) => {
           const candidate = AppStore.getRunQueueJob(runId)
           const job = candidate?.runId === runId ? candidate : null

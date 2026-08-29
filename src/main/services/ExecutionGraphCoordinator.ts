@@ -139,6 +139,13 @@ export interface ExecutionGraphCoordinatorRepository {
   getRunTemplate: ExecutionGraphRepository['getRunTemplate']
 }
 
+/**
+ * Whether the thread/seat accountable for an execution is still reachable.
+ * Deliberately two-valued: an execution either has somewhere to report back to
+ * or it does not. There is no "detached" state — a graph with no owner pauses.
+ */
+export type ExecutionGraphOwnerStatus = 'live' | 'missing'
+
 export interface ExecutionGraphCoordinatorDeps {
   repository: ExecutionGraphCoordinatorRepository
   materializePausedQueueJob: (input: MaterializeExecutionQueueJobInput) => RunQueueJob
@@ -158,12 +165,33 @@ export interface ExecutionGraphCoordinatorDeps {
    * RunManager event emitted synchronously while this call runs is also
    * authoritative confirmation.
    */
+  /**
+   * Main-owned truth for whether a graph's accountable thread/seat is still
+   * present and able to receive its result. `missing` means the graph has
+   * nobody to answer for it and must pause rather than dispatch further work.
+   * The initiating RUN terminalizing is normal and is not an owner loss — the
+   * thread outlives the turn, and delivery re-wakes it.
+   */
+  resolveOwnerStatus: (owner: ExecutionOwnerRef) => ExecutionGraphOwnerStatus
   cancelActiveRun: (runId: string) => Promise<boolean> | boolean
   /** Notify the main-owned dispatcher after a queued attempt is durable. */
   onAttemptQueued?: (runId: string) => void
   onChanged?: (notice: ExecutionGraphChangedNotice) => void
   now?: () => string
   createId?: () => string
+}
+
+/**
+ * A user-authored Stack is owned by the thread it was written in, and by the
+ * seat that will execute it. It has no initiating agent turn, so it carries an
+ * anchor run only when main bound one.
+ */
+function stackOwner(input: AppendExecutionStackStepInput): ExecutionOwnerRef {
+  return {
+    threadId: input.rootChatId,
+    seatId: input.model?.trim() ? `${input.provider}:${input.model.trim()}` : input.provider,
+    ...(input.anchorRunRef ? { initiatingRunId: input.anchorRunRef } : {})
+  }
 }
 
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
@@ -643,6 +671,7 @@ export class ExecutionGraphCoordinator {
         workspaceId: input.workspaceId,
         tenant: { kind: 'stack', tenantId: input.rootChatId },
         rootChatId: input.rootChatId,
+        owner: stackOwner(input),
         ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
         permissionCeilingRef: input.permissionCeilingRef,
         timestamp: this.now()
@@ -1145,6 +1174,15 @@ export class ExecutionGraphCoordinator {
   private recoverExecution(projection: ExecutionRunProjection): void {
     if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
 
+    // Restart is the moment an orphaned graph would otherwise resume dispatching
+    // into a thread that no longer exists. Check accountability before anything
+    // else, so a lost owner surfaces as attention rather than as silent work.
+    const ownerBlock = this.ownerDispatchBlock(projection)
+    if (ownerBlock) {
+      this.requireExecutionAction(projection, `${ownerBlock} Recovered after restart.`)
+      return
+    }
+
     if (this.isWaitingForAnchor(projection)) {
       this.recoverAnchor(projection)
       return
@@ -1269,6 +1307,15 @@ export class ExecutionGraphCoordinator {
           projection.state === 'waiting' ||
           projection.state === 'requires_action'
         ) {
+          return
+        }
+
+        // Accountability gate. Sits above every claim so that an execution
+        // without a reachable owner creates no activation, no attempt, and no
+        // queue row — it pauses for a human instead of running unattributed.
+        const ownerBlock = this.ownerDispatchBlock(projection)
+        if (ownerBlock) {
+          this.requireExecutionAction(projection, ownerBlock)
           return
         }
 
@@ -2066,6 +2113,26 @@ export class ExecutionGraphCoordinator {
       activations.every((activation) => activation.state === 'dormant') &&
       Object.keys(projection.attempts).length === 0
     )
+  }
+
+  /**
+   * Why an execution may not dispatch right now, or null if it may.
+   *
+   * Ownership is mandatory and checked on every drain, not only at creation: a
+   * thread can be deleted while its graph is mid-flight, and the next stage
+   * must not be dispatched into a thread that can no longer answer for it.
+   */
+  private ownerDispatchBlock(projection: ExecutionRunProjection): string | null {
+    if (!projection.owner) {
+      return 'This execution names no owning thread, so no seat is accountable for it.'
+    }
+    return this.deps.resolveOwnerStatus(projection.owner) === 'missing'
+      ? 'The owning thread is no longer available to receive this execution\u2019s result.'
+      : null
+  }
+
+  private requireExecutionAction(projection: ExecutionRunProjection, reason: string): void {
+    this.requireAnchorAction(projection, reason)
   }
 
   private requireAnchorAction(projection: ExecutionRunProjection, reason: string): void {

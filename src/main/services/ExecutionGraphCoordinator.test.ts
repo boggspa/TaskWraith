@@ -94,6 +94,7 @@ interface Harness {
   cancelActiveRun: ReturnType<typeof vi.fn>
   materializePausedQueueJob: ReturnType<typeof vi.fn>
   anchorStatuses: Map<string, ExecutionGraphAnchorRunStatus>
+  ownerStatuses: Map<string, 'live' | 'missing'>
   templateRef: string
   ceiling: ExecutionPermissionCeilingRef
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
@@ -164,6 +165,7 @@ function harness(
       return job
     }
   )
+  const ownerStatuses = new Map<string, 'live' | 'missing'>()
   let id = 0
   let clientRequest = 0
   const deps: ExecutionGraphCoordinatorDeps = {
@@ -172,6 +174,7 @@ function harness(
     getQueueJob: (runId) => jobs.get(runId) ?? null,
     transitionQueueJob: transitions,
     resolveAnchorRunStatus: (runId) => anchorStatuses.get(runId) ?? 'missing',
+    resolveOwnerStatus: (owner) => ownerStatuses.get(owner.threadId) ?? 'live',
     cancelActiveRun,
     now: () => '2026-07-18T11:00:00.000Z',
     createId: () => `id-${++id}`,
@@ -192,6 +195,7 @@ function harness(
     cancelActiveRun,
     materializePausedQueueJob,
     anchorStatuses,
+    ownerStatuses,
     templateRef: template.templateId,
     ceiling,
     input: (overrides = {}) => {
@@ -1578,6 +1582,101 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
   })
 })
 
+describe('ExecutionGraphCoordinator owner accountability', () => {
+  const owner = {
+    threadId: 'chat-one',
+    initiatingRunId: 'run-parent-one',
+    seatId: 'antigravity:gemini-3.1-pro'
+  }
+
+  it('dispatches while the owning thread is live', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'owned-live-execution',
+      title: 'Owned live execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).toHaveBeenCalled()
+    expect(h.coordinator.getExecution('owned-live-execution')?.state).toBe('running')
+  })
+
+  // The failure this exists to prevent: a graph that keeps dispatching provider
+  // work after nobody is left to answer for it or receive the result.
+  it('pauses instead of dispatching when the owning thread is gone', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    h.coordinator.startExecutionGraph({
+      executionId: 'owner-gone-execution',
+      title: 'Owner gone execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+    const projection = h.coordinator.getExecution('owner-gone-execution')!
+    expect(projection.state).toBe('requires_action')
+    expect(Object.keys(projection.attempts)).toHaveLength(0)
+  })
+
+  // Pre-ownership ledgers stay readable, but they are not grandfathered into
+  // dispatching: unowned means unaccountable, which means paused.
+  it('refuses to dispatch an execution that names no owner at all', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'unowned-execution',
+      title: 'Unowned execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+    const projection = h.coordinator.getExecution('unowned-execution')!
+    expect(projection.state).toBe('requires_action')
+    expect(Object.keys(projection.attempts)).toHaveLength(0)
+  })
+
+  it('pauses a running graph at the next drain once its owner disappears', () => {
+    const h = harness()
+    const started = h.coordinator.startExecutionGraph({
+      executionId: 'owner-lost-midflight',
+      title: 'Owner lost midflight',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    const firstRunId = providerRunId(started)
+    const dispatchesBefore = h.materializePausedQueueJob.mock.calls.length
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    markQueueStarting(h, firstRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'completed'),
+      terminalReceipt(h, firstRunId, 'completed')
+    )
+
+    expect(h.materializePausedQueueJob.mock.calls.length).toBe(dispatchesBefore)
+    expect(h.coordinator.getExecution('owner-lost-midflight')?.state).toBe('requires_action')
+  })
+})
+
 describe('ExecutionGraphCoordinator structured graph scheduling', () => {
   it('binds a narrower per-step permission digest under the execution ceiling', () => {
     const h = harness()
@@ -1591,6 +1690,7 @@ describe('ExecutionGraphCoordinator structured graph scheduling', () => {
       title: 'Step authority execution',
       workspaceId: 'workspace-one',
       rootChatId: 'chat-one',
+      owner: { threadId: 'chat-one', seatId: 'codex:gpt-5.6-sol' },
       tenant: { kind: 'workflow' },
       revision,
       permissionCeilingRef: h.ceiling
@@ -1633,6 +1733,7 @@ describe('ExecutionGraphCoordinator structured graph scheduling', () => {
       title: 'Structured join execution',
       workspaceId: 'workspace-one',
       rootChatId: 'chat-one',
+      owner: { threadId: 'chat-one', seatId: 'codex:gpt-5.6-sol' },
       tenant: { kind: 'workflow', tenantId: 'ultratask-one' },
       revision,
       permissionCeilingRef: h.ceiling

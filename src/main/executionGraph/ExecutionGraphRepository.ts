@@ -622,8 +622,9 @@ function validateEventEnvelope(
         if (
           !isRecord(event.owner) ||
           !isNonEmptyString(event.owner.threadId) ||
-          !isNonEmptyString(event.owner.initiatingRunId) ||
-          !isNonEmptyString(event.owner.seatId)
+          !isNonEmptyString(event.owner.seatId) ||
+          (event.owner.initiatingRunId !== undefined &&
+            !isNonEmptyString(event.owner.initiatingRunId))
         ) {
           throw new Error('execution_created.owner is invalid.')
         }
