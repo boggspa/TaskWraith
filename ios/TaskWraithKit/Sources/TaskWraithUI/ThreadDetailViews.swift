@@ -307,6 +307,12 @@ func twShouldRenderAfterLiveBlock(
     return rowTimestampMs >= liveStartedAtMs
 }
 
+/// Workspace whose git surface is open. `id` IS the workspaceId — the sheet
+/// has exactly one target at a time and nothing else identifies it.
+private struct GitSurfaceTarget: Identifiable, Equatable {
+    let id: String
+}
+
 struct ThreadDetailView: View {
     // Plain reference (NOT @ObservedObject): the transcript's re-renders are gated
     // by `store` below, not by the monolithic RemoteSessionModel's whole-object
@@ -367,12 +373,19 @@ struct ThreadDetailView: View {
     @State private var ensembleSoloProviderChoices: [String] = []
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
-    /// Git workspace surface (branch / changes / PR) opened from the
-    /// composer workspace pill. The workspace is captured at open time — the
-    /// pill lives inside a view builder whose locals aren't in scope at the
-    /// presentation modifier.
-    @State private var gitSurfacePresented = false
-    @State private var gitSurfaceWorkspaceId: String?
+    /// Git workspace surface (branch / changes / PR) opened from the composer
+    /// workspace pill. The workspace is captured at open time — the pill lives
+    /// inside a view builder whose locals aren't in scope at the presentation
+    /// modifier.
+    ///
+    /// ONE piece of state, deliberately. The pair this replaced
+    /// (`presented: Bool` + `workspaceId: String?`) let `.sheet(isPresented:)`
+    /// build its content while the workspaceId was still nil, and the `if let`
+    /// inside collapsed to an EMPTY sheet — a blank panel carrying none of the
+    /// `twSheetLiquidGlass` chrome either, since those modifiers live inside
+    /// the same `if let`. `.sheet(item:)` hands the id to the builder, so the
+    /// content cannot be built without one.
+    @State private var gitSurfaceTarget: GitSurfaceTarget?
     @State private var diffPillRefreshGeneration = 0
     /// Drives the focus-independent git snapshot refresh on foregrounding —
     /// the compact pill (mounted only while the composer is blurred) can no
@@ -2803,8 +2816,7 @@ struct ThreadDetailView: View {
         #if canImport(UIKit)
             dismissKeyboard()
         #endif
-        gitSurfaceWorkspaceId = workspaceId
-        gitSurfacePresented = true
+        gitSurfaceTarget = GitSurfaceTarget(id: workspaceId)
     }
 
     private func openComposerDiff(workspaceId: String?) {
@@ -3189,19 +3201,17 @@ struct ThreadDetailView: View {
             }
             .twSheetLiquidGlass(detents: [.medium])
         }
-        .sheet(isPresented: $gitSurfacePresented) {
+        .sheet(item: $gitSurfaceTarget) { target in
             // Roster pattern (a1815e037): the SAME content adapts — a sheet on
             // phone, and `presentationCompactAdaptation(.popover)` lets a
             // regular-width iPad render it as an anchored popover instead.
-            if let workspaceId = gitSurfaceWorkspaceId {
-                GitWorkspaceSurface(
-                    model: model,
-                    workspaceId: workspaceId,
-                    chatId: taskId,
-                    onDismiss: { gitSurfacePresented = false }
-                )
-                .twSheetLiquidGlass(detents: [.large])
-            }
+            GitWorkspaceSurface(
+                model: model,
+                workspaceId: target.id,
+                chatId: taskId,
+                onDismiss: { gitSurfaceTarget = nil }
+            )
+            .twSheetLiquidGlass(detents: [.large])
         }
         .sheet(isPresented: $composerDiffSheetPresented) {
             NavigationStack {

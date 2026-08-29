@@ -10605,8 +10605,15 @@ public struct ComposerDiffPill: View {
 
     public var body: some View {
         if compactInline {
-            Button { onTap?() } label: { pillBody }
-                .buttonStyle(.plain)
+            // `.contentShape` is load-bearing, not decoration: the glass-chromed
+            // `pillBody` leaves the Button with no hit region inside the row's
+            // GlassEffectContainer (iOS 26). Same fix as ComposerWorkspacePill;
+            // the non-compact branch below already names its shape.
+            Button { onTap?() } label: {
+                pillBody.contentShape(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel(accessibilityText)
@@ -10801,7 +10808,18 @@ public struct ComposerWorkspacePill: View {
         Group {
             if let onOpenGitSurface {
                 Button(action: onOpenGitSurface) {
-                    chipBody
+                    // Load-bearing (iOS 26): `chipBody` ends in
+                    // `composerFloatingPillChrome`, whose `glassEffect` is
+                    // rendered by the row's shared `GlassEffectContainer`. A
+                    // Button whose label is nothing but that effect gets NO hit
+                    // region — the pill drew, animated and read correctly to
+                    // VoiceOver, and taps did nothing at all. Naming the shape
+                    // gives the Button its own region back. ComposerToolsPill
+                    // dodges this by passing `interactive: false` and owning its
+                    // Buttons INSIDE the glass; that is not an option here,
+                    // where the whole chip is one target.
+                    chipBody.contentShape(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
             } else if canSwitch {
