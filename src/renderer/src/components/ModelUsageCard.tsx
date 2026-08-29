@@ -96,6 +96,13 @@ export interface ModelUsageApiSpendOptions extends ApiSpendCurrencyOptions {
   providerRates?: RendererProviderRates
   /** Persisted view ('plan' | 'spend'). Defaults to 'plan'. */
   view?: ModelUsagePanelView
+  /**
+   * True while the first plan/quota hydration is unresolved. A persisted Plan
+   * selection remains provisionally available during that window so the card
+   * does not transiently mount API Spend and fetch the complete chat list.
+   * Explicit Spend/Context selections remain authoritative.
+   */
+  planAvailabilityPending?: boolean
   /** Persist a new view selection (writes `settings.modelUsagePanelView`). */
   onViewChange?: (view: ModelUsagePanelView) => void
   /**
@@ -1423,7 +1430,9 @@ export function ModelUsageCard({
   // A plan-side meter exists when there are quota entries, the gated Grok
   // credit meter, or Mistral's estimated band. Only then is the Plan ⇄ Spend
   // choice meaningful.
-  const planViewAvailable = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
+  const hasPlanMeters = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
+  const planViewAvailable =
+    hasPlanMeters || (apiSpend?.planAvailabilityPending === true && view === 'plan')
   const isSidebarVariant = variant === 'sidebar'
   // Render when there's a plan-side meter OR the API-spend view is available (so
   // a user on API keys with no plan meters can still reach their spend).

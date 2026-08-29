@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createThreadTitleRepairRunner,
   MAX_THREAD_TITLE_REPAIR_SLICES_PER_PROCESS,
   threadTitleRepairModeFromEnv,
   THREAD_TITLE_REPAIR_INITIAL_DELAY_MS,
+  THREAD_TITLE_REPAIR_PERSIST_BARRIER_TIMEOUT_MS,
   type ThreadTitleRepairRunnerDeps
 } from './ThreadTitleRepairRunner'
 import { parseThreadTitleRepairState } from './store/ThreadTitleRepair'
@@ -53,6 +54,7 @@ interface Harness {
   deps: ThreadTitleRepairRunnerDeps
   files: Map<string, string>
   scheduled: Array<{ run: () => void; delayMs: number }>
+  listChats: ReturnType<typeof vi.fn>
   saveChat: ReturnType<typeof vi.fn>
   getChat: ReturnType<typeof vi.fn>
   broadcastChatUpdated: ReturnType<typeof vi.fn>
@@ -67,6 +69,7 @@ function harness(overrides: Partial<ThreadTitleRepairRunnerDeps> = {}): Harness 
   const scheduled: Array<{ run: () => void; delayMs: number }> = []
   const order: string[] = []
   const records = new Map<string, ChatRecord>([['chat-1', record()]])
+  const listChats = vi.fn(overrides.listChats ?? (() => [item()]))
 
   const getChat = vi.fn((chatId: string) => {
     order.push(`getChat:${chatId}`)
@@ -83,7 +86,6 @@ function harness(overrides: Partial<ThreadTitleRepairRunnerDeps> = {}): Harness 
 
   const deps: ThreadTitleRepairRunnerDeps = {
     statePath: STATE_PATH,
-    listChats: () => [item()],
     getChat,
     saveChat,
     awaitChatRecordPersisted: async (chatId: string) => {
@@ -103,13 +105,16 @@ function harness(overrides: Partial<ThreadTitleRepairRunnerDeps> = {}): Harness 
     },
     log: () => {},
     onError: () => {},
-    ...overrides
+    ...overrides,
+    // Always retain the probe even when a test supplies its own source.
+    listChats
   }
 
   return {
     deps,
     files,
     scheduled,
+    listChats,
     saveChat,
     getChat,
     broadcastChatUpdated,
@@ -125,6 +130,10 @@ describe('thread title repair runner', () => {
 
   beforeEach(() => {
     consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('derives a title and rewrites nothing else on the record', async () => {
@@ -239,11 +248,113 @@ describe('thread title repair runner', () => {
     consoleError.mockRestore()
   })
 
-  it('awaits the persistence barrier before moving to the next record', async () => {
-    const h = harness()
-    await createThreadTitleRepairRunner(h.deps).drainNow()
+  it('awaits the persistence barrier before claiming or broadcasting a repair', async () => {
+    let confirmPersist!: () => void
+    const h = harness({
+      awaitChatRecordPersisted: () =>
+        new Promise<void>((resolve) => {
+          confirmPersist = resolve
+        })
+    })
+    const draining = createThreadTitleRepairRunner(h.deps).drainNow()
 
-    expect(h.order).toEqual(['getChat:chat-1', 'saveChat:chat-1', 'persist:chat-1'])
+    expect(h.order).toEqual(['getChat:chat-1', 'saveChat:chat-1'])
+    expect(h.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(h.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(h.pushRemoteTaskCardDelta).not.toHaveBeenCalled()
+    expect(h.state().entries).toHaveLength(0)
+
+    confirmPersist()
+    await draining
+
+    expect(h.broadcastChatUpdated).toHaveBeenCalledTimes(1)
+    expect(h.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+    expect(h.pushRemoteTaskCardDelta).toHaveBeenCalledWith('chat-1')
+    expect(h.state().entries).toHaveLength(1)
+    consoleError.mockRestore()
+  })
+
+  it('stands down after a rejected persistence barrier without claiming success', async () => {
+    const listChats = () => [item({ appChatId: 'chat-1' }), item({ appChatId: 'chat-2' })]
+    const onError = vi.fn()
+    const h = harness({
+      listChats,
+      getChat: (chatId: string) => record({ appChatId: chatId }),
+      awaitChatRecordPersisted: async () => {
+        throw new Error('Host unavailable')
+      },
+      onError
+    })
+    const runner = createThreadTitleRepairRunner(h.deps)
+
+    await runner.drainNow()
+
+    expect(h.listChats).toHaveBeenCalledTimes(1)
+    expect(h.saveChat).toHaveBeenCalledTimes(1)
+    expect((h.saveChat.mock.calls[0][0] as ChatRecord).appChatId).toBe('chat-1')
+    expect(h.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(h.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(h.pushRemoteTaskCardDelta).not.toHaveBeenCalled()
+    expect(h.state().repaired).toBe(0)
+    expect(h.state().entries).toHaveLength(0)
+    expect(h.state().failures).toEqual({})
+    expect(h.scheduled).toHaveLength(0)
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining('standing down without recording the repair'),
+      expect.any(Error)
+    )
+
+    // Persistence availability is process-wide. A direct retry in the same
+    // session must not rediscover the corpus and start the 12-slice storm.
+    await runner.drainNow()
+    expect(h.listChats).toHaveBeenCalledTimes(1)
+    expect(h.saveChat).toHaveBeenCalledTimes(1)
+    consoleError.mockRestore()
+  })
+
+  it('stands down after a persistence timeout and handles a late rejection', async () => {
+    vi.useFakeTimers()
+    let rejectPersist!: (error: Error) => void
+    const onError = vi.fn()
+    const h = harness({
+      awaitChatRecordPersisted: () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectPersist = reject
+        }),
+      onError
+    })
+    const runner = createThreadTitleRepairRunner(h.deps)
+    const draining = runner.drainNow()
+
+    await vi.advanceTimersByTimeAsync(THREAD_TITLE_REPAIR_PERSIST_BARRIER_TIMEOUT_MS)
+    await draining
+
+    expect(h.listChats).toHaveBeenCalledTimes(1)
+    expect(h.saveChat).toHaveBeenCalledTimes(1)
+    expect(h.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(h.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(h.pushRemoteTaskCardDelta).not.toHaveBeenCalled()
+    expect(h.state().repaired).toBe(0)
+    expect(h.state().entries).toHaveLength(0)
+    expect(h.state().failures).toEqual({})
+    expect(h.scheduled).toHaveLength(0)
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining('did not confirm'),
+      expect.any(Error)
+    )
+
+    // The losing branch remains handled after the race, so a late Host failure
+    // is diagnostic rather than an unhandled rejection.
+    rejectPersist(new Error('late Host failure'))
+    await Promise.resolve()
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining('Host record persist failed'),
+      expect.any(Error)
+    )
+
+    await runner.drainNow()
+    expect(h.listChats).toHaveBeenCalledTimes(1)
+    expect(h.saveChat).toHaveBeenCalledTimes(1)
     consoleError.mockRestore()
   })
 
@@ -344,6 +455,7 @@ describe('thread title repair runner', () => {
     await runner.drainNow()
 
     // The slice cleared the corpus, so no follow-up slice is scheduled.
+    expect(h.listChats).toHaveBeenCalledTimes(1)
     expect(h.scheduled).toHaveLength(0)
     consoleError.mockRestore()
   })
@@ -356,8 +468,29 @@ describe('thread title repair runner', () => {
     })
     await createThreadTitleRepairRunner(h.deps).drainNow()
 
+    expect(h.listChats).toHaveBeenCalledTimes(1)
     expect(h.saveChat).toHaveBeenCalledTimes(8)
     expect(h.scheduled).toHaveLength(1)
+    consoleError.mockRestore()
+  })
+
+  it('uses one list snapshot per slice and advances past completed rows', async () => {
+    const h = harness({
+      listChats: () =>
+        Array.from({ length: 20 }, (_unused, index) => item({ appChatId: `chat-${index}` })),
+      // Deliberately keep returning a placeholder. The session completion set,
+      // not this harness's optimistic cache, must advance the second slice.
+      getChat: (chatId: string) => record({ appChatId: chatId })
+    })
+    const runner = createThreadTitleRepairRunner(h.deps)
+
+    await runner.drainNow()
+    await runner.drainNow()
+
+    expect(h.listChats).toHaveBeenCalledTimes(2)
+    const savedIds = h.saveChat.mock.calls.map(([chat]) => (chat as ChatRecord).appChatId)
+    expect(savedIds).toEqual(Array.from({ length: 16 }, (_unused, index) => `chat-${index}`))
+    expect(new Set(savedIds).size).toBe(16)
     consoleError.mockRestore()
   })
 

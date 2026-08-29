@@ -486,6 +486,37 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('model-usage-window-list')
   })
 
+  it('keeps default Plan selected while its first availability check is unresolved', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'plan',
+      planAvailabilityPending: true
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    // ApiSpendView owns the getChatList effect. Keeping its body out of this
+    // branch is what prevents the transient all-history startup fetch.
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="Plan limits"/)
+    expect(html).toMatch(/aria-checked="false"[^>]*aria-label="API spend"/)
+    expect(html).not.toContain('No API spend tracked in the last 30 days')
+  })
+
+  it('preserves an explicit Spend selection while Plan availability is unresolved', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'spend',
+      planAvailabilityPending: true
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="API spend"/)
+    expect(html).toContain('No API spend tracked in the last 30 days')
+  })
+
   it('renders the context-lengths table when view=context (static data, no IPC)', () => {
     const apiSpend: ModelUsageApiSpendOptions = { providerRates: {}, view: 'context' }
     const html = renderToStaticMarkup(
@@ -514,7 +545,11 @@ describe('ModelUsageCard', () => {
     const rates: RendererProviderRates = {
       codex: [{ modelId: 'gpt-5.5', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }]
     }
-    const apiSpend: ModelUsageApiSpendOptions = { providerRates: rates, view: 'plan' }
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: rates,
+      view: 'plan',
+      planAvailabilityPending: false
+    }
     // No quota entries at all → spend + context views are available in the sidebar.
     // The toggle shows spend ⇄ context, but no Plan tab (no quota meters).
     const html = renderToStaticMarkup(

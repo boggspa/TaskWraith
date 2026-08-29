@@ -56,6 +56,9 @@ export const THREAD_TITLE_REPAIR_PERSIST_BARRIER_TIMEOUT_MS = 5_000
 
 export type ThreadTitleRepairMode = 'apply' | 'dry' | 'off'
 
+type ThreadTitleRepairPersistOutcome = 'confirmed' | 'rejected' | 'timeout'
+type ThreadTitleRepairCandidateOutcome = 'applied' | 'complete' | 'retry' | 'abort-session'
+
 export interface ThreadTitleRepairRunnerDeps {
   statePath: string
   /**
@@ -140,6 +143,8 @@ export function createThreadTitleRepairRunner(
   let armed = false
   let drainInFlight: Promise<void> | null = null
   let slicesRun = 0
+  let persistenceBlocked = false
+  const completedChatIds = new Set<string>()
 
   const readState = (): ThreadTitleRepairState => {
     try {
@@ -162,58 +167,78 @@ export function createThreadTitleRepairRunner(
     }
   }
 
-  const settlePersistBarrier = async (chatId: string): Promise<void> => {
+  const settlePersistBarrier = async (chatId: string): Promise<ThreadTitleRepairPersistOutcome> => {
     const barrier = deps.awaitChatRecordPersisted?.(chatId)
-    if (!barrier) return
+    if (!barrier) {
+      onError(
+        `[thread-title-repair] no persistence barrier is available for chat ${chatId}; ` +
+          'standing down without recording the repair.',
+        new Error('thread title repair persistence barrier is unavailable')
+      )
+      return 'rejected'
+    }
     let timer: ReturnType<typeof setTimeout> | undefined
     // Handle the barrier itself rather than the race: the losing branch stays
     // pending, and a late rejection with no handler surfaces as an unhandled
     // rejection in main.
-    const reported = barrier.catch((error) => {
-      onError(
-        `[thread-title-repair] Host record persist failed for chat ${chatId}; the title was ` +
-          'written but is not yet durable.',
-        error
-      )
-    })
-    const bound = new Promise<'timeout'>((resolve) => {
+    const reported = barrier.then<ThreadTitleRepairPersistOutcome, ThreadTitleRepairPersistOutcome>(
+      () => 'confirmed',
+      (error) => {
+        onError(
+          `[thread-title-repair] Host record persist failed for chat ${chatId}; ` +
+            'standing down without recording the repair.',
+          error
+        )
+        return 'rejected'
+      }
+    )
+    const bound = new Promise<ThreadTitleRepairPersistOutcome>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), THREAD_TITLE_REPAIR_PERSIST_BARRIER_TIMEOUT_MS)
       timer.unref?.()
     })
     try {
-      await Promise.race([reported, bound])
+      const outcome = await Promise.race([reported, bound])
+      if (outcome === 'timeout') {
+        onError(
+          `[thread-title-repair] Host record persist did not confirm chat ${chatId} within ` +
+            `${THREAD_TITLE_REPAIR_PERSIST_BARRIER_TIMEOUT_MS}ms; standing down without ` +
+            'recording the repair.',
+          new Error('thread title repair persistence barrier timed out')
+        )
+      }
+      return outcome
     } finally {
       if (timer) clearTimeout(timer)
     }
   }
 
-  /** Returns the state after this candidate, and whether a repair was applied. */
+  /** Returns the state after this candidate and whether the session may continue. */
   const repairOne = async (
     state: ThreadTitleRepairState,
     chatId: string
-  ): Promise<{ state: ThreadTitleRepairState; applied: boolean }> => {
+  ): Promise<{ state: ThreadTitleRepairState; outcome: ThreadTitleRepairCandidateOutcome }> => {
     // Read late and write immediately. The record must not cross an await
     // between the read and the save, or a concurrent turn's appended messages
     // can be forced back out by a stale snapshot when the revision rebases.
     const fresh = deps.getChat(chatId)
     if (!fresh) {
-      return { state: recordThreadTitleRepairFailure(state, chatId), applied: false }
+      return { state: recordThreadTitleRepairFailure(state, chatId), outcome: 'retry' }
     }
     if (!isThreadTitleRepairTarget(fresh)) {
       // Already repaired, or a real title arrived. Not a failure.
-      return { state: clearThreadTitleRepairFailure(state, chatId), applied: false }
+      return { state: clearThreadTitleRepairFailure(state, chatId), outcome: 'complete' }
     }
     if (isThreadTitleRepairBlocked(fresh, deps.isChatBusy(chatId))) {
       // Deferred, not failed: retry on the next slice.
-      return { state, applied: false }
+      return { state, outcome: 'retry' }
     }
     const derived = deriveThreadTitleFromTranscript(fresh)
     if (!derived) {
-      return { state: recordThreadTitleRepairFailure(state, chatId), applied: false }
+      return { state: recordThreadTitleRepairFailure(state, chatId), outcome: 'retry' }
     }
     if (mode === 'dry') {
       log(`[thread-title-repair] dry run: ${chatId} "${fresh.title}" -> "${derived}"`)
-      return { state, applied: false }
+      return { state, outcome: 'complete' }
     }
 
     const previousTitle = fresh.title
@@ -221,10 +246,17 @@ export function createThreadTitleRepairRunner(
     // saveChat returns the *current* record unchanged on a workspace or
     // revision mismatch, so a returned record is not proof of a write.
     if (!saved || saved.title !== derived) {
-      return { state: recordThreadTitleRepairFailure(state, chatId), applied: false }
+      return { state: recordThreadTitleRepairFailure(state, chatId), outcome: 'retry' }
     }
 
-    await settlePersistBarrier(chatId)
+    const persistOutcome = await settlePersistBarrier(chatId)
+    if (persistOutcome !== 'confirmed') {
+      // saveChat may have updated only the optimistic in-memory shadow. A
+      // rejected or indeterminate Host barrier is session-wide availability
+      // evidence, not a per-record defect: claim no success, burn no failure
+      // strike, and stop this process from repeatedly selecting the same row.
+      return { state, outcome: 'abort-session' }
+    }
 
     deps.broadcastChatUpdated(saved)
     deps.broadcastThreadUpdate(saved.appChatId)
@@ -236,11 +268,11 @@ export function createThreadTitleRepairRunner(
       derivedTitle: saved.title,
       at: now()
     })
-    return { state: next, applied: true }
+    return { state: next, outcome: 'applied' }
   }
 
   const runSlice = async (): Promise<void> => {
-    if (mode === 'off') return
+    if (mode === 'off' || persistenceBlocked) return
 
     let state = readState()
     if (isThreadTitleRepairLedgerFull(state)) {
@@ -263,16 +295,31 @@ export function createThreadTitleRepairRunner(
     }
     state = confirmed
 
-    const candidates = selectThreadTitleRepairCandidates(deps.listChats(), state)
+    // One authoritative list snapshot per slice. Re-reading the full unscoped
+    // list after every batch doubled the synchronous index/stat/normalization
+    // work, and a stale row could keep rediscovering an optimistic repair.
+    const listed = deps.listChats()
+    const candidates = selectThreadTitleRepairCandidates(listed, state).filter(
+      (candidate) => !completedChatIds.has(candidate.chatId)
+    )
     if (candidates.length === 0) return
 
     const slice = sliceRepairBatch(candidates)
     let applied = 0
+    let abortSession = false
     for (const candidate of slice) {
       try {
         const result = await repairOne(state, candidate.chatId)
         state = result.state
-        if (result.applied) applied += 1
+        if (result.outcome === 'applied') applied += 1
+        if (result.outcome === 'applied' || result.outcome === 'complete') {
+          completedChatIds.add(candidate.chatId)
+        }
+        if (result.outcome === 'abort-session') {
+          persistenceBlocked = true
+          abortSession = true
+          break
+        }
       } catch (error) {
         // One bad record must never stop the drain.
         onError(`[thread-title-repair] could not repair chat ${candidate.chatId}.`, error)
@@ -289,7 +336,10 @@ export function createThreadTitleRepairRunner(
     }
 
     slicesRun += 1
-    const remaining = selectThreadTitleRepairCandidates(deps.listChats(), state)
+    if (abortSession) return
+    const remaining = selectThreadTitleRepairCandidates(listed, state).filter(
+      (candidate) => !completedChatIds.has(candidate.chatId)
+    )
     if (remaining.length > 0 && slicesRun < MAX_THREAD_TITLE_REPAIR_SLICES_PER_PROCESS) {
       schedule(() => void drainNow(), THREAD_TITLE_REPAIR_SLICE_INTERVAL_MS)
     }

@@ -1406,6 +1406,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   currency: displayCurrency,
                   overestimatePercent,
                   view: settings?.modelUsagePanelView ?? 'plan',
+                  planAvailabilityPending: !usageInitialized,
                   onViewChange: (nextView) =>
                     handleSettingsChange({ modelUsagePanelView: nextView }),
                   refreshKey: usageRefreshTick,
