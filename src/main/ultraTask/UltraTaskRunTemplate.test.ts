@@ -27,7 +27,6 @@ describe('buildUltraTaskRunTemplateRequest', () => {
       workflowMode: 'normal',
       sessionTrust: false,
       imageAttachments: [],
-      externalPathGrants: [],
       runtimeProfileId: 'builtin:codex:local',
       codexReasoningEffort: 'ultracode'
     })
@@ -47,9 +46,29 @@ describe('buildUltraTaskRunTemplateRequest', () => {
       permissionPresetId: 'read_only',
       workflowMode: 'plan',
       sessionTrust: false,
-      externalPathGrants: [],
       claudeReasoningEffort: 'max'
     })
+  })
+
+  // Regression: the graph dispatch guard (src/main/index.ts, "Execution graph
+  // queue request no longer matches its complete template") stable-stringifies
+  // the persisted template against a reconstruction of the queue row. The queue
+  // snapshot writes `externalPathGrants: undefined` when there are no grants
+  // (RunQueueService.ts, `externalPathGrants.length ? … : undefined`) and JSON
+  // drops the key, so a template that emits `[]` can never match its own queue
+  // row. Both recorded UltraTask executions died here, 10s after dispatch, with
+  // no provider session ever created.
+  it('omits externalPathGrants entirely when the stage carries no grants', () => {
+    const request = buildUltraTaskRunTemplateRequest({
+      prompt: 'Scout the codebase.',
+      effect: 'read_only',
+      seat: { provider: 'antigravity', model: 'gemini-3.1-pro' },
+      parentApprovalMode: 'default',
+      parentPermissionPresetId: 'default',
+      parentWorkflowMode: 'normal'
+    })
+    expect('externalPathGrants' in request).toBe(false)
+    expect(JSON.parse(JSON.stringify(request))).toEqual(request)
   })
 
   it.each([

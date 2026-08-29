@@ -76,7 +76,10 @@ export function buildUltraTaskRunTemplateRequest(
     workflowMode: readOnly ? 'plan' : input.parentWorkflowMode === 'plan' ? 'plan' : 'normal',
     sessionTrust: false,
     imageAttachments: [],
-    externalPathGrants: [],
+    // Emitted only when non-empty. The run queue's snapshot normalizer maps an
+    // empty grant list to `undefined` (dropped by JSON), and the graph dispatch
+    // guard stable-stringifies this template against the queue row — so a
+    // hard-coded `[]` here can never match its own queue request.
     ...(input.seat.runtimeProfileId?.trim()
       ? { runtimeProfileId: input.seat.runtimeProfileId.trim() }
       : {}),
