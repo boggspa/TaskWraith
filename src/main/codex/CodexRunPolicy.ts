@@ -9,12 +9,19 @@ import { isAbsolute, resolve } from 'node:path'
 
 export function codexSandboxForMode(
   approvalMode?: string,
-  _fullAccessGranted?: boolean
-): 'read-only' | 'workspace-write' {
-  // Plan is always the read-only floor. A signed full-access grant changes
-  // which workspace tools may be called; it must not widen a workspace run's
-  // native filesystem sandbox beyond its declared workspace roots.
+  fullAccessGranted?: boolean
+): 'read-only' | 'workspace-write' | 'danger-full-access' {
+  // Plan is always the read-only floor, and it outranks a full-access grant:
+  // if the flag ever leaks onto a plan run the floor still wins.
   if (approvalMode === 'plan') return 'read-only'
+  // A signed Full Access grant drops the native sandbox outright, so the run's
+  // real posture matches what the permissions picker promised the user. The
+  // blast radius is the point — Full Access exists to reach the login keychain
+  // and ~/Library for signing/archiving, and the user is warned before granting
+  // it. Callers must pass `isFullShellAccessGranted(effectivePermissions)`,
+  // which already requires presetId === 'full_access' AND the global shell
+  // kill-switch to be open; anything short of that stays workspace-confined.
+  if (fullAccessGranted) return 'danger-full-access'
   return 'workspace-write'
 }
 

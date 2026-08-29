@@ -1090,16 +1090,17 @@ function assertProviderPostureControls(
           'Codex exec transport cannot satisfy an interactive approval posture.'
         )
       }
-      // ONE derivation, shared with the launcher. This used to re-derive the
-      // sandbox from the raw preset and expect `danger-full-access` for a
-      // full_access shell-allow run — the contract as of `40d3c2e2f`. But
-      // `b34286c3e` deliberately re-enforced the workspace sandbox: a signed
-      // full-access grant changes which TOOLS may be called, not how wide the
-      // native filesystem sandbox is. `codexSandboxForMode` can no longer
-      // return `danger-full-access` at all, so the verifier was demanding a
-      // sandbox the app will never launch with, and EVERY scheduled Codex
-      // occurrence at Full Access failed to seal. Calling the same function the
-      // producer calls is what stops the two drifting again.
+      // ONE derivation, shared with the launcher — that shared call is the
+      // whole point, and it is what stops the two drifting again. This pair has
+      // now drifted in BOTH directions: the verifier once re-derived the
+      // sandbox from the raw preset and demanded `danger-full-access` while the
+      // launcher clamped to `workspace-write` (`b34286c3e`), so every scheduled
+      // Codex occurrence at Full Access failed to seal; the repair aligned the
+      // verifier down to that clamp. The clamp itself was the drift: a signed
+      // Full Access grant is meant to drop the sandbox so the run matches the
+      // permissions picker, so `codexSandboxForMode` now returns
+      // `danger-full-access` for it and this verifier follows automatically.
+      // Do NOT re-derive the expectation here — call the producer.
       const expectedSandbox = codexSandboxForMode(
         approvalMode,
         isFullShellAccessGranted(permissions)

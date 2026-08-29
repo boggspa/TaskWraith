@@ -6,7 +6,10 @@ import {
 import { normalizeCodexModel } from '../providers/StaticProviderModels'
 
 export type CodexAppServerApprovalPolicy = 'never' | 'on-request'
-export type CodexAppServerSandboxMode = 'read-only' | 'workspace-write'
+// Mirrors the host-node transport's posture union (HostNodeCodexProvider).
+// 'danger-full-access' is reachable only from a signed Full Access grant —
+// see codexSandboxForMode.
+export type CodexAppServerSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 export type CodexAppServerThreadRequest =
   | Readonly<{

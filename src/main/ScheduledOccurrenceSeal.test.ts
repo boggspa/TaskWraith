@@ -2313,11 +2313,11 @@ describe('runtime launch and loop verifier authority', () => {
       readOnly: false
     })
     // Full Access with shell allowed — the one posture this reconciliation
-    // never covered, and the one the verifier got wrong. `codexSandboxForMode`
-    // cannot return 'danger-full-access' (b34286c3e deliberately re-enforced
-    // the workspace sandbox: a signed grant changes which TOOLS may be called,
-    // not how wide the native filesystem sandbox is), so the launch plan the
-    // app actually produces here is 'workspace-write'.
+    // never covered, and the one the verifier got wrong twice. It now seals
+    // against 'danger-full-access': a signed Full Access grant drops the
+    // native sandbox so the run matches what the permissions picker promised.
+    // Both directions are pinned below — the wide sandbox is ACCEPTED here,
+    // and the narrow one is REFUSED in its own assertion after the loop.
     const fullAccessPermissions = effectivePermissions({
       presetId: 'full_access',
       approvalMode: 'auto_edit',
@@ -2348,7 +2348,7 @@ describe('runtime launch and loop verifier authority', () => {
       ],
       [
         fullAccessPermissions,
-        codexLaunchPlan({ approvalPolicy: 'never', sandboxMode: 'workspace-write' })
+        codexLaunchPlan({ approvalPolicy: 'never', sandboxMode: 'danger-full-access' })
       ]
     ]
     for (const [permissions, launch] of accepted) {
@@ -2404,9 +2404,12 @@ describe('runtime launch and loop verifier authority', () => {
 
     // Its own assertion, not a member of the loop above: this one must be
     // refused for a DIFFERENT reason, and folding it in would have meant
-    // loosening that loop's regex and weakening every case in it. Aligning the
-    // verifier down to the producer must not stop it checking — a launch plan
-    // claiming the wide sandbox is still refused.
+    // loosening that loop's regex and weakening every case in it. Following the
+    // producer must not stop the verifier checking — so with the sandbox now
+    // widening at Full Access, the posture that must be refused is the NARROW
+    // one. A plan claiming 'workspace-write' for a full_access shell-allow run
+    // no longer matches what the app launches, and a seal must not certify a
+    // confinement the run will not actually have.
     expect(() =>
       mintScheduledOccurrenceSeal(
         ROOT,
@@ -2423,7 +2426,7 @@ describe('runtime launch and loop verifier authority', () => {
                 fullAccessPermissions,
                 codexLaunchPlan({
                   approvalPolicy: 'never',
-                  sandboxMode: 'danger-full-access'
+                  sandboxMode: 'workspace-write'
                 })
               )
             ]
