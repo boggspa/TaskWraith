@@ -2371,6 +2371,7 @@ import {
   StartupAuthorityRecoverySupervisor
 } from './startup/StartupAuthorityRecovery'
 import { resolveWorkspaceLockAuthorityRoot } from './startup/WorkspaceLockAuthorityRootOverride'
+import { startupMilestones } from './startup/StartupMilestones'
 import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
 import { providerRunRequiresCoarseWorkspaceLock } from './WorkspaceLockProviderPolicy'
 import {
@@ -42978,6 +42979,7 @@ function scheduleExternalUsagePrewarmAfterFirstPaint(): void {
 }
 
 function createWindow(): void {
+  startupMilestones.mark('create-window')
   if (tuiHeadlessHostSession.isHeadless) {
     tuiHeadlessHostSession.promoteToDesktop()
     restoreDesktopAppPresentation()
@@ -43025,6 +43027,8 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', () => {
+    startupMilestones.mark('ready-to-show')
+    startupMilestones.report()
     mainWindow?.show()
     deferredProjectReferenceReconciler?.scheduleAfterFirstPaint()
     managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
@@ -43537,6 +43541,7 @@ if (isGeminiMcpBridgeProcess) {
     // execution graph, scheduled occurrence, or wakeup can resume provider
     // mutation. Failure leaves new reads available while every mutation and
     // recovery dispatch remains fail-closed for this process.
+    startupMilestones.mark('store-ready')
     runQueueShapeAtBoot = captureBootOnlyRecoveryShape(
       AppStore.getRunQueueJobs({ includeTerminal: true })
     )
@@ -43602,6 +43607,7 @@ if (isGeminiMcpBridgeProcess) {
       logError: (message, error) => console.error(`${message}:`, error)
     })
     const startupAuthorityState = await startupAuthorityRecoveryRef.runInitialAttempt()
+    startupMilestones.mark('workspace-lock-open')
     if (startupAuthorityState.status !== 'available') {
       workspaceLockStartupRecoveryBlockedReason =
         startupAuthorityState.failure?.message ?? 'Workspace-lock authority is unavailable.'
@@ -56428,6 +56434,7 @@ if (isGeminiMcpBridgeProcess) {
     // A degraded workspace-lock boot must be legible in the UI, not just the
     // console: while it is degraded, workspace mutation, provider admission,
     // run recovery and scheduling are all fail-closed.
+    startupMilestones.mark('ipc-registration-start')
     const startupAuthorityIpc = registerStartupAuthorityHandlers({
       getState: () =>
         startupAuthorityRecoveryRef?.state() ?? {
