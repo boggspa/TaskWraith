@@ -10944,7 +10944,16 @@ struct SideChatsPanel: View {
     var onOpenThread: ((String) -> Void)? = nil
     /// Inline-selected side chat — renders the mini chat window (the
     /// desktop's right-hand side-chat pane, phone-idiom).
-    @State private var selectedSideChatId: String? = nil
+    ///
+    /// Backed by the model, not `@State`, so it survives the shell rebuild
+    /// (see `selectedSideChatByThread`). The mini transcript's follow state
+    /// already outlives that rebuild; without this the panel it lives in did
+    /// not, and the whole side chat closed out from under the user on any
+    /// reconnect or settings change.
+    private var selectedSideChatId: String? {
+        get { model.selectedSideChatByThread[threadId] }
+        nonmutating set { model.selectedSideChatByThread[threadId] = newValue }
+    }
     @State private var createSheetPresented = false
     @State private var createProvider = "codex"
     @State private var createModelId: String?
