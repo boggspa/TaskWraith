@@ -44,7 +44,7 @@ import type {
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
 import { stripAnsi } from './ansi'
-import { TaskWraithTui } from './TaskWraithTui'
+import { TaskWraithTui, shouldAdvanceAnimationFrame } from './TaskWraithTui'
 import { TUI_GLYPHS_ASCII } from './theme'
 
 const cleanup: Array<() => Promise<void> | void> = []
@@ -2884,5 +2884,41 @@ describe('seat lens (/seats)', () => {
     expect(seatsTui.state.overlayIndex).toBe(1)
     seatsTui.handleSeatsKey({ name: 'up' })
     expect(seatsTui.state.overlayIndex).toBe(0)
+  })
+})
+
+describe('animation frame gating', () => {
+  const gate = (over: Partial<Parameters<typeof shouldAdvanceAnimationFrame>[0]>) =>
+    shouldAdvanceAnimationFrame({
+      working: false,
+      homeFrame: false,
+      tick: 1,
+      stride: 2,
+      ...over
+    })
+
+  it('advances every tick while a thread is working', () => {
+    // The working shimmer is the faster of the two animations and must not be
+    // subject to the banner's stride.
+    for (const tick of [1, 2, 3, 4, 5]) {
+      expect(gate({ working: true, tick })).toBe(true)
+    }
+  })
+
+  it('advances the home frame only once per stride', () => {
+    const advanced = [1, 2, 3, 4, 5, 6].filter((tick) => gate({ homeFrame: true, tick }))
+    expect(advanced).toEqual([2, 4, 6])
+  })
+
+  it('stays still on a settled thread and behind any overlay', () => {
+    // Not "no thread": the canvas only falls through to the banner while no
+    // overlay is up, so a raised overlay must stop the sweep even at home.
+    expect(gate({ working: false, homeFrame: false, tick: 2 })).toBe(false)
+    expect(gate({ working: false, homeFrame: false, tick: 4 })).toBe(false)
+  })
+
+  it('never divides by a zero or negative stride', () => {
+    expect(gate({ homeFrame: true, tick: 1, stride: 0 })).toBe(true)
+    expect(gate({ homeFrame: true, tick: 1, stride: -3 })).toBe(true)
   })
 })

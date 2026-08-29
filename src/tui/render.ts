@@ -17,6 +17,7 @@ import {
 } from './ansi'
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import { resolveGhostBanner } from './ghostBanner'
+import { sweepGhostBanner } from './ghostBannerSweep'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import {
   TUI_AUTO_THEME_NAME,
@@ -390,6 +391,7 @@ function renderHome(
   width: number,
   height: number,
   ansi: Ansi,
+  animationEnabled: boolean,
   glyphs: TuiGlyphSet
 ): string[] {
   const canvasHeight = Math.max(1, height)
@@ -408,8 +410,16 @@ function renderHome(
   })
   // Every banner row shares one visible width, so centring each row by its own
   // width centres the block. `place` must not be given a per-row offset here.
+  // The sweep preserves each row's visible width exactly, which is what keeps
+  // that true frame to frame.
   const block = [
-    ...banner.lines.map((line) => ansi.provider(line, tones(ansi).ensemble)),
+    ...sweepGhostBanner({
+      lines: banner.lines,
+      ansi,
+      frame: state.animationFrame,
+      enabled: animationEnabled,
+      accent: tones(ansi).ensemble
+    }),
     '',
     ansi.bold('TaskWraith'),
     '',
@@ -457,7 +467,7 @@ function renderTranscriptCanvas(
   glyphs: TuiGlyphSet
 ): string[] {
   const snapshot = state.thread
-  if (!snapshot) return renderHome(state, width, height, ansi, glyphs)
+  if (!snapshot) return renderHome(state, width, height, ansi, animationEnabled, glyphs)
   const allLines = snapshot.rows.flatMap((row) => renderTranscriptRow(row, width, ansi, glyphs))
   allLines.push(
     ...renderWorkingBlock(

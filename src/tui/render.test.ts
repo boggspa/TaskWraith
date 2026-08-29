@@ -562,6 +562,32 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).not.toContain('retrying locally')
   })
 
+  it('sweeps the home banner without costing the frame a column', () => {
+    // Every other home-screen test renders with `Ansi('none')`, which takes the
+    // sweep's early return -- so without this one the swept path has no coverage
+    // and a sweep that sheared the centred block would ship green.
+    const swept = (frame: number) =>
+      renderTaskWraithTui(
+        { ...homeState('connecting'), animationFrame: frame },
+        {
+          width: 80,
+          height: 24,
+          ansi: new Ansi('truecolor'),
+          animationEnabled: true,
+          glyphs: TUI_GLYPHS_UNICODE
+        }
+      ).split('\n')
+
+    const first = swept(0)
+    expect(first.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('unicode')) {
+      expect(stripAnsi(first.join('\n'))).toContain(row.trim())
+    }
+    // The home frame is the one surface where nothing else advances the frame
+    // counter, so this is what proves it reaches the banner at all.
+    expect(swept(1)).not.toEqual(first)
+  })
+
   it('degrades the ghost banner to pure ASCII without changing its geometry', () => {
     const lines = renderedHome(80, 24, 'offline', TUI_GLYPHS_ASCII)
     const output = lines.join('\n')

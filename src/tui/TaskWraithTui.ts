@@ -83,7 +83,7 @@ import {
   type TuiOverlay,
   type TuiPendingHostMutation
 } from './state'
-import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
 interface Keypress {
   name?: string
@@ -138,6 +138,36 @@ const RECONNECT_MAX_DELAY_MS = 15_000
 /** Consecutive failed reconnects before the loop re-arms the Host launcher. */
 const HOST_REVIVE_FAILURE_THRESHOLD = 5
 const ANIMATION_INTERVAL_MS = 120
+
+/**
+ * Whether this timer tick should advance the shared animation frame.
+ *
+ * Two animations ride one timer, and this is the whole of what separates them.
+ * The working shimmer advances on every tick. The home-frame banner sweep
+ * advances on every `stride`-th, because the home frame repaints for no other
+ * reason — every frame drawn there is CPU spent while the user is idle, so the
+ * sweep is deliberately the slower of the two.
+ *
+ * Nothing advances anywhere else. A settled thread and any raised overlay must
+ * both stay still, which is why `homeFrame` is not simply "no thread": the
+ * canvas only falls through to the banner while no overlay is up.
+ *
+ * Extracted rather than left inline because it is the single line that decides
+ * whether the banner sweep is a feature or dead code, and inline in a
+ * `setInterval` it is unreachable by any test — every existing TUI test
+ * constructs the client with `animationEnabled: false`, so the timer never
+ * runs at all.
+ */
+export function shouldAdvanceAnimationFrame(input: {
+  working: boolean
+  homeFrame: boolean
+  tick: number
+  stride: number
+}): boolean {
+  if (input.working) return true
+  if (!input.homeFrame) return false
+  return input.tick % Math.max(1, input.stride) === 0
+}
 const TRANSCRIPT_PAGE_ROWS = 8
 const HOST_FULL_REFRESH_MS = 5_000
 
@@ -324,8 +354,25 @@ export class TaskWraithTui {
       this.enterTerminal()
       this.bindInput()
       if (this.options.animationEnabled && this.ansi.enabled) {
+        const bannerTickStride = Math.round(
+          TUI_MOTION.bannerSweepIntervalMs / ANIMATION_INTERVAL_MS
+        )
+        let tick = 0
         this.animationTimer = setInterval(() => {
-          if (this.state.thread?.thread.status !== 'working') return
+          tick += 1
+          if (
+            !shouldAdvanceAnimationFrame({
+              working: this.state.thread?.thread.status === 'working',
+              // `renderTranscriptCanvas` falls through to the home frame
+              // exactly when there is no thread snapshot, and only while no
+              // overlay is up.
+              homeFrame: !this.state.thread && this.state.overlay === 'none',
+              tick,
+              stride: bannerTickStride
+            })
+          ) {
+            return
+          }
           this.state.animationFrame += 1
           this.render()
         }, ANIMATION_INTERVAL_MS)
