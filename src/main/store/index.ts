@@ -351,6 +351,7 @@ import {
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import { collectOrphanSubThreadCandidates } from './OrphanSubThreadScan'
+import { ChatListRebuildMemo } from './ChatListRebuildMemo'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
@@ -771,6 +772,10 @@ const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatJournalDir = path.join(userDataPath, 'chat-journal')
 const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
 const chatListIndexStore = new ChatListIndexStore(userDataPath, { canWrite: legacyStoreCanWrite })
+/** Rows already derived from the exact bytes on disk, so a chat whose index
+ *  entry cannot be restamped is parsed once per process rather than once per
+ *  getChatList call. See ChatListRebuildMemo for why the restamp can stall. */
+const chatListRebuildMemo = new ChatListRebuildMemo<ChatListItem>()
 /**
  * T3a-1: per-chat save coalescer.
  *
@@ -5187,6 +5192,7 @@ export class AppStore {
     openApprovalSignatureByChatId.clear()
     this.chatRecordCache.clear()
     chatListIndexStore.clearCache()
+    chatListRebuildMemo.clear()
     incrementalChatPersistence.clear()
     chatUpdateProjectionTracker.clear()
     this.orphanSubThreadsReaped = false
@@ -6189,11 +6195,22 @@ export class AppStore {
       ) {
         item = this.normalizeChatListItem(indexed)
       } else {
-        const chat = readJson<ChatRecord | null>(chatPath, null)
-        if (chat) {
-          item = this.toChatListItem(chat, sourceStat)
-          dirtyChatIds.add(chatId)
+        // A rebuild parses the WHOLE record, and the restamp below is gated on
+        // legacyStoreCanWrite() — while the Host owns legacy writes the same
+        // rows rebuild on every call. Serve the row this process already
+        // derived from these exact bytes; correctness rides on the same
+        // mtime+size identity the index entry is judged by.
+        const memoised = chatListRebuildMemo.get(chatId, sourceStat)
+        if (memoised) {
+          item = memoised
+        } else {
+          const chat = readJson<ChatRecord | null>(chatPath, null)
+          if (chat) {
+            item = this.toChatListItem(chat, sourceStat)
+            chatListRebuildMemo.set(chatId, sourceStat, item)
+          }
         }
+        if (item) dirtyChatIds.add(chatId)
       }
       if (!item) continue
       nextIndex[chatId] = item
@@ -9265,6 +9282,7 @@ export class AppStore {
         // metadata, so once the Host has removed a record the stale row no
         // longer matches and is dropped on the next read.
         chatListIndexStore.clearCache()
+        chatListRebuildMemo.clear()
         for (const chatId of intent.chatIds) this.chatListIndexWriteAtByChatId.delete(chatId)
         return
       }
@@ -9283,6 +9301,7 @@ export class AppStore {
           // Best effort — summary file removal is non-fatal.
         }
         chatListIndexStore.clearCache()
+        chatListRebuildMemo.clear()
       } else {
         chatListIndexStore.removeEntries(intent.chatIds)
         // Verify removal.
@@ -9476,6 +9495,7 @@ export class AppStore {
     }
 
     chatListIndexStore.clearCache()
+    chatListRebuildMemo.clear()
     if (intent.kind === 'global') {
       this.chatRecordCache.clear()
       this.chatListIndexWriteAtByChatId.clear()
