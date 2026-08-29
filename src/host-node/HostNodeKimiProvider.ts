@@ -48,6 +48,10 @@ import type {
   HostNodeProviderRunRequest,
   HostNodeProviderRunResult
 } from './HostNodeProvider'
+import {
+  createHostNodeAcpTurnCompletion,
+  type HostNodeAcpTurnCompletion
+} from './HostNodeAcpTurnCompletion'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
@@ -66,7 +70,7 @@ type AcpSpawn = (
 ) => ChildProcessWithoutNullStreams
 
 interface ActiveRun {
-  readonly child: ChildProcessWithoutNullStreams
+  readonly completion: HostNodeAcpTurnCompletion
   cancelled: boolean
 }
 
@@ -332,7 +336,8 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       let failure = ''
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
-      const active: ActiveRun = { child, cancelled: false }
+      const completion = createHostNodeAcpTurnCompletion(child)
+      const active: ActiveRun = { completion, cancelled: false }
       this.activeRuns.set(request.runId, active)
 
       const finish = (
@@ -341,6 +346,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       ): void => {
         if (settled) return
         settled = true
+        completion.dispose()
         this.activeRuns.delete(request.runId)
         try {
           this.runPort.clearCancel(request.runId)
@@ -485,14 +491,11 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           sendPrompt()
           return
         }
+        if (completion.acceptPromptResult(frame)) return
         if (frame.id === 3 && frame.error) {
           const error = readObject(frame.error)
           failure = typeof error?.message === 'string' ? error.message : 'ACP prompt was rejected.'
-          try {
-            child.kill('SIGTERM')
-          } catch {
-            finish('failed', 'provider_failed')
-          }
+          completion.requestStop()
           return
         }
         if (frame.method !== 'session/update') return
@@ -525,13 +528,13 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       })
       child.once('error', (error) => {
         failure = error instanceof Error ? error.message : 'ACP process failed.'
-        finish('failed', 'provider_launch_failed')
+        completion.requestStop()
       })
-      child.once('close', (code) => {
-        finish(
-          active.cancelled ? 'cancelled' : code === 0 ? 'completed' : 'failed',
-          code === 0 ? undefined : 'provider_failed'
-        )
+      child.once('close', () => {
+        const status = active.cancelled
+          ? 'cancelled'
+          : (completion.promptOutcome()?.status ?? 'failed')
+        finish(status, status === 'failed' ? 'provider_failed' : undefined)
       })
 
       const registration = this.runPort.registerCancel(request.runId, () => {
@@ -541,20 +544,11 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           phase: 'cancelling',
           updatedAt: timestamp()
         })
-        try {
-          child.stdin.end()
-        } catch {
-          child.kill('SIGTERM')
-        }
+        completion.requestStop()
       })
       if (registration.kind !== 'registered') {
         failure = 'Host could not register exact cancellation.'
-        active.cancelled = true
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          finish('failed', 'provider_launch_failed')
-        }
+        completion.requestStop()
         return
       }
 
@@ -607,11 +601,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
     const active = this.activeRuns.get(runId)
     if (!active) return false
     active.cancelled = true
-    try {
-      active.child.stdin.end()
-    } catch {
-      active.child.kill('SIGTERM')
-    }
+    active.completion.requestStop()
     return true
   }
 

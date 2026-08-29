@@ -115,6 +115,12 @@ function frames(child: FakeChild): string[] {
   return received
 }
 
+function completePrompt(child: FakeChild): void {
+  child.stdout.write(
+    JSON.stringify({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } }) + '\n'
+  )
+}
+
 describe('HostNodeMistralProvider', () => {
   it('keeps a missing binary visible as unavailable and terminalizes setup failure', async () => {
     const { instance, finishes } = open({ missingBinary: true })
@@ -167,20 +173,54 @@ describe('HostNodeMistralProvider', () => {
         }
       }) + '\n'
     )
-    child.emit('close', 0)
+    let settled = false
+    void running.finally(() => {
+      settled = true
+    })
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('error', new Error('teardown race'))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('close', null, 'SIGTERM')
 
     await expect(running).resolves.toMatchObject({
       runId: 'run-1',
       status: 'completed',
       sessionId: 'session-1'
     })
-    expect(appends).toEqual(
-      expect.arrayContaining([expect.objectContaining({ role: 'assistant', text: 'ready' })])
-    )
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'assistant')).toEqual([
+      expect.objectContaining({ text: 'ready' })
+    ])
     expect(events).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'run.content' })])
     )
     expect(finishes).toEqual([expect.objectContaining({ status: 'completed' })])
+    expect(
+      events.filter(
+        (entry) =>
+          (entry as { type?: unknown }).type === 'run.status' &&
+          (entry as { status?: unknown }).status === 'completed'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('does not treat a clean ACP process exit without terminal prompt evidence as completion', async () => {
+    const { instance, child, finishes } = open()
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(child.stdin.readableLength).toBeGreaterThan(0))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'failed', errorCode: 'provider_failed' })
+    ])
   })
 
   it('cancels only the exact active run', async () => {
@@ -222,8 +262,9 @@ describe('HostNodeMistralProvider', () => {
       await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
       expect(spawnEnvs).toHaveLength(1)
       expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBeUndefined()
+      expect(instance.cancel('run-1')).toBe(true)
       child.emit('close', 0)
-      await expect(running).resolves.toMatchObject({ status: 'completed' })
+      await expect(running).resolves.toMatchObject({ status: 'cancelled' })
     }
   )
 
@@ -242,8 +283,9 @@ describe('HostNodeMistralProvider', () => {
 
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
     expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBe('studio-key')
+    expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
-    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('rejects a key-marked model before launch when the host has no API key', async () => {
@@ -323,8 +365,9 @@ describe('HostNodeMistralProvider', () => {
     )
     expect(sent.join('')).toContain('"outcome":"selected"')
     expect(sent.join('')).toContain('"optionId":"allow-once"')
+    expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
-    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('does not register elicitation/create as a question: vibe ACP agent never emits it', async () => {
@@ -352,8 +395,9 @@ describe('HostNodeMistralProvider', () => {
     )
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
     expect(interactions.register).not.toHaveBeenCalled()
+    expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
-    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('resolves unknown resource auth into configured or auth-required status', async () => {

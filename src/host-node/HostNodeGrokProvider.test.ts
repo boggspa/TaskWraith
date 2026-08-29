@@ -109,6 +109,12 @@ function frames(child: FakeChild): string[] {
   return received
 }
 
+function completePrompt(child: FakeChild): void {
+  child.stdout.write(
+    JSON.stringify({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } }) + '\n'
+  )
+}
+
 describe('HostNodeGrokProvider', () => {
   it('keeps a missing binary visible as unavailable and terminalizes setup failure', async () => {
     const { instance, finishes } = open({ missingBinary: true })
@@ -161,20 +167,57 @@ describe('HostNodeGrokProvider', () => {
         }
       }) + '\n'
     )
-    child.emit('close', 0)
+    let settled = false
+    void running.finally(() => {
+      settled = true
+    })
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('error', new Error('teardown race'))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('close', null, 'SIGTERM')
 
     await expect(running).resolves.toMatchObject({
       runId: 'run-1',
       status: 'completed',
       sessionId: 'session-1'
     })
-    expect(appends).toEqual(
-      expect.arrayContaining([expect.objectContaining({ role: 'assistant', text: 'ready' })])
-    )
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'assistant')).toEqual([
+      expect.objectContaining({ text: 'ready' })
+    ])
     expect(events).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'run.content' })])
     )
     expect(finishes).toEqual([expect.objectContaining({ status: 'completed' })])
+    expect(
+      events.filter(
+        (entry) =>
+          (entry as { type?: unknown }).type === 'run.status' &&
+          (entry as { status?: unknown }).status === 'completed'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('does not treat a clean ACP process exit without terminal prompt evidence as completion', async () => {
+    const { instance, child, finishes } = open()
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(child.stdin.readableLength).toBeGreaterThan(0))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'failed', errorCode: 'provider_failed' })
+    ])
+    completePrompt(child)
+    expect(child.stdin.writableEnded).toBe(false)
+    expect(child.kill).not.toHaveBeenCalled()
   })
 
   it('cancels only the exact active run', async () => {
@@ -189,6 +232,50 @@ describe('HostNodeGrokProvider', () => {
     expect(instance.cancel('other-run')).toBe(false)
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('keeps explicit user cancellation authoritative over a late end_turn result', async () => {
+    const { instance, child } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-1' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    expect(instance.cancel('run-1')).toBe(true)
+    completePrompt(child)
+    child.emit('close', 1)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('keeps SIGTERM and SIGKILL backstops armed after a child error until close', async () => {
+    vi.useFakeTimers()
+    try {
+      const { instance, child } = open()
+      const running = instance.run({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        prompt: 'hello',
+        target: { id: 'client' }
+      })
+      await vi.waitFor(() => expect(child.stdin.readableLength).toBeGreaterThan(0))
+      child.emit('error', new Error('transport failed'))
+      expect(child.stdin.writableEnded).toBe(true)
+      await vi.advanceTimersByTimeAsync(250)
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+      child.emit('close', null, 'SIGKILL')
+      await expect(running).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects a thread whose catalog model is not selectable', async () => {
@@ -262,8 +349,9 @@ describe('HostNodeGrokProvider', () => {
     )
     expect(sent.join('')).toContain('"outcome":"selected"')
     expect(sent.join('')).toContain('"optionId":"allow-once"')
+    expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
-    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('does not register elicitation/create or x.ai/ask_user_question as questions', async () => {
@@ -299,8 +387,9 @@ describe('HostNodeGrokProvider', () => {
     )
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
     expect(interactions.register).not.toHaveBeenCalled()
+    expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
-    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('resolves unknown resource auth into configured or auth-required status', async () => {
