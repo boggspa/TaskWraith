@@ -107,7 +107,7 @@ newline-terminated, torn final fragment ignored). A v1 authority root has no
       "sequence": 82438,
       "filename": "events-…jsonl",
       "byteLength": 133_000_000,
-      "digest": "<sha256 of segment bytes>"
+      "digest": "<sha256 of the segment's exact bytes>"
     }
   ],
   "previousCheckpointDigest": "<sha256 of the checkpoint this supersedes, or ''>",
@@ -132,7 +132,9 @@ exactly that bar and no lower:
   being rewritten too — the same property the chain already had.
 - `previousCheckpointDigest` chains successive checkpoints, and
   `archivedSegments[].digest` binds the sealed bytes, so the audit trail from
-  event 1 to the present is still verifiable end to end.
+  event 1 to the present is still verifiable end to end. That one field is
+  hashed as raw UTF-8 rather than through `canonicalJson`, precisely so it can
+  be checked from outside the app with `shasum -a 256 events-<seq>.jsonl`.
 
 ## Publication protocol
 
