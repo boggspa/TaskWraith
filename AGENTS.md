@@ -94,9 +94,13 @@ protocol is in
 ### Committing
 
 Stage only explicit paths. Never use `git add -A`, `git add .`, or `-u`,
-and never use `git stash` in the shared checkout. Diff-audit the staged result
-before every commit. A hunk subset of a shared file requires the private-index
-workflow; do not rely on `git add -p` plus either a pathspec or bare commit.
+and never use `git stash` in the shared checkout. Commit through a PRIVATE
+index whenever another session may be live: the hazard is the shared index,
+not the shared file, so owning a path outright does not make a bare commit
+safe. Diff-audit the staged result before every commit, and afterwards
+re-sync your own paths only. A hunk subset of a shared file additionally
+needs an isolated patch; do not rely on `git add -p` plus either a pathspec
+or bare commit.
 Read [Committing](docs/agent-doctrine/REPOSITORY_WORKFLOW.md#committing) before
 staging or committing.
 

@@ -357,12 +357,52 @@ explicitly out of the current release, a worktree is the answer, not a marker.
 - **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.** Other
   sessions' files live in this tree and bulk staging sweeps them into your
   commit. Diff-audit what you staged before committing.
-- **In a large shared file, commit a hunk subset through a PRIVATE index — not
-  `git add -p`.** Staging a monolith wholesale takes _every_ change in it,
-  including hunks another session left there mid-edit; you then commit their
-  half-written work under your message and they lose it on their next checkout.
-  `index.ts` and `App.tsx` are the two measured monoliths — line counts and
-  their measurement date live once, under
+- **Commit through a PRIVATE index whenever another session may be live —
+  which in this checkout is nearly always.** The trigger is a live peer, not a
+  shared file: the hazard is the shared _index_, and owning your path outright
+  does not exempt you from it. `git diff --cached` and `git commit` are two
+  commands, and the gap between them is long enough for a peer's `git add` to
+  land. Measured 2026-08-29: a session staged one path no peer had ever
+  touched, verified `git diff --cached --name-only` showed exactly that file,
+  and its bare commit still landed two — a peer had staged an unrelated test
+  into the shared index in the intervening seconds. The audit was correct when
+  it ran and stale by the time it mattered. **The tell is the commit's own
+  summary line reporting a higher file count than you staged; read it every
+  time.**
+
+  This never reads or writes the shared index:
+
+  ```bash
+  rm -f /tmp/c.idx; export GIT_INDEX_FILE=/tmp/c.idx
+  git read-tree HEAD
+  git add -- <your paths>         # or git apply --cached, for a hunk subset
+  git diff --cached --name-only   # PROVE only your paths are there
+  git commit -F msg               # bare is safe: the index is private
+  unset GIT_INDEX_FILE
+  git restore --staged -- <your paths>   # re-sync the shared index, NOT optional
+  ```
+
+  Re-sync **your paths only**. A bare `git restore --staged` flattens a peer's
+  staging along with yours, which is the same defect pointing the other way.
+
+  The rule is bidirectional and only one direction has a guard. The hook blocks
+  staging a path another owner _claims_, so pulling a peer's work into your
+  commit is caught by name; nothing at all stops your own `git add` from arming
+  the next session's commit. Treat a plain `git add` in the shared index as a
+  loaded gun pointed at whoever commits next.
+
+  Recovery, when nothing is pushed: confirm HEAD is still your commit, then
+  `git reset --soft HEAD~1` — soft, so the peer's staged entry survives exactly
+  as they left it — rebuild in a private index, re-commit, and restore only
+  your own paths. Capture `git show :<peer-path> | shasum` _before_ the reset,
+  so the restore can be proven by content rather than by name.
+
+- **A hunk subset of a large shared file needs that private index _plus_ an
+  isolated patch — not `git add -p`.** Staging a monolith wholesale takes
+  _every_ change in it, including hunks another session left there mid-edit;
+  you then commit their half-written work under your message and they lose it
+  on their next checkout. `index.ts` and `App.tsx` are the two measured
+  monoliths — line counts and their measurement date live once, under
   [Formatting policy for agents](#formatting-policy-for-agents) — and at that
   size, assume someone else is in there.
 
@@ -373,18 +413,6 @@ explicitly out of the current release, a worktree is the answer, not a marker.
   index held one hunk, the commit landed both). A **bare** commit takes the
   whole **shared** index, sweeping whatever a concurrent session has staged.
   `git add -p` is also interactive, which most agent harnesses cannot run.
-
-  Do this instead, which never reads or writes the shared index:
-
-  ```bash
-  rm -f /tmp/c.idx; export GIT_INDEX_FILE=/tmp/c.idx
-  git read-tree HEAD
-  git apply --cached your-isolated-hunks.patch
-  git diff --cached          # PROVE only your hunks are there
-  git commit -F msg          # bare is safe: the index is private
-  unset GIT_INDEX_FILE
-  git restore --staged -- <your paths>   # re-sync the shared index, NOT optional
-  ```
 
   To _produce_ the isolated patch without hand-splitting `@@` blocks, make your
   edits in a detached worktree at HEAD (`git worktree add --detach <scratch>
