@@ -81,8 +81,9 @@ export interface ChatHandlerDeps {
   /**
    * Host-routed chat-persistence durability barrier (AppStore.saveChat's
    * Host-owned-gate branch enqueues; this drains). Awaited after ensemble-chat
-   * creation so a persistence failure rejects the IPC instead of returning an
-   * unpersisted chat. Optional so unit-test harnesses can omit it.
+   * creation, but only for a bounded window and never fatally — see
+   * `settleEnsembleCreatePersistBarrier`. Optional so unit-test harnesses can
+   * omit it.
    */
   awaitChatRecordPersisted?: (chatId: string) => Promise<void>
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
@@ -324,6 +325,63 @@ function assertReadableWorkspace(
   }
 }
 
+/**
+ * How long chat creation waits for the Host to confirm a new ensemble record
+ * before giving up on the confirmation and returning the chat anyway. The
+ * shutdown drain bounds itself for the same reason
+ * (`HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS`); the create path never did.
+ */
+export const ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS = 5_000
+
+/**
+ * Bounded, non-fatal wait for the Host to confirm a freshly created ensemble
+ * record.
+ *
+ * Chat creation must never be destroyed by Host persistence trouble. The
+ * renderer discards this IPC's promise (`onNewChat` is typed `=> void`), so a
+ * rejection or an unbounded wait here reaches the user as a "+ New" menu item
+ * that silently does nothing — measured 2026-08-29 against a saturated Host
+ * that failed every `thread.record.persist` in the session.
+ *
+ * Durability is still enforced where it actually matters:
+ * `EnsembleOrchestrator.persistChatBarrier` blocks before any round dispatches,
+ * so an unconfirmed record can exist but can never start work. Both the timeout
+ * and the failure are reported loudly instead of being swallowed.
+ */
+async function settleEnsembleCreatePersistBarrier(
+  awaitChatRecordPersisted: ((chatId: string) => Promise<void>) | undefined,
+  chatId: string
+): Promise<void> {
+  const barrier = awaitChatRecordPersisted?.(chatId)
+  if (!barrier) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // Attach the handler to the barrier itself rather than to the race: the
+  // losing branch stays pending, and a late rejection with no handler would
+  // surface as an unhandled rejection in main.
+  const reported = barrier.catch((error) => {
+    console.error(
+      `[create-ensemble-chat] Host record persist failed for chat ${chatId}; ` +
+        'the chat was created but is not yet durable.',
+      error
+    )
+  })
+  const bound = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS)
+    timer.unref?.()
+  })
+  try {
+    if ((await Promise.race([reported, bound])) === 'timeout') {
+      console.error(
+        `[create-ensemble-chat] Host record persist did not confirm chat ${chatId} within ` +
+          `${ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS}ms; the chat was created but is not ` +
+          'yet durable.'
+      )
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
   const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
   const setChatKindMutation =
@@ -401,9 +459,10 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
       const configuredProviders = await deps.detectConfiguredProviders(deps.getSettings())
       const chat = deps.chatService.createEnsembleChat(args, configuredProviders)
-      // Durability barrier: the new ensemble record must be persisted through
-      // the Host before the renderer receives it; a failure rejects this IPC.
-      if (chat) await deps.awaitChatRecordPersisted?.(chat.appChatId)
+      // Durability barrier: bounded and non-fatal. A slow or failing Host must
+      // not destroy the create — see settleEnsembleCreatePersistBarrier.
+      if (chat)
+        await settleEnsembleCreatePersistBarrier(deps.awaitChatRecordPersisted, chat.appChatId)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat

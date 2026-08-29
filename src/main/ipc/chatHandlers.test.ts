@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerChatHandlers } from './chatHandlers'
+import {
+  ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
+  registerChatHandlers
+} from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
 import { queuePendingWorkspaceRebind } from '../pendingWorkspaceRebind'
@@ -155,6 +158,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     assertSenderChatScope: vi.fn(),
     assertSenderCanRebindChatWorkspace: vi.fn(),
     getChatWorkspaceRebindBlocker: vi.fn(() => null),
+    awaitChatRecordPersisted: vi.fn(async () => undefined),
     ...overrides
   }
 }
@@ -426,6 +430,43 @@ describe('registerChatHandlers', () => {
     expect(deps.detectConfiguredProviders).toHaveBeenCalledWith(deps.getSettings())
     expect(deps.chatService.createEnsembleChat).toHaveBeenCalledWith(undefined, new Set(['codex']))
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
+  })
+
+  it('keeps a created ensemble chat when the Host record persist fails', async () => {
+    // Regression: a failed Host persist rejected the whole IPC, so the renderer's
+    // discarded create promise turned a Host fault into a dead "New Workspace
+    // Chat" menu item. Creation must survive; EnsembleOrchestrator's
+    // persistChatBarrier is the hard durability gate before a round dispatches.
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => {
+        throw new Error('Host persistence failed.')
+      })
+    })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('create-ensemble-chat')({} as any, undefined)).resolves.toEqual(
+      chat('ensemble', { chatKind: 'ensemble' })
+    )
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('ensemble')
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
+  })
+
+  it('does not block ensemble chat creation on a Host that never confirms the record', async () => {
+    vi.useFakeTimers()
+    try {
+      const deps = createDeps({
+        awaitChatRecordPersisted: vi.fn(() => new Promise<void>(() => {}))
+      })
+      registerChatHandlers(deps)
+
+      const pending = handlerFor('create-ensemble-chat')({} as any, undefined)
+      await vi.advanceTimersByTimeAsync(ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS + 1)
+
+      await expect(pending).resolves.toEqual(chat('ensemble', { chatKind: 'ensemble' }))
+      expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('preserves the ensemble disabled guard before provider detection', async () => {
