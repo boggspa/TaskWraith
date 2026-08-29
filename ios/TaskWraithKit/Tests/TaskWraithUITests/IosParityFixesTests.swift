@@ -392,6 +392,59 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func workspaceRevocationDropsOnlyTheRevokedThreadsInlineSideChatSelection() throws {
+        let model = makeRemoteSessionModel()
+        let granted = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":true},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(granted)
+
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {"projections":[
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-1","workspaceId":"ws-1","threadId":"thread-1",
+                "payload":{"id":"thread-1","threadId":"thread-1","title":"One","provider":"codex","workspaceId":"ws-1"}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-2","workspaceId":"ws-2","threadId":"thread-2",
+                "payload":{"id":"thread-2","threadId":"thread-2","title":"Two","provider":"claude","workspaceId":"ws-2"}
+              }
+            ]}
+            """)
+        model.applySnapshot(snapshot)
+
+        // Each thread has a side chat open inline in its inspector.
+        model.selectedSideChatByThread["thread-1"] = "side-1"
+        model.selectedSideChatByThread["thread-2"] = "side-2"
+
+        let revoked = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":false},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(revoked)
+
+        #expect(model.selectedSideChatByThread["thread-1"] == nil)
+        // The load-bearing half. Now that the selection outlives the view,
+        // clearing the whole map would also satisfy the assertion above while
+        // closing every other thread's open side chat on an unrelated
+        // revocation — a regression no other test here would catch.
+        #expect(model.selectedSideChatByThread["thread-2"] == "side-2")
+    }
+
+    @MainActor
     @Test func threadSnapshotRequestWaitsForTaskCardScope() async throws {
         let model = makeRemoteSessionModel()
 

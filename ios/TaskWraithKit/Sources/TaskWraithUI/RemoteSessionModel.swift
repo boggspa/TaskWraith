@@ -696,6 +696,25 @@ public final class RemoteSessionModel: ObservableObject {
     /// `TranscriptFollowStateStore.shouldArmOnOpen` so a remount cannot be
     /// mistaken for an open.
     public private(set) var threadSelectionGeneration = 0
+    /// The side chat opened inline in a thread's "Side chats" inspector tab,
+    /// keyed by PARENT thread. Hoisted onto the model for the same reason as
+    /// `selectedTaskId`: `SideChatsPanel` held it in `@State`, and both the
+    /// `switch model.phase` branches and RootView's `.id(themes.revision)`
+    /// rebuild the shell as a new identity — so a reconnect, or any settings
+    /// change, closed the open side chat back to the list.
+    ///
+    /// Keyed rather than single-valued because the panel is per-thread. One
+    /// global slot would follow the user to the next thread, where
+    /// `selectedSideChatCard` rejects it as a non-child and the panel sits on
+    /// its "Opening side chat…" spinner for a thread nobody is loading.
+    ///
+    /// Known limitation of the durability: a side chat that disappears while
+    /// its parent survives (deleted on the Mac) leaves the panel on that same
+    /// spinner until the user backs out, where the old `@State` forgot it at
+    /// the next rebuild. A snapshot request for a missing thread acks with no
+    /// thread rather than an error, so nothing here separates "gone" from
+    /// "still loading" and a timeout would be a guess.
+    @Published public var selectedSideChatByThread: [String: String] = [:]
     // Sidebar layout — persisted across launches (see TWSidebarPersistence). The
     // paren-wrapped initializer disambiguates the didSet block from a trailing
     // closure on `load(_:)`.
@@ -7132,6 +7151,15 @@ public final class RemoteSessionModel: ObservableObject {
         }
 
         if selectedTaskId.map(revokedThreadKeys.contains) == true { selectedTaskId = nil }
+        // Keyed on the PARENT only. A side chat inherits its parent's
+        // workspace at creation, so a revoked workspace takes both together
+        // and filtering on the selected id as well would be unreachable.
+        let survivingSideChatSelections = selectedSideChatByThread.filter {
+            !revokedThreadKeys.contains($0.key)
+        }
+        if survivingSideChatSelections != selectedSideChatByThread {
+            selectedSideChatByThread = survivingSideChatSelections
+        }
         if navigationTarget.map(revokedThreadKeys.contains) == true { navigationTarget = nil }
         if visibleThreadId.map(revokedThreadKeys.contains) == true { visibleThreadId = nil }
         if pendingDeepLinkThreadId.map(revokedThreadKeys.contains) == true {
