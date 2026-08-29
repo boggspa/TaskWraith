@@ -1089,6 +1089,8 @@ private struct DiffViewerPane: View {
     var onOpenSelectedFile: ((String) -> Void)? = nil
     let compact: Bool
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+    @Environment(\.appScale) private var appScale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var canvasFill: Color {
         DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: glassSheetHosted)
@@ -1106,8 +1108,28 @@ private struct DiffViewerPane: View {
     }
 
     var body: some View {
+        // Budgeted against the PANE, not the size class — see
+        // WorkspaceHeaderChrome.swift and DESIGN.md v0.13. Read inline, never
+        // written back to @State.
+        GeometryReader { pane in
+            paneBody(
+                TWWorkspaceHeaderPolicy.layout(
+                    paneWidth: pane.size.width,
+                    backTitle: backTitle,
+                    actionTitles: actionTitles,
+                    trailingReserved: trailingReserved,
+                    scale: appScale,
+                    typeSize: dynamicTypeSize)
+            )
+            // Load-bearing: GeometryReader gives its child no size proposal
+            // and pins it top-leading.
+            .frame(width: pane.size.width, height: pane.size.height)
+        }
+    }
+
+    private func paneBody(_ layout: TWWorkspaceHeaderLayout) -> some View {
         VStack(spacing: 0) {
-            header
+            header(layout)
             Divider().overlay(TWTheme.border)
             if let file = state.selectedFile {
                 DiffHunksView(file: file, layout: .pane)
@@ -1154,91 +1176,112 @@ private struct DiffViewerPane: View {
         .diffStudioInlineTitle()
     }
 
-    private var header: some View {
+    private var backTitle: String { compact ? "Changes" : "Back to app" }
+
+    private var canEditFiles: Bool {
+        model.workspaceCanEditFiles(state.selectedWorkspaceId)
+    }
+
+    /// The wording-bearing actions, in bar order. Unlike the file editor's
+    /// fixed vocabulary these are capability-GATED — an absent action is not in
+    /// the bar at all, so a read-only workspace correctly buys wording for the
+    /// two that remain.
+    private var actionTitles: [String] {
+        var titles: [String] = []
+        if onOpenSelectedFile != nil { titles.append("Open in Files") }
+        if canEditFiles {
+            titles.append("Stage")
+            titles.append("Unstage")
+        }
+        return titles
+    }
+
+    /// "+120 −48" at caption2 monospaced digits, plus its inner gap.
+    private static let statChipsWidth: CGFloat = 76
+
+    /// Trailing chrome the budget must hold back but that carries no wording of
+    /// its own: the expand glyph and the ± chips.
+    private var trailingReserved: CGFloat {
+        var reserved: CGFloat = 0
+        if onExpand != nil { reserved += TWWorkspaceHeaderPolicy.glyphControlWidth }
+        if state.selectedFile != nil { reserved += Self.statChipsWidth }
+        return reserved
+    }
+
+    private func header(_ layout: TWWorkspaceHeaderLayout) -> some View {
         HStack(spacing: 10) {
-            Button {
+            TWChromeBackButton(title: backTitle, showsLabel: layout.backShowsLabel) {
                 if compact {
                     state.selectedPath = nil
                 } else {
                     onBack()
                 }
-            } label: {
-                Label(
-                    compact ? "Changes" : "Back to app",
-                    systemImage: compact ? "chevron.left" : "arrow.uturn.backward")
             }
-            .buttonStyle(.bordered)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(state.selectedName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    if let file = state.selectedFile {
-                        DiffKindChip(kind: file.kind)
-                    }
+            TWWorkspaceHeaderTitle(
+                name: state.selectedName,
+                subtitle: state.selectedPath ?? "No file selected"
+            ) {
+                if let file = state.selectedFile {
+                    DiffKindChip(kind: file.kind)
                 }
-                Text(state.selectedPath ?? "No file selected")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textMuted)
-                    .lineLimit(1)
             }
-            Spacer()
-            if let onExpand {
-                Button(action: onExpand) {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Open full Diff Studio")
-            }
-            if let onOpenSelectedFile {
-                Button {
-                    if let selectedPath = state.selectedPath {
-                        onOpenSelectedFile(selectedPath)
-                    }
-                } label: {
-                    if compact {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .accessibilityLabel("Open in Files")
-                    } else {
-                        Label("Open in Files", systemImage: "doc.text.magnifyingglass")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(
-                    !state.selectedFileCanOpenInEditor
-                        || !model.workspaceCanEditFiles(state.selectedWorkspaceId))
-            }
-            if model.workspaceCanEditFiles(state.selectedWorkspaceId) {
-                Button {
-                    Task { await state.stageSelectedFile(model: model) }
-                } label: {
-                    if compact {
-                        Image(systemName: "plus.circle")
-                            .accessibilityLabel("Stage file")
-                    } else {
-                        Label("Stage", systemImage: "plus.circle")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(!state.selectedFileCanStage || state.isLoading)
 
-                Button {
-                    Task { await state.unstageSelectedFile(model: model) }
-                } label: {
-                    if compact {
-                        Image(systemName: "minus.circle")
-                            .accessibilityLabel("Unstage file")
-                    } else {
-                        Label("Unstage", systemImage: "minus.circle")
+            // Fixed-size: the run holds its intrinsic width or drops to
+            // glyphs. It must never be the thing that compresses.
+            HStack(spacing: 0) {
+                if let onExpand {
+                    Button(action: onExpand) {
+                        TWChromeActionLabel(
+                            title: "Open full Diff Studio",
+                            systemImage: "arrow.up.left.and.arrow.down.right",
+                            showsLabel: false)
                     }
+                    .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
                 }
-                .buttonStyle(.bordered)
-                .disabled(!state.selectedFileCanUnstage || state.isLoading)
+                if let onOpenSelectedFile {
+                    Button {
+                        if let selectedPath = state.selectedPath {
+                            onOpenSelectedFile(selectedPath)
+                        }
+                    } label: {
+                        TWChromeActionLabel(
+                            title: "Open in Files",
+                            systemImage: "doc.text.magnifyingglass",
+                            showsLabel: layout.actionsShowLabels)
+                    }
+                    .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
+                    .disabled(!state.selectedFileCanOpenInEditor || !canEditFiles)
+                }
+                if canEditFiles {
+                    Button {
+                        Task { await state.stageSelectedFile(model: model) }
+                    } label: {
+                        TWChromeActionLabel(
+                            title: "Stage",
+                            systemImage: "plus.circle",
+                            showsLabel: layout.actionsShowLabels)
+                    }
+                    .buttonStyle(TWChromeActionButtonStyle(tone: .prominent))
+                    .disabled(!state.selectedFileCanStage || state.isLoading)
+
+                    Button {
+                        Task { await state.unstageSelectedFile(model: model) }
+                    } label: {
+                        TWChromeActionLabel(
+                            title: "Unstage",
+                            systemImage: "minus.circle",
+                            showsLabel: layout.actionsShowLabels)
+                    }
+                    .buttonStyle(TWChromeActionButtonStyle(tone: .standard))
+                    .disabled(!state.selectedFileCanUnstage || state.isLoading)
+                }
+                if let file = state.selectedFile {
+                    DiffStatChips(additions: file.additions, deletions: file.deletions)
+                        .padding(.leading, 6)
+                }
             }
-            if let file = state.selectedFile {
-                DiffStatChips(additions: file.additions, deletions: file.deletions)
-            }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
