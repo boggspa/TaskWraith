@@ -186,6 +186,71 @@ struct PairedHostSessionControllerTests {
     #expect(request["kind"] as? String == "snapshot.get")
   }
 
+  @Test("matching live state cannot certify a missed fresh snapshot")
+  func missedFreshSnapshotRequiresResyncBeforeLive() async throws {
+    let store = MemoryHostSnapshotStore()
+    store.seed(snapshotFrame().snapshot, hostIdentity: "mac-a")
+    let fresh = SnapshotResponseFixture(kind: .snapshotGet, frame: snapshotFrame())
+    let transport = FakePairedHostTransport(
+      replies: [
+        AckResult(
+          ok: true,
+          result: try JSONEncoder().encode(fresh),
+          error: nil)
+      ])
+    let controller = PairedHostSessionController(snapshotStore: store)
+    let identity = try #require(makeIdentity())
+
+    controller.activate(
+      hostIdentity: "mac-a",
+      phoneIdentity: identity,
+      transport: transport)
+    #expect(controller.phase == .connecting)
+    #expect(controller.snapshot?.freshness == .stale)
+    #expect(controller.health?.freshness == .stale)
+    #expect(controller.health?.connectionPhase == .staleCache)
+
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.welcome,
+        params: try JSONEncoder().encode(welcome(identity: identity))) == .updated)
+
+    // Deliberately omit the fresh snapshot push. The cached snapshot has the
+    // same generation/cursor, so cursor equality alone used to promote these
+    // explicitly stale bytes to `.live` and suppress the recovery fallback.
+    let liveState = controller.receive(
+      method: PairedHostProjectionMethods.state,
+      params: try JSONEncoder().encode(
+        PairedHostProjectionStateMessage(
+          phase: .live,
+          generation: 7,
+          cursor: 0)))
+    #expect(liveState == .requireSnapshot(reason: "live_state_stale_snapshot"))
+    #expect(controller.phase == .reconnecting)
+
+    await waitUntil {
+      controller.phase == .live && controller.snapshot?.freshness == .live
+        && controller.health?.freshness == .live && !controller.resyncInFlight
+    }
+
+    #expect(controller.phase == .live)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(controller.health?.freshness == .live)
+    let liveness = HostLiveness.derive(
+      sessionPhase: .connected,
+      projectionPhase: controller.phase,
+      healthProjection: controller.health,
+      probeLedger: HostLivenessProbeLedger())
+    #expect(liveness == .live)
+    #expect(liveness?.warrantsBanner == false)
+
+    let requests = await transport.requests()
+    #expect(requests.count == 1)
+    let request = try #require(
+      JSONSerialization.jsonObject(with: requests[0].params) as? [String: Any])
+    #expect(request["kind"] as? String == "snapshot.get")
+  }
+
   @Test("command timeout looks up the exact durable receipt instead of retrying")
   func commandTimeoutUsesReceiptLookup() async throws {
     let identity = try #require(makeIdentity())

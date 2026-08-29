@@ -385,6 +385,9 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
       return reject("state decode failed: \(error.localizedDescription)")
     }
     if state.phase == .live {
+      guard welcome != nil else {
+        return requireSnapshot("live_state_before_welcome")
+      }
       guard let generation = state.generation, let cursor = state.cursor else {
         return reject("live state requires generation and cursor")
       }
@@ -393,6 +396,20 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
         snapshot.cursor == cursor
       else {
         return requireSnapshot("live_state_cursor_mismatch")
+      }
+      // A cached snapshot is valid here only when it was coherently advanced by
+      // ordered live deltas. Explicit `.stale` / `.staleCache` bytes come from
+      // offline or reconnect demotion and must never be certified current merely
+      // because the Host cursor did not move while the fresh snapshot frame was
+      // lost. Keep the replica reconnecting so the controller's existing
+      // full-snapshot recovery can replace those bytes before publishing live.
+      guard snapshot.freshness != .stale,
+        snapshot.health.freshness != .stale,
+        snapshot.health.connectionPhase != .staleCache,
+        health?.freshness != .stale,
+        health?.connectionPhase != .staleCache
+      else {
+        return requireSnapshot("live_state_stale_snapshot")
       }
     }
     phase = state.phase
