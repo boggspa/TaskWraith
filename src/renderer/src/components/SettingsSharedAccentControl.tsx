@@ -26,6 +26,14 @@ function rangeFillStyle(value: number, min: number, max: number): React.CSSPrope
   } as React.CSSProperties
 }
 
+/**
+ * The user's message-bubble colour editor.
+ *
+ * Named "shared" because this control once drove BOTH the bubble and the app
+ * accent from one value. It no longer does: `--accent` follows the host OS
+ * accent, and this picker owns the bubble (and the "You" label) alone. The
+ * class names keep the old word so the stylesheet does not have to move.
+ */
 export function SettingsSharedAccentControl({
   color,
   themeAppearance,
@@ -120,7 +128,7 @@ export function SettingsSharedAccentControl({
     >
       <header className="settings-diff-stat-color-header">
         <span className="agent-pool-color-swatch" style={{ backgroundColor: safeColor }} />
-        <span className="settings-diff-stat-color-name">Shared color</span>
+        <span className="settings-diff-stat-color-name">Bubble color</span>
         <span className="settings-diff-stat-color-hsl">
           HSL {safeHue} / {safeSaturation}% / {safeBrightness}%
         </span>
@@ -143,7 +151,7 @@ export function SettingsSharedAccentControl({
             max={359}
             value={safeHue}
             onChange={(event) => applyColor({ hue: Number(event.target.value) })}
-            aria-label="Accent and chat bubble hue"
+            aria-label="Message bubble hue"
             style={rangeFillStyle(safeHue, 0, 359)}
           />
         </label>
@@ -156,7 +164,7 @@ export function SettingsSharedAccentControl({
             max={100}
             value={safeSaturation}
             onChange={(event) => applyColor({ saturation: Number(event.target.value) })}
-            aria-label="Accent and chat bubble saturation"
+            aria-label="Message bubble saturation"
             style={rangeFillStyle(safeSaturation, 0, 100)}
           />
         </label>
@@ -169,7 +177,7 @@ export function SettingsSharedAccentControl({
             max={100}
             value={safeBrightness}
             onChange={(event) => applyColor({ brightness: Number(event.target.value) })}
-            aria-label="Accent and chat bubble luma"
+            aria-label="Message bubble luma"
             style={rangeFillStyle(safeBrightness, 0, 100)}
           />
         </label>
@@ -183,7 +191,7 @@ export function SettingsSharedAccentControl({
               onChange={(event) => setHexDraft(event.target.value)}
               onBlur={commitHexDraft}
               onKeyDown={blurOnEnter}
-              aria-label="Accent and chat bubble hex color"
+              aria-label="Message bubble hex color"
               spellCheck={false}
             />
           </label>
@@ -195,19 +203,16 @@ export function SettingsSharedAccentControl({
               onChange={(event) => setRgbDraft(event.target.value)}
               onBlur={commitRgbDraft}
               onKeyDown={blurOnEnter}
-              aria-label="Accent and chat bubble RGB color"
+              aria-label="Message bubble RGB color"
               spellCheck={false}
             />
           </label>
         </div>
       </div>
 
-      <div
-        className="settings-shared-accent-preview"
-        aria-label="Accent and message bubble preview"
-      >
+      <div className="settings-shared-accent-preview" aria-label="Message bubble preview">
         <div className="settings-shared-accent-preview-copy">
-          <span className="settings-shared-accent-preview-kicker">Accent preview</span>
+          <span className="settings-shared-accent-preview-kicker">Bubble preview</span>
           <div
             className="settings-shared-accent-preview-message"
             style={{ '--transcript-font-family': transcriptFontFamily } as React.CSSProperties}
@@ -218,7 +223,7 @@ export function SettingsSharedAccentControl({
             <div
               className={`message-bubble user settings-shared-accent-preview-bubble ${cornerStyle === 'hard' ? 'is-hard' : 'is-rounded'}`}
             >
-              Looks good — your accent and message bubble now stay in sync.
+              Looks good — this color is your message bubble’s alone.
             </div>
           </div>
         </div>

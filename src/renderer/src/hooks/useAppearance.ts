@@ -28,6 +28,7 @@ import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
 } from '../../../shared/systemThemeAppearance'
+import { normalizeSystemAccentColor } from '../../../shared/systemAccentColor'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   FONT_STACKS,
@@ -53,7 +54,16 @@ export interface AppearanceState {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
+  /**
+   * The user's message-bubble colour, chosen in Settings. Despite the name it
+   * no longer drives `--accent`; see `resolveAccentTokens`.
+   */
   themeAccentColor: string
+  /**
+   * The host OS accent colour, or null where the platform reports none. Host
+   * state read over IPC — never persisted, and never written back to settings.
+   */
+  systemAccentColor: string | null
   userBubbleColor: UserBubbleColor
   diffStatColors: DiffStatColors
   agentThemeTokens: AgentThemeTokenOverrides
@@ -121,6 +131,32 @@ export const resolvePaneOpacityFactor = (
   reduceTransparency: boolean
 ): number => (reduceTransparency ? 1 : normalizePaneOpacity(value) / 100)
 
+/**
+ * Splits the two colours that used to be a single token.
+ *
+ * `--accent` is the DESKTOP's accent — buttons, focus rings, selection, every
+ * `var(--accent)` caller — and follows the OS. `null` there means "apply
+ * nothing", so the active theme's own `--accent` stands; that is the correct
+ * result on a host with no accent preference to report, not a fallback colour
+ * invented here.
+ *
+ * `--message-bubble-accent` is the colour the user picked in Settings for
+ * their own bubble. It is always applied, because the app is its only source.
+ *
+ * Kept pure and exported so the split is testable without a DOM.
+ */
+export function resolveAccentTokens(input: {
+  systemAccentColor: unknown
+  messageBubbleColor: string
+}): { accent: string | null; accentHover: string | null; messageBubbleAccent: string } {
+  const accent = normalizeSystemAccentColor(input.systemAccentColor)
+  return {
+    accent,
+    accentHover: accent ? `color-mix(in srgb, ${accent} 78%, white)` : null,
+    messageBubbleAccent: input.messageBubbleColor
+  }
+}
+
 const hostPlatform = (): string =>
   typeof window !== 'undefined' && typeof window.api?.hostPlatform === 'string'
     ? window.api.hostPlatform
@@ -155,6 +191,7 @@ function getInitialState(): AppearanceState {
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'system',
     themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
+    systemAccentColor: null,
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     agentThemeTokens: {},
@@ -237,7 +274,13 @@ export function useAppearance() {
         if (settings.themeAppearance && settings.themeAppearance !== themeAppearance) {
           window.api.updateSettings({ themeAppearance }).catch(() => {})
         }
-        setState({
+        setState((prev) => ({
+          // Spread first so state that is NOT a stored setting survives this
+          // literal. `systemAccentColor` is read over its own IPC and usually
+          // lands before the settings file does, so a plain object literal
+          // here silently threw the OS accent away on every launch that won
+          // the race. Every persisted field below still overwrites its own key.
+          ...prev,
           mode: settings.appearanceMode || 'soft_glass',
           visualEffectStyle: settings.visualEffectStyle || 'auto',
           themeAppearance,
@@ -288,7 +331,7 @@ export function useAppearance() {
           mainPaneOpacity: normalizePaneOpacity(settings.mainPaneOpacity),
           sidebarOpacityOverride: Boolean(settings.sidebarOpacityOverride),
           mainPaneOpacityOverride: Boolean(settings.mainPaneOpacityOverride)
-        })
+        }))
         if (typeof settings.funFxEnabled !== 'boolean' || !isFunFxMode(settings.funFxMode)) {
           window.api
             .updateSettings({
@@ -330,16 +373,26 @@ export function useAppearance() {
     root.setAttribute('data-corners', next.themeCornerStyle)
     root.setAttribute('data-accent', 'custom')
     root.setAttribute('data-user-bubble-color', 'shared')
-    const themeAccentColor = resolveThemeAccentColorForAppearance(
-      next.themeAccentColor,
-      next.themeAppearance,
-      Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches)
-    )
-    root.style.setProperty('--accent', themeAccentColor)
-    root.style.setProperty(
-      '--accent-hover',
-      `color-mix(in srgb, ${themeAccentColor} 78%, white)`
-    )
+    const accentTokens = resolveAccentTokens({
+      systemAccentColor: next.systemAccentColor,
+      messageBubbleColor: resolveThemeAccentColorForAppearance(
+        next.themeAccentColor,
+        next.themeAppearance,
+        Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches)
+      )
+    })
+    root.style.setProperty('--message-bubble-accent', accentTokens.messageBubbleAccent)
+    // Removing rather than writing a fallback is deliberate: an inline
+    // property on documentElement outranks every [data-theme] block, so a
+    // stand-in colour here would freeze the accent for every theme on a host
+    // that simply has no accent to report.
+    if (accentTokens.accent && accentTokens.accentHover) {
+      root.style.setProperty('--accent', accentTokens.accent)
+      root.style.setProperty('--accent-hover', accentTokens.accentHover)
+    } else {
+      root.style.removeProperty('--accent')
+      root.style.removeProperty('--accent-hover')
+    }
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
@@ -447,6 +500,35 @@ export function useAppearance() {
       applyToDocument(state)
     }
   }, [state, loaded, applyToDocument])
+
+  // The OS accent is HOST state, not a stored preference: read it once at
+  // mount and follow it live. It deliberately never joins the `update` write —
+  // persisting the desktop's colour would make a machine's accent travel with
+  // the settings file to a machine with a different one.
+  useEffect(() => {
+    let cancelled = false
+    // Returning `prev` unchanged is load-bearing, not tidy: a fresh object
+    // reference re-runs applyToDocument, which rewrites ~20 attributes on
+    // documentElement and restarts every infinite CSS animation gated on one.
+    const adopt = (color: string | null): void => {
+      setState((prev) =>
+        prev.systemAccentColor === (color ?? null)
+          ? prev
+          : { ...prev, systemAccentColor: color ?? null }
+      )
+    }
+    window.api
+      .getSystemAccentColor?.()
+      .then((color) => {
+        if (!cancelled) adopt(color ?? null)
+      })
+      .catch(() => {})
+    const unsubscribe = window.api.onSystemAccentColorChanged?.(adopt)
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [])
 
   // Live-apply an agent restyle. Settings are otherwise read ONCE on mount, so
   // without this an agent write persists but nothing changes until a reload —

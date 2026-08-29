@@ -1501,9 +1501,16 @@
 [data-user-bubble-color="yellow"]   { --user-bubble-base: #f2c94c; }
 [data-user-bubble-color="graphite"] { --user-bubble-base: #9da6b8; }
 
-/* Settings → Appearance now supplies one custom accent. The message bubble
- * aliases it rather than retaining a second user-facing colour choice. */
-[data-user-bubble-color="shared"] { --user-bubble-base: var(--accent); }
+/* Settings → Appearance → "Message bubble" supplies this colour directly, as
+ * `--message-bubble-accent` (set inline on :root by useAppearance).
+ *
+ * `--accent` is NOT the same colour any more: it follows the host OS accent,
+ * so aliasing it here would drag the bubble back onto the desktop's blue. It
+ * survives only as the last-resort fallback for a renderer that painted
+ * before the inline token was written. */
+[data-user-bubble-color="shared"] {
+  --user-bubble-base: var(--message-bubble-accent, var(--accent));
+}
 
 [data-corners="hard"] {
   --radius-sm: 3px;

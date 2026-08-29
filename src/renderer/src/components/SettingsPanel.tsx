@@ -5820,7 +5820,7 @@ export function SettingsPanel({
               </div>
 
               <div className="settings-group settings-shared-accent-group">
-                <label className="settings-label">Accent &amp; chat bubble</label>
+                <label className="settings-label">Message bubble</label>
                 <SettingsSharedAccentControl
                   color={themeAccentColor}
                   cornerStyle={themeCornerStyle}
@@ -5829,8 +5829,8 @@ export function SettingsPanel({
                   onCornerStyleChange={(themeCornerStyle) => onChange({ themeCornerStyle })}
                 />
                 <p className="settings-hint">
-                  One shared color drives the interface accent, your message bubble, and its “You”
-                  label.
+                  This color is your message bubble and its “You” label. Buttons, focus rings, and
+                  the rest of the interface accent follow your operating system’s accent color.
                 </p>
               </div>
 

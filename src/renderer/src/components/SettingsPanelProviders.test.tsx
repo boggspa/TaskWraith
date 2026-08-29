@@ -144,17 +144,21 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
 }
 
 describe('SettingsPanel provider cards', () => {
-  it('renders shared accent/bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
+  it('renders message bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance' })} />
     )
 
     expect(html).toContain('Diff stat colors')
-    expect(html).toContain('Accent &amp; chat bubble')
-    expect(html).toContain('Shared color')
-    expect(html).toContain('Accent and message bubble preview')
+    expect(html).toContain('Message bubble')
+    expect(html).toContain('Bubble color')
+    expect(html).toContain('Message bubble preview')
     expect(html).toContain('Message bubble corners')
-    expect(html).toContain('Looks good — your accent and message bubble now stay in sync.')
+    expect(html).toContain('Looks good — this color is your message bubble’s alone.')
+    // This picker stopped driving the interface accent when --accent moved to
+    // the OS accent, so the section must not still promise that it does.
+    expect(html).toContain('follow your operating system’s accent color')
+    expect(html).not.toContain('One shared color drives the interface accent')
     expect(html).toContain('Additions')
     expect(html).toContain('Deletions')
     expect(html).toContain('#2DB777')
