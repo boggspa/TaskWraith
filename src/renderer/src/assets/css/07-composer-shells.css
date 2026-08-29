@@ -3128,6 +3128,54 @@
   border-color: color-mix(in srgb, var(--danger) 38%, transparent);
   background: color-mix(in srgb, var(--danger) 5%, transparent);
 }
+/* A durable execution that stopped for a person. Deliberately NOT the danger
+   tone: it has not failed, it is waiting on a decision, and colouring it as a
+   failure would tell the reader the work is lost. */
+.claude-workflow-card.status-attention {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+.claude-workflow-card.status-attention .claude-workflow-card-glyph {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+}
+.claude-workflow-card.status-cancelled {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 4%, transparent);
+}
+
+/* Delivered execution-graph result. The chassis carries the chrome; these are
+   the body/action hooks the card adds on top of it. */
+.execution-result-card-body {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  /* Always visible, but a long synthesis must not push the rest of the
+     transcript off-screen — it scrolls in place. */
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.execution-result-card-open-map {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 30%, transparent);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.execution-result-card-open-map:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 55%, transparent);
+}
 
 .claude-workflow-card-header {
   appearance: none;

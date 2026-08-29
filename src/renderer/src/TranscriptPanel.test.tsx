@@ -2599,6 +2599,10 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       expect(html).toContain('UltraTask · gemini-3.1-pro')
       // A paused graph must not read as a failure: it is stopped for a person.
       expect(html).toContain('Needs attention')
+      // The delivered result must be VISIBLE, not collapsed behind the card's
+      // disclosure chevron. This card exists so a graph's answer reaches the
+      // thread; hiding it would reproduce the silence it was built to remove.
+      expect(html).toContain('The reviewed synthesis.')
     })
 
     it('replaces the title with the blocker in red when the round produced nothing', () => {

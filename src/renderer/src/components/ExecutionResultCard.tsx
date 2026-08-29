@@ -80,7 +80,16 @@ export function ExecutionResultCard({
           </button>
         ) : undefined
       }
-      detail={<div className="execution-result-card-body">{message.content}</div>}
+      // The result goes in `extras` (always visible), never `detail` (collapsed
+      // behind the chevron). This card exists so a graph's answer reaches the
+      // thread that asked for it; putting the answer behind a disclosure would
+      // reproduce the silence it was built to remove — the reader would see
+      // "Complete" and no result. Long output scrolls in place instead.
+      extras={
+        <div className="execution-result-card-body" data-outcome={outcome}>
+          {message.content}
+        </div>
+      }
     />
   )
 }

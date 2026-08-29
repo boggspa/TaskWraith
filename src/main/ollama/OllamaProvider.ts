@@ -2403,15 +2403,20 @@ function ollamaNativeToolParameters(
     case 'ultra_task':
       return {
         description: compact
-          ? 'Build and launch an UltraTask worker wave.'
-          : 'Build and launch the standard UltraTask researcher/worker/reviewer wave, using the highest supported reasoning tier.',
+          ? 'Start a staged UltraTask graph this thread owns; await its executionId.'
+          : 'Start a durable staged UltraTask graph (scouts, worker, review, synthesis) at the highest supported reasoning tier. Your thread stays accountable for it: call ensemble_await with the returned executionId and do not report completion before its result reaches you.',
         properties: {
-          task: { ...STRING, minLength: 1, description: 'Primary task for the worker wave.' },
+          task: { ...STRING, minLength: 1, description: 'Primary task for the graph.' },
           provider: { ...STRING, description: 'Optional target provider.' },
           model: { ...STRING, description: 'Optional target model.' },
           enableFanout: { type: 'boolean', description: 'Enable researcher fan-out.' },
           enableReview: { type: 'boolean', description: 'Enable the reviewer layer.' },
-          maxWorkers: { type: 'number', minimum: 2, maximum: 64 },
+          maxWorkers: {
+            type: 'number',
+            description: 'Requested durable scout stages (2-64, clamped to 6, default: 3).',
+            minimum: 2,
+            maximum: 64
+          },
           reasoningEffort: {
             ...STRING,
             enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode']

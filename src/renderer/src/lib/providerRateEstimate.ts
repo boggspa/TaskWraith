@@ -29,6 +29,7 @@
  */
 
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
+import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 
 /**
  * Minimal renderer-side mirror of `ProviderRateService`'s `ModelRateEntry`.
@@ -193,6 +194,28 @@ export function resolveModelRate(
   const table = rates[provider]
   if (!table || table.length === 0) return null
   const wanted = canonicalRateModelId(provider, model).toLowerCase()
+
+  // Ollama's table is entirely LOCAL models priced at $0 ("TaskWraith does not
+  // charge per token for local inference"). ollama.com CLOUD models are a paid
+  // service with no rows, so the ordinary fallbacks below would resolve real
+  // spend to a free local row and report $0 — either via `table[0]` or via the
+  // reverse prefix match, the exact hazard `isKnownLocalOllamaModel` documents
+  // and deliberately avoids.
+  //
+  // A cloud id therefore matches cloud rows only, and never falls through. With
+  // no cloud rows present it returns null, so callers render the cost blank
+  // rather than a confident and wrong zero. Add a real row and it prices
+  // normally.
+  if (provider === 'ollama' && isOllamaCloudModelId(wanted)) {
+    if (!wanted) return null
+    const cloudRows = table.filter((r) => isOllamaCloudModelId(r.modelId))
+    const exactCloud = cloudRows.find((r) => r.modelId.toLowerCase() === wanted)
+    if (exactCloud) return exactCloud
+    // Forward-only: a tag may EXTEND a cloud row, but a shorter id must never
+    // adopt a longer row's price.
+    return cloudRows.find((r) => wanted.startsWith(r.modelId.toLowerCase())) ?? null
+  }
+
   if (wanted) {
     const exact = table.find((r) => r.modelId.toLowerCase() === wanted)
     if (exact) return exact
