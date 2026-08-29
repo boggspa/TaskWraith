@@ -216,6 +216,23 @@ export function webSiteNavigationRefusal(binding: WebSiteBinding, url: string): 
   )
 }
 
+/**
+ * How many saved sites need the user to sign in again.
+ *
+ * ONLY `expired` counts. `unknown` deliberately does not: it is what an offline
+ * probe, a 5xx, or a site that has never been verified all produce, and badging
+ * those would make the signal mean "something happened" instead of "you are
+ * needed" - which is how a notification becomes noise.
+ */
+export function countWebSiteLoginsNeedingAttention(
+  // `status` is optional because the caller is reading it back across IPC,
+  // where a row from an older schema may not carry one. A missing status is
+  // not attention.
+  sites: readonly { status?: WebSiteLoginStatus }[]
+): number {
+  return sites.filter((site) => site.status === 'expired').length
+}
+
 /** Read-back guard for the durable catalogue. Returns null rather than throwing
  *  so one corrupt row drops instead of bricking the whole file. */
 export function parseWebSiteLogin(value: unknown): WebSiteLogin | null {

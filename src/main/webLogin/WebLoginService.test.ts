@@ -7,6 +7,7 @@ import { WebLoginService } from './WebLoginService'
 import { WebSiteLoginStore } from './WebSiteLoginStore'
 import { WebSiteProfileRegistry } from './WebSiteProfileRegistry'
 import type { WebLoginSignInWindowController } from './WebLoginSignInWindow'
+import type { WebSiteLogin } from '../../shared/webSiteLogin'
 
 const tempDirs: string[] = []
 
@@ -25,6 +26,7 @@ function harness(
       url: string
       partition: string
     }) => Promise<{ finalUrl: string; status: number }>
+    onStatusChanged?: (site: WebSiteLogin) => void
   } = {}
 ): {
   service: WebLoginService
@@ -64,7 +66,8 @@ function harness(
       store,
       profiles,
       signInWindows,
-      ...(overrides.probe ? { probe: overrides.probe } : {})
+      ...(overrides.probe ? { probe: overrides.probe } : {}),
+      ...(overrides.onStatusChanged ? { onStatusChanged: overrides.onStatusChanged } : {})
     }),
     store,
     order
@@ -229,5 +232,50 @@ describe('WebLoginService liveness', () => {
   it('probing a site that is gone is unknown, not a throw', async () => {
     const h = harness()
     expect(await h.service.probeLiveness('never-existed')).toBe('unknown')
+  })
+})
+
+describe('WebLoginService status change events', () => {
+  it('announces a site that has GONE expired', async () => {
+    const seen: string[] = []
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://example.com/', status: 401 }),
+      onStatusChanged: (site) => seen.push(`${site.id}:${site.status}`)
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    h.store.setStatus(id, 'signed-in')
+    await h.service.probeLiveness(id)
+    expect(seen).toEqual(['example-com:expired'])
+  })
+
+  it('stays SILENT when nothing changed', async () => {
+    // A surface that re-announces "still fine" is one the user stops reading,
+    // which is the same failure as crying wolf.
+    const seen: string[] = []
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://example.com/', status: 200 }),
+      onStatusChanged: (site) => seen.push(site.id)
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    await h.service.probeLiveness(id)
+    seen.length = 0
+    await h.service.probeLiveness(id)
+    await h.service.probeLiveness(id)
+    expect(seen).toEqual([])
+  })
+
+  it('announces recovery too, so a stale warning clears itself', async () => {
+    const seen: string[] = []
+    let status = 401
+    const h = harness({
+      probe: async () => ({ finalUrl: 'https://example.com/', status }),
+      onStatusChanged: (site) => seen.push(`${site.id}:${site.status}`)
+    })
+    const id = h.service.add({ origin: 'https://example.com' }).site!.id
+    h.store.setStatus(id, 'signed-in')
+    await h.service.probeLiveness(id)
+    status = 200
+    await h.service.probeLiveness(id)
+    expect(seen).toEqual(['example-com:expired', 'example-com:signed-in'])
   })
 })

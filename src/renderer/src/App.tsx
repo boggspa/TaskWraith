@@ -802,6 +802,7 @@ import {
   type ProjectReferenceCitationOpenRequest
 } from './lib/projectReferenceCitationOpen'
 import type { ProjectReferenceCitationOpenTarget } from './lib/projectReferenceCitations'
+import { countWebSiteLoginsNeedingAttention, type WebSiteLogin } from '../../shared/webSiteLogin'
 import {
   readDockSurface,
   resolveDockSurfaceContext,
@@ -2223,6 +2224,34 @@ function App(): React.JSX.Element {
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
   const [isWebSiteLoginsPanelOpen, setIsWebSiteLoginsPanelOpen] = useState(false)
+  // Saved sessions that have gone stale. TaskWraith cannot re-authenticate for
+  // the user, so the one thing it owes them is saying which site needs them -
+  // surfaced as a badged Work > Logins tab rather than a modal, because this is
+  // never urgent enough to interrupt what they are doing.
+  const [webSiteLoginAttention, setWebSiteLoginAttention] = useState(0)
+  useEffect(() => {
+    const api = window.api as unknown as {
+      listWebSiteLogins?: () => Promise<Array<{ status?: WebSiteLogin['status'] }>>
+      onWebSiteLoginsChanged?: (callback: () => void) => () => void
+    }
+    if (!api?.listWebSiteLogins) return
+    let active = true
+    const refreshAttention = (): void => {
+      void api
+        .listWebSiteLogins?.()
+        .then((sites) => {
+          if (!active) return
+          setWebSiteLoginAttention(countWebSiteLoginsNeedingAttention(sites))
+        })
+        .catch(() => {})
+    }
+    refreshAttention()
+    const unsubscribe = api.onWebSiteLoginsChanged?.(refreshAttention)
+    return () => {
+      active = false
+      unsubscribe?.()
+    }
+  }, [])
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
@@ -26334,7 +26363,9 @@ function App(): React.JSX.Element {
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
-    isWebSiteLoginsPanelOpen,
+    // The tab also appears unopened when a site needs re-authentication, so the
+    // notification and the fix are one click apart.
+    isWebSiteLoginsPanelOpen: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
     isPinnedMessagesPanelOpen,
     isTerminalDockAvailable
   })
@@ -26415,9 +26446,10 @@ function App(): React.JSX.Element {
       id: 'logins',
       label: 'Logins',
       icon: <SiteLoginSymbolIcon />,
-      enabled: isWebSiteLoginsPanelOpen,
+      enabled: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
+      badge: webSiteLoginAttention,
       group: 'work',
-      hint: 'Sites you stay signed into'
+      hint: webSiteLoginAttention > 0 ? 'A saved sign-in needs you' : 'Sites you stay signed into'
     },
     {
       id: 'pins',

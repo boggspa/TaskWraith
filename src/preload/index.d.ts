@@ -2341,6 +2341,7 @@ declare global {
         | { ok: true; text: string; truncated: boolean; charCount: number }
         | { ok: false; code: string; message: string }
       >
+      onWebSiteLoginsChanged: (callback: (site: WebSiteLogin) => void) => () => void
       listWebSiteLogins: () => Promise<WebSiteLogin[]>
       addWebSiteLogin: (input: {
         origin: string

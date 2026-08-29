@@ -94,6 +94,16 @@ export function RightDockSurfaceSwitcher({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const active = tabs.find((tab) => tab.id === activeTab) ?? tabs[0]
+  /**
+   * Whether some surface OTHER than the one on screen is waiting on the user.
+   * The per-surface counts live inside the picker, which is closed by default,
+   * so without this the whole notification would only ever reach someone who
+   * had already gone looking for it.
+   */
+  const pendingElsewhere = useMemo(
+    () => tabs.some((tab) => tab.id !== activeTab && (tab.badge ?? 0) > 0),
+    [tabs, activeTab]
+  )
 
   // Outside-click + Escape dismiss (only while open).
   useEffect(() => {
@@ -213,13 +223,16 @@ export function RightDockSurfaceSwitcher({
         className={`right-dock-switcher${open && mode === 'menu' ? ' open' : ''}`}
         aria-haspopup="menu"
         aria-expanded={open && mode === 'menu'}
-        aria-label={`Current surface: ${active?.label ?? 'Surfaces'}. Choose a surface`}
+        aria-label={`Current surface: ${active?.label ?? 'Surfaces'}. Choose a surface${
+          pendingElsewhere ? '. Another surface needs you' : ''
+        }`}
         onClick={openMenu}
       >
         <span className="right-dock-switcher-icon" aria-hidden>
           {active?.icon}
         </span>
         <span className="right-dock-switcher-label">{active?.label ?? 'Surfaces'}</span>
+        {pendingElsewhere && <span className="right-dock-switcher-pending" aria-hidden />}
         <svg
           className="right-dock-switcher-caret"
           viewBox="0 0 24 24"

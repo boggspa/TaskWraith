@@ -244,6 +244,12 @@ export function WebLoginsDockPanel(): JSX.Element {
 
   useEffect(() => {
     void refresh()
+    // Main announces a status change (a probe finding a session expired, or
+    // recovering). Re-read rather than patching a row: the catalogue is
+    // main-owned and this panel holds no authority over it.
+    const api = bridge() as { onWebSiteLoginsChanged?: (cb: () => void) => () => void } | undefined
+    const unsubscribe = api?.onWebSiteLoginsChanged?.(() => void refresh())
+    return () => unsubscribe?.()
   }, [refresh])
 
   const handleAdd = useCallback(async (): Promise<void> => {

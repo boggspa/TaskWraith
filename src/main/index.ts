@@ -4594,7 +4594,13 @@ const webLoginService = new WebLoginService({
   store: webSiteLoginStore,
   profiles: webSiteProfiles,
   signInWindows: new WebLoginSignInWindowController({ createWindow: createSignInBrowserWindow }),
-  probe: createElectronWebSiteLivenessProbe()
+  probe: createElectronWebSiteLivenessProbe(),
+  // A saved session going stale is the one thing TaskWraith cannot fix for the
+  // user, so it has to be excellent at saying so. Fan the change out; the
+  // renderer badges the Work > Logins tab.
+  onStatusChanged: (site) => {
+    safeSendToWebContents(mainWindow, 'web-login:changed', site)
+  }
 })
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {

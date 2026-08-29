@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   authorizedOriginsForSite,
+  countWebSiteLoginsNeedingAttention,
   isNavigationAllowedForSite,
   isWebSiteLoginId,
   normalizeWebSiteOrigin,
@@ -224,5 +225,33 @@ describe('webSiteNavigationRefusal', () => {
     const message = webSiteNavigationRefusal(binding, 'javascript:alert(document.cookie)')
     expect(message).not.toContain('javascript:')
     expect(message).toContain('that address')
+  })
+})
+
+describe('countWebSiteLoginsNeedingAttention', () => {
+  it('counts only expired sites', () => {
+    expect(
+      countWebSiteLoginsNeedingAttention([
+        { status: 'expired' },
+        { status: 'expired' },
+        { status: 'signed-in' }
+      ])
+    ).toBe(2)
+  })
+
+  it('does NOT count unknown — that is offline, 5xx and never-verified', () => {
+    // Badging those would make the signal mean "something happened" rather than
+    // "you are needed", which is how a notification becomes noise.
+    expect(
+      countWebSiteLoginsNeedingAttention([
+        { status: 'unknown' },
+        { status: 'never' },
+        { status: 'signed-in' }
+      ])
+    ).toBe(0)
+  })
+
+  it('is zero for an empty catalogue', () => {
+    expect(countWebSiteLoginsNeedingAttention([])).toBe(0)
   })
 })

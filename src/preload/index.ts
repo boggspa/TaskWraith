@@ -2225,6 +2225,11 @@ const api = {
     ipcRenderer.invoke('projects:studio-discard', input),
   listProjectStudioArtifacts: (input: { projectId: string; includeDiscarded?: boolean }) =>
     ipcRenderer.invoke('projects:studio-list', input),
+  onWebSiteLoginsChanged: (callback: (site: unknown) => void) => {
+    const wrapped = (_event: unknown, site: unknown): void => callback(site)
+    ipcRenderer.on('web-login:changed', wrapped)
+    return () => ipcRenderer.removeListener('web-login:changed', wrapped)
+  },
   listWebSiteLogins: () => ipcRenderer.invoke('web-login:list'),
   addWebSiteLogin: (input: { origin: string; label?: string }) =>
     ipcRenderer.invoke('web-login:add', input),

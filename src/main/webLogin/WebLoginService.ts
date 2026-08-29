@@ -33,6 +33,12 @@ export interface WebLoginServiceDeps {
   /** Optional: without it every probe answers "unknown", which is the honest
    *  degraded state rather than a guess. */
   probe?: WebSiteLivenessProbe
+  /**
+   * Fired when a probe CHANGES a site's status. Only on a change, never on
+   * every probe: a surface that re-announces "still fine" every few minutes is
+   * one the user stops reading, which is the same failure as crying wolf.
+   */
+  onStatusChanged?: (site: WebSiteLogin) => void
   log?: (line: string) => void
 }
 
@@ -132,7 +138,9 @@ export class WebLoginService {
       }
     }
     const status = classifyWebSiteLiveness(site, response)
-    this.deps.store.setStatus(id, status)
+    const previous = site.status
+    const updated = this.deps.store.setStatus(id, status)
+    if (updated && previous !== status) this.deps.onStatusChanged?.(updated)
     return status
   }
 
