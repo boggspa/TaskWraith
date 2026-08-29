@@ -72,6 +72,6 @@ export function resolveWebSiteCanvasBinding(
   if (authorizedOrigins.length === 0) throw new UnknownWebSiteLoginError(siteId)
   return {
     browserProfile: deps.profiles.profileFor(site.id),
-    siteBinding: { siteId: site.id, authorizedOrigins }
+    siteBinding: { siteId: site.id, authorizedOrigins, agentAccess: site.agentAccess }
   }
 }

@@ -198,7 +198,11 @@ describe('proposeWebSiteLoginId', () => {
 })
 
 describe('webSiteNavigationRefusal', () => {
-  const binding = { siteId: 'example-com', authorizedOrigins: ['https://example.com'] }
+  const binding = {
+    siteId: 'example-com',
+    authorizedOrigins: ['https://example.com'],
+    agentAccess: 'act' as const
+  }
 
   it('names the site and the allowed origins so the refusal is actionable', () => {
     const message = webSiteNavigationRefusal(binding, 'https://evil.com/x')

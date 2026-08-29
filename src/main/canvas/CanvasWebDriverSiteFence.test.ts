@@ -30,7 +30,11 @@ interface Harness {
 }
 
 function harness(
-  siteBinding?: { siteId: string; authorizedOrigins: string[] },
+  siteBinding?: {
+    siteId: string
+    authorizedOrigins: string[]
+    agentAccess: 'off' | 'read' | 'act'
+  },
   partitionOverride?: string
 ): Harness {
   const listeners = new Map<string, Listener[]>()
@@ -59,6 +63,16 @@ function harness(
       windowOpen = handler
     }),
     setWebRTCIPHandlingPolicy: vi.fn(),
+    // Minimal isolated-world stub: enough for an ALLOWED act to get past the
+    // read-only gate and reach dispatch, which is what those cases assert.
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+      ok: true,
+      found: true,
+      action: 'click',
+      executed: true,
+      verified: 'yes',
+      trustedInputEpoch: 0
+    })),
     getURL: vi.fn(() => 'https://example.com/'),
     on: vi.fn((event: string, listener: Listener) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener])
@@ -97,7 +111,12 @@ function harness(
   }
 }
 
-const BOUND = { siteId: 'example-com', authorizedOrigins: ['https://example.com'] }
+const BOUND = {
+  siteId: 'example-com',
+  authorizedOrigins: ['https://example.com'],
+  agentAccess: 'act' as const
+}
+const BOUND_READ_ONLY = { ...BOUND, agentAccess: 'read' as const }
 
 describe('CanvasWebDriver site fence', () => {
   it('opens an in-fence URL', async () => {
@@ -240,6 +259,48 @@ describe('CanvasWebDriver site binding integrity', () => {
     await expect(h.driver.navigate({ url: 'https://example.com/redirector' })).rejects.toThrow(
       /may only navigate to/i
     )
+    await h.driver.close()
+  })
+})
+
+describe('CanvasWebDriver read-only site access', () => {
+  const ACTUATION = ['click', 'fill', 'key', 'scroll', 'hover', 'select'] as const
+
+  it.each(ACTUATION)('refuses %s on a read-only site, do-not-retry', async (kind) => {
+    const h = harness(BOUND_READ_ONLY)
+    await h.driver.open({ url: 'https://example.com/' })
+    const result = await h.driver.act({ kind, ref: 'e1', value: 'x' })
+    expect(result.ok).toBe(false)
+    expect(result.executed).toBe(false)
+    expect(result.refusalReason).toBe('site_read_only')
+    expect(result.message).toMatch(/read-only/i)
+    expect(result.message).toMatch(/Do not retry/i)
+    // The refusal has to name the only way out, which is the USER widening it.
+    expect(result.message).toMatch(/Work > Logins/)
+    await h.driver.close()
+  })
+
+  it('still allows the read-only verb wait_for', async () => {
+    const h = harness(BOUND_READ_ONLY)
+    await h.driver.open({ url: 'https://example.com/' })
+    const result = await h.driver.act({ kind: 'wait_for', selector: '#done', timeoutMs: 1 })
+    expect(result.refusalReason).not.toBe('site_read_only')
+    await h.driver.close()
+  })
+
+  it('permits actuation on a site the user set to act', async () => {
+    const h = harness(BOUND)
+    await h.driver.open({ url: 'https://example.com/' })
+    const result = await h.driver.act({ kind: 'click', ref: 'e1' })
+    expect(result.refusalReason).not.toBe('site_read_only')
+    await h.driver.close()
+  })
+
+  it('leaves an UNBOUND canvas actuable exactly as before', async () => {
+    const h = harness()
+    await h.driver.open({ url: 'https://anything.example/' })
+    const result = await h.driver.act({ kind: 'click', ref: 'e1' })
+    expect(result.refusalReason).not.toBe('site_read_only')
     await h.driver.close()
   })
 })

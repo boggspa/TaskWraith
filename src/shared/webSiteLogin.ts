@@ -177,6 +177,15 @@ export function isNavigationAllowedForOrigins(
 export interface WebSiteBinding {
   siteId: string
   authorizedOrigins: readonly string[]
+  /**
+   * How much authority the user granted over this site. Snapshotted with the
+   * origins at bind time for the same reason: a live read would silently
+   * re-scope a canvas an agent is already working in.
+   *
+   * `read` is not advisory. It refuses every actuation verb at the driver, so a
+   * user who set a bank to "agents can read" gets exactly that.
+   */
+  agentAccess: WebSiteLoginAccess
 }
 
 /** The refusal a bound surface returns. Deliberately names the site and the

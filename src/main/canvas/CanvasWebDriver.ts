@@ -1505,7 +1505,7 @@ export class CanvasWebDriver implements CanvasDriver {
     // the same task as dispatch, while the main input-event epoch remains an
     // independent defence against input the isolated listener could not observe.
     const refuse = (
-      refusalReason: 'user_active' | 'stale_input_epoch',
+      refusalReason: 'user_active' | 'stale_input_epoch' | 'site_read_only',
       message: string
     ): CanvasActResult => ({
       ok: false,
@@ -1520,6 +1520,23 @@ export class CanvasWebDriver implements CanvasDriver {
       url: wc.getURL(),
       title: surface.getTitle()
     })
+    // A site the user granted READ access to is not actuable, whatever the
+    // run's permission tier says. This is enforced here rather than at the
+    // executor because act() is the single entry every actuation verb passes
+    // through, so one check covers click/fill/key/scroll/hover/select and any
+    // verb added later. `wait_for` is bounded read-only and stays allowed.
+    if (
+      action.kind !== 'wait_for' &&
+      this.siteBinding &&
+      this.siteBinding.agentAccess === 'read'
+    ) {
+      return refuse(
+        'site_read_only',
+        `The saved login "${this.siteBinding.siteId}" is set to read-only, so this canvas can be ` +
+          `read but not acted in. Do not retry. If this action is needed, ask the user to change ` +
+          `that site to "Agents can act as me" in Work > Logins.`
+      )
+    }
     if (action.kind !== 'wait_for' && Date.now() < this.userActiveUntil) {
       return refuse(
         'user_active',

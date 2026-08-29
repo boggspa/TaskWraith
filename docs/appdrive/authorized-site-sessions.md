@@ -241,9 +241,13 @@ default.
     `agentAccess`, status. **Never a cookie, never a header, never a secret.**
   - `web_login_open` - open a canvas bound to that site. Refuses a site whose
     `agentAccess` is `off` or one outside the run's lease set.
-- `agentAccess: 'read'` refuses every actuation verb at the executor, not at the
-  driver, so the refusal is uniform across every verb rather than re-derived per
-  driver method.
+- `agentAccess: 'read'` refuses every actuation verb in `CanvasWebDriver.act()`,
+  which is the single entry click / fill / key / scroll / hover / select all
+  pass through - so one check covers them and any verb added later. `wait_for`
+  is bounded read-only and stays allowed. The refusal is `site_read_only`,
+  do-not-retry, and it names the only way out: the USER widening the site.
+  (An earlier draft of this document said "at the executor"; the executor does
+  not know about bindings, and the driver does.)
 - Tool placement: the highest minted generation is **v17** (plus its `-mesh`
   twin), and existing generations are immutable, pinned by exact-membership and
   sha256 tests. The established route for a tool that does not need to be
@@ -299,8 +303,11 @@ A row shows label, origin, status pill, and the access selector
   costs one orphaned directory on disk instead of handing a re-added site a
   cookie jar the user believes they deleted.
 
-The panel is also where a `signin_required` prompt lands, so the notification
-and the fix are one click apart.
+**Not yet built:** the panel shows an expired status when you look at it, and
+`web_login_open` refuses an expired session by name, but nothing proactively
+surfaces "this site needs you". A run that stops for this reason therefore
+reports the refusal in its transcript rather than raising a prompt. Closing that
+means an event channel from main plus a renderer surface, and is its own slice.
 
 ---
 
@@ -389,11 +396,14 @@ the shipped Canvas Browser.
 
 ## 13. Open questions
 
-1. Should a site be promotable to `act` at all for a class of high-value
-   origins - banking, and email-as-identity in particular, since email is the
-   password-reset root for everything else? A hard "never `act`" class is
-   cheap to add and impossible to add later without breaking someone's
-   workflow.
+1. ~~Should a site be promotable to `act` at all for a class of high-value
+   origins - banking, and email-as-identity in particular?~~ **ANSWERED
+   2026-08-29 by the owner: no hard class. It stays user-driven.** Some people
+   will want an agent helping with banking and email, and that is their call to
+   make at their own risk; the product should not decide it for them. What the
+   product owes them instead is that the dial is honest - which is why `read`
+   now refuses actuation at the driver rather than being advisory, and why a new
+   site still starts at no access.
 2. Should `web_login_list` be visible to a run whose lease names no sites?
    Listing is not acting, but it is reconnaissance, and it tells a model which
    accounts exist.
