@@ -78,10 +78,24 @@ interface WebSiteLoginStateFile {
    * user believes they deleted.
    */
   retiredIds: string[]
+  /**
+   * Origins the user was offered from the OLD shared Canvas Browser jar and
+   * declined. Kept separate from `retiredIds` on purpose: that list feeds
+   * `proposeWebSiteLoginId` as a collision set, so a dismissal parked there
+   * would silently change the id - and therefore the partition directory - of
+   * a site the user later adds by hand.
+   */
+  dismissedMigrationOrigins: string[]
 }
 
-const EMPTY_STATE: WebSiteLoginStateFile = { schemaVersion: 1, sites: [], retiredIds: [] }
+const EMPTY_STATE: WebSiteLoginStateFile = {
+  schemaVersion: 1,
+  sites: [],
+  retiredIds: [],
+  dismissedMigrationOrigins: []
+}
 const MAX_RETIRED_IDS = 1024
+const MAX_DISMISSED_MIGRATION_ORIGINS = 256
 
 function readJson<T>(filePath: string, fallback: T, log: (line: string) => void): T {
   try {
@@ -130,7 +144,17 @@ function normalizeState(value: unknown): WebSiteLoginStateFile {
       retiredIds.push(entry)
     }
   }
-  return { schemaVersion: 1, sites, retiredIds }
+  const rawDismissed = (value as Partial<WebSiteLoginStateFile>).dismissedMigrationOrigins
+  const dismissedMigrationOrigins: string[] = []
+  if (Array.isArray(rawDismissed)) {
+    for (const entry of rawDismissed) {
+      const origin = normalizeWebSiteOrigin(entry)
+      if (!origin || dismissedMigrationOrigins.includes(origin)) continue
+      if (dismissedMigrationOrigins.length >= MAX_DISMISSED_MIGRATION_ORIGINS) break
+      dismissedMigrationOrigins.push(origin)
+    }
+  }
+  return { schemaVersion: 1, sites, retiredIds, dismissedMigrationOrigins }
 }
 
 function cleanExtraOrigins(input: unknown, siteOrigin: string): string[] | null {
@@ -244,7 +268,7 @@ export class WebSiteLoginStore {
     const retiredIds = state.retiredIds.includes(id)
       ? state.retiredIds
       : [...state.retiredIds, id].slice(-MAX_RETIRED_IDS)
-    this.writeState({ schemaVersion: 1, sites: next, retiredIds })
+    this.writeState({ ...state, sites: next, retiredIds })
     return true
   }
 
@@ -288,6 +312,26 @@ export class WebSiteLoginStore {
       blockedEmbedOrigins: [...current, normalized].slice(-MAX_WEB_SITE_BLOCKED_EMBEDS)
     }
     this.writeState(state)
+  }
+
+  /** Origins the user declined when offered the old shared jar's sign-ins. */
+  listDismissedMigrationOrigins(): string[] {
+    return this.readState().dismissedMigrationOrigins
+  }
+
+  /** Record a decline, so the prompt does not ask a second time. */
+  dismissMigrationOrigin(origin: string): boolean {
+    const normalized = normalizeWebSiteOrigin(origin)
+    if (!normalized) return false
+    const state = this.readState()
+    if (state.dismissedMigrationOrigins.includes(normalized)) return true
+    this.writeState({
+      ...state,
+      dismissedMigrationOrigins: [...state.dismissedMigrationOrigins, normalized].slice(
+        -MAX_DISMISSED_MIGRATION_ORIGINS
+      )
+    })
+    return true
   }
 
   private readState(): WebSiteLoginStateFile {

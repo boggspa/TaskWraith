@@ -2231,6 +2231,10 @@ const api = {
     return () => ipcRenderer.removeListener('web-login:changed', wrapped)
   },
   listWebSiteLogins: () => ipcRenderer.invoke('web-login:list'),
+  listWebSiteLoginMigrationCandidates: () => ipcRenderer.invoke('web-login:migration-candidates'),
+  dismissWebSiteLoginMigrationCandidate: (input: { origin: string }) =>
+    ipcRenderer.invoke('web-login:migration-dismiss', input),
+  clearSharedBrowserData: () => ipcRenderer.invoke('web-login:clear-shared-jar'),
   addWebSiteLogin: (input: { origin: string; label?: string }) =>
     ipcRenderer.invoke('web-login:add', input),
   updateWebSiteLogin: (input: {

@@ -1376,7 +1376,7 @@ import { resolveAppshotsTargetOwnership } from './AppshotsTargetOwnership'
 import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
-import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
+import { CANVAS_BROWSER_PARTITION, CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { WebSiteLoginStore } from './webLogin/WebSiteLoginStore'
 import { WebSiteProfileRegistry } from './webLogin/WebSiteProfileRegistry'
 import { resolveWebSiteCanvasBinding } from './webLogin/WebSiteCanvasBinding'
@@ -4600,7 +4600,19 @@ const webLoginService = new WebLoginService({
   // renderer badges the Work > Logins tab.
   onStatusChanged: (site) => {
     safeSendToWebContents(mainWindow, 'web-login:changed', site)
-  }
+  },
+  // The OLD shared Canvas Browser jar - one cookie store every site and every
+  // canvas shared. Existing users are sitting in it right now, so the feature
+  // has to offer a way out rather than only being correct for new ones.
+  sharedJarCookies: async () => {
+    const cookies = await session.fromPartition(CANVAS_BROWSER_PARTITION).cookies.get({})
+    return cookies.map((cookie) => ({
+      domain: cookie.domain,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure
+    }))
+  },
+  clearSharedJar: () => canvasBrowserProfile.clearBrowsingData()
 })
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: (hostId) => {
@@ -55192,7 +55204,10 @@ if (isGeminiMcpBridgeProcess) {
       updateSite: (id, patch) => webLoginService.update(id, patch),
       removeSite: (id) => webLoginService.forget(id),
       signOutSite: (id) => webLoginService.signOut(id),
-      signInSite: (id) => webLoginService.signIn(id)
+      signInSite: (id) => webLoginService.signIn(id),
+      listMigrationCandidates: () => webLoginService.migrationCandidates(),
+      dismissMigrationCandidate: (origin) => webLoginService.dismissMigrationCandidate(origin),
+      clearSharedJar: () => webLoginService.clearSharedJar()
     })
     // Authoritative project changes fan out to the main window; the renderer
     // facade reconciles its optimistic snapshot from this event. The payload

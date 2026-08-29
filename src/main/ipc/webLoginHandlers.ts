@@ -2,6 +2,7 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
   isWebSiteLoginAccess,
+  type SharedJarCandidate,
   type WebSiteLogin,
   type WebSiteLoginAccess
 } from '../../shared/webSiteLogin'
@@ -50,6 +51,11 @@ export interface WebLoginHandlerDeps {
   /** Clears the site's partition and keeps the row. */
   signOutSite: (id: string) => Promise<WebLoginRemoveResult>
   signInSite: (id: string) => Promise<WebLoginSignInResult>
+  /** Sign-ins still sitting in the old shared Canvas Browser jar. An OFFER:
+   *  no cookie is ever copied, the user re-authenticates into the new jar. */
+  listMigrationCandidates: () => Promise<SharedJarCandidate[]>
+  dismissMigrationCandidate: (origin: string) => WebLoginRemoveResult
+  clearSharedJar: () => Promise<WebLoginRemoveResult>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -124,13 +130,22 @@ function parseIdRequest(raw: unknown, label: string): string {
   return requireId(value.id, 'Site id')
 }
 
+function parseOriginRequest(raw: unknown, label: string): string {
+  const value = assertExactKeys(raw, ['origin'], label)
+  if (typeof value.origin !== 'string') throw new Error('Site address must be a string.')
+  return value.origin
+}
+
 export const WEB_LOGIN_IPC_CHANNELS = [
   'web-login:list',
   'web-login:add',
   'web-login:update',
   'web-login:remove',
   'web-login:sign-in',
-  'web-login:sign-out'
+  'web-login:sign-out',
+  'web-login:migration-candidates',
+  'web-login:migration-dismiss',
+  'web-login:clear-shared-jar'
 ] as const
 
 export function registerWebLoginHandlers(deps: WebLoginHandlerDeps): void {
@@ -163,5 +178,20 @@ export function registerWebLoginHandlers(deps: WebLoginHandlerDeps): void {
   ipcMain.handle('web-login:sign-out', async (event, raw: unknown) => {
     deps.assertSenderCanManageWebLogins(event)
     return deps.signOutSite(parseIdRequest(raw, 'site login sign-out'))
+  })
+
+  ipcMain.handle('web-login:migration-candidates', async (event) => {
+    deps.assertSenderCanManageWebLogins(event)
+    return deps.listMigrationCandidates()
+  })
+
+  ipcMain.handle('web-login:migration-dismiss', async (event, raw: unknown) => {
+    deps.assertSenderCanManageWebLogins(event)
+    return deps.dismissMigrationCandidate(parseOriginRequest(raw, 'site login migration dismiss'))
+  })
+
+  ipcMain.handle('web-login:clear-shared-jar', async (event) => {
+    deps.assertSenderCanManageWebLogins(event)
+    return deps.clearSharedJar()
   })
 }

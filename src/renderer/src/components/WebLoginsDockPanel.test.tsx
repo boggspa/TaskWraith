@@ -35,6 +35,10 @@ function render(overrides: Partial<WebLoginsDockPanelViewProps> = {}): string {
     onAcceptSuggestions: () => {},
     onDismissSuggestions: () => {},
     onAllowBlockedEmbeds: () => {},
+    migrationCandidates: [],
+    onMigrate: () => {},
+    onDismissMigration: () => {},
+    onClearSharedBrowser: () => {},
     ...overrides
   }
   return renderToStaticMarkup(<WebLoginsDockPanelView {...props} />)
@@ -146,5 +150,39 @@ describe('WebLoginsDockPanelView blocked embeds', () => {
     })
     expect(html).toContain('https://a.example')
     expect(html).toContain('https://b.example')
+  })
+})
+
+describe('WebLoginsDockPanelView shared-jar migration', () => {
+  const candidate = { origin: 'https://mail.example.com', host: 'mail.example.com' }
+
+  it('names the site and says the user signs in again', () => {
+    // The offer has to be honest that nothing is copied - a prompt implying
+    // the session moves across would be a promise the feature cannot keep.
+    const html = render({ migrationCandidates: [candidate] })
+    expect(html).toContain('mail.example.com')
+    expect(html).toContain('sign in again')
+  })
+
+  it('offers no migration section when the shared jar has nothing to move', () => {
+    expect(render()).not.toContain('web-logins-migration')
+  })
+
+  it('hides the clear-shared button while candidates remain', () => {
+    // The jar is the only copy. Offering to empty it in the same breath as
+    // listing what would be lost is how a user loses a session by reflex.
+    const html = render({ migrationCandidates: [candidate] })
+    expect(html).not.toContain('web-logins-clear-shared')
+  })
+
+  it('offers the clear once nothing is left to lose', () => {
+    const html = render()
+    expect(html).toContain('Clear the shared browser data')
+    expect(html).toContain('Saved logins here are untouched')
+  })
+
+  it('still renders no password field with a migration offer on screen', () => {
+    const html = render({ migrationCandidates: [candidate], sites: [site()] })
+    expect(html).not.toContain('type="password"')
   })
 })

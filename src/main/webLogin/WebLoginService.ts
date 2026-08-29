@@ -1,5 +1,8 @@
 import {
   partitionForWebSiteLogin,
+  proposeSharedJarMigration,
+  type SharedJarCandidate,
+  type SharedJarCookie,
   type WebSiteLogin,
   type WebSiteLoginAccess,
   type WebSiteLoginStatus
@@ -39,6 +42,15 @@ export interface WebLoginServiceDeps {
    * one the user stops reading, which is the same failure as crying wolf.
    */
   onStatusChanged?: (site: WebSiteLogin) => void
+  /**
+   * Reads the cookies of the OLD shared Canvas Browser jar - the single
+   * ambient-authority jar every site used before per-site partitions existed.
+   * Optional: without it the migration prompt simply never appears, which is
+   * the right degraded behaviour for a prompt.
+   */
+  sharedJarCookies?: () => Promise<readonly SharedJarCookie[]>
+  /** Clears that same shared jar, once the user has moved what they wanted. */
+  clearSharedJar?: () => Promise<void>
   log?: (line: string) => void
 }
 
@@ -119,6 +131,72 @@ export class WebLoginService {
    * answer to "TaskWraith cannot re-authenticate for you, so it had better be
    * excellent at saying so".
    */
+  /**
+   * Sign-ins sitting in the old shared jar that could each have a partition of
+   * their own.
+   *
+   * Deliberately returns candidates rather than migrating them. Copying the
+   * cookies across would be the obvious implementation and it is the wrong one
+   * twice over: `httpOnly`, `sameSite`, host-only-vs-domain and partition-key
+   * nuances mean a copied jar half-works, and a session that looks signed in
+   * and then fails mid-task is worse than one that plainly asks for a password.
+   * And it would move a live credential without the user authenticating, which
+   * is the one thing this whole feature exists to avoid.
+   */
+  async migrationCandidates(): Promise<SharedJarCandidate[]> {
+    if (!this.deps.sharedJarCookies) return []
+    let cookies: readonly SharedJarCookie[]
+    try {
+      cookies = await this.deps.sharedJarCookies()
+    } catch (error) {
+      this.deps.log?.(`[web-login] shared jar read failed: ${String(error)}`)
+      return []
+    }
+    return proposeSharedJarMigration({
+      cookies,
+      savedOrigins: this.deps.store.list().map((site) => site.origin),
+      dismissedOrigins: this.deps.store.listDismissedMigrationOrigins()
+    })
+  }
+
+  /** The user said no to one candidate. Do not offer it again. */
+  dismissMigrationCandidate(origin: string): WebLoginMutationResult {
+    if (!this.deps.store.dismissMigrationOrigin(origin)) {
+      return { ok: false, error: 'That is not a site address.' }
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Empty the old shared jar. Refuses while candidates remain, because the jar
+   * is the only copy - clearing it signs the user out of everything they have
+   * not moved across yet, and "it logged me out of everything" is not a thing
+   * a housekeeping button gets to do by surprise.
+   */
+  async clearSharedJar(): Promise<WebLoginMutationResult> {
+    if (!this.deps.clearSharedJar) {
+      return { ok: false, error: 'The shared browser data is not available yet.' }
+    }
+    const remaining = await this.migrationCandidates()
+    if (remaining.length > 0) {
+      return {
+        ok: false,
+        error:
+          `Save or dismiss the ${remaining.length} remaining sign-in${remaining.length === 1 ? '' : 's'} first. ` +
+          'Clearing now would sign you out of them with no way back.'
+      }
+    }
+    try {
+      await this.deps.clearSharedJar()
+    } catch (error) {
+      if (isSurfacesOpenError(error)) {
+        return { ok: false, error: 'Close the open browser canvases first, then clear.' }
+      }
+      return { ok: false, error: String(error) }
+    }
+    return { ok: true }
+  }
+
   async probeLiveness(id: string): Promise<WebSiteLoginStatus> {
     const site = this.deps.store.get(id)
     if (!site) return 'unknown'
@@ -168,9 +246,16 @@ export class WebLoginService {
   }
 }
 
-function describeClearFailure(error: unknown): string {
+/** The profile refuses to clear while a page is still live on it. One place
+ *  knows that string, because two callers word the remedy differently. */
+function isSurfacesOpenError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /Close all Canvas Browser surfaces/i.test(message)
-    ? 'Close this site’s open browser canvases first, then try again.'
-    : message
+}
+
+function describeClearFailure(error: unknown): string {
+  if (isSurfacesOpenError(error)) {
+    return 'Close this site’s open browser canvases first, then try again.'
+  }
+  return error instanceof Error ? error.message : String(error)
 }

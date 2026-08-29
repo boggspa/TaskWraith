@@ -24,6 +24,9 @@ function harness(overrides: Partial<WebLoginHandlerDeps> = {}): {
     removeSite: vi.fn(async () => ({ ok: true })),
     signOutSite: vi.fn(async () => ({ ok: true })),
     signInSite: vi.fn(async () => ({ ok: true })),
+    listMigrationCandidates: vi.fn(async () => []),
+    dismissMigrationCandidate: vi.fn(() => ({ ok: true })),
+    clearSharedJar: vi.fn(async () => ({ ok: true })),
     ...overrides
   }
   registerWebLoginHandlers(deps)
@@ -118,5 +121,31 @@ describe('registerWebLoginHandlers', () => {
     await expect(
       h.invoke('web-login:update', { id: 'x', extraOrigins: ['https://a.example', 7] })
     ).rejects.toThrow(/Malformed/)
+  })
+})
+
+describe('web-login migration channels', () => {
+  it('never lets a payload address something other than an origin', async () => {
+    // assertExactKeys is the whole validation: a dismissal that accepted an
+    // `id` too would let a caller retire a saved site through the housekeeping
+    // channel.
+    const h = harness()
+    await expect(
+      h.invoke('web-login:migration-dismiss', { origin: 'https://example.com', id: 'example-com' })
+    ).rejects.toThrow()
+  })
+
+  it('rejects a non-string origin rather than coercing it', async () => {
+    const h = harness()
+    await expect(h.invoke('web-login:migration-dismiss', { origin: 42 })).rejects.toThrow(
+      /must be a string/i
+    )
+  })
+
+  it('passes the origin through untouched, so main owns normalization', async () => {
+    const dismissMigrationCandidate = vi.fn(() => ({ ok: true }))
+    const h = harness({ dismissMigrationCandidate })
+    await h.invoke('web-login:migration-dismiss', { origin: 'EXAMPLE.com' })
+    expect(dismissMigrationCandidate).toHaveBeenCalledWith('EXAMPLE.com')
   })
 })

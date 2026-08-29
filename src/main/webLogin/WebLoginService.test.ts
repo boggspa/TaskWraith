@@ -7,7 +7,7 @@ import { WebLoginService } from './WebLoginService'
 import { WebSiteLoginStore } from './WebSiteLoginStore'
 import { WebSiteProfileRegistry } from './WebSiteProfileRegistry'
 import type { WebLoginSignInWindowController } from './WebLoginSignInWindow'
-import type { WebSiteLogin } from '../../shared/webSiteLogin'
+import type { SharedJarCookie, WebSiteLogin } from '../../shared/webSiteLogin'
 
 const tempDirs: string[] = []
 
@@ -27,6 +27,8 @@ function harness(
       partition: string
     }) => Promise<{ finalUrl: string; status: number }>
     onStatusChanged?: (site: WebSiteLogin) => void
+    sharedJarCookies?: () => Promise<readonly SharedJarCookie[]>
+    clearSharedJar?: () => Promise<void>
   } = {}
 ): {
   service: WebLoginService
@@ -67,7 +69,9 @@ function harness(
       profiles,
       signInWindows,
       ...(overrides.probe ? { probe: overrides.probe } : {}),
-      ...(overrides.onStatusChanged ? { onStatusChanged: overrides.onStatusChanged } : {})
+      ...(overrides.onStatusChanged ? { onStatusChanged: overrides.onStatusChanged } : {}),
+      ...(overrides.sharedJarCookies ? { sharedJarCookies: overrides.sharedJarCookies } : {}),
+      ...(overrides.clearSharedJar ? { clearSharedJar: overrides.clearSharedJar } : {})
     }),
     store,
     order
@@ -277,5 +281,99 @@ describe('WebLoginService status change events', () => {
     status = 200
     await h.service.probeLiveness(id)
     expect(seen).toEqual(['example-com:expired', 'example-com:signed-in'])
+  })
+})
+
+describe('WebLoginService shared-jar migration', () => {
+  const sessionCookie = (domain: string): SharedJarCookie => ({
+    domain,
+    httpOnly: true,
+    secure: true
+  })
+
+  it('offers the old shared jar sign-ins the user has not saved yet', async () => {
+    const h = harness({
+      sharedJarCookies: async () => [sessionCookie('example.com'), sessionCookie('other.test')]
+    })
+    h.service.add({ origin: 'https://other.test' })
+    expect((await h.service.migrationCandidates()).map((c) => c.origin)).toEqual([
+      'https://example.com'
+    ])
+  })
+
+  it('offers nothing at all with no reader wired, rather than guessing', async () => {
+    const h = harness()
+    expect(await h.service.migrationCandidates()).toEqual([])
+  })
+
+  it('survives a jar that will not open', async () => {
+    const h = harness({
+      sharedJarCookies: async () => {
+        throw new Error('Session is not available yet.')
+      }
+    })
+    expect(await h.service.migrationCandidates()).toEqual([])
+  })
+
+  it('stops offering a candidate the user dismissed', async () => {
+    const h = harness({ sharedJarCookies: async () => [sessionCookie('example.com')] })
+    expect(await h.service.migrationCandidates()).toHaveLength(1)
+    expect(h.service.dismissMigrationCandidate('https://example.com').ok).toBe(true)
+    expect(await h.service.migrationCandidates()).toEqual([])
+  })
+
+  it('does NOT park a dismissal in retiredIds, which would move a later id', async () => {
+    // retiredIds feeds proposeWebSiteLoginId as a collision set. A dismissal
+    // stored there would silently rename the partition of a site the user goes
+    // on to add by hand.
+    const h = harness({ sharedJarCookies: async () => [sessionCookie('example.com')] })
+    h.service.dismissMigrationCandidate('https://example.com')
+    expect(h.service.add({ origin: 'https://example.com' }).site?.id).toBe('example-com')
+  })
+
+  it('refuses to clear the shared jar while sign-ins are still only in it', async () => {
+    // The jar is the only copy. Clearing it here signs the user out of
+    // everything they have not moved across, with no way back.
+    let cleared = false
+    const h = harness({
+      sharedJarCookies: async () => [sessionCookie('example.com')],
+      clearSharedJar: async () => {
+        cleared = true
+      }
+    })
+    const result = await h.service.clearSharedJar()
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/save or dismiss/i)
+    expect(cleared).toBe(false)
+  })
+
+  it('clears once every candidate has been saved or dismissed', async () => {
+    let cleared = false
+    const h = harness({
+      sharedJarCookies: async () => [sessionCookie('example.com')],
+      clearSharedJar: async () => {
+        cleared = true
+      }
+    })
+    h.service.dismissMigrationCandidate('https://example.com')
+    expect((await h.service.clearSharedJar()).ok).toBe(true)
+    expect(cleared).toBe(true)
+  })
+
+  it('explains an open canvas rather than reporting a raw Electron error', async () => {
+    const h = harness({
+      sharedJarCookies: async () => [],
+      clearSharedJar: async () => {
+        throw new Error('Close all Canvas Browser surfaces before clearing browsing data.')
+      }
+    })
+    const result = await h.service.clearSharedJar()
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/close the open browser canvases/i)
+  })
+
+  it('refuses a dismissal that is not a site address', () => {
+    const h = harness()
+    expect(h.service.dismissMigrationCandidate('   ').ok).toBe(false)
   })
 })

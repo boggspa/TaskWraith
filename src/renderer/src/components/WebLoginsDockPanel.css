@@ -219,3 +219,63 @@
   font-size: 11px;
   cursor: pointer;
 }
+
+/* The way out of the old shared cookie jar. Offered, never performed: the
+   cookies are not copied, the user signs in again into a jar of their own. */
+.web-logins-migration {
+  padding: 8px 10px;
+  border: 1px solid var(--rightdock-border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.web-logins-migration-lead {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.web-logins-migration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.web-logins-migration-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.web-logins-migration-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-logins-migration-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.web-logins-dock-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.web-logins-clear-shared {
+  align-self: flex-start;
+}
+
+.web-logins-clear-shared-hint {
+  color: var(--rightdock-text-faint, rgba(128, 128, 128, 0.9));
+  font-size: 11px;
+  line-height: 1.4;
+}

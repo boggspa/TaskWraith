@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 
-import type { WebSiteLogin, WebSiteLoginAccess } from '../../../shared/webSiteLogin'
+import type {
+  SharedJarCandidate,
+  WebSiteLogin,
+  WebSiteLoginAccess
+} from '../../../shared/webSiteLogin'
 import './WebLoginsDockPanel.css'
 
 /**
@@ -37,6 +41,11 @@ interface WebLoginBridge {
     site?: WebSiteLogin | null
   }>
   signOutWebSiteLogin?: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
+  listWebSiteLoginMigrationCandidates?: () => Promise<SharedJarCandidate[]>
+  dismissWebSiteLoginMigrationCandidate?: (input: {
+    origin: string
+  }) => Promise<{ ok: boolean; error?: string }>
+  clearSharedBrowserData?: () => Promise<{ ok: boolean; error?: string }>
 }
 
 function bridge(): WebLoginBridge | undefined {
@@ -78,6 +87,10 @@ export interface WebLoginsDockPanelViewProps {
   onAcceptSuggestions: () => void
   onDismissSuggestions: () => void
   onAllowBlockedEmbeds: (site: WebSiteLogin) => void
+  migrationCandidates: SharedJarCandidate[]
+  onMigrate: (candidate: SharedJarCandidate) => void
+  onDismissMigration: (candidate: SharedJarCandidate) => void
+  onClearSharedBrowser: () => void
 }
 
 /** Pure view. There is no jsdom in this repo, so the testable surface is the
@@ -97,7 +110,11 @@ export function WebLoginsDockPanelView({
   onForget,
   onAcceptSuggestions,
   onDismissSuggestions,
-  onAllowBlockedEmbeds
+  onAllowBlockedEmbeds,
+  migrationCandidates,
+  onMigrate,
+  onDismissMigration,
+  onClearSharedBrowser
 }: WebLoginsDockPanelViewProps): JSX.Element {
   return (
     <section className="web-logins-dock" aria-label="Site logins">
@@ -150,6 +167,31 @@ export function WebLoginsDockPanelView({
               Not now
             </button>
           </div>
+        </div>
+      )}
+
+      {migrationCandidates.length > 0 && (
+        <div className="web-logins-migration" role="status">
+          <p className="web-logins-migration-lead">
+            You may already be signed into these in the shared browser, where every site and every
+            agent share one set of cookies. Saving one here gives it a browser of its own — you sign
+            in again, once.
+          </p>
+          <ul className="web-logins-migration-list">
+            {migrationCandidates.map((candidate) => (
+              <li key={candidate.origin} className="web-logins-migration-row">
+                <span className="web-logins-migration-host">{candidate.host}</span>
+                <div className="web-logins-migration-actions">
+                  <button type="button" onClick={() => onMigrate(candidate)}>
+                    Save &amp; sign in
+                  </button>
+                  <button type="button" onClick={() => onDismissMigration(candidate)}>
+                    Not this one
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -221,6 +263,18 @@ export function WebLoginsDockPanelView({
           ))}
         </ul>
       )}
+
+      {migrationCandidates.length === 0 && (
+        <footer className="web-logins-dock-footer">
+          <button type="button" className="web-logins-clear-shared" onClick={onClearSharedBrowser}>
+            Clear the shared browser data
+          </button>
+          <span className="web-logins-clear-shared-hint">
+            Empties the old shared cookie jar the Canvas Browser used before saved logins existed.
+            Saved logins here are untouched.
+          </span>
+        </footer>
+      )}
     </section>
   )
 }
@@ -231,6 +285,7 @@ export function WebLoginsDockPanel(): JSX.Element {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<{ id: string; origins: string[] } | null>(null)
+  const [migrationCandidates, setMigrationCandidates] = useState<SharedJarCandidate[]>([])
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = bridge()
@@ -239,6 +294,13 @@ export function WebLoginsDockPanel(): JSX.Element {
       setSites(await api.listWebSiteLogins())
     } catch (loadError) {
       setError(String(loadError))
+    }
+    try {
+      setMigrationCandidates((await api.listWebSiteLoginMigrationCandidates?.()) ?? [])
+    } catch {
+      // A jar that will not open is not worth an error banner; the offer just
+      // does not appear.
+      setMigrationCandidates([])
     }
   }, [])
 
@@ -350,6 +412,53 @@ export function WebLoginsDockPanel(): JSX.Element {
     [refresh]
   )
 
+  /**
+   * Promote one shared-jar sign-in. Adds the site, then opens the sign-in
+   * window so the user authenticates INTO the new isolated jar - the cookies
+   * are never copied across, which is the whole point: TaskWraith moves the
+   * authority, and only the user can move the credential.
+   */
+  const migrate = useCallback(
+    async (candidate: SharedJarCandidate): Promise<void> => {
+      const api = bridge()
+      if (!api?.addWebSiteLogin) return
+      setBusyId(candidate.origin)
+      setError(null)
+      try {
+        const added = await api.addWebSiteLogin({ origin: candidate.origin })
+        if (!added.ok || !added.site) {
+          setError(added.error ?? 'Could not save that site.')
+          return
+        }
+        const result = await api.signInWebSiteLogin?.({ id: added.site.id })
+        if (result && !result.ok && result.reason) setError(result.reason)
+      } finally {
+        setBusyId(null)
+        await refresh()
+      }
+    },
+    [refresh]
+  )
+
+  const dismissMigration = useCallback(
+    async (candidate: SharedJarCandidate): Promise<void> => {
+      const api = bridge()
+      if (!api?.dismissWebSiteLoginMigrationCandidate) return
+      await api.dismissWebSiteLoginMigrationCandidate({ origin: candidate.origin })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const clearSharedBrowser = useCallback(async (): Promise<void> => {
+    const api = bridge()
+    if (!api?.clearSharedBrowserData) return
+    setError(null)
+    const result = await api.clearSharedBrowserData()
+    if (!result.ok) setError(result.error ?? 'Could not clear the shared browser data.')
+    await refresh()
+  }, [refresh])
+
   const acceptSuggestions = useCallback(async (): Promise<void> => {
     const api = bridge()
     if (!api?.updateWebSiteLogin || !suggestions) return
@@ -382,6 +491,10 @@ export function WebLoginsDockPanel(): JSX.Element {
       onAcceptSuggestions={() => void acceptSuggestions()}
       onDismissSuggestions={() => setSuggestions(null)}
       onAllowBlockedEmbeds={(site) => void allowBlockedEmbeds(site)}
+      migrationCandidates={migrationCandidates}
+      onMigrate={(candidate) => void migrate(candidate)}
+      onDismissMigration={(candidate) => void dismissMigration(candidate)}
+      onClearSharedBrowser={() => void clearSharedBrowser()}
     />
   )
 }

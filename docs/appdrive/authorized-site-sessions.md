@@ -373,6 +373,16 @@ Added to design.md Section 10, not replacing it.
 7. **Sign-out is best-effort against server-side sessions.** Clearing the
    partition ends the client's session; a token the site already minted
    elsewhere is beyond TaskWraith's reach.
+8. **The old shared jar is offered, not migrated.** Sessions already sitting in
+   `persist:taskwraith-canvas-browser-v1` keep their pre-feature ambient
+   authority until the user acts. The prompt that surfaces them (Section 12,
+   R2) deliberately copies no cookies, so the residual is that a user who
+   ignores the offer is no better off than before - which is the same position
+   they were in, not a new exposure.
+9. **The candidate filter is a heuristic.** `httpOnly && secure` is a good
+   proxy for a first-party session cookie and not a proof of one: a site whose
+   sign-in cookie is neither will not be offered, and an occasional non-login
+   domain will be. It is an offer, so both errors cost a row in a list.
 
 ---
 
@@ -390,6 +400,10 @@ this index.
 | **P3** | Work-tab panel and IPC | Handler module, main registration, preload runtime and types, renderer IPC policy, dock tab, panel. |
 | **P4** | Agent surface | Landed. `web_login_list` and `web_login_open` on a FULL-only placement (no new generation needed), their own `web-login` dispatch owner, and a regenerated `resources/Tools.md`. `web_login_list` omits sites the user has kept at no-agent-access: listing is not acting, but it is reconnaissance. |
 | **P5** | Re-authentication signalling and the liveness probe | Landed. A probe on the site's own partition classifies the session; `web_login_open` refuses an expired one by name, with no retry and an explicit instruction not to self-serve; sign-in takes its status from a real request rather than from the window closing. |
+
+| **R1** | Proactive expiry surface | Landed. `onStatusChanged` fires only on an actual change, main fans it out on `web-login:changed`, and the Logins tab carries the count of expired sites. The dock's per-surface counts live inside a picker that is closed by default, so the switcher header also carries a dot whenever some surface other than the one on screen is waiting. |
+| **R2** | Shared-jar migration | Landed. Sign-ins still in the old shared Canvas Browser jar are offered for promotion, one per row. No cookie is copied: the user re-authenticates into the new partition, because moving a live credential without the user authenticating is the one thing this feature exists to avoid. The clear-shared-jar action refuses while candidates remain - the jar is the only copy. |
+| **R3** | Sub-frame fence | Landed. See Residual 4. |
 
 P1 is the bulk of the work and the only slice that carries regression risk to
 the shipped Canvas Browser.

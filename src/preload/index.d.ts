@@ -2343,6 +2343,11 @@ declare global {
       >
       onWebSiteLoginsChanged: (callback: (site: WebSiteLogin) => void) => () => void
       listWebSiteLogins: () => Promise<WebSiteLogin[]>
+      listWebSiteLoginMigrationCandidates: () => Promise<Array<{ origin: string; host: string }>>
+      dismissWebSiteLoginMigrationCandidate: (input: {
+        origin: string
+      }) => Promise<{ ok: boolean; error?: string }>
+      clearSharedBrowserData: () => Promise<{ ok: boolean; error?: string }>
       addWebSiteLogin: (input: {
         origin: string
         label?: string
