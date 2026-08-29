@@ -3302,6 +3302,15 @@
 .claude-workflow-card-progress.status-stopped span {
   background: var(--danger);
 }
+/* Settled states must override the base rule above, whose animated accent
+   gradient is what work IN FLIGHT looks like. Without these, a paused or
+   cancelled graph wears the same bar as a running one. */
+.claude-workflow-card-progress.status-attention span {
+  background: var(--warning);
+}
+.claude-workflow-card-progress.status-cancelled span {
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
 .claude-workflow-card-progress span.settled {
   width: 100%;
 }
