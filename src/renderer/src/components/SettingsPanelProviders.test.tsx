@@ -510,6 +510,34 @@ describe('SettingsPanel provider cards', () => {
     expect(card).not.toContain('sign-in status unavailable')
   })
 
+  it('renders verified Muse login as a green configured card', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            muse: {
+              available: true,
+              setupRequired: false,
+              authState: 'oauth',
+              credentialPresent: true
+            }
+          }
+        })}
+      />
+    )
+
+    const museStart = html.indexOf('provider-muse')
+    expect(museStart).toBeGreaterThanOrEqual(0)
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      museStart + 'provider-muse'.length
+    )
+    const card = html.slice(museStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Muse Code configured')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).not.toContain('setup unverified')
+  })
+
   it('buries the AntiGravity risk-consent card after Ollama', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

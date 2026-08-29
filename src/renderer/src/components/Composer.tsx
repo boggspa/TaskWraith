@@ -1115,10 +1115,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       ? readPendingProviderChange(currentChat)?.provider
       : undefined
   const currentProviderRunUnavailableReason = !isCurrentEnsembleChat
-    ? providerRunUnavailableReason(
-        pendingSoloProvider ?? currentProvider,
-        configuredProviderSnapshot.providerIds
-      )
+    ? providerRunUnavailableReason(pendingSoloProvider ?? currentProvider)
     : null
   const hasSendablePromptContent =
     hasAttachmentPromptContent(prompt, imageAttachments) ||
@@ -4931,12 +4928,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // Model/provider/prompt locks still use
                           // isCurrentComposerLocked elsewhere.
                           const pickerDisabled =
-                            Boolean(
-                              providerRunUnavailableReason(
-                                effectiveProvider,
-                                configuredProviderSnapshot.providerIds
-                              )
-                            ) ||
+                            Boolean(providerRunUnavailableReason(effectiveProvider)) ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
                           // Tier retirement (2026-07): Ollama uses the SAME standard
                           // permission-role picker as every provider — no more
@@ -4957,10 +4949,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               onStopTrustedSession={stopTrustedSessionForPicker}
                               disabled={pickerDisabled}
                               disabledReason={
-                                providerRunUnavailableReason(
-                                  effectiveProvider,
-                                  configuredProviderSnapshot.providerIds
-                                ) || undefined
+                                providerRunUnavailableReason(effectiveProvider) || undefined
                               }
                             />
                           )

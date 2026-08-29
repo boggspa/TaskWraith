@@ -85,8 +85,14 @@ export function parseMuseAuthJsonCredential(
   }
   try {
     const parsed = JSON.parse(raw) as {
+      schema_version?: unknown
       providers?: {
-        meta?: { api_key?: unknown; mechanism?: unknown; access_token?: unknown }
+        meta?: {
+          api_key?: unknown
+          mechanism?: unknown
+          access_token?: unknown
+          storage?: unknown
+        }
       }
     }
     const meta = parsed?.providers?.meta
@@ -97,6 +103,17 @@ export function parseMuseAuthJsonCredential(
         source: 'auth-json-meta',
         credentialKind: 'api-key',
         apiKeyLength: key.trim().length
+      }
+    }
+    if (parsed.schema_version === 2 && meta?.mechanism === 'oauth' && meta.storage === 'keychain') {
+      // Muse 1.0 stores the OAuth secret in the OS keychain and leaves only
+      // this exact, non-secret schema-v2 locator in auth.json. Treat the
+      // reviewed shape as presence evidence without reading or copying a token.
+      return {
+        present: true,
+        source: 'auth-json-meta',
+        credentialKind: 'oauth',
+        apiKeyLength: null
       }
     }
     if (

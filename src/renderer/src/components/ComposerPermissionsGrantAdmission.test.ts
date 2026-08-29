@@ -26,7 +26,7 @@ describe('Composer permission-picker admission while running', () => {
     expect(region).not.toMatch(/const pickerDisabled =\s*[\s\S]*isCurrentComposerLocked/)
     expect(region).toContain('providerRunUnavailableReason(')
     expect(region).toContain('effectiveProvider')
-    expect(region).toContain('configuredProviderSnapshot.providerIds')
+    expect(region).not.toContain('configuredProviderSnapshot.providerIds')
   })
 
   it('does not wire the retired Tool Grants column into the composer picker', () => {

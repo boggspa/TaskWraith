@@ -88,8 +88,7 @@ describe('resolveProviderRows (additive visibility + option order)', () => {
     )
     expect(providerRunUnavailableReason('claude')).toBeNull()
     expect(providerRunUnavailableReason('cursor')).toBeNull()
-    expect(providerRunUnavailableReason('antigravity')).toContain('consent or Gemini API setup')
-    expect(providerRunUnavailableReason('antigravity', ['antigravity'])).toBeNull()
+    expect(providerRunUnavailableReason('antigravity')).toBeNull()
   })
 
   it('offers every statically live provider when legacy readiness flags are false', () => {

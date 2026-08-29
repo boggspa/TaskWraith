@@ -122,12 +122,13 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
 }
 
 /** User-facing offer-policy reason for a retired or not-yet-configured provider. */
-export function providerRunUnavailableReason(
-  provider: ProviderId,
-  configuredProviderIds: readonly ProviderId[] = []
-): string | null {
-  if (provider === 'antigravity' && configuredProviderIds.includes('antigravity')) return null
-  if (isLiveSelectableProvider(provider)) return null
+export function providerRunUnavailableReason(provider: ProviderId): string | null {
+  // AntiGravity's real admission authority is the consent/key union enforced by
+  // App and main at dispatch. The configured-provider model catalogue is a
+  // presentation cache that intentionally goes empty while refreshing, so it
+  // must not create a sticky composer warning or disable an otherwise admitted
+  // AGY / Gemini API lane.
+  if (provider === 'antigravity' || isLiveSelectableProvider(provider)) return null
   return `${getProviderOfferUnavailableReason(provider)} Choose a currently offered provider to continue.`
 }
 

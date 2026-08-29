@@ -67,6 +67,55 @@ describe('MuseProbe', () => {
       expect(JSON.stringify(evidence)).not.toContain('oauth-refresh-secret')
     })
 
+    it('accepts Muse schema-v2 OAuth keychain metadata without requiring an inline token', () => {
+      expect(
+        parseMuseAuthJsonCredential(
+          JSON.stringify({
+            schema_version: 2,
+            providers: {
+              meta: {
+                mechanism: 'oauth',
+                storage: 'keychain',
+                obtained_via: 'device_code'
+              }
+            }
+          })
+        )
+      ).toEqual({
+        present: true,
+        source: 'auth-json-meta',
+        credentialKind: 'oauth',
+        apiKeyLength: null
+      })
+    })
+
+    it.each([
+      ['missing schema version', undefined, 'oauth', 'keychain'],
+      ['older schema version', 1, 'oauth', 'keychain'],
+      ['string schema version', '2', 'oauth', 'keychain'],
+      ['unknown newer schema version', 3, 'oauth', 'keychain'],
+      ['missing storage', 2, 'oauth', undefined],
+      ['wrong storage', 2, 'oauth', 'file'],
+      ['wrong mechanism', 2, 'api-key', 'keychain']
+    ])(
+      'rejects incomplete schema-v2 keychain metadata: %s',
+      (_label, schema, mechanism, storage) => {
+        expect(
+          parseMuseAuthJsonCredential(
+            JSON.stringify({
+              ...(schema === undefined ? {} : { schema_version: schema }),
+              providers: {
+                meta: {
+                  mechanism,
+                  ...(storage === undefined ? {} : { storage })
+                }
+              }
+            })
+          ).present
+        ).toBe(false)
+      }
+    )
+
     it('rejects empty or malformed auth.json', () => {
       expect(parseMuseAuthJsonCredential(null).present).toBe(false)
       expect(parseMuseAuthJsonCredential('{').present).toBe(false)

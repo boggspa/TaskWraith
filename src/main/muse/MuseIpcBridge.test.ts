@@ -510,6 +510,33 @@ describe('runMuseProviderFromIpc', () => {
     )
   })
 
+  it('passes schema-v2 keychain OAuth metadata through as run-local auth.json', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const authJsonText = JSON.stringify({
+      schema_version: 2,
+      providers: {
+        meta: {
+          mechanism: 'oauth',
+          storage: 'keychain',
+          obtained_via: 'device_code'
+        }
+      }
+    })
+    const readAuthJsonText = vi.fn(async () => authJsonText)
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ readAuthJsonText, runMuseProvider })
+    })
+
+    expect(readAuthJsonText).toHaveBeenCalledOnce()
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: null,
+        authJsonText
+      })
+    )
+  })
+
   it('accepts a payload API key without requiring a second credential source', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome())
 
