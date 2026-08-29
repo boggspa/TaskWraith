@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -146,6 +146,8 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
     releaseRun = resolve
   })
   const events: unknown[] = []
+  /** Every prompt the provider was actually handed, for goal-injection proofs. */
+  const prompts: string[] = []
   const manualBegin = vi.fn()
   const museFactory = createHostNodeMuseProviderFactory({
     offers: museOffers,
@@ -165,6 +167,7 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
     now: () => Date.UTC(2026, 7, 24, 5, 0, 0),
     createSessionId: () => SESSION_ID,
     runMuseProvider: async (input) => {
+      prompts.push(input.prompt)
       input.spawn({ binaryPath: '/usr/local/bin/muse', argv: [], cwd: workspace, env: {} })
       await waitForRun
       return outcome(input.shouldCancel?.() ? 'cancelled' : 'success')
@@ -189,6 +192,7 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
     store,
     workspace,
     events,
+    prompts,
     manualBegin,
     releaseRun: () => releaseRun?.()
   }
@@ -950,6 +954,80 @@ describe('HostNodeDomainPorts', () => {
     expect(bareOffers.locked).toBeTruthy()
 
     expect(() => domain.threadOffers('id-absent')).toThrow(/Unknown standalone thread/)
+  })
+
+  it('prepends the App-authored work state when the thread carries a live goal', async () => {
+    const { domain, domainOptions, prompts, workspace, releaseRun } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-goal-workspace', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-goal-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await domain.executeCommand(
+      context,
+      command(
+        'thread.configure',
+        'cmd-goal-configure',
+        { threadId },
+        {
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          reasoningId: 'high',
+          postureId: 'workspace_write',
+          offerRevision: 'muse-offer-1',
+          postureConsent: true
+        }
+      ),
+      { id: 'tui-target' }
+    )
+
+    // Goals are authored by the App onto the very record this Host reads, so the
+    // fixture plants one exactly there rather than inventing a Host-side writer.
+    const recordPath = join(domainOptions.profilePath, 'chats', `${threadId}.json`)
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>
+    record.activeGoal = {
+      id: 'goal-1',
+      objective: 'Ship the standalone goal lens.',
+      status: 'active',
+      mode: 'taskwraith_steered',
+      provider: 'muse',
+      createdAt: '2026-08-29T10:00:00.000Z',
+      updatedAt: '2026-08-29T10:00:00.000Z',
+      specification: { kind: 'prompt', acceptanceCriteria: ['The TUI shows the goal.'] }
+    }
+    writeFileSync(recordPath, JSON.stringify(record))
+
+    await domain.executeCommand(
+      context,
+      command('composer.send', 'cmd-goal-send', { threadId }, { text: 'Carry on.' }),
+      { id: 'tui-target' }
+    )
+    releaseRun()
+    await domain.shutdown()
+
+    expect(prompts).toHaveLength(1)
+    const prompt = prompts[0]
+    expect(prompt).toContain('<taskwraith_work_state>')
+    expect(prompt).toContain('Goal id: goal-1')
+    expect(prompt).toContain('Ship the standalone goal lens.')
+    expect(prompt).toContain('The TUI shows the goal.')
+    // The block steers the request, so it must precede it exactly as
+    // injectBeforeCurrentRequest places it in the App.
+    expect(prompt.indexOf('<taskwraith_work_state>')).toBeLessThan(prompt.indexOf('Carry on.'))
+    expect(prompt.endsWith('Carry on.')).toBe(true)
   })
 
   it('waits for tracked provider completion during shutdown before reporting stopped', async () => {

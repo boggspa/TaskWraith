@@ -38,6 +38,7 @@ import type {
 } from '../shared/hostSetupProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import { buildAgentWorkState, type AgentWorkGoalFacts } from '../host-shared/AgentWorkContract'
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
@@ -287,6 +288,26 @@ function ensembleRoundIsActive(ensemble: HostNodeEnsembleRecord): boolean {
   )
 }
 
+/**
+ * Narrow an untrusted stored goal to the facts the work contract reads. Only a
+ * LIVE goal qualifies: a completed or paused goal must not reach a prompt, and
+ * a run on a thread with no live goal stays byte-identical to before.
+ */
+function liveAgentWorkGoal(value: unknown): AgentWorkGoalFacts | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.id !== 'string' ||
+    typeof record.objective !== 'string' ||
+    typeof record.status !== 'string' ||
+    typeof record.mode !== 'string'
+  ) {
+    return undefined
+  }
+  if (record.status !== 'active' && record.status !== 'blocked') return undefined
+  return record as unknown as AgentWorkGoalFacts
+}
+
 function isSetupMutationName(name: HostCommand['name']): boolean {
   return (
     name === 'workspace.register' ||
@@ -448,6 +469,33 @@ export class HostNodeDomainPorts {
       source: 'curated',
       ...(locked ? { locked } : {})
     }
+  }
+
+  /**
+   * Prepend the App's work-state block when the thread carries a live goal.
+   *
+   * The App writes goals onto chat records that this Host also reads, but the
+   * Host previously passed the raw prompt through — so a goal set in the App was
+   * stored, shown, and then silently ignored by every run the Host started. The
+   * block is built by the same host-shared builder PromptComposition uses, and
+   * placed before the request exactly as injectBeforeCurrentRequest does, so a
+   * Host run reads identically to an App run.
+   *
+   * Threads with no live goal are untouched: their prompt is byte-identical.
+   */
+  private promptWithActiveGoal(threadId: string, text: string): string {
+    const goal = liveAgentWorkGoal(this.options.store.getThread(threadId)?.activeGoal)
+    if (!goal) return text
+    // Native provider goal engines retain the objective themselves; arming a
+    // second steering copy is exactly what PromptComposition avoids here.
+    const providerOwnsGoalSteering =
+      goal.mode === 'codex_native' || goal.mode === 'claude_native' || goal.mode === 'grok_native'
+    const workState = buildAgentWorkState({
+      activeGoal: goal,
+      providerOwnsGoalSteering,
+      completionAuthority: 'root'
+    })
+    return `${workState}\n\n${text}`
   }
 
   providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {
@@ -745,7 +793,7 @@ export class HostNodeDomainPorts {
     const completion = provider.run({
       runId: command.commandId,
       threadId: command.target.threadId,
-      prompt: command.arguments.text as string,
+      prompt: this.promptWithActiveGoal(command.target.threadId, command.arguments.text as string),
       target
     })
     const tracked = completion
