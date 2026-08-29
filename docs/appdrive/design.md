@@ -374,6 +374,10 @@ Ephemeral partitions mean the user logs in inside the drivable surface, repeated
 - **Disclose the frame destination in the lease consent.** The card names the provider that will receive screenshots. This is the honest version of the privacy claim, and it is also the argument for the local-model path later.
 - Sketch surface gains the four missing session hardenings so it matches web (§2).
 
+**This section covers the credential MECHANICS. It does not cover which
+authenticated sessions an agent may reach at all** — that is §6b, and it is the
+part 1.9.5 left open when the durable profile shipped.
+
 ---
 
 ## 6a. HARD INVARIANT — AppDrive never targets TaskWraith's own chrome
@@ -410,6 +414,42 @@ The appearance-customisation feature planned a "Tier 3" that would load TaskWrai
 **Tier 3 was cancelled, not deferred**, and the premise turned out to be weak independently: the feature's live-apply broadcast means the *user* sees a restyle instantly, and for a taste decision the human is the better feedback loop than an agent screenshotting a copy. So no canvas ever hosts our renderer, and §6a stays structurally true rather than policy-true — the stronger form.
 
 The secondary threat that motivated the conditions is worth keeping even though this particular design is gone: a pixel-identical screenshot of an app state that never happened is **evidence forgery**, and it doesn't need to *be* the app to work — it only needs to look like it. If a self-preview is ever revisited, the load-bearing condition is that any watermark or preview chrome must be stamped **main-side at capture time** (in `screenshot()` after `capturePage`), never in the page, because `canvas_eval` can strip anything the page contains. And `validateCanvasUrl` must stay http(s)-only — a `file://`/`app://` carve-out would weaken the SSRF guard for *every* canvas, so a non-http source wants a separate driver kind, ideally one where `evaluate` is unsupported.
+
+## 6b. Authorized site sessions — which accounts an agent may reach
+
+**Design: [authorized-site-sessions.md](authorized-site-sessions.md). Read it
+before touching the Canvas Browser partition, the navigation gate, or anything
+that widens what a canvas may navigate to.**
+
+§6 answers "may the agent type this secret" (no) and "may a frame leak it"
+(no). Neither question is the same as **which authenticated accounts a given
+canvas carries**, and since 1.9.5 the answer to that has been "all of them":
+one shared `persist:taskwraith-canvas-browser-v1` jar, and a navigation gate
+with a fixed link-local/metadata deny rule and **no host allowlist**. An agent
+leased for one site holds every other site's cookies and is one
+`canvas_navigate` away from using them.
+
+That is ambient authority, not a sandbox escape — the sandbox is doing its job
+and the authority inside it is simply too wide. It is also what turns §10.7's
+dominant residual (judgment error) into an account compromise rather than a
+wrong click.
+
+The answer is three invariants, developed in the linked document:
+
+1. **One partition per site** (`persist:taskwraith-site-<id>`), with a surface
+   bound at construction and cross-origin **document** navigation refused.
+   Sub-resources stay unfenced — a fence that breaks every real site gets
+   turned off, and a disabled control protects nothing.
+2. **A password never exists in the process.** Sign-in happens in a human-only
+   window no canvas driver can resolve — the same structural argument as §6a,
+   not a policy check. §6's secret-field refusal stays, as defence-in-depth.
+3. **Authorization is per-site, revocable, and named up front by a run.** A
+   newly added site defaults to no agent access at all; promotion is a separate
+   deliberate act.
+
+This is also the answer §13 Q3 asks for. The loopback fence is **not** being
+restored; this is the re-proposal against the any-origin product, and it fences
+by authorized origin rather than by loopback.
 
 ## 7. Consequential-action confirmation
 
@@ -509,7 +549,7 @@ When it does land, the governing rules are: one writer per surface (many observe
 
 Accepted for Tier 1–2:
 
-1. **In-origin destructive actions remain possible** on an authenticated surface. Mitigated by §7, not eliminated. **Since 1.9.5 this is the DEFAULT case, not an edge one** — the durable Canvas Browser profile means the agent is usually driving a signed-in page (see §1). The §7 web check raises the floor for honestly-labelled controls; it does not close this.
+1. **In-origin destructive actions remain possible** on an authenticated surface. Mitigated by §7, not eliminated. **Since 1.9.5 this is the DEFAULT case, not an edge one** — the durable Canvas Browser profile means the agent is usually driving a signed-in page (see §1). The §7 web check raises the floor for honestly-labelled controls; it does not close this. **The CROSS-SITE half of this residual is answered by §6b** (one partition per site, fenced navigation); the in-origin half stated here remains open.
 2. **The dev server / native build under test is not sandboxed.** Displaying it in a Canvas does not contain it.
 3. **Screenshots leave the Mac when a hosted provider drives.** Disclosed in the lease consent; the local-model path is the eventual answer.
 4. **DNS rebinding** — partly closed since this was written. `CanvasDnsGuard` resolves the host before opening and refuses a public-looking name that lands on loopback, private LAN or link-local. It is a resolve-time check, not connect-time IP pinning, so a name that re-resolves between the check and the connection is still a gap.
@@ -699,6 +739,6 @@ Rules that override marketing copy:
    - `PLAN_INSTRUMENT_ADVERTISE_TOOLS` ([McpAutoAllowedTools.ts](../../src/main/mcp/McpAutoAllowedTools.ts)) is **bridge visibility only**. Plan-tier safety comes from the main-side service gate (`canvasInteraction: 'ask'`), backed by the `SAFETY INVARIANT` test at [McpAutoAllowedTools.test.ts](../../src/main/mcp/McpAutoAllowedTools.test.ts) asserting no plan instrument is also in `MCP_AUTO_ALLOWED_TOOLS`.
 
    Being `workspace_write` therefore neither adds nor removes anything under `plan`. **Trap for new verbs:** `PLAN_INSTRUMENT_ADVERTISE_TOOLS` is a `.filter()` over three hard-coded literals plus `MEDIA_EDITING_TOOLS`, so a new verb is not picked up automatically and must be added by name. It fails safe (forget it → invisible to plan seats, not silently permitted), but the invariant test only iterates that derived list, so a new verb inherits the not-auto-allowed guarantee **only once added** — add to both or neither.
-3. ~~Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based?~~ **MOOT — decided by shipping (see §0a).** The fence was never built and 1.9.5 shipped any-origin browsing over a durable signed-in profile. `isLoopbackHost` remains exported but is called only by its own tests. Re-propose against the any-origin product if a fence is still wanted; do not "restore" this one.
+3. ~~Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based?~~ **MOOT — decided by shipping (see §0a).** The fence was never built and 1.9.5 shipped any-origin browsing over a durable signed-in profile. `isLoopbackHost` remains exported but is called only by its own tests. Re-propose against the any-origin product if a fence is still wanted; do not "restore" this one. **RE-PROPOSED 2026-08-29 — see §6b and [authorized-site-sessions.md](authorized-site-sessions.md).** The replacement fences by user-authorized origin per site partition, not by loopback.
 4. Sandbox posture for the process under test — real seatbelt profile, or documented non-containment?
 5. **New.** Should the consequential predicate (§7, `CanvasConsequentialTarget`) widen beyond irreversible/financial verbs? It deliberately omits generic form verbs (`submit`/`continue`/`OK`) and comms verbs (`send`/`post`) because they fire on nearly every page and a constant confirmation is one users learn to click through. Widening wants evidence about firing frequency, not intuition.
