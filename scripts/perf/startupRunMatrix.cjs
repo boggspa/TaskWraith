@@ -9,6 +9,15 @@
  * "cold" deletes the instance's userData profile before launching (fresh
  * profile, NOT an OS-cold filesystem cache). "warm" reuses it.
  *
+ * Each run captures failure diagnostics: the main-process stdout/stderr log
+ * (<out>.runN.<kind>.log), app exit status, DevTools inspector state when the
+ * run fails, and a structured failureClass —
+ *   boot-ready | boot-ready-degraded | no-boot-ready | wedged-no-window |
+ *   app-exited-early
+ * plus signature flags separating distinct failures: recovery-disabled boots
+ * ("startup recovery failed; run and schedule recovery remain disabled"),
+ * WAL identity/revision append conflicts, and WorkspaceLockAuthorityBusyError.
+ *
  * Interpretation caveats, measured 2026-08-29:
  * - The workspace-lock authority root is shared per real OS user
  *   (~/.taskwraith/workspace-lock-authority-v1). Launches contend on its fence
@@ -28,6 +37,7 @@
 
 const { spawn } = require('child_process')
 const fs = require('fs')
+const http = require('http')
 const os = require('os')
 const path = require('path')
 
@@ -65,15 +75,55 @@ function profileDir() {
   )
 }
 
-async function runOnce(kind) {
+function inspectorState() {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/json/list', timeout: 1500 }, (res) => {
+      let body = ''
+      res.on('data', (c) => (body += c))
+      res.on('end', () => {
+        try {
+          resolve({ reachable: true, targetCount: JSON.parse(body).length })
+        } catch {
+          resolve({ reachable: true, targetCount: null })
+        }
+      })
+    })
+    req.on('error', () => resolve({ reachable: false }))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve({ reachable: false, timedOut: true })
+    })
+  })
+}
+
+// Distinct failure signatures; a degraded boot is not necessarily the same
+// failure as an identity conflict or a busy authority.
+function classifyLog(logText) {
+  return {
+    recoveryDisabled: /startup recovery failed; run and schedule recovery remain disabled/.test(
+      logText
+    ),
+    walIdentityConflict: /WAL changed identity or revision/.test(logText),
+    authorityBusy: /WorkspaceLockAuthorityBusyError/.test(logText)
+  }
+}
+
+async function runOnce(kind, runIndex) {
   if (kind === 'cold') fs.rmSync(profileDir(), { recursive: true, force: true })
   const env = { ...process.env, TASKWRAITH_INSTANCE_ID: instanceId, IOS_REMOTE_TRUE: '0' }
   delete env.ELECTRON_RUN_AS_NODE
+  const logPath = `${outFile.replace(/\.jsonl$/, '')}.run${runIndex}.${kind}.log`
+  const logFd = fs.openSync(logPath, 'w')
   const t0 = Date.now()
   const app = spawn(ELECTRON, ['.', `--remote-debugging-port=${port}`], {
     cwd: REPO,
     env,
-    stdio: 'ignore'
+    stdio: ['ignore', logFd, logFd]
+  })
+  let appExit = null
+  let killSent = false
+  app.on('exit', (code, signal) => {
+    appExit = { code, signal, wallMs: Date.now() - t0, beforeKill: !killSent }
   })
   const probe = spawn('node', [PROBE, String(port), '150000'], {
     stdio: ['ignore', 'pipe', 'pipe']
@@ -100,10 +150,31 @@ async function runOnce(kind) {
     bootReady && bootReady.sample && Array.isArray(bootReady.sample.paint)
       ? bootReady.sample.paint.find((x) => x.n === 'first-contentful-paint')
       : null
+  const inspector = bootReady ? null : await inspectorState()
+  killSent = true
+  if (!appExit) {
+    app.kill('SIGTERM')
+    await Promise.race([new Promise((r) => app.on('exit', r)), sleep(6000)])
+    app.kill('SIGKILL')
+  }
+  await sleep(1500)
+  fs.closeSync(logFd)
+  const signatures = classifyLog(fs.readFileSync(logPath, 'utf8'))
+  let failureClass
+  if (appExit && appExit.beforeKill) failureClass = 'app-exited-early'
+  else if (bootReady && signatures.recoveryDisabled) failureClass = 'boot-ready-degraded'
+  else if (bootReady) failureClass = 'boot-ready'
+  else if (!by('page-target')) failureClass = 'wedged-no-window'
+  else failureClass = 'no-boot-ready'
   const result = {
     kind,
     t0,
     probeExit,
+    failureClass,
+    signatures,
+    appExit,
+    inspector,
+    logPath,
     devtoolsUpMs: by('devtools-up') ? by('devtools-up').wall - t0 : null,
     windowStartMs: origin ? Math.round(origin - t0) : null,
     dclMs:
@@ -112,10 +183,6 @@ async function runOnce(kind) {
     bootReadyMs: bootReady ? bootReady.wall - t0 : null,
     maskGoneMs: by('mask-gone') ? by('mask-gone').wall - t0 : null
   }
-  app.kill('SIGTERM')
-  await Promise.race([new Promise((r) => app.on('exit', r)), sleep(6000)])
-  app.kill('SIGKILL')
-  await sleep(1500)
   fs.appendFileSync(outFile, JSON.stringify(result) + '\n')
   console.log(JSON.stringify(result))
   return result
@@ -135,8 +202,9 @@ function agg(rows, key) {
 async function main() {
   fs.writeFileSync(outFile, '')
   const results = []
-  for (let i = 0; i < coldRuns; i++) results.push(await runOnce('cold'))
-  for (let i = 0; i < warmRuns; i++) results.push(await runOnce('warm'))
+  let runIndex = 0
+  for (let i = 0; i < coldRuns; i++) results.push(await runOnce('cold', runIndex++))
+  for (let i = 0; i < warmRuns; i++) results.push(await runOnce('warm', runIndex++))
 
   const summary = {}
   for (const kind of ['cold', 'warm']) {
@@ -148,6 +216,10 @@ async function main() {
       maskGoneMs: agg(rows, 'maskGoneMs')
     }
   }
+  const failureClasses = {}
+  for (const r of results)
+    failureClasses[r.failureClass] = (failureClasses[r.failureClass] || 0) + 1
+  summary.failureClasses = failureClasses
   console.log('SUMMARY ' + JSON.stringify(summary))
   fs.rmSync(profileDir(), { recursive: true, force: true })
   console.log('MATRIX DONE')
