@@ -21,6 +21,13 @@ import type {
   RendererReapContext
 } from '../AbandonedChatReaper'
 import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
+import { defaultThreadTitleRepairStatePath } from '../store/ThreadTitleRepair'
+import {
+  createThreadTitleRepairRunner,
+  readThreadTitleRepairStateFile,
+  threadTitleRepairModeFromEnv,
+  writeThreadTitleRepairStateFile
+} from '../ThreadTitleRepairRunner'
 import {
   RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
   chatPersistenceRevision,
@@ -130,6 +137,11 @@ export interface ChatHandlerDeps {
   broadcastChatUpdatedExcept: (chat: ChatRecord, senderId: number) => void
   broadcastChatPopoutUpdate: (chat: ChatRecord) => void
   pushRemoteTaskCardDelta: (chatId: string) => void
+  /**
+   * Live provider-run liveness for a chat, from the run manager rather than the
+   * stored record. The title repair pass defers a chat that is mid-turn.
+   */
+  isChatBusy: (chatId: string) => boolean
   pushRemoteThreadSnapshot: (chat: ChatRecord, workspaceId: string) => void
   canonicalRemoteWorkspaceId: (workspaceId?: string | null) => string | null
   globalRemoteScope: string
@@ -384,6 +396,23 @@ async function settleEnsembleCreatePersistBarrier(
 
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
   const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
+  const threadTitleRepair = createThreadTitleRepairRunner({
+    statePath: defaultThreadTitleRepairStatePath(app.getPath('userData')),
+    // Unscoped on purpose: the list this handler returns can be narrowed to one
+    // workspace, and a partial observation would strand every candidate outside
+    // it. Discovery is index-backed, so sourcing the full list costs no reads.
+    listChats: () => deps.chatService.getChatList(),
+    getChat: (chatId) => deps.chatService.getChat(chatId),
+    saveChat: (chat) => deps.chatService.saveChat(chat),
+    awaitChatRecordPersisted: deps.awaitChatRecordPersisted,
+    isChatBusy: (chatId) => deps.isChatBusy(chatId),
+    broadcastChatUpdated: (chat) => deps.broadcastChatUpdated(chat),
+    broadcastThreadUpdate: (chatId) => deps.broadcastThreadUpdate(chatId),
+    pushRemoteTaskCardDelta: (chatId) => deps.pushRemoteTaskCardDelta(chatId),
+    readStateFile: readThreadTitleRepairStateFile,
+    writeStateFile: writeThreadTitleRepairStateFile,
+    mode: threadTitleRepairModeFromEnv(process.env.TASKWRAITH_THREAD_TITLE_REPAIR)
+  })
   const setChatKindMutation =
     deps.setChatKindMutation ??
     (() => {
@@ -410,6 +439,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('get-chat-list', (event, workspaceId?: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
     assertReadableWorkspace(scope, workspaceId)
+    threadTitleRepair.observe()
     const list = deps.chatService.getChatList(
       scope.kind === 'chat' ? scope.workspaceId : workspaceId
     )

@@ -48,6 +48,10 @@ function chatListItem(record: ChatRecord): ChatListItem {
 function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0]> = {}) {
   const settings = { ensembleModeEnabled: true } as AppSettings
   return {
+    // Required rather than optional: the title repair pass defers a busy chat,
+    // and a missing liveness source must be a compile error rather than a
+    // silent "nothing is running".
+    isChatBusy: vi.fn(() => false),
     chatService: {
       getChats: vi.fn(() => [chat('chat-1')]),
       getChatList: vi.fn(() => []),
