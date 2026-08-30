@@ -199,6 +199,14 @@ function sampleThreadOffers(): TaskWraithControlThreadOffers {
     },
     currentModel: 'gpt-5.6-sol',
     currentReasoningEffort: 'high',
+    currentPostureId: 'default',
+    postures: [
+      {
+        id: 'default',
+        label: 'Accept Edits',
+        requiresExplicitConsent: false
+      }
+    ],
     models: [
       {
         id: 'gpt-5.6-sol',

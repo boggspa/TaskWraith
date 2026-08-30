@@ -1050,6 +1050,9 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       latestPreview: 'progress',
       previewTruncated: false,
       providerId: 'codex',
+      modelId: 'gpt-5.6',
+      reasoningEffort: 'high',
+      permissionPresetId: 'workspace_write',
       missionOutcome: 'active',
       activeRoundId: 'round-1'
     })

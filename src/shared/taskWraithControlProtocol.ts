@@ -115,6 +115,8 @@ export interface TaskWraithControlTranscriptRow {
   kind: string
   speaker: string
   provider?: TaskWraithControlProviderPresentation
+  model?: string
+  reasoning?: string
   text: string
   timestamp: string
   truncated: boolean
@@ -189,9 +191,19 @@ export interface TaskWraithControlThreadOffers {
   provider: TaskWraithControlProviderPresentation
   currentModel?: string
   currentReasoningEffort?: string
+  currentPostureId?: string
+  postures?: TaskWraithControlPostureOffer[]
   models: TaskWraithControlModelOffer[]
   source: 'curated'
   locked?: string
+}
+
+export interface TaskWraithControlPostureOffer {
+  id: string
+  label: string
+  disabled?: boolean
+  disabledReason?: string
+  requiresExplicitConsent: boolean
 }
 
 export type TaskWraithControlRequest =

@@ -113,6 +113,17 @@ function timestamp(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
 }
 
+function boundedSelectionId(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 512 &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- profile display facts reject C0 controls.
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : undefined
+}
+
 function providerOutcome(
   status: string | undefined
 ): 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' {
@@ -363,6 +374,22 @@ export function projectHostProfileDomainSnapshot(
     workspaces,
     threads: threads.map((thread) => {
       const goal = projectThreadGoal(thread.activeGoal, thread.updatedAt)
+      const metadata =
+        thread.providerMetadata && typeof thread.providerMetadata === 'object'
+          ? (thread.providerMetadata as Record<string, unknown>)
+          : {}
+      const modelId = boundedSelectionId(metadata.selectedModelType)
+      const reasoningEffort = boundedSelectionId(metadata.reasoningEffort)
+      const rawPermission = boundedSelectionId(metadata.permissionPresetId)
+      const storedPermission =
+        rawPermission &&
+        ['read_only', 'plan', 'default', 'workspace_write', 'full_access'].includes(rawPermission)
+          ? rawPermission
+          : undefined
+      const permissionPresetId =
+        thread.workflowMode === 'plan' && storedPermission === 'read_only'
+          ? 'plan'
+          : storedPermission
       return {
         id: thread.appChatId,
         workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
@@ -374,6 +401,9 @@ export function projectHostProfileDomainSnapshot(
         messageCount: thread.messageCount,
         ...(thread.latestPreview ? { latestPreview: thread.latestPreview } : {}),
         ...(thread.provider ? { providerId: thread.provider } : {}),
+        ...(modelId ? { modelId } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(permissionPresetId ? { permissionPresetId } : {}),
         ...(goal ? { goal } : {})
       }
     }),

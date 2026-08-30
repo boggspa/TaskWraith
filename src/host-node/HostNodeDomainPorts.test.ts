@@ -1053,6 +1053,8 @@ describe('HostNodeDomainPorts', () => {
     expect(offers.locked).toBeUndefined()
     expect(offers.currentModel).toBe('muse-spark-1.2')
     expect(offers.currentReasoningEffort).toBe('high')
+    expect(offers.currentPostureId).toBe('workspace_write')
+    expect(offers.postures?.map((posture) => posture.label)).toEqual(['Workspace write'])
     expect(offers.provider.runtimeProvider).toBe('muse')
     expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2'])
     const model = offers.models[0]
@@ -1074,6 +1076,7 @@ describe('HostNodeDomainPorts', () => {
     ).threadId
     const bareOffers = await domain.threadOffers(bare)
     expect(bareOffers.models).toEqual([])
+    expect(bareOffers.postures).toBeUndefined()
     expect(bareOffers.locked).toBeTruthy()
 
     await expect(domain.threadOffers('id-absent')).rejects.toThrow(/Unknown standalone thread/)

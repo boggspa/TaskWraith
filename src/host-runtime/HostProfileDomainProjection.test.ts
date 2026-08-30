@@ -35,7 +35,13 @@ it('projects profile workspaces/threads/providers with honest empty unsupported 
     workspaceId: registered.id,
     title: 'Thread'
   })
-  store.configureThread({ threadId: thread.appChatId, providerId: 'codex', modelId: 'gpt-5.6' })
+  store.configureThread({
+    threadId: thread.appChatId,
+    providerId: 'codex',
+    modelId: 'gpt-5.6',
+    reasoningId: 'high',
+    postureId: 'default'
+  })
   const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
   const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
   raw.runs = [
@@ -65,7 +71,16 @@ it('projects profile workspaces/threads/providers with honest empty unsupported 
   })
   expect(donor).toMatchObject({
     workspaces: [{ id: registered.id, name: 'Workspace' }],
-    threads: [{ id: thread.appChatId, providerId: 'codex', chatKind: 'single' }],
+    threads: [
+      {
+        id: thread.appChatId,
+        providerId: 'codex',
+        modelId: 'gpt-5.6',
+        reasoningEffort: 'high',
+        permissionPresetId: 'default',
+        chatKind: 'single'
+      }
+    ],
     runs: [
       { runId: 'run-success', providerOutcome: 'completed' },
       { runId: 'run-cancel', providerOutcome: 'cancelled' },

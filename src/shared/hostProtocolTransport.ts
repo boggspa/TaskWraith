@@ -499,6 +499,7 @@ function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadO
   if (!isBoundedId(value.threadId) || value.source !== 'curated') return false
   if (!isOptionalBoundedString(value.currentModel, 200)) return false
   if (!isOptionalBoundedString(value.currentReasoningEffort, 80)) return false
+  if (!isOptionalBoundedString(value.currentPostureId, 80)) return false
   if (!isOptionalBoundedString(value.locked, 1_000)) return false
   if (!isRecord(value.provider)) return false
   for (const key of [
@@ -519,6 +520,24 @@ function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadO
     value.models.length > PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER
   ) {
     return false
+  }
+  if (value.postures !== undefined) {
+    if (!Array.isArray(value.postures) || value.postures.length > 16) return false
+    if (
+      !value.postures.every(
+        (posture) =>
+          isRecord(posture) &&
+          isOptionalBoundedString(posture.id, 80) &&
+          posture.id !== undefined &&
+          isOptionalBoundedString(posture.label, 200) &&
+          posture.label !== undefined &&
+          isOptionalBoundedString(posture.disabledReason, 1_000) &&
+          (posture.disabled === undefined || typeof posture.disabled === 'boolean') &&
+          typeof posture.requiresExplicitConsent === 'boolean'
+      )
+    ) {
+      return false
+    }
   }
   return value.models.every((model) => {
     if (!isRecord(model) || !isOptionalBoundedString(model.id, 200) || model.id === undefined) {

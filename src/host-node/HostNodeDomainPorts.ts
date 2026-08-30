@@ -473,6 +473,12 @@ export class HostNodeDomainPorts {
       typeof metadata.selectedModelType === 'string' ? metadata.selectedModelType : undefined
     const currentReasoning =
       typeof metadata.reasoningEffort === 'string' ? metadata.reasoningEffort : undefined
+    const currentPosture =
+      thread.workflowMode === 'plan' && metadata.permissionPresetId === 'read_only'
+        ? 'plan'
+        : typeof metadata.permissionPresetId === 'string'
+          ? metadata.permissionPresetId
+          : undefined
     const refreshed = providerId ? await this.registry.refreshOffers(providerId) : null
     const offers = refreshed ? this.effectiveProviderOffers(refreshed) : undefined
     const catalogue = offers?.models ?? []
@@ -488,6 +494,19 @@ export class HostNodeDomainPorts {
       provider: resolveTaskWraithProviderPresentation(providerId, currentModel, currentLabel),
       ...(currentModel ? { currentModel } : {}),
       ...(currentReasoning ? { currentReasoningEffort: currentReasoning } : {}),
+      ...(currentPosture ? { currentPostureId: currentPosture } : {}),
+      ...(offers
+        ? {
+            postures: offers.postures.map((posture) => ({
+              id: posture.postureId,
+              label: posture.label,
+              ...(posture.available
+                ? {}
+                : { disabled: true, disabledReason: posture.detail || unavailable }),
+              requiresExplicitConsent: posture.requiresExplicitConsent
+            }))
+          }
+        : {}),
       models: catalogue.map((model) => ({
         id: model.modelId,
         ...(model.label ? { label: model.label } : {}),

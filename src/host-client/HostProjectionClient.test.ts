@@ -377,6 +377,39 @@ describe('truncation fidelity', () => {
 })
 
 describe('request shaping', () => {
+  it('rejects a history response correlated to a different thread', async () => {
+    const host = await startFakeHost({
+      hostOffer: [...FULL_OFFER, 'history'],
+      respond: () => ({
+        kind: 'history.since',
+        result: {
+          kind: 'deltas',
+          threadId: 'thread-other',
+          generation: 1,
+          fromCursor: 1,
+          toCursor: 1,
+          deltas: []
+        }
+      })
+    })
+    const client = new HostProjectionClient({
+      client: { clientId: 'tui-test', clientClass: 'tui', clientVersion: '1.9.6' },
+      capabilities: ['bootstrap', 'history'],
+      discoveryPath: host.discoveryPath,
+      connectTimeoutMs: 4_000,
+      requestTimeoutMs: 4_000
+    })
+    cleanups.push(() => client.close())
+    await client.connect()
+
+    await expect(
+      client.getHistorySince({
+        threadId: 'thread-1',
+        since: { generation: 1, cursor: 1 }
+      })
+    ).rejects.toThrow(/different thread/)
+  })
+
   it('passes a thread-scoped request through unchanged', async () => {
     const host = await startFakeHost({
       hostOffer: FULL_OFFER,

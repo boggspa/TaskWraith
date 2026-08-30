@@ -287,12 +287,14 @@ describe('HostProfileDomainStore', () => {
     raw.linkedProviderSessionId = 'provider-session'
     raw.linkedGeminiSessionId = 'gemini-session'
     raw.taskWraithMcpProfileReceipt = { opaque: true }
+    raw.providerMetadata = { reasoningEffort: 'max' }
     writeFileSync(chatFile, JSON.stringify(raw))
     chmodSync(chatFile, 0o600)
     const switched = store.configureThread({ threadId: thread.appChatId, providerId: 'codex' })
     expect(switched).not.toHaveProperty('linkedProviderSessionId')
     expect(switched).not.toHaveProperty('linkedGeminiSessionId')
     expect(switched).not.toHaveProperty('taskWraithMcpProfileReceipt')
+    expect(switched.providerMetadata?.reasoningEffort).toBeUndefined()
     expect(() =>
       store.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'completed' })
     ).toThrow('begin')

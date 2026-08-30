@@ -581,6 +581,9 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     if (result.kind !== 'history.since') {
       throw new Error('TaskWraith Host returned an unexpected history since result kind.')
     }
+    if (result.result.threadId !== request.threadId) {
+      throw new Error('TaskWraith Host returned history for a different thread.')
+    }
     return result.result
   }
 

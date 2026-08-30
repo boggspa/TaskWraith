@@ -1150,6 +1150,8 @@ export class HostProfileDomainStore {
       metadata.selectedModelType = this.requireText(input.modelId, 512)
     if (input.reasoningId !== undefined)
       metadata.reasoningEffort = this.requireText(input.reasoningId, 512)
+    else if (input.providerId !== undefined || input.modelId !== undefined)
+      delete metadata.reasoningEffort
     let workflowMode = current.workflowMode
     if (input.postureId !== undefined) {
       const posture = this.posture(input.postureId)
@@ -1214,7 +1216,9 @@ export class HostProfileDomainStore {
       ...(input.providerId !== undefined
         ? { provider: this.requireText(input.providerId, 512) }
         : {}),
-      ...(Object.keys(metadata).length > 0 ? { providerMetadata: metadata } : {}),
+      ...(Object.keys(metadata).length > 0
+        ? { providerMetadata: metadata }
+        : { providerMetadata: undefined }),
       ...(workflowMode !== undefined ? { workflowMode } : {}),
       persistenceRevision: this.nextRevision(current),
       updatedAt: this.now()

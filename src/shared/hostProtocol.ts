@@ -314,6 +314,12 @@ export interface HostThreadProjection {
   latestPreview?: string
   previewTruncated?: boolean
   providerId?: string
+  /** Display-only configured model; run admission still revalidates provider offers. */
+  modelId?: string
+  /** Display-only configured reasoning/effort value. */
+  reasoningEffort?: string
+  /** Display-only selected permission tier; never grants authority. */
+  permissionPresetId?: string
   missionOutcome?: HostMissionOutcome
   activeRoundId?: string
   usage?: HostUsageObservation
@@ -2332,6 +2338,15 @@ function decodeHostThreadProjection(
   if (!isOptionalString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.providerId is invalid` }
   }
+  if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  if (!isOptionalString(value.reasoningEffort, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.reasoningEffort is invalid` }
+  }
+  if (!isOptionalString(value.permissionPresetId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.permissionPresetId is invalid` }
+  }
   if (!isOptionalString(value.activeRoundId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.activeRoundId is invalid` }
   }
@@ -2367,6 +2382,11 @@ function decodeHostThreadProjection(
   if (value.latestPreview !== undefined) thread.latestPreview = value.latestPreview
   if (value.previewTruncated !== undefined) thread.previewTruncated = value.previewTruncated
   if (value.providerId !== undefined) thread.providerId = value.providerId
+  if (value.modelId !== undefined) thread.modelId = value.modelId
+  if (value.reasoningEffort !== undefined) thread.reasoningEffort = value.reasoningEffort
+  if (value.permissionPresetId !== undefined) {
+    thread.permissionPresetId = value.permissionPresetId
+  }
   if (value.missionOutcome !== undefined) {
     thread.missionOutcome = value.missionOutcome as HostMissionOutcome
   }
