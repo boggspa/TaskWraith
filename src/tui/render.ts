@@ -264,12 +264,12 @@ function renderToolLine(
         : tones(ansi).good
   const delta =
     tool.additions !== undefined || tool.deletions !== undefined
-      ? `  +${tool.additions ?? 0} -${tool.deletions ?? 0}`
+      ? `  ${ansi.color(`+${tool.additions ?? 0}`, tones(ansi).good)} ${ansi.color(`-${tool.deletions ?? 0}`, tones(ansi).error)}`
       : ''
   const detail = tool.detail ? ` ${glyphs.separator} ${terminalLabel(tool.detail)}` : ''
   const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
   return fitAnsiLine(
-    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(`${terminalLabel(tool.name)}${detail}${delta}`)}`,
+    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(`${terminalLabel(tool.name)}${detail}`)}${delta}`,
     width
   )
 }
