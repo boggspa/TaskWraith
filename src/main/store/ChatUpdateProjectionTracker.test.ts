@@ -161,4 +161,40 @@ describe('ChatUpdateProjectionTracker', () => {
     expect(observed.delta).toBeNull()
     expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)
   })
+
+  it('treats legacy duplicate transcript ids as a recoverable snapshot condition', () => {
+    const before = chat([message('a', 'A'), message('a', 'Legacy duplicate')])
+    const after = advance(before, (next) => {
+      next.title = 'Still usable'
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+
+    expect(() => tracker.seed(before)).not.toThrow()
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after)
+    )
+
+    expect(observed.delta).toBeNull()
+    expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)
+  })
+
+  it('falls back when a new save introduces a duplicate transcript id', () => {
+    const before = chat([message('a', 'A')])
+    const after = advance(before, (next) => {
+      next.messages.push(message('a', 'Duplicate append'))
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+    tracker.seed(before)
+
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after)
+    )
+
+    expect(observed.delta).toBeNull()
+    expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)
+  })
 })

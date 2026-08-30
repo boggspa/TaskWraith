@@ -15,6 +15,8 @@ interface TrackedProjection {
   state: ChatUpdateProducerState
   messageIds: string[]
   messageBytesById: Map<string, number>
+  /** Duplicate/blank ids can exist in legacy or imported transcripts. */
+  transcriptIdsUnique: boolean
   runCount: number
   hasEnsemble: boolean
   lastTouched: number
@@ -121,11 +123,13 @@ export class ChatUpdateProjectionTracker {
     const sub = computeChatSubRevisions(chat)
     const messageIds: string[] = []
     const messageBytesById = new Map<string, number>()
+    let transcriptIdsUnique = true
     for (const message of chat.messages) {
-      if (!message.id || messageBytesById.has(message.id)) {
-        throw new Error(`Chat update projection requires unique message ids for ${chat.appChatId}`)
-      }
       messageIds.push(message.id)
+      if (!message.id || messageBytesById.has(message.id)) {
+        transcriptIdsUnique = false
+        continue
+      }
       messageBytesById.set(message.id, estimateChatMessageBytes(message))
     }
     const state: ChatUpdateProducerState = {
@@ -139,6 +143,7 @@ export class ChatUpdateProjectionTracker {
       state,
       messageIds,
       messageBytesById,
+      transcriptIdsUnique,
       runCount: chat.runs.length,
       hasEnsemble: chat.ensemble != null,
       lastTouched: this.now()
@@ -166,6 +171,13 @@ export class ChatUpdateProjectionTracker {
       tracked = this.projections.get(after.appChatId)
     }
     if (!tracked) throw new Error(`Chat update projection seed failed for ${after.appChatId}`)
+
+    // ID-based transcript deltas cannot be applied safely to a legacy/imported
+    // transcript with duplicate or blank ids. Keep the chat usable and let the
+    // delivery coordinator recover from its canonical baseline instead.
+    if (!tracked.transcriptIdsUnique) {
+      return { state: this.seed(after), delta: null }
+    }
 
     // A non-expressible transcript edit must be sent through the regular
     // snapshot/recovery path. Re-root the digest from the exact saved content
