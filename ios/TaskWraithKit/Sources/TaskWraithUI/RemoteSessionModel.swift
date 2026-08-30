@@ -2856,7 +2856,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"DeepSeek V4 Flash","blurb":"DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.","accentProvider":"deepseek"},
               {"name":"GLM-5.2","blurb":"Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.","accentProvider":"zai"},
               {"name":"Qwen3.8 Max","blurb":"Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},
-              {"name":"Xiaomi MiMo","blurb":"MiMo V2 Pro, V2.5, and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.","accentProvider":"xiaomi"},
+              {"name":"Xiaomi MiMo","blurb":"MiMo V2.5 and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.","accentProvider":"xiaomi"},
               {"name":"Mistral Large 3","blurb":"Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.","accentProvider":"mistral"},
               {"name":"Laguna S 2.1","blurb":"Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.","accentProvider":"poolside"},
               {"name":"Nemotron 3 Ultra","blurb":"NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.","accentProvider":"nvidia"}

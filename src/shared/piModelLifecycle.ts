@@ -11,7 +11,12 @@ export const PI_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.fre
   // https://inference-docs.cerebras.ai/models/overview
   'cerebras/zai-glm-4.7': '2026-08-17',
   // OpenRouter withdrew this route; the user approved its retirement on 2026-08-28.
-  'openrouter/stealth/ox-alpha': '2026-08-28'
+  'openrouter/stealth/ox-alpha': '2026-08-28',
+  // Xiaomi sunset MiMo V2 Pro across all three token-plan regions in favor of
+  // MiMo V2.5 and MiMo V2.5 Pro.
+  'xiaomi-token-plan-cn/mimo-v2-pro': '2026-08-30',
+  'xiaomi-token-plan-sgp/mimo-v2-pro': '2026-08-30',
+  'xiaomi-token-plan-ams/mimo-v2-pro': '2026-08-30'
 })
 
 const ISO_CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/

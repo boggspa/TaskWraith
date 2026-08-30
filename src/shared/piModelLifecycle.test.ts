@@ -73,4 +73,61 @@ describe('Pi model lifecycle', () => {
       { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' }
     ])
   })
+
+  it('retires all three regional MiMo V2 Pro routes while leaving V2.5 and V2.5 Pro active', () => {
+    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2-pro')).toBe('2026-08-30')
+    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2-pro')).toBe('2026-08-30')
+    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2-pro')).toBe('2026-08-30')
+
+    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5')).toBeUndefined()
+    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5')).toBeUndefined()
+    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5')).toBeUndefined()
+    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5-pro')).toBeUndefined()
+    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5-pro')).toBeUndefined()
+    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5-pro')).toBeUndefined()
+
+    expect(
+      isPiModelRetired('xiaomi-token-plan-cn/mimo-v2-pro', new Date(2026, 7, 29, 23, 59))
+    ).toBe(false)
+    expect(isPiModelRetired('xiaomi-token-plan-cn/mimo-v2-pro', new Date(2026, 7, 30, 0, 0))).toBe(
+      true
+    )
+    expect(isPiModelRetired('xiaomi-token-plan-sgp/mimo-v2-pro', new Date(2026, 7, 30, 0, 0))).toBe(
+      true
+    )
+    expect(isPiModelRetired('xiaomi-token-plan-ams/mimo-v2-pro', new Date(2026, 7, 30, 0, 0))).toBe(
+      true
+    )
+    expect(isPiModelRetired('xiaomi-token-plan-cn/mimo-v2.5', new Date(2026, 7, 30, 0, 0))).toBe(
+      false
+    )
+    expect(
+      isPiModelRetired('xiaomi-token-plan-cn/mimo-v2.5-pro', new Date(2026, 7, 30, 0, 0))
+    ).toBe(false)
+  })
+
+  it('drops exactly the three regional MiMo V2 Pro rows from active rows once reached', () => {
+    const rows = [
+      { id: 'xiaomi-token-plan-cn/mimo-v2-pro', label: 'MiMo V2 Pro (CN)' },
+      { id: 'xiaomi-token-plan-cn/mimo-v2.5', label: 'MiMo V2.5 (CN)' },
+      { id: 'xiaomi-token-plan-cn/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (CN)' },
+      { id: 'xiaomi-token-plan-sgp/mimo-v2-pro', label: 'MiMo V2 Pro (SGP)' },
+      { id: 'xiaomi-token-plan-sgp/mimo-v2.5', label: 'MiMo V2.5 (SGP)' },
+      { id: 'xiaomi-token-plan-sgp/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (SGP)' },
+      { id: 'xiaomi-token-plan-ams/mimo-v2-pro', label: 'MiMo V2 Pro (AMS)' },
+      { id: 'xiaomi-token-plan-ams/mimo-v2.5', label: 'MiMo V2.5 (AMS)' },
+      { id: 'xiaomi-token-plan-ams/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (AMS)' }
+    ]
+
+    const active = activePiModelRows(rows, new Date(2026, 7, 30))
+    expect(active.map((row) => row.id)).toEqual([
+      'xiaomi-token-plan-cn/mimo-v2.5',
+      'xiaomi-token-plan-cn/mimo-v2.5-pro',
+      'xiaomi-token-plan-sgp/mimo-v2.5',
+      'xiaomi-token-plan-sgp/mimo-v2.5-pro',
+      'xiaomi-token-plan-ams/mimo-v2.5',
+      'xiaomi-token-plan-ams/mimo-v2.5-pro'
+    ])
+    expect(active).toHaveLength(rows.length - 3)
+  })
 })

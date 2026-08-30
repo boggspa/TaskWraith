@@ -253,7 +253,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Qwen3.8 Max** `qwen-token-plan/qwen3.8-max`              | —            | —    | 1M context via the Qwen token plan. The `…-max-preview` id survives only as a legacy alias for older transcripts. |
 | **MiniMax M3** `minimax/MiniMax-M3`                        | Off / High   | —    | 1M context via MiniMax; High is the on/adaptive control. |
 | **MiniMax M2.7** `minimax/MiniMax-M2.7`                    | —            | —    | ~200K context via MiniMax.                  |
-| **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan.       |
+| **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan. **Retired 2026-08-30** after Xiaomi sunset it in favor of MiMo V2.5 and MiMo V2.5 Pro; no longer offered for new runs, kept here so older transcripts still decode. |
 | **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | —            | —    | 1M context via the Xiaomi token plan.       |
 | **MiMo V2.5 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5-pro` | —      | —    | 1M context via the Xiaomi token plan.       |
 | **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
