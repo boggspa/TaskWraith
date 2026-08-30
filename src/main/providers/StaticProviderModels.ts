@@ -918,13 +918,13 @@ const OLLAMA_STATIC_MODELS = [
   },
   {
     id: 'deepseek-r1:1.5b',
-    label: 'DeepSeek R1 (1.5B Param)',
+    label: 'R1 (1.5B Param)',
     description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking',
     ultraTaskSupported: true
   },
   {
     id: 'deepseek-r1:8b',
-    label: 'DeepSeek R1 (8B Param)',
+    label: 'R1 (8B Param)',
     description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking',
     ultraTaskSupported: true
   },

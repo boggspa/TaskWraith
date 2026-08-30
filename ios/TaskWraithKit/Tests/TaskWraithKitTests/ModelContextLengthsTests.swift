@@ -424,7 +424,7 @@ struct ModelContextLengthsTests {
             "ministral-3:3b": ("Ministral 3 (3B Param)", 262_144),
             "granite4:3b": ("Granite 4.0 (3B Param)", 131_072),
             "qwen3.5:2b": ("Qwen 3.5 (2B Param)", 262_144),
-            "deepseek-r1:1.5b": ("DeepSeek R1 (1.5B Param)", 131_072),
+            "deepseek-r1:1.5b": ("R1 (1.5B Param)", 131_072),
             "nemotron-3-nano:4b": ("Nemotron 3 Nano (4B Param)", 262_144),
             "lfm2.5-thinking:1.2b": ("LFM 2.5 Thinking (1.2B Param)", 128_000),
             "gemma3:4b": ("Gemma 3 (4B Param)", 131_072),
@@ -446,7 +446,7 @@ struct ModelContextLengthsTests {
         }
 
         #expect(row("llama3.1:8b")?.contextWindow == 131_072)
-        #expect(row("deepseek-r1:8b")?.label == "DeepSeek R1 (8B Param)")
+        #expect(row("deepseek-r1:8b")?.label == "R1 (8B Param)")
         #expect(row("rnj-1")?.contextWindow == 32_768)
         #expect(row("glm-4.7-flash:q4_K_M")?.contextWindow == 202_752)
         #expect(row("north-mini-code-1.0:q4_K_M")?.contextWindow == 500_000)

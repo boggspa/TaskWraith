@@ -309,10 +309,10 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
       return 'Llama 3.1 (8B Param)'
     }
     if (id === 'deepseek-r1:1.5b' || id.startsWith('deepseek-r1:1.5b-')) {
-      return 'DeepSeek R1 (1.5B Param)'
+      return 'R1 (1.5B Param)'
     }
     if (id === 'deepseek-r1:8b' || id.startsWith('deepseek-r1:8b-')) {
-      return 'DeepSeek R1 (8B Param)'
+      return 'R1 (8B Param)'
     }
     if (id === 'rnj-1' || id === 'rnj-1:latest' || id === 'rnj-1:8b') {
       return 'Rnj-1 (8B Param)'

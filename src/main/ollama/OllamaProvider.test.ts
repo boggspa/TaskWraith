@@ -3966,7 +3966,7 @@ describe('normalizeOllamaModels', () => {
       'Nemotron 3.5 Lightning (30B-MLX)'
     )
     expect(humanizeOllamaModelId('llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
-    expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('R1 (8B Param)')
     expect(humanizeOllamaModelId('rnj-1:latest')).toBe('Rnj-1 (8B Param)')
     expect(humanizeOllamaModelId('glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
     expect(humanizeOllamaModelId('north-mini-code-1.0:q4_K_M')).toBe(
@@ -3984,7 +3984,7 @@ describe('normalizeOllamaModels', () => {
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],
       ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
-      ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+      ['deepseek-r1:1.5b', 'R1 (1.5B Param)'],
       ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
       ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
       ['gemma3:4b', 'Gemma 3 (4B Param)']

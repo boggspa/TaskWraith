@@ -97,7 +97,7 @@ public enum OllamaDisplayBrands {
             providerLabel: "DeepSeek",
             providerClass: "deepseek",
             needles: ["deepseek-r1", "deepseek r1", "deepseek"],
-            fallbackModelLabel: "DeepSeek R1 (8B Param)"),
+            fallbackModelLabel: "R1 (8B Param)"),
         OllamaDisplayBrandDefinition(
             id: "deep-reinforce",
             providerLabel: "Deep Reinforce",

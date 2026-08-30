@@ -1086,10 +1086,10 @@ export function humanizeOllamaModelId(model: string): string {
     return 'Llama 3.1 (8B Param)'
   }
   if (key === 'deepseek-r1:1.5b' || key.startsWith('deepseek-r1:1.5b-')) {
-    return 'DeepSeek R1 (1.5B Param)'
+    return 'R1 (1.5B Param)'
   }
   if (key === 'deepseek-r1:8b' || key.startsWith('deepseek-r1:8b-')) {
-    return 'DeepSeek R1 (8B Param)'
+    return 'R1 (8B Param)'
   }
   if (key === 'rnj-1' || key === 'rnj-1:latest' || key === 'rnj-1:8b') {
     return 'Rnj-1 (8B Param)'

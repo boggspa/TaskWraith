@@ -224,8 +224,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ministral-3:14b': 'Ministral 3 (14B Param)',
   'muse-glimmer:30b-mlx': 'Muse Glimmer (30B-MLX)',
   'llama3.1:8b': 'Llama 3.1 (8B Param)',
-  'deepseek-r1:1.5b': 'DeepSeek R1 (1.5B Param)',
-  'deepseek-r1:8b': 'DeepSeek R1 (8B Param)',
+  'deepseek-r1:1.5b': 'R1 (1.5B Param)',
+  'deepseek-r1:8b': 'R1 (8B Param)',
   'rnj-1': 'Rnj-1 (8B Param)',
   'rnj-1:latest': 'Rnj-1 (8B Param)',
   'rnj-1:8b': 'Rnj-1 (8B Param)',
@@ -496,10 +496,10 @@ export function humaniseModelId(
     return 'Llama 3.1 (8B Param)'
   }
   if (provider === 'ollama' && key.startsWith('deepseek-r1:8b-')) {
-    return 'DeepSeek R1 (8B Param)'
+    return 'R1 (8B Param)'
   }
   if (provider === 'ollama' && key.startsWith('deepseek-r1:1.5b-')) {
-    return 'DeepSeek R1 (1.5B Param)'
+    return 'R1 (1.5B Param)'
   }
   if (provider === 'ollama' && key.startsWith('glm-4.7-flash:q4_k_m-')) {
     return 'GLM-4.7-Flash (30B-A3B Q4)'

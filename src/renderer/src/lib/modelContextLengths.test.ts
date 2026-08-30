@@ -196,7 +196,7 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 131_072
     })
     expect(byId.get('deepseek-r1:8b')).toMatchObject({
-      label: 'DeepSeek R1 (8B Param)',
+      label: 'R1 (8B Param)',
       contextWindow: 131_072
     })
     expect(byId.get('rnj-1')).toMatchObject({ contextWindow: 32_768, formatted: '33k' })

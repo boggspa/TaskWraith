@@ -77,11 +77,12 @@ manually-maintained iOS mirror `ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swi
 `MODEL_CATALOGUE.md`'s provider rail was missed and has been corrected
 separately.
 
-**Still carrying the old `#8D7312`** (design assets, not corrected here because
-they are artwork rather than paperwork — flagging for a design pass):
-`design-assets/provider-glyphs/glyphs/ensemble.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom-comparison.svg`.
+**Resolved 2026-08-30.** The three design assets that still carried `#8D7312`
+— `design-assets/provider-glyphs/glyphs/ensemble.svg` and the two
+`auditions/ensemble-confluence-loom*.svg` files — were re-synced to `#8C7508`
+in the same pass that fixed the Ollama stop below, and the baked PNGs were
+regenerated. The glyph's stops are now checked against `theme.css` wholesale,
+not one hex at a time: every `data-brand` stop matches its live token.
 
 ### Collision revision — 2026-08-30 (Ollama, Thinking Machines)
 
@@ -138,14 +139,16 @@ case list, and the `ollama` Agent-Aura RGB triplet), the `--agent-accent-rgb` /
 `WelcomeUsageDashboard.tsx`, `agentPoolIconAssets.ts`, `canvasChartSvg.ts`,
 `ProviderGlyph.tsx` and `scripts/export-dmg-background.cjs`.
 
-**Still carrying the old `#1A8562`**, on the same artwork-not-paperwork grounds
-as the Cursor note above, and in the same three files:
-`design-assets/provider-glyphs/glyphs/ensemble.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom-comparison.svg`.
-The first of these is the live source for the baked Ensemble PNG, so correcting
-it needs the glyph baker (`render-glyph-pngs.cjs`) run in the same pass —
-flagging for the design pass that still owes `#8D7312`.
+**Design assets corrected in the same pass, 2026-08-30.** All three files —
+`design-assets/provider-glyphs/glyphs/ensemble.svg` and the two
+`auditions/ensemble-confluence-loom*.svg` — now carry `#976C52`, and the
+long-outstanding Cursor `#8D7312` was cleared alongside it. The glyph is the
+live source for the baked Ensemble PNG and for the Agent Pool artwork, so
+`npx electron design-assets/provider-glyphs/render-glyph-pngs.cjs` was run in
+the same pass; it rewrites three copies at once (the master under `png/`, the
+`TaskWraithUI/Resources` copy, and the `Assets.xcassets` imageset), and all
+three now share one digest. Rebake whenever a stop changes — the SVG and its
+PNGs drift silently otherwise, and the PNG is what iOS ships.
 
 **This document remains incomplete.** It has no allocation rows for Meta,
 Xiaomi/MiMo, OpenRouter, or the original Thinking Machines swatch, nor for the

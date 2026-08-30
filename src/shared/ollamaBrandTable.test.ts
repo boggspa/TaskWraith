@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { matchOllamaBrand, resolveHealthEntryPresentation } from './ollamaBrandTable'
+import {
+  OLLAMA_DISPLAY_BRANDS,
+  matchOllamaBrand,
+  resolveHealthEntryPresentation
+} from './ollamaBrandTable'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from './piBrandTable'
 
 describe('resolveHealthEntryPresentation', () => {
@@ -66,6 +70,22 @@ describe('resolveHealthEntryPresentation', () => {
       displayHueClass: 'pi'
     })
   })
+})
+
+describe('brand labels never repeat their own brand', () => {
+  // Every surface that shows fallbackModelLabel shows it BESIDE providerLabel,
+  // so a label that opens with its own brand renders "DeepSeek DeepSeek R1".
+  // Mistral and Qwen are the standing exception — their product names
+  // canonically carry the vendor word — but neither reaches this table's
+  // fallbacks, so the rule holds here with no carve-out.
+  it.each(OLLAMA_DISPLAY_BRANDS.map((brand) => [brand.id, brand] as const))(
+    'the %s fallback label does not open with its own brand',
+    (_id, brand) => {
+      expect(brand.fallbackModelLabel.toLowerCase()).not.toMatch(
+        new RegExp(`^${brand.providerLabel.toLowerCase()}\\b`)
+      )
+    }
+  )
 })
 
 describe('matchOllamaBrand', () => {

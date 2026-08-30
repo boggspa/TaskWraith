@@ -129,7 +129,7 @@ describe('mergeOllamaModelCatalog', () => {
       'Llama 3.1 (8B Param)'
     )
     expect(models.find((model) => model.id === 'deepseek-r1:8b')?.label).toBe(
-      'DeepSeek R1 (8B Param)'
+      'R1 (8B Param)'
     )
     expect(models.filter((model) => ollamaModelCatalogKey(model.id) === 'rnj-1')).toHaveLength(1)
     expect(models.find((model) => model.id === 'glm-4.7-flash:q4_K_M')?.label).toBe(

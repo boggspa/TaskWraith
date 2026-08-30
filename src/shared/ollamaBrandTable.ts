@@ -42,7 +42,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'DeepSeek',
     providerClass: 'deepseek',
     needles: ['deepseek-r1', 'deepseek r1', 'deepseek'],
-    fallbackModelLabel: 'DeepSeek R1 (8B Param)'
+    fallbackModelLabel: 'R1 (8B Param)'
   },
   {
     id: 'deep-reinforce',

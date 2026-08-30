@@ -175,6 +175,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     command: 'ollama run muse-glimmer:30b-mlx'
   },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)', command: 'ollama run llama3.1:8b' },
+  // These two keep the "DeepSeek" prefix that the picker rows drop. This list
+  // is a seat-headed install surface — it sits under "Ollama", not under the
+  // spoofed upstream brand — so the label has to name its own maker or the row
+  // reads as an unattributed "R1". Same split the brand-spoof helper documents:
+  // presentation surfaces name the brand, setup/auth surfaces name the seat.
   {
     id: 'deepseek-r1:1.5b',
     label: 'DeepSeek R1 (1.5B Param)',
