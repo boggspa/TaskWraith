@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS, registerChatHandlers } from './chatHandlers'
+import {
+  CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS,
+  ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
+  registerChatHandlers
+} from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type {
   RebindChatWorkspaceInput,
@@ -590,6 +594,80 @@ describe('registerChatHandlers', () => {
     const result = await handlerFor('set-chat-kind')({} as any, args)
     expect(result).toEqual(chat('chat-1', { chatKind: 'single' }))
     expect(deps.chatService.setChatKind).toHaveBeenCalledWith(args)
+  })
+
+  it('fails loudly when the mode switch never reached the durable Host record', async () => {
+    // 2026-08-30 wedge: a mode change that silently misses the durable record
+    // reverts the user's choice on the next stale delivery (ensemble forced
+    // back on mid-session). The handler must throw — and must not broadcast the
+    // optimistic record — instead of reporting a success the Host never stored.
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    ).rejects.toThrow('could not be persisted')
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('confirms a mode switch once the durable Host record carries it', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+    })
+    registerChatHandlers(deps)
+
+    const result = await handlerFor('set-chat-kind')({} as any, {
+      chatId: 'chat-1',
+      targetKind: 'ensemble',
+      seedParticipant: {
+        id: 'seed-1',
+        provider: 'codex' as const,
+        enabled: true,
+        role: 'Boss',
+        instructions: '',
+        order: 1
+      }
+    })
+    expect(result).toEqual(chat('chat-1', { chatKind: 'ensemble' }))
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('skips durable verification when no Host record exists (history disabled)', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => null)
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    ).resolves.toEqual(chat('chat-1', { chatKind: 'single' }))
+  })
+
+  it('does not wait forever on a set-chat-kind barrier that never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const deps = createDeps({
+        awaitChatRecordPersisted: vi.fn(() => new Promise<void>(() => {})),
+        readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+      })
+      registerChatHandlers(deps)
+
+      const pending = handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'single'
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS + 1)
+      await expect(pending).resolves.toEqual(chat('chat-1', { chatKind: 'single' }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([

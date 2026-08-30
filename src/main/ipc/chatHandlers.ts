@@ -80,6 +80,14 @@ export interface ChatHandlerDeps {
    * omit it.
    */
   awaitChatRecordPersisted?: (chatId: string) => Promise<void>
+  /**
+   * The Host's durable record for a chat, bypassing the optimistic shadow cache
+   * and the selection overlay. Read after the set-chat-kind barrier: a mode
+   * switch that never reached the durable record must fail loudly, not report a
+   * success the next stale delivery will revert. Optional so unit-test
+   * harnesses can omit it (verification then skips).
+   */
+  readDurableChatRecord?: (chatId: string) => ChatRecord | null
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
   /** Revoke/claim provider approval authority synchronously before graph awaits. */
@@ -381,6 +389,70 @@ async function settleEnsembleCreatePersistBarrier(
   }
 }
 
+/**
+ * How long a mode switch waits for the Host to confirm the rewritten record
+ * before verifying against whatever is durable. Same bound as chat creation:
+ * the user is waiting on a toggle, but a saturated Host must not wedge the IPC.
+ */
+export const CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS = 5_000
+
+/**
+ * Bounded wait + durable verification for `set-chat-kind`.
+ *
+ * Mode switches ride the same Host-routed CAS lane as every other save, but
+ * unlike a transcript append their loss is invisible until some later write —
+ * a switch that never lands is a silent revert the user only meets when the
+ * next stale delivery flips the thread back (measured 2026-08-30: Ensemble
+ * forced back on mid-session, provider changes undone). Wait a bounded window
+ * for the lane to drain, then verify the DURABLE record carries the requested
+ * kind; a mismatch throws so the renderer keeps the truthful pre-toggle state
+ * and reports the failure in the thread log instead of applying an optimistic
+ * record the Host never accepted.
+ */
+async function assertChatKindPersisted(
+  deps: Pick<ChatHandlerDeps, 'awaitChatRecordPersisted' | 'readDurableChatRecord'>,
+  chatId: string,
+  targetKind: ChatKind
+): Promise<void> {
+  const barrier = deps.awaitChatRecordPersisted?.(chatId)
+  if (barrier) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Same shape as settleEnsembleCreatePersistBarrier: the handler rides on
+    // the barrier itself, so a late rejection on the losing branch cannot
+    // surface as an unhandled rejection in main.
+    const reported = barrier.catch((error) => {
+      console.error(`[set-chat-kind] Host record persist failed for chat ${chatId}.`, error)
+    })
+    const bound = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS)
+      timer.unref?.()
+    })
+    try {
+      if ((await Promise.race([reported, bound])) === 'timeout') {
+        console.error(
+          `[set-chat-kind] Host record persist did not confirm chat ${chatId} within ` +
+            `${CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS}ms; verifying against the durable record.`
+        )
+      }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+  const durable = deps.readDurableChatRecord?.(chatId)
+  // No durable record at all: local history is disabled or the chat was never
+  // persisted — there is nothing to verify against, so the in-memory mutation
+  // stands on its own.
+  if (!durable) return
+  const durableKind = durable.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  if (durableKind !== targetKind) {
+    throw new Error(
+      `The chat mode change could not be persisted — the durable record is still ` +
+        `${durableKind === 'ensemble' ? 'an Ensemble' : 'a single-provider chat'}. ` +
+        'The thread is unchanged; try the switch again.'
+    )
+  }
+}
+
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
   const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
   const threadTitleRepair = createThreadTitleRepairRunner({
@@ -544,6 +616,13 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         throw new Error('Ensemble Mode is disabled.')
       }
       const chat = deps.chatService.setChatKind(args)
+      // Prove the mode switch reached the durable Host record before reporting
+      // success — otherwise the next stale delivery silently reverts the toggle.
+      await assertChatKindPersisted(
+        deps,
+        args.chatId,
+        args?.targetKind === 'ensemble' ? 'ensemble' : 'single'
+      )
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }

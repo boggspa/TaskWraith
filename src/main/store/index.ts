@@ -8229,6 +8229,21 @@ export class AppStore {
   }
 
   /**
+   * The Host's durable record for a chat, bypassing the optimistic shadow cache
+   * AND the composer-selection overlay. This is the only truthful answer to
+   * "did my mutation land": the shadow can hold unconfirmed content, and the
+   * overlay projects main-local selection state on top of it. Used by callers
+   * that must verify a user-facing mutation actually persisted before reporting
+   * success (e.g. the set-chat-kind durability check). Returns null when no
+   * durable record exists (never persisted, or local history disabled).
+   */
+  static readDurableChatRecord(chatId: string): ChatRecord | null {
+    if (!isSafeChatId(chatId)) return null
+    const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+    return stored ? this.normalizeChatRecord(stored as ChatRecord) : null
+  }
+
+  /**
    * Durability barrier for the Host-routed persistence path: resolves once the
    * chat's queued `thread.record.persist` work has landed. Revision conflicts
    * are rebased onto the latest Host record and retried within a strict bound,

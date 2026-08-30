@@ -55708,6 +55708,7 @@ if (isGeminiMcpBridgeProcess) {
     registerChatHandlers({
       chatService,
       awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
+      readDurableChatRecord: (chatId) => AppStore.readDurableChatRecord(chatId),
       isChatBusy: hasActiveProviderRunForChat,
       beginChatHistoryMutation,
       finishChatHistoryMutation,
