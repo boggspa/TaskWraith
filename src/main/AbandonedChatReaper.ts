@@ -121,10 +121,19 @@ export function isReapableAbandonedChat(
   if (chat.delegationContext) return false
   if (inSet(ctx.parentChatIds, chat.appChatId)) return false
 
-  // ── Renamed from the type default ⇒ keep (defensive; a started chat is
-  //    already excluded above, this catches odd manual-rename states). ──
+  // Explicit provenance wins even when the user deliberately chose a title
+  // that spells like a factory placeholder. Automatic provenance does not
+  // protect an otherwise empty shell from normal draft cleanup.
+  if (
+    chat.threadTitle?.source &&
+    chat.threadTitle.source !== 'placeholder' &&
+    chat.threadTitle.source !== 'prompt-fallback'
+  )
+    return false
+
+  // Legacy records without provenance retain the spelling fallback.
   const title = chat.title?.trim()
-  if (title && !DEFAULT_TITLES.has(title)) return false
+  if (!chat.threadTitle && title && !DEFAULT_TITLES.has(title)) return false
 
   // ── Workflow / scheduled linkage — intentionally message-less, never reap. ──
   if (inSet(ctx.workflowChatIds, chat.appChatId)) return false

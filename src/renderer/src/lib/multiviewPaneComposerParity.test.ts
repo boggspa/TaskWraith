@@ -224,6 +224,7 @@ describe('Multiview pane Composer context parity', () => {
     expect(builder).toContain('viewerChatId,')
     expect(builder).toContain('dmTargetParticipantId,')
     expect(builder).toContain('exactPickerParticipantId')
+    expect(builder).not.toContain('registerFocusedRunPromptRoutingReader')
     expect(paneRun).toContain(
       'if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId'
     )

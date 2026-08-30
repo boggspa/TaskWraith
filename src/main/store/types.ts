@@ -490,6 +490,22 @@ export interface ActiveGoal {
   completedSummary?: string
   lastStatusReason?: string
 }
+
+export type ThreadTitleSource = 'placeholder' | 'prompt-fallback' | 'local-ai' | 'user'
+
+/**
+ * Provenance for the current thread title. Missing legacy metadata is decoded
+ * conservatively by the title lifecycle helpers: factory placeholders remain
+ * replaceable, while an unrelated non-placeholder title is treated as user
+ * authored. `sourceMessageId` and `evidenceFingerprint` form the compare-and-
+ * swap guard for an asynchronous on-device refinement.
+ */
+export interface ThreadTitleProvenance {
+  source: ThreadTitleSource
+  sourceMessageId?: string
+  sourceFingerprint?: string
+  evidenceFingerprint?: string
+}
 export type ChatScope = 'workspace' | 'global'
 export type ChatKind = 'single' | 'ensemble'
 export type ChatParentRelation = 'subThread' | 'sideChat'
@@ -2668,11 +2684,10 @@ export interface AppSettings {
    * Defaults to true; requires the bridge daemon + macOS 26 Foundation
    * Models, so on older hosts it is silently inert. */
   closeoutAiSummaryEnabled?: boolean
-  /** Settings → General toggle for the optional, on-device ranker used by
-   * safe composer continuation suggestions. It receives only host-owned round
-   * enums and opaque candidate ids — never prompt text, transcripts, agent
-   * output, tool output, telemetry, or candidate wording. Defaults to true;
-   * turning it off preserves deterministic + local aggregate ranking. */
+  /** Settings → General toggle for contextual on-device composer drafts.
+   * The main process builds a bounded, authority-labelled evidence snapshot;
+   * Apple Foundation Models may propose grounded text or abstain. Defaults to
+   * true. Turning it off disables composer AutoDraft entirely. */
   composerContinuationAiEnabled?: boolean
   /** Settings → General toggle for evidence-gated host auto-compaction.
    * Generic run input/output is advisory and cannot authorize a session reset;
@@ -4029,39 +4044,64 @@ export interface CloseoutSummarySnapshot {
   error?: string
 }
 
-/**
- * A strictly bounded on-device ranking request for composer continuation.
- * It deliberately carries no transcript, tool output, telemetry, agent prose,
- * prompt text, or candidate text. The model may select only one of the host
- * generated opaque ids below; the renderer validates it again before use.
- */
-export type ContinuationProposalCandidateKind =
-  | 'picker-dismissed'
-  | 'task-continuation'
-  | 'lane-failed'
-  | 'uncommitted-changes'
+export type ContinuationDraftIntentKind = 'clarify' | 'continue-step' | 'verify' | 'review'
+
+export type ContinuationProposalPurpose = 'draft' | 'title'
 
 export interface ContinuationProposalRequest {
+  schemaVersion: 2
   /** Used by the main process to keep a secondary renderer in its own chat. */
   chatId: string
-  /** Host-created replacement checkpoint identity, not a transcript digest. */
-  checkpointId: string
-  phase: 'none' | 'working' | 'blocked'
-  roundState: 'none' | 'completed' | 'partial-success' | 'all-failed'
-  candidates: Array<{
-    id: string
-    kind: ContinuationProposalCandidateKind
-  }>
+  /** Renderer-local invalidation key. It is echoed, never trusted as evidence. */
+  contextVersion: string
+  purpose: ContinuationProposalPurpose
+}
+
+export interface ContinuationDraftProposal {
+  id: string
+  text: string
+  intentKind: ContinuationDraftIntentKind
+  evidenceIds: string[]
+  /** Deterministic host score in [0, 1], never model self-confidence. */
+  qualityScore: number
+  explanation: string
+  target?: {
+    participantId: string
+    mentionText: string
+  }
 }
 
 export interface ContinuationProposalSnapshot {
-  checkpointId: string
+  schemaVersion: 2
+  chatId: string
+  contextVersion: string
   generatedAt: string
-  status: 'ready' | 'unavailable' | 'error'
-  /** Present only when it exactly matches a candidate id in the request. */
-  candidateId?: string
+  status: 'ready' | 'abstained' | 'stale' | 'unavailable'
+  proposals: ContinuationDraftProposal[]
+  /** Optional three-to-seven-word title proposal; renderer applies it by CAS. */
+  title?: string
+  titleSourceMessageId?: string
+  titleSourceFingerprint?: string
+  titleExpectedCurrent?: string
+  fingerprint?: string
   model?: string
-  error?: string
+  reason?: string
+}
+
+export interface ContinuationTitleApplyRequest {
+  schemaVersion: 1
+  chatId: string
+  title: string
+  sourceMessageId: string
+  sourceFingerprint: string
+  evidenceFingerprint: string
+  expectedTitle: string
+}
+
+export interface ContinuationTitleApplyResult {
+  ok: boolean
+  chat?: ChatRecord
+  reason?: string
 }
 
 export interface StoredOllamaSessionMemory {
@@ -4132,6 +4172,7 @@ export interface ChatRecord {
   chatKind?: ChatKind
   provider?: ProviderId
   title: string
+  threadTitle?: ThreadTitleProvenance
   workspaceId?: string
   workspacePath?: string
   /** Main-owned durable identity for a thread's isolated Git worktree. */

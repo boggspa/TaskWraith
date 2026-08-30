@@ -4626,7 +4626,7 @@ export function Sidebar({
     const trimmed = normalizeThreadTitle(nextValue, '')
     const currentTitle = normalizeThreadTitle(chat.title, '')
     setEditingChatTarget(null)
-    if (!trimmed || trimmed === currentTitle) return
+    if (!trimmed || (trimmed === currentTitle && chat.threadTitle?.source === 'user')) return
     onRenameChat?.(chat.appChatId, trimmed)
   }
 

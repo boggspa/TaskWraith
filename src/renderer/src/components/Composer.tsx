@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
@@ -35,9 +35,8 @@ import { buildParticipantReasoningSelectionPatch } from '../components/Participa
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
-import type { ComposerSuggestionModel } from '../lib/composerSuggestion'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
-import { failedLanesFromChat } from '../lib/composerSuggestionInputs'
+import { buildContinuationTitleApplyRequest } from '../lib/composerContinuationProposal'
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
 import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
@@ -90,6 +89,7 @@ import {
   parseComposerMentionTrigger
 } from '../lib/ComposerMentionTrigger'
 import {
+  acceptedDraftParticipantMentionSelection,
   exactComposerParticipantMentionTarget,
   formatComposerParticipantMention,
   rebaseComposerParticipantMentionSelections,
@@ -215,6 +215,13 @@ import { createPortal } from 'react-dom'
  * deliberate, temporary passthrough — a follow-up slice tightens them and lifts
  * the singleton refs/UI-state into the component so multiple instances are safe.
  */
+export interface ComposerRunPromptRouting {
+  chatId: string
+  exactPickerParticipantId?: string
+}
+
+export type ComposerRunPromptRoutingReader = () => ComposerRunPromptRouting
+
 export interface ComposerProps {
   prompt: string
   PLAN_IMPORT_RISK_LABELS: any
@@ -263,6 +270,10 @@ export interface ComposerProps {
   composerAreaRef: any
   /** Optional host bridge for focusing a secondary Composer after it mounts. */
   externalComposerTextareaRef?: { current: HTMLTextAreaElement | null }
+  /** Focused-only reader used by the window-level Run Prompt command. */
+  registerFocusedRunPromptRoutingReader?: (
+    reader: ComposerRunPromptRoutingReader | null
+  ) => void
   composerAriaLabel: any
   composerPlaceholder: any
   composerRunTimecodeStartedAt: any
@@ -662,6 +673,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerAgentAuraClass,
     composerAreaRef,
     externalComposerTextareaRef,
+    registerFocusedRunPromptRoutingReader,
     composerAriaLabel,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
@@ -1122,58 +1134,62 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     hasProjectReferenceContext ||
     Boolean(currentDiscordContextSelection)
 
-  /**
-   * Model the user highlighted in the picker and then closed out of
-   * without committing to. Set by the picker's `onCloseWithHighlight`
-   * (which compares against the model actually selected once the close
-   * settles, so a real selection never lands here), and cleared on
-   * send.
-   */
-  const [consideredModel, setConsideredModel] = useState<ComposerSuggestionModel | null>(null)
-
-  /**
-   * Failed seats in the last settled round. Derived from `currentChat`
-   * rather than a new prop: the round state already rides along on the
-   * chat record, so no App.tsx composer mount needs re-threading.
-   * Memoised because the extraction walks the lane map and the seat
-   * list, and this component re-renders on every keystroke.
-   */
-  const composerFailedLanes = useMemo(
-    () => failedLanesFromChat(currentChat),
-    [currentChat]
-  )
-
-  // A narrow, host-owned replacement checkpoint. It reads the active goal and
-  // structured round state only — never transcript, tool output, telemetry,
-  // participant prose, or Foundation Models summaries.
+  // Renderer invalidation only. Main re-reads the canonical chat and owns the
+  // bounded semantic evidence snapshot sent to Foundation Models.
   const composerContinuationCheckpoint = useMemo(
     () => buildComposerContinuationCheckpoint(currentChat),
     [currentChat]
   )
 
-  /** v1 prefill: template-driven ghost text into an EMPTY composer only. */
+  const applyComposerTitleProposal = useCallback(
+    (snapshot: import('../../../main/store/types').ContinuationProposalSnapshot) => {
+      if (!currentComposerChatId) return
+      const request = buildContinuationTitleApplyRequest(currentComposerChatId, snapshot)
+      if (!request) return
+      void window.api
+        .applyContinuationTitle(request)
+        .then((result) => {
+          const saved = result.chat
+          if (!result.ok || !saved) return
+          const live = chatByIdRef.current.get(saved.appChatId)
+          if (
+            live &&
+            (live.title !== request.expectedTitle || live.threadTitle?.source === 'user')
+          ) {
+            return
+          }
+          chatByIdRef.current.set(saved.appChatId, saved)
+          setCurrentChat((previous) =>
+            previous?.appChatId === saved.appChatId ? saved : previous
+          )
+          setChats((previous) =>
+            previous.map((chat) => (chat.appChatId === saved.appChatId ? saved : chat))
+          )
+        })
+        .catch(() => {})
+    },
+    [chatByIdRef, currentComposerChatId, setChats, setCurrentChat]
+  )
+
+  /** Contextual ghost text into an empty composer; no template fallback. */
   const composerSuggestion = useComposerSuggestion({
     chatId: currentComposerChatId,
     draft: prompt,
     busy: Boolean(isCurrentChatRunning),
-    hasPriorTurn: Boolean(
-      currentChat?.messages?.some((message) => message.role === 'assistant')
-    ),
-    consideredModel,
-    selectedModelKey: contextModelId ? `${currentProvider}:${contextModelId}` : null,
-    failedLanes: composerFailedLanes,
-    continuationCheckpoint: composerContinuationCheckpoint,
-    requestContinuationProposal:
-      settings?.composerContinuationAiEnabled === false
-        ? undefined
-        : window.api.proposeContinuation,
-    uncommittedFileCount: primaryGitSnapshot?.counts?.changed ?? 0,
-    branch: primaryGitSnapshot?.detached ? null : (primaryGitSnapshot?.branch ?? null)
+    hasNonTextPromptContent:
+      imageAttachments.length > 0 ||
+      hasProjectReferenceContext ||
+      Boolean(currentDiscordContextSelection),
+    checkpoint: composerContinuationCheckpoint,
+    requestContinuationProposal: window.api.proposeContinuation,
+    onTitleProposal: applyComposerTitleProposal,
+    enabled: settings?.composerContinuationAiEnabled !== false
   })
   const composerGhostText = composerSuggestion.ghostText
   const composerSuggestionTitle = composerSuggestion.explanation
     ? `${composerSuggestion.explanation} Press Tab to accept or Escape to dismiss.`
     : undefined
+  const composerSuggestionDescriptionId = useId()
 
   const buildPickerModelOptions = (
     targetProvider: ProviderId,
@@ -1703,6 +1719,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       selections: pickerParticipantMentionsByChatIdRef.current.get(currentComposerChatId) || []
     })
   }
+  useLayoutEffect(() => {
+    if (!registerFocusedRunPromptRoutingReader || !currentComposerChatId) return
+    registerFocusedRunPromptRoutingReader(() => {
+      const exactPickerParticipantId = exactPickerParticipantTarget(prompt)
+      return {
+        chatId: currentComposerChatId,
+        ...(exactPickerParticipantId ? { exactPickerParticipantId } : {})
+      }
+    })
+    return () => registerFocusedRunPromptRoutingReader(null)
+  }, [currentComposerChatId, prompt, registerFocusedRunPromptRoutingReader])
   useEffect(() => {
     const previous = pickerParticipantMentionDraftRef.current
     if (previous.chatId === currentComposerChatId && previous.value !== prompt) {
@@ -3048,23 +3075,23 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         onRemoveAttachment={handleRemoveImageAttachment}
                         onClearDiscordContext={handleClearDiscordContext}
                       />
-                      {/* A ghost suggestion needs the overlay even with no
-                          mention to highlight. Safe to mount without the
-                          `has-mention-overlay` class in that case: a ghost is
-                          only offered into an empty composer, so there is no
-                          textarea text for the overlay to double-paint. */}
-                      {(composerRichActive || Boolean(composerGhostText)) && (
+                      {composerRichActive && (
                         <ComposerHighlightOverlay
                           value={prompt}
                           participants={currentComposerMentionParticipants}
                           textareaRef={composerTextareaRef}
                           syncEpoch={composerOverlaySyncEpoch}
-                          ghostText={composerGhostText}
                           richText
                         />
                       )}
+                      {composerGhostText && (
+                        <span id={composerSuggestionDescriptionId} className="sr-only">
+                          Suggested draft: {composerGhostText}. Press Tab to insert or Escape to
+                          dismiss.
+                        </span>
+                      )}
                       <textarea
-                        className={`composer-textarea${composerRichActive ? ' has-mention-overlay' : ''}`}
+                        className={`composer-textarea${composerRichActive ? ' has-mention-overlay' : ''}${composerGhostText ? ' has-ghost-suggestion' : ''}`}
                         ref={bindComposerTextareaRef}
                         value={prompt}
                         title={composerSuggestionTitle}
@@ -3176,11 +3203,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                           }
                         }}
-                        // The ghost occupies the same empty-composer space the
-                        // placeholder does; showing both stacks two greyed
-                        // strings on top of each other.
-                        placeholder={composerGhostText ? '' : composerPlaceholder}
+                        placeholder={composerGhostText || composerPlaceholder}
                         aria-label={composerAriaLabel}
+                        aria-describedby={
+                          composerGhostText ? composerSuggestionDescriptionId : undefined
+                        }
+                        aria-keyshortcuts={composerGhostText ? 'Tab Escape' : undefined}
                         rows={1}
                         disabled={!currentChat || (!isCurrentGlobalChat && !currentWorkspace)}
                         onKeyDown={(e) => {
@@ -3205,7 +3233,30 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 // becomes real text. Everything upstream of
                                 // this line keeps it in the overlay, out of
                                 // the draft store.
-                                setChatPromptDraft(currentComposerChatId, accepted)
+                                const acceptedMention =
+                                  accepted.targetParticipantId &&
+                                  accepted.targetMentionText
+                                    ? acceptedDraftParticipantMentionSelection({
+                                        value: accepted.text,
+                                        participantId: accepted.targetParticipantId,
+                                        mentionText: accepted.targetMentionText
+                                      })
+                                    : null
+                                if (acceptedMention) {
+                                  pickerParticipantMentionsByChatIdRef.current.set(
+                                    currentComposerChatId,
+                                    [acceptedMention]
+                                  )
+                                } else {
+                                  pickerParticipantMentionsByChatIdRef.current.delete(
+                                    currentComposerChatId
+                                  )
+                                }
+                                pickerParticipantMentionDraftRef.current = {
+                                  chatId: currentComposerChatId,
+                                  value: accepted.text
+                                }
+                                setChatPromptDraft(currentComposerChatId, accepted.text)
                                 return
                               }
                             }
@@ -3342,11 +3393,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             pickerParticipantMentionsByChatIdRef.current.delete(
                               currentComposerChatId
                             )
-                            // A picker glance is only about the turn it
-                            // followed. Once a new message is away it's stale,
-                            // so it must not resurface as a suggestion against
-                            // whatever comes back next.
-                            setConsideredModel(null)
                           }
                         }}
                       />
@@ -4611,30 +4657,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
                                 disabled={false}
-                                onCloseWithHighlight={(highlighted) => {
-                                  // The picker reports the highlighted row on
-                                  // every close. A committed selection lands
-                                  // on that same row, so the two are told
-                                  // apart here by outcome: if the row the user
-                                  // was on IS now the active model, they chose
-                                  // it and there's nothing to suggest.
-                                  if (!highlighted) {
-                                    setConsideredModel(null)
-                                    return
-                                  }
-                                  const key = `${highlighted.provider}:${highlighted.option.id}`
-                                  if (
-                                    key === `${effectiveProvider}:${effectiveSelectedModel}` ||
-                                    highlighted.option.disabled
-                                  ) {
-                                    setConsideredModel(null)
-                                    return
-                                  }
-                                  setConsideredModel({
-                                    label: highlighted.option.label,
-                                    key
-                                  })
-                                }}
                               />
                               {!ensembleBinding &&
                                 effectiveSelectedModel === 'custom' &&

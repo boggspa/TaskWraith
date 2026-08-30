@@ -1,91 +1,136 @@
-/**
- * Host-owned task-continuation checkpoint for composer suggestions.
- *
- * This is intentionally NOT a transcript summary. In particular, it never
- * reads messages, tool output, warnings, participant prose, the ensemble
- * synthesizer summary, or Foundation Models output. Those surfaces may be
- * useful to display to a person, but they are not authority to prefill what a
- * person should ask next.
- *
- * A future local model may rank the finite actions exposed here. It may not
- * manufacture a new action: every user-facing continuation phrase comes from
- * a user-confirmed active goal and every round fact comes from host state.
- */
-
 import type { ChatRecord, EnsembleRoundState } from '../../../main/store/types'
 
 export type ComposerContinuationRoundState = 'none' | 'completed' | 'partial-success' | 'all-failed'
-
-export type ComposerContinuationPhase = 'none' | 'working' | 'blocked'
-
-export interface ComposerContinuationAction {
-  /** Stable reference, never model-authored text. */
-  id: string
-  /** Safe display text derived only from the active thread goal. */
-  text: string
-  /** The reason exposed to the user via the composer tooltip. */
-  explanation: string
-  provenance: 'user-confirmed-active-goal'
-}
+export type ComposerContinuationPhase = 'none' | 'working' | 'blocked' | 'complete'
 
 export interface ComposerContinuationCheckpoint {
-  schemaVersion: 1
-  /** Stable for this exact goal/round-state snapshot. */
+  schemaVersion: 2
+  /** Renderer invalidation key only; main builds and fingerprints authority. */
   id: string
+  /** Stable across assistant/run streaming; title summarizes the first prompt. */
+  titleId: string
   phase: ComposerContinuationPhase
   roundState: ComposerContinuationRoundState
-  /** Absent when the thread has no live, user-confirmed active goal. */
-  action: ComposerContinuationAction | null
+  hasUserRequest: boolean
+  hasSettledAssistant: boolean
+  titleNeedsProposal: boolean
+}
+
+function stableHash(value: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
 /**
- * Build a deliberately narrow replacement checkpoint. The caller may run this
- * on every chat update: it has no side effects and replaces prior state rather
- * than recursively carrying transcript prose forward.
+ * Cheap renderer invalidation only. This intentionally authorizes nothing:
+ * `continuation:propose` re-reads the canonical ChatRecord and builds the
+ * bounded semantic evidence snapshot in main.
  */
 export function buildComposerContinuationCheckpoint(
   chat: ChatRecord | null | undefined
 ): ComposerContinuationCheckpoint | null {
   if (!chat) return null
-
   const roundState = roundStateFromChat(chat)
-  // Active goals can also be set by agent control actions. Their text is
-  // useful for the visible task UI, but cannot steer AutoDraft until a person
-  // explicitly reaffirms it through the goal control.
-  const goal = chat.activeGoal?.objectiveSource === 'user' ? chat.activeGoal : undefined
-  const objective = goal?.status === 'active' ? compactGoalText(goal.objective) : ''
-  const action =
-    goal && objective
-      ? {
-          id: `active-goal:${goal.id}`,
-          text: `Continue with: ${objective}`,
-          explanation:
-            'Based on this thread’s user-confirmed goal, not run telemetry or agent output.',
-          provenance: 'user-confirmed-active-goal' as const
-        }
-      : null
-  const goalVersion = goal ? `${goal.id}:${goal.updatedAt || goal.createdAt || 'current'}` : 'none'
-
+  const userMessages = (chat.messages || []).filter(
+    (message) => message.role === 'user' && Boolean(message.content?.trim())
+  )
+  const assistantMessages = (chat.messages || []).filter(
+    (message) => message.role === 'assistant' && Boolean(message.content?.trim())
+  )
+  const goal = chat.activeGoal
+  const titleSource = chat.threadTitle?.source
+  const titleNeedsProposal =
+    userMessages.length > 0 && titleSource !== 'user' && titleSource !== 'local-ai'
+  const versionMaterial = JSON.stringify({
+    chatId: chat.appChatId,
+    user: userMessages.map((message) => [message.id, message.content]),
+    assistant: assistantMessages.slice(-4).map((message) => [message.id, message.content]),
+    goal: goal
+      ? [
+          goal.id,
+          goal.status,
+          goal.objectiveSource,
+          goal.objective,
+          goal.specification?.sourceMessageId,
+          goal.specification?.acceptanceCriteria
+        ]
+      : null,
+    todos: Object.entries(chat.chatTodos || {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([lane, items]) => [
+        lane,
+        (items || []).map((item) => [item.id, item.content, item.status, item.goalId])
+      ]),
+    runs: (chat.runs || [])
+      .slice(-8)
+      .map((run) => [
+        run.runId,
+        run.promptMessageId,
+        run.status,
+        run.endedAt,
+        run.warnings?.map((warning) => warning.message),
+        run.runDiff
+          ? [
+              ...run.runDiff.createdFiles,
+              ...run.runDiff.modifiedFiles,
+              ...run.runDiff.deletedFiles
+            ].map((file) => [file.path, file.status])
+          : null
+      ]),
+    round: chat.ensemble?.activeRound
+      ? [
+          chat.ensemble.activeRound.roundId,
+          chat.ensemble.activeRound.status,
+          chat.ensemble.activeRound.participants.map((participant) => [
+            participant.participantId,
+            participant.status
+          ])
+        ]
+      : null,
+    summary: chat.ensemble?.lastRoundSummary,
+    roster: (chat.ensemble?.participants || []).map((participant) => [
+      participant.id,
+      participant.enabled,
+      participant.role,
+      participant.provider,
+      participant.model,
+      participant.stageRole,
+      participant.order
+    ]),
+    title: [chat.title, chat.threadTitle]
+  })
   return {
-    schemaVersion: 1,
-    id: `continuation:${chat.appChatId || 'unscoped'}:${goalVersion}:${roundState}`,
-    phase: roundState === 'all-failed' ? 'blocked' : action ? 'working' : 'none',
+    schemaVersion: 2,
+    id: `continuation-v2:${stableHash(versionMaterial)}`,
+    titleId: `continuation-title-v1:${stableHash(
+      JSON.stringify({
+        chatId: chat.appChatId,
+        firstUser: userMessages[0] ? [userMessages[0].id, userMessages[0].content] : null,
+        title: [chat.title, chat.threadTitle]
+      })
+    )}`,
+    phase:
+      goal?.status === 'completed'
+        ? 'complete'
+        : roundState === 'all-failed' || goal?.status === 'blocked'
+          ? 'blocked'
+          : goal?.status === 'active'
+            ? 'working'
+            : 'none',
     roundState,
-    action
+    hasUserRequest: userMessages.length > 0,
+    hasSettledAssistant: assistantMessages.length > 0,
+    titleNeedsProposal
   }
-}
-
-/** A hard round failure must remain ahead of a learned continuation preference. */
-export function isComposerContinuationHardBlocked(
-  checkpoint: ComposerContinuationCheckpoint | null | undefined
-): boolean {
-  return checkpoint?.roundState === 'all-failed'
 }
 
 function roundStateFromChat(chat: ChatRecord): ComposerContinuationRoundState {
   const round = chat.ensemble?.activeRound
   if (!round || round.status === 'running') return 'none'
-
   const outcome = summariseRoundOutcome(round)
   if (outcome.failures > 0 && outcome.successes === 0) return 'all-failed'
   if (outcome.failures > 0 && outcome.successes > 0) return 'partial-success'
@@ -100,7 +145,6 @@ function summariseRoundOutcome(round: EnsembleRoundState): { successes: number; 
       failures: lanes.filter((lane) => lane.status === 'failed').length
     }
   }
-
   return {
     successes: (round.participants || []).filter(
       (participant) => participant.status === 'answered' || participant.status === 'yielded'
@@ -109,12 +153,4 @@ function summariseRoundOutcome(round: EnsembleRoundState): { successes: number; 
       (participant) => participant.status === 'failed' || participant.status === 'unreachable'
     ).length
   }
-}
-
-function compactGoalText(value: string | undefined): string {
-  return (value || '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 240)
 }

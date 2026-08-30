@@ -969,6 +969,18 @@ describe('MainSanitizers settings patches', () => {
     })
   })
 
+  it('persists the contextual AutoDraft opt-out as a boolean', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    expect(
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: false })
+        .composerContinuationAiEnabled
+    ).toBe(false)
+    expect(
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: true })
+        .composerContinuationAiEnabled
+    ).toBe(true)
+  })
+
   it('accepts a valid modelUsagePanelView and drops invalid values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

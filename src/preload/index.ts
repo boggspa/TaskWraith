@@ -13,6 +13,8 @@ import type {
   CloseoutSummarySnapshot,
   ContinuationProposalRequest,
   ContinuationProposalSnapshot,
+  ContinuationTitleApplyRequest,
+  ContinuationTitleApplyResult,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
   RepoConventionIndexSnapshot,
@@ -2787,6 +2789,11 @@ const api = {
     ipcRenderer.invoke('closeout:summarize', request) as Promise<CloseoutSummarySnapshot>,
   proposeContinuation: (request: ContinuationProposalRequest) =>
     ipcRenderer.invoke('continuation:propose', request) as Promise<ContinuationProposalSnapshot>,
+  applyContinuationTitle: (request: ContinuationTitleApplyRequest) =>
+    ipcRenderer.invoke(
+      'continuation:apply-title',
+      request
+    ) as Promise<ContinuationTitleApplyResult>,
   getApprovalLedger: (filter: any = {}) => ipcRenderer.invoke('get-approval-ledger', filter),
   recordApprovalElevationAck: (input: {
     provider: string

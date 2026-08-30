@@ -226,6 +226,7 @@ function normalizeProfile(value: unknown): ComposerSuggestionPersonalizationProf
   const style = record.style || ({} as Partial<ComposerSuggestionStyleProfile>)
   const profile = emptyComposerSuggestionPersonalizationProfile()
   for (const trigger of [
+    'semantic-continuation',
     'picker-dismissed',
     'task-continuation',
     'lane-failed',

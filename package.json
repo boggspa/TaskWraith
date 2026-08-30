@@ -73,6 +73,7 @@
     "perf:t2:smoke-plan": "node scripts/perf/runT2Baseline.cjs --smoke-plan --workload=dual_run --scale-down=40",
     "perf:t2:dry": "node scripts/perf/runT2Baseline.cjs --dry-run --workload=dual_run --lean --scale-down=40",
     "perf:test": "vitest run scripts/perf/perfHarness.test.ts",
+    "test:composer-ghost-layout": "node scripts/perf/composerGhostLayoutProbe.cjs",
     "acceptance:studio": "node scripts/studio-acceptance-harness.cjs --pretty",
     "test:studio-acceptance-harness": "vitest run scripts/studio-acceptance-harness.test.ts",
     "format:ratchet": "node scripts/format-ratchet.cjs",

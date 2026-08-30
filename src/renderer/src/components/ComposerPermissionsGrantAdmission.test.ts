@@ -82,7 +82,7 @@ describe('Composer permission-picker admission while running', () => {
     const attachmentRegion = sourceRegion(
       composerSource,
       '<ComposerAttachmentTray',
-      '{/* A ghost suggestion needs the overlay'
+      '{composerRichActive && ('
     )
     expect(attachmentRegion).not.toContain('disabled={isCurrentComposerLocked}')
 

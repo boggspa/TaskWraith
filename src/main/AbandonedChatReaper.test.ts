@@ -84,6 +84,18 @@ describe('isReapableAbandonedChat — explicit-intent exclusions', () => {
       })
     ).toBe(true)
   })
+  it('uses provenance before placeholder spelling', () => {
+    expect(
+      isReapableAbandonedChat(
+        chat({ title: 'New Chat', threadTitle: { source: 'user' } })
+      )
+    ).toBe(false)
+    expect(
+      isReapableAbandonedChat(
+        chat({ title: 'Automatic title', threadTitle: { source: 'prompt-fallback' } })
+      )
+    ).toBe(true)
+  })
 })
 
 describe('isReapableAbandonedChat — relationship exclusions', () => {

@@ -91,6 +91,18 @@ const createDeps = () => {
     getToolActivityDetails: vi.fn(async () => []),
     getRunEventReplay: vi.fn(() => ({ runId: 'run-1', events: [] })),
     getBridgeDaemon: vi.fn(() => null),
+    composerContinuationProposalService: {
+      propose: vi.fn(async (request) => ({
+        schemaVersion: 2 as const,
+        chatId: request.chatId,
+        contextVersion: request.contextVersion,
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        status: 'abstained' as const,
+        proposals: [],
+        reason: 'fixture'
+      })),
+      applyTitle: vi.fn(async () => ({ ok: false, reason: 'fixture' }))
+    },
     sanitizeRunAnalystRequest: vi.fn(() => analyzerRequest),
     normalizeRunAnalystResult: vi.fn(() => analyzerSnapshot),
     buildRunAnalystUnavailableSnapshot: vi.fn((request, reason) => ({
@@ -135,6 +147,7 @@ describe('registerRunQueueHandlers', () => {
     expect(handlerFor('run-analyst:analyze')).toBeTypeOf('function')
     expect(handlerFor('closeout:summarize')).toBeTypeOf('function')
     expect(handlerFor('continuation:propose')).toBeTypeOf('function')
+    expect(handlerFor('continuation:apply-title')).toBeTypeOf('function')
   })
 
   it('keeps a chat popout scoped to its own jobs, recovery, events, and run actions', async () => {
@@ -187,14 +200,10 @@ describe('registerRunQueueHandlers', () => {
     })
 
     await handlerFor('continuation:propose')(event, {
+      schemaVersion: 2,
       chatId: 'chat-1',
-      checkpointId: 'continuation:chat-1:goal-1:partial-success',
-      phase: 'working',
-      roundState: 'partial-success',
-      candidates: [
-        { id: 'task-continuation:goal-1', kind: 'task-continuation' },
-        { id: 'lane-failed:seat-2', kind: 'lane-failed' }
-      ]
+      contextVersion: 'continuation-v2:abc:draft',
+      purpose: 'draft'
     })
   })
 
@@ -240,14 +249,19 @@ describe('registerRunQueueHandlers', () => {
         scope: 'ensembleRound'
       }),
       () => handlerFor('continuation:propose')(event, {
+        schemaVersion: 2,
         chatId: 'chat-3',
-        checkpointId: 'continuation:chat-3:goal-1:partial-success',
-        phase: 'working',
-        roundState: 'partial-success',
-        candidates: [
-          { id: 'task-continuation:goal-1', kind: 'task-continuation' },
-          { id: 'lane-failed:seat-2', kind: 'lane-failed' }
-        ]
+        contextVersion: 'continuation-v2:def:draft',
+        purpose: 'draft'
+      }),
+      () => handlerFor('continuation:apply-title')(event, {
+        schemaVersion: 1,
+        chatId: 'chat-3',
+        title: 'Focused Validation Repair',
+        sourceMessageId: 'user-1',
+        sourceFingerprint: 'title-source-v1:1234abcd',
+        evidenceFingerprint: `sha256:${'a'.repeat(64)}`,
+        expectedTitle: 'Validation repair'
       })
     ]
 
@@ -775,41 +789,38 @@ describe('registerRunQueueHandlers', () => {
     )
   })
 
-  it('sends only a sanitized continuation choice set to the local bridge', async () => {
+  it('delegates an identity-only continuation request to the main-owned service', async () => {
     const deps = createDeps()
-    const bridgeRequest = vi.fn(async () => ({
-      candidateId: 'task-continuation:goal-1',
-      model: 'Apple Foundation Models',
-      explanation: 'this must not reach the renderer'
+    const propose = vi.fn(async (request) => ({
+      schemaVersion: 2 as const,
+      chatId: request.chatId,
+      contextVersion: request.contextVersion,
+      generatedAt: '2026-08-30T00:00:00.000Z',
+      status: 'abstained' as const,
+      proposals: [],
+      reason: 'model-abstained'
     }))
-    deps.getBridgeDaemon = vi.fn(() => ({
-      status: () => ({ running: true }),
-      request: bridgeRequest
-    }))
+    deps.composerContinuationProposalService = {
+      propose,
+      applyTitle: vi.fn(async () => ({ ok: false, reason: 'fixture' }))
+    }
     registerRunQueueHandlers(deps)
 
     const request = {
+      schemaVersion: 2,
       chatId: 'chat-1',
-      checkpointId: 'continuation:chat-1:goal-1:partial-success',
-      phase: 'working',
-      roundState: 'partial-success',
-      candidates: [
-        { id: 'task-continuation:goal-1', kind: 'task-continuation' },
-        { id: 'lane-failed:seat-2', kind: 'lane-failed' }
-      ]
+      contextVersion: 'continuation-v2:abc:draft',
+      purpose: 'draft'
     }
     const snapshot = await handlerFor('continuation:propose')({}, request)
 
-    expect(bridgeRequest).toHaveBeenCalledWith('continuation.propose', request, {
-      timeoutMs: 10_000
-    })
+    expect(propose).toHaveBeenCalledWith(request)
     expect(snapshot).toMatchObject({
-      checkpointId: request.checkpointId,
-      status: 'ready',
-      candidateId: 'task-continuation:goal-1',
-      model: 'Apple Foundation Models'
+      schemaVersion: 2,
+      chatId: 'chat-1',
+      status: 'abstained',
+      proposals: []
     })
-    expect(JSON.stringify(snapshot)).not.toContain('this must not reach the renderer')
   })
 
   it('delegates run events and replay through injected read APIs', async () => {

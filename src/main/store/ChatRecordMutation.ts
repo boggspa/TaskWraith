@@ -1,4 +1,5 @@
-import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
+import type { ChatMessage, ChatRecord, ChatRun, ThreadTitleProvenance, ToolActivity } from './types'
+import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
 import { buildChatTranscriptOps, type ChatTranscriptOp } from '../../shared/chatUpdateTransport'
 
 export const CHAT_RECORD_MUTATION_FORMAT = 'taskwraith-chat-mutation' as const
@@ -116,6 +117,7 @@ interface ObjectPatch {
 }
 
 const TOP_LEVEL_EXCLUDES = new Set(['appChatId', 'messages', 'runs', 'persistenceRevision'])
+const REBASE_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'title', 'threadTitle'])
 const MESSAGE_FIELD_EXCLUDES = new Set(['id', 'content', 'toolActivities'])
 const MESSAGE_REBASE_EXCLUDES = new Set(['id'])
 const RUN_REBASE_EXCLUDES = new Set(['runId'])
@@ -566,6 +568,34 @@ function rebaseIdentityArray<T extends object>(input: {
   return result
 }
 
+function titlePair(record: ChatRecord): { title: string; provenance?: ThreadTitleProvenance } {
+  return { title: record.title, provenance: record.threadTitle }
+}
+
+function titlePairRank(pair: { title: string; provenance?: ThreadTitleProvenance }): number {
+  if (pair.provenance?.source === 'user') return 3
+  if (pair.provenance?.source === 'local-ai') return 2
+  if (pair.provenance?.source === 'prompt-fallback') return 1
+  if (pair.provenance?.source === 'placeholder') return 0
+  return isPlaceholderThreadTitle(pair.title) ? 0 : 3
+}
+
+function rebaseTitlePair(base: ChatRecord, desired: ChatRecord, source: ChatRecord) {
+  const basePair = titlePair(base)
+  const desiredPair = titlePair(desired)
+  const sourcePair = titlePair(source)
+  const desiredChanged = !jsonEqual(basePair, desiredPair)
+  const sourceChanged = !jsonEqual(basePair, sourcePair)
+  if (!desiredChanged) return sourcePair
+  if (!sourceChanged) return desiredPair
+  const desiredRank = titlePairRank(desiredPair)
+  const sourceRank = titlePairRank(sourcePair)
+  // Explicit intent beats automatic text. At equal precedence the current
+  // Host source wins, preventing a stale whole-record replay from clobbering a
+  // concurrent rename or a newer semantic refinement.
+  return desiredRank > sourceRank ? desiredPair : sourcePair
+}
+
 /**
  * Three-way rebase for a Desktop full-record intent after the Host advanced
  * the same chat. Fields untouched by Desktop remain Host-authored; explicit
@@ -598,7 +628,11 @@ export function rebaseChatRecordUpdate(
     throw new Error('Chat rebase source revision is exhausted')
   }
 
-  const record = rebaseObjectFields(base, desired, source, TOP_LEVEL_EXCLUDES)
+  const record = rebaseObjectFields(base, desired, source, REBASE_TOP_LEVEL_EXCLUDES)
+  const rebasedTitle = rebaseTitlePair(base, desired, source)
+  record.title = rebasedTitle.title
+  if (rebasedTitle.provenance) record.threadTitle = jsonClone(rebasedTitle.provenance)
+  else delete record.threadTitle
   record.messages = rebaseIdentityArray({
     base: base.messages,
     desired: desired.messages,

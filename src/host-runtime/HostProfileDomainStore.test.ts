@@ -188,9 +188,32 @@ describe('HostProfileDomainStore', () => {
     // predicate is case-sensitive after whitespace collapse, so a lowercase
     // default silently made every TUI-born thread keep its title forever.
     expect(isPlaceholderThreadTitle(thread.title)).toBe(true)
+    expect(thread.threadTitle).toEqual({ source: 'placeholder' })
     // An explicit title still wins and is never treated as a placeholder.
     const named = store.createThread({ scope: 'global', title: 'Persistence review' })
     expect(isPlaceholderThreadTitle(named.title)).toBe(false)
+    expect(named.threadTitle).toEqual({ source: 'user' })
+  })
+
+  it('titles the first durable Host user prompt and protects a later manual rename', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    const started = store.appendTranscript({
+      threadId: thread.appChatId,
+      role: 'user',
+      content: 'Repair resumed Host thread naming'
+    })
+    expect(started).toMatchObject({
+      title: 'Repair resumed Host thread naming',
+      threadTitle: {
+        source: 'prompt-fallback',
+        sourceMessageId: expect.any(String),
+        sourceFingerprint: expect.stringMatching(/^title-source-v1:/)
+      }
+    })
+    expect(
+      store.configureThread({ threadId: thread.appChatId, title: 'My Host title' })
+    ).toMatchObject({ title: 'My Host title', threadTitle: { source: 'user' } })
   })
 
   it('fences setup/archive while a run is active and supports bounded history pages', () => {

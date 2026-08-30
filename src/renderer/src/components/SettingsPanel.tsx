@@ -6524,13 +6524,13 @@ export function SettingsPanel({
                     checked={composerContinuationAiEnabled !== false}
                     onChange={(e) => onChange({ composerContinuationAiEnabled: e.target.checked })}
                   />
-                  <span>Prioritize safe composer suggestions with Foundation Models</span>
+                  <span>Generate contextual composer drafts with Foundation Models</span>
                 </label>
                 <p className="settings-hint">
-                  Lets Apple Foundation Models on this Mac rank only host-approved suggestion
-                  categories and opaque IDs. It never receives prompt text, transcripts, agent
-                  output, tool output, telemetry, or suggestion wording. Turning this off keeps
-                  deterministic task continuity and local aggregate preference ranking.
+                  Uses a bounded, main-owned snapshot of your request and settled thread evidence.
+                  Agent output is labelled untrusted, unsafe or generic proposals are rejected,
+                  and the model may show nothing. A suggestion enters your draft only when you
+                  press Tab. Turning this off disables composer AutoDraft.
                 </p>
               </div>
 

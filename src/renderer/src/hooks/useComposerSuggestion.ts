@@ -1,82 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  deriveComposerSuggestionCandidates,
-  type ComposerSuggestion,
-  type ComposerSuggestionLane,
-  type ComposerSuggestionModel
-} from '../lib/composerSuggestion'
-import type { ComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
-import { buildComposerContinuationProposalRequest } from '../lib/composerContinuationProposal'
-import { recordComposerSuggestionEvent } from '../lib/composerSuggestionLog'
-import {
-  personalizeComposerSuggestionText,
-  readComposerSuggestionPersonalization,
-  recordComposerSuggestionFeedback,
-  recordComposerSuggestionSentPrompt,
-  selectPersonalizedComposerSuggestion,
-  type ComposerSuggestionPersonalizationProfile,
-  type ComposerSuggestionSelectionSource
-} from '../lib/composerSuggestionPersonalization'
 import type {
   ContinuationProposalRequest,
   ContinuationProposalSnapshot
 } from '../../../main/store/types'
-
-/**
- * Owns the lifecycle of the composer's ghost prefill: which suggestion
- * is live, whether the user has waved it away, and the acceptance log
- * entries that let the trigger table be judged later.
- *
- * The single invariant worth stating loudly: **an unaccepted suggestion
- * never becomes draft text.** `ghostText` is painted by the overlay and
- * exists nowhere else — it is not fed through the textarea's `onChange`,
- * so it never reaches `setChatPromptDraft` and never lands in draft
- * persistence. Only `accept()` returns a string, and only the caller's
- * explicit Tab handler calls it. Without that separation a suggestion
- * the user ignored would be sitting there the next time they opened the
- * chat, indistinguishable from something they typed themselves.
- */
+import {
+  deriveComposerSuggestionCandidates,
+  type ComposerSuggestion
+} from '../lib/composerSuggestion'
+import type { ComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
+import { recordComposerSuggestionEvent } from '../lib/composerSuggestionLog'
+import {
+  recordComposerSuggestionFeedback,
+  recordComposerSuggestionSentPrompt,
+  type ComposerSuggestionSelectionSource
+} from '../lib/composerSuggestionPersonalization'
 
 export interface UseComposerSuggestionArgs {
-  /** Scopes dismissals, so waving one away in chat A doesn't mute chat B. */
   chatId: string | null | undefined
   draft: string
   busy: boolean
-  hasPriorTurn: boolean
-  consideredModel: ComposerSuggestionModel | null
-  selectedModelKey: string | null
-  failedLanes?: readonly ComposerSuggestionLane[]
-  continuationCheckpoint?: ComposerContinuationCheckpoint | null
-  /** Optional local-only ranker. It receives no prompt, telemetry, or display text. */
+  hasNonTextPromptContent?: boolean
+  checkpoint?: ComposerContinuationCheckpoint | null
   requestContinuationProposal?: (
     request: ContinuationProposalRequest
   ) => Promise<ContinuationProposalSnapshot>
-  uncommittedFileCount: number
-  branch: string | null
-  /** Escape hatch for users who don't want prefills at all. */
+  onTitleProposal?: (snapshot: ContinuationProposalSnapshot) => void
   enabled?: boolean
+  displayDeadlineMs?: number
+}
+
+export interface ComposerSuggestionAcceptance {
+  text: string
+  targetParticipantId?: string
+  targetMentionText?: string
 }
 
 export interface ComposerSuggestionController {
-  /** Text for the overlay to paint, or null when there's nothing to offer. */
   ghostText: string | null
-  /** Why the live suggestion is safe and relevant; suitable for a tooltip. */
   explanation: string | null
-  /** How the candidate was selected, without exposing prompt or telemetry data. */
   selectionSource: ComposerSuggestionSelectionSource | null
-  /**
-   * Commit the live suggestion. Returns the string the caller should
-   * write into the draft, or null when nothing is live — so a stray Tab
-   * can never blank or corrupt the composer.
-   */
-  accept: () => string | null
-  /** Wave the live suggestion away; it won't be re-offered in this chat. */
+  accept: () => ComposerSuggestionAcceptance | null
   dismiss: () => void
-  /** Learn aggregate style/edit signals when the user actually sends a prompt. */
   observeSentDraft: (draft: string) => void
 }
 
-const NO_LANES: readonly ComposerSuggestionLane[] = []
 const NO_DISMISSALS: readonly string[] = []
 
 export function useComposerSuggestion(
@@ -86,231 +53,226 @@ export function useComposerSuggestion(
     chatId,
     draft,
     busy,
-    hasPriorTurn,
-    consideredModel,
-    selectedModelKey,
-    failedLanes = NO_LANES,
-    continuationCheckpoint = null,
+    hasNonTextPromptContent = false,
+    checkpoint = null,
     requestContinuationProposal,
-    uncommittedFileCount,
-    branch,
-    enabled = true
+    onTitleProposal,
+    enabled = true,
+    displayDeadlineMs = 3_500
   } = args
-
   const scope = chatId || '__unscoped__'
-
-  const [personalizationByScope, setPersonalizationByScope] = useState<
-    Record<string, ComposerSuggestionPersonalizationProfile>
-  >({})
-  const persistedPersonalization = useMemo(
-    () => readComposerSuggestionPersonalization(chatId),
-    [chatId]
-  )
-  const personalization = personalizationByScope[scope] ?? persistedPersonalization
-  const setPersonalization = useCallback(
-    (profile: ComposerSuggestionPersonalizationProfile) => {
-      setPersonalizationByScope((previous) => ({ ...previous, [scope]: profile }))
-    },
-    [scope]
-  )
-
-  // Profiles are deliberately per-thread. On a chat switch, the render reads
-  // only that chat's aggregate localStorage record; no transcript content is
-  // ever loaded into this hook.
-
-  /**
-   * Dismissals are keyed by chat so waving one away in one conversation
-   * doesn't mute another, and held in state rather than a ref so the
-   * derive below re-runs when one lands. Deliberately not persisted: a
-   * dismissal is a "not now", not a preference, and should not outlive
-   * the session.
-   */
   const [dismissedByChat, setDismissedByChat] = useState<Record<string, readonly string[]>>({})
-
   const dismissedForScope = useMemo(
     () => new Set(dismissedByChat[scope] ?? NO_DISMISSALS),
     [dismissedByChat, scope]
   )
 
-  const candidates = useMemo(() => {
-    if (!enabled) return []
-    return deriveComposerSuggestionCandidates({
-      draft,
-      busy,
-      hasPriorTurn,
-      consideredModel,
-      selectedModelKey,
-      failedLanes,
-      continuationCheckpoint,
-      uncommittedFileCount,
-      branch,
-      dismissedIds: dismissedForScope
-    })
-  }, [
-    enabled,
-    draft,
-    busy,
-    hasPriorTurn,
-    consideredModel,
-    selectedModelKey,
-    failedLanes,
-    continuationCheckpoint,
-    uncommittedFileCount,
-    branch,
-    dismissedForScope
-  ])
-
-  const continuationProposalRequest = useMemo(
-    () => buildComposerContinuationProposalRequest(chatId, continuationCheckpoint, candidates),
-    [chatId, continuationCheckpoint, candidates]
+  const retire = useCallback(
+    (id: string) => {
+      setDismissedByChat((previous) => {
+        const existing = previous[scope] ?? NO_DISMISSALS
+        if (existing.includes(id)) return previous
+        return { ...previous, [scope]: [...existing, id] }
+      })
+    },
+    [scope]
   )
-  const proposalKey = useMemo(
+
+  const scopedChatId = chatId?.trim().slice(0, 180) || ''
+  const titleContextVersion =
+    enabled && checkpoint?.titleNeedsProposal ? `${checkpoint.titleId}:title` : null
+  const titleRequest = useMemo<ContinuationProposalRequest | null>(
     () =>
-      continuationProposalRequest
-        ? JSON.stringify({
-            chatId: continuationProposalRequest.chatId,
-            checkpointId: continuationProposalRequest.checkpointId,
-            phase: continuationProposalRequest.phase,
-            roundState: continuationProposalRequest.roundState,
-            candidates: continuationProposalRequest.candidates
-          })
+      scopedChatId && titleContextVersion
+        ? {
+            schemaVersion: 2,
+            chatId: scopedChatId,
+            contextVersion: titleContextVersion,
+            purpose: 'title'
+          }
         : null,
-    [continuationProposalRequest]
+    [scopedChatId, titleContextVersion]
   )
-  const [proposal, setProposal] = useState<{ requestKey: string; candidateId: string } | null>(null)
-  const lastProposalRequestKeyRef = useRef<string | null>(null)
-
-  // Foundation Models is an untrusted, bounded ranker. The request adapter
-  // contains only host-generated enum state and opaque ids, and this effect
-  // accepts a response only when it selects a candidate that still exists.
   useEffect(() => {
-    if (!requestContinuationProposal || !continuationProposalRequest || !proposalKey) {
-      lastProposalRequestKeyRef.current = null
-      return
-    }
-
-    // Chat records can be rehydrated without their checkpoint changing. Do not
-    // spend another local-model turn just because an equivalent object arrived.
-    if (lastProposalRequestKeyRef.current === proposalKey) return
-    lastProposalRequestKeyRef.current = proposalKey
-
+    if (!requestContinuationProposal || !titleRequest || !onTitleProposal) return
     let cancelled = false
-
-    void requestContinuationProposal(continuationProposalRequest)
+    void requestContinuationProposal(titleRequest)
       .then((snapshot) => {
-        if (cancelled || snapshot.status !== 'ready' || !snapshot.candidateId) return
-        if (snapshot.checkpointId !== continuationProposalRequest.checkpointId) return
-        if (
-          !continuationProposalRequest.candidates.some(
-            (candidate) => candidate.id === snapshot.candidateId
-          )
-        ) {
-          return
-        }
-        setProposal({ requestKey: proposalKey, candidateId: snapshot.candidateId })
+        if (cancelled || snapshot.contextVersion !== titleRequest.contextVersion) return
+        if (snapshot.status === 'ready' && snapshot.title) onTitleProposal(snapshot)
       })
-      .catch(() => {
-        // The deterministic candidate ordering is the normal fallback.
-      })
-
+      .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [continuationProposalRequest, proposalKey, requestContinuationProposal])
+  }, [onTitleProposal, requestContinuationProposal, titleRequest])
 
-  // A response is usable only for the exact current request. This lets a new
-  // checkpoint fall back immediately while an older model response is ignored.
-  const proposedCandidateId = proposal?.requestKey === proposalKey ? proposal.candidateId : null
-
-  const selection = useMemo(
-    () => selectPersonalizedComposerSuggestion(candidates, personalization, proposedCandidateId),
-    [candidates, personalization, proposedCandidateId]
+  const draftContextVersion =
+    enabled &&
+    !busy &&
+    draft.length === 0 &&
+    !hasNonTextPromptContent &&
+    checkpoint?.hasUserRequest &&
+    checkpoint.hasSettledAssistant &&
+    checkpoint.phase !== 'complete'
+      ? `${checkpoint.id}:draft`
+      : null
+  const draftRequest = useMemo<ContinuationProposalRequest | null>(
+    () =>
+      scopedChatId && draftContextVersion
+        ? {
+            schemaVersion: 2,
+            chatId: scopedChatId,
+            contextVersion: draftContextVersion,
+            purpose: 'draft'
+          }
+        : null,
+    [draftContextVersion, scopedChatId]
   )
-  const suggestion: ComposerSuggestion | null = selection?.candidate.suggestion ?? null
-  const suggestionText = selection
-    ? personalizeComposerSuggestionText(selection.candidate, personalization)
-    : null
+  const draftRequestKey = draftRequest ? JSON.stringify(draftRequest) : null
+  const [proposalState, setProposalState] = useState<{
+    requestKey: string
+    snapshot: ContinuationProposalSnapshot
+  } | null>(null)
 
-  /**
-   * Log `shown` once per suggestion identity, not once per render. The
-   * composer re-renders constantly; a shown-count inflated by render
-   * churn would make every accept rate look like noise and defeat the
-   * point of keeping the log at all.
-   */
-  const lastShownIdRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!suggestion) {
-      lastShownIdRef.current = null
+    if (!requestContinuationProposal || !draftRequest || !draftRequestKey) {
+      setProposalState(null)
       return
     }
+    setProposalState(null)
+    let cancelled = false
+    const startedAt = Date.now()
+    void requestContinuationProposal(draftRequest)
+      .then((snapshot) => {
+        if (cancelled || Date.now() - startedAt > displayDeadlineMs) return
+        if (snapshot.contextVersion !== draftRequest.contextVersion) return
+        if (snapshot.status !== 'ready') return
+        if (snapshot.title) onTitleProposal?.(snapshot)
+        if (snapshot.proposals.length === 0) return
+        setProposalState({ requestKey: draftRequestKey, snapshot })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [
+    displayDeadlineMs,
+    draftRequest,
+    draftRequestKey,
+    onTitleProposal,
+    requestContinuationProposal
+  ])
+
+  const liveSnapshot = proposalState?.requestKey === draftRequestKey ? proposalState.snapshot : null
+  const candidates = useMemo(
+    () =>
+      deriveComposerSuggestionCandidates({
+        draft,
+        busy,
+        proposals: liveSnapshot?.proposals || [],
+        dismissedIds: dismissedForScope
+      }),
+    [busy, dismissedForScope, draft, liveSnapshot]
+  )
+  const suggestion: ComposerSuggestion | null = candidates[0]?.suggestion ?? null
+
+  const lastShownIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!suggestion) return
     if (lastShownIdRef.current === suggestion.id) return
     lastShownIdRef.current = suggestion.id
     recordComposerSuggestionEvent(suggestion.trigger, 'shown')
     recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'shown')
   }, [chatId, suggestion])
 
-  const acceptedSuggestionRef = useRef<{ chatId: string | null | undefined; text: string } | null>(
-    null
-  )
+  const lastVisibleSuggestionRef = useRef<{
+    chatId: string | null | undefined
+    suggestion: ComposerSuggestion
+  } | null>(null)
+  useEffect(() => {
+    if (suggestion) lastVisibleSuggestionRef.current = { chatId, suggestion }
+  }, [chatId, suggestion])
+  useEffect(() => {
+    if (suggestion || draft.trim()) return
+    lastVisibleSuggestionRef.current = null
+  }, [chatId, draft, suggestion])
+  useEffect(() => {
+    const previous = lastVisibleSuggestionRef.current
+    if (!draft.trim() || !previous) return
+    if (previous.chatId !== chatId) {
+      lastVisibleSuggestionRef.current = null
+      return
+    }
+    recordComposerSuggestionEvent(previous.suggestion.trigger, 'dismissed')
+    recordComposerSuggestionFeedback(chatId, previous.suggestion.trigger, 'dismissed')
+    retire(previous.suggestion.id)
+    lastVisibleSuggestionRef.current = null
+  }, [chatId, draft, retire])
 
-  const retire = useCallback(
-    (id: string) => {
-      setDismissedByChat((prev) => {
-        const existing = prev[scope] ?? NO_DISMISSALS
-        if (existing.includes(id)) return prev
-        return { ...prev, [scope]: [...existing, id] }
-      })
-    },
-    [scope]
-  )
+  const acceptedSuggestionRef = useRef<{
+    chatId: string | null | undefined
+    text: string
+    seenInDraft: boolean
+  } | null>(null)
 
-  const accept = useCallback((): string | null => {
-    if (!suggestion || !suggestionText) return null
+  useEffect(() => {
+    const accepted = acceptedSuggestionRef.current
+    if (!accepted) return
+    if (accepted.chatId !== chatId) {
+      acceptedSuggestionRef.current = null
+      return
+    }
+    if (draft === accepted.text) {
+      accepted.seenInDraft = true
+    } else if (accepted.seenInDraft && !draft.trim()) {
+      acceptedSuggestionRef.current = null
+    }
+  }, [chatId, draft])
+
+  const accept = useCallback((): ComposerSuggestionAcceptance | null => {
+    if (!suggestion) return null
     recordComposerSuggestionEvent(suggestion.trigger, 'accepted')
-    setPersonalization(recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'accepted'))
-    // Retire it as well as logging: once accepted it must not re-offer
-    // itself the moment the user clears the composer to start over.
+    recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'accepted')
     retire(suggestion.id)
-    acceptedSuggestionRef.current = { chatId, text: suggestionText }
-    return suggestionText
-  }, [chatId, retire, setPersonalization, suggestion, suggestionText])
+    lastVisibleSuggestionRef.current = null
+    acceptedSuggestionRef.current = { chatId, text: suggestion.text, seenInDraft: false }
+    return {
+      text: suggestion.text,
+      ...(suggestion.targetParticipantId
+        ? {
+            targetParticipantId: suggestion.targetParticipantId,
+            targetMentionText: suggestion.targetMentionText
+          }
+        : {})
+    }
+  }, [chatId, retire, suggestion])
 
   const dismiss = useCallback((): void => {
     if (!suggestion) return
     recordComposerSuggestionEvent(suggestion.trigger, 'dismissed')
-    setPersonalization(recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'dismissed'))
+    recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'dismissed')
     retire(suggestion.id)
-  }, [chatId, retire, setPersonalization, suggestion])
+    lastVisibleSuggestionRef.current = null
+  }, [chatId, retire, suggestion])
 
   const observeSentDraft = useCallback(
     (sentDraft: string): void => {
-      const acceptedSuggestion = acceptedSuggestionRef.current
-      setPersonalization(
-        recordComposerSuggestionSentPrompt(
-          chatId,
-          sentDraft,
-          acceptedSuggestion && acceptedSuggestion.chatId === chatId
-            ? acceptedSuggestion.text
-            : null
-        )
+      const accepted = acceptedSuggestionRef.current
+      recordComposerSuggestionSentPrompt(
+        chatId,
+        sentDraft,
+        accepted && accepted.chatId === chatId ? accepted.text : null
       )
       acceptedSuggestionRef.current = null
     },
-    [chatId, setPersonalization]
+    [chatId]
   )
 
-  const explanation = suggestion
-    ? selection?.source === 'local-preference'
-      ? `${suggestion.explanation || 'Based on current TaskWraith state.'} Locally ranked from your accept and dismiss feedback in this thread.`
-      : selection?.source === 'foundation-model-proposal'
-        ? `${suggestion.explanation || 'Based on current TaskWraith state.'} Apple Foundation Models on this Mac ranked only host-approved choices.`
-        : suggestion.explanation || null
-    : null
-
   return {
-    ghostText: suggestionText,
-    explanation,
-    selectionSource: selection?.source ?? null,
+    ghostText: suggestion?.text || null,
+    explanation: suggestion?.explanation || null,
+    selectionSource: suggestion ? 'foundation-model-proposal' : null,
     accept,
     dismiss,
     observeSentDraft

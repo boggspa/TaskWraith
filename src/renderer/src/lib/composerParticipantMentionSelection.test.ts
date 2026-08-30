@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  acceptedDraftParticipantMentionSelection,
   exactComposerParticipantMentionTarget,
   formatComposerParticipantMention,
   rebaseComposerParticipantMentionSelections
@@ -8,6 +9,23 @@ import {
 describe('composer participant mention selections', () => {
   it('formats a picker choice as ordinary editable @text', () => {
     expect(formatComposerParticipantMention('CodexSlice')).toBe('@CodexSlice ')
+  })
+
+  it('keeps an accepted AutoDraft target exact across its first draft sync', () => {
+    const value = '@Reviewer Can you inspect the validation failure?'
+    const selection = acceptedDraftParticipantMentionSelection({
+      value,
+      participantId: 'seat-review',
+      mentionText: '@Reviewer'
+    })!
+    const rebased = rebaseComposerParticipantMentionSelections({
+      previousValue: value,
+      nextValue: value,
+      selections: [selection]
+    })
+    expect(exactComposerParticipantMentionTarget({ value, selections: rebased })).toBe(
+      'seat-review'
+    )
   })
 
   it('shifts a picker selection when text is inserted before it', () => {

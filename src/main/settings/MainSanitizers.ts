@@ -203,6 +203,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'currencyOverestimatePercent',
   'showRunCompleteSummary',
   'closeoutAiSummaryEnabled',
+  'composerContinuationAiEnabled',
   'hostAutoCompactEnabled',
   'ensembleCollapseOlderRounds',
   'maxWaveAgents',
@@ -1928,6 +1929,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('closeoutAiSummaryEnabled' in sanitized) {
       const value = sanitized.closeoutAiSummaryEnabled
       sanitized.closeoutAiSummaryEnabled = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('composerContinuationAiEnabled' in sanitized) {
+      const value = sanitized.composerContinuationAiEnabled
+      sanitized.composerContinuationAiEnabled = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('hostAutoCompactEnabled' in sanitized) {
       const value = sanitized.hostAutoCompactEnabled

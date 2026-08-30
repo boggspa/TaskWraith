@@ -57,6 +57,9 @@ import {
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
 import { rebaseChatRecordUpdate, type AuthoredChatTranscriptMutation } from './ChatRecordMutation'
+import { applyLocalAiThreadTitle, applyThreadTitlePolicy } from './ThreadTitlePolicy'
+import { buildContinuationEvidenceSnapshot } from '../ContinuationProposal'
+import { observeComposerContinuationPersisted } from '../services/ComposerContinuationPrefetch'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 import {
   runLegacyStoreWriteAdmission,
@@ -173,6 +176,7 @@ import {
   MemoryProposalPack,
   MemoryProposal,
   SubThreadJoinPolicy,
+  ContinuationTitleApplyRequest,
   ToolActivity
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
@@ -7598,19 +7602,54 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
+    const titledChat = applyThreadTitlePolicy(chat, this.getChat(chat.appChatId))
+    // Several main-owned callers broadcast the input object they passed rather
+    // than the returned normalized record. Mirror the atomic title pair just
+    // like the persistence revision stamp below so resumed-title repair is
+    // visible immediately in every projection.
+    chat.title = titledChat.title
+    chat.threadTitle = titledChat.threadTitle
     // When the legacy writer gate is open (or a drain is retaining this exact
     // writer), persist through the proven admitted path unchanged. Since the
     // Host cutover the gate is Host-owned and admission throws
     // LegacyStoreWriterGateClosedError — route the save through the Host
     // instead (thread.record.persist). Both branches stay synchronous for the
     // 86 existing call sites.
-    if (legacyStoreCanWrite()) {
-      return runLegacyStoreWriteAdmission(
-        { operation: 'save-chat', pathFamily: 'chats' },
-        (writerAdmission) => this.saveChatAdmitted(chat, options, writerAdmission)
-      )
+    const saved = legacyStoreCanWrite()
+      ? runLegacyStoreWriteAdmission(
+          { operation: 'save-chat', pathFamily: 'chats' },
+          (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
+        )
+      : this.saveChatThroughHost(titledChat)
+    chat.persistenceRevision = saved.persistenceRevision
+    chat.updatedAt = saved.updatedAt
+    observeComposerContinuationPersisted(saved.appChatId)
+    return saved
+  }
+
+  /** Atomic, main-owned semantic-title compare-and-swap. */
+  static applyContinuationTitle(request: ContinuationTitleApplyRequest): ChatRecord | null {
+    const current = this.getChat(request.chatId)
+    if (!current) return null
+    const evidence = buildContinuationEvidenceSnapshot(current, 'title')
+    if (
+      !evidence ||
+      evidence.fingerprint !== request.evidenceFingerprint ||
+      !evidence.title.eligible ||
+      evidence.title.expectedCurrent !== request.expectedTitle ||
+      evidence.title.sourceMessageId !== request.sourceMessageId ||
+      evidence.title.sourceFingerprint !== request.sourceFingerprint
+    ) {
+      return null
     }
-    return this.saveChatThroughHost(chat)
+    const updated = applyLocalAiThreadTitle(current, {
+      title: request.title,
+      sourceMessageId: request.sourceMessageId,
+      sourceFingerprint: request.sourceFingerprint,
+      evidenceFingerprint: request.evidenceFingerprint,
+      expectedTitle: request.expectedTitle
+    })
+    return updated ? this.saveChat(updated) : null
   }
 
   /**
@@ -8818,6 +8857,12 @@ export class AppStore {
       this.normalizeChatRecord({
         ...retainedChat,
         ...(ensemble ? { ensemble } : {}),
+        ...(chat.threadTitle?.source === 'prompt-fallback' ||
+        chat.threadTitle?.source === 'local-ai'
+          ? {
+              threadTitle: { source: 'user' as const }
+            }
+          : {}),
         messages: [],
         runs: [],
         updatedAt: Date.parse(intent.createdAt),

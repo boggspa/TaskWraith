@@ -175,12 +175,12 @@ describe('thread title derivation', () => {
     expect(title).toBe('Explain the barrier')
   })
 
-  it('caps at the shared title length and adds no ellipsis', () => {
+  it('caps at the prompt-fallback title length with a single ellipsis', () => {
     const title = deriveThreadTitleFromTranscript(
       record({ messages: [message({ content: 'A'.repeat(400) })] })
     )
-    expect(title).toHaveLength(160)
-    expect(title?.endsWith('...')).toBe(false)
+    expect(title).toHaveLength(72)
+    expect(title?.endsWith('…')).toBe(true)
   })
 
   it('returns null rather than deriving from an empty first message', () => {

@@ -1,6 +1,9 @@
-import { isPlaceholderThreadTitle, normalizeThreadTitle } from '../../shared/threadTitles'
-import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
+import {
+  derivePromptFallbackThreadTitle,
+  isPlaceholderThreadTitle
+} from '../../shared/threadTitles'
 import type { ChatListItem, ChatRecord } from './types'
+import { firstHumanPromptForTitle } from './ThreadTitlePolicy'
 
 /**
  * Pure selection and derivation for the bounded placeholder-title repair pass.
@@ -148,6 +151,7 @@ export function selectThreadTitleRepairCandidates(
   for (const item of items) {
     if (!item || item.summaryOnly !== true) continue
     if (!isRepairablePlaceholderTitle(item.title)) continue
+    if (item.threadTitle?.source === 'user' || item.threadTitle?.source === 'local-ai') continue
     if (!(item.messageCount > 0)) continue
     if ((state.failures[item.appChatId] ?? 0) >= MAX_TITLE_REPAIR_FAILURES_PER_CHAT) continue
     candidates.push({
@@ -163,7 +167,12 @@ export function selectThreadTitleRepairCandidates(
 
 /** Re-checked against the freshly read record immediately before the write. */
 export function isThreadTitleRepairTarget(chat: ChatRecord): boolean {
-  return isRepairablePlaceholderTitle(chat.title) && (chat.messages?.length ?? 0) > 0
+  return (
+    isRepairablePlaceholderTitle(chat.title) &&
+    chat.threadTitle?.source !== 'user' &&
+    chat.threadTitle?.source !== 'local-ai' &&
+    (chat.messages?.length ?? 0) > 0
+  )
 }
 
 /**
@@ -181,31 +190,19 @@ export function isThreadTitleRepairBlocked(chat: ChatRecord, busy: boolean): boo
 }
 
 /**
- * The title a repaired thread gets: the first real user message, whitespace
- * collapsed, capped at 160 characters, no ellipsis.
- *
- * `normalizeThreadTitle` is the shared, tested primitive three of the four
- * existing derivation sites already use; hand-rolling the Ensemble gate's
- * 30-char-plus-ellipsis shape would add a fifth derivation rule to a repo that
- * already has four.
- *
- * Retired external-gateway rows are skipped. They persist with `role: 'user'`
- * but are not a human compose action in this app, and every other
- * "find the real user message" consumer excludes them.
+ * The title a repaired thread gets: the canonical first human prompt, compact
+ * and word-boundary-capped like the live persistence invariant. External
+ * contributions/imports and retired inbound rows remain evidence, never title
+ * authority.
  *
  * Returns null when there is nothing to derive from — an attachment-only first
  * message can reach disk with empty content, and a title must never be derived
  * from an empty string.
  */
 export function deriveThreadTitleFromTranscript(chat: ChatRecord): string | null {
-  const first = (chat.messages ?? []).find(
-    (message) =>
-      Boolean(message) &&
-      message.role === 'user' &&
-      !isRetiredExternalChannelInboundMessage(message)
-  )
+  const first = firstHumanPromptForTitle(chat)
   if (!first) return null
-  return normalizeThreadTitle(first.content, '') || null
+  return derivePromptFallbackThreadTitle(first.content, '') || null
 }
 
 /**

@@ -66,6 +66,8 @@ import {
   CloseoutSummarySnapshot,
   ContinuationProposalRequest,
   ContinuationProposalSnapshot,
+  ContinuationTitleApplyRequest,
+  ContinuationTitleApplyResult,
   AgenticServiceId,
   EffectiveRunPermissions,
   AuditRunRecord,
@@ -2960,6 +2962,9 @@ declare global {
       proposeContinuation: (
         request: ContinuationProposalRequest
       ) => Promise<ContinuationProposalSnapshot>
+      applyContinuationTitle: (
+        request: ContinuationTitleApplyRequest
+      ) => Promise<ContinuationTitleApplyResult>
       getApprovalLedger: (filter?: ApprovalLedgerFilter) => Promise<ApprovalLedgerRecord[]>
       recordApprovalElevationAck: (input: {
         provider: string

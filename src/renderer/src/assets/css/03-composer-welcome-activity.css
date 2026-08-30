@@ -4331,6 +4331,15 @@
   opacity: 0.72;
 }
 
+/* Contextual AutoDraft uses the native placeholder so Chromium's
+ * `field-sizing: content` includes every wrapped/newline-preserved line in the
+ * textarea's intrinsic height. It remains a placeholder, never draft value. */
+[data-composer-style] .composer-textarea.has-ghost-suggestion::placeholder {
+  color: var(--text-tertiary, var(--text-secondary)) !important;
+  -webkit-text-fill-color: var(--text-tertiary, var(--text-secondary)) !important;
+  opacity: 0.72 !important;
+}
+
 .composer-textarea-highlight .composer-mention-token {
   /*
    * 1.0.4 — NO `font-weight: 700` here. Bold glyphs have wider

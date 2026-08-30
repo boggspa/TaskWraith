@@ -90,6 +90,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'clear-blackboard-entries',
   'clear-workspaces',
   'closeout:summarize',
+  'continuation:apply-title',
   'continuation:propose',
   'compact-provider-context',
   'compose-run',

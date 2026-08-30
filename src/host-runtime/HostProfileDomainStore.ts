@@ -40,6 +40,11 @@ import type {
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import {
+  derivePromptFallbackThreadTitle,
+  isPlaceholderThreadTitle,
+  threadTitleSourceFingerprint
+} from '../shared/threadTitles'
+import {
   decodeHostPermissionConsentEnvelope,
   type HostPermissionConsentEnvelope
 } from './HostPermissionConsent'
@@ -101,6 +106,12 @@ export interface HostProfileThread {
   readonly workspaceId?: string
   readonly workspacePath?: string
   readonly title: string
+  readonly threadTitle?: {
+    readonly source: 'placeholder' | 'prompt-fallback' | 'local-ai' | 'user'
+    readonly sourceMessageId?: string
+    readonly sourceFingerprint?: string
+    readonly evidenceFingerprint?: string
+  }
   readonly provider?: string
   readonly providerMetadata?: Record<string, unknown>
   readonly workflowMode?: 'normal' | 'plan'
@@ -888,6 +899,7 @@ export class HostProfileDomainStore {
       // first-prompt title gates and to the placeholder repair pass. A thread
       // born here would keep its default title for its whole life.
       title: input.title === undefined ? 'New Chat' : this.requireText(input.title, 200),
+      threadTitle: { source: input.title === undefined ? 'placeholder' : 'user' },
       archived: false,
       messages: [],
       persistenceRevision: 0,
@@ -1198,6 +1210,7 @@ export class HostProfileDomainStore {
     const next: HostProfileThread = {
       ...current,
       ...(input.title !== undefined ? { title: this.requireText(input.title, 200) } : {}),
+      ...(input.title !== undefined ? { threadTitle: { source: 'user' as const } } : {}),
       ...(input.providerId !== undefined
         ? { provider: this.requireText(input.providerId, 512) }
         : {}),
@@ -1539,8 +1552,23 @@ export class HostProfileDomainStore {
       timestamp
     }
     const messages = [...current.messages, message]
+    const shouldTitle =
+      input.role === 'user' &&
+      current.threadTitle?.source !== 'user' &&
+      current.threadTitle?.source !== 'local-ai' &&
+      isPlaceholderThreadTitle(current.title)
     const next = {
       ...current,
+      ...(shouldTitle
+        ? {
+            title: derivePromptFallbackThreadTitle(input.content, current.title),
+            threadTitle: {
+              source: 'prompt-fallback' as const,
+              sourceMessageId: message.id,
+              sourceFingerprint: threadTitleSourceFingerprint(message.id, input.content)
+            }
+          }
+        : {}),
       messages,
       persistenceRevision: this.nextRevision(current),
       updatedAt: this.now()

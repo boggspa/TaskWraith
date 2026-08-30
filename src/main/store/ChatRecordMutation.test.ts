@@ -265,6 +265,54 @@ describe('ChatRecordMutation', () => {
     expect(rebased.ensemble?.participants[0]).toMatchObject({ hostSession: 'preserve' })
   })
 
+  it('rebases title and provenance atomically with explicit intent ahead of automation', () => {
+    const base = chat([], [], 3, {
+      title: 'Prompt fallback',
+      threadTitle: { source: 'prompt-fallback', sourceMessageId: 'user-1' }
+    })
+    const staleAutomatic = advance(base, (next) => {
+      next.title = 'Late AI title'
+      next.threadTitle = {
+        source: 'local-ai',
+        sourceMessageId: 'user-1',
+        sourceFingerprint: 'title-source-v1:1234abcd',
+        evidenceFingerprint: `sha256:${'a'.repeat(64)}`
+      }
+    })
+    const hostRename = structuredClone(base)
+    hostRename.persistenceRevision = 7
+    hostRename.title = 'Manual Host title'
+    hostRename.threadTitle = { source: 'user' }
+
+    const rebased = rebaseChatRecordUpdate(base, staleAutomatic, hostRename)
+    expect(rebased.title).toBe('Manual Host title')
+    expect(rebased.threadTitle).toEqual({ source: 'user' })
+  })
+
+  it('lets an explicit Desktop rename outrank a concurrent automatic title', () => {
+    const base = chat([], [], 3, {
+      title: 'Prompt fallback',
+      threadTitle: { source: 'prompt-fallback', sourceMessageId: 'user-1' }
+    })
+    const desired = advance(base, (next) => {
+      next.title = 'My chosen title'
+      next.threadTitle = { source: 'user' }
+    })
+    const source = structuredClone(base)
+    source.persistenceRevision = 7
+    source.title = 'Automatic refinement'
+    source.threadTitle = {
+      source: 'local-ai',
+      sourceMessageId: 'user-1',
+      sourceFingerprint: 'title-source-v1:1234abcd',
+      evidenceFingerprint: `sha256:${'b'.repeat(64)}`
+    }
+
+    const rebased = rebaseChatRecordUpdate(base, desired, source)
+    expect(rebased.title).toBe('My chosen title')
+    expect(rebased.threadTitle).toEqual({ source: 'user' })
+  })
+
   it('fails closed when Desktop changed an item the Host removed', () => {
     const base = chat([message('m-1', 'base')], [], 3)
     const desired = advance(base, (next) => {

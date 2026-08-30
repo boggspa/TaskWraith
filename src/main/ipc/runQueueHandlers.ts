@@ -5,10 +5,17 @@ import {
   sanitizeCloseoutSummaryRequest
 } from '../CloseoutSummarizer'
 import {
-  buildContinuationProposalUnavailableSnapshot,
-  normalizeContinuationProposalResult,
-  sanitizeContinuationProposalRequest
+  sanitizeContinuationProposalRequest,
+  sanitizeContinuationTitleApplyRequest
 } from '../ContinuationProposal'
+import {
+  createComposerContinuationProposalService,
+  type ComposerContinuationProposalService
+} from '../services/ComposerContinuationProposalService'
+import {
+  createComposerContinuationPrefetch,
+  installComposerContinuationPersistObserver
+} from '../services/ComposerContinuationPrefetch'
 import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
@@ -18,6 +25,7 @@ import type {
   PromoteQueuedJobForSteerResult
 } from '../services/RunLifecycleCoordinator'
 import {
+  type ChatRecord,
   type ProviderId,
   type RunAnalystRequest,
   type RunAnalystSnapshot,
@@ -117,6 +125,9 @@ export interface RunQueueHandlersDeps {
   getToolActivityDetails: (refs: ToolActivityDetailRef[]) => Promise<unknown[]>
   getRunEventReplay: (runId: string) => unknown
   getBridgeDaemon: () => BridgeDaemonLike | null
+  /** Test/embedding seam; production resolves the canonical AppStore lazily. */
+  composerContinuationProposalService?: ComposerContinuationProposalService
+  onContinuationTitleApplied?: (chat: ChatRecord) => void | Promise<void>
 
   sanitizeRunAnalystRequest: (input: unknown) => RunAnalystRequest
   normalizeRunAnalystResult: (
@@ -131,7 +142,6 @@ export interface RunQueueHandlersDeps {
 
 const RUN_ANALYST_TIMEOUT_MS = 45_000
 const CLOSEOUT_SUMMARY_TIMEOUT_MS = 30_000
-const CONTINUATION_PROPOSAL_TIMEOUT_MS = 10_000
 
 function scopedChatFilter<T extends { chatId?: string }>(
   scope: RunQueueSenderScope,
@@ -175,6 +185,45 @@ function authorizeRendererMutation(
 }
 
 export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
+  const continuationProposalService =
+    deps.composerContinuationProposalService ??
+    createComposerContinuationProposalService({
+      getChat: async (chatId) => {
+        const { AppStore } = await import('../store')
+        return AppStore.getChat(chatId)
+      },
+      applyTitle: async (request) => {
+        const { AppStore } = await import('../store')
+        return AppStore.applyContinuationTitle(request)
+      },
+      getBridgeDaemon: deps.getBridgeDaemon
+    })
+  const continuationPrefetch = createComposerContinuationPrefetch({
+    service: continuationProposalService,
+    isEnabled: async () => {
+      const { AppStore } = await import('../store')
+      return AppStore.getSettings().composerContinuationAiEnabled !== false
+    },
+    beforePrefetch: async (chatId) => {
+      const { AppStore } = await import('../store')
+      await AppStore.awaitChatRecordPersisted(chatId)
+    },
+    afterTitleApplied: async (chat) => {
+      const { AppStore } = await import('../store')
+      await AppStore.awaitChatRecordPersisted(chat.appChatId)
+      const canonical = AppStore.getChat(chat.appChatId)
+      if (
+        canonical?.threadTitle?.source === 'local-ai' &&
+        canonical.threadTitle.evidenceFingerprint === chat.threadTitle?.evidenceFingerprint
+      ) {
+        await deps.onContinuationTitleApplied?.(canonical)
+      }
+    },
+    onError: (chatId, error) => {
+      console.error(`[composer-continuation] prefetch failed for ${chatId}`, error)
+    }
+  })
+  installComposerContinuationPersistObserver(continuationPrefetch.observe)
   ipcMain.handle('get-run-queue-jobs', (event, filter?: RunQueueJobFilter) => {
     const scope = deps.resolveSenderRunQueueScope(event)
     return deps.getRunQueueJobs(scopedChatFilter(scope, filter))
@@ -407,31 +456,24 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     }
   })
 
-  // On-device continuation ranking is deliberately narrower than close-out
-  // summarization: sanitizeContinuationProposalRequest accepts only enum
-  // state + host-generated opaque candidate ids. The model can suggest an id,
-  // but cannot mint prompt text or consume telemetry through this channel.
+  // Contextual AutoDraft remains main-owned: the renderer supplies only chat
+  // identity + a local invalidation key. The service re-reads the canonical
+  // ChatRecord, builds bounded authority-labelled evidence, validates every
+  // generated candidate, and may abstain without a deterministic fallback.
   ipcMain.handle('continuation:propose', async (event, input: unknown) => {
     const scope = deps.resolveSenderRunQueueScope(event)
     const request = sanitizeContinuationProposalRequest(input)
     if (scope.kind === 'chat' && request.chatId !== scope.chatId) {
       throw new Error('Renderer cannot request continuation ranking for another chat.')
     }
-    const daemon = deps.getBridgeDaemon()
-    if (!daemon?.status().running) {
-      return buildContinuationProposalUnavailableSnapshot(
-        request,
-        'TaskWraith bridge daemon is not running.'
-      )
+    return continuationProposalService.propose(request)
+  })
+  ipcMain.handle('continuation:apply-title', async (event, input: unknown) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    const request = sanitizeContinuationTitleApplyRequest(input)
+    if (scope.kind === 'chat' && request.chatId !== scope.chatId) {
+      throw new Error('Renderer cannot apply a continuation title for another chat.')
     }
-    try {
-      const result = await daemon.request('continuation.propose', request, {
-        timeoutMs: CONTINUATION_PROPOSAL_TIMEOUT_MS
-      })
-      return normalizeContinuationProposalResult(request, result, new Date().toISOString())
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      return buildContinuationProposalUnavailableSnapshot(request, reason)
-    }
+    return continuationProposalService.applyTitle(request)
   })
 }

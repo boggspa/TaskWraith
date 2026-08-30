@@ -352,14 +352,28 @@ export class ChatService {
     const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
     if (input.scope === 'global') {
       const chat = this.createGlobalChat()
-      return title === undefined ? chat : this.saveChat({ ...chat, title, updatedAt: Date.now() })
+      return title === undefined
+        ? chat
+        : this.saveChat({
+            ...chat,
+            title,
+            threadTitle: { source: 'user' },
+            updatedAt: Date.now()
+          })
     }
     if (input.scope !== 'workspace') throw new Error('Thread scope must be global or workspace.')
     const chat = this.createChat(
       requireNonEmptyString(input.workspaceId, 'Workspace id'),
       requireNonEmptyString(input.workspacePath, 'Workspace path')
     )
-    return title === undefined ? chat : this.saveChat({ ...chat, title, updatedAt: Date.now() })
+    return title === undefined
+      ? chat
+      : this.saveChat({
+          ...chat,
+          title,
+          threadTitle: { source: 'user' },
+          updatedAt: Date.now()
+        })
   }
 
   /**
@@ -418,7 +432,12 @@ export class ChatService {
       posture !== undefined
     if (!changesProviderState) {
       if (title === undefined) throw new Error('Thread configuration is empty.')
-      return this.saveChat({ ...current, title, updatedAt: Date.now() })
+      return this.saveChat({
+        ...current,
+        title,
+        threadTitle: { source: 'user' },
+        updatedAt: Date.now()
+      })
     }
     const provider =
       input.provider === undefined ? current.provider : assertLiveProviderId(input.provider)
@@ -435,7 +454,7 @@ export class ChatService {
     })
     return this.saveChat({
       ...configured,
-      ...(title !== undefined ? { title } : {}),
+      ...(title !== undefined ? { title, threadTitle: { source: 'user' as const } } : {}),
       ...(posture ? { workflowMode: posture.workflowMode } : {}),
       updatedAt: Date.now()
     })

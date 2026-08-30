@@ -112,7 +112,12 @@ import {
   clearEnsembleRoundFailureForSeatChange,
   ensembleSeatExecutionConfigChanged
 } from '../../shared/ensembleSeatFailureClear'
-import { normalizeThreadTitle } from '../../shared/threadTitles'
+import {
+  derivePromptFallbackThreadTitle,
+  isPlaceholderThreadTitle,
+  normalizeThreadTitle,
+  threadTitleSourceFingerprint
+} from '../../shared/threadTitles'
 import { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
 import { antigravityEffortForModelId } from '../../shared/antigravityAgyModelGrouping'
 import {
@@ -958,7 +963,10 @@ import {
   cachedPaneRunCompleteNotice
 } from './lib/multiviewPaneDerivations'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
-import { type ComposerProps } from './components/Composer'
+import {
+  type ComposerProps,
+  type ComposerRunPromptRoutingReader
+} from './components/Composer'
 import {
   buildDetachedChatSurfaceBase,
   ChatSurfaceComposerRuntime,
@@ -3731,6 +3739,13 @@ function App(): React.JSX.Element {
   const rawEventsAutoFollowRef = useRef(true)
   const rawEventsUserScrolledAwayRef = useRef(false)
   const composerAreaRef = useRef<HTMLDivElement>(null)
+  const focusedRunPromptRoutingReaderRef = useRef<ComposerRunPromptRoutingReader | null>(null)
+  const registerFocusedRunPromptRoutingReader = useCallback(
+    (reader: ComposerRunPromptRoutingReader | null): void => {
+      focusedRunPromptRoutingReaderRef.current = reader
+    },
+    []
+  )
   // TODO(per-pane): non-focused multiview panes render the shared <Composer>,
   // but must never clobber the focused composer's reservation ref. Pane contexts
   // retain this safe throwaway default; ChatViewPane overrides it at the actual
@@ -9986,8 +10001,13 @@ function App(): React.JSX.Element {
     const trimmed = normalizeThreadTitle(nextTitle, '')
     if (!trimmed) return
     updateChatById(chatId, (source) => {
-      if (source.title === trimmed) return source
-      return { ...source, title: trimmed, updatedAt: Date.now() }
+      if (source.title === trimmed && source.threadTitle?.source === 'user') return source
+      return {
+        ...source,
+        title: trimmed,
+        threadTitle: { source: 'user' },
+        updatedAt: Date.now()
+      }
     })
   }
 
@@ -14315,10 +14335,23 @@ function App(): React.JSX.Element {
         })
         appendedMessage = result.message
         if (!result.appended) return chat
+        const shouldTitle =
+          chat.messages.length === 0 &&
+          isPlaceholderThreadTitle(chat.title) &&
+          chat.threadTitle?.source !== 'user' &&
+          chat.threadTitle?.source !== 'local-ai'
         return {
           ...chat,
-          title:
-            chat.messages.length === 0 ? normalizeThreadTitle(content, 'New Chat') : chat.title,
+          title: shouldTitle ? derivePromptFallbackThreadTitle(content, 'New Chat') : chat.title,
+          ...(shouldTitle && result.message
+            ? {
+                threadTitle: {
+                  source: 'prompt-fallback' as const,
+                  sourceMessageId: result.message.id,
+                  sourceFingerprint: threadTitleSourceFingerprint(result.message.id, content)
+                }
+              }
+            : {}),
           messages: result.messages,
           updatedAt: Date.now()
         }
@@ -14934,8 +14967,13 @@ function App(): React.JSX.Element {
         setIsThinking(true)
       }
 
-      if (chatToUpdate.messages.length === 0) {
-        chatToUpdate.title = normalizeThreadTitle(displayFinalPrompt, 'New Chat')
+      if (
+        chatToUpdate.messages.length === 0 &&
+        isPlaceholderThreadTitle(chatToUpdate.title) &&
+        chatToUpdate.threadTitle?.source !== 'user' &&
+        chatToUpdate.threadTitle?.source !== 'local-ai'
+      ) {
+        chatToUpdate.title = derivePromptFallbackThreadTitle(displayFinalPrompt, 'New Chat')
       }
 
       let runStartedAt = new Date().toISOString()
@@ -20992,12 +21030,27 @@ function App(): React.JSX.Element {
     [resolvedKeyCommandBindings]
   )
 
+  const runCurrentPromptFromKeyboard = (): void => {
+    const routing = focusedRunPromptRoutingReaderRef.current?.()
+    const focusedChatId = currentChatIdRef.current || currentComposerChatId
+    const exactPickerParticipantId =
+      routing?.chatId === focusedChatId ? routing.exactPickerParticipantId : undefined
+    handleRun(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      exactPickerParticipantId
+    )
+  }
+
   const keyboardActionsRef = useRef({
     attachWindowFromKeyboard,
     clearImagePermissions,
     copyCurrentTranscriptFromKeyboard,
     createNewChatFromKeyboard,
-    handleRun,
+    runCurrentPromptFromKeyboard,
     openChatPopoutWindowFromKeyboard,
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
@@ -21012,7 +21065,7 @@ function App(): React.JSX.Element {
     clearImagePermissions,
     copyCurrentTranscriptFromKeyboard,
     createNewChatFromKeyboard,
-    handleRun,
+    runCurrentPromptFromKeyboard,
     openChatPopoutWindowFromKeyboard,
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
@@ -21076,7 +21129,7 @@ function App(): React.JSX.Element {
           return false
         }
         if (commandId === 'run-prompt') {
-          keyboardActions.handleRun()
+          keyboardActions.runCurrentPromptFromKeyboard()
           return true
         }
         if (commandId === 'command-palette') {
@@ -31355,6 +31408,7 @@ function App(): React.JSX.Element {
     cursorReasoningEffort,
     cursorFastMode,
     composerAreaRef,
+    registerFocusedRunPromptRoutingReader,
     composerAriaLabel,
     composerPlaceholder,
     composerRunTimecodeStartedAt,

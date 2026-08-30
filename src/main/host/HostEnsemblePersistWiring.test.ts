@@ -363,7 +363,10 @@ describe('HostEnsemblePersistWiring', () => {
       ensemble: undefined
     } as never)
     // While the Host has not landed the file, the shadow is served.
-    expect(AppStore.getChat('chat-solo-interop')?.title).toBe('New Ensemble')
+    expect(AppStore.getChat('chat-solo-interop')).toMatchObject({
+      title: 'Ship the cutover fix.',
+      threadTitle: { source: 'prompt-fallback' }
+    })
     // The Host then lands the write AND advances the record on its own (solo
     // run lifecycle / thread.configure): revision 3, newer title.
     const chatsDir = join(profilePath, 'chats')
