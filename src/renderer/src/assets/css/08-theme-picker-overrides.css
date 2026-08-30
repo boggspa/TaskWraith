@@ -7476,10 +7476,6 @@
     0 0 24px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-[data-theme="alabaster"] .app-transcript .welcome-hero p {
-  color: rgba(18, 21, 27, 0.58);
-}
-
 [data-theme="alabaster"] .welcome-workspace-picker-label {
   color: rgba(18, 21, 27, 0.52);
 }
@@ -7576,10 +7572,6 @@
     0 1px 0 rgba(255, 255, 255, 0.82),
     0 0 12px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 22%, transparent),
     0 0 24px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 12%, transparent);
-}
-
-[data-theme="obsidian"] .app-transcript .welcome-hero p {
-  color: rgba(250, 247, 243, 0.64);
 }
 
 [data-theme="obsidian"] .welcome-workspace-picker-label {

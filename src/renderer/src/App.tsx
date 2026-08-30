@@ -27022,7 +27022,6 @@ function App(): React.JSX.Element {
     : []
   const welcomeDiffCount =
     activeDiffSummaries.filter((item) => !item.isNoise).length || displayFileChangeSummaries.length
-  const hasWelcomeDiff = Boolean((activeDiff as any)?.type === 'changes' || welcomeDiffCount > 0)
   const relevantScheduledTasks = isCurrentGlobalChat
     ? []
     : scheduledTasks
@@ -27037,10 +27036,7 @@ function App(): React.JSX.Element {
     isGlobalChat: isCurrentGlobalChat,
     nowHour: new Date().getHours(),
     userName: settings?.userName,
-    hasDiff: hasWelcomeDiff,
-    diffCount: welcomeDiffCount,
-    scheduledTaskCount: relevantScheduledTasks.length,
-    lastRunStatus: currentRun?.status
+    diffCount: welcomeDiffCount
   })
   const visibleScheduledTasks = relevantScheduledTasks.slice(0, 4)
   const runtimeProfileControl =
@@ -30719,9 +30715,7 @@ function App(): React.JSX.Element {
         isGlobalChat: viewerIsGlobalChat,
         nowHour: new Date().getHours(),
         userName: settings?.userName,
-        hasDiff: false,
-        diffCount: 0,
-        scheduledTaskCount: 0
+        diffCount: 0
       })
       const paneThreadTokenTallyHasValue =
         viewerTokenTally.totalTokens > 0 || viewerLiveOutputTokens > 0

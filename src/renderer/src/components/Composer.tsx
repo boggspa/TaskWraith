@@ -923,7 +923,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workflowDraft,
     workflowForCurrentChat,
     workflowMode,
-    workflowIntervalMinutes,
     workspaceDiffStats,
     showWorkspaceGitAboveRows = true,
     workspaces
@@ -2342,9 +2341,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 theme from the chat-level fallback provider.
               */
                 const orderedEnabled = ensembleEnabledParticipantsForCurrent
-                const ensembleIsContinuous =
-                  currentChat?.ensemble?.orchestrationMode === 'continuous'
-                const ensembleContinuationLimit = currentChat?.ensemble?.maxContinuationHops || 6
                 const shellClassName = [
                   'welcome-hero',
                   'welcome-hero-ensemble',
@@ -2373,35 +2369,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </>
                       )}
                     </h1>
-                    {orderedEnabled.length === 0 ? (
-                      <p className="welcome-hero-ensemble-empty">
-                        No providers enabled yet. Open any chip below to turn one back on, then
-                        describe the task.
-                      </p>
-                    ) : (
-                      <>
-                        <p>
-                          {orderedEnabled.length}{' '}
-                          {orderedEnabled.length === 1 ? 'provider' : 'providers'} will work through
-                          this in order.{' '}
-                          {ensembleIsContinuous ? (
-                            <>
-                              Continuous mode lets them hand work back and forth with{' '}
-                              <code>@mentions</code> or <code>ensemble_yield(target:&nbsp;…)</code>,
-                              capped at {ensembleContinuationLimit} extra handoffs.
-                            </>
-                          ) : (
-                            <>
-                              Each speaks once unless you switch the chip strip to Continuous mode.
-                            </>
-                          )}
-                        </p>
-                        {/* The ordered-provider chip chain that used to sit here
-                            was removed — the speaking order is already shown by the
-                            composer chip strip below and its per-provider filter
-                            icons, so the duplicate welcome-hero chain was redundant. */}
-                      </>
-                    )}
                   </div>
                 )
               })()}
@@ -2421,10 +2388,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         {currentWorkspace?.displayName ?? 'this workspace'}
                       </WelcomeProviderHighlight>
                     </h1>
-                    <p>
-                      Describe the recurring task. It captures the current provider and run
-                      settings, then runs on the cadence you set below.
-                    </p>
                   </>
                 ) : (
                   <>
@@ -2436,11 +2399,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         {workflowForCurrentChat?.name ?? 'Workflow'}
                       </WelcomeProviderHighlight>
                     </h1>
-                    <p>
-                      {workflowIntervalMinutes != null
-                        ? `Runs every ${workflowIntervalMinutes} minute${workflowIntervalMinutes === 1 ? '' : 's'} — runs will appear here.`
-                        : 'Runs manually — use Run now from the Workflows sidebar; runs will appear here.'}
-                    </p>
                   </>
                 )}
               </div>
@@ -2454,7 +2412,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   </WelcomeProviderHighlight>
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
-                {welcomeCopy.subheading ? <p>{welcomeCopy.subheading}</p> : null}
               </div>
             )}
             {/*

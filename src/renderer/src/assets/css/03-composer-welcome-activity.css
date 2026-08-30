@@ -1343,25 +1343,6 @@
   --welcome-provider-color: var(--provider-ensemble-color);
 }
 
-.welcome-hero p {
-  margin: 7px 0 0;
-  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
-  font-size: var(--font-size-sm);
-}
-
-/* Slice F follow-up (1.0.3) — ensemble welcome variant. Renders the
- * orchestration order as a chevron-arrow chain (Claude → Codex →
- * Gemini → Kimi) so the user sees the speaking sequence at a glance.
- * Tiles inherit per-provider theming via the standard `provider-*`
- * class hooks the rest of the app uses. */
-.welcome-hero-ensemble code {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  font-size: 0.85em;
-  font-family: var(--font-mono);
-}
-
 /* TaskWraith 1.0.3 polish — provider-theme-aware ensemble welcome shell.
  *
  * The ensemble welcome screen receives a subtle hue gradient built
@@ -1512,11 +1493,6 @@
     0 0 13px rgba(255, 255, 255, 0.36),
     0 0 22px color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
-.welcome-hero-ensemble-empty {
-  margin-top: 18px !important;
-  color: color-mix(in srgb, var(--danger, #c44a4a) 60%, var(--text-secondary)) !important;
-}
-
 .welcome-suggestions {
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
