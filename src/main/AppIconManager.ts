@@ -43,7 +43,16 @@ let lastApplied: { variant: AppIconVariant; dark: boolean } | null = null
  * catch-all is dark. Refine HERE (one place) if a light-based named theme lands.
  */
 export function resolveEffectiveDark(themeAppearance: string, osDark: boolean): boolean {
-  if (themeAppearance === 'light') return false
+  if (
+    themeAppearance === 'light' ||
+    themeAppearance === 'citrus' ||
+    themeAppearance === 'mist' ||
+    themeAppearance === 'sage' ||
+    themeAppearance === 'alabaster' ||
+    themeAppearance === 'xcode-light'
+  ) {
+    return false
+  }
   if (themeAppearance === 'system') return osDark
   return true
 }
