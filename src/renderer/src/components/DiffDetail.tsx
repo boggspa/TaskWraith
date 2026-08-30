@@ -1,9 +1,26 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import type { GitFileStatus } from '../../../main/services/GitService'
 import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
+import {
+  ensureEditorHighlightStylesMounted,
+  highlightCodeToLineSpans,
+  languageFromPath,
+  type HighlightSpan
+} from './highlightCodeLines'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import {
   DEFAULT_DIFF_RENDER_LINE_LIMIT,
+  diffLineDisplayText,
+  diffLineNumber,
+  isRenderableDiffLine,
   parseUnifiedDiff,
   type ParsedDiffLine,
   type ParsedUnifiedDiff
@@ -22,9 +39,12 @@ export interface DiffDetailProps {
 
 interface DiffLineRowProps {
   line: ParsedDiffLine
+  newSpans?: HighlightSpan[]
+  oldSpans?: HighlightSpan[]
 }
 
 interface DiffLinesProps {
+  filePath?: string
   parsed: ParsedUnifiedDiff | null
   viewMode: DiffViewMode
   onShowMore?: () => void
@@ -48,6 +68,12 @@ interface DiffVirtualRange {
   startIndex: number
 }
 
+interface DiffHighlightSet {
+  lookup: Map<string, { new?: number; old?: number }>
+  new: HighlightSpan[][]
+  old: HighlightSpan[][]
+}
+
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
 const DIFF_DETAIL_MAX_RENDER_LINE_LIMIT = 10_000
 const DIFF_VIRTUALIZATION_THRESHOLD = 800
@@ -62,6 +88,7 @@ export interface DiffTextPreviewExcerpt {
 }
 
 export interface DiffLineGutterWidths {
+  inline: string
   new: string
   old: string
 }
@@ -91,9 +118,7 @@ export const diffDetailPathDisplay = (path: string): { name: string; parent: str
   }
 }
 
-export const diffLineGutterWidths = (
-  parsed: ParsedUnifiedDiff | null
-): DiffLineGutterWidths => {
+export const diffLineGutterWidths = (parsed: ParsedUnifiedDiff | null): DiffLineGutterWidths => {
   let oldDigits = 1
   let newDigits = 1
 
@@ -108,9 +133,12 @@ export const diffLineGutterWidths = (
     })
   })
 
+  const old = `${Math.max(4, oldDigits + 2)}ch`
+  const next = `${Math.max(4, newDigits + 2)}ch`
   return {
-    old: `${Math.max(4, oldDigits + 2)}ch`,
-    new: `${Math.max(4, newDigits + 2)}ch`
+    inline: `${Math.max(4, Math.max(oldDigits, newDigits) + 2)}ch`,
+    old,
+    new: next
   }
 }
 
@@ -222,6 +250,7 @@ export function DiffDetail({
           <DiffLines
             parsed={parsedDiff}
             viewMode={viewMode}
+            filePath={summary.path}
             onShowMore={showMoreLineCount > 0 ? showMoreDiffLines : undefined}
             renderCapReached={renderCapReached}
             showMoreLineCount={showMoreLineCount}
@@ -335,6 +364,48 @@ export function DiffDetail({
   )
 }
 
+const emptyDiffHighlights = (): DiffHighlightSet => ({
+  lookup: new Map(),
+  new: [],
+  old: []
+})
+
+const collectDiffHighlights = (
+  parsed: ParsedUnifiedDiff | null,
+  filePath?: string
+): DiffHighlightSet => {
+  if (!parsed) return emptyDiffHighlights()
+  ensureEditorHighlightStylesMounted()
+  const language = languageFromPath(filePath)
+  const oldTexts: string[] = []
+  const newTexts: string[] = []
+  const lookup = new Map<string, { new?: number; old?: number }>()
+
+  parsed.sections.forEach((section, sectionIndex) => {
+    section.lines.forEach((line, lineIndex) => {
+      if (!isRenderableDiffLine(line)) return
+      const key = `${sectionIndex}:line:${lineIndex}`
+      const display = diffLineDisplayText(line)
+      const entry: { new?: number; old?: number } = {}
+      if (line.kind === 'del' || line.kind === 'context') {
+        entry.old = oldTexts.length
+        oldTexts.push(display)
+      }
+      if (line.kind === 'add' || line.kind === 'context') {
+        entry.new = newTexts.length
+        newTexts.push(display)
+      }
+      lookup.set(key, entry)
+    })
+  })
+
+  return {
+    lookup,
+    old: highlightCodeToLineSpans(oldTexts.join('\n'), language),
+    new: highlightCodeToLineSpans(newTexts.join('\n'), language)
+  }
+}
+
 const buildDiffRows = (parsed: ParsedUnifiedDiff): DiffRenderRow[] => {
   const rows: DiffRenderRow[] = []
   parsed.sections.forEach((section, sectionIndex) => {
@@ -345,14 +416,13 @@ const buildDiffRows = (parsed: ParsedUnifiedDiff): DiffRenderRow[] => {
         header: section.header
       })
     }
-    if (section.lines.length === 0) {
-      rows.push({
-        id: `${sectionIndex}:empty`,
-        kind: 'empty'
-      })
+    const lines = section.lines.filter(isRenderableDiffLine)
+    if (lines.length === 0) {
+      if (!section.header) return
       return
     }
     section.lines.forEach((line, lineIndex) => {
+      if (!isRenderableDiffLine(line)) return
       rows.push({
         id: `${sectionIndex}:line:${lineIndex}`,
         kind: 'line',
@@ -378,6 +448,7 @@ export const diffVirtualizationSummary = (
 function DiffLines({
   parsed,
   viewMode,
+  filePath,
   onShowMore,
   renderCapReached = false,
   showMoreLineCount,
@@ -387,8 +458,10 @@ function DiffLines({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
   const rows = useMemo(() => (parsed ? buildDiffRows(parsed) : []), [parsed])
+  const highlights = useMemo(() => collectDiffHighlights(parsed, filePath), [filePath, parsed])
   const gutterWidths = useMemo(() => diffLineGutterWidths(parsed), [parsed])
   const gutterStyle = {
+    '--diff-gutter-width': gutterWidths.inline,
     '--diff-new-gutter-width': gutterWidths.new,
     '--diff-old-gutter-width': gutterWidths.old
   } as CSSProperties
@@ -503,7 +576,7 @@ function DiffLines({
         onScroll={handleScroll}
       >
         {currentVirtualHeader && (
-          <div className="diff-lines-floating-header">{currentVirtualHeader}</div>
+          <div className="diff-lines-floating-header" title={currentVirtualHeader} />
         )}
         <div
           className="diff-lines-virtual-window"
@@ -516,7 +589,7 @@ function DiffLines({
               : undefined
           }
         >
-          {visibleRows.map((row) => renderDiffRow(row, viewMode))}
+          {visibleRows.map((row) => renderDiffRow(row, viewMode, highlights))}
         </div>
       </div>
     </div>
@@ -524,28 +597,26 @@ function DiffLines({
 }
 
 function DiffLinesColumnHeader({ viewMode }: { viewMode: DiffViewMode }) {
-  return viewMode === 'split' ? (
+  if (viewMode !== 'split') return null
+  return (
     <div className="diff-lines-column-header split" role="presentation">
       <span>Old</span>
       <span>Original</span>
       <span>New</span>
       <span>Modified</span>
     </div>
-  ) : (
-    <div className="diff-lines-column-header inline" role="presentation">
-      <span>Old</span>
-      <span>New</span>
-      <span>Diff</span>
-    </div>
   )
 }
 
-function renderDiffRow(row: DiffRenderRow, viewMode: DiffViewMode) {
+function renderDiffRow(row: DiffRenderRow, viewMode: DiffViewMode, highlights: DiffHighlightSet) {
   if (row.kind === 'sectionHeader') {
     return (
-      <div key={row.id} className="diff-lines-section-header">
-        {row.header}
-      </div>
+      <div
+        key={row.id}
+        className="diff-lines-section-header"
+        title={row.header}
+        aria-label={row.header}
+      />
     )
   }
   if (row.kind === 'empty') {
@@ -556,45 +627,59 @@ function renderDiffRow(row: DiffRenderRow, viewMode: DiffViewMode) {
     )
   }
   if (!row.line) return null
+  const sides = highlights.lookup.get(row.id)
+  const oldSpans = sides?.old != null ? highlights.old[sides.old] : undefined
+  const newSpans = sides?.new != null ? highlights.new[sides.new] : undefined
   return viewMode === 'split' ? (
-    <SplitDiffLineRow key={row.id} line={row.line} />
+    <SplitDiffLineRow key={row.id} line={row.line} oldSpans={oldSpans} newSpans={newSpans} />
   ) : (
-    <DiffLineRow key={row.id} line={row.line} />
+    <DiffLineRow key={row.id} line={row.line} newSpans={newSpans} oldSpans={oldSpans} />
   )
 }
 
-function DiffLineRow({ line }: DiffLineRowProps) {
+function renderHighlightedSpans(spans: HighlightSpan[] | undefined, fallback: string): ReactNode {
+  if (!spans || spans.length === 0) return fallback || ' '
+  return spans.map((span, index) =>
+    span.className ? (
+      <span className={span.className} key={index}>
+        {span.text}
+      </span>
+    ) : (
+      <Fragment key={index}>{span.text}</Fragment>
+    )
+  )
+}
+
+function DiffLineRow({ line, newSpans, oldSpans }: DiffLineRowProps) {
   const className = `diff-line ${line.kind === 'context' ? '' : line.kind}`.trim()
+  const spans = line.kind === 'del' ? oldSpans : newSpans
   return (
     <div className={className}>
-      <span className="diff-line-gutter old">{line.oldLine ?? ''}</span>
-      <span className="diff-line-gutter new">{line.newLine ?? ''}</span>
-      <span className="diff-line-code">{line.text || ' '}</span>
+      <span className="diff-line-marker" aria-hidden="true" />
+      <span className="diff-line-gutter">{diffLineNumber(line) ?? ''}</span>
+      <span className="diff-line-code">
+        {renderHighlightedSpans(spans, diffLineDisplayText(line))}
+      </span>
     </div>
   )
 }
 
-const splitDiffText = (line: ParsedDiffLine, side: 'old' | 'new'): string => {
-  if (line.kind === 'add' && side === 'old') return ''
-  if (line.kind === 'del' && side === 'new') return ''
-  if (line.kind === 'add') return line.text.replace(/^\+/, '')
-  if (line.kind === 'del') return line.text.replace(/^-/, '')
-  if (line.kind === 'context') return line.text.replace(/^ /, '')
-  return line.text
-}
-
-function SplitDiffLineRow({ line }: DiffLineRowProps) {
+function SplitDiffLineRow({ line, oldSpans, newSpans }: DiffLineRowProps) {
   if (line.kind === 'meta') {
-    return <div className="diff-line-split meta">{line.text || ' '}</div>
+    return null
   }
 
   const className = `diff-line-split ${line.kind === 'context' ? '' : line.kind}`.trim()
   return (
     <div className={className}>
       <span className="diff-line-gutter old">{line.oldLine ?? ''}</span>
-      <span className="diff-line-split-code old">{splitDiffText(line, 'old') || ' '}</span>
+      <span className="diff-line-split-code old">
+        {renderHighlightedSpans(oldSpans, diffLineDisplayText(line, 'old'))}
+      </span>
       <span className="diff-line-gutter new">{line.newLine ?? ''}</span>
-      <span className="diff-line-split-code new">{splitDiffText(line, 'new') || ' '}</span>
+      <span className="diff-line-split-code new">
+        {renderHighlightedSpans(newSpans, diffLineDisplayText(line, 'new'))}
+      </span>
     </div>
   )
 }
