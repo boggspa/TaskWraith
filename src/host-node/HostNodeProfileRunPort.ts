@@ -204,10 +204,14 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     const metadata = providerMetadata(thread)
     const modelId = metadata?.selectedModelType
     const reasoningId = metadata?.reasoningEffort
+    // A native session belongs to the model that created it. If the user
+    // reconfigured the thread, starting a fresh session is safer than asking
+    // the previous model's conversation to silently switch identities.
     const persistedSessionId = [...(thread.runs ?? [])]
       .reverse()
-      .map((run) => run.providerSessionId)
-      .find(isCanonicalId)
+      .find(
+        (run) => run.requestedModel === modelId && isCanonicalId(run.providerSessionId)
+      )?.providerSessionId
     const legacySessionId = (thread as Record<string, unknown>).linkedProviderSessionId
     const canonicalWorkspacePath = workspace
       ? this.verifyWorkspacePath(workspace.path, workspace.realPath)
@@ -344,6 +348,24 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   publishRunEvent(target: HostRunEventTarget, event: HostProviderRunEvent): void {
     const normalized = normalizeHostProviderRunEvent(event)
     if (!normalized) throw new Error('Host profile run event is invalid')
+    if (normalized.type === 'run.tool') {
+      try {
+        this.options.store.recordRunTool({
+          threadId: normalized.threadId,
+          runId: normalized.runId,
+          toolId: normalized.toolId,
+          ...(normalized.toolName ? { toolName: normalized.toolName } : {}),
+          phase: normalized.phase,
+          ...(normalized.status ? { status: normalized.status } : {}),
+          ...(normalized.file ? { file: normalized.file } : {}),
+          ...(normalized.additions !== undefined ? { additions: normalized.additions } : {}),
+          ...(normalized.deletions !== undefined ? { deletions: normalized.deletions } : {})
+        })
+      } catch {
+        // Tool presentation is additive; a persistence hiccup must not turn a
+        // provider's otherwise valid run event into a failed run.
+      }
+    }
     this.options.events.publish(target, normalized)
   }
 

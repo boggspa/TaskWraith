@@ -126,6 +126,11 @@ export type HostProviderRunEvent =
       readonly threadId: string
       readonly toolId: string
       readonly toolName?: string
+      /** Display-safe workspace-relative file path, when the provider exposes one. */
+      readonly file?: string
+      /** Optional exact line counts derived from the provider tool input/result. */
+      readonly additions?: number
+      readonly deletions?: number
       readonly phase: 'started' | 'finished'
       readonly status?: 'success' | 'error'
       readonly at: string
@@ -402,6 +407,15 @@ export function normalizeHostProviderRunEvent(
   if (value.type === 'run.tool') {
     if (!canonicalIdentifier(value.toolId)) return null
     if (value.toolName !== undefined && !canonicalIdentifier(value.toolName)) return null
+    if (value.file !== undefined && !canonicalIdentifier(value.file)) return null
+    if (
+      (value.additions !== undefined &&
+        (!Number.isSafeInteger(value.additions) || value.additions < 0)) ||
+      (value.deletions !== undefined &&
+        (!Number.isSafeInteger(value.deletions) || value.deletions < 0))
+    ) {
+      return null
+    }
     if (!['started', 'finished'].includes(value.phase)) return null
     if (value.status !== undefined && !['success', 'error'].includes(value.status)) return null
     return { ...value }

@@ -115,6 +115,33 @@ describe('HostNodeProfileRunPort', () => {
         at: '2026-08-24T05:00:00.000Z'
       }
     )
+    port.publishRunEvent(
+      { id: 'host-client-1' },
+      {
+        type: 'run.tool',
+        runId: 'run-1',
+        threadId,
+        toolId: 'tool-edit',
+        toolName: 'Edit',
+        file: 'src/example.ts',
+        additions: 4,
+        deletions: 2,
+        phase: 'started',
+        at: '2026-08-24T05:00:00.000Z'
+      }
+    )
+    port.publishRunEvent(
+      { id: 'host-client-1' },
+      {
+        type: 'run.tool',
+        runId: 'run-1',
+        threadId,
+        toolId: 'tool-edit',
+        phase: 'finished',
+        status: 'success',
+        at: '2026-08-24T05:00:00.000Z'
+      }
+    )
     port.finishRun({
       runId: 'run-1',
       status: 'completed',
@@ -159,7 +186,22 @@ describe('HostNodeProfileRunPort', () => {
     expect(store.getThread(threadId)?.runs).toEqual([
       expect.objectContaining({ runId: 'run-1', status: 'completed' })
     ])
-    expect(events).toEqual([expect.objectContaining({ type: 'run.content' })])
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'run.content' }),
+      expect.objectContaining({ type: 'run.tool', phase: 'started' }),
+      expect.objectContaining({ type: 'run.tool', phase: 'finished' })
+    ])
+    expect(store.getThread(threadId)?.runs?.[0]?.toolActivities).toEqual([
+      expect.objectContaining({
+        id: 'tool-edit',
+        name: 'Edit File',
+        category: 'write',
+        status: 'success',
+        file: 'src/example.ts',
+        additions: 4,
+        deletions: 2
+      })
+    ])
   })
 
   it('fails closed for global, unconfigured, or unconsented threads and cancels exact active thread once', () => {

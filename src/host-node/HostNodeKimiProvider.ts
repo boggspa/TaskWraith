@@ -128,6 +128,93 @@ function updateText(value: unknown): string {
   return ''
 }
 
+function firstString(record: Record<string, unknown> | null, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = record?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function nonNegativeCount(value: unknown): number | undefined {
+  const numeric =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : undefined
+}
+
+function lineCount(value: string): number {
+  return value ? value.split(/\r?\n/).length : 0
+}
+
+function toolInput(
+  update: Record<string, unknown>,
+  tool: Record<string, unknown>
+): Record<string, unknown> {
+  for (const value of [
+    tool.input,
+    tool.rawInput,
+    tool.arguments,
+    tool.args,
+    tool.parameters,
+    tool.payload,
+    update.input,
+    update.rawInput,
+    update.arguments,
+    update.args,
+    update.parameters,
+    update.payload
+  ]) {
+    const record = readObject(value)
+    if (record) return record
+  }
+  return {}
+}
+
+function toolFileAndDiff(
+  name: string,
+  input: Record<string, unknown>
+): { file?: string; additions?: number; deletions?: number } {
+  const file = firstString(input, [
+    'file_path',
+    'filePath',
+    'path',
+    'target',
+    'target_file',
+    'target_file_path'
+  ])
+  const additions = nonNegativeCount(
+    input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
+  )
+  const deletions = nonNegativeCount(
+    input.deletions ??
+      input.deleted ??
+      input.linesDeleted ??
+      input.linesRemoved ??
+      input.lines_removed ??
+      input.removals
+  )
+  const oldText = firstString(input, ['old_string', 'oldString', 'oldText', 'old_text'])
+  const newText = firstString(input, ['new_string', 'newString', 'newText', 'new_text'])
+  const content = firstString(input, ['content', 'text', 'new_content', 'newContent'])
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+  return {
+    ...(file ? { file } : {}),
+    ...(additions !== undefined || deletions !== undefined
+      ? {
+          ...(additions !== undefined ? { additions } : {}),
+          ...(deletions !== undefined ? { deletions } : {})
+        }
+      : oldText || newText
+        ? {
+            additions: lineCount(newText),
+            deletions: lineCount(oldText)
+          }
+        : content && /(?:write|create|replace|edit|patch)/.test(normalized)
+          ? { additions: lineCount(content), deletions: 0 }
+          : {})
+  }
+}
+
 function providerModelIsSelectable(
   offers: HostProviderOffersProjection,
   thread: HostProviderRunThread
@@ -329,9 +416,17 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
 
     return new Promise<HostNodeProviderRunResult>((resolve) => {
       let settled = false
-      let sessionId = thread.providerSessionId ?? request.runId
+      const requestedResumeSessionId = thread.providerSessionId
+      let sessionId = requestedResumeSessionId ?? request.runId
       let carry = ''
       let promptSent = false
+      let sessionRpcId = 2
+      let resumeAttempted = false
+      let promptText = request.prompt
+      const resumeFallbackPrompt =
+        request.resumeFallbackPrompt && validateHostProviderRunPrompt(request.resumeFallbackPrompt)
+          ? request.resumeFallbackPrompt
+          : undefined
       let assistantText = ''
       let failure = ''
       let interactionSequence = 0
@@ -385,12 +480,27 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       const write = (id: number, method: string, params: Record<string, unknown>): void => {
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
       }
+      const sessionConfigOptions = [
+        { configId: 'model', value: kimiExplicitCliModelAlias(thread.modelId) },
+        ...(thread.reasoningId ? [{ configId: 'reasoning', value: thread.reasoningId }] : [])
+      ]
+      const sendNewSession = (fallback: boolean): void => {
+        sessionRpcId = fallback ? 4 : 2
+        resumeAttempted = false
+        sessionId = ''
+        if (fallback && resumeFallbackPrompt) promptText = resumeFallbackPrompt
+        write(sessionRpcId, 'session/new', {
+          cwd: thread.workspace.canonicalPath,
+          mcpServers: [],
+          configOptions: sessionConfigOptions
+        })
+      }
       const sendPrompt = (): void => {
         if (promptSent) return
         promptSent = true
         write(3, 'session/prompt', {
           sessionId,
-          prompt: [{ type: 'text', text: request.prompt }]
+          prompt: [{ type: 'text', text: promptText }]
         })
       }
       const publishText = (value: string): void => {
@@ -406,11 +516,40 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           at: timestamp()
         })
       }
+      const publishTool = (
+        update: Record<string, unknown>,
+        phase: 'started' | 'finished',
+        status?: 'success' | 'error'
+      ): void => {
+        const tool = readObject(update.toolCall) ?? update
+        const toolId =
+          firstString(update, ['toolCallId', 'toolCallID', 'toolId', 'id']) ||
+          firstString(tool, ['toolCallId', 'toolCallID', 'toolId', 'id'])
+        if (!safeOperationId(toolId)) return
+        const toolName =
+          firstString(tool, ['name', 'toolName', 'title', 'kind']) ||
+          firstString(update, ['toolName', 'title', 'kind'])
+        const details = toolFileAndDiff(toolName, toolInput(update, tool))
+        this.runPort.publishRunEvent(request.target, {
+          type: 'run.tool',
+          runId: request.runId,
+          threadId: thread.threadId,
+          toolId,
+          ...(toolName ? { toolName } : {}),
+          ...(details.file ? { file: details.file } : {}),
+          ...(details.additions !== undefined ? { additions: details.additions } : {}),
+          ...(details.deletions !== undefined ? { deletions: details.deletions } : {}),
+          phase,
+          ...(status ? { status } : {}),
+          at: timestamp()
+        })
+      }
       const handlePermissionRequest = (frame: Record<string, unknown>): void => {
         const rpcId = frame.id
         if (typeof rpcId !== 'string' && typeof rpcId !== 'number') return
         const params = readObject(frame.params)
         const toolCall = readObject(params?.toolCall)
+        if (toolCall) publishTool({ ...toolCall }, 'started')
         const title =
           (typeof toolCall?.title === 'string' && toolCall.title.trim().slice(0, 200)) ||
           (typeof toolCall?.kind === 'string' && toolCall.kind.trim().slice(0, 200)) ||
@@ -468,30 +607,58 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           child.stdin.write(
             JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }) + '\n'
           )
-          write(2, 'session/new', {
-            cwd: thread.workspace.canonicalPath,
-            mcpServers: [],
-            configOptions: [
-              { configId: 'model', value: thread.modelId },
-              ...(thread.reasoningId ? [{ configId: 'reasoning', value: thread.reasoningId }] : [])
-            ]
-          })
+          if (requestedResumeSessionId) {
+            resumeAttempted = true
+            sessionRpcId = 2
+            write(2, 'session/resume', {
+              sessionId: requestedResumeSessionId,
+              cwd: thread.workspace.canonicalPath,
+              mcpServers: []
+            })
+          } else {
+            sendNewSession(false)
+          }
           return
         }
-        if (frame.id === 2 && frame.result) {
+        if (frame.id === sessionRpcId && frame.result) {
           const result = readObject(frame.result)
-          const session =
-            result &&
-            (typeof result.sessionId === 'string'
-              ? result.sessionId
-              : typeof readObject(result.session)?.id === 'string'
-                ? String(readObject(result.session)?.id)
-                : '')
-          if (session) sessionId = session
+          if (resumeAttempted) {
+            sessionId = requestedResumeSessionId ?? ''
+            resumeAttempted = false
+          } else {
+            const session =
+              result &&
+              (typeof result.sessionId === 'string'
+                ? result.sessionId
+                : typeof readObject(result.session)?.id === 'string'
+                  ? String(readObject(result.session)?.id)
+                  : '')
+            if (session) sessionId = session
+          }
+          if (!sessionId) {
+            failure = 'Kimi ACP did not return a session identity.'
+            completion.requestStop()
+            return
+          }
           sendPrompt()
           return
         }
         if (completion.acceptPromptResult(frame)) return
+        if (frame.error && resumeAttempted && frame.id === 2) {
+          // A missing/expired native session is recoverable: mint a fresh
+          // session and explicitly carry the bounded Host transcript context.
+          sendNewSession(true)
+          return
+        }
+        if (frame.error && frame.id === sessionRpcId) {
+          const error = readObject(frame.error)
+          failure =
+            typeof error?.message === 'string'
+              ? error.message
+              : 'Kimi ACP session setup was rejected.'
+          completion.requestStop()
+          return
+        }
         if (frame.id === 3 && frame.error) {
           const error = readObject(frame.error)
           failure = typeof error?.message === 'string' ? error.message : 'ACP prompt was rejected.'
@@ -505,6 +672,15 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         const kind = String(update.sessionUpdate ?? update.type ?? '')
         if (/agent_message|assistant_message/i.test(kind))
           publishText(updateText(update.content ?? update))
+        if (kind === 'tool_call' || kind === 'tool_call_update') {
+          const rawStatus = firstString(update, ['status']).toLowerCase()
+          const terminal = rawStatus === 'completed' || rawStatus === 'failed'
+          publishTool(
+            update,
+            terminal ? 'finished' : 'started',
+            terminal ? (rawStatus === 'failed' ? 'error' : 'success') : undefined
+          )
+        }
       }
       const consume = (chunk: Buffer | string): void => {
         carry += String(chunk)

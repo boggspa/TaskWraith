@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type {
   HostProviderRunPort,
+  HostProviderRunEvent,
   HostProviderRunThread
 } from '../host-runtime/HostProviderRunPort'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
@@ -62,7 +63,7 @@ function open(
 ) {
   const appends: unknown[] = []
   const finishes: unknown[] = []
-  const events: unknown[] = []
+  const events: HostProviderRunEvent[] = []
   const cancels = new Map<string, () => void>()
   const child = new FakeChild()
   const spawn = vi.fn((_command: string, _args: string[], _options: unknown) => child as never)
@@ -138,6 +139,207 @@ describe('HostNodeKimiProvider', () => {
     expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('uses the managed model alias in the ACP session configuration', async () => {
+    const { instance, child } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-model-config',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const sessionNew = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/new"'))!
+    ) as {
+      params: { configOptions: Array<{ configId: string; value: string }> }
+    }
+    expect(sessionNew.params.configOptions).toEqual([
+      { configId: 'model', value: 'kimi-code/k3' },
+      { configId: 'reasoning', value: 'high' }
+    ])
+
+    expect(instance.cancel('run-model-config')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('resumes an existing ACP session and falls back with bounded transcript context', async () => {
+    const { instance, child } = open({
+      configuredThread: thread({
+        modelId: 'kimi-k3',
+        reasoningId: 'high',
+        providerSessionId: 'session-existing'
+      })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-resume',
+      threadId: 'thread-1',
+      prompt: 'follow up',
+      resumeFallbackPrompt: 'Earlier context\n\nNew user message:\nfollow up',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/resume"'))
+    const resume = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/resume"'))!
+    ) as {
+      params: { sessionId: string; cwd: string; mcpServers: unknown[] }
+    }
+    expect(resume.params).toMatchObject({
+      sessionId: 'session-existing',
+      cwd: '/tmp/host-node-provider-test',
+      mcpServers: []
+    })
+
+    child.stdout.write(JSON.stringify({ id: 2, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const resumedPrompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: Array<{ text: string }> } }
+    expect(resumedPrompt.params).toMatchObject({
+      sessionId: 'session-existing',
+      prompt: [{ text: 'follow up' }]
+    })
+
+    child.stdout.write(JSON.stringify({ id: 3, result: { stopReason: 'end_turn' } }) + '\n')
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-existing'
+    })
+  })
+
+  it('uses the Host transcript prompt when native Kimi resume is rejected', async () => {
+    const { instance, child } = open({
+      configuredThread: thread({
+        providerSessionId: 'session-expired',
+        modelId: 'kimi-k3',
+        reasoningId: 'high'
+      })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-resume-fallback',
+      threadId: 'thread-1',
+      prompt: 'short follow up',
+      resumeFallbackPrompt: 'Prior turn: hello\n\nNew user message:\nshort follow up',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/resume"'))
+    child.stdout.write(
+      JSON.stringify({ id: 2, error: { code: -32000, message: 'session not found' } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"id":4,"method":"session/new"'))
+    const fallbackSession = JSON.parse(
+      sent.find((frame) => frame.includes('"id":4,"method":"session/new"'))!
+    ) as { params: { configOptions: Array<{ configId: string; value: string }> } }
+    expect(fallbackSession.params.configOptions[0]).toEqual({
+      configId: 'model',
+      value: 'kimi-code/k3'
+    })
+
+    child.stdout.write(JSON.stringify({ id: 4, result: { sessionId: 'session-fresh' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const fallbackPrompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: Array<{ text: string }> } }
+    expect(fallbackPrompt.params).toMatchObject({
+      sessionId: 'session-fresh',
+      prompt: [{ text: 'Prior turn: hello\n\nNew user message:\nshort follow up' }]
+    })
+
+    child.stdout.write(JSON.stringify({ id: 3, result: { stopReason: 'end_turn' } }) + '\n')
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-fresh'
+    })
+  })
+
+  it('publishes bounded file-edit activity with line counts', async () => {
+    const { instance, child, events } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+    })
+    const running = instance.run({
+      runId: 'run-edit-activity',
+      threadId: 'thread-1',
+      prompt: 'edit the example',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => events.some((event) => event.type === 'run.started'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => events.some((event) => event.type === 'run.status'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-edit' } }) + '\n')
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tool-edit',
+            title: 'Edit',
+            input: {
+              file_path: 'src/example.ts',
+              old_string: 'one\ntwo',
+              new_string: 'one\nthree\nfour'
+            }
+          }
+        }
+      }) + '\n'
+    )
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tool-edit',
+            title: 'Edit',
+            status: 'completed'
+          }
+        }
+      }) + '\n'
+    )
+
+    await vi.waitFor(() => events.filter((event) => event.type === 'run.tool').length === 2)
+    const toolEvents = events.filter((event) => event.type === 'run.tool')
+    expect(toolEvents).toEqual([
+      expect.objectContaining({
+        toolId: 'tool-edit',
+        toolName: 'Edit',
+        phase: 'started',
+        file: 'src/example.ts',
+        additions: 3,
+        deletions: 2
+      }),
+      expect.objectContaining({
+        toolId: 'tool-edit',
+        phase: 'finished',
+        status: 'success'
+      })
+    ])
+
+    child.stdout.write(JSON.stringify({ id: 3, result: { stopReason: 'end_turn' } }) + '\n')
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('keeps a missing binary visible as unavailable and terminalizes setup failure', async () => {

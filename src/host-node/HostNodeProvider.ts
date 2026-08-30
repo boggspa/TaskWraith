@@ -21,6 +21,8 @@ export interface HostNodeProviderRunRequest {
   readonly runId: string
   readonly threadId: string
   readonly prompt: string
+  /** Full bounded transcript prompt used only if native session resume fails. */
+  readonly resumeFallbackPrompt?: string
   readonly target: HostRunEventTarget
 }
 

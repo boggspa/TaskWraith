@@ -75,6 +75,46 @@ import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
+const HOST_RESUME_FALLBACK_MAX_CHARS = 16_000
+
+/**
+ * Build a bounded cold-session prompt for providers whose native session cannot
+ * be resumed. The transcript is already Host-owned data; this fallback keeps a
+ * follow-up useful without pretending that a new provider process has native
+ * history. Only user/assistant/system messages are carried, never legacy tool
+ * or error carriers.
+ */
+function buildResumeFallbackPrompt(
+  thread: HostProfileThread,
+  nextPrompt: string
+): string | undefined {
+  const messages = thread.messages.filter(
+    (message) =>
+      (message.role === 'user' || message.role === 'assistant' || message.role === 'system') &&
+      message.content.trim().length > 0
+  )
+  if (messages.length === 0) return undefined
+
+  const clean = (value: string): string =>
+    value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim()
+  const history = messages
+    .slice(-32)
+    .map(
+      (message) => `${message.role === 'user' ? 'User' : message.role}: ${clean(message.content)}`
+    )
+    .join('\n\n')
+  const prompt =
+    'Continue the existing TaskWraith conversation using this bounded transcript context. ' +
+    'Do not claim this is a new conversation.\n\n' +
+    history +
+    '\n\nNew user message:\n' +
+    clean(nextPrompt)
+  if (prompt.length <= HOST_RESUME_FALLBACK_MAX_CHARS) return prompt
+  return `Continue the existing TaskWraith conversation.\n\n${prompt.slice(
+    -HOST_RESUME_FALLBACK_MAX_CHARS + 44
+  )}`
+}
+
 export interface HostNodeDomainPortsOptions {
   /** Canonical profile directory used only for owner-bound large-record transfer artifacts. */
   readonly profilePath?: string
@@ -869,10 +909,19 @@ export class HostNodeDomainPorts {
     const effectiveThread = this.effectiveThread(thread, command.arguments)
     if (!effectiveThread) return failed('standalone_configuration_mismatch')
 
+    const prompt = this.promptWithActiveGoal(
+      command.target.threadId,
+      command.arguments.text as string
+    )
+    const profileThread = this.options.store.getThread(command.target.threadId)
+
     const completion = provider.run({
       runId: command.commandId,
       threadId: command.target.threadId,
-      prompt: this.promptWithActiveGoal(command.target.threadId, command.arguments.text as string),
+      prompt,
+      ...(thread.providerId === 'kimi' && profileThread
+        ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
+        : {}),
       target
     })
     const tracked = completion
