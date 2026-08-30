@@ -198,6 +198,8 @@ export interface CompactChatUpdateBaseline {
   revision: number
   recordHash: string
   transcriptHash?: string
+  /** Whether the acknowledged transcript is safe for id-based patching. */
+  transcriptIdsUnique?: boolean
   ensembleRevision?: number
   runsRevision?: number
   /** Cheap retained-byte estimate for statsForTarget meters. */

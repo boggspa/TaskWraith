@@ -151,6 +151,31 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
   })
 
+  it('keeps an ACKed malformed snapshot fenced after its producer envelope is gone', () => {
+    const sink = target(8)
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const invalid = chat(1, ['one', 'duplicate'])
+    invalid.messages[1].id = invalid.messages[0].id
+
+    coordinator.enqueue(sink, invalid)
+    const invalidSnapshot = sink.deliveries[0]
+    expect(invalidSnapshot.kind).toBe('snapshot')
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: invalidSnapshot.deliveryId,
+        applied: true
+      })
+    ).toBe(true)
+
+    // This update has no producer envelope, so the ACKed snapshot metadata is
+    // the only signal that the retained baseline is still malformed.
+    coordinator.enqueue(sink, chat(2, ['repaired']))
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
   it('advances an idle baseline for a renderer-authored compact mutation without an echo', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({

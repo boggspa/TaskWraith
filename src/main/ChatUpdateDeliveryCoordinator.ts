@@ -220,7 +220,8 @@ function toPatchBaseline(
     ensembleRevision: acknowledged.ensembleRevision,
     runsRevision: acknowledged.runsRevision,
     recordHash: acknowledged.recordHash,
-    transcriptHash: acknowledged.transcriptHash
+    transcriptHash: acknowledged.transcriptHash,
+    transcriptIdsUnique: acknowledged.transcriptIdsUnique
   }
 }
 
@@ -842,6 +843,13 @@ export class ChatUpdateDeliveryCoordinator {
       revision: next.revision,
       recordHash,
       ...(epochDelivery.transcriptHash ? { transcriptHash: epochDelivery.transcriptHash } : {}),
+      ...(next.producer?.state.transcriptIdsUnique !== undefined
+        ? { transcriptIdsUnique: next.producer.state.transcriptIdsUnique }
+        : epochDelivery.kind === 'snapshot' && epochDelivery.transcriptIdsUnique !== undefined
+          ? { transcriptIdsUnique: epochDelivery.transcriptIdsUnique }
+          : state.acknowledged?.transcriptIdsUnique !== undefined
+            ? { transcriptIdsUnique: state.acknowledged.transcriptIdsUnique }
+            : {}),
       ensembleRevision: deliveryEnsembleRevision ?? contentSub.ensembleRevision,
       runsRevision: deliveryRunsRevision ?? contentSub.runsRevision,
       retainedBytes: next.retainedBytes
