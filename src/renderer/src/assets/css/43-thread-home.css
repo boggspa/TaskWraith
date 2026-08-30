@@ -461,8 +461,9 @@
 .thread-home-terminal-picker {
   align-self: flex-start;
   display: grid;
-  width: min(720px, 100%);
-  gap: 18px;
+  grid-template-columns: 1fr 1fr;
+  width: min(900px, 100%);
+  gap: 32px;
   margin: auto;
 }
 
@@ -492,37 +493,6 @@
 .thread-home-terminal-workspace-copy small {
   color: var(--text-secondary);
   font-size: 10px;
-}
-
-.thread-home-terminal-workspace-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
-  gap: 8px;
-}
-
-.thread-home-terminal-workspace-list > button {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.thread-home-terminal-workspace-list > button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-.thread-home-terminal-workspace-list > button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
-  outline-offset: 2px;
 }
 
 .thread-home-terminal-workspace-list > button:disabled {
@@ -1224,4 +1194,45 @@
   .thread-home-surface-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.thread-home-terminal-picker-column {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: calc(100vh - 200px);
+}
+
+.thread-home-terminal-workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-home-terminal-workspace-list.is-scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+}
+
+.thread-home-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thread-home-radio.is-checked {
+  border-color: var(--accent);
+}
+
+.thread-home-radio.is-checked::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent);
+  border-radius: 50%;
 }
