@@ -810,7 +810,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('data-label="#1 Scout"')
     expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
-    expect(html).not.toContain('DeepSeek V4 Flash')
+    expect(html).not.toContain('V4 Flash')
   })
 
   it('scopes a settled solo tool stack to its Pi upstream brand hue', () => {
@@ -873,7 +873,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
     expect(html).not.toContain('--accent:var(--provider-pi-color, var(--accent))')
     expect(html).toContain('>DeepSeek</span>')
-    expect(html).toContain('Model: DeepSeek V4 Flash')
+    expect(html).toContain('Model: V4 Flash')
   })
 
   it('prepends participant-style headers to live tool-call viewports', () => {

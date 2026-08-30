@@ -203,7 +203,7 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(html).toContain('provider-deepseek')
     expect(html).toContain('>DeepSeek<')
-    expect(html).toContain('>DeepSeek V4 Pro<')
+    expect(html).toContain('>V4 Pro<')
   })
 
   it('labels write-intent lanes as writer fan-out', () => {

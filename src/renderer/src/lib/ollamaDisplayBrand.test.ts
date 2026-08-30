@@ -118,22 +118,22 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('minimax-m3:cloud')).toMatchObject({
       providerLabel: 'MiniMax',
       providerClass: 'minimax',
-      modelLabel: 'MiniMax M3'
+      modelLabel: 'M3'
     })
     expect(resolveOllamaDisplayBrand('kimi-k2.7-code:cloud')).toMatchObject({
       providerLabel: 'Kimi',
       providerClass: 'kimi',
-      modelLabel: 'Kimi K2.7 Code'
+      modelLabel: 'K2.7 Code'
     })
     expect(resolveOllamaDisplayBrand('deepseek-v4-pro:cloud')).toMatchObject({
       providerLabel: 'DeepSeek',
       providerClass: 'deepseek',
-      modelLabel: 'DeepSeek V4 Pro'
+      modelLabel: 'V4 Pro'
     })
     expect(resolveOllamaDisplayBrand('deepseek-v4-flash:cloud')).toMatchObject({
       providerLabel: 'DeepSeek',
       providerClass: 'deepseek',
-      modelLabel: 'DeepSeek V4 Flash'
+      modelLabel: 'V4 Flash'
     })
     expect(resolveOllamaDisplayBrand('gemma4:cloud')).toMatchObject({
       providerLabel: 'Google',

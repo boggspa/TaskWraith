@@ -4162,7 +4162,7 @@ describe('RemoteThreadProjection', () => {
         } as import('./store/types').ChatRun
       ])
 
-      expect(labeler(msg(1, { runId: 'pi-run' }))).toBe('DeepSeek · DeepSeek V4 Pro')
+      expect(labeler(msg(1, { runId: 'pi-run' }))).toBe('DeepSeek · V4 Pro')
       expect(labeler(msg(3, { runId: 'ollama-run' }))).toBe('Z.ai · GLM 5.2')
       expect(
         labeler(

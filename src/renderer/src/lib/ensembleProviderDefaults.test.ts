@@ -1313,7 +1313,7 @@ describe('Pi add-participant model options', () => {
     )
     expect(labels).toMatchObject({
       'openrouter/cohere/north-mini-code:free': 'North Mini Code',
-      'openrouter/minimax/minimax-m3:free': 'MiniMax M3',
+      'openrouter/minimax/minimax-m3:free': 'M3 (OpenRouter)',
       'openrouter/thinkingmachines/inkling:free': 'Inkling',
       'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small'
     })

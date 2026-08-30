@@ -22,13 +22,13 @@ describe('mergeOllamaModelCatalog', () => {
     })
     expect(models.find((model) => model.id === 'minimax-m3:cloud')).toMatchObject({
       id: 'minimax-m3:cloud',
-      label: 'MiniMax M3'
+      label: 'M3'
     })
     expect(models.find((model) => model.id === 'deepseek-v4-pro:cloud')?.label).toBe(
-      'DeepSeek V4 Pro'
+      'V4 Pro'
     )
     expect(models.find((model) => model.id === 'deepseek-v4-flash:cloud')?.label).toBe(
-      'DeepSeek V4 Flash'
+      'V4 Flash'
     )
     expect(models.find((model) => model.id === 'gemma4:cloud')?.label).toBe('Gemma 4')
   })

@@ -132,7 +132,7 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(resolveTaskWraithProviderPresentation('ollama', 'deepseek-v4-pro:cloud')).toMatchObject({
       displayProvider: 'DeepSeek',
       hueKey: 'deepseek',
-      modelLabel: 'DeepSeek V4 Pro'
+      modelLabel: 'V4 Pro'
     })
     expect(resolveTaskWraithProviderPresentation('ollama', 'gemma4:cloud')).toMatchObject({
       displayProvider: 'Google',

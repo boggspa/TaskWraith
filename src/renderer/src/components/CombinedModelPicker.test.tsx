@@ -301,11 +301,11 @@ describe('CombinedModelPicker', () => {
     expect(html).not.toMatch(/stroke="#|fill="#/)
   })
 
-  it('labels a selected Cloud model distinctly in the trigger', () => {
+  it('brands a selected Cloud model by its upstream, keeping the glyph as the source classifier', () => {
     const catalogModel = mergeOllamaModelCatalog([
       { id: 'minimax-m3:cloud', label: 'minimax-m3' }
     ]).find((option) => option.id === 'minimax-m3:cloud')!
-    expect(catalogModel.label).toBe('MiniMax M3')
+    expect(catalogModel.label).toBe('M3')
     const model = { id: catalogModel.id, label: catalogModel.label! }
     const html = renderToStaticMarkup(
       <CombinedModelPicker
@@ -320,8 +320,15 @@ describe('CombinedModelPicker', () => {
       />
     )
 
-    expect(html).toContain('>Ollama Cloud<')
-    expect(html).toContain('composer-combined-picker-trigger-primary">MiniMax M3</span>')
+    // The seat is still `ollama`, but the trigger names the upstream brand, the
+    // same spoof every other surface (seat changes, close-outs, transcript
+    // headers, the TUI projection) has always applied to cloud rows.
+    expect(html).toContain('composer-combined-picker-trigger-provider-label">MiniMax</span>')
+    expect(html).not.toContain('composer-combined-picker-trigger-provider-label">Ollama Cloud<')
+    // And the label must not repeat the brand: 'MiniMax M3' would read
+    // 'MiniMax MiniMax M3' once the two sit side by side.
+    expect(html).toContain('composer-combined-picker-trigger-primary">M3</span>')
+    // Cloud-ness is carried by the glyph beside the label, not by naming the seat.
     expect(html).toContain('composer-combined-picker-trigger-cloud-indicator')
     expect(html).toContain('aria-label="Ollama Cloud model"')
     expect(html).toContain('data-provider-hue="minimax"')
@@ -392,8 +399,10 @@ describe('CombinedModelPicker', () => {
       hueClass: 'cohere'
     },
     {
+      // Disambiguated the way the (Groq)/(Cerebras) rows are: the direct
+      // MiniMax lane also offers M3, and the two rows sit in one flat list.
       id: 'openrouter/minimax/minimax-m3:free',
-      label: 'MiniMax M3',
+      label: 'M3 (OpenRouter)',
       brand: 'MiniMax',
       hueClass: 'minimax'
     },

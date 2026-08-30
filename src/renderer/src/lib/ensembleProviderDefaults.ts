@@ -414,16 +414,16 @@ const ANTIGRAVITY_MODELS = withCuratedUltraTaskSupport(ANTIGRAVITY_MODEL_ROWS)
  * mirror the seat editor offers. A model whose upstream has no stored key is
  * still listed here but fails visibly at dispatch with a "no key" message. */
 const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
-  { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-  { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  { id: 'deepseek/deepseek-v4-flash', label: 'V4 Flash' },
+  { id: 'deepseek/deepseek-v4-pro', label: 'V4 Pro' },
   { id: 'zai/glm-5.2', label: 'GLM-5.2' },
   { id: 'zai/glm-5.1', label: 'GLM-5.1' },
   { id: 'zai/glm-4.7', label: 'GLM-4.7' },
   { id: 'qwen-token-plan/qwen3.7-max', label: 'Qwen3.7 Max' },
   { id: 'qwen-token-plan/qwen3.7-plus', label: 'Qwen3.7 Plus' },
   { id: 'qwen-token-plan/qwen3.8-max', label: 'Qwen3.8 Max' },
-  { id: 'minimax/MiniMax-M3', label: 'MiniMax M3' },
-  { id: 'minimax/MiniMax-M2.7', label: 'MiniMax M2.7' },
+  { id: 'minimax/MiniMax-M3', label: 'M3' },
+  { id: 'minimax/MiniMax-M2.7', label: 'M2.7' },
   { id: 'xiaomi-token-plan-cn/mimo-v2-pro', label: 'MiMo V2 Pro (CN)' },
   { id: 'xiaomi-token-plan-cn/mimo-v2.5', label: 'MiMo V2.5 (CN)' },
   { id: 'xiaomi-token-plan-cn/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (CN)' },
@@ -458,7 +458,7 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
     id: 'openrouter/cohere/north-mini-code:free',
     label: 'North Mini Code'
   },
-  { id: 'openrouter/minimax/minimax-m3:free', label: 'MiniMax M3' },
+  { id: 'openrouter/minimax/minimax-m3:free', label: 'M3 (OpenRouter)' },
   { id: 'openrouter/thinkingmachines/inkling:free', label: 'Inkling' },
   {
     id: 'openrouter/thinkingmachines/inkling-small:free',

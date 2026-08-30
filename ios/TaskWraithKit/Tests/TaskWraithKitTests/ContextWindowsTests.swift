@@ -118,7 +118,7 @@ struct ContextWindowsTests {
             ),
             (
                 id: "openrouter/minimax/minimax-m3:free",
-                label: "MiniMax M3",
+                label: "M3 (OpenRouter)",
                 window: 1_048_576
             ),
             (

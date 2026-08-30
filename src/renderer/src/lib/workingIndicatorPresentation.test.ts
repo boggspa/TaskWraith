@@ -122,7 +122,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'pi',
       providerClass: 'deepseek',
       roleLabel: 'Scout',
-      modelBadge: 'DeepSeek V4 Flash',
+      modelBadge: 'V4 Flash',
       activity: 'working'
     })
   })

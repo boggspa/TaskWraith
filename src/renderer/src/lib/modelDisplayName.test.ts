@@ -163,9 +163,11 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('devstral-small')
     })
 
-    it('drops the redundant brand prefix under the provider header', () => {
-      expect(humaniseModelIdCompact('mistral', 'mistral-medium-3.5')).toBe('Medium 3.5')
-      // Devstral does not repeat the provider, so the strip is a no-op.
+    it('keeps the Mistral brand word, which is part of the product name', () => {
+      // Mistral is deliberately absent from PROVIDER_MODEL_LABEL_PREFIX: its
+      // products canonically carry the vendor word, so stripping it produced
+      // 'Medium 3.5' here while every brand-spoofed surface kept the full name.
+      expect(humaniseModelIdCompact('mistral', 'mistral-medium-3.5')).toBe('Mistral Medium 3.5')
       expect(humaniseModelIdCompact('mistral', 'devstral-small')).toBe('Devstral Small')
     })
 
@@ -215,7 +217,7 @@ describe('humaniseModelId', () => {
     it('maps local Ollama tags to readable model names', () => {
       expect(humaniseModelId('ollama', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
       expect(humaniseModelId('ollama', 'glm-5.2:cloud')).toBe('GLM 5.2')
-      expect(humaniseModelId('ollama', 'minimax-m3:cloud')).toBe('MiniMax M3')
+      expect(humaniseModelId('ollama', 'minimax-m3:cloud')).toBe('M3')
       expect(humaniseModelId('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')

@@ -120,7 +120,7 @@ describe('OllamaDaemonClient model presentation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: 'minimax-m3:cloud',
-          label: 'MiniMax M3',
+          label: 'M3',
           source: 'cloud',
           contextLength: 262_144,
           isDefault: true

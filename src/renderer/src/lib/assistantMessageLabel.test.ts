@@ -301,7 +301,7 @@ describe('formatAssistantMessageLabel', () => {
     }> = [
       { provider: 'grok', model: 'grok-4.6', expected: 'Grok 4.6 Fast UltraTask' },
       { provider: 'cursor', model: 'cursor-grok-4.6-low', expected: 'Grok 4.6 UltraTask' },
-      { provider: 'pi', model: 'deepseek/deepseek-v4-pro', expected: 'DeepSeek V4 Pro UltraTask' },
+      { provider: 'pi', model: 'deepseek/deepseek-v4-pro', expected: 'V4 Pro UltraTask' },
       { provider: 'mistral', model: 'devstral-small', expected: 'Devstral Small UltraTask' },
       { provider: 'muse', model: 'muse-spark-1.2', expected: 'Spark 1.2 UltraTask' },
       {
@@ -521,7 +521,7 @@ describe('cli-default sentinel expansion', () => {
     ).toMatchObject({
       label: 'DeepSeek',
       providerClass: 'deepseek',
-      modelBadge: 'DeepSeek V4 Flash'
+      modelBadge: 'V4 Flash'
     })
   })
 

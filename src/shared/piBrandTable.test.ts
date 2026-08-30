@@ -102,13 +102,13 @@ describe('resolvePiModelLabel', () => {
   it('humanises a catalogued wire id', () => {
     expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2')
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
-    expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
+    expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('V4 Flash')
     expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {
     expect(resolvePiModelLabel('openrouter/cohere/north-mini-code:free')).toBe('North Mini Code')
-    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe('MiniMax M3')
+    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe('M3 (OpenRouter)')
     expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling:free')).toBe('Inkling')
     expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling-small:free')).toBe(
       'Inkling Small'

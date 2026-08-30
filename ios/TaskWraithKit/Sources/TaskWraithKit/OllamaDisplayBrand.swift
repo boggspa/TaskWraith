@@ -37,12 +37,12 @@ public enum OllamaDisplayBrands {
     /// differently named family. Brand-wide fallbacks cannot distinguish these
     /// newer families when callers only have the raw Ollama tag.
     private static let exactModelLabels = [
-        "deepseek-v4-flash": "DeepSeek V4 Flash",
-        "deepseek-v4-flash:0731": "DeepSeek V4 Flash (0731)",
-        "deepseek-v4-flash:preview": "DeepSeek V4 Flash (Preview)",
-        "deepseek-v4-pro": "DeepSeek V4 Pro",
-        "deepseek-v4-pro:0813": "DeepSeek V4 Pro (0813)",
-        "deepseek-v4-pro:preview": "DeepSeek V4 Pro (Preview)",
+        "deepseek-v4-flash": "V4 Flash",
+        "deepseek-v4-flash:0731": "V4 Flash (0731)",
+        "deepseek-v4-flash:preview": "V4 Flash (Preview)",
+        "deepseek-v4-pro": "V4 Pro",
+        "deepseek-v4-pro:0813": "V4 Pro (0813)",
+        "deepseek-v4-pro:preview": "V4 Pro (Preview)",
         "gemma4": "Gemma 4",
         "gemma4:31b": "Gemma 4 (31B Param)",
         "glm-5.3-flash": "GLM 5.3 Flash",
@@ -51,12 +51,12 @@ public enum OllamaDisplayBrands {
         "glm-5.2": "GLM 5.2",
         "gpt-oss:20b": "GPT OSS (20B Param)",
         "gpt-oss:120b": "GPT OSS (120B Param)",
-        "kimi-k2.5": "Kimi K2.5",
-        "kimi-k2.6": "Kimi K2.6",
-        "kimi-k2.7-code": "Kimi K2.7 Code",
-        "kimi-k3": "Kimi K3",
-        "minimax-m2.7": "MiniMax M2.7",
-        "minimax-m3": "MiniMax M3",
+        "kimi-k2.5": "K2.5",
+        "kimi-k2.6": "K2.6",
+        "kimi-k2.7-code": "K2.7 Code",
+        "kimi-k3": "K3",
+        "minimax-m2.7": "M2.7",
+        "minimax-m3": "M3",
         "mistral-large-3:675b": "Mistral Large 3 (675B Param)",
         "nemotron-3-nano:30b": "Nemotron 3 Nano (30B Param)",
         "nemotron-3-super": "Nemotron 3 Super",
@@ -127,7 +127,7 @@ public enum OllamaDisplayBrands {
             providerLabel: "Kimi",
             providerClass: "kimi",
             needles: ["kimi-"],
-            fallbackModelLabel: "Kimi K3"),
+            fallbackModelLabel: "K3"),
         OllamaDisplayBrandDefinition(
             id: "liquid",
             providerLabel: "Liquid",
@@ -148,7 +148,7 @@ public enum OllamaDisplayBrands {
             providerLabel: "MiniMax",
             providerClass: "minimax",
             needles: ["minimax-", "minimax "],
-            fallbackModelLabel: "MiniMax M3"),
+            fallbackModelLabel: "M3"),
         // The `mistral` hue class + label already exist for the first-class
         // Mistral Vibe seat, so a local Devstral / Ministral tag reuses them
         // rather than introducing a tenth brand colour. `ministral` needs its

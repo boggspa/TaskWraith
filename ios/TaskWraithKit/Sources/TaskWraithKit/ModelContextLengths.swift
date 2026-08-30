@@ -94,11 +94,11 @@ public enum ModelContextLengths {
             // BYOK seat: the flagship row per allowed upstream. Wire ids stay
             // `<upstream>/<model>` so the window lookup matches the desktop.
             return [
-                (id: "deepseek/deepseek-v4-flash",  label: "DeepSeek V4 Flash"),
-                (id: "deepseek/deepseek-v4-pro",    label: "DeepSeek V4 Pro"),
+                (id: "deepseek/deepseek-v4-flash",  label: "V4 Flash"),
+                (id: "deepseek/deepseek-v4-pro",    label: "V4 Pro"),
                 (id: "zai/glm-5.2",                 label: "GLM-5.2"),
                 (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
-                (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
+                (id: "minimax/MiniMax-M3",          label: "M3"),
                 (id: "xiaomi-token-plan-sgp/mimo-v2.5-pro", label: "MiMo V2.5 Pro (SGP)"),
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
                 (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
@@ -106,7 +106,7 @@ public enum ModelContextLengths {
                 (id: "openrouter/poolside/laguna-s-2.1", label: "Laguna S 2.1"),
                 (id: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra"),
                 (id: "openrouter/cohere/north-mini-code:free", label: "North Mini Code"),
-                (id: "openrouter/minimax/minimax-m3:free", label: "MiniMax M3"),
+                (id: "openrouter/minimax/minimax-m3:free", label: "M3 (OpenRouter)"),
                 (id: "openrouter/thinkingmachines/inkling:free", label: "Inkling"),
                 (id: "openrouter/thinkingmachines/inkling-small:free", label: "Inkling Small"),
             ]

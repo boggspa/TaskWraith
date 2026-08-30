@@ -1577,12 +1577,16 @@ export function CombinedModelPicker({
     showShellFastLabel,
     reasoningSuffix
   ])
+  // Cloud rows resolve their upstream brand exactly like local ones: the seat
+  // is still `ollama`, and every other surface (seat changes, close-outs,
+  // transcript headers, the TUI projection) has always spoofed the brand here.
+  // Cloud-ness is carried by OllamaCloudModelIndicator beside this label and by
+  // the picker's own "Ollama Cloud" group heading, so naming the seat again was
+  // redundant as well as inconsistent.
   const providerDisplayLabel =
-    provider === 'ollama' && isOllamaCloudModelId(selectedModelOption.id)
-      ? 'Ollama Cloud'
-      : resolveProviderBrandLabel(provider, selectedModelOption.id) ||
-        selectedProviderGroup?.label ||
-        getProviderName(provider)
+    resolveProviderBrandLabel(provider, selectedModelOption.id) ||
+    selectedProviderGroup?.label ||
+    getProviderName(provider)
   const providerHueClass = modelPickerHueClass(
     provider,
     selectedModelOption.id,

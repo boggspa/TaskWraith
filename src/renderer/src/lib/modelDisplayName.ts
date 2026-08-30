@@ -548,10 +548,11 @@ const PROVIDER_MODEL_LABEL_PREFIX: Partial<Record<ProviderId, RegExp>> = {
   claude: /^Claude\s+/i,
   kimi: /^Kimi\s+/i,
   grok: /^Grok\s+/i,
-  antigravity: /^Gemini\s+/i,
-  // 'Mistral Medium 3.5' → 'Medium 3.5'. Devstral keeps its full name: it does
-  // not repeat the provider, so the strip is a no-op there.
-  mistral: /^Mistral\s+/i
+  antigravity: /^Gemini\s+/i
+  // Mistral is deliberately ABSENT. Its product names canonically carry the
+  // vendor word — 'Mistral Large 3', 'Mistral Medium 3.5' — so stripping it
+  // yields 'Large 3' / 'Medium 3.5', and the model tables then disagreed with
+  // every brand-spoofed surface, which keeps the word for the same reason.
 }
 
 /**

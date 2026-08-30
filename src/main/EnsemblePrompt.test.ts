@@ -3716,7 +3716,7 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
           ensembleParticipantId: 'pi-deepseek'
         }
       })
-    ).toBe('DeepSeek / Researcher (DeepSeek V4 Pro)')
+    ).toBe('DeepSeek / Researcher (V4 Pro)')
   })
 
   it('buildDupProviderModelLabels maps only duplicated providers, skipping cli-default', () => {

@@ -83,7 +83,7 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
   },
   {
     modelId: 'minimax/minimax-m3:free',
-    label: 'MiniMax M3',
+    label: 'M3 (OpenRouter)',
     reasoning: true,
     reasoningControl: 'toggle',
     input: ['text', 'image'],

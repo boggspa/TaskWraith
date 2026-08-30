@@ -31,13 +31,22 @@ export function ollamaCloudModelId(modelId?: string | null): string {
   return `${value}:cloud`
 }
 
+/**
+ * Cloud wire id -> the label shown beside the resolved upstream brand.
+ *
+ * These render as `<brand> <label>` (DeepSeek V4 Pro, Kimi K3), so the label
+ * must NOT repeat the brand or the chip stutters. The exception is a vendor
+ * whose own product names carry the vendor word: `Mistral Large 3` is the
+ * product, not a prefix, so it keeps it. Same reasoning keeps `Qwen 3.5` —
+ * though that one resolves to the Alibaba brand, so it never stuttered.
+ */
 const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
-  'deepseek-v4-flash': 'DeepSeek V4 Flash',
-  'deepseek-v4-flash:0731': 'DeepSeek V4 Flash (0731)',
-  'deepseek-v4-flash:preview': 'DeepSeek V4 Flash (Preview)',
-  'deepseek-v4-pro': 'DeepSeek V4 Pro',
-  'deepseek-v4-pro:0813': 'DeepSeek V4 Pro (0813)',
-  'deepseek-v4-pro:preview': 'DeepSeek V4 Pro (Preview)',
+  'deepseek-v4-flash': 'V4 Flash',
+  'deepseek-v4-flash:0731': 'V4 Flash (0731)',
+  'deepseek-v4-flash:preview': 'V4 Flash (Preview)',
+  'deepseek-v4-pro': 'V4 Pro',
+  'deepseek-v4-pro:0813': 'V4 Pro (0813)',
+  'deepseek-v4-pro:preview': 'V4 Pro (Preview)',
   gemma4: 'Gemma 4',
   'gemma4:31b': 'Gemma 4 (31B Param)',
   'glm-5.3-flash': 'GLM 5.3 Flash',
@@ -46,12 +55,12 @@ const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   'glm-5.1': 'GLM 5.1',
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:120b': 'GPT OSS (120B Param)',
-  'kimi-k2.5': 'Kimi K2.5',
-  'kimi-k2.6': 'Kimi K2.6',
-  'kimi-k2.7-code': 'Kimi K2.7 Code',
-  'kimi-k3': 'Kimi K3',
-  'minimax-m2.7': 'MiniMax M2.7',
-  'minimax-m3': 'MiniMax M3',
+  'kimi-k2.5': 'K2.5',
+  'kimi-k2.6': 'K2.6',
+  'kimi-k2.7-code': 'K2.7 Code',
+  'kimi-k3': 'K3',
+  'minimax-m2.7': 'M2.7',
+  'minimax-m3': 'M3',
   'mistral-large-3:675b': 'Mistral Large 3 (675B Param)',
   'nemotron-3-nano:30b': 'Nemotron 3 Nano (30B Param)',
   'nemotron-3-super': 'Nemotron 3 Super',

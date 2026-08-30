@@ -77,7 +77,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'Kimi',
     providerClass: 'kimi',
     needles: ['kimi-'],
-    fallbackModelLabel: 'Kimi K3'
+    fallbackModelLabel: 'K3'
   },
   {
     id: 'liquid',
@@ -98,7 +98,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'MiniMax',
     providerClass: 'minimax',
     needles: ['minimax-', 'minimax '],
-    fallbackModelLabel: 'MiniMax M3'
+    fallbackModelLabel: 'M3'
   },
   {
     // The `mistral` hue class + label already exist for the first-class Mistral

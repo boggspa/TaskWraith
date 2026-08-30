@@ -95,21 +95,21 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.resolve(modelId: "minimax-m3:cloud")
                 == OllamaDisplayBrand(
-                    providerLabel: "MiniMax", providerClass: "minimax", modelLabel: "MiniMax M3"))
+                    providerLabel: "MiniMax", providerClass: "minimax", modelLabel: "M3"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "kimi-k2.7-code:cloud")
                 == OllamaDisplayBrand(
-                    providerLabel: "Kimi", providerClass: "kimi", modelLabel: "Kimi K2.7 Code"))
+                    providerLabel: "Kimi", providerClass: "kimi", modelLabel: "K2.7 Code"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "deepseek-v4-pro:cloud")
                 == OllamaDisplayBrand(
                     providerLabel: "DeepSeek", providerClass: "deepseek",
-                    modelLabel: "DeepSeek V4 Pro"))
+                    modelLabel: "V4 Pro"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "deepseek-v4-flash:cloud")
                 == OllamaDisplayBrand(
                     providerLabel: "DeepSeek", providerClass: "deepseek",
-                    modelLabel: "DeepSeek V4 Flash"))
+                    modelLabel: "V4 Flash"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "gemma4:cloud")
                 == OllamaDisplayBrand(

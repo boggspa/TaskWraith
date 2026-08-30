@@ -77,14 +77,14 @@ struct PiBrandTableTests {
         #expect(PiBrandTable.modelLabel(forWireModelId: "mistral/zai-glm-5-2") == "GLM-5.2 (via Mistral)")
         #expect(
             PiBrandTable.modelLabel(forWireModelId: "deepseek/deepseek-v4-flash")
-                == "DeepSeek V4 Flash")
+                == "V4 Flash")
     }
 
     @Test("humanises new OpenRouter model ids")
     func humanisesOpenRouterModels() {
         let expected = [
             "openrouter/cohere/north-mini-code:free": "North Mini Code",
-            "openrouter/minimax/minimax-m3:free": "MiniMax M3",
+            "openrouter/minimax/minimax-m3:free": "M3 (OpenRouter)",
             "openrouter/thinkingmachines/inkling:free": "Inkling",
             "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
         ]
