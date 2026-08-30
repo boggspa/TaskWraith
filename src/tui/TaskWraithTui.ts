@@ -1125,8 +1125,12 @@ export class TaskWraithTui {
     this.render()
   }
 
-  private readonly onKeypress = (input: string, key: Keypress): void => {
+  private readonly onKeypress = (input: string, key: Keypress | undefined): void => {
     if (this.stopped) return
+    if (key?.name === 'btab') {
+      key = { ...key, name: 'tab', shift: true }
+    }
+    if (!key) return
     if (key.name === 'paste-start') {
       this.bracketedPaste = true
       this.bracketedPasteBuffer = ''
