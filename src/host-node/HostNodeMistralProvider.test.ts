@@ -223,6 +223,91 @@ describe('HostNodeMistralProvider', () => {
     ])
   })
 
+  it('applies gated session mode and the picker after session/new', async () => {
+    const { instance, child } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-model-config',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const sessionNew = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/new"'))!
+    ) as { params: { configOptions?: unknown } }
+    expect(sessionNew.params.configOptions).toBeUndefined()
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-mistral',
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'plan',
+              options: [{ value: 'plan' }, { value: 'ask' }, { value: 'default' }]
+            },
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    const modeConfig = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/set_config_option"'))!
+    ) as { params: { configId: string; value: string } }
+    expect(modeConfig.params).toEqual({
+      sessionId: 'session-mistral',
+      configId: 'mode',
+      value: 'ask'
+    })
+    child.stdout.write(
+      JSON.stringify({
+        id: 1000,
+        result: {
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'ask',
+              options: [{ value: 'ask' }]
+            },
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() =>
+      expect(
+        sent.filter((frame) => frame.includes('"method":"session/set_config_option"')).length
+      ).toBe(2)
+    )
+    const modelConfig = JSON.parse(
+      sent.filter((frame) => frame.includes('"method":"session/set_config_option"'))[1]!
+    ) as { params: { configId: string; value: string } }
+    expect(modelConfig.params).toEqual({
+      sessionId: 'session-mistral',
+      configId: 'model',
+      value: 'devstral-small'
+    })
+
+    expect(instance.cancel('run-model-config')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
   it('cancels only the exact active run', async () => {
     const { instance, child } = open()
     const running = instance.run({

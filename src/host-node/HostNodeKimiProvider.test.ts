@@ -141,7 +141,7 @@ describe('HostNodeKimiProvider', () => {
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
-  it('uses the managed model alias in the ACP session configuration', async () => {
+  it('re-asserts the picker with session/set_config_option after session/new', async () => {
     const { instance, child } = open({
       configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
     })
@@ -158,13 +158,71 @@ describe('HostNodeKimiProvider', () => {
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
     const sessionNew = JSON.parse(
       sent.find((frame) => frame.includes('"method":"session/new"'))!
-    ) as {
-      params: { configOptions: Array<{ configId: string; value: string }> }
-    }
-    expect(sessionNew.params.configOptions).toEqual([
-      { configId: 'model', value: 'kimi-code/k3' },
-      { configId: 'reasoning', value: 'high' }
-    ])
+    ) as { params: { configOptions?: unknown; cwd: string } }
+    expect(sessionNew.params.configOptions).toBeUndefined()
+    expect(sessionNew.params.cwd).toBe('/tmp/host-node-provider-test')
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-k3',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'kimi-code/kimi-for-coding',
+              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'low',
+              options: [{ value: 'low' }, { value: 'high' }, { value: 'max' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    const modelConfig = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/set_config_option"'))!
+    ) as { params: { configId: string; value: string } }
+    expect(modelConfig.params).toEqual({
+      sessionId: 'session-k3',
+      configId: 'model',
+      value: 'kimi-code/k3'
+    })
+    child.stdout.write(
+      JSON.stringify({
+        id: 1000,
+        result: {
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'kimi-code/k3',
+              options: [{ value: 'kimi-code/k3' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'low',
+              options: [{ value: 'low' }, { value: 'high' }, { value: 'max' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() =>
+      expect(
+        sent.filter((frame) => frame.includes('"method":"session/set_config_option"')).length
+      ).toBe(2)
+    )
+    const thinkingConfig = JSON.parse(
+      sent.filter((frame) => frame.includes('"method":"session/set_config_option"'))[1]!
+    ) as { params: { configId: string; value: string } }
+    expect(thinkingConfig.params).toEqual({
+      sessionId: 'session-k3',
+      configId: 'thinking',
+      value: 'high'
+    })
 
     expect(instance.cancel('run-model-config')).toBe(true)
     child.emit('close', 0)
@@ -247,11 +305,9 @@ describe('HostNodeKimiProvider', () => {
     await vi.waitFor(() => expect(sent.join('')).toContain('"id":4,"method":"session/new"'))
     const fallbackSession = JSON.parse(
       sent.find((frame) => frame.includes('"id":4,"method":"session/new"'))!
-    ) as { params: { configOptions: Array<{ configId: string; value: string }> } }
-    expect(fallbackSession.params.configOptions[0]).toEqual({
-      configId: 'model',
-      value: 'kimi-code/k3'
-    })
+    ) as { params: { cwd: string; configOptions?: unknown } }
+    expect(fallbackSession.params.cwd).toBe('/tmp/host-node-provider-test')
+    expect(fallbackSession.params.configOptions).toBeUndefined()
 
     child.stdout.write(JSON.stringify({ id: 4, result: { sessionId: 'session-fresh' } }) + '\n')
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))

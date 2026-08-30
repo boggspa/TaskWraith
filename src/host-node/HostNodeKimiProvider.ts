@@ -51,6 +51,10 @@ import type {
   HostNodeProviderRunResult
 } from './HostNodeProvider'
 import {
+  createHostAcpSessionConfigApplicator,
+  hostAcpModelAndEffortSelections
+} from './HostNodeAcpSessionConfig'
+import {
   createHostNodeAcpTurnCompletion,
   type HostNodeAcpTurnCompletion
 } from './HostNodeAcpTurnCompletion'
@@ -385,6 +389,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           : undefined
       let assistantText = ''
       let failure = ''
+      const configWarnings: string[] = []
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
       const completion = createHostNodeAcpTurnCompletion(child)
@@ -429,7 +434,10 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
             inputTokens: usageStats.input_tokens,
             outputTokens: usageStats.output_tokens
           },
-          warningSummaries: failure ? [failure.slice(0, 300)] : [],
+          warningSummaries: [...configWarnings, ...(failure ? [failure.slice(0, 300)] : [])].slice(
+            0,
+            8
+          ),
           ...(errorCode ? { errorCode } : {})
         })
         this.runPort.publishRunEvent(request.target, {
@@ -438,7 +446,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           threadId: thread.threadId,
           status,
           at: timestamp(),
-          ...(failure ? { warningCount: 1 } : {})
+          ...(configWarnings.length || failure ? { warningCount: 1 } : {})
         })
         resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
       }
@@ -446,10 +454,6 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       const write = (id: number, method: string, params: Record<string, unknown>): void => {
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
       }
-      const sessionConfigOptions = [
-        { configId: 'model', value: kimiExplicitCliModelAlias(thread.modelId) },
-        ...(thread.reasoningId ? [{ configId: 'reasoning', value: thread.reasoningId }] : [])
-      ]
       const sendNewSession = (fallback: boolean): void => {
         sessionRpcId = fallback ? 4 : 2
         resumeAttempted = false
@@ -460,8 +464,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         }
         write(sessionRpcId, 'session/new', {
           cwd: thread.workspace.canonicalPath,
-          mcpServers: [],
-          configOptions: sessionConfigOptions
+          mcpServers: []
         })
       }
       const sendPrompt = (): void => {
@@ -470,6 +473,21 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         write(3, 'session/prompt', {
           sessionId,
           prompt: [{ type: 'text', text: promptText }]
+        })
+      }
+      const sessionConfig = createHostAcpSessionConfigApplicator({
+        write,
+        onWarning: (text) => configWarnings.push(text.slice(0, 300)),
+        onComplete: sendPrompt
+      })
+      const applySessionConfig = (result: unknown): void => {
+        sessionConfig.begin({
+          sessionId,
+          result,
+          selections: hostAcpModelAndEffortSelections({
+            modelValue: kimiExplicitCliModelAlias(thread.modelId),
+            reasoningId: thread.reasoningId
+          })
         })
       }
       const publishText = (value: string): void => {
@@ -619,9 +637,10 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
             completion.requestStop()
             return
           }
-          sendPrompt()
+          applySessionConfig(frame.result)
           return
         }
+        if (sessionConfig.acceptFrame(frame)) return
         if (completion.acceptPromptResult(frame)) return
         if (frame.error && resumeAttempted && frame.id === 2) {
           // A missing/expired native session is recoverable: mint a fresh

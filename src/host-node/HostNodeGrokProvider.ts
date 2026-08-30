@@ -48,6 +48,10 @@ import type {
   HostNodeProviderRunResult
 } from './HostNodeProvider'
 import {
+  createHostAcpSessionConfigApplicator,
+  hostAcpModelAndEffortSelections
+} from './HostNodeAcpSessionConfig'
+import {
   createHostNodeAcpTurnCompletion,
   type HostNodeAcpTurnCompletion
 } from './HostNodeAcpTurnCompletion'
@@ -334,6 +338,7 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
       let promptSent = false
       let assistantText = ''
       let failure = ''
+      const configWarnings: string[] = []
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
       const completion = createHostNodeAcpTurnCompletion(child)
@@ -368,7 +373,10 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
           status,
           finishedAt: timestamp(),
           ...(sessionId ? { providerSessionId: sessionId } : {}),
-          warningSummaries: failure ? [failure.slice(0, 300)] : [],
+          warningSummaries: [...configWarnings, ...(failure ? [failure.slice(0, 300)] : [])].slice(
+            0,
+            8
+          ),
           ...(errorCode ? { errorCode } : {})
         })
         this.runPort.publishRunEvent(request.target, {
@@ -377,7 +385,7 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
           threadId: thread.threadId,
           status,
           at: timestamp(),
-          ...(failure ? { warningCount: 1 } : {})
+          ...(configWarnings.length || failure ? { warningCount: 1 } : {})
         })
         resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
       }
@@ -393,6 +401,11 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
           prompt: [{ type: 'text', text: request.prompt }]
         })
       }
+      const sessionConfig = createHostAcpSessionConfigApplicator({
+        write,
+        onWarning: (text) => configWarnings.push(text.slice(0, 300)),
+        onComplete: sendPrompt
+      })
       const publishText = (value: string): void => {
         const text = normalizeHostProviderRunPresentationText(value)
         if (!text) return
@@ -470,11 +483,7 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
           )
           write(2, 'session/new', {
             cwd: thread.workspace.canonicalPath,
-            mcpServers: [],
-            configOptions: [
-              { configId: 'model', value: thread.modelId },
-              ...(thread.reasoningId ? [{ configId: 'reasoning', value: thread.reasoningId }] : [])
-            ]
+            mcpServers: []
           })
           return
         }
@@ -488,9 +497,17 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
                 ? String(readObject(result.session)?.id)
                 : '')
           if (session) sessionId = session
-          sendPrompt()
+          sessionConfig.begin({
+            sessionId,
+            result: frame.result,
+            selections: hostAcpModelAndEffortSelections({
+              modelValue: thread.modelId,
+              reasoningId: thread.reasoningId
+            })
+          })
           return
         }
+        if (sessionConfig.acceptFrame(frame)) return
         if (completion.acceptPromptResult(frame)) return
         if (frame.id === 3 && frame.error) {
           const error = readObject(frame.error)

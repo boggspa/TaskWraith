@@ -220,6 +220,59 @@ describe('HostNodeGrokProvider', () => {
     expect(child.kill).not.toHaveBeenCalled()
   })
 
+  it('re-asserts the picker with session/set_config_option after session/new', async () => {
+    const { instance, child } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-model-config',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const sessionNew = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/new"'))!
+    ) as { params: { configOptions?: unknown } }
+    expect(sessionNew.params.configOptions).toBeUndefined()
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-grok',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'grok-4.5',
+              options: [{ value: 'grok-4.5' }, { value: 'grok-4.6' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'low',
+              options: [{ value: 'low' }, { value: 'high' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    const modelConfig = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/set_config_option"'))!
+    ) as { params: { configId: string; value: string } }
+    expect(modelConfig.params).toEqual({
+      sessionId: 'session-grok',
+      configId: 'model',
+      value: 'grok-4.6'
+    })
+
+    expect(instance.cancel('run-model-config')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
   it('cancels only the exact active run', async () => {
     const { instance, child } = open()
     const running = instance.run({

@@ -54,6 +54,15 @@ import {
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import { resolveMistralCredentialLaunch } from '../main/mistral/MistralCredentialLane'
+import {
+  mistralSessionModeFallbacksForSeat,
+  mistralSessionModeForSeat
+} from '../main/mistral/MistralCliArgs'
+import {
+  createHostAcpSessionConfigApplicator,
+  hostAcpModelAndEffortSelections,
+  type HostAcpSessionConfigSelection
+} from './HostNodeAcpSessionConfig'
 
 const PROVIDER_ID = 'mistral'
 const PROVIDER_DISPLAY_NAME = 'Mistral'
@@ -82,6 +91,32 @@ export interface HostNodeMistralProviderOptions {
   readonly isConfigured?: () => boolean | Promise<boolean>
   /** Dependency-injected launch environment; production inherits process.env. */
   readonly environment?: NodeJS.ProcessEnv
+}
+
+function mistralReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
+  return (
+    posture.postureId === 'plan' ||
+    posture.postureId === 'read_only' ||
+    posture.approvalMode === 'read' ||
+    posture.approvalMode === 'plan'
+  )
+}
+
+function mistralSessionConfigSelections(
+  thread: HostProviderRunThread
+): HostAcpSessionConfigSelection[] {
+  const readOnly = mistralReadOnlySeat(thread.posture)
+  const mode = mistralSessionModeForSeat(readOnly)
+  return [
+    {
+      configId: 'mode',
+      values: [mode, ...mistralSessionModeFallbacksForSeat(readOnly)]
+    },
+    ...hostAcpModelAndEffortSelections({
+      modelValue: thread.modelId,
+      reasoningId: thread.reasoningId
+    })
+  ]
 }
 
 function hasConfiguredMistralCredential(environment: NodeJS.ProcessEnv): boolean {
@@ -355,6 +390,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       let promptSent = false
       let assistantText = ''
       let failure = ''
+      const configWarnings: string[] = []
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
       const completion = createHostNodeAcpTurnCompletion(child)
@@ -389,7 +425,10 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           status,
           finishedAt: timestamp(),
           ...(sessionId ? { providerSessionId: sessionId } : {}),
-          warningSummaries: failure ? [failure.slice(0, 300)] : [],
+          warningSummaries: [...configWarnings, ...(failure ? [failure.slice(0, 300)] : [])].slice(
+            0,
+            8
+          ),
           ...(errorCode ? { errorCode } : {})
         })
         this.runPort.publishRunEvent(request.target, {
@@ -398,7 +437,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           threadId: thread.threadId,
           status,
           at: timestamp(),
-          ...(failure ? { warningCount: 1 } : {})
+          ...(configWarnings.length || failure ? { warningCount: 1 } : {})
         })
         resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
       }
@@ -414,6 +453,11 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           prompt: [{ type: 'text', text: request.prompt }]
         })
       }
+      const sessionConfig = createHostAcpSessionConfigApplicator({
+        write,
+        onWarning: (text) => configWarnings.push(text.slice(0, 300)),
+        onComplete: sendPrompt
+      })
       const publishText = (value: string): void => {
         const text = normalizeHostProviderRunPresentationText(value)
         if (!text) return
@@ -491,11 +535,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           )
           write(2, 'session/new', {
             cwd: thread.workspace.canonicalPath,
-            mcpServers: [],
-            configOptions: [
-              { configId: 'model', value: thread.modelId },
-              ...(thread.reasoningId ? [{ configId: 'reasoning', value: thread.reasoningId }] : [])
-            ]
+            mcpServers: []
           })
           return
         }
@@ -509,9 +549,14 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
                 ? String(readObject(result.session)?.id)
                 : '')
           if (session) sessionId = session
-          sendPrompt()
+          sessionConfig.begin({
+            sessionId,
+            result: frame.result,
+            selections: mistralSessionConfigSelections(thread)
+          })
           return
         }
+        if (sessionConfig.acceptFrame(frame)) return
         if (completion.acceptPromptResult(frame)) return
         if (frame.id === 3 && frame.error) {
           const error = readObject(frame.error)
