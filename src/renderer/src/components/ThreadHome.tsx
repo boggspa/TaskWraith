@@ -210,7 +210,7 @@ function ThreadHomeMissionControlGlyph(): ReactNode {
 export interface ThreadHomeTerminalWorkspacePickerProps {
   workspaces: readonly WorkspaceRecord[]
   busyWorkspacePath?: string | null
-  onSelect: (workspace: WorkspaceRecord) => void
+  onSelect: (workspace: WorkspaceRecord, cliId: string) => void
 }
 
 const NATIVE_CLIS = [
@@ -227,6 +227,35 @@ const NATIVE_CLIS = [
   { id: 'muse', label: 'Muse Code CLI (Meta)' },
   { id: 'github', label: 'GitHub CLI' }
 ]
+
+export function getCommandForCli(cliId: string): string | null {
+  switch (cliId) {
+    case 'codex':
+      return 'codex'
+    case 'claude':
+      return 'claude'
+    case 'kimi':
+      return 'kimi'
+    case 'cursor':
+      return 'cursor-agent'
+    case 'grok':
+      return 'grok'
+    case 'ollama':
+      return 'ollama'
+    case 'mistral':
+      return 'mistral'
+    case 'agy':
+      return 'agy'
+    case 'pi':
+      return 'pi'
+    case 'muse':
+      return 'muse'
+    case 'github':
+      return 'gh'
+    default:
+      return null
+  }
+}
 
 export function ThreadHomeTerminalWorkspacePicker({
   workspaces,
@@ -262,7 +291,7 @@ export function ThreadHomeTerminalWorkspacePicker({
                   key={workspace.id}
                   className="thread-home-thread-row"
                   disabled={Boolean(busyWorkspacePath)}
-                  onClick={() => onSelect(workspace)}
+                  onClick={() => onSelect(workspace, selectedCli)}
                   aria-label={`Open terminal in ${workspace.displayName}, ${workspace.path}`}
                 >
                   <span className="thread-home-thread-provider" aria-hidden>
@@ -1027,7 +1056,10 @@ function ThreadHomeWorkspaceInner(
     if (isCurrent()) setBusySurface(null)
   }
 
-  const openTerminalWorkspace = async (workspace: WorkspaceRecord): Promise<void> => {
+  const openTerminalWorkspace = async (
+    workspace: WorkspaceRecord,
+    cliId: string = 'default'
+  ): Promise<void> => {
     const generation = terminalOpenGenerationRef.current + 1
     terminalOpenGenerationRef.current = generation
     const sessionId = createThreadHomeTerminalSessionId()
@@ -1044,6 +1076,13 @@ function ThreadHomeWorkspaceInner(
         terminalSessionRef.current = nextSession
         setTerminalSession(nextSession)
         terminalSidebarStore.recordRecipe(workspace.path)
+
+        if (cliId && cliId !== 'default') {
+          const command = getCommandForCli(cliId)
+          if (command) {
+            window.api.terminal.write(sessionId, command + '\r')
+          }
+        }
       },
       onRejected: setIssue,
       onDiscarded: (discardedSessionId) => window.api.terminal.kill(discardedSessionId)
@@ -1137,7 +1176,7 @@ function ThreadHomeWorkspaceInner(
             <ThreadHomeTerminalWorkspacePicker
               workspaces={workspaces}
               busyWorkspacePath={busyTerminalWorkspacePath}
-              onSelect={(workspace) => void openTerminalWorkspace(workspace)}
+              onSelect={(workspace, cliId) => void openTerminalWorkspace(workspace, cliId)}
             />
           ))}
         {surface === 'charts' && <ThreadHomeCharts chatId={surfaceAuthorityChatId} />}
