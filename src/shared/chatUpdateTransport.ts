@@ -41,6 +41,8 @@ export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
   chatId: string
   persistenceRevision: number
   retainedBytes: number
+  /** False when the canonical transcript cannot safely use id-based ops. */
+  transcriptIdsUnique?: boolean
   /**
    * A compact transcript operation-chain digest. A snapshot roots it in the
    * exact message content; each accepted patch advances it from the previous
@@ -105,6 +107,8 @@ export interface ChatUpdateSnapshotDelivery {
   runsRevision?: number
   recordHash?: string
   transcriptHash?: string
+  /** Snapshot metadata carried forward so later patches keep the recovery fence. */
+  transcriptIdsUnique?: boolean
 }
 
 /** v1 patch: full non-message record (legacy clients / default emit). */
@@ -181,6 +185,8 @@ export interface ChatUpdateBaseline {
   runsRevision?: number
   recordHash?: string
   transcriptHash?: string
+  /** Whether this acknowledged transcript is safe for id-based patching. */
+  transcriptIdsUnique?: boolean
 }
 
 /**
@@ -423,6 +429,22 @@ export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevision
  */
 export function computeChatTranscriptHash(messages: readonly ChatMessage[]): string {
   return stableTranscriptDigest(messages)
+}
+
+/**
+ * Whether a transcript is safe for identity-based delivery operations.
+ * Historical/imported records can contain duplicate or blank ids; those
+ * records must be delivered as exact snapshots until a later save repairs the
+ * transcript rather than being spliced by id.
+ */
+export function hasUniqueChatMessageIds(messages: readonly ChatMessage[]): boolean {
+  const seen = new Set<string>()
+  for (const message of messages) {
+    const id = message?.id
+    if (typeof id !== 'string' || id.length === 0 || seen.has(id)) return false
+    seen.add(id)
+  }
+  return true
 }
 
 export type ChatTranscriptHashOperation =
@@ -789,10 +811,27 @@ export function buildChatUpdateDelivery(input: {
     // transcript: it establishes a fresh exact root after a reload, NACK, or
     // discontinuity.
     transcriptHash: computeChatTranscriptHash(chat.messages),
+    transcriptIdsUnique: hasUniqueChatMessageIds(chat.messages),
     ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
   })
 
   if (!baseline || baseline.chat.appChatId !== chat.appChatId) {
+    return snapshot()
+  }
+
+  // The producer tracker and snapshot ACK carry this bit without a transcript
+  // walk on the normal patch path. A splice can preserve a duplicate or blank
+  // id from a legacy baseline and leave the renderer with an identity map that
+  // cannot safely accept the next update. Snapshots are the recovery boundary
+  // for malformed identity; do not turn this into another id-based patch while
+  // the canonical record remains malformed.
+  if (
+    baseline.transcriptIdsUnique === false ||
+    chatUpdateProducerEnvelopeFor(baseline.chat)?.state.transcriptIdsUnique === false ||
+    producerDelta?.transcriptIdsUnique === false ||
+    producerState?.transcriptIdsUnique === false ||
+    chatUpdateProducerEnvelopeFor(chat)?.state.transcriptIdsUnique === false
+  ) {
     return snapshot()
   }
 
@@ -924,7 +963,12 @@ export function applyChatUpdateDelivery(
     }
     return {
       ok: true,
-      baseline: appliedChatUpdateBaseline(delivery.revision, delivery.chat, transcriptHash)
+      baseline: {
+        ...appliedChatUpdateBaseline(delivery.revision, delivery.chat, transcriptHash),
+        ...(delivery.transcriptIdsUnique !== undefined
+          ? { transcriptIdsUnique: delivery.transcriptIdsUnique }
+          : {})
+      }
     }
   }
 

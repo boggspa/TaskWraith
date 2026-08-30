@@ -12,6 +12,7 @@ import {
   computeChatSubRevisions,
   composeChatUpdateProducerDeltas,
   estimateChatRecordBytes,
+  hasUniqueChatMessageIds,
   isChatUpdateDelivery,
   normalizeChatUpdateAck,
   type ChatUpdateProducerDelta
@@ -59,6 +60,7 @@ function producerDelta(before: ChatRecord, after: ChatRecord): ChatUpdateProduce
         return count + 1
       }, 0) ?? after.messages.length,
     retainedBytes: estimateChatRecordBytes(after),
+    transcriptIdsUnique: hasUniqueChatMessageIds(after.messages),
     ...sub
   }
 }
@@ -259,6 +261,51 @@ describe('chat update transport', () => {
       }).kind
     ).toBe('snapshot')
   })
+
+  it.each([CHAT_UPDATE_PROTOCOL_V1, CHAT_UPDATE_PROTOCOL_V2])(
+    'uses a snapshot recovery boundary for duplicate or blank transcript ids (%i)',
+    (protocolVersion) => {
+      const first = chat(1, [message('a', 'A')])
+      const duplicate = chat(2, [message('a', 'A'), message('a', 'duplicate')])
+      const blank = chat(3, [message('', 'blank')])
+
+      expect(hasUniqueChatMessageIds(first.messages)).toBe(true)
+      expect(hasUniqueChatMessageIds(duplicate.messages)).toBe(false)
+      expect(hasUniqueChatMessageIds(blank.messages)).toBe(false)
+
+      const duplicateRecovery = buildChatUpdateDelivery({
+        deliveryId: `duplicate-${protocolVersion}`,
+        revision: 2,
+        chat: duplicate,
+        baseline: { revision: 1, chat: first },
+        producerDelta: producerDelta(first, duplicate),
+        protocolVersion
+      })
+      expect(duplicateRecovery.kind).toBe('snapshot')
+      if (duplicateRecovery.kind !== 'snapshot') throw new Error('expected snapshot recovery')
+      expect(duplicateRecovery.transcriptIdsUnique).toBe(false)
+      expect(applyChatUpdateDelivery(duplicateRecovery)).toMatchObject({
+        ok: true,
+        baseline: { chat: duplicate, transcriptIdsUnique: false }
+      })
+
+      const duplicateBaseline = applyChatUpdateDelivery(duplicateRecovery)
+      if (!duplicateBaseline.ok) throw new Error(duplicateBaseline.reason)
+
+      const baselineRecovery = buildChatUpdateDelivery({
+        deliveryId: `blank-baseline-${protocolVersion}`,
+        revision: 4,
+        chat: first,
+        baseline: duplicateBaseline.baseline,
+        protocolVersion
+      })
+      expect(baselineRecovery.kind).toBe('snapshot')
+      expect(applyChatUpdateDelivery(baselineRecovery)).toMatchObject({
+        ok: true,
+        baseline: { chat: first }
+      })
+    }
+  )
 
   it('keeps an append-sized update small for a multi-megabyte transcript', () => {
     const largeMessages = Array.from({ length: 700 }, (_, index) =>

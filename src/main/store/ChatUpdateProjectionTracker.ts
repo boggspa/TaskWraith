@@ -137,6 +137,7 @@ export class ChatUpdateProjectionTracker {
       persistenceRevision: persistenceRevision(chat),
       retainedBytes: estimateChatRecordBytes(chat),
       transcriptHash: computeChatTranscriptHash(chat.messages),
+      transcriptIdsUnique,
       ...sub
     }
     this.projections.set(chat.appChatId, {

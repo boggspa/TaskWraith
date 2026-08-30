@@ -114,6 +114,43 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
   })
 
+  it('sends a snapshot instead of a splice when a saved transcript has duplicate ids', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const first = chat(1, ['one'])
+    const duplicate = chat(2, ['one', 'duplicate'])
+    duplicate.messages[1].id = duplicate.messages[0].id
+    const [projectedFirst, projectedDuplicate] = projectSequence(first, duplicate)
+
+    coordinator.enqueue(sink, projectedFirst)
+    const initial = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: initial.deliveryId,
+        applied: true
+      })
+    ).toBe(true)
+
+    coordinator.enqueue(sink, projectedDuplicate)
+    const recovery = sink.deliveries[1]
+    expect(recovery.kind).toBe('snapshot')
+    expect(applyChatUpdateDelivery(recovery)).toMatchObject({
+      ok: true,
+      baseline: { chat: duplicate }
+    })
+
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: recovery.deliveryId,
+        applied: true
+      })
+    ).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
   it('advances an idle baseline for a renderer-authored compact mutation without an echo', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
