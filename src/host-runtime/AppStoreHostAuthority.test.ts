@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   decodeHostCommandReceipt,
+  HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_VERSION,
   type HostActorIdentity,
   type HostAuthenticatedClientIdentity,
@@ -583,6 +584,78 @@ describe('AppStoreHostAuthority', () => {
     // no domain effects were published).
     expect(result.value.generation).toBe(before.generation)
     expect(result.value.cursor).toBe(before.cursor)
+  })
+
+  it('executes a thread-record persist when unrelated run rows exceed the public snapshot cap', async () => {
+    const threadId = 'thread-release-scale'
+    const unrelatedRuns = Array.from({ length: HOST_PROTOCOL_MAX_COLLECTION + 1 }, (_, index) => ({
+      runId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      threadId: `thread-unrelated-${index}`,
+      providerId: 'codex',
+      providerOutcome: 'completed' as const,
+      endedAt: index + 1
+    }))
+    let persisted = false
+    const commandExecutor = vi.fn(() => {
+      persisted = true
+      return { status: 'succeeded' as const, resultSummary: 'thread_record_persisted' }
+    })
+    const authority = open({
+      ports: {
+        snapshotDonor: () =>
+          donorFamilies({
+            threads: [
+              {
+                id: threadId,
+                workspaceId: null,
+                title: persisted ? 'Persisted' : 'Before',
+                chatKind: 'ensemble',
+                archived: false,
+                pinned: false,
+                updatedAt: persisted ? 2 : 1,
+                messageCount: persisted ? 1 : 0
+              }
+            ],
+            runs: unrelatedRuns
+          }),
+        commandExecutor
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'release-scale-persist',
+        idempotencyKey: 'release-scale-persist-key',
+        actor: ACTOR_A,
+        name: 'thread.record.persist',
+        target: { threadId },
+        arguments: {
+          transferId: '11111111-1111-4111-8111-111111111111',
+          sha256: 'a'.repeat(64),
+          byteLength: 1,
+          expectedRevision: 0
+        }
+      })
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { status: 'succeeded', resultSummary: 'thread_record_persisted' }
+    })
+    expect(commandExecutor).toHaveBeenCalledOnce()
+    const deltaResult = runtime.deltaStore.since({ generation: 1, cursor: 0 })
+    expect(deltaResult).toMatchObject({
+      kind: 'deltas',
+      deltas: [
+        expect.objectContaining({
+          kind: 'upsert',
+          family: 'thread',
+          entityId: threadId,
+          payload: expect.objectContaining({ title: 'Persisted' })
+        })
+      ]
+    })
   })
 
   it('injects runtime-only position and overrides donor position smuggling', async () => {

@@ -95,6 +95,12 @@ import {
   HostObservedMutationExecutor,
   type HostObservedMutationResult
 } from './HostObservedMutationExecutor'
+import {
+  createHostMutationObservationScope,
+  extendHostMutationObservationScope,
+  scopeHostMutationObservationFamilies,
+  type HostMutationObservationScope
+} from './HostMutationObservationScope'
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
@@ -936,13 +942,24 @@ export class AppStoreHostAuthority implements HostAuthority {
     context: HostAuthorityCallContext,
     executor: AppStoreHostAuthorityExecutor | AppStoreHostAuthoritySetupExecutor
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    let observationScope: HostMutationObservationScope | null = null
+    let executionResult: AppStoreHostAuthorityExecutorResult | undefined
     const observedExecutor = new HostObservedMutationExecutor({
-      captureSnapshot: () => this.captureMutationSnapshot(),
+      captureSnapshot: async () => {
+        const donor = await this.readMutationSnapshotDonor()
+        observationScope = observationScope
+          ? extendHostMutationObservationScope(observationScope, executionResult?.resultRef, donor)
+          : createHostMutationObservationScope(hostCommand, donor)
+        return this.projectMutationSnapshot(
+          scopeHostMutationObservationFamilies(donor, observationScope)
+        )
+      },
       executeCommand: async (command) => {
         const result =
           'execute' in executor
             ? await executor.execute(command, context)
             : await executor(command, context)
+        executionResult = result
         return result
       }
     })
@@ -967,12 +984,17 @@ export class AppStoreHostAuthority implements HostAuthority {
     return this.projectAllowedCompletion(hostCommand.commandId, context, completion)
   }
 
-  /** Privacy-clean live snapshot for observe before/after capture. */
-  private async captureMutationSnapshot(): Promise<unknown> {
+  /** Complete donor families before the public per-family cap is applied. */
+  private async readMutationSnapshotDonor(): Promise<AppStoreHostAuthoritySnapshotDonorFamilies> {
     const donor = await this.snapshotDonor()
     if (!donor || typeof donor !== 'object') {
       throw new Error('snapshot donor unavailable')
     }
+    return donor
+  }
+
+  /** Privacy-clean command-scoped snapshot for observe before/after capture. */
+  private projectMutationSnapshot(donor: AppStoreHostAuthoritySnapshotDonorFamilies): unknown {
     const position = this.runtime.getPosition()
     const generatedAt = this.now()
     const recovery = projectHostRecovery({ summary: this.runtime.getRecoverySummary() })
