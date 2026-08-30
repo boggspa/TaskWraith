@@ -322,6 +322,56 @@ function preserveNewerLocalEnsembleRoster(
   }
 }
 
+/**
+ * Same 1.0.5-UI2 class as the goal and roster helpers, reported 2026-08-30 as
+ * "I switched Ensemble off and the next refresh forced it back on". A mode
+ * switch (the composer's Ensemble toggle, or the solo-provider modal) commits
+ * optimistically and persists asynchronously; a main delivery built BEFORE
+ * that save lands reverts `chatKind` wholesale. The roster helper cannot catch
+ * it — a collapsed live record has no `ensemble` block, so the membership
+ * comparison bails — and the selection helper only covers picker keys.
+ *
+ * When the live record is provably fresher, its mode state wins: `chatKind`,
+ * the presence/absence of the `ensemble` block, and the stashed roster a
+ * collapse rides on (`providerMetadata.stashedEnsemble`, without which a later
+ * Ensemble-on toggle would lose the user's roster). A genuinely newer
+ * main-side mode change — this toggle's own confirmed broadcast, a remote
+ * companion's switch — still wins on its stamp.
+ */
+function preserveNewerLocalChatKind(
+  merged: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  if (!liveChat) return merged
+  const liveIsEnsemble = liveChat.chatKind === 'ensemble'
+  const deliveredIsEnsemble = merged.chatKind === 'ensemble'
+  // A degenerate live record (kind says ensemble but no roster arrived yet)
+  // has nothing to defend with; the delivered block is strictly better.
+  if (liveIsEnsemble && !liveChat.ensemble) return merged
+  const liveStash = liveChat.providerMetadata?.stashedEnsemble
+  const deliveredStash = merged.providerMetadata?.stashedEnsemble
+  const sameStash =
+    JSON.stringify(liveStash ?? null) === JSON.stringify(deliveredStash ?? null)
+  if (liveIsEnsemble === deliveredIsEnsemble && sameStash) return merged
+  if (stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) return merged
+  const next: ChatRecord = { ...merged, chatKind: liveIsEnsemble ? 'ensemble' : 'single' }
+  if (liveIsEnsemble) {
+    next.ensemble = liveChat.ensemble
+  } else {
+    delete next.ensemble
+  }
+  if (liveStash === undefined) {
+    if (next.providerMetadata && 'stashedEnsemble' in next.providerMetadata) {
+      const { stashedEnsemble: _dropped, ...restMetadata } = next.providerMetadata
+      if (Object.keys(restMetadata).length > 0) next.providerMetadata = restMetadata
+      else delete next.providerMetadata
+    }
+  } else {
+    next.providerMetadata = { ...(next.providerMetadata || {}), stashedEnsemble: liveStash }
+  }
+  return next
+}
+
 /** Local copy by repo convention (see Sidebar.tsx, LinkedChatsStrip.tsx,
  * resolveSlashParticipant.ts) — keeps this merge module dependency-light. */
 const SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY = 'sideChatSelectedParticipantId'
@@ -425,9 +475,12 @@ export function mergeChatUpdatedForRender(
 
   // Same preservation class as closeouts and user messages above, scoped to
   // the user-authored fields whose optimistic commit is not otherwise
-  // represented in a delivery: the thread goal, the Ensemble seat roster and
-  // per-seat configuration, and the composer's chat-level selection.
+  // represented in a delivery: the chat mode (Ensemble on/off), the thread
+  // goal, the Ensemble seat roster and per-seat configuration, and the
+  // composer's chat-level selection. Mode state goes FIRST: the roster helper
+  // can only compare seats once both records agree the thread is an ensemble.
   // See 1.0.5-UI2 on each helper.
+  merged = preserveNewerLocalChatKind(merged, liveChat)
   merged = preserveNewerLocalActiveGoal(merged, liveChat)
   merged = preserveNewerLocalEnsembleRoster(merged, liveChat)
   merged = preserveNewerLocalComposerSelection(merged, liveChat)

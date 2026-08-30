@@ -255,6 +255,85 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged).toBe(delivered)
   })
 
+  // Same 1.0.5-UI2 class, mode-state report (2026-08-30): an Ensemble on/off
+  // toggle commits optimistically and persists asynchronously. A delivery built
+  // BEFORE that save lands reverts chatKind wholesale — the roster helper
+  // cannot defend it because a collapsed live record has no ensemble block to
+  // compare, and the selection helper never covered mode state.
+  it('keeps a just-collapsed single-provider mode against a staler ensemble delivery', () => {
+    const delivered = { ...chat([message('a', 'frame')]), chatKind: 'ensemble' as const }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-08-31T00:00:00.500Z')
+    const live = { ...chat([message('a', 'frame')]), chatKind: 'single' as const }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = {
+      stashedEnsemble: {
+        config: makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-08-31T00:00:00.500Z'),
+        provider: 'kimi'
+      }
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.chatKind).toBe('single')
+    expect(merged.ensemble).toBeUndefined()
+    // The stashed roster rides across too, or a later Ensemble-on toggle loses it.
+    expect(merged.providerMetadata?.stashedEnsemble).toEqual(
+      live.providerMetadata.stashedEnsemble
+    )
+  })
+
+  it('keeps a just-enabled ensemble mode against a staler single-provider delivery', () => {
+    const delivered = { ...chat([message('a', 'frame')]), chatKind: 'single' as const }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    const live = { ...chat([message('a', 'frame')]), chatKind: 'ensemble' as const }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:02.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.chatKind).toBe('ensemble')
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual(['seat-1'])
+  })
+
+  it('lets a newer delivered mode change replace the stale live mode', () => {
+    // The toggle's own confirmed broadcast — or a remote companion's switch —
+    // is newer than the optimistic live copy and must still win.
+    const delivered = { ...chat([message('a', 'frame')]), chatKind: 'ensemble' as const }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:04.000Z')
+    delivered.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:04.000Z')
+    const live = { ...chat([message('a', 'frame')]), chatKind: 'single' as const }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged.chatKind).toBe('ensemble')
+    expect(merged.ensemble?.participants).toHaveLength(1)
+  })
+
+  it('leaves the record untouched when live and delivered modes agree', () => {
+    const delivered = { ...chat([message('a', 'frame')]), chatKind: 'single' as const }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    const live = { ...chat([message('a', 'frame')]), chatKind: 'single' as const }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+    expect(merged).toBe(delivered)
+  })
+
   // Same 1.0.5-UI2 class, third report: a seat's model/reasoning edit (the
   // Provider/Model/Reasoning picker bound to a participant chip, or the Add
   // Participant picker's seat rows) keeps the id sequence identical, so the
