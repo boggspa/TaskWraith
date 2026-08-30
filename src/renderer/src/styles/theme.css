@@ -476,7 +476,7 @@
  * sidebar on a light theme) is intentionally excluded so it keeps that dark
  * chrome. Obsidian (light sidebar on a dark theme) flips in its .app-sidebar
  * block below. */
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"]) {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="xcode-light"]) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
   --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
   --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
@@ -489,7 +489,8 @@
 
 /* Theme palettes ported from the Swift shared theme choices */
 [data-theme="light"],
-[data-theme="citrus"] {
+[data-theme="citrus"],
+[data-theme="xcode-light"] {
   --app-bg: #f8fafc;
   --app-bg-elevated: #ffffff;
   --app-bg-sunken: #e9edf2;
@@ -1193,6 +1194,61 @@
   --alabaster-ambient-gradient:
     radial-gradient(120% 60% at 50% 0%, rgba(120, 140, 200, 0.06), transparent 70%),
     radial-gradient(120% 50% at 50% 100%, rgba(140, 120, 200, 0.04), transparent 70%);
+}
+
+/* ───── Xcode-inspired High Contrast (Dark) ─────
+ * Deep opaque editor surface, saturated Xcode-palette syntax
+ * tokens, prominent blue-band active-line highlight, and a
+ * seamless gutter that merges with the editor background.
+ * Paired with xcode-light below. */
+[data-theme="xcode-dark"] {
+  --cm-keyword: #fc5fa3;
+  --cm-name: #d0d0d0;
+  --cm-property: #4eb0cc;
+  --cm-function: #67b7a4;
+  --cm-type: #5dd8ff;
+  --cm-number: #d0bf69;
+  --cm-string: #fc6a5d;
+  --cm-regexp: #fc6a5d;
+  --cm-comment: #6c7986;
+  --cm-meta: #a167e6;
+  --cm-heading: #ffffff;
+  --cm-invalid: #ff3b30;
+  --cm-gutter-bg: transparent;
+  --cm-gutter-border: transparent;
+  --cm-active-line: rgba(44, 48, 80, 0.85);
+  --cm-bracket-match: rgba(100, 130, 255, 0.25);
+}
+
+[data-theme="xcode-dark"] .cm-activeLineGutter {
+  color: #ffffff !important;
+}
+
+/* ───── Xcode-inspired High Contrast (Light) ─────
+ * Clean white editor surface, saturated Xcode-palette syntax
+ * tokens for light backgrounds, light-blue active-line band,
+ * and a seamless gutter. Paired with xcode-dark above. */
+[data-theme="xcode-light"] {
+  --cm-keyword: #ad3da4;
+  --cm-name: #262626;
+  --cm-property: #4b21b0;
+  --cm-function: #326d74;
+  --cm-type: #0b4f79;
+  --cm-number: #272ad8;
+  --cm-string: #d12f1b;
+  --cm-regexp: #d12f1b;
+  --cm-comment: #707f8c;
+  --cm-meta: #643820;
+  --cm-heading: #000000;
+  --cm-invalid: #d12f1b;
+  --cm-gutter-bg: transparent;
+  --cm-gutter-border: transparent;
+  --cm-active-line: rgba(212, 222, 245, 0.7);
+  --cm-bracket-match: rgba(0, 70, 200, 0.15);
+}
+
+[data-theme="xcode-light"] .cm-activeLineGutter {
+  color: #000000 !important;
 }
 
 /* Paint the cool lavender ambient gradient behind the app on

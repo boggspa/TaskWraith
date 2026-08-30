@@ -653,7 +653,9 @@ const SIDEBAR_SYSTEM_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: strin
   { value: 'cyber', label: 'Cyber' },
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' }
+  { value: 'sage', label: 'Sage' },
+  { value: 'xcode-dark', label: 'Xcode Dark' },
+  { value: 'xcode-light', label: 'Xcode Light' }
 ]
 
 function FolderSymbolIcon() {

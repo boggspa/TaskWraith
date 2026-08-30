@@ -784,6 +784,17 @@
   color: var(--text-primary);
 }
 
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active {
+  background: var(--accent);
+  box-shadow: none;
+  color: #ffffff;
+}
+
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active .file-editor-file-size,
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active .file-editor-disclosure {
+  color: rgba(255, 255, 255, 0.85);
+}
+
 .app-file-editor .file-editor-file-name {
   font-weight: 500;
 }

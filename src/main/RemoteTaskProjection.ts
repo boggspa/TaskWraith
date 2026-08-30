@@ -894,17 +894,20 @@ const THEME_ACCENTS: Partial<Record<ThemeAppearance | ThemeAccentStyle, string>>
   sage: '#84a33b',
   obsidian: '#c8c0d2',
   alabaster: '#5a6172',
-  midnight: '#5a8cff'
+  midnight: '#5a8cff',
+  'xcode-dark': '#2656d0',
+  'xcode-light': '#2656d0'
 }
 
-const LIGHT_THEMES = new Set<ThemeAppearance>(['light', 'mist', 'sage', 'alabaster'])
+const LIGHT_THEMES = new Set<ThemeAppearance>(['light', 'mist', 'sage', 'alabaster', 'xcode-light'])
 const DARK_THEMES = new Set<ThemeAppearance>([
   'dark',
   'midnight',
   'rainbow',
   'twilight',
   'cyber',
-  'obsidian'
+  'obsidian',
+  'xcode-dark'
 ])
 
 const DEFAULT_REMOTE_SHELL_SETTINGS: Required<BuildRemoteShellAppearanceSettings> = {

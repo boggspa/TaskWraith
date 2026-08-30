@@ -108,6 +108,18 @@ export type ThemeAppearance =
    * with the obsidian composer's polar twin.
    */
   | 'alabaster'
+  /**
+   * Xcode-inspired High Contrast (Dark). Deep opaque editor background,
+   * saturated syntax tokens matching Xcode's HC palette, prominent blue-band
+   * active-line highlight, seamless gutter. Pairs with `xcode-light`.
+   */
+  | 'xcode-dark'
+  /**
+   * Xcode-inspired High Contrast (Light). Clean white editor background,
+   * saturated syntax tokens matching Xcode's HC Light palette, light-blue
+   * active-line highlight, seamless gutter. Pairs with `xcode-dark`.
+   */
+  | 'xcode-light'
 export type ThemeCornerStyle = 'rounded' | 'hard'
 export type ThemeAccentStyle =
   | 'system'
