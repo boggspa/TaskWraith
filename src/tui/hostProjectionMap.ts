@@ -48,19 +48,20 @@ export const HOST_TUI_PREVIEW_ROW_KIND = 'host-preview'
 
 /** Maps bounded Host history entries to existing renderer-independent transcript rows. */
 export function mapHostHistoryEntriesToTranscriptRows(
-  entries: readonly HostTranscriptHistoryEntry[]
+  entries: readonly HostTranscriptHistoryEntry[],
+  thread?: TaskWraithControlThread
 ): TaskWraithControlTranscriptRow[] {
+  const provider = thread?.provider
+  const model = provider?.modelLabel ?? provider?.model
   return entries.map((entry) => ({
     id: `host-history:${entry.entryId}`,
     role: entry.role,
     kind: 'host-history',
     speaker:
-      entry.label ||
-      (entry.role === 'user'
-        ? 'You'
-        : entry.role === 'assistant'
-          ? 'Assistant'
-          : 'TaskWraith Host'),
+      entry.label || (entry.role === 'user' ? 'You' : (provider?.displayProvider ?? 'TaskWraith')),
+    ...(entry.role === 'assistant' && provider ? { provider } : {}),
+    ...(entry.role === 'assistant' && model ? { model } : {}),
+    ...(entry.role === 'assistant' && thread?.reasoning ? { reasoning: thread.reasoning } : {}),
     text: entry.text,
     timestamp: new Date(entry.createdAt).toISOString(),
     truncated: false
@@ -96,10 +97,11 @@ function providerPresentation(
     ? providers.find((provider) => provider.providerId === providerId)
     : undefined
   if (match) {
+    const projectedLabel = !modelId || modelId === match.modelId ? match.modelLabel : undefined
     const base = resolveTaskWraithProviderPresentation(
       match.providerId,
       modelId ?? match.modelId,
-      match.modelLabel
+      projectedLabel
     )
     return {
       ...base,
@@ -111,8 +113,8 @@ function providerPresentation(
         : base.model
           ? { model: base.model }
           : {}),
-      ...(match.modelLabel || base.modelLabel
-        ? { modelLabel: match.modelLabel ?? base.modelLabel }
+      ...(projectedLabel || base.modelLabel
+        ? { modelLabel: projectedLabel ?? base.modelLabel }
         : {})
     }
   }
@@ -238,7 +240,7 @@ function mapEnsemble(
 }
 
 function mapThread(thread: HostThreadProjection, snapshot: HostSnapshot): TaskWraithControlThread {
-  const provider = providerPresentation(snapshot.providers, thread.providerId)
+  const provider = providerPresentation(snapshot.providers, thread.providerId, thread.modelId)
   const status = threadStatusFromHost(thread, snapshot.runs, snapshot.rounds)
   const ensemble = mapEnsemble(thread, snapshot)
   const tokenEstimate = usageTokenEstimate(thread.usage)
@@ -257,6 +259,7 @@ function mapThread(thread: HostThreadProjection, snapshot: HostSnapshot): TaskWr
     messageCount: thread.messageCount,
     ...(tokenEstimate !== undefined ? { tokenEstimate } : {}),
     ...(costText ? { costText } : {}),
+    ...(thread.reasoningEffort ? { reasoning: thread.reasoningEffort } : {}),
     ...(ensemble ? { ensemble } : {})
   }
 }
@@ -297,6 +300,10 @@ export function mapHostSnapshotToThreadDetail(
       kind: HOST_TUI_PREVIEW_ROW_KIND,
       speaker: thread.provider.displayProvider,
       provider: thread.provider,
+      ...(thread.provider.modelLabel || thread.provider.model
+        ? { model: thread.provider.modelLabel ?? thread.provider.model }
+        : {}),
+      ...(thread.reasoning ? { reasoning: thread.reasoning } : {}),
       text: preview,
       timestamp: snapshot.generatedAt,
       truncated: Boolean(hostThread.previewTruncated)
@@ -336,6 +343,8 @@ export function mapHostSnapshotToThreadDetail(
                 ]
               : [],
         provider: thread.provider,
+        ...(thread.reasoning ? { reasoning: thread.reasoning } : {}),
+        ...(hostThread.permissionPresetId ? { permission: hostThread.permissionPresetId } : {}),
         ...(thread.ensemble ? { ensemble: thread.ensemble } : {}),
         ...(thread.tokenEstimate !== undefined ? { tokenEstimate: thread.tokenEstimate } : {}),
         ...(thread.costText ? { costText: thread.costText } : {})

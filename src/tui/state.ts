@@ -90,7 +90,9 @@ export interface TuiHomeTuneState {
   loading?: boolean
   error?: string
   providers: TuiHomeTuneProvider[]
+  /** Provider owning the selected flattened model row (derived, not a second menu). */
   providerIndex: number
+  /** Index into the one combined cross-provider model list. */
   modelIndex: number
   /** -1 means the provider's own default; non-negative indexes an offered row. */
   reasoningIndex: number
@@ -186,6 +188,8 @@ export interface TaskWraithTuiState {
   hostProjection?: HostSnapshot
   thread?: TaskWraithControlThreadSnapshot
   selectedThreadId?: string
+  /** A thread born from this Home canvas keeps the landed hero above its transcript. */
+  homeContinuationThreadId?: string
   input: string
   inputCursor: number
   overlay: TuiOverlay

@@ -48,6 +48,9 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
         updatedAt: 200,
         messageCount: 4,
         providerId: 'claude',
+        modelId: 'claude-opus-5',
+        reasoningEffort: 'high',
+        permissionPresetId: 'workspace_write',
         latestPreview: 'Bounded preview only',
         previewTruncated: true
       }
@@ -90,6 +93,28 @@ describe('hostProjectionMap', () => {
     ])
   })
 
+  it('keeps provider, model and effort identity on authoritative assistant history rows', () => {
+    const thread = mapHostSnapshotToThreadDetail(snapshotWithThread(), 'thread-1')!.thread.thread
+    expect(
+      mapHostHistoryEntriesToTranscriptRows(
+        [
+          {
+            entryId: 'history-provider',
+            role: 'assistant',
+            createdAt: 1,
+            text: 'Stable identity'
+          }
+        ],
+        thread
+      )[0]
+    ).toMatchObject({
+      speaker: 'Claude',
+      provider: { runtimeProvider: 'claude' },
+      model: 'Opus 5',
+      reasoning: 'high'
+    })
+  })
+
   it('maps workspaces and threads onto the control snapshot shape', () => {
     const mapped = mapHostSnapshotToControlSnapshot(snapshotWithThread())
     expect(mapped.generatedAt).toBe('2026-08-06T12:00:00.000Z')
@@ -112,8 +137,10 @@ describe('hostProjectionMap', () => {
       provider: {
         runtimeProvider: 'claude',
         displayProvider: 'Claude',
-        shortCode: 'CLA'
-      }
+        shortCode: 'CLA',
+        model: 'claude-opus-5'
+      },
+      reasoning: 'high'
     })
   })
 
@@ -298,10 +325,14 @@ describe('hostProjectionMap', () => {
     expect(detail?.thread.rows[0]).toMatchObject({
       kind: HOST_TUI_PREVIEW_ROW_KIND,
       text: 'Bounded preview only',
-      truncated: true
+      truncated: true,
+      provider: { runtimeProvider: 'claude' },
+      model: 'Opus 5',
+      reasoning: 'high'
     })
     expect(detail?.thread.hasMoreAbove).toBe(true)
     expect(detail?.thread.context.workspaces[0]?.access).toBe('read')
+    expect(detail?.thread.context.permission).toBe('workspace_write')
   })
 
   it('returns null when the thread is absent from the Host snapshot', () => {

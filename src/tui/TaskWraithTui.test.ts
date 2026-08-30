@@ -2419,6 +2419,250 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(host.commands).toHaveLength(0)
   })
 
+  it('shows one cross-provider model list and configures the selected provider immediately', async () => {
+    let providerId = 'claude'
+    let modelId = 'claude-sonnet-5'
+    const providerOffers = (id: string): HostProviderOffersProjection => ({
+      providerId: id,
+      offerRevision: `${id}-revision`,
+      models: [
+        {
+          modelId: id === 'claude' ? 'claude-sonnet-5' : 'gpt-5.6-terra',
+          label: id === 'claude' ? 'Sonnet 5' : 'GPT-5.6-Terra',
+          available: true,
+          default: true,
+          reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+        }
+      ],
+      postures: [
+        {
+          postureId: 'default',
+          label: 'Accept Edits',
+          available: true,
+          requiresExplicitConsent: false,
+          ceiling: 'workspace_write'
+        }
+      ]
+    })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-combined-models-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          providers: [
+            {
+              providerId: 'claude',
+              displayProvider: 'Claude',
+              modelId: 'claude-sonnet-5',
+              modelLabel: 'Sonnet 5',
+              shortCode: 'CLD',
+              available: true
+            },
+            {
+              providerId: 'codex',
+              displayProvider: 'Codex',
+              modelId: 'gpt-5.6-terra',
+              modelLabel: 'GPT-5.6-Terra',
+              shortCode: 'CDX',
+              available: true
+            }
+          ],
+          threads: [
+            {
+              id: 'thread-1',
+              workspaceId: 'ws-1',
+              title: 'Combined models',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 10,
+              messageCount: 1,
+              providerId,
+              modelId,
+              reasoningEffort: 'high',
+              permissionPresetId: 'default',
+              latestPreview: 'Hello TaskWraith'
+            }
+          ]
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        { providerId: 'claude', status: 'ready', label: 'Claude' },
+        { providerId: 'codex', status: 'ready', label: 'Codex' }
+      ],
+      providerOffers,
+      offers: (threadId) => ({
+        threadId,
+        provider: {
+          runtimeProvider: providerId,
+          displayProvider: providerId === 'claude' ? 'Claude' : 'Codex',
+          hueKey: providerId,
+          accent: '#777777',
+          model: modelId,
+          modelLabel: modelId,
+          shortCode: providerId
+        },
+        currentModel: modelId,
+        currentReasoningEffort: 'high',
+        currentPostureId: 'default',
+        models: [],
+        source: 'curated'
+      }),
+      onCommand: (command) => {
+        if (command.name !== 'thread.configure') return
+        providerId = String(command.arguments.providerId)
+        modelId = String(command.arguments.modelId)
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, '/model\r')
+    await waitFor(
+      () => output.lastFrame.includes('Claude Sonnet 5') && output.lastFrame.includes('Codex GPT'),
+      'combined model list'
+    )
+    feed(input, '\u001b[B\r')
+    await waitFor(
+      () =>
+        host.commands.some(
+          (command) =>
+            command.name === 'thread.configure' && command.arguments.providerId === 'codex'
+        ),
+      'cross-provider configuration'
+    )
+    expect(
+      host.commands.find(
+        (command) => command.name === 'thread.configure' && command.arguments.providerId === 'codex'
+      )?.arguments
+    ).toMatchObject({ modelId: 'gpt-5.6-terra', postureId: 'default' })
+  })
+
+  it('cycles active-thread permissions with Shift+Tab in the app tier order', async () => {
+    let postureId = 'default'
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-permission-cycle-'))
+    const postures: HostProviderOffersProjection['postures'] = [
+      {
+        postureId: 'plan',
+        label: 'Plan',
+        available: true,
+        requiresExplicitConsent: false,
+        ceiling: 'read'
+      },
+      {
+        postureId: 'read_only',
+        label: 'Ask',
+        available: true,
+        requiresExplicitConsent: false,
+        ceiling: 'read'
+      },
+      {
+        postureId: 'default',
+        label: 'Accept Edits',
+        available: true,
+        requiresExplicitConsent: false,
+        ceiling: 'workspace_write'
+      },
+      {
+        postureId: 'workspace_write',
+        label: 'Full WS Access',
+        available: true,
+        requiresExplicitConsent: true,
+        ceiling: 'workspace_write'
+      },
+      {
+        postureId: 'full_access',
+        label: 'Full Access (YOLO)',
+        available: true,
+        requiresExplicitConsent: true,
+        ceiling: 'full_access'
+      }
+    ]
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          threads: [
+            {
+              id: 'thread-1',
+              workspaceId: 'ws-1',
+              title: 'Permission cycle',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 10,
+              messageCount: 1,
+              providerId: 'claude',
+              modelId: 'claude-sonnet-5',
+              reasoningEffort: 'high',
+              permissionPresetId: postureId,
+              latestPreview: 'Hello TaskWraith'
+            }
+          ]
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerOffers: () => ({
+        providerId: 'claude',
+        offerRevision: `claude-${postureId}`,
+        models: [
+          {
+            modelId: 'claude-sonnet-5',
+            label: 'Sonnet 5',
+            available: true,
+            reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+          }
+        ],
+        postures
+      }),
+      offers: (threadId) => ({
+        ...makeThreadOffers(threadId),
+        currentPostureId: postureId,
+        postures: postures.map((posture) => ({
+          id: posture.postureId,
+          label: posture.label,
+          requiresExplicitConsent: posture.requiresExplicitConsent
+        }))
+      }),
+      onCommand: (command) => {
+        if (command.name === 'thread.configure') postureId = String(command.arguments.postureId)
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const secret = Buffer.alloc(32, 7)
+    const presence = createTuiFullAccessPresence(secret, {
+      pid: process.pid,
+      startedAt: new Date(0).toISOString(),
+      hostId: 'fake-host',
+      hostVersion: '1.9.1-preview'
+    })
+    secret.fill(0)
+    const { tui, output } = startTui(userDataPath, { fullAccessPresence: presence })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    const press = () =>
+      (
+        tui as unknown as {
+          onKeypress: (input: string, key: { name: string; shift: boolean }) => void
+        }
+      ).onKeypress('', { name: 'tab', shift: true })
+    const expected = ['workspace_write', 'full_access', 'plan', 'read_only', 'default']
+    for (let index = 0; index < expected.length; index += 1) {
+      press()
+      await waitFor(
+        () =>
+          host.commands.filter((command) => command.name === 'thread.configure').length > index &&
+          !(tui as unknown as { mutationInFlight: boolean }).mutationInFlight,
+        `permission cycle ${expected[index]}`
+      )
+    }
+    const configure = host.commands.filter((command) => command.name === 'thread.configure')
+    expect(configure.map((command) => command.arguments.postureId)).toEqual(expected)
+    expect(configure[1].arguments.postureConsentProof).toMatch(/^[a-f0-9]{64}$/)
+  })
+
   it('opens a credential-free /login hub and begins only an advertised flow', async () => {
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-login-hub-'))
     const host = new FakeHostV2(userDataPath, {
@@ -2616,6 +2860,18 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       modelId: 'remembered-model',
       reasoningId: undefined
     })
+    expect(
+      (tui as unknown as { state: { homeContinuationThreadId?: string } }).state
+        .homeContinuationThreadId
+    ).toBe('thread-lazy')
+    expect(output.lastFrame).toContain('TaskWraith')
+    await (tui as unknown as { openThread: (threadId: string) => Promise<void> }).openThread(
+      'thread-lazy'
+    )
+    expect(
+      (tui as unknown as { state: { homeContinuationThreadId?: string } }).state
+        .homeContinuationThreadId
+    ).toBeUndefined()
   }, 12_000)
 
   it('keeps the first draft and opens guided setup when no provider is ready', async () => {
@@ -2698,15 +2954,9 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       () => output.lastFrame.includes('/model [id]') && !output.lastFrame.includes('/workspace'),
       'slash palette filtered'
     )
-    feed(input, '\t')
-    await waitFor(
-      () => !output.lastFrame.includes('Commands') && output.lastFrame.includes('/model'),
-      'slash command completed'
-    )
-    expect(output.lastFrame).not.toContain('Model (preview)')
-
     feed(input, '\r')
-    await waitFor(() => output.lastFrame.includes('Model (preview)'), 'completed command executed')
+    await waitFor(() => output.lastFrame.includes('Model'), 'selected command opened its menu')
+    expect((tui as unknown as { state: { input: string } }).state.input).toBe('')
   })
 
   it('keeps destructive palette selections inert and closes on arguments or clear keys', async () => {
@@ -2742,9 +2992,11 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       'Ctrl+P opened the unfiltered palette'
     )
     expect((tui as unknown as { state: { input: string } }).state.input).toBe('ordinary draft')
-    feed(input, '\u0010')
-    await waitFor(() => !output.lastFrame.includes('Commands'), 'Ctrl+P closed palette')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Model'), 'manual palette opened selected menu')
     expect((tui as unknown as { state: { input: string } }).state.input).toBe('ordinary draft')
+    feed(input, '\u001b')
+    await waitFor(() => !output.lastFrame.includes('Model'), 'model menu closed')
     feed(input, '\u0015')
     feed(input, '/help\r')
     await waitFor(() => output.lastFrame.includes('Commands'), '/help opened palette')
@@ -2924,6 +3176,67 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       () => output.lastFrame.includes('Older bounded history entry'),
       'older history render'
     )
+  })
+
+  it('preserves authoritative transcript rows across snapshot refresh and a caught-up poll', async () => {
+    let pageRequests = 0
+    let sinceRequests = 0
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-history-refresh-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts',
+        'history'
+      ],
+      threadHistory: (request) => {
+        pageRequests += 1
+        return {
+          threadId: request.threadId,
+          generation: 3,
+          cursor: 11,
+          entries: [
+            {
+              entryId: 'stable-history',
+              role: 'assistant',
+              createdAt: 2,
+              text: 'This authoritative row must not flash away'
+            }
+          ]
+        }
+      },
+      historySince: (request) => {
+        sinceRequests += 1
+        return {
+          kind: 'deltas',
+          threadId: request.threadId,
+          generation: request.since.generation,
+          fromCursor: request.since.cursor,
+          toCursor: request.since.cursor,
+          deltas: []
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, output } = startTui(userDataPath, { projectionRefreshMs: 25 })
+
+    await tui.start()
+    await waitFor(
+      () => output.lastFrame.includes('This authoritative row must not flash away'),
+      'full history rendered'
+    )
+    await waitFor(() => sinceRequests > 0, 'caught-up history poll')
+    await new Promise((settle) => setTimeout(settle, 80))
+
+    expect(output.lastFrame).toContain('This authoritative row must not flash away')
+    expect(output.lastFrame).not.toContain('Transcript history changed')
+    expect(pageRequests).toBe(1)
   })
 
   it('drives Host setup through exact result refs before enabling the composer', async () => {

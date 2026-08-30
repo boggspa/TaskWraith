@@ -20,6 +20,8 @@ import {
 } from '../shared/hostProtocol'
 import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
 import type {
+  HostPermissionPostureOffer,
+  HostProviderModelOffer,
   HostProviderOffersProjection,
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
@@ -111,8 +113,15 @@ import {
 } from './promptQueue'
 import { matchProviderStatus } from './providerLoginFlow'
 import { projectTuiFullAccessPresence, type TuiFullAccessPresence } from './fullAccessConsent'
+import { classifyHistoryResult, preserveAuthoritativeHistoryRows } from './historyReconcile'
 import type { EnsureTuiHostAvailableResult } from './hostProcessManager'
 import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import {
+  findTuiModelChoiceIndex,
+  nextAvailableTuiPosture,
+  tuiModelChoices,
+  type TuiModelChoice
+} from './modelPicker'
 
 interface Keypress {
   name?: string
@@ -380,6 +389,8 @@ export class TaskWraithTui {
   private lastError = ''
   /** Serialises full snapshots and push deltas into one atomic apply lane. */
   private projectionQueue: Promise<void> = Promise.resolve()
+  /** Serialises polling and pushed transcript deltas so cursor order cannot race. */
+  private historyQueue: Promise<void> = Promise.resolve()
   /** Last live HostSnapshot — authority for local thread detail + approvals. */
   private hostSnapshot: HostSnapshot | null = null
   /** Whether a `welcome` has ever been received. Distinguishes a first-time
@@ -418,6 +429,7 @@ export class TaskWraithTui {
   private homeTuneReadGeneration = 0
   private providerLoginReadGeneration = 0
   private fullAccessPresence: TuiFullAccessPresence | null
+  private retainHomeForNextThread = false
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -601,7 +613,9 @@ export class TaskWraithTui {
       })
     })
     this.client.on('history', (frame) => {
-      void this.applyHistoryEvent(frame).catch((error) => this.surfaceProjectionSyncError(error))
+      void this.enqueueHistoryUpdate(() => this.applyHistoryEvent(frame)).catch((error) =>
+        this.surfaceProjectionSyncError(error)
+      )
     })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
@@ -632,7 +646,9 @@ export class TaskWraithTui {
     const selectedThreadId = this.state.selectedThreadId
     if (selectedThreadId) {
       const detail = mapHostSnapshotToThreadDetail(snapshot, selectedThreadId)
-      this.state.thread = detail?.thread
+      this.state.thread = detail
+        ? preserveAuthoritativeHistoryRows(this.state.thread, detail.thread, this.state.history)
+        : undefined
     }
     const liveIds = new Set([
       ...snapshot.runs
@@ -889,9 +905,15 @@ export class TaskWraithTui {
    * reader's overlay, drop the seat lens, scroll them back, or re-announce a
    * thread they never left.
    */
-  private async openThread(threadId: string, options: { reattach?: boolean } = {}): Promise<void> {
+  private async openThread(
+    threadId: string,
+    options: { reattach?: boolean; preserveHome?: boolean } = {}
+  ): Promise<void> {
     if (!threadId || this.selectingThread || this.mutationInFlight) return
     const reattach = options.reattach === true && threadId === this.state.selectedThreadId
+    if (!reattach) {
+      this.state.homeContinuationThreadId = options.preserveHome ? threadId : undefined
+    }
     const preservedScrollOffset = this.state.scrollOffset
     if (threadId !== this.state.selectedThreadId) {
       // Offers and staged selections are per-thread state.
@@ -1018,7 +1040,7 @@ export class TaskWraithTui {
     })
     if (page.threadId !== threadId) throw new Error('Host returned history for a different thread.')
     if (this.state.selectedThreadId !== threadId) return
-    const pageRows = mapHostHistoryEntriesToTranscriptRows(page.entries)
+    const pageRows = mapHostHistoryEntriesToTranscriptRows(page.entries, this.state.thread?.thread)
     const current = this.state.history
     const currentRows =
       current?.threadId === threadId && !current.previewOnly ? (this.state.thread?.rows ?? []) : []
@@ -1036,21 +1058,23 @@ export class TaskWraithTui {
 
   /** Polling reconciliation for Hosts that do not yet publish history events. */
   private async refreshSelectedHistory(): Promise<void> {
-    const history = this.state.history
-    if (
-      !history ||
-      history.previewOnly ||
-      history.loadingOlder ||
-      !this.client?.connected ||
-      !this.client.supports('history')
-    ) {
-      return
-    }
-    const result = await this.client.getHistorySince({
-      threadId: history.threadId,
-      since: { generation: history.generation, cursor: history.cursor }
+    await this.enqueueHistoryUpdate(async () => {
+      const history = this.state.history
+      if (
+        !history ||
+        history.previewOnly ||
+        history.loadingOlder ||
+        !this.client?.connected ||
+        !this.client.supports('history')
+      ) {
+        return
+      }
+      const result = await this.client.getHistorySince({
+        threadId: history.threadId,
+        since: { generation: history.generation, cursor: history.cursor }
+      })
+      await this.applyHistoryResult(history.threadId, result)
     })
-    await this.applyHistoryResult(history.threadId, result)
   }
 
   /** Future-safe event handling; production presently reaches this through polling above. */
@@ -1064,16 +1088,13 @@ export class TaskWraithTui {
   ): Promise<void> {
     const history = this.state.history
     if (!history || history.previewOnly || history.threadId !== threadId) return
-    if (result.kind === 'full_resnapshot_required') {
-      this.setNotice('Transcript history changed · reloaded latest page.', 'warning', 3_000)
+    const decision = classifyHistoryResult(history, result)
+    if (decision === 'ignore') return
+    if (decision === 'reload') {
       await this.loadThreadHistory(threadId)
       return
     }
-    if (result.generation !== history.generation || result.fromCursor !== history.cursor) {
-      this.setNotice('Transcript history cursor changed · reloaded latest page.', 'warning', 3_000)
-      await this.loadThreadHistory(threadId)
-      return
-    }
+    if (result.kind !== 'deltas') return
     if (!this.state.thread || this.state.selectedThreadId !== threadId) return
     let rows = [...this.state.thread.rows]
     for (const delta of result.deltas) {
@@ -1085,7 +1106,7 @@ export class TaskWraithTui {
         rows = rows.filter((row) => row.id !== id)
         continue
       }
-      const row = mapHostHistoryEntriesToTranscriptRows([delta.entry])[0]
+      const row = mapHostHistoryEntriesToTranscriptRows([delta.entry], this.state.thread.thread)[0]
       const existing = rows.findIndex((candidate) => candidate.id === id)
       if (existing >= 0) rows.splice(existing, 1, row)
       else rows.push(row)
@@ -1352,6 +1373,10 @@ export class TaskWraithTui {
       }
       return
     }
+    if (key.name === 'tab' && key.shift) {
+      void this.cycleThreadPermission()
+      return
+    }
     if (key.name === 'pageup') {
       const history = this.state.history
       const transcriptRows = this.state.thread?.rows.length ?? 0
@@ -1498,18 +1523,13 @@ export class TaskWraithTui {
         this.render()
         return
       }
-      const resolved = this.commandPaletteAutomatic
-        ? resolveTuiSlashCommand(this.state.input)
-        : null
-      const exactSelection =
-        resolved?.command.name === selected.name && resolved.argumentText.length === 0
-      if (
-        (key.name === 'return' || key.name === 'enter') &&
-        exactSelection &&
-        !selected.destructive
-      ) {
+      if ((key.name === 'return' || key.name === 'enter') && !selected.destructive) {
+        if (this.commandPaletteAutomatic) {
+          this.state.input = ''
+          this.state.inputCursor = 0
+        }
         this.dismissCommandPalette()
-        void this.submit()
+        void this.runCommand(selected.name)
         return
       }
       this.state.input = selected.name
@@ -1784,6 +1804,8 @@ export class TaskWraithTui {
           this.state.overlay = 'none'
           this.state.coldStartIntent = undefined
           this.state.selectedThreadId = cold.threadId
+          if (this.retainHomeForNextThread) this.state.homeContinuationThreadId = cold.threadId
+          this.retainHomeForNextThread = false
           await this.refreshHostSnapshot()
           this.applyLocalThread(cold.threadId, { previewNotice: true })
           await this.loadThreadHistory(cold.threadId)
@@ -2260,24 +2282,24 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    if (!this.state.thread) {
+    if (this.state.thread && (!this.client || !this.client.supports('provider-catalog'))) {
+      this.state.homeTune = undefined
       this.state.overlay = 'tune'
-      this.state.homeTune = {
-        loading: true,
-        providers: [],
-        providerIndex: 0,
-        modelIndex: 0,
-        reasoningIndex: -1
-      }
-      void this.loadHomeTuneProviders(true)
+      this.state.overlayIndex = 0
+      this.state.tuneEffortIndex = 0
+      void this.loadOffers()
       this.render()
       return
     }
-    this.state.homeTune = undefined
     this.state.overlay = 'tune'
-    this.state.overlayIndex = 0
-    this.state.tuneEffortIndex = 0
-    void this.loadOffers()
+    this.state.homeTune = {
+      loading: true,
+      providers: [],
+      providerIndex: 0,
+      modelIndex: 0,
+      reasoningIndex: -1
+    }
+    void this.loadHomeTuneProviders(true)
     this.render()
   }
 
@@ -2379,38 +2401,30 @@ export class TaskWraithTui {
     this.render()
   }
 
-  private resetHomeTuneIndices(providerIndex: number): void {
+  private resetHomeTuneSelection(
+    preferredProviderId?: string,
+    preferredModelId?: string,
+    preferredReasoningId?: string
+  ): void {
     const home = this.state.homeTune
-    const provider = home?.providers[providerIndex]
-    if (!home || !provider) return
-    const savedForProvider = this.profileSettings.providerId === provider.status.providerId
-    const model = resolveStartupModel(
-      provider.offers,
-      savedForProvider ? this.profileSettings.modelId : undefined
-    )
-    const models = provider.offers.models.filter((candidate) => candidate.available)
-    const modelIndex = Math.max(
-      0,
-      model ? models.findIndex((candidate) => candidate.modelId === model.modelId) : 0
-    )
-    const reasoning = resolveStartupReasoning(
-      model,
-      savedForProvider && this.profileSettings.modelId === model?.modelId
-        ? this.profileSettings.reasoningId
-        : undefined
-    )
-    const reasoningRows = model?.reasoning.filter((candidate) => candidate.available) ?? []
+    if (!home) return
+    const choices = tuiModelChoices(home.providers)
+    const selectedIndex = findTuiModelChoiceIndex(choices, preferredProviderId, preferredModelId)
+    const modelIndex = Math.max(0, selectedIndex)
+    const selected = choices[modelIndex]
+    const reasoningRows = selected?.model.reasoning.filter((candidate) => candidate.available) ?? []
+    const reasoningIndex = preferredReasoningId
+      ? reasoningRows.findIndex((candidate) => candidate.reasoningId === preferredReasoningId)
+      : -1
     this.state.homeTune = {
       ...home,
-      providerIndex,
+      providerIndex: selected?.providerIndex ?? 0,
       modelIndex,
-      reasoningIndex: reasoning
-        ? reasoningRows.findIndex((candidate) => candidate.reasoningId === reasoning.reasoningId)
-        : -1
+      reasoningIndex
     }
   }
 
-  private async loadHomeTuneProviders(showOverlay: boolean): Promise<void> {
+  private async loadHomeTuneProviders(_showOverlay: boolean): Promise<void> {
     const generation = ++this.homeTuneReadGeneration
     if (!this.client?.connected || !this.client.supports('provider-catalog')) {
       this.state.homeTune = {
@@ -2427,35 +2441,40 @@ export class TaskWraithTui {
       const statuses = (await this.client.getProviderStatuses()).filter(
         (status) => status.status === 'ready'
       )
-      const loaded = await Promise.all(
-        statuses.map(async (status) => ({
-          status,
-          offers: this.effectiveProviderOffers(
-            await this.client!.getProviderOffers(status.providerId)
-          )
-        }))
-      )
-      if (generation !== this.homeTuneReadGeneration || this.state.selectedThreadId) return
+      const loaded = (
+        await Promise.all(
+          statuses.map(async (status) => {
+            try {
+              return {
+                status,
+                offers: this.effectiveProviderOffers(
+                  await this.client!.getProviderOffers(status.providerId)
+                )
+              }
+            } catch {
+              return null
+            }
+          })
+        )
+      ).filter((provider): provider is NonNullable<typeof provider> => provider !== null)
+      if (generation !== this.homeTuneReadGeneration) return
       const providers = loaded.filter(
         ({ status, offers }) =>
           offers.providerId === status.providerId && offers.models.some((model) => model.available)
       )
-      const preferred = resolveStartupProvider(statuses, this.profileSettings.providerId)
-      const providerIndex = Math.max(
-        0,
-        preferred
-          ? providers.findIndex((provider) => provider.status.providerId === preferred.providerId)
-          : 0
-      )
       this.state.homeTune = {
         providers,
-        providerIndex,
+        providerIndex: 0,
         modelIndex: 0,
         reasoningIndex: -1,
         ...(providers.length ? {} : { error: 'No ready provider has selectable model offers.' })
       }
-      this.resetHomeTuneIndices(providerIndex)
-      if (showOverlay) this.state.overlay = 'tune'
+      const thread = this.state.thread?.thread
+      this.resetHomeTuneSelection(
+        thread?.provider.runtimeProvider ?? this.profileSettings.providerId,
+        thread?.provider.model ?? this.profileSettings.modelId,
+        thread?.reasoning ?? this.profileSettings.reasoningId
+      )
     } catch (error) {
       if (generation !== this.homeTuneReadGeneration) return
       this.state.homeTune = {
@@ -2472,17 +2491,19 @@ export class TaskWraithTui {
   private handleHomeTuneKey(key: Keypress): void {
     const home = this.state.homeTune
     if (!home || home.loading || !home.providers.length) return
-    const provider = home.providers[home.providerIndex]
-    const models = provider?.offers.models.filter((candidate) => candidate.available) ?? []
-    if (key.name === 'tab') {
-      const next = cycleIndex(home.providerIndex, home.providers.length, key.shift ? -1 : 1)
-      this.resetHomeTuneIndices(next)
-    } else if (key.name === 'up' || key.name === 'down') {
-      const next = cycleIndex(home.modelIndex, models.length, key.name === 'up' ? -1 : 1)
-      this.state.homeTune = { ...home, modelIndex: next, reasoningIndex: -1 }
+    const choices = tuiModelChoices(home.providers)
+    const selected = choices[home.modelIndex]
+    if (key.name === 'up' || key.name === 'down') {
+      const next = cycleIndex(home.modelIndex, choices.length, key.name === 'up' ? -1 : 1)
+      const nextChoice = choices[next]
+      this.state.homeTune = {
+        ...home,
+        providerIndex: nextChoice?.providerIndex ?? 0,
+        modelIndex: next,
+        reasoningIndex: -1
+      }
     } else if (key.name === 'left' || key.name === 'right') {
-      const reasoning =
-        models[home.modelIndex]?.reasoning.filter((candidate) => candidate.available) ?? []
+      const reasoning = selected?.model.reasoning.filter((candidate) => candidate.available) ?? []
       const slot = cycleIndex(
         home.reasoningIndex + 1,
         reasoning.length + 1,
@@ -2490,19 +2511,22 @@ export class TaskWraithTui {
       )
       this.state.homeTune = { ...home, reasoningIndex: slot - 1 }
     } else if (key.name === 'return' || key.name === 'enter') {
-      const model = models[home.modelIndex]
-      if (!provider || !model) return
-      const reasoning = model.reasoning.filter((candidate) => candidate.available)[
+      if (!selected) return
+      const reasoning = selected.model.reasoning.filter((candidate) => candidate.available)[
         home.reasoningIndex
       ]
+      if (this.state.selectedThreadId) {
+        void this.configureThreadModel(selected, reasoning?.reasoningId)
+        return
+      }
       const persisted = this.rememberProfileSettings({
-        providerId: provider.status.providerId,
-        modelId: model.modelId,
+        providerId: selected.provider.status.providerId,
+        modelId: selected.model.modelId,
         ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
       })
       this.state.overlay = 'none'
       this.setNotice(
-        `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}${
+        `${persisted ? 'Default' : 'Session default'} · ${selected.provider.status.label} / ${selected.model.label}${
           reasoning ? ` / ${reasoning.label}` : ''
         }`,
         persisted ? 'good' : 'warning',
@@ -2512,6 +2536,129 @@ export class TaskWraithTui {
       return
     }
     this.render()
+  }
+
+  private async configureThreadModel(choice: TuiModelChoice, reasoningId?: string): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId || !this.client?.connected || this.mutationInFlight) return
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(threadId),
+        this.client.getProviderOffers(choice.provider.status.providerId)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === choice.model.modelId && candidate.available
+      )
+      if (!model) throw new Error('That model is no longer offered by the Host.')
+      const requestedPosture =
+        current.currentPostureId ?? this.state.thread?.context.permission ?? 'default'
+      const posture =
+        offers.postures.find(
+          (candidate) => candidate.postureId === requestedPosture && candidate.available
+        ) ??
+        offers.postures.find(
+          (candidate) => candidate.postureId === 'default' && candidate.available
+        )
+      if (!posture) throw new Error('The selected provider has no compatible permission tier.')
+      await this.configureThreadSelection({
+        threadId,
+        providerId: offers.providerId,
+        providerLabel: choice.provider.status.label,
+        offers,
+        model,
+        reasoningId,
+        posture,
+        closeTune: true,
+        ...(posture.postureId !== requestedPosture ? { downgradedFrom: requestedPosture } : {})
+      })
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'warning', 4_000)
+      this.render()
+    }
+  }
+
+  private async configureThreadSelection(input: {
+    threadId: string
+    providerId: string
+    providerLabel: string
+    offers: HostProviderOffersProjection
+    model: HostProviderModelOffer
+    reasoningId?: string
+    posture: HostPermissionPostureOffer
+    closeTune?: boolean
+    downgradedFrom?: string
+  }): Promise<void> {
+    const actor = this.actorIdentity()
+    if (!actor) return
+    const command = this.authorizeConfigureCommand(
+      buildThreadConfigureCommand({
+        actor,
+        selection: {
+          threadId: input.threadId,
+          providerId: input.providerId,
+          modelId: input.model.modelId,
+          postureId: input.posture.postureId,
+          offerRevision: input.offers.offerRevision,
+          ...(input.reasoningId ? { reasoningId: input.reasoningId } : {}),
+          ...(input.posture.requiresExplicitConsent ? { postureConsent: true } : {})
+        }
+      })
+    )
+    let configured = false
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        configured = true
+        await this.refreshHostSnapshot()
+      }
+    })
+    if (!configured) return
+    this.state.pendingSelection = undefined
+    if (input.closeTune) this.state.overlay = 'none'
+    const effort = input.reasoningId ? ` ${this.glyphs.separator} ${input.reasoningId}` : ''
+    const downgrade = input.downgradedFrom
+      ? ` ${this.glyphs.separator} ${input.posture.label} (compatible tier)`
+      : ''
+    this.setNotice(
+      `${input.providerLabel} ${input.model.label}${effort}${downgrade}`,
+      input.downgradedFrom ? 'warning' : 'good',
+      4_000
+    )
+    this.render()
+  }
+
+  private async cycleThreadPermission(): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    const thread = this.state.thread?.thread
+    if (!threadId || !thread || !this.client?.connected || this.mutationInFlight) return
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(threadId),
+        this.client.getProviderOffers(thread.provider.runtimeProvider)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const modelId = current.currentModel ?? thread.provider.model
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === modelId && candidate.available
+      )
+      if (!model) throw new Error('The active model is no longer offered by the Host.')
+      const currentPosture =
+        current.currentPostureId ?? this.state.thread?.context.permission ?? 'default'
+      const posture = nextAvailableTuiPosture(offers.postures, currentPosture)
+      if (!posture) throw new Error('No permission tier is available for the active model.')
+      await this.configureThreadSelection({
+        threadId,
+        providerId: offers.providerId,
+        providerLabel: thread.provider.displayProvider,
+        offers,
+        model,
+        reasoningId: current.currentReasoningEffort ?? thread.reasoning,
+        posture
+      })
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'warning', 4_000)
+      this.render()
+    }
   }
 
   private applyTuneSelection(offer: TaskWraithControlModelOffer | undefined): void {
@@ -2693,6 +2840,7 @@ export class TaskWraithTui {
       this.unresolvedLazySetupCommand = undefined
       if (recovered.status === 'succeeded' && unresolved.name === 'thread.configure') {
         const recoveredThreadId = unresolved.target.threadId
+        this.state.homeContinuationThreadId = recoveredThreadId
         await this.refreshHostSnapshot()
         this.applyLocalThread(recoveredThreadId, { previewNotice: true })
         await this.loadThreadHistory(recoveredThreadId)
@@ -2800,6 +2948,7 @@ export class TaskWraithTui {
       },
       onSucceeded: async () => {
         configured = true
+        this.state.homeContinuationThreadId = newThreadId
         await this.refreshHostSnapshot()
         this.applyLocalThread(newThreadId, { previewNotice: true })
         await this.loadThreadHistory(newThreadId)
@@ -3304,31 +3453,47 @@ export class TaskWraithTui {
       await this.stageHomeModel(modelId)
       return
     }
-    const offers = await this.commandOffers()
-    if (!offers) return
-    const modelIndex = offers.models.findIndex((model) => model.id === modelId)
-    if (modelIndex < 0) {
+    if (!this.client?.supports('provider-catalog')) {
+      const offers = await this.commandOffers()
+      if (!offers) return
+      const modelIndex = offers.models.findIndex((model) => model.id === modelId)
+      if (modelIndex < 0) {
+        this.setNotice(
+          `Unknown model "${modelId}". Offered: ${offers.models.map((model) => model.id).join(', ')}`,
+          'warning',
+          4_000
+        )
+        this.render()
+        return
+      }
+      this.state.overlayIndex = modelIndex
+      this.state.tuneEffortIndex = this.effortIndexFor(offers, modelIndex)
+      this.applyTuneSelection(offers.models[modelIndex])
+      return
+    }
+    await this.loadHomeTuneProviders(false)
+    const choices = tuiModelChoices(this.state.homeTune?.providers ?? []).filter(
+      (choice) => choice.model.modelId === modelId
+    )
+    if (choices.length !== 1) {
       this.setNotice(
-        `Unknown model "${modelId}". Offered: ${offers.models.map((model) => model.id).join(', ')}`,
+        choices.length > 1
+          ? `Model "${modelId}" is offered by multiple providers · use /model to choose.`
+          : `Unknown ready-provider model "${modelId}" · use /model to browse.`,
         'warning',
         4_000
       )
       this.render()
       return
     }
-    this.state.overlayIndex = modelIndex
-    this.state.tuneEffortIndex = this.effortIndexFor(offers, modelIndex)
-    this.applyTuneSelection(offers.models[modelIndex])
+    await this.configureThreadModel(choices[0])
   }
 
   private async stageHomeModel(modelId: string): Promise<void> {
     await this.loadHomeTuneProviders(false)
     const providers = this.state.homeTune?.providers ?? []
-    const matches = providers.flatMap((provider) =>
-      provider.offers.models
-        .filter((model) => model.available && model.modelId === modelId)
-        .map((model) => ({ provider, model }))
-    )
+    const choices = tuiModelChoices(providers)
+    const matches = choices.filter((choice) => choice.model.modelId === modelId)
     if (matches.length !== 1) {
       this.setNotice(
         matches.length > 1
@@ -3340,7 +3505,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    const { provider, model } = matches[0]
+    const { provider, model, providerIndex } = matches[0]
     const savedReasoning =
       this.profileSettings.providerId === provider.status.providerId &&
       this.profileSettings.modelId === model.modelId
@@ -3351,9 +3516,11 @@ export class TaskWraithTui {
       modelId: model.modelId,
       ...(savedReasoning ? { reasoningId: savedReasoning.reasoningId } : { reasoningId: undefined })
     })
-    const providerIndex = providers.indexOf(provider)
-    const models = provider.offers.models.filter((candidate) => candidate.available)
-    const modelIndex = models.findIndex((candidate) => candidate.modelId === model.modelId)
+    const modelIndex = choices.findIndex(
+      (choice) =>
+        choice.provider.status.providerId === provider.status.providerId &&
+        choice.model.modelId === model.modelId
+    )
     const reasoning = model.reasoning.filter((candidate) => candidate.available)
     this.state.homeTune = {
       ...this.state.homeTune!,
@@ -3624,18 +3791,22 @@ export class TaskWraithTui {
           'warning',
           4_000
         )
+        this.retainHomeForNextThread = false
         this.render()
         return
       }
+      if (!this.state.selectedThreadId) this.retainHomeForNextThread = true
       await this.createSoloThread()
       return
     }
     if (this.state.coldStartIntent === 'required' && this.state.coldStart?.kind !== 'ready') {
       this.state.overlay = 'setup'
+      this.retainHomeForNextThread = false
       this.setNotice('Finish Host setup, then /new starts another solo thread.', 'warning', 3_000)
       this.render()
       return
     }
+    if (!this.state.selectedThreadId) this.retainHomeForNextThread = true
     const workspaceId = this.resolveWorkspaceId()
     this.state.coldStart = workspaceId ? coldStartWorkspaceRegistered(workspaceId) : coldStartIdle()
     this.state.coldStartIntent = this.state.thread || workspaceId ? 'new-thread' : 'required'
@@ -3654,6 +3825,7 @@ export class TaskWraithTui {
             'warning',
             4_000
           )
+          this.retainHomeForNextThread = false
           this.render()
           return
         }
@@ -3667,6 +3839,7 @@ export class TaskWraithTui {
   }
 
   private cancelNewSoloThread(): void {
+    this.retainHomeForNextThread = false
     this.state.coldStart = undefined
     this.state.coldStartIntent = undefined
     this.state.coldStartProviderChoices = undefined
@@ -3782,7 +3955,10 @@ export class TaskWraithTui {
         }
       }
     })
-    if (createdThreadId) await this.openThread(createdThreadId)
+    if (createdThreadId) {
+      await this.openThread(createdThreadId, { preserveHome: this.retainHomeForNextThread })
+      this.retainHomeForNextThread = false
+    }
   }
 
   private showStatus(): void {
@@ -4320,6 +4496,12 @@ export class TaskWraithTui {
   private enqueueProjectionUpdate(operation: () => Promise<void>): Promise<void> {
     const run = this.projectionQueue.then(operation, operation)
     this.projectionQueue = run.catch(() => undefined)
+    return run
+  }
+
+  private enqueueHistoryUpdate(operation: () => Promise<void>): Promise<void> {
+    const run = this.historyQueue.then(operation, operation)
+    this.historyQueue = run.catch(() => undefined)
     return run
   }
 

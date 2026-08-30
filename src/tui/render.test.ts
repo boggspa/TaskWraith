@@ -777,6 +777,70 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(swept(1).join('\n'))).toBe(stripAnsi(first.join('\n')))
   })
 
+  it('renders every provider model in one combined picker without a provider submenu', () => {
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+    state.homeTune!.providers.push({
+      status: { providerId: 'claude', status: 'ready', label: 'Claude' },
+      offers: {
+        providerId: 'claude',
+        offerRevision: 'claude-offer',
+        models: [
+          {
+            modelId: 'claude-opus-5',
+            label: 'Opus 5',
+            available: true,
+            reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+          }
+        ],
+        postures: []
+      }
+    })
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('Codex GPT-5.6-Terra')
+    expect(output).toContain('Claude Opus 5')
+    expect(output).not.toContain('Tab provider')
+  })
+
+  it('keeps the landed Home hero above a thread created from that canvas', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 30, 12, 0, 0))
+    state.homeContinuationThreadId = state.thread!.thread.id
+    state.thread = {
+      ...state.thread!,
+      rows: [
+        {
+          id: 'continued-row',
+          role: 'assistant',
+          kind: 'host-history',
+          speaker: 'Claude',
+          provider: state.thread!.thread.provider,
+          model: state.thread!.thread.provider.modelLabel,
+          reasoning: state.thread!.thread.reasoning,
+          text: 'The transcript continues beneath Home.',
+          timestamp: new Date(0).toISOString(),
+          truncated: false
+        }
+      ]
+    }
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('TaskWraith')
+    expect(output).toContain('The transcript continues beneath Home.')
+  })
+
   it('degrades the ghost banner to pure ASCII without changing its geometry', () => {
     const lines = renderedHome(80, 24, 'offline', TUI_GLYPHS_ASCII)
     const output = lines.join('\n')
