@@ -30,6 +30,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 
 import { hostProviderAuthFlows, hostProviderOffers } from '../host-shared/HostProviderCatalog'
+import { normalizeGrok46ReasoningEffort } from '../shared/grok45Models'
 import {
   createHostNodeProviderResourcePort,
   hostNodeProviderAuthFlows,
@@ -142,6 +143,17 @@ export interface HostNodeCursorProviderOptions {
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeCursorAuthProbe
 }
+
+/**
+ * Top-of-ladder tiers other seats persist that Cursor has never offered. These
+ * fold onto Cursor's ceiling; every other off-ladder value still fails closed.
+ */
+const CURSOR_FOLDABLE_TOP_TIER_STOPS: ReadonlySet<string> = new Set([
+  'max',
+  'ultra',
+  'ultracode',
+  'ultratask'
+])
 
 export class HostNodeCursorProvider implements HostNodeProviderInstance {
   readonly providerId = CURSOR_PROVIDER_ID
@@ -268,7 +280,28 @@ export class HostNodeCursorProvider implements HostNodeProviderInstance {
       normalized.reasoningId !== undefined &&
       !model.reasoning.some((entry) => entry.reasoningId === normalized.reasoningId)
     ) {
-      throw new HostNodeCursorValidationError('Cursor reasoning is not offered for this model.')
+      // Reasoning is persisted per CHAT, not per provider, so a thread that ran
+      // on Claude, Ollama or Pi arrives here carrying `max` — a stop Cursor's
+      // STANDARD_REASONING ladder (low/medium/high/xhigh) has never offered.
+      // `19db454b6` folded exactly this for Ollama and Pi and left Cursor
+      // throwing because its ladder "did not narrow": true, but the stop comes
+      // from another seat rather than from a narrowing, so the exemption did
+      // not hold. Refusing strands the run — HostNodeDomainPorts turns the
+      // rejection into failed('run_not_started') — which reads in the UI as the
+      // model selection snapping back to the previous one.
+      //
+      // Fold only the recognised top-of-ladder tiers, through the same clamp
+      // the renderer already applies (normalizeGrok46ReasoningEffort), so host
+      // and renderer cannot disagree about the ceiling. A value that was never
+      // a stop still fails closed — the normalizer is total, so gating on the
+      // recognised set is what stops it laundering junk into 'xhigh'.
+      const folded = CURSOR_FOLDABLE_TOP_TIER_STOPS.has(normalized.reasoningId)
+        ? normalizeGrok46ReasoningEffort(normalized.reasoningId)
+        : undefined
+      if (!folded || !model.reasoning.some((entry) => entry.reasoningId === folded)) {
+        throw new HostNodeCursorValidationError('Cursor reasoning is not offered for this model.')
+      }
+      return { ...normalized, reasoningId: folded }
     }
     return normalized
   }

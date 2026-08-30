@@ -259,6 +259,32 @@ describe('HostNodeCursorProvider selection validation', () => {
     expect(provider().validateThread(threadFixture()).modelId).toBe('composer-2.5-fast')
   })
 
+  it('folds a top-of-ladder stop Cursor never offered instead of refusing the run', () => {
+    // Cursor's offers are STANDARD_REASONING — low/medium/high/xhigh, no `max`.
+    // `max` is still reachable here because it is persisted per CHAT, not per
+    // provider: a thread that ran on Claude, Ollama or Pi carries `max`, and
+    // switching that chat to Cursor hands this validator a stop Cursor has
+    // never had. 19db454b6 folded exactly this for Ollama and Pi and left
+    // Cursor throwing on the reasoning that its ladder "did not narrow" — true,
+    // but the stop arrives from another seat rather than from a narrowing.
+    // The throw becomes failed('run_not_started') upstream, which the picker
+    // shows as the model selection snapping back to the previous one.
+    const instance = provider()
+    for (const stop of ['max', 'ultra', 'ultracode', 'ultratask']) {
+      expect(instance.validateThread(threadFixture({ reasoningId: stop })).reasoningId).toBe(
+        'xhigh'
+      )
+    }
+    // Intent survives rather than collapsing to a default: an on-ladder stop is
+    // untouched, and `xhigh` is Grok's own documented ceiling for these tiers
+    // (normalizeGrok46ReasoningEffort), so the fold cannot disagree with the
+    // renderer, which already clamps the same way.
+    expect(instance.validateThread(threadFixture({ reasoningId: 'low' })).reasoningId).toBe('low')
+    expect(instance.validateThread(threadFixture({ reasoningId: 'xhigh' })).reasoningId).toBe(
+      'xhigh'
+    )
+  })
+
   it('rejects an uncatalogued model, reasoning, or provider', () => {
     const instance = provider()
     expect(() => instance.validateThread(threadFixture({ modelId: 'gpt-9' }))).toThrow(
