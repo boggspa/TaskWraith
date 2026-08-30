@@ -61,7 +61,9 @@ describe('ChatComposerSelectionOverlayStore', () => {
     expect(result.changed).toBe(true)
     expect(result.chat.messages).toBe(source.messages)
     expect(result.chat.runs).toBe(source.runs)
-    expect(result.chat.persistenceRevision).toBe(8)
+    // Revision transparency: the record stays at the Host-visible revision (7);
+    // the overlay's own base+1 pair lives only in the sidecar file.
+    expect(result.chat.persistenceRevision).toBe(7)
     expect(result.chat.providerMetadata).toMatchObject({
       selectedModelType: 'claude-opus-5',
       claudeReasoningEffort: 'high'
@@ -86,7 +88,7 @@ describe('ChatComposerSelectionOverlayStore', () => {
 
     const replayed = restarted.apply(source)
     expect(replayed).toMatchObject({
-      persistenceRevision: 8,
+      persistenceRevision: 7,
       updatedAt: 42,
       workflowMode: 'normal',
       providerMetadata: {
@@ -96,6 +98,10 @@ describe('ChatComposerSelectionOverlayStore', () => {
     })
     expect(replayed.messages).toBe(source.messages)
 
+    // The canonical checkpoint that folds the selection in lands at base+1 and
+    // supersedes the overlay; a later revision ignores the stale overlay too.
+    const foldedCheckpoint = { ...persisted.chat, persistenceRevision: 8 }
+    expect(restarted.apply(foldedCheckpoint)).toBe(foldedCheckpoint)
     const ordinaryCheckpoint = { ...persisted.chat, persistenceRevision: 9 }
     expect(restarted.apply(ordinaryCheckpoint)).toBe(ordinaryCheckpoint)
   })
@@ -119,7 +125,7 @@ describe('ChatComposerSelectionOverlayStore', () => {
       () => 44
     )
 
-    expect(second.chat.persistenceRevision).toBe(8)
+    expect(second.chat.persistenceRevision).toBe(7)
     expect(second.chat.providerMetadata).toMatchObject({
       selectedModelType: 'claude-opus-5',
       claudeReasoningEffort: 'high'
@@ -163,7 +169,38 @@ describe('ChatComposerSelectionOverlayStore', () => {
       providerMetadata: { selectedModelType: 'claude-opus-5' },
       queuedAt: '2026-08-26T12:00:00.000Z'
     })
-    expect(deferred.chat.persistenceRevision).toBe(8)
+    expect(deferred.chat.persistenceRevision).toBe(7)
+  })
+
+  it('never moves the record revision off the Host CAS chain (2026-08-30 wedge)', async () => {
+    // Regression: the overlay used to stamp persistenceRevision = base+1, a
+    // revision the Host had never written. Every saveChatThroughHost after a
+    // picker change then asked the Host to CAS against base+1 while its record
+    // sat at base — thread_record_revision_conflict on every persist, and the
+    // conflict recovery re-derived the same unsatisfiable revision because it
+    // also reads through apply(). 842 conflicts in three days on the live
+    // release profile; one thread failing 95/95 persists.
+    const source = chat()
+    const store = new ChatComposerSelectionOverlayStore(path.join(testRoot, 'chats'))
+
+    const result = await store.persist(
+      source,
+      request({ selectedModelType: 'claude-opus-5' }),
+      () => 42
+    )
+
+    // The patched record stays at the Host-visible revision...
+    expect(result.chat.persistenceRevision).toBe(7)
+    // ...and replaying the overlay over the durable record does not move it
+    // either, so the next whole-record persist keeps
+    // expectedRevision === the Host's revision.
+    const replayed = store.apply(source)
+    expect(replayed.providerMetadata).toMatchObject({ selectedModelType: 'claude-opus-5' })
+    expect(replayed.persistenceRevision).toBe(7)
+    // The canonical checkpoint that folds the selection in lands at base+1 and
+    // supersedes the overlay (the record itself now carries the patch).
+    const checkpointed = { ...result.chat, persistenceRevision: 8 }
+    expect(store.apply(checkpointed)).toBe(checkpointed)
   })
 
   it('removes the adjacent overlay with chat deletion', async () => {

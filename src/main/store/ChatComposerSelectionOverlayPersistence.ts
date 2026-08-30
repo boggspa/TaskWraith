@@ -146,6 +146,18 @@ function materializeOverlay(
  * revision is exactly base+1. The next ordinary canonical chat checkpoint
  * advances beyond that revision and therefore supersedes the overlay without a
  * migration or read-time ambiguity.
+ *
+ * REVISION TRANSPARENCY (2026-08-30 wedge): the overlay's base/revision pair is
+ * supersede bookkeeping ONLY. It must never be stamped onto the record's
+ * `persistenceRevision`: that counter is the Host's compare-and-swap chain and
+ * only advances on writes the Host itself accepted. Stamping base+1 here left
+ * every later `thread.record.persist` asking the Host to CAS against a revision
+ * it had never written, so each save failed `thread_record_revision_conflict`
+ * and the conflict recovery — which reads through `apply` — re-derived the same
+ * unsatisfiable revision forever (measured on the live release profile: 842
+ * conflicts in three days, one thread failing 95/95 persists). The overlay
+ * changes record CONTENT at the record's own revision; the canonical save that
+ * folds the selection in is what advances the chain past the overlay.
  */
 export class ChatComposerSelectionOverlayStore {
   private readonly overlays = new Map<string, StoredComposerSelectionOverlay | null>()
@@ -171,11 +183,13 @@ export class ChatComposerSelectionOverlayStore {
     if (overlay.pendingProviderChange) {
       patched = queueProviderChange(patched, overlay.pendingProviderChange)
     }
+    // Revision transparency: the record keeps its own `persistenceRevision`
+    // (== overlay.baseRevision here). Stamping overlay.revision would invent a
+    // revision the Host never wrote and wedge every later CAS persist.
     return {
       ...patched,
       ...(overlay.workflowMode ? { workflowMode: overlay.workflowMode } : {}),
-      updatedAt: overlay.updatedAt,
-      persistenceRevision: overlay.revision
+      updatedAt: overlay.updatedAt
     }
   }
 
@@ -200,8 +214,9 @@ export class ChatComposerSelectionOverlayStore {
     const hadPreviousOverlay = this.overlays.has(chat.appChatId)
     const previousOverlay = this.overlays.get(chat.appChatId)
     // Publish in memory before the first async filesystem yield. A concurrent
-    // ordinary saveChat then reads the overlayed revision and checkpoints the
-    // selection instead of racing a stale base record against this sidecar.
+    // ordinary saveChat then reads the overlayed CONTENT at the record's own
+    // revision, so the checkpoint it enqueues carries the selection and a CAS
+    // expectation the Host can actually satisfy (base, not base+1).
     this.overlays.set(chat.appChatId, overlay)
     try {
       await writeJsonAtomically(this.overlayPath(chat.appChatId), overlay)
@@ -214,8 +229,7 @@ export class ChatComposerSelectionOverlayStore {
       changed: true,
       chat: {
         ...next,
-        updatedAt,
-        persistenceRevision: revision
+        updatedAt
       }
     }
   }
