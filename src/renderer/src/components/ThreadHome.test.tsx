@@ -191,11 +191,20 @@ describe('ThreadHome', () => {
     expect(html).toContain('Beta repo')
     expect(html).toContain('/work/beta')
     expect(html).toContain('aria-label="Open terminal in Alpha repo, /work/alpha"')
+    expect(html).toContain('Select a CLI to load in the workspace-isolated terminal.')
 
     const empty = renderToStaticMarkup(
       <ThreadHomeTerminalWorkspacePicker workspaces={[]} onSelect={onSelect} />
     )
     expect(empty).toContain('Add a workspace in the sidebar before opening a terminal.')
+  })
+
+  it('passes the selected CLI id to main instead of writing a renderer command', () => {
+    const source = readFileSync('src/renderer/src/components/ThreadHome.tsx', 'utf8')
+
+    expect(source).toContain('window.api.terminal.create(workspace.path, sessionId, cliId)')
+    expect(source).not.toContain('getCommandForCli')
+    expect(source).not.toContain('window.api.terminal.write(sessionId, command')
   })
 
   it('keeps presets visible but disabled without thread authority', () => {

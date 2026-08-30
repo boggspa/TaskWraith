@@ -228,35 +228,6 @@ const NATIVE_CLIS = [
   { id: 'github', label: 'GitHub CLI' }
 ]
 
-export function getCommandForCli(cliId: string): string | null {
-  switch (cliId) {
-    case 'codex':
-      return 'codex'
-    case 'claude':
-      return 'claude'
-    case 'kimi':
-      return 'kimi'
-    case 'cursor':
-      return 'cursor-agent'
-    case 'grok':
-      return 'grok'
-    case 'ollama':
-      return 'ollama'
-    case 'mistral':
-      return 'mistral'
-    case 'agy':
-      return 'agy'
-    case 'pi':
-      return 'pi'
-    case 'muse':
-      return 'muse'
-    case 'github':
-      return 'gh'
-    default:
-      return null
-  }
-}
-
 export function ThreadHomeTerminalWorkspacePicker({
   workspaces,
   busyWorkspacePath,
@@ -332,7 +303,7 @@ export function ThreadHomeTerminalWorkspacePicker({
           <span className="thread-home-thread-provider" style={{ width: 30, height: 30 }} />
           <span>
             <strong>Native CLI Quickload</strong>
-            <small>Select a CLI to load when opening the terminal.</small>
+            <small>Select a CLI to load in the workspace-isolated terminal.</small>
           </span>
         </div>
         <div className="thread-home-terminal-workspace-list is-scrollable">
@@ -1125,7 +1096,7 @@ function ThreadHomeWorkspaceInner(
     const isCurrent = (): boolean =>
       mountedRef.current && terminalOpenGenerationRef.current === generation
     await settleThreadHomeTerminalOpen({
-      request: window.api.terminal.create(workspace.path, sessionId),
+      request: window.api.terminal.create(workspace.path, sessionId, cliId),
       sessionId,
       isCurrent,
       onAccepted: () => {
@@ -1133,13 +1104,6 @@ function ThreadHomeWorkspaceInner(
         terminalSessionRef.current = nextSession
         setTerminalSession(nextSession)
         terminalSidebarStore.recordRecipe(workspace.path)
-
-        if (cliId && cliId !== 'default') {
-          const command = getCommandForCli(cliId)
-          if (command) {
-            window.api.terminal.write(sessionId, command + '\r')
-          }
-        }
       },
       onRejected: setIssue,
       onDiscarded: (discardedSessionId) => window.api.terminal.kill(discardedSessionId)

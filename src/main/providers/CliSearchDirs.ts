@@ -94,6 +94,12 @@ export function getCliSearchDirs(
     binaryPath ? dirname(binaryPath) : '',
     ...userCliSearchDirs,
     ...(inheritedEnv.PATH || '').split(delimiter),
+    // Kimi Code and Grok install their launchers under provider-specific home
+    // directories rather than one of the generic npm/local-bin roots. They
+    // follow the inherited PATH so existing resolution order stays stable,
+    // while still being available to Finder-launched app sessions.
+    join(os.homedir(), '.kimi-code', 'bin'),
+    join(os.homedir(), '.grok', 'bin'),
     ...windowsDirs,
     join(os.homedir(), '.local', 'bin'),
     join(os.homedir(), '.npm-global', 'bin'),

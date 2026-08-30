@@ -722,7 +722,7 @@ declare global {
       hostPlatform: NodeJS.Platform
       getRuntimeVersions: () => NodeJS.ProcessVersions
       terminal: {
-        create: (workspacePath: string, sessionId: string) => Promise<void>
+        create: (workspacePath: string, sessionId: string, cliId?: string) => Promise<void>
         write: (sessionId: string, data: string) => Promise<void>
         resize: (sessionId: string, cols: number, rows: number) => Promise<void>
         detach: (sessionId: string) => Promise<void>

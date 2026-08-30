@@ -541,7 +541,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'clear-kimi-web-session': [],
   // Terminal session channels (src/main/ipc/terminalHandlers.ts). The
   // sessionId argument is the renderer-supplied session key.
-  'terminal:create': ['workspacePath', 'nonEmptyString'],
+  'terminal:create': ['workspacePath', 'nonEmptyString', 'optionalString'],
   'terminal:write': ['nonEmptyString', 'string'],
   'terminal:resize': ['nonEmptyString', 'number', 'number'],
   'terminal:detach': ['nonEmptyString'],

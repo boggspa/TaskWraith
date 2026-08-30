@@ -3,21 +3,24 @@ import { TerminalSessionManager } from '../terminal/TerminalSessionManager'
 
 export interface TerminalHandlerDeps {
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
-  assertSenderWorkspaceScope: (
-    event: Electron.IpcMainInvokeEvent,
-    workspacePath: string
-  ) => void
+  assertSenderWorkspaceScope: (event: Electron.IpcMainInvokeEvent, workspacePath: string) => void
 }
 
-export function registerTerminalHandlers(deps: TerminalHandlerDeps, manager: TerminalSessionManager): void {
+export function registerTerminalHandlers(
+  deps: TerminalHandlerDeps,
+  manager: TerminalSessionManager
+): void {
   const { requireRegisteredWorkspace, assertSenderWorkspaceScope } = deps
 
-  ipcMain.handle('terminal:create', async (event, workspacePath: string, sessionId: string) => {
-    const registeredWorkspace = requireRegisteredWorkspace(workspacePath)
-    assertSenderWorkspaceScope(event, registeredWorkspace)
-    // No requestAgenticServiceApproval gate here as per binding ruling
-    manager.create(registeredWorkspace, sessionId)
-  })
+  ipcMain.handle(
+    'terminal:create',
+    async (event, workspacePath: string, sessionId: string, cliId?: string) => {
+      const registeredWorkspace = requireRegisteredWorkspace(workspacePath)
+      assertSenderWorkspaceScope(event, registeredWorkspace)
+      // No requestAgenticServiceApproval gate here as per binding ruling
+      await manager.create(registeredWorkspace, sessionId, cliId)
+    }
+  )
 
   ipcMain.handle('terminal:write', (_event, sessionId: string, data: string) => {
     manager.write(sessionId, data)

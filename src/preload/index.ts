@@ -541,8 +541,8 @@ const api = {
   hostPlatform: process.platform,
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
   terminal: {
-    create: (workspacePath, sessionId) =>
-      ipcRenderer.invoke('terminal:create', workspacePath, sessionId),
+    create: (workspacePath, sessionId, cliId) =>
+      ipcRenderer.invoke('terminal:create', workspacePath, sessionId, cliId),
     write: (sessionId, data) => ipcRenderer.invoke('terminal:write', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
     detach: (sessionId) => ipcRenderer.invoke('terminal:detach', sessionId),
