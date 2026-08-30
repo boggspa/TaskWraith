@@ -64,7 +64,19 @@ export function mapHostHistoryEntriesToTranscriptRows(
     ...(entry.role === 'assistant' && thread?.reasoning ? { reasoning: thread.reasoning } : {}),
     text: entry.text,
     timestamp: new Date(entry.createdAt).toISOString(),
-    truncated: false
+    truncated: false,
+    ...(entry.tools?.length
+      ? {
+          tools: entry.tools.map((tool) => ({
+            name: tool.name,
+            category: tool.category,
+            status: tool.status,
+            ...(tool.file ? { file: tool.file } : {}),
+            ...(tool.additions !== undefined ? { additions: tool.additions } : {}),
+            ...(tool.deletions !== undefined ? { deletions: tool.deletions } : {})
+          }))
+        }
+      : {})
   }))
 }
 

@@ -266,10 +266,13 @@ function renderToolLine(
     tool.additions !== undefined || tool.deletions !== undefined
       ? `  ${ansi.color(`+${tool.additions ?? 0}`, tones(ansi).good)} ${ansi.color(`-${tool.deletions ?? 0}`, tones(ansi).error)}`
       : ''
+  const file = tool.file ? ` ${glyphs.separator} ${terminalLabel(tool.file)}` : ''
   const detail = tool.detail ? ` ${glyphs.separator} ${terminalLabel(tool.detail)}` : ''
   const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
   return fitAnsiLine(
-    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(`${terminalLabel(tool.name)}${detail}`)}${delta}`,
+    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(
+      `${terminalLabel(tool.name)}${file}${detail}`
+    )}${delta}`,
     width
   )
 }

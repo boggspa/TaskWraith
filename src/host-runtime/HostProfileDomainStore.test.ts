@@ -474,6 +474,30 @@ describe('HostProfileDomainStore', () => {
       status: 'running',
       phase: 'streaming'
     })
+    store.recordRunTool({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      toolId: 'tool-1',
+      toolName: 'Edit',
+      phase: 'started',
+      file: 'src/example.ts',
+      additions: 4,
+      deletions: 2
+    })
+    store.recordRunTool({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      toolId: 'tool-1',
+      phase: 'finished',
+      status: 'success'
+    })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      runId: 'run-1',
+      role: 'assistant',
+      content: 'The file was updated.',
+      timestamp: startedAt
+    })
     store.updateRun({
       threadId: thread.appChatId,
       runId: 'run-1',
@@ -490,7 +514,10 @@ describe('HostProfileDomainStore', () => {
       now: () => 200
     })
     expect(restarted.getThread(thread.appChatId)).toMatchObject({
-      messages: [{ runId: 'run-1', content: 'Run-correlated user message' }],
+      messages: [
+        { runId: 'run-1', content: 'Run-correlated user message' },
+        { runId: 'run-1', role: 'assistant', content: 'The file was updated.' }
+      ],
       runs: [
         {
           runId: 'run-1',
@@ -499,12 +526,40 @@ describe('HostProfileDomainStore', () => {
           startedAt,
           endedAt,
           providerSessionId: '11111111-1111-4111-8111-111111111111',
+          toolActivities: [
+            {
+              id: 'tool-1',
+              name: 'Edit File',
+              category: 'write',
+              status: 'success',
+              file: 'src/example.ts',
+              additions: 4,
+              deletions: 2
+            }
+          ],
           usage: { inputTokens: 11, outputTokens: 13, estimatedCostUsd: 0.001 },
           warningSummaries: ['Muse reported stderr during the run.'],
           errorCode: 'provider_failed'
         }
       ]
     })
+    expect(restarted.threadHistory({ threadId: thread.appChatId, limit: 10 }).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: 'The file was updated.',
+          tools: [
+            expect.objectContaining({
+              name: 'Edit File',
+              category: 'write',
+              status: 'success',
+              file: 'src/example.ts',
+              additions: 4,
+              deletions: 2
+            })
+          ]
+        })
+      ])
+    )
     expect(
       restarted.updateRun({
         threadId: thread.appChatId,

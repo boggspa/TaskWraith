@@ -532,6 +532,44 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(output)).toContain('→ Fable 5 high')
   })
 
+  it('renders file-edit activity with the file path and colored line counts', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.notice = undefined
+    state.thread!.rows.push({
+      id: 'edit-row',
+      role: 'assistant',
+      kind: 'host-history',
+      speaker: 'Claude',
+      provider: state.thread!.thread.provider,
+      model: state.thread!.thread.provider.modelLabel,
+      reasoning: state.thread!.thread.reasoning,
+      text: 'Updated the requested file.',
+      timestamp: new Date(now).toISOString(),
+      truncated: false,
+      tools: [
+        {
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          file: 'src/example.ts',
+          additions: 4,
+          deletions: 2
+        }
+      ]
+    })
+    const output = renderTaskWraithTui(state, {
+      width: 100,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      now,
+      animationEnabled: false
+    })
+    expect(stripAnsi(output)).toContain('Edit File · src/example.ts  +4 -2')
+    expect(output).toMatch(/\u001b\[38;2;[^m]+m\+4/)
+    expect(output).toMatch(/\u001b\[38;2;[^m]+m-2/)
+  })
+
   it('turns selected-thread approvals and questions into actionable footer states', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)

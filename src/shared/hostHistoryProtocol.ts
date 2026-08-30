@@ -4,9 +4,14 @@ export const HOST_HISTORY_MAX_PAGE_SIZE = 100
 export const HOST_HISTORY_DEFAULT_PAGE_SIZE = 50
 export const HOST_HISTORY_MAX_ENTRY_TEXT = 16_000
 export const HOST_HISTORY_MAX_ENTRY_LABEL = 200
+export const HOST_HISTORY_MAX_ENTRY_TOOLS = 32
+export const HOST_HISTORY_MAX_TOOL_NAME = 200
+export const HOST_HISTORY_MAX_TOOL_FILE = 512
 
 export type HostHistoryDecodeResult<T> = { ok: true; value: T } | { ok: false; error: string }
 export type HostTranscriptRole = 'user' | 'assistant' | 'system' | 'tool'
+export type HostHistoryToolCategory = 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
+export type HostHistoryToolStatus = 'running' | 'success' | 'error'
 
 export interface HostHistoryCursor {
   readonly generation: number
@@ -19,12 +24,24 @@ export interface HostThreadHistoryRequest {
   readonly limit: number
 }
 
+/** Bounded display-only tool activity attached to its assistant transcript row. */
+export interface HostHistoryToolEntry {
+  readonly id: string
+  readonly name: string
+  readonly category: HostHistoryToolCategory
+  readonly status: HostHistoryToolStatus
+  readonly file?: string
+  readonly additions?: number
+  readonly deletions?: number
+}
+
 export interface HostTranscriptHistoryEntry {
   readonly entryId: string
   readonly role: HostTranscriptRole
   readonly createdAt: number
   readonly text: string
   readonly label?: string
+  readonly tools?: readonly HostHistoryToolEntry[]
 }
 
 export interface HostThreadHistoryPage {
@@ -167,10 +184,50 @@ export function decodeHostHistorySinceRequest(
   return { ok: true, value: { threadId: value.threadId, since: since.value } }
 }
 
+function decodeHostHistoryToolEntry(
+  value: unknown,
+  index: number
+): HostHistoryDecodeResult<HostHistoryToolEntry> {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['id', 'name', 'category', 'status', 'file', 'additions', 'deletions']) ||
+    !isCanonicalString(value.id, MAX_ID) ||
+    !isCanonicalString(value.name, HOST_HISTORY_MAX_TOOL_NAME) ||
+    !['task', 'read', 'write', 'search', 'shell', 'unknown'].includes(String(value.category)) ||
+    !['running', 'success', 'error'].includes(String(value.status))
+  ) {
+    return fail(`history tool entry ${index} is invalid`)
+  }
+  if (value.file !== undefined && !isCanonicalString(value.file, HOST_HISTORY_MAX_TOOL_FILE)) {
+    return fail(`history tool entry ${index} is invalid`)
+  }
+  if (value.additions !== undefined && !isNonNegativeInt(value.additions)) {
+    return fail(`history tool entry ${index} is invalid`)
+  }
+  if (value.deletions !== undefined && !isNonNegativeInt(value.deletions)) {
+    return fail(`history tool entry ${index} is invalid`)
+  }
+  return {
+    ok: true,
+    value: {
+      id: value.id,
+      name: value.name,
+      category: value.category as HostHistoryToolCategory,
+      status: value.status as HostHistoryToolStatus,
+      ...(value.file !== undefined ? { file: value.file } : {}),
+      ...(value.additions !== undefined ? { additions: value.additions } : {}),
+      ...(value.deletions !== undefined ? { deletions: value.deletions } : {})
+    }
+  }
+}
+
 export function decodeHostTranscriptHistoryEntry(
   value: unknown
 ): HostHistoryDecodeResult<HostTranscriptHistoryEntry> {
-  if (!isRecord(value) || !exactKeys(value, ['entryId', 'role', 'createdAt', 'text', 'label'])) {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['entryId', 'role', 'createdAt', 'text', 'label', 'tools'])
+  ) {
     return fail('history entry is invalid')
   }
   if (!isCanonicalString(value.entryId, MAX_ID) || !isNonNegativeInt(value.createdAt)) {
@@ -185,6 +242,20 @@ export function decodeHostTranscriptHistoryEntry(
   if (value.label !== undefined && !isCanonicalString(value.label, HOST_HISTORY_MAX_ENTRY_LABEL)) {
     return fail('history entry is invalid')
   }
+  let tools: HostHistoryToolEntry[] | undefined
+  if (value.tools !== undefined) {
+    if (!Array.isArray(value.tools) || value.tools.length > HOST_HISTORY_MAX_ENTRY_TOOLS) {
+      return fail('history entry is invalid')
+    }
+    const ids = new Set<string>()
+    tools = []
+    for (let index = 0; index < value.tools.length; index += 1) {
+      const decoded = decodeHostHistoryToolEntry(value.tools[index], index)
+      if (!decoded.ok || ids.has(decoded.value.id)) return fail('history entry is invalid')
+      ids.add(decoded.value.id)
+      tools.push(decoded.value)
+    }
+  }
   return {
     ok: true,
     value: {
@@ -192,7 +263,8 @@ export function decodeHostTranscriptHistoryEntry(
       role: value.role as HostTranscriptRole,
       createdAt: value.createdAt,
       text: value.text,
-      ...(value.label ? { label: value.label } : {})
+      ...(value.label ? { label: value.label } : {}),
+      ...(tools && tools.length > 0 ? { tools } : {})
     }
   }
 }

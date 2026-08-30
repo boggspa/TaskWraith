@@ -33,6 +33,39 @@ describe('host history protocol', () => {
     ).toMatchObject({ ok: true })
   })
 
+  it('decodes display-only tool activity without accepting raw payloads', () => {
+    const entry = {
+      ...ENTRY,
+      tools: [
+        {
+          id: 'tool-1',
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          file: 'src/example.ts',
+          additions: 4,
+          deletions: 2
+        }
+      ]
+    }
+    expect(
+      decodeHostThreadHistoryPage({
+        threadId: 'thread-1',
+        generation: 2,
+        cursor: 4,
+        entries: [entry]
+      })
+    ).toMatchObject({ ok: true, value: { entries: [entry] } })
+    expect(
+      decodeHostThreadHistoryPage({
+        threadId: 'thread-1',
+        generation: 2,
+        cursor: 4,
+        entries: [{ ...entry, tools: [{ ...entry.tools[0], output: 'raw' }] }]
+      })
+    ).toEqual({ ok: false, error: 'thread history page is invalid' })
+  })
+
   it('decodes separate history deltas and their event frame', () => {
     const result = {
       kind: 'deltas',

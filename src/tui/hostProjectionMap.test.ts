@@ -115,6 +115,45 @@ describe('hostProjectionMap', () => {
     })
   })
 
+  it('maps bounded file-edit activity onto the assistant row', () => {
+    const thread = mapHostSnapshotToThreadDetail(snapshotWithThread(), 'thread-1')!.thread.thread
+    const row = mapHostHistoryEntriesToTranscriptRows(
+      [
+        {
+          entryId: 'history-edit',
+          role: 'assistant',
+          createdAt: 1,
+          text: 'Updated the file.',
+          tools: [
+            {
+              id: 'tool-edit',
+              name: 'Edit File',
+              category: 'write',
+              status: 'success',
+              file: 'src/example.ts',
+              additions: 4,
+              deletions: 2
+            }
+          ]
+        }
+      ],
+      thread
+    )[0]
+    expect(row).toMatchObject({
+      text: 'Updated the file.',
+      tools: [
+        {
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          file: 'src/example.ts',
+          additions: 4,
+          deletions: 2
+        }
+      ]
+    })
+  })
+
   it('maps workspaces and threads onto the control snapshot shape', () => {
     const mapped = mapHostSnapshotToControlSnapshot(snapshotWithThread())
     expect(mapped.generatedAt).toBe('2026-08-06T12:00:00.000Z')

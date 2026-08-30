@@ -33,6 +33,9 @@ import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
+  HostHistoryToolCategory,
+  HostHistoryToolEntry,
+  HostHistoryToolStatus,
   HostThreadHistoryPage,
   HostThreadHistoryRequest,
   HostTranscriptHistoryEntry
@@ -56,6 +59,7 @@ const PRIVATE_FILE_MODE = 0o600
 const MAX_WORKSPACES_BYTES = 4 * 1024 * 1024
 const MAX_CHAT_BYTES = 64 * 1024 * 1024
 const MAX_TEXT = 16_000
+const MAX_RUN_TOOL_ACTIVITIES = 64
 /** Preview length the Host projection has always published. */
 const MAX_THREAD_PREVIEW = 2_000
 /**
@@ -142,6 +146,7 @@ export interface HostProfileRun {
   readonly endedAt?: string
   readonly requestedModel?: string
   readonly providerSessionId?: string
+  readonly toolActivities?: readonly HostHistoryToolEntry[]
   readonly usage?: HostProfileRunUsage
   readonly warningSummaries?: readonly string[]
   readonly errorCode?: 'provider_setup_unavailable' | 'provider_launch_failed' | 'provider_failed'
@@ -424,6 +429,61 @@ function safeRunUsage(value: unknown): value is HostProfileRunUsage {
   return true
 }
 
+function safeProfileToolActivity(value: unknown): value is HostHistoryToolEntry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (
+    !safeId(record.id) ||
+    !safeText(record.name, 200) ||
+    !['task', 'read', 'write', 'search', 'shell', 'unknown'].includes(String(record.category)) ||
+    !['running', 'success', 'error'].includes(String(record.status))
+  ) {
+    return false
+  }
+  if (record.file !== undefined && !safeId(record.file)) return false
+  if (
+    record.additions !== undefined &&
+    (typeof record.additions !== 'number' ||
+      !Number.isSafeInteger(record.additions) ||
+      record.additions < 0)
+  ) {
+    return false
+  }
+  if (
+    record.deletions !== undefined &&
+    (typeof record.deletions !== 'number' ||
+      !Number.isSafeInteger(record.deletions) ||
+      record.deletions < 0)
+  ) {
+    return false
+  }
+  return true
+}
+
+function profileToolPresentation(toolName: string | undefined): {
+  name: string
+  category: HostHistoryToolCategory
+} {
+  const raw = toolName?.trim() || 'Tool'
+  const normalized = raw
+    .toLowerCase()
+    .replace(/^mcp__[^_]+__/i, '')
+    .replace(/^taskwraith(?:-broker)?[_-]+/i, '')
+  if (/(?:write|edit|replace|patch|create|delete|remove|move|rename)(?:[_ -]|$)/.test(normalized)) {
+    return { name: 'Edit File', category: 'write' }
+  }
+  if (/(?:read|list|view|open)(?:[_ -]|$)/.test(normalized)) {
+    return { name: raw.slice(0, 200), category: 'read' }
+  }
+  if (/(?:search|grep|glob|find)(?:[_ -]|$)/.test(normalized)) {
+    return { name: raw.slice(0, 200), category: 'search' }
+  }
+  if (/(?:shell|bash|terminal|command|exec)(?:[_ -]|$)/.test(normalized)) {
+    return { name: raw.slice(0, 200), category: 'shell' }
+  }
+  return { name: raw.slice(0, 200), category: 'unknown' }
+}
+
 function sameRunUsage(
   left: HostProfileRunUsage | undefined,
   right: HostProfileRunUsage | undefined
@@ -665,6 +725,15 @@ function decodeThread(value: unknown): HostProfileThread {
         (record.startedAt !== undefined && !safeText(record.startedAt, 80)) ||
         (record.endedAt !== undefined && !safeText(record.endedAt, 80)) ||
         (record.providerSessionId !== undefined && !safeId(record.providerSessionId)) ||
+        (record.toolActivities !== undefined &&
+          (!Array.isArray(record.toolActivities) ||
+            record.toolActivities.length > MAX_RUN_TOOL_ACTIVITIES ||
+            record.toolActivities.some((activity) => !safeProfileToolActivity(activity)) ||
+            new Set(
+              record.toolActivities
+                .filter((activity) => safeProfileToolActivity(activity))
+                .map((activity) => (activity as HostHistoryToolEntry).id)
+            ).size !== record.toolActivities.length)) ||
         (record.usage !== undefined && !safeRunUsage(record.usage)) ||
         (record.warningSummaries !== undefined &&
           (!Array.isArray(record.warningSummaries) ||
@@ -1581,6 +1650,92 @@ export class HostProfileDomainStore {
     return next
   }
 
+  /** Persist only bounded tool presentation metadata; raw tool payloads stay out of the profile. */
+  recordRunTool(input: {
+    threadId: string
+    runId: string
+    toolId: string
+    toolName?: string
+    phase: 'started' | 'finished'
+    status?: HostHistoryToolStatus
+    file?: string
+    additions?: number
+    deletions?: number
+  }): HostProfileThread {
+    this.assertAuthority()
+    this.requireId(input.threadId)
+    this.requireId(input.runId)
+    this.requireId(input.toolId)
+    if (input.toolName !== undefined && !safeText(input.toolName, 200)) {
+      throw new Error('Invalid tool name')
+    }
+    if (input.file !== undefined && !safeId(input.file)) throw new Error('Invalid tool file')
+    if (input.phase !== 'started' && input.phase !== 'finished') {
+      throw new Error('Invalid tool phase')
+    }
+    if (
+      input.status !== undefined &&
+      input.status !== 'running' &&
+      input.status !== 'success' &&
+      input.status !== 'error'
+    ) {
+      throw new Error('Invalid tool status')
+    }
+    if (
+      (input.additions !== undefined &&
+        (!Number.isSafeInteger(input.additions) || input.additions < 0)) ||
+      (input.deletions !== undefined &&
+        (!Number.isSafeInteger(input.deletions) || input.deletions < 0))
+    ) {
+      throw new Error('Invalid tool line counts')
+    }
+    const current = this.requireThread(input.threadId)
+    const runs = [...(current.runs ?? [])]
+    const runIndex = runs.findIndex((run) => run.runId === input.runId)
+    if (runIndex < 0) throw new Error('Run is not found')
+    const run = runs[runIndex]!
+    const activities = [...(run.toolActivities ?? [])]
+    const existingIndex = activities.findIndex((activity) => activity.id === input.toolId)
+    const existing = existingIndex >= 0 ? activities[existingIndex] : undefined
+    if (input.phase === 'started' && existing && existing.status !== 'running') return current
+    const presentation = profileToolPresentation(input.toolName)
+    const activity: HostHistoryToolEntry = {
+      id: input.toolId,
+      name: input.toolName ? presentation.name : (existing?.name ?? presentation.name),
+      category: input.toolName
+        ? presentation.category
+        : (existing?.category ?? presentation.category),
+      status: input.phase === 'started' ? 'running' : (input.status ?? 'success'),
+      ...(input.file !== undefined
+        ? { file: input.file }
+        : existing?.file !== undefined
+          ? { file: existing.file }
+          : {}),
+      ...(input.additions !== undefined
+        ? { additions: input.additions }
+        : existing?.additions !== undefined
+          ? { additions: existing.additions }
+          : {}),
+      ...(input.deletions !== undefined
+        ? { deletions: input.deletions }
+        : existing?.deletions !== undefined
+          ? { deletions: existing.deletions }
+          : {})
+    }
+    if (existingIndex >= 0) activities[existingIndex] = activity
+    else activities.push(activity)
+    const nextRun = { ...run, toolActivities: activities.slice(-MAX_RUN_TOOL_ACTIVITIES) }
+    runs[runIndex] = nextRun
+    const next = {
+      ...current,
+      runs,
+      persistenceRevision: this.nextRevision(current),
+      updatedAt: this.now()
+    }
+    this.writeThread(next)
+    return next
+  }
+
   updateRun(input: {
     threadId: string
     runId: string
@@ -1947,7 +2102,15 @@ export class HostProfileDomainStore {
           createdAt: Number.isFinite(Date.parse(message.timestamp))
             ? Date.parse(message.timestamp)
             : 0,
-          text: message.content
+          text: message.content,
+          ...(message.role === 'assistant' && message.runId
+            ? {
+                tools:
+                  thread.runs
+                    ?.find((run) => run.runId === message.runId)
+                    ?.toolActivities?.map((activity) => ({ ...activity })) ?? []
+              }
+            : {})
         }
       ]
     })
