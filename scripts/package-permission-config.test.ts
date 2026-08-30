@@ -86,6 +86,7 @@ describe('app.asar denylist', () => {
   // `files` is a DENYLIST: anything not excluded is bundled. A dropped entry
   // is silent — the build still succeeds and the tree just ships.
   it.each([
+    ['.taskwraith-worktrees/**'],
     ['.work-guard/**'],
     ['.tmp_vitest/**'],
     ['.WORK-IN-PROGRESS-*.md'],

@@ -27,6 +27,7 @@ files:
   - '!.claude/**'
   - '!.cursor/**'
   - '!.fixpass*'
+  - '!.taskwraith-worktrees/**'
   - '!.wsa-*'
   # Shared-checkout coordination markers (AGENTS.md / CLAUDE.md). These are
   # untracked and gitignored, but this list is a denylist, so without these
