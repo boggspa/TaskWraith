@@ -244,6 +244,44 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it('allows an explicitly opted-in provider to send images despite a stale capability flag', () => {
+    const child = new FakeAcpChild()
+    const image = Buffer.from('grok-vision-image')
+    const readImageFile = vi.fn(() => image)
+    const { events, handle } = baseOptions(child, {
+      prompt: 'describe this',
+      imagePaths: ['/authorized/image.png'],
+      readImageFile,
+      allowUnadvertisedPromptImages: true
+    })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { promptCapabilities: { image: false } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'grok-image-session' } })
+
+    expect(child.killed).toBe(false)
+    expect(child.sent().some((message) => message.method === 'session/new')).toBe(true)
+    expect(child.sent().find((message) => message.method === 'session/prompt')).toMatchObject({
+      params: {
+        sessionId: 'grok-image-session',
+        prompt: [
+          { type: 'text', text: 'describe this' },
+          { type: 'image', mimeType: 'image/png', data: image.toString('base64') }
+        ]
+      }
+    })
+    expect(readImageFile).toHaveBeenCalledWith('/authorized/image.png')
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: expect.stringContaining('forwarding the verified inline image blocks')
+    })
+
+    handle.cancel()
+  })
+
   it('rejects an oversized initial image set before reading any file', () => {
     const child = new FakeAcpChild()
     const readImageFile = vi.fn(() => Buffer.from('image'))
@@ -1766,6 +1804,38 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     expect(onRejected).toHaveBeenCalledWith(expect.stringMatching(/promptCapabilities\.image=true/))
     expect(readImageFile).not.toHaveBeenCalled()
     expect(child.sent().filter((message) => message.method === 'session/cancel')).toHaveLength(0)
+    handle.cancel()
+  })
+
+  it('allows an opted-in provider to steer with images despite a stale capability flag', () => {
+    const child = new FakeAcpChild()
+    const image = Buffer.from('grok-steer-image')
+    const readImageFile = vi.fn(() => image)
+    const { handle } = baseOptions(child, {
+      readImageFile,
+      allowUnadvertisedPromptImages: true
+    })
+    driveToInFlightPrompt(child)
+    const onDelivered = vi.fn()
+
+    expect(
+      handle.steer('inspect this screenshot', {
+        imagePaths: ['/authorized/steer.png'],
+        onDelivered
+      })
+    ).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+
+    const followUp = promptsSent(child)[1]
+    expect(followUp).toMatchObject({
+      params: {
+        prompt: [
+          { type: 'text', text: 'inspect this screenshot' },
+          { type: 'image', mimeType: 'image/png', data: image.toString('base64') }
+        ]
+      }
+    })
+    expect(readImageFile).toHaveBeenCalledWith('/authorized/steer.png')
     handle.cancel()
   })
 
