@@ -2450,13 +2450,13 @@
   .first-launch-sheet-provider-card-label {
   color: color-mix(in srgb, var(--provider-claude-color) 78%, var(--text-primary));
 }
-.first-launch-sheet-provider-card[data-provider="gemini"] {
-  border-color: color-mix(in srgb, var(--provider-gemini-color) 38%, var(--surface-border));
-  background: color-mix(in srgb, var(--provider-gemini-color) 6%, transparent);
+.first-launch-sheet-provider-card[data-provider="muse"] {
+  border-color: color-mix(in srgb, var(--provider-muse-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-muse-color) 6%, transparent);
 }
-.first-launch-sheet-provider-card[data-provider="gemini"]
+.first-launch-sheet-provider-card[data-provider="muse"]
   .first-launch-sheet-provider-card-label {
-  color: color-mix(in srgb, var(--provider-gemini-color) 78%, var(--text-primary));
+  color: color-mix(in srgb, var(--provider-muse-color) 78%, var(--text-primary));
 }
 .first-launch-sheet-provider-card[data-provider="kimi"] {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 38%, var(--surface-border));
@@ -2528,8 +2528,8 @@
 .first-launch-sheet-provider-card[data-provider="claude"] {
   --card-accent: var(--provider-claude-color);
 }
-.first-launch-sheet-provider-card[data-provider="gemini"] {
-  --card-accent: var(--provider-gemini-color);
+.first-launch-sheet-provider-card[data-provider="muse"] {
+  --card-accent: var(--provider-muse-color);
 }
 .first-launch-sheet-provider-card[data-provider="kimi"] {
   --card-accent: var(--provider-kimi-color);
@@ -2558,15 +2558,6 @@
     0 0 0 1px color-mix(in srgb, var(--card-accent, rgba(255, 255, 255, 0.5)) 30%, transparent),
     0 6px 22px color-mix(in srgb, var(--card-accent, rgba(255, 255, 255, 0.5)) 16%, transparent);
   transform: translateY(-1px);
-}
-.first-launch-sheet-provider-card-optional-badge {
-  font-size: 0.7em;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-tertiary);
 }
 .first-launch-sheet-provider-card-status {
   display: flex;
@@ -3073,10 +3064,6 @@
 :root[data-theme='light'] .first-launch-sheet-helper-kbd,
 .theme-light .first-launch-sheet-helper-kbd {
   background: rgba(0, 0, 0, 0.08);
-}
-:root[data-theme='light'] .first-launch-sheet-provider-card-optional-badge,
-.theme-light .first-launch-sheet-provider-card-optional-badge {
-  background: rgba(0, 0, 0, 0.06);
 }
 :root[data-theme='light'] .first-launch-sheet-preference-card,
 .theme-light .first-launch-sheet-preference-card,

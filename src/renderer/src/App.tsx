@@ -32260,6 +32260,7 @@ function App(): React.JSX.Element {
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
         mistralStatus={agentStatusByProvider.mistral}
+        museStatus={agentStatusByProvider.muse}
         antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes('antigravity')}
         ollamaProviderAvailable={
           agentStatusByProvider.ollama?.available === true &&

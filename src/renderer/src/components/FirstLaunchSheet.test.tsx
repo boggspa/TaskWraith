@@ -53,7 +53,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toBe('')
   })
 
-  it('renders live onboarding plus historical Gemini reporting when open', () => {
+  it('renders live onboarding including the Muse card, with Gemini retired', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -65,7 +65,8 @@ describe('FirstLaunchSheet', () => {
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
-    expect(html).toContain('data-provider="gemini"')
+    expect(html).toContain('data-provider="muse"')
+    expect(html).not.toContain('data-provider="gemini"')
     // AntiGravity stays hidden until BOTH pieces of its conditional setup exist.
     expect(html).not.toContain('data-provider="antigravity"')
     expect(html).toContain('data-provider="kimi"')
@@ -100,6 +101,30 @@ describe('FirstLaunchSheet', () => {
     expect(card).toContain('Sign in')
     expect(card).toContain('Pi’s metered Mistral API-key route')
     expect(card).not.toContain('Sign out')
+  })
+
+  it('shows no Optional/Conditional badge chip on any provider card', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        antigravityProviderOffered={true}
+      />
+    )
+    // Scoped to the provider grid: other sheet sections (the GitHub CLI
+    // install card, the product-observation survey) have their own,
+    // unrelated "Optional" badges that are out of scope here.
+    expect(html).not.toContain('first-launch-sheet-provider-card-optional-badge')
+    const grid = html.slice(
+      html.indexOf('first-launch-sheet-provider-grid'),
+      html.indexOf('first-launch-sheet-install')
+    )
+    expect(grid).not.toContain('>Optional<')
+    expect(grid).not.toContain('>Conditional<')
   })
 
   it('renders Welcome heading and the numbered onboarding sections', () => {
@@ -293,22 +318,25 @@ describe('FirstLaunchSheet', () => {
     expect(card).not.toContain('first-launch-sheet-provider-card-deemphasised')
   })
 
-  it('reports historical Gemini without offering a new-run action', () => {
+  it('offers Muse Code setup with real sign-in and sign-out actions', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
         onDismiss={() => {}}
         onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+        museStatus={{ available: true, credentialPresent: true }}
+      />
     )
-    const card = providerCardMarkup(html, 'gemini')
-    expect(card).toContain('Historical · not offered for new runs')
-    expect(card).toContain('Historical')
-    expect(card).not.toContain('Sign in')
-    expect(card).not.toContain('Open Settings')
-    expect(card).not.toContain('Manage in Settings')
+    const card = providerCardMarkup(html, 'muse')
+    expect(card).toContain('Muse Code CLI over the Meta Model API')
+    expect(card).toContain('Muse Code configured')
+    expect(card).toContain('Sign out')
+    expect(card).toContain('Manage in Settings')
   })
 
   it('shows AntiGravity only when the host conditional-offer snapshot includes it', () => {

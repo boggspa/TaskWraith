@@ -13,6 +13,7 @@ import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseMistralVibeStatus,
+  summariseMuseCodeStatus,
   summariseOllamaStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthVariant
@@ -103,6 +104,10 @@ export interface FirstLaunchSheetProps {
    * read Vibe's private credential store, so this only drives truthful setup
    * guidance rather than a guessed sign-in state. */
   mistralStatus?: unknown
+  /** Muse Code CLI status (binary presence + opaque Meta Model API credential
+   * state). Fail-closed like Mistral's probe — a missing status object reads
+   * as "not checked yet", never as signed in. */
+  museStatus?: unknown
   /** Whether TaskWraith can see a local Ollama runtime/service. Used only as
    * the fallback when the full `ollamaStatus` snapshot isn't wired. */
   ollamaProviderAvailable?: boolean
@@ -269,6 +274,7 @@ export function FirstLaunchSheet({
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
   mistralStatus,
+  museStatus,
   ollamaProviderAvailable = false,
   ollamaStatus,
   antigravityProviderOffered = false,
@@ -372,6 +378,7 @@ export function FirstLaunchSheet({
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
   const mistralSummary = summariseMistralVibeStatus(mistralStatus)
+  const museSummary = summariseMuseCodeStatus(museStatus)
   // Hosts that only pass the reachability boolean still get a truthful
   // runtime answer; the account half simply stays "not signed in".
   const ollamaSnapshot =
@@ -474,17 +481,12 @@ export function FirstLaunchSheet({
       localOnly: true
     },
     {
-      id: 'gemini',
-      label: 'Gemini',
+      id: 'muse',
+      label: 'Muse',
       description:
-        'Historical Gemini provider identity. Existing chats, usage, and audit records remain attributed to Gemini, but it is not offered for new runs.',
-      variant: 'partial',
-      statusText: 'Historical · not offered for new runs',
-      hint:
-        'Kept visible for honest reporting and history continuity; there is no new-run sign-in or enable action here.',
-      badge: 'Historical',
-      deemphasised: true,
-      reportingOnly: true
+        'Muse Code CLI over the Meta Model API. Sign in with `muse login` or a Meta Model API key; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
+      ...museSummary,
+      optional: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the
@@ -1065,11 +1067,6 @@ function ProviderCard({
       <div className="first-launch-sheet-provider-card-header">
         <ProviderBrandLogo provider={row.id} className="first-launch-sheet-provider-card-logo" />
         <span className="first-launch-sheet-provider-card-label">{row.label}</span>
-        {(row.badge || row.optional) && (
-          <span className="first-launch-sheet-provider-card-optional-badge">
-            {row.badge || 'Optional'}
-          </span>
-        )}
       </div>
       <div className="first-launch-sheet-provider-card-status">
         <span
