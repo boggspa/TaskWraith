@@ -149,7 +149,7 @@
 }
 
 .activity-progress-note[data-provider="ollama"] {
-  --activity-progress-note-thinking-accent: var(--provider-ollama-color, #1a8562);
+  --activity-progress-note-thinking-accent: var(--provider-ollama-color, #976c52);
 }
 
 .activity-progress-note-thinking-icon {
@@ -452,7 +452,7 @@
 .compact-tool-trace-provider.provider-kimi   { color: var(--provider-kimi-color,   #0073e6); }
 .compact-tool-trace-provider.provider-grok   { color: var(--provider-grok-color,   #757575); }
 .compact-tool-trace-provider.provider-cursor { color: var(--provider-cursor-color, #8c7508); }
-.compact-tool-trace-provider.provider-ollama { color: var(--provider-ollama-color, #1a8562); }
+.compact-tool-trace-provider.provider-ollama { color: var(--provider-ollama-color, #976c52); }
 
 /* Shared clickable file reference (compact trace + activity rows). A link-
  * styled button that resets native chrome but leaves font-weight/style/color

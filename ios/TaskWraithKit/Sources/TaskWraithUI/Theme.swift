@@ -163,7 +163,7 @@ public enum TWTheme {
         case "claude": return 0xB16105
         case "kimi": return 0x0073E6
         case "cursor": return 0x8C7508
-        case "ollama": return 0x1A8562
+        case "ollama": return 0x976C52
         case "antigravity", "google": return 0x308713
         case "pi": return 0x68768C
         case "muse": return 0x1671EA
@@ -202,10 +202,13 @@ public enum TWTheme {
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
         case "openrouter": return 0xE02948
-        // TaskWraith design token: the flagship Inkling card's #0155BF with
-        // lightness raised only enough for AA on white and black; not a claim
-        // that Thinking Machines publishes #016EF6 as a corporate brand colour.
-        case "thinkingmachines": return 0x016EF6
+        // TaskWraith design token, not a claim about Thinking Machines' brand.
+        // It was the flagship Inkling card's #0155BF raised to this palette's
+        // AA-on-both-grounds luminance, which landed on #016EF6 — CIEDE2000
+        // dE 1.73 from meta/muse and 1.88 from gemini, i.e. the same colour on
+        // a chip strip. The blue band is full, so Inkling wears a rose of its
+        // own: dE 9.28 from liquid and 9.50 from the openrouter fallback.
+        case "thinkingmachines": return 0xC24E68
         default: return chroma1Hex
         }
     }

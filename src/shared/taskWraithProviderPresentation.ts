@@ -17,7 +17,7 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   kimi: '#0073E6',
   grok: '#757575',
   cursor: '#8C7508',
-  ollama: '#1A8562',
+  ollama: '#976C52',
   antigravity: '#308713',
   pi: '#68768C',
   muse: '#1671EA',
@@ -40,10 +40,14 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   cerebras: '#BB584A',
   groq: '#088482',
   openrouter: '#E02948',
-  // TaskWraith token derived from Inkling's official #0155BF model-card blue;
-  // only lightness is raised so it clears the palette's two-sided AA floor.
-  // Thinking Machines does not publish this as a corporate brand colour.
-  thinkingmachines: '#016EF6'
+  // TaskWraith token. It was derived from Inkling's official #0155BF model-card
+  // blue and shipped as #016EF6, which turned out to be CIEDE2000 dE 1.73 from
+  // meta/muse above and dE 1.88 from gemini — the same colour on a chip strip.
+  // The blue band is full, so Inkling wears a rose of its own, held clear of
+  // liquid (dE 9.28) and of the openrouter fallback (dE 9.50) at the palette's
+  // equal-contrast luminance. Thinking Machines does not publish either value
+  // as a corporate brand colour.
+  thinkingmachines: '#C24E68'
 } as const
 
 export const TASKWRAITH_PROVIDER_ACCENT_ALIASES = {

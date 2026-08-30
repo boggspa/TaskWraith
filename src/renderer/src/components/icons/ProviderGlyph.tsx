@@ -29,7 +29,7 @@ const ENSEMBLE_SPECTRUM_STOPS = [
   ['.467', '#8C7508', 'cursor'],
   ['.533', '#538200', 'nvidia'],
   ['.60', '#308713', 'antigravity'],
-  ['.667', '#1A8562', 'ollama'],
+  ['.667', '#976C52', 'ollama'],
   ['.733', '#0C8194', 'poolside'],
   ['.80', '#0073E6', 'kimi'],
   ['.867', '#346EEC', 'gemini'],

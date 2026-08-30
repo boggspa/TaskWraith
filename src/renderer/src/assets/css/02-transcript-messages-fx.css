@@ -154,7 +154,7 @@
 }
 
 .app-transcript.provider-ollama {
-  --agent-accent-rgb: 26 133 98;
+  --agent-accent-rgb: 151 108 82;
   --transcript-provider-color: var(--provider-ollama-color);
 }
 

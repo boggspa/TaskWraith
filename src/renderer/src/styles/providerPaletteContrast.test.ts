@@ -42,7 +42,7 @@ const STATIC_PROVIDER_COLORS = {
   kimi: '#0073E6',
   grok: '#757575',
   cursor: '#8C7508',
-  ollama: '#1A8562',
+  ollama: '#976C52',
   antigravity: '#308713',
   ensemble: '#986781',
   alibaba: '#8C52EF',
@@ -67,7 +67,7 @@ const STATIC_PROVIDER_COLORS = {
   cerebras: '#BB584A',
   groq: '#088482',
   openrouter: '#E02948',
-  thinkingmachines: '#016EF6',
+  thinkingmachines: '#C24E68',
   xiaomi: '#008844'
 } as const
 
@@ -85,7 +85,7 @@ const IOS_PROVIDER_CASES = [
   ['case "kimi"', '#0073E6'],
   ['case "grok"', '#757575'],
   ['case "cursor"', '#8C7508'],
-  ['case "ollama"', '#1A8562'],
+  ['case "ollama"', '#976C52'],
   ['case "antigravity", "google"', '#308713'],
   ['case "ensemble"', '#986781'],
   ['case "alibaba", "qwen"', '#8C52EF'],
@@ -99,7 +99,7 @@ const IOS_PROVIDER_CASES = [
   ['case "openbmb"', '#E22B17'],
   ['case "poolside"', '#0C8194'],
   ['case "openrouter"', '#E02948'],
-  ['case "thinkingmachines"', '#016EF6']
+  ['case "thinkingmachines"', '#C24E68']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {
@@ -109,7 +109,7 @@ const PROVIDER_RGB_TRIPLETS = {
   kimi: '0 115 230',
   grok: '117 117 117',
   cursor: '140 117 8',
-  ollama: '26 133 98',
+  ollama: '151 108 82',
   ensemble: '152 103 129'
 } as const
 

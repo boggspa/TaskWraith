@@ -93,7 +93,7 @@ const OFFICIAL_PROVIDER_POOL_ASSETS: readonly {
   { providerLogo: 'kimi', label: 'Kimi', accent: '#0073E6' },
   { providerLogo: 'cursor', label: 'Cursor', accent: '#8C7508' },
   { providerLogo: 'grok', label: 'Grok', accent: '#757575' },
-  { providerLogo: 'ollama', label: 'Ollama', accent: '#1A8562' },
+  { providerLogo: 'ollama', label: 'Ollama', accent: '#976C52' },
   { providerLogo: 'antigravity', label: 'Antigravity', accent: '#308713' },
   { providerLogo: 'pi', label: 'Pi', accent: '#68768C' },
   { providerLogo: 'mistral', label: 'Mistral', accent: '#D44404' },

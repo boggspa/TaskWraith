@@ -507,7 +507,7 @@
   box-shadow: inset 3px 0 0 var(--provider-cursor-color, #8c7508);
 }
 .model-usage-table-provider.provider-ollama .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-ollama-color, #1a8562);
+  box-shadow: inset 3px 0 0 var(--provider-ollama-color, #976c52);
 }
 
 .model-usage-table-provider--memory .model-usage-table-memory,

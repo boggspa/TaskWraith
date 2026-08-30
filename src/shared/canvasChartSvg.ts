@@ -26,7 +26,7 @@ export const CANVAS_CHART_SERIES_COLORS = [
   '#0073E6', // kimi
   '#757575', // grok
   '#8C7508', // cursor
-  '#1A8562', // ollama
+  '#976C52', // ollama
   '#308713' // antigravity
 ] as const
 

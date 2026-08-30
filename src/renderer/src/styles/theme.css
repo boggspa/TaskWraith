@@ -213,8 +213,15 @@
   --provider-grok-color: #757575;
   /* Cursor (Composer 2.5) — saturated golden yellow (leans yellow, not orange). */
   --provider-cursor-color: #8C7508;
-  /* Ollama / Local — green-teal for on-device inference. */
-  --provider-ollama-color: #1A8562;
+  /* Ollama / Local — walnut brown for on-device inference. The old green-teal
+   * #1A8562 sat only CIEDE2000 dE 7.89 from Xiaomi's #008844, barely over the
+   * dE 7.6 bar this palette uses for a new hue and the tightest pair in the
+   * green band. Brown is the one warm family with headroom left: at this
+   * palette's luminance a brown is a LOW-CHROMA orange (C* 25 against Claude's
+   * 63), and it is that chroma gap, not hue, that buys the separation the
+   * crowded 6-32 degree orange band could not. Nearest neighbours are cerebras
+   * dE 12.9 and claude dE 13.0. */
+  --provider-ollama-color: #976C52;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */
   --provider-antigravity-color: #308713;
   /* Pi — cold slate. Every other hue in this palette sits at ~4.58 contrast
@@ -284,9 +291,15 @@
   --provider-groq-color: #088482;
   --provider-openrouter-color: #E02948;
   /* Thinking Machines has not published this as a corporate brand colour.
-   * TaskWraith takes the flagship Inkling card blue (#0155BF) and adjusts only
-   * its lightness to meet AA on both white and black. */
-  --provider-thinkingmachines-color: #016EF6;
+   * TaskWraith previously derived the token from the flagship Inkling card
+   * blue (#0155BF), which landed on #016EF6 — a royal blue only CIEDE2000
+   * dE 1.73 from Meta/Muse's #1671EA and dE 1.88 from Gemini's #346EEC at
+   * identical luminance, i.e. the same colour on a chip strip. The blue band
+   * (gemini, kimi, meta/muse, deepseek, ibm, zai, codex) is full, so Inkling
+   * moves to a rose of its own. It is held clear of the two pinks it could be
+   * confused with: liquid dE 9.3, and openrouter dE 9.5 — #E02948 stays the
+   * generic OpenRouter fallback rather than becoming Inkling's colour. */
+  --provider-thinkingmachines-color: #C24E68;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

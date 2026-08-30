@@ -914,7 +914,7 @@ describe('mixProviderColors', () => {
     kimi: '#0073E6',
     grok: '#757575',
     cursor: '#8C7508',
-    ollama: '#1A8562',
+    ollama: '#976C52',
     antigravity: '#308713',
     pi: '#68768C',
     mistral: '#D44404',

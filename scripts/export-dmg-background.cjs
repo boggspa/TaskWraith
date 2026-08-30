@@ -56,7 +56,7 @@ const PROVIDER = Object.freeze({
   kimi: '#0073e6',
   ensemble: '#986781',
   mistral: '#d44404',
-  ollama: '#1a8562'
+  ollama: '#976c52'
 })
 const GRN = '#4cc38a'
 

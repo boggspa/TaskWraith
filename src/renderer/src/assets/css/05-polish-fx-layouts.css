@@ -4028,8 +4028,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-ollama {
-  --agent-aura-rgb: 26 133 98;
-  --agent-aura-rgb-2: 26 133 98;
+  --agent-aura-rgb: 151 108 82;
+  --agent-aura-rgb-2: 151 108 82;
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-ensemble {

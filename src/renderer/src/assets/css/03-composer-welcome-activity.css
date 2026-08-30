@@ -3093,8 +3093,8 @@
 /* Ollama-backed display brands. Runtime provider stays `ollama`, but the
  * Model Comparisons rows wear their spoofed upstream brand hue (mirrors the
  * transcript meta, run cards, and CombinedModelPicker provider column) so a
- * Qwen / Gemma / Nemotron row reads as Alibaba / Google / NVIDIA, not generic
- * Ollama green. Brand tokens live in styles/theme.css. */
+ * Qwen / Gemma / Nemotron row reads as Alibaba / Google / NVIDIA, not the
+ * generic Ollama seat hue. Brand tokens live in styles/theme.css. */
 .welcome-usage-model-dot.provider-alibaba,
 .welcome-usage-model-meter-fill.provider-alibaba,
 .welcome-usage-bar-segment.provider-alibaba { color: var(--provider-alibaba-color); }
@@ -14844,7 +14844,7 @@ button.diff-file-row {
 }
 .notification-newadditions-provider.provider-ollama,
 .notification-newadditions-model.provider-ollama {
-  color: var(--provider-ollama-color, #1a8562);
+  color: var(--provider-ollama-color, #976c52);
 }
 .notification-newadditions-provider.provider-mistral {
   color: var(--provider-mistral-color, #d44404);
@@ -14855,7 +14855,8 @@ button.diff-file-row {
 }
 /* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
  * `accentProvider`) — so a model name reads in its brand colour instead of
- * generic Ollama green. The "Ollama" group heading stays green above. */
+ * the generic Ollama seat hue. The "Ollama" group heading keeps that seat
+ * hue above. */
 .notification-newadditions-model.provider-deep-reinforce {
   color: var(--provider-deep-reinforce-color, #be5809);
 }
@@ -14908,7 +14909,7 @@ button.diff-file-row {
   color: var(--provider-openrouter-color, #e02948);
 }
 .notification-newadditions-model.provider-thinkingmachines {
-  color: var(--provider-thinkingmachines-color, #016ef6);
+  color: var(--provider-thinkingmachines-color, #c24e68);
 }
 
 .notification-newadditions-model.provider-groq {
