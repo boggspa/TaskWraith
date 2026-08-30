@@ -374,6 +374,7 @@ export interface ThreadHomeProps {
   variant: 'main' | 'pane'
   threads: readonly ThreadHomeThreadOption[]
   recentThreads: readonly ThreadHomeThreadOption[]
+  activeTerminals?: readonly { sessionId: string; workspacePath: string }[]
   missionControl: ThreadHomeMissionControlSummary
   authorityChatId?: string | null
   mediaCount?: number
@@ -385,6 +386,7 @@ export interface ThreadHomeProps {
   onSelectSurface: (surface: ThreadHomeSurface) => void
   onOpenMissionControl: () => void
   onOpenTerminal: () => void
+  onOpenExistingTerminal?: (term: { sessionId: string; workspacePath: string }) => void
   onClosePane?: () => void
   onActivate?: () => void
 }
@@ -394,6 +396,7 @@ export function ThreadHome({
   variant,
   threads,
   recentThreads,
+  activeTerminals = [],
   missionControl,
   authorityChatId,
   mediaCount = 0,
@@ -405,6 +408,7 @@ export function ThreadHome({
   onSelectSurface,
   onOpenMissionControl,
   onOpenTerminal,
+  onOpenExistingTerminal,
   onClosePane,
   onActivate
 }: ThreadHomeProps) {
@@ -417,7 +421,7 @@ export function ThreadHome({
         key={term.sessionId}
         type="button"
         className="thread-home-thread-row"
-        onClick={() => openExistingTerminal(term)}
+        onClick={() => onOpenExistingTerminal?.(term)}
         aria-label={`Open terminal session in ${dirName}`}
       >
         <span className="thread-home-thread-provider" aria-hidden>
@@ -1160,6 +1164,7 @@ function ThreadHomeWorkspaceInner(
         variant={variant}
         threads={threads}
         recentThreads={recentThreads}
+        activeTerminals={activeTerminals}
         missionControl={missionControl}
         authorityChatId={authorityChatId}
         mediaCount={mediaRefs.length}
@@ -1171,6 +1176,7 @@ function ThreadHomeWorkspaceInner(
         onSelectSurface={(next) => void openSurface(next)}
         onOpenMissionControl={() => void openSurface('mission-control')}
         onOpenTerminal={() => void openSurface('terminal')}
+        onOpenExistingTerminal={openExistingTerminal}
         onClosePane={onClosePane}
         onActivate={onActivate}
       />
