@@ -366,6 +366,36 @@ describe('HostThreadRecordPersistClient failure paths', () => {
     expect(rejection).toEqual({ code: 'host_rejected', hostErrorCode: 'authority_denied' })
   })
 
+  it('names snapshot truncation and diff-position incoherence independently', async () => {
+    const before = createClient(
+      scriptedBroker((command) => [
+        receiptFor(command, 'failed', {
+          errorCode: 'pre_execution_before_projection_truncated'
+        })
+      ])
+    )
+    await expect(
+      before.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).rejects.toMatchObject({
+      message:
+        'Host record persistence was blocked because its command-scoped snapshot was truncated before execution.'
+    })
+
+    const after = createClient(
+      scriptedBroker((command) => [
+        receiptFor(command, 'indeterminate', {
+          errorCode: 'observation_diff_cursor_mismatch'
+        })
+      ])
+    )
+    await expect(
+      after.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).rejects.toMatchObject({
+      message:
+        'Host record persistence executed, but its before/after snapshot position changed; the result is indeterminate.'
+    })
+  })
+
   it('rejects a receipt belonging to another command', async () => {
     const broker = scriptedBroker((command) => [
       receiptFor(command, 'succeeded', { commandId: 'someone-elses-command' })

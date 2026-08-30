@@ -244,6 +244,32 @@ export function classifyHostPersistRejection(receipt: HostCommandReceipt): {
   return { code: 'host_rejected', ...(rawCode ? { hostErrorCode: rawCode } : {}) }
 }
 
+function hostPersistRejectionMessage(
+  receipt: HostCommandReceipt,
+  classified: ReturnType<typeof classifyHostPersistRejection>
+): string {
+  if (classified.code === 'revision_conflict') {
+    return 'Host record persistence revision conflicted.'
+  }
+  const code = classified.hostErrorCode ?? ''
+  if (code === 'pre_execution_before_projection_truncated') {
+    return 'Host record persistence was blocked because its command-scoped snapshot was truncated before execution.'
+  }
+  if (code.startsWith('pre_execution_')) {
+    return 'Host record persistence could not obtain a complete pre-execution snapshot.'
+  }
+  if (
+    code === 'observation_diff_generation_mismatch' ||
+    code === 'observation_diff_cursor_mismatch'
+  ) {
+    return 'Host record persistence executed, but its before/after snapshot position changed; the result is indeterminate.'
+  }
+  if (code.startsWith('observation_')) {
+    return 'Host record persistence executed, but its effects could not be observed coherently; the result is indeterminate.'
+  }
+  return `Host record persistence ended with ${receipt.status}.`
+}
+
 export class HostThreadRecordPersistClient
   implements HostThreadRecordPersistPort, HostThreadRecordDeletePort
 {
@@ -624,13 +650,9 @@ export class HostThreadRecordPersistClient
     if (receipt.status === 'pending') return null
     if (receipt.status === 'succeeded') return receipt
     const classified = classifyHostPersistRejection(receipt)
-    const fallbackMessage =
-      classified.code === 'revision_conflict'
-        ? 'Host record persistence revision conflicted.'
-        : `Host record persistence ended with ${receipt.status}.`
     throw new HostThreadRecordPersistError(
       classified.code,
-      receipt.errorMessage ?? fallbackMessage,
+      receipt.errorMessage ?? hostPersistRejectionMessage(receipt, classified),
       { ...(classified.hostErrorCode ? { hostErrorCode: classified.hostErrorCode } : {}), receipt }
     )
   }

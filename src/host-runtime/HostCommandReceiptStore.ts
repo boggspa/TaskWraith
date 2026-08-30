@@ -198,6 +198,15 @@ export type HostCommandReceiptIndeterminateCode =
   | 'deferred_effects_unavailable'
   | 'deferred_receipt_uncertain'
   | 'deferred_execution_may_have_begun'
+  | 'observation_after_snapshot_capture_failed'
+  | 'observation_after_snapshot_decode_failed'
+  | 'observation_after_snapshot_privacy_failed'
+  | 'observation_after_projection_truncated'
+  | 'observation_diff_decode_failed'
+  | 'observation_diff_privacy_failed'
+  | 'observation_diff_generation_mismatch'
+  | 'observation_diff_cursor_mismatch'
+  | 'observation_diff_incoherent'
 
 /** Runtime membership set for HostCommandReceiptIndeterminateCode. */
 export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandReceiptIndeterminateCode> =
@@ -209,7 +218,16 @@ export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandRe
     'deferred_effects_partial',
     'deferred_effects_unavailable',
     'deferred_receipt_uncertain',
-    'deferred_execution_may_have_begun'
+    'deferred_execution_may_have_begun',
+    'observation_after_snapshot_capture_failed',
+    'observation_after_snapshot_decode_failed',
+    'observation_after_snapshot_privacy_failed',
+    'observation_after_projection_truncated',
+    'observation_diff_decode_failed',
+    'observation_diff_privacy_failed',
+    'observation_diff_generation_mismatch',
+    'observation_diff_cursor_mismatch',
+    'observation_diff_incoherent'
   ])
 
 /**

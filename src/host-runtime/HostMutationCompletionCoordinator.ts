@@ -73,6 +73,33 @@ export type HostMutationCompletionInput = {
   readonly mutation: HostObservedMutationResult
 }
 
+type ObservationFailure = Extract<HostObservedMutationResult, { kind: 'observation_failed' }>
+
+function observationFailureCode(mutation: ObservationFailure): HostCommandReceiptIndeterminateCode {
+  switch (mutation.reason) {
+    case 'after_snapshot_capture_failed':
+      return 'observation_after_snapshot_capture_failed'
+    case 'after_snapshot_decode_failed':
+      return 'observation_after_snapshot_decode_failed'
+    case 'after_snapshot_privacy_failed':
+      return 'observation_after_snapshot_privacy_failed'
+    case 'after_projection_truncated':
+      return 'observation_after_projection_truncated'
+    case 'diff_decode_failed':
+      return 'observation_diff_decode_failed'
+    case 'diff_privacy_failed':
+      return 'observation_diff_privacy_failed'
+    case 'diff_incoherent':
+      if (mutation.incoherenceReason === 'generation_mismatch') {
+        return 'observation_diff_generation_mismatch'
+      }
+      if (mutation.incoherenceReason === 'cursor_mismatch') {
+        return 'observation_diff_cursor_mismatch'
+      }
+      return 'observation_diff_incoherent'
+  }
+}
+
 export type HostMutationCompletionAnomalyReason =
   | 'invalid_command_id'
   | 'complete_refused'
@@ -194,11 +221,11 @@ export class HostMutationCompletionCoordinator {
 
     switch (mutation.kind) {
       case 'pre_execution_failed':
-        return this.completePreExecutionFailed(commandId)
+        return this.completePreExecutionFailed(commandId, mutation.reason)
       case 'observed':
         return this.completeObserved(commandId, mutation.execution, mutation.effects)
       case 'observation_failed':
-        return this.promoteIndeterminate(commandId, 'deferred_receipt_uncertain')
+        return this.promoteIndeterminate(commandId, observationFailureCode(mutation))
       case 'execution_may_have_begun':
         return this.promoteIndeterminate(commandId, 'deferred_execution_may_have_begun')
       default: {
@@ -210,7 +237,10 @@ export class HostMutationCompletionCoordinator {
     }
   }
 
-  private completePreExecutionFailed(commandId: string): HostMutationCompletionResult {
+  private completePreExecutionFailed(
+    commandId: string,
+    reason: Extract<HostObservedMutationResult, { kind: 'pre_execution_failed' }>['reason']
+  ): HostMutationCompletionResult {
     const position = this.readPosition()
     if (!position) return { kind: 'host_unavailable' }
     // H never invoked — terminal failed at current sole-journal position.
@@ -220,7 +250,7 @@ export class HostMutationCompletionCoordinator {
       'failed',
       position,
       {
-        errorCode: 'pre_execution_failed'
+        errorCode: `pre_execution_${reason}`
       },
       { consumeEnvelope: false }
     )

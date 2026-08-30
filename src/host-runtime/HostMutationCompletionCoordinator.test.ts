@@ -205,7 +205,7 @@ describe('HostMutationCompletionCoordinator', () => {
     expect(ports.completeReceipt.mock.calls[0][0]).toMatchObject({
       commandId: COMMAND_ID,
       status: 'failed',
-      errorCode: 'pre_execution_failed',
+      errorCode: 'pre_execution_before_snapshot_privacy_failed',
       position: POS
     })
     expect(envelope).not.toHaveBeenCalled()
@@ -518,7 +518,7 @@ describe('HostMutationCompletionCoordinator', () => {
     expect(ports.markIndeterminate).not.toHaveBeenCalled()
   })
 
-  it('observation_failed → deferred_receipt_uncertain at current position', () => {
+  it('observation_failed retains its exact after-projection diagnosis', () => {
     const envelope = vi.fn(() => ({ kind: 'updated' as const }))
     const { coordinator, ports } = openCoordinator({ markEnvelopeConsumed: envelope })
     const result = coordinator.complete({
@@ -532,12 +532,32 @@ describe('HostMutationCompletionCoordinator', () => {
     })
     expect(result).toEqual({
       kind: 'indeterminate',
-      errorCode: 'deferred_receipt_uncertain',
+      errorCode: 'observation_after_projection_truncated',
       position: POS
     })
     expect(ports.publishEffects).not.toHaveBeenCalled()
     expect(ports.completeReceipt).not.toHaveBeenCalled()
     expect(envelope).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['generation_mismatch', 'observation_diff_generation_mismatch'],
+    ['cursor_mismatch', 'observation_diff_cursor_mismatch'],
+    ['duplicate_entity_id', 'observation_diff_incoherent']
+  ] as const)('distinguishes diff incoherence %s', (incoherenceReason, errorCode) => {
+    const { coordinator } = openCoordinator()
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: SUCCESS,
+          effects: [],
+          reason: 'diff_incoherent',
+          incoherenceReason
+        }
+      })
+    ).toEqual({ kind: 'indeterminate', errorCode, position: POS })
   })
 
   it('execution_may_have_begun → deferred_execution_may_have_begun', () => {
