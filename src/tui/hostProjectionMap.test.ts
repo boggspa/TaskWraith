@@ -132,7 +132,19 @@ describe('hostProjectionMap', () => {
               status: 'success',
               file: 'src/example.ts',
               additions: 4,
-              deletions: 2
+              deletions: 2,
+              diff: {
+                hunks: [
+                  {
+                    header: '@@ -1,1 +1,2 @@',
+                    lines: [
+                      { type: 'del', text: 'old', oldLine: 1 },
+                      { type: 'add', text: 'new', newLine: 1 }
+                    ]
+                  }
+                ]
+              },
+              command: { command: 'npm test', output: 'passed', exitCode: 0 }
             }
           ]
         }
@@ -148,7 +160,19 @@ describe('hostProjectionMap', () => {
           status: 'success',
           file: 'src/example.ts',
           additions: 4,
-          deletions: 2
+          deletions: 2,
+          diff: {
+            hunks: [
+              {
+                header: '@@ -1,1 +1,2 @@',
+                lines: [
+                  { type: 'del', text: 'old', oldLine: 1 },
+                  { type: 'add', text: 'new', newLine: 1 }
+                ]
+              }
+            ]
+          },
+          command: { command: 'npm test', output: 'passed', exitCode: 0 }
         }
       ]
     })

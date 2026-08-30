@@ -566,8 +566,104 @@ describe('TaskWraith TUI renderer', () => {
       animationEnabled: false
     })
     expect(stripAnsi(output)).toContain('Edit File · src/example.ts  +4 -2')
+    // eslint-disable-next-line no-control-regex -- assert the intentional ANSI color prefix.
     expect(output).toMatch(/\u001b\[38;2;[^m]+m\+4/)
+    // eslint-disable-next-line no-control-regex -- assert the intentional ANSI color prefix.
     expect(output).toMatch(/\u001b\[38;2;[^m]+m-2/)
+  })
+
+  it('renders bounded inline diff hunks and command cards inside the transcript', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.notice = undefined
+    state.thread!.rows = [
+      {
+        id: 'rich-activity-row',
+        role: 'assistant',
+        kind: 'host-history',
+        speaker: 'Kimi',
+        provider: {
+          ...state.thread!.thread.provider,
+          runtimeProvider: 'kimi',
+          model: 'kimi-k3',
+          modelLabel: 'K3 (1M)'
+        },
+        text: 'I updated the requested file and ran the tests.',
+        timestamp: new Date(now).toISOString(),
+        truncated: false,
+        tools: [
+          {
+            name: 'Edit File',
+            category: 'write',
+            status: 'success',
+            file: 'src/example.ts',
+            additions: 2,
+            deletions: 1,
+            diff: {
+              hunks: [
+                {
+                  header: '@@ -18,2 +18,3 @@',
+                  lines: [
+                    { type: 'context', text: 'one', oldLine: 18, newLine: 18 },
+                    { type: 'del', text: 'two', oldLine: 19 },
+                    { type: 'add', text: 'three', newLine: 19 },
+                    { type: 'add', text: 'four', newLine: 20 }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            name: 'run_shell_command',
+            category: 'shell',
+            status: 'success',
+            command: {
+              command: 'npm test -- --runInBand',
+              output: '203 tests passed\n7 files passed',
+              exitCode: 0
+            }
+          }
+        ]
+      }
+    ]
+    state.thread!.thread = {
+      ...state.thread!.thread,
+      provider: {
+        ...state.thread!.thread.provider,
+        runtimeProvider: 'kimi',
+        model: 'kimi-k3',
+        modelLabel: 'K3 (1M)'
+      },
+      tokenEstimate: 220_000
+    }
+    const baseline = renderTaskWraithTui(state, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    }).split('\n')
+    expect(baseline).toHaveLength(24)
+    expect(baseline.every((line) => visibleWidth(line) === 80)).toBe(true)
+    expect(baseline.at(-1)).toContain('AGBench W+1')
+    expect(baseline.at(-1)).toContain('ctx 21%')
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 30,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('Edit File · src/example.ts  +2 -1')
+    expect(output).toContain('@@ -18,2 +18,3 @@')
+    expect(output).toContain('-two')
+    expect(output).toContain('+three')
+    expect(output).toContain('Ran a command')
+    expect(output).toContain('$ npm test -- --runInBand')
+    expect(output).toContain('exit 0')
+    expect(output).toContain('context: 21% (≈220k/1M)')
   })
 
   it('turns selected-thread approvals and questions into actionable footer states', () => {

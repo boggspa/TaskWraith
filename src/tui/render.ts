@@ -16,6 +16,12 @@ import {
   wrapPlainText
 } from './ansi'
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
+import {
+  contextPercent,
+  formatContextTokens,
+  isContextWindowProviderId,
+  resolveContextWindow
+} from '../shared/contextWindows'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { resolveGhostBanner } from './ghostBanner'
 import { filterTuiSlashCommands } from './slashCommands'
@@ -63,6 +69,21 @@ export interface TaskWraithTuiRenderOptions {
 
 function terminalLabel(value: unknown): string {
   return sanitizeTerminalText(String(value ?? '')).replace(/\n+/g, ' ')
+}
+
+// Diff/code lines must preserve indentation while still stripping terminal
+// controls. `sanitizeTerminalText` intentionally collapses whitespace for
+// prose, which would make an inline hunk unreadable.
+function terminalCodeLine(value: unknown): string {
+  return (
+    String(value ?? '')
+      .replaceAll('\u001b', '')
+      .replace(/\r\n?/g, ' ')
+      // eslint-disable-next-line no-control-regex -- provider code previews reject C0/C1 controls.
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, (character) =>
+        character === '\t' ? '  ' : ''
+      )
+  )
 }
 
 function selectedPendingApproval(state: TaskWraithTuiState) {
@@ -244,7 +265,10 @@ function transcriptSpeaker(
   return ansi.bold(speaker || 'TaskWraith')
 }
 
-function renderToolLine(
+const TUI_TOOL_DIFF_PREVIEW_LINES = 10
+const TUI_TOOL_COMMAND_PREVIEW_LINES = 3
+
+function renderToolHeader(
   tool: NonNullable<TaskWraithControlTranscriptRow['tools']>[number],
   ansi: Ansi,
   width: number,
@@ -268,13 +292,108 @@ function renderToolLine(
       : ''
   const file = tool.file ? ` ${glyphs.separator} ${terminalLabel(tool.file)}` : ''
   const detail = tool.detail ? ` ${glyphs.separator} ${terminalLabel(tool.detail)}` : ''
+  const label = tool.command ? 'Ran a command' : terminalLabel(tool.name)
   const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
   return fitAnsiLine(
-    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(
-      `${terminalLabel(tool.name)}${file}${detail}`
+    `${gutter}${ansi.color(glyph, accent)} ${ansi.provider(
+      `${label}${file}${detail}`,
+      tones(ansi).ensemble
     )}${delta}`,
     width
   )
+}
+
+function renderToolDiff(
+  diff: NonNullable<TaskWraithControlTranscriptRow['tools']>[number]['diff'],
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  if (!diff) return []
+  const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
+  const lines: string[] = []
+  let renderedLines = 0
+  let hiddenLines = 0
+  for (const hunk of diff.hunks) {
+    if (renderedLines >= TUI_TOOL_DIFF_PREVIEW_LINES) {
+      hiddenLines += hunk.lines.length
+      continue
+    }
+    lines.push(fitAnsiLine(`${gutter}${ansi.dim(terminalLabel(hunk.header))}`, width))
+    for (const line of hunk.lines) {
+      if (renderedLines >= TUI_TOOL_DIFF_PREVIEW_LINES) {
+        hiddenLines += 1
+        continue
+      }
+      const oldLine = line.oldLine === undefined ? '    ' : String(line.oldLine).padStart(4)
+      const newLine = line.newLine === undefined ? '    ' : String(line.newLine).padStart(4)
+      const marker =
+        line.type === 'add' ? glyphs.diffAdd : line.type === 'del' ? glyphs.diffRemove : ' '
+      const lineTone =
+        line.type === 'add' ? tones(ansi).good : line.type === 'del' ? tones(ansi).error : undefined
+      const code = `${ansi.dim(`${oldLine} ${newLine}`)} ${lineTone ? ansi.color(marker, lineTone) : marker}${terminalCodeLine(line.text)}`
+      lines.push(fitAnsiLine(`${gutter}${code}`, width))
+      renderedLines += 1
+    }
+  }
+  if (hiddenLines > 0 || diff.truncated) {
+    const suffix =
+      hiddenLines > 0
+        ? `${hiddenLines} more diff line${hiddenLines === 1 ? '' : 's'}`
+        : 'diff preview capped'
+    lines.push(fitAnsiLine(`${gutter}${ansi.dim(`${glyphs.ellipsis} ${suffix}`)}`, width))
+  }
+  return lines
+}
+
+function renderToolCommand(
+  command: NonNullable<TaskWraithControlTranscriptRow['tools']>[number]['command'],
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  if (!command) return []
+  const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
+  const lines: string[] = []
+  if (command.command) {
+    lines.push(
+      fitAnsiLine(
+        `${gutter}${ansi.color('$', tones(ansi).ensemble)} ${terminalCodeLine(command.command)}`,
+        width
+      )
+    )
+  }
+  const outputLines = command.output?.replace(/\r\n?/g, '\n').split('\n') ?? []
+  const visibleOutput = outputLines.slice(0, TUI_TOOL_COMMAND_PREVIEW_LINES)
+  for (const output of visibleOutput) {
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.dim(terminalCodeLine(output))}`, width))
+  }
+  if (command.exitCode !== undefined) {
+    const exitTone = command.exitCode === 0 ? tones(ansi).good : tones(ansi).error
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.color(`exit ${command.exitCode}`, exitTone)}`, width))
+  }
+  const hiddenOutput = Math.max(0, outputLines.length - visibleOutput.length)
+  if (hiddenOutput > 0 || command.truncated) {
+    const suffix =
+      hiddenOutput > 0
+        ? `${hiddenOutput} more output line${hiddenOutput === 1 ? '' : 's'}`
+        : 'output preview capped'
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.dim(`${glyphs.ellipsis} ${suffix}`)}`, width))
+  }
+  return lines
+}
+
+function renderToolLines(
+  tool: NonNullable<TaskWraithControlTranscriptRow['tools']>[number],
+  ansi: Ansi,
+  width: number,
+  glyphs: TuiGlyphSet
+): string[] {
+  return [
+    renderToolHeader(tool, ansi, width, glyphs),
+    ...renderToolDiff(tool.diff, width, ansi, glyphs),
+    ...renderToolCommand(tool.command, width, ansi, glyphs)
+  ]
 }
 
 function renderTranscriptRow(
@@ -308,9 +427,7 @@ function renderTranscriptRow(
       )
     )
   }
-  for (const tool of row.tools ?? []) {
-    lines.push(renderToolLine(tool, ansi, width, glyphs))
-  }
+  for (const tool of row.tools ?? []) lines.push(...renderToolLines(tool, ansi, width, glyphs))
   lines.push('')
   return lines
 }
@@ -1992,6 +2109,26 @@ function renderOverlay(
   return renderHelpOverlay(state, width, height, ansi, glyphs)
 }
 
+function renderContextMeter(
+  thread: TaskWraithControlThread,
+  width: number,
+  ansi: Ansi
+): string | undefined {
+  const used = thread.tokenEstimate
+  const provider = thread.provider.runtimeProvider
+  if (!Number.isFinite(used) || Number(used) < 0 || !isContextWindowProviderId(provider)) {
+    return undefined
+  }
+  const window = resolveContextWindow(provider, thread.provider.model)
+  const percent = Math.round(contextPercent(Number(used), window))
+  if (width < 96) return ansi.dim(`ctx ${percent}%`)
+  const formatHudContextTokens = (value: number): string =>
+    formatContextTokens(value).replace(/\.0M$/, 'M')
+  return ansi.dim(
+    `context: ${percent}% (≈${formatHudContextTokens(Math.round(Number(used)))}/${formatHudContextTokens(window)})`
+  )
+}
+
 function renderHud(
   state: TaskWraithTuiState,
   thread: TaskWraithControlThread | undefined,
@@ -2090,6 +2227,7 @@ function renderHud(
       )
     : undefined
   const cost = terminalLabel(thread.costText)
+  const contextMeter = renderContextMeter(thread, width, ansi)
   const right = [
     ansi.provider(provider, presentation.provider.accent),
     model,
@@ -2106,7 +2244,8 @@ function renderHud(
         ? ansi.dim(`${queuedDrafts.length} QUEUED`)
         : undefined,
     elapsed !== '—' ? elapsed : undefined,
-    cost
+    cost,
+    contextMeter
   ]
     .filter(Boolean)
     .join(ansi.dim(density.segmentSpacing === 'padded' ? ` ${glyphs.separator} ` : ' '))

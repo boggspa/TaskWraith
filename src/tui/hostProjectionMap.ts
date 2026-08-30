@@ -73,7 +73,9 @@ export function mapHostHistoryEntriesToTranscriptRows(
             status: tool.status,
             ...(tool.file ? { file: tool.file } : {}),
             ...(tool.additions !== undefined ? { additions: tool.additions } : {}),
-            ...(tool.deletions !== undefined ? { deletions: tool.deletions } : {})
+            ...(tool.deletions !== undefined ? { deletions: tool.deletions } : {}),
+            ...(tool.diff ? { diff: tool.diff } : {}),
+            ...(tool.command ? { command: tool.command } : {})
           }))
         }
       : {})
@@ -143,6 +145,19 @@ function usageTokenEstimate(usage: HostUsageObservation | undefined): number | u
   if (!usage || usage.availability === 'unavailable') return undefined
   if (typeof usage.tokens === 'number' && Number.isFinite(usage.tokens)) return usage.tokens
   return undefined
+}
+
+function latestRunUsage(
+  snapshot: HostSnapshot,
+  threadId: string
+): HostUsageObservation | undefined {
+  let latest: { at: number; usage: HostUsageObservation } | undefined
+  for (const run of snapshot.runs) {
+    if (run.threadId !== threadId || !run.usage) continue
+    const at = run.endedAt ?? run.startedAt ?? 0
+    if (!latest || at >= latest.at) latest = { at, usage: run.usage }
+  }
+  return latest?.usage
 }
 
 function threadStatusFromHost(
@@ -255,7 +270,8 @@ function mapThread(thread: HostThreadProjection, snapshot: HostSnapshot): TaskWr
   const provider = providerPresentation(snapshot.providers, thread.providerId, thread.modelId)
   const status = threadStatusFromHost(thread, snapshot.runs, snapshot.rounds)
   const ensemble = mapEnsemble(thread, snapshot)
-  const tokenEstimate = usageTokenEstimate(thread.usage)
+  const usage = thread.usage ?? latestRunUsage(snapshot, thread.id)
+  const tokenEstimate = usageTokenEstimate(usage)
   const costText = usageCostText(thread.usage)
   return {
     id: thread.id,
