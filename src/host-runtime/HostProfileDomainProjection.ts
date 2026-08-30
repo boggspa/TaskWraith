@@ -6,12 +6,15 @@ import { basename } from 'node:path'
 import {
   createEmptyHostSnapshot,
   decodeHostSnapshot,
+  HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_GOAL_CRITERIA,
   HOST_PROTOCOL_MAX_GOAL_OBJECTIVE,
   HOST_PROTOCOL_MAX_SHORT,
+  HOST_WARNING_PROJECTION_WINDOWED,
   type HostHealthProjection,
   type HostParticipantProjection,
   type HostProviderModelProjection,
+  type HostRunProjection,
   type HostThreadGoalProjection,
   type HostWarningProjection
 } from '../shared/hostProtocol'
@@ -136,6 +139,89 @@ function providerOutcome(
 }
 
 type ProfileThread = ReturnType<HostProfileDomainStore['listThreadSummaries']>[number]
+type ProfileRun = NonNullable<ProfileThread['runs']>[number]
+
+/**
+ * Leave headroom below the public per-family cap for future live-source joins.
+ * This is a working-set projection, not retention: complete run history remains
+ * in the profile record and its history surfaces.
+ */
+export const HOST_PROFILE_RUN_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
+
+interface ProfileRunProjectionCandidate {
+  readonly key: string
+  readonly row: HostRunProjection
+  readonly active: boolean
+  readonly recency: number
+}
+
+function runIsActive(run: ProfileRun): boolean {
+  const status = typeof run.status === 'string' ? run.status.toLowerCase() : ''
+  if (
+    ['completed', 'success', 'succeeded', 'failed', 'error', 'cancelled', 'canceled'].includes(
+      status
+    )
+  ) {
+    return false
+  }
+  // Match HostProfileDomainStore's fail-closed legacy rule: an unknown or
+  // status-less row is possibly live unless a terminal timestamp proves not.
+  return timestamp(run.endedAt) === undefined
+}
+
+function projectProfileRuns(threads: readonly ProfileThread[]): {
+  runs: HostRunProjection[]
+  warning?: HostWarningProjection
+} {
+  const candidates = threads.flatMap((thread) =>
+    (thread.runs ?? []).map((run, index): ProfileRunProjectionCandidate => {
+      const startedAt = timestamp(run.startedAt)
+      const endedAt = timestamp(run.endedAt)
+      return {
+        key: `${thread.appChatId.length}:${thread.appChatId}:${run.runId.length}:${run.runId}:${index}`,
+        row: {
+          runId: run.runId,
+          threadId: thread.appChatId,
+          providerId: run.provider ?? thread.provider ?? 'unknown',
+          providerOutcome: providerOutcome(run.status),
+          ...(startedAt !== undefined ? { startedAt } : {}),
+          ...(endedAt !== undefined ? { endedAt } : {}),
+          ...(run.requestedModel ? { modelId: run.requestedModel } : {})
+        },
+        active: runIsActive(run),
+        recency: endedAt ?? startedAt ?? thread.updatedAt
+      }
+    })
+  )
+  if (candidates.length <= HOST_PROFILE_RUN_PROJECTION_LIMIT) {
+    return { runs: candidates.map((candidate) => candidate.row) }
+  }
+
+  const ranked = [...candidates].sort((left, right) => {
+    if (left.active !== right.active) return left.active ? -1 : 1
+    if (left.recency !== right.recency) return right.recency - left.recency
+    return left.key.localeCompare(right.key)
+  })
+  const selected = new Set(
+    ranked.slice(0, HOST_PROFILE_RUN_PROJECTION_LIMIT).map((candidate) => candidate.key)
+  )
+  const runs = candidates
+    .filter((candidate) => selected.has(candidate.key))
+    .map((candidate) => candidate.row)
+  const warningAt = candidates.reduce((latest, candidate) => Math.max(latest, candidate.recency), 0)
+  return {
+    runs,
+    warning: {
+      warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
+      severity: 'warning',
+      code: HOST_WARNING_PROJECTION_WINDOWED,
+      message:
+        `family runs intentionally windowed from ${candidates.length} to ` +
+        `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
+      at: warningAt
+    }
+  }
+}
 
 const PARTICIPANT_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
   generation: 0,
@@ -270,6 +356,8 @@ export function projectHostProfileDomainSnapshot(
             at: participantWarningAt
           }
         ]
+  const runProjection = projectProfileRuns(threads)
+  if (runProjection.warning) warnings.push(runProjection.warning)
   return {
     health,
     workspaces,
@@ -289,17 +377,7 @@ export function projectHostProfileDomainSnapshot(
         ...(goal ? { goal } : {})
       }
     }),
-    runs: threads.flatMap((thread) =>
-      (thread.runs ?? []).map((run) => ({
-        runId: run.runId,
-        threadId: thread.appChatId,
-        providerId: run.provider ?? thread.provider ?? 'unknown',
-        providerOutcome: providerOutcome(run.status),
-        ...(timestamp(run.startedAt) !== undefined ? { startedAt: timestamp(run.startedAt) } : {}),
-        ...(timestamp(run.endedAt) !== undefined ? { endedAt: timestamp(run.endedAt) } : {}),
-        ...(run.requestedModel ? { modelId: run.requestedModel } : {})
-      }))
-    ),
+    runs: runProjection.runs,
     missions: [],
     rounds: [],
     participants,

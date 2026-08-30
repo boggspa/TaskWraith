@@ -3,9 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 
-import { createEmptyHostSnapshot, decodeHostSnapshot } from '../shared/hostProtocol'
+import {
+  createEmptyHostSnapshot,
+  decodeHostSnapshot,
+  HOST_PROTOCOL_MAX_COLLECTION
+} from '../shared/hostProtocol'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
-import { projectHostProfileDomainSnapshot } from './HostProfileDomainProjection'
+import {
+  HOST_PROFILE_RUN_PROJECTION_LIMIT,
+  projectHostProfileDomainSnapshot
+} from './HostProfileDomainProjection'
 
 const paths: string[] = []
 
@@ -75,6 +82,85 @@ it('projects profile workspaces/threads/providers with honest empty unsupported 
     artifacts: []
   })
   expect('position' in donor).toBe(false)
+})
+
+it('windows oversized run history by active-first recency without emitting a fatal truncation', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-run-window-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-run-window-workspace-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-run-window'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Run window'
+  })
+  const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
+  const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+  const terminalRuns = Array.from({ length: HOST_PROTOCOL_MAX_COLLECTION + 10 }, (_, index) => ({
+    runId: `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    status: index === 0 ? 'Cancelled' : 'success',
+    startedAt: new Date(index * 1_000).toISOString(),
+    endedAt: new Date(index * 1_000 + 500).toISOString()
+  }))
+  expect(terminalRuns.length).toBeGreaterThan(HOST_PROTOCOL_MAX_COLLECTION)
+  raw.runs = [
+    ...terminalRuns,
+    {
+      runId: 'ffffffff-ffff-4fff-8fff-fffffffffff0',
+      status: 'sleeping',
+      startedAt: new Date(1).toISOString()
+    },
+    {
+      runId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+      startedAt: new Date(2).toISOString()
+    },
+    {
+      runId: 'ffffffff-ffff-4fff-8fff-fffffffffff2',
+      status: 'unknown-legacy',
+      endedAt: new Date(3).toISOString()
+    }
+  ]
+  writeFileSync(chatFile, JSON.stringify(raw))
+  chmodSync(chatFile, 0o600)
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+
+  expect(donor.runs).toHaveLength(HOST_PROFILE_RUN_PROJECTION_LIMIT)
+  expect(donor.runs.map((run) => run.runId)).toEqual(
+    expect.arrayContaining([
+      'ffffffff-ffff-4fff-8fff-fffffffffff0',
+      'ffffffff-ffff-4fff-8fff-fffffffffff1'
+    ])
+  )
+  expect(donor.runs.map((run) => run.runId)).not.toContain(terminalRuns[0].runId)
+  expect(donor.runs.find((run) => run.runId === terminalRuns.at(-1)?.runId)?.providerOutcome).toBe(
+    'completed'
+  )
+  expect(donor.warnings).toContainEqual(
+    expect.objectContaining({
+      warningId: 'projection_windowed:runs',
+      code: 'projection_windowed'
+    })
+  )
+  const decoded = decodeHostSnapshot({
+    ...createEmptyHostSnapshot({ generation: 1, cursor: 0 }),
+    ...donor
+  })
+  expect(decoded.ok).toBe(true)
+  if (decoded.ok) {
+    expect(decoded.value.warnings.some((warning) => warning.code === 'projection_truncated')).toBe(
+      false
+    )
+  }
 })
 
 it('projects an ensemble thread kind and its persisted seat roster without synthesizing solos', () => {

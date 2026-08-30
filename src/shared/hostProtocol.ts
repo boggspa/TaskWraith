@@ -427,6 +427,8 @@ export interface HostChannelProjection {
  * not zero").
  */
 export const HOST_WARNING_PROVIDER_SOURCE_NOT_READY = 'provider_source_not_ready'
+/** Intentional bounded working set; unlike projection_truncated this is safe for mutation capture. */
+export const HOST_WARNING_PROJECTION_WINDOWED = 'projection_windowed'
 
 export interface HostWarningProjection {
   warningId: string
