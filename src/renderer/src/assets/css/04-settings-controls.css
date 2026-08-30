@@ -5875,6 +5875,9 @@ input:disabled, select:disabled, textarea:disabled {
   min-width: max-content;
   min-height: 19px;
   white-space: pre;
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  tab-size: 4;
 }
 
 .diff-hover-preview-gutter {
@@ -5898,13 +5901,21 @@ input:disabled, select:disabled, textarea:disabled {
 .diff-hover-preview-line.add .diff-hover-preview-code,
 .diff-hover-preview-line.add .diff-hover-preview-gutter {
   background: var(--diff-add-bg);
-  color: var(--diff-add-text);
+  color: inherit;
 }
 
 .diff-hover-preview-line.del .diff-hover-preview-code,
 .diff-hover-preview-line.del .diff-hover-preview-gutter {
   background: var(--diff-del-bg);
-  color: var(--diff-del-text);
+  color: inherit;
+}
+
+.diff-hover-preview-line.add {
+  box-shadow: inset 3px 0 0 var(--diff-stat-add-color, var(--success));
+}
+
+.diff-hover-preview-line.del {
+  box-shadow: inset 3px 0 0 var(--diff-stat-del-color, var(--danger));
 }
 
 .diff-hover-preview-empty,

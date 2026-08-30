@@ -637,7 +637,10 @@ function renderDiffRow(row: DiffRenderRow, viewMode: DiffViewMode, highlights: D
   )
 }
 
-function renderHighlightedSpans(spans: HighlightSpan[] | undefined, fallback: string): ReactNode {
+export function renderHighlightedSpans(
+  spans: HighlightSpan[] | undefined,
+  fallback: string
+): ReactNode {
   if (!spans || spans.length === 0) return fallback || ' '
   return spans.map((span, index) =>
     span.className ? (

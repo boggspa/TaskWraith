@@ -1,9 +1,13 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { diffLineDisplayText } from '../lib/unifiedDiffParser'
 import {
   canShowDiffHoverPreview,
   diffHoverPreviewEmptyMessage,
   diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
+  DiffHoverPreviewLine,
   DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT,
   DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE,
   getDiffHoverPreviewFileWindow,
@@ -11,6 +15,7 @@ import {
   getDiffHoverPreviewStats,
   prepareDiffHoverPreviewText
 } from './DiffHoverPreview'
+import { editorHighlightStyleRules, highlightCodeToLineSpans } from './highlightCodeLines'
 
 const rect = (
   input: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
@@ -146,5 +151,23 @@ describe('DiffHoverPreview stats', () => {
     expect(getDiffHoverPreviewStats({ additions: 0, deletions: undefined })).toEqual([
       { kind: 'add', label: '+0', ariaLabel: '0 additions' }
     ])
+  })
+})
+
+describe('DiffHoverPreview editor-style presentation', () => {
+  it('hides the leading diff marker and syntax-highlights the source', () => {
+    const rules = editorHighlightStyleRules()
+    const keywordClass = rules.match(
+      /\.([\wͰ-Ͽ]+)\s*\{[^}]*color:\s*var\(--cm-keyword\)/
+    )?.[1]
+    expect(keywordClass).toBeTruthy()
+
+    const line = { kind: 'add' as const, oldLine: null, newLine: 3, text: '+const added = "ok"' }
+    const spans = highlightCodeToLineSpans(diffLineDisplayText(line), 'typescript')[0]
+    const html = renderToStaticMarkup(createElement(DiffHoverPreviewLine, { line, spans }))
+
+    expect(html).not.toContain('+const added')
+    expect(html.replace(/<[^>]+>/g, '')).toContain('const added')
+    expect(html).toContain(`class="${keywordClass}">const</span>`)
   })
 })
