@@ -18,6 +18,8 @@ const welcome = {
     'health'
   ]
 } as HostBootstrapWelcome
+const CURRENT_PAYLOAD = `sha256:${'a'.repeat(64)}`
+const OLD_PAYLOAD = `sha256:${'b'.repeat(64)}`
 
 describe('HostExternalSupervisor', () => {
   it('rejects noncanonical profiles and marks resolver/spawn failures failed', async () => {
@@ -40,7 +42,13 @@ describe('HostExternalSupervisor', () => {
       probe: async () => {
         throw new Error('offline')
       },
-      resolveLaunch: async () => ({ executable: '/node', args: [], cwd: '/', env: {} }),
+      resolveLaunch: async () => ({
+        executable: '/node',
+        args: [],
+        cwd: '/',
+        env: {},
+        payloadVersion: CURRENT_PAYLOAD
+      }),
       spawn: () => {
         throw new Error('spawn failed')
       }
@@ -70,12 +78,37 @@ describe('HostExternalSupervisor', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
+  it('keeps a matching payload attached without issuing shutdown', async () => {
+    const spawn = vi.fn()
+    const shutdownExisting = vi.fn(async () => {})
+    const supervisor = new HostExternalSupervisor({
+      profilePath: '/p',
+      probe: async () => ({ welcome, payloadVersion: CURRENT_PAYLOAD }),
+      resolveLaunch: async () => ({
+        executable: '/node',
+        args: [],
+        cwd: '/',
+        env: {},
+        payloadVersion: CURRENT_PAYLOAD
+      }),
+      shutdownExisting,
+      spawn
+    })
+
+    await expect(supervisor.ensureAvailable()).resolves.toEqual({ kind: 'existing', welcome })
+    expect(shutdownExisting).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('coalesces launch and refuses App-mode Host without spawning', async () => {
     const child = Object.assign(new EventEmitter(), {
       pid: 42,
       unref: vi.fn()
     }) as unknown as ChildProcess
-    const probe = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(welcome)
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD })
     const supervisor = new HostExternalSupervisor({
       profilePath: '/p',
       probe,
@@ -83,7 +116,8 @@ describe('HostExternalSupervisor', () => {
         executable: '/node',
         args: ['/cli', 'serve', '--mode', 'production', '--profile', '/p'],
         cwd: '/',
-        env: {}
+        env: {},
+        payloadVersion: CURRENT_PAYLOAD
       }),
       spawn: vi.fn(() => child),
       delay: async () => {}
@@ -114,7 +148,14 @@ describe('HostExternalSupervisor', () => {
       },
       resolveLaunch: () =>
         new Promise((resolve) => {
-          release = () => resolve({ executable: '/node', args: [], cwd: '/', env: {} })
+          release = () =>
+            resolve({
+              executable: '/node',
+              args: [],
+              cwd: '/',
+              env: {},
+              payloadVersion: CURRENT_PAYLOAD
+            })
         }),
       spawn
     })
@@ -135,7 +176,13 @@ describe('HostExternalSupervisor', () => {
     const supervisor = new HostExternalSupervisor({
       profilePath: '/p',
       probe: vi.fn().mockRejectedValue(new Error('offline')),
-      resolveLaunch: async () => ({ executable: '/node', args: [], cwd: '/', env: {} }),
+      resolveLaunch: async () => ({
+        executable: '/node',
+        args: [],
+        cwd: '/',
+        env: {},
+        payloadVersion: CURRENT_PAYLOAD
+      }),
       spawn: vi.fn(() => child),
       delay: () => new Promise<void>(() => {})
     })
@@ -162,7 +209,13 @@ describe('HostExternalSupervisor', () => {
         probe: async () => {
           throw new Error('offline')
         },
-        resolveLaunch: async () => ({ executable: '/node', args: [], cwd: '/', env: {} }),
+        resolveLaunch: async () => ({
+          executable: '/node',
+          args: [],
+          cwd: '/',
+          env: {},
+          payloadVersion: CURRENT_PAYLOAD
+        }),
         spawn,
         delay: async () => {
           event === 'error'
@@ -176,5 +229,44 @@ describe('HostExternalSupervisor', () => {
       supervisor.close()
       expect((child as unknown as { kill: ReturnType<typeof vi.fn> }).kill).not.toHaveBeenCalled()
     }
+  })
+
+  it('authentically stops and replaces an existing stale Host payload', async () => {
+    const order: string[] = []
+    const child = Object.assign(new EventEmitter(), {
+      pid: 73,
+      unref: vi.fn()
+    }) as unknown as ChildProcess
+    const probe = vi
+      .fn()
+      .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD })
+      .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD })
+    const supervisor = new HostExternalSupervisor({
+      profilePath: '/p',
+      probe,
+      resolveLaunch: async () => ({
+        executable: '/node',
+        args: [],
+        cwd: '/',
+        env: {},
+        payloadVersion: CURRENT_PAYLOAD
+      }),
+      shutdownExisting: async () => {
+        order.push('shutdown')
+      },
+      spawn: vi.fn(() => {
+        order.push('spawn')
+        return child
+      }),
+      delay: async () => {}
+    })
+
+    await expect(supervisor.ensureAvailable()).resolves.toEqual({
+      kind: 'launched',
+      pid: 73,
+      welcome
+    })
+    expect(order).toEqual(['shutdown', 'spawn'])
+    expect(probe).toHaveBeenCalledTimes(2)
   })
 })

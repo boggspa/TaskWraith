@@ -8,6 +8,7 @@ import {
   HostProjectionIncompatibleProtocolError
 } from '../../host-client/HostProjectionClient'
 import type { HostCapability, HostBootstrapWelcome } from '../../shared/hostProtocol'
+import { HostShutdownClient } from '../../host-client/HostShutdownClient'
 import type { HostExternalLaunchCommand } from './HostExternalLaunchResolver'
 
 /** The Host used to be spawned with stdio:'ignore', so a refusal to start was
@@ -30,6 +31,7 @@ export type HostExternalSupervisorStatus =
   | 'idle'
   | 'probing'
   | 'launching'
+  | 'restarting'
   | 'attached-existing'
   | 'attached-launched'
   | 'failed'
@@ -51,8 +53,9 @@ export class HostExternalProductionModeError extends HostProjectionIncompatibleP
 
 export interface HostExternalSupervisorOptions {
   readonly profilePath: string
-  readonly probe?: (timeoutMs: number) => Promise<HostBootstrapWelcome>
+  readonly probe?: (timeoutMs: number) => Promise<HostBootstrapWelcome | HostExternalProbeResult>
   readonly resolveLaunch: () => Promise<HostExternalLaunchCommand | null>
+  readonly shutdownExisting?: (profilePath: string) => Promise<unknown>
   readonly spawn?: (
     executable: string,
     args: readonly string[],
@@ -65,6 +68,11 @@ export interface HostExternalSupervisorOptions {
   readonly probeTimeoutMs?: number
 }
 
+export interface HostExternalProbeResult {
+  readonly welcome: HostBootstrapWelcome
+  readonly payloadVersion?: string
+}
+
 function assertProduction(welcome: HostBootstrapWelcome): void {
   if (
     welcome.hostVersion !== 'node-host-v1' ||
@@ -74,7 +82,16 @@ function assertProduction(welcome: HostBootstrapWelcome): void {
   }
 }
 
-async function defaultProbe(profilePath: string, timeoutMs: number): Promise<HostBootstrapWelcome> {
+function normalizeProbeResult(
+  value: HostBootstrapWelcome | HostExternalProbeResult
+): HostExternalProbeResult {
+  return 'welcome' in value ? value : { welcome: value }
+}
+
+async function defaultProbe(
+  profilePath: string,
+  timeoutMs: number
+): Promise<HostExternalProbeResult> {
   const client = new HostProjectionClient({
     userDataPath: profilePath,
     client: {
@@ -87,7 +104,9 @@ async function defaultProbe(profilePath: string, timeoutMs: number): Promise<Hos
     requestTimeoutMs: timeoutMs
   })
   try {
-    return await client.connect()
+    const welcome = await client.connect()
+    const payloadVersion = client.discoveryProcessIdentity?.payloadVersion
+    return { welcome, ...(payloadVersion ? { payloadVersion } : {}) }
   } finally {
     client.close()
   }
@@ -149,13 +168,15 @@ export class HostExternalSupervisor {
     const probe =
       this.options.probe ?? ((timeout: number) => defaultProbe(this.options.profilePath, timeout))
     const probeTimeout = this.options.probeTimeoutMs ?? 1_500
+    const probeProduction = async (): Promise<HostExternalProbeResult> => {
+      const result = normalizeProbeResult(await probe(probeTimeout))
+      assertProduction(result.welcome)
+      return result
+    }
     this.statusValue = 'probing'
+    let existing: HostExternalProbeResult | null = null
     try {
-      const welcome = await probe(probeTimeout)
-      assertProduction(welcome)
-      assertOpen()
-      this.statusValue = 'attached-existing'
-      return { kind: 'existing', welcome }
+      existing = await probeProduction()
     } catch (error) {
       if (error instanceof HostProjectionIncompatibleProtocolError) {
         this.statusValue = 'failed'
@@ -170,6 +191,23 @@ export class HostExternalSupervisor {
       throw error
     }
     assertOpen()
+    if (existing && (!command || existing.payloadVersion === command.payloadVersion)) {
+      this.statusValue = 'attached-existing'
+      return { kind: 'existing', welcome: existing.welcome }
+    }
+    if (existing) {
+      this.statusValue = 'restarting'
+      try {
+        await (
+          this.options.shutdownExisting ??
+          ((profilePath: string) => new HostShutdownClient({ profilePath }).shutdown())
+        )(this.options.profilePath)
+      } catch (error) {
+        this.statusValue = 'failed'
+        throw error
+      }
+      assertOpen()
+    }
     if (!command) {
       this.statusValue = 'failed'
       throw new Error('External Host launch command is unavailable.')
@@ -259,12 +297,12 @@ export class HostExternalSupervisor {
           )
         }
         try {
-          const welcome = await probe(probeTimeout)
-          assertProduction(welcome)
+          const ready = await probeProduction()
+          if (ready.payloadVersion !== command.payloadVersion) continue
           assertOpen()
           this.statusValue = 'attached-launched'
           drainStderr()
-          return { kind: 'launched', pid: child.pid ?? null, welcome }
+          return { kind: 'launched', pid: child.pid ?? null, welcome: ready.welcome }
         } catch (error) {
           if (error instanceof HostProjectionIncompatibleProtocolError) {
             this.statusValue = 'failed'
