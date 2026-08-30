@@ -38,7 +38,7 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(additions).toEqual({
       'cohere/north-mini-code:free': {
         modelId: 'cohere/north-mini-code:free',
-        label: 'North Mini Code (OpenRouter Free)',
+        label: 'North Mini Code',
         reasoning: true,
         reasoningControl: 'toggle',
         input: ['text'],
@@ -48,7 +48,7 @@ describe('writePiOpenRouterModelRegistration', () => {
       },
       'minimax/minimax-m3:free': {
         modelId: 'minimax/minimax-m3:free',
-        label: 'MiniMax M3 (OpenRouter Free)',
+        label: 'MiniMax M3',
         reasoning: true,
         reasoningControl: 'toggle',
         input: ['text', 'image'],
@@ -58,7 +58,7 @@ describe('writePiOpenRouterModelRegistration', () => {
       },
       'thinkingmachines/inkling:free': {
         modelId: 'thinkingmachines/inkling:free',
-        label: 'Inkling (OpenRouter Free)',
+        label: 'Inkling',
         reasoning: true,
         thinkingLevelMap: {
           off: 'none',
@@ -76,7 +76,7 @@ describe('writePiOpenRouterModelRegistration', () => {
       },
       'thinkingmachines/inkling-small:free': {
         modelId: 'thinkingmachines/inkling-small:free',
-        label: 'Inkling Small (OpenRouter Free)',
+        label: 'Inkling Small',
         reasoning: true,
         thinkingLevelMap: {
           off: 'none',

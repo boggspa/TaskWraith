@@ -387,25 +387,25 @@ describe('CombinedModelPicker', () => {
   it.each([
     {
       id: 'openrouter/cohere/north-mini-code:free',
-      label: 'North Mini Code (OpenRouter Free)',
+      label: 'North Mini Code',
       brand: 'Cohere',
       hueClass: 'cohere'
     },
     {
       id: 'openrouter/minimax/minimax-m3:free',
-      label: 'MiniMax M3 (OpenRouter Free)',
+      label: 'MiniMax M3',
       brand: 'MiniMax',
       hueClass: 'minimax'
     },
     {
       id: 'openrouter/thinkingmachines/inkling:free',
-      label: 'Inkling (OpenRouter Free)',
+      label: 'Inkling',
       brand: 'Thinking Machines',
       hueClass: 'thinkingmachines'
     },
     {
       id: 'openrouter/thinkingmachines/inkling-small:free',
-      label: 'Inkling Small (OpenRouter Free)',
+      label: 'Inkling Small',
       brand: 'Thinking Machines',
       hueClass: 'thinkingmachines'
     }

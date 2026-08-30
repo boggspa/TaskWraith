@@ -456,13 +456,13 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' },
   {
     id: 'openrouter/cohere/north-mini-code:free',
-    label: 'North Mini Code (OpenRouter Free)'
+    label: 'North Mini Code'
   },
-  { id: 'openrouter/minimax/minimax-m3:free', label: 'MiniMax M3 (OpenRouter Free)' },
-  { id: 'openrouter/thinkingmachines/inkling:free', label: 'Inkling (OpenRouter Free)' },
+  { id: 'openrouter/minimax/minimax-m3:free', label: 'MiniMax M3' },
+  { id: 'openrouter/thinkingmachines/inkling:free', label: 'Inkling' },
   {
     id: 'openrouter/thinkingmachines/inkling-small:free',
-    label: 'Inkling Small (OpenRouter Free)'
+    label: 'Inkling Small'
   }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)

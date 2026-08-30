@@ -83,10 +83,10 @@ struct PiBrandTableTests {
     @Test("humanises new OpenRouter model ids")
     func humanisesOpenRouterModels() {
         let expected = [
-            "openrouter/cohere/north-mini-code:free": "North Mini Code (OpenRouter Free)",
-            "openrouter/minimax/minimax-m3:free": "MiniMax M3 (OpenRouter Free)",
-            "openrouter/thinkingmachines/inkling:free": "Inkling (OpenRouter Free)",
-            "openrouter/thinkingmachines/inkling-small:free": "Inkling Small (OpenRouter Free)",
+            "openrouter/cohere/north-mini-code:free": "North Mini Code",
+            "openrouter/minimax/minimax-m3:free": "MiniMax M3",
+            "openrouter/thinkingmachines/inkling:free": "Inkling",
+            "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
         ]
 
         for (wireId, label) in expected {

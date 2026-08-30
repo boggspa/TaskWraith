@@ -59,7 +59,7 @@ const OPENROUTER_OFFERS: HostProviderOffersProjection = {
   models: [
     {
       modelId: OPENROUTER_WIRE_MODEL_ID,
-      label: 'Inkling (OpenRouter Free)',
+      label: 'Inkling',
       available: true,
       reasoning: [
         { reasoningId: 'off', label: 'Off', available: true },
@@ -424,7 +424,7 @@ describe('HostNodePiProvider containment', () => {
           models: [
             expect.objectContaining({
               id: OPENROUTER_MODEL_ID,
-              name: 'Inkling (OpenRouter Free)',
+              name: 'Inkling',
               thinkingLevelMap: {
                 off: 'none',
                 minimal: 'minimal',

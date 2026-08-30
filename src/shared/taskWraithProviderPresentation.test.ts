@@ -68,7 +68,7 @@ describe('TaskWraith TUI provider presentation', () => {
       displayProvider: 'Thinking Machines',
       hueKey: 'thinkingmachines',
       accent: '#016EF6',
-      modelLabel: 'Inkling Small (OpenRouter Free)',
+      modelLabel: 'Inkling Small',
       shortCode: 'TML'
     })
   })

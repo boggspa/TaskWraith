@@ -113,22 +113,22 @@ struct ContextWindowsTests {
         let expected = [
             (
                 id: "openrouter/cohere/north-mini-code:free",
-                label: "North Mini Code (OpenRouter Free)",
+                label: "North Mini Code",
                 window: 256_000
             ),
             (
                 id: "openrouter/minimax/minimax-m3:free",
-                label: "MiniMax M3 (OpenRouter Free)",
+                label: "MiniMax M3",
                 window: 1_048_576
             ),
             (
                 id: "openrouter/thinkingmachines/inkling:free",
-                label: "Inkling (OpenRouter Free)",
+                label: "Inkling",
                 window: 1_048_576
             ),
             (
                 id: "openrouter/thinkingmachines/inkling-small:free",
-                label: "Inkling Small (OpenRouter Free)",
+                label: "Inkling Small",
                 window: 1_048_576
             ),
         ]
