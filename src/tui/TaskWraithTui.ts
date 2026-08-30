@@ -1191,12 +1191,13 @@ export class TaskWraithTui {
         return
       }
     }
-    // A projected provider approval is independently actionable when the
-    // composer is empty. Never steal y/n from an in-progress user message.
+    // A projected provider approval is independently actionable. The approval
+    // decision owns y/n while it is outstanding, even when the composer already
+    // contains text; leaving the text gate here turns a visible Host approval
+    // into an accidental composer insertion and lets the provider time out.
     if (
       !this.state.pendingHostMutation &&
       this.state.overlay === 'none' &&
-      !this.state.input &&
       !key.ctrl &&
       !key.meta
     ) {

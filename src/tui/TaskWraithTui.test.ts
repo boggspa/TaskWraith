@@ -2218,6 +2218,39 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(decision?.arguments).toEqual({ decision: 'accept' })
   })
 
+  it('lets projected approval y/n win over an existing composer draft', async () => {
+    const snapshot = makeHostSnapshot({
+      approvals: [
+        {
+          approvalId: 'provider-approval-with-draft',
+          commandId: 'provider-command-with-draft',
+          threadId: 'thread-1',
+          status: 'pending',
+          actionKind: 'provider.tool',
+          createdAt: 10,
+          summary: 'Run the requested provider tool'
+        }
+      ]
+    })
+    const { host, userDataPath } = await setupHost(snapshot)
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Approval · provider.tool'), 'projected approval')
+    feed(input, 'keep this draft')
+    await waitFor(() => output.lastFrame.includes('keep this draft'), 'draft in composer')
+    feed(input, 'y')
+
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'approval.decide'),
+      'approval decision with draft present'
+    )
+    const decision = host.commands.find((command) => command.name === 'approval.decide')
+    expect(decision?.target).toEqual({ approvalId: 'provider-approval-with-draft' })
+    expect(decision?.arguments).toEqual({ decision: 'accept' })
+    expect((tui as unknown as { state: { input: string } }).state.input).toBe('keep this draft')
+  })
+
   it('answers projected questions oldest-first and supports explicit dismiss', async () => {
     const snapshot = makeHostSnapshot({
       questions: [
@@ -2647,7 +2680,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
         tui as unknown as {
           onKeypress: (input: string, key: { name: string; shift: boolean }) => void
         }
-      ).onKeypress('', { name: 'tab', shift: true })
+      ).onKeypress('', { name: 'btab', shift: true })
     const expected = ['workspace_write', 'full_access', 'plan', 'read_only', 'default']
     for (let index = 0; index < expected.length; index += 1) {
       press()
