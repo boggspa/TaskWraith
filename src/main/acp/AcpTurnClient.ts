@@ -129,6 +129,13 @@ export interface AcpTurnOptions {
   /** Injected only for tests or an equivalent main-owned file reader. */
   readImageFile?: (imagePath: string) => Buffer
   /**
+   * Allow a provider adapter with independently verified image behavior to
+   * send inline image blocks when the provider's ACP capability flag is stale.
+   * This is intentionally opt-in: ordinary ACP lanes remain fail-closed when
+   * the runtime does not advertise promptCapabilities.image=true.
+   */
+  allowUnadvertisedPromptImages?: boolean
+  /**
    * Existing provider-native ACP session to rehydrate. The neutral client only
    * sends `session/resume` when the initialize response advertises that
    * capability; otherwise it opens a fresh session.
@@ -1436,11 +1443,17 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       if (message.id === ACP_ID.initialize && message.result) {
         agentSupportsImagePrompts = agentSupportsPromptImages(message.result)
         if (initialImagePaths.length > 0) {
-          if (!agentSupportsImagePrompts) {
+          if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
             failInitialImagePrompt(
               'the runtime did not advertise agentCapabilities.promptCapabilities.image=true. No image was silently omitted.'
             )
             continue
+          }
+          if (!agentSupportsImagePrompts) {
+            options.onEvent({
+              type: 'provider_warning',
+              text: 'ACP runtime reported promptCapabilities.image=false; forwarding the verified inline image blocks through the provider compatibility path.'
+            })
           }
           try {
             initialPromptImages = loadMainAuthorizedAcpImageContents(
@@ -1826,7 +1839,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       const steerImagePaths = Array.isArray(hooks?.imagePaths) ? [...hooks.imagePaths] : []
       let steerImages: AcpPromptImageContent[] = []
       if (steerImagePaths.length > 0) {
-        if (!agentSupportsImagePrompts) {
+        if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
           return rejectSteerHooksBeforeAdmission(
             hooks,
             'ACP live steering was not sent because this runtime did not advertise agentCapabilities.promptCapabilities.image=true.'

@@ -30,8 +30,10 @@ export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
 export interface GrokAcpRunOptions {
   prompt: string
-  /** Main-authorized images; the exact ACP runtime negotiates support. */
+  /** Main-authorized images; Grok ACP accepts inline blocks despite its stale image flag. */
   imagePaths?: readonly string[]
+  /** Injected only for tests or an equivalent main-owned image reader. */
+  readImageFile?: (imagePath: string) => Buffer
   cwd: string
   /** Spawns `grok --no-auto-update agent stdio` (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -195,6 +197,12 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   const handle = runAcpTurn({
     prompt: options.prompt,
     imagePaths: options.imagePaths,
+    readImageFile: options.readImageFile,
+    // Grok ACP builds accept inline image content even though their
+    // initialize response currently reports promptCapabilities.image=false.
+    // Keep the compatibility exception at the Grok adapter boundary; other
+    // ACP providers remain fail-closed on an unadvertised image capability.
+    allowUnadvertisedPromptImages: true,
     cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,

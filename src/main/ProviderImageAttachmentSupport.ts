@@ -24,8 +24,11 @@ const ANTIGRAVITY_GEMINI_API_IMAGE_ROUTE = /^gemini-api:gemini-[a-z0-9][a-z0-9._
  * - gemini: API lane sends inline image parts (GeminiApiProvider
  *   loadImageParts); CLI lane grants read access via --include-directories
  *   and the prompt names the attached files so the model knows to read them.
- * - kimi, grok, mistral: standard ACP image content blocks after the exact
- *   runtime advertises `agentCapabilities.promptCapabilities.image=true`.
+ * - kimi, mistral: standard ACP image content blocks after the exact runtime
+ *   advertises `agentCapabilities.promptCapabilities.image=true`.
+ * - grok: standard ACP image content blocks through a narrowly scoped
+ *   compatibility path because current Grok ACP builds accept them while
+ *   reporting the stale `promptCapabilities.image=false` flag.
  * - ollama: runtime-negotiated against the exact model's `/api/show`
  *   capabilities, then REST `/api/chat` `messages[].images` for vision models.
  * - pi: RPC `prompt.images` content blocks, only when the selected Pi model's
