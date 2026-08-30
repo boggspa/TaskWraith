@@ -783,6 +783,13 @@ export class TaskWraithTui {
       if (this.unresolvedLazySetupCommand) {
         this.setNotice('Connection restored · press Enter to resume the first prompt.', 'neutral')
       }
+      if (
+        !this.state.selectedThreadId &&
+        this.state.overlay === 'none' &&
+        this.client.supports('provider-catalog')
+      ) {
+        void this.loadHomeTuneProviders(false)
+      }
       this.render()
     } catch (error) {
       if (this.stopped) return
@@ -2249,7 +2256,7 @@ export class TaskWraithTui {
     if (this.state.overlay === 'tune') {
       this.state.overlay = 'none'
       this.homeTuneReadGeneration += 1
-      this.state.homeTune = undefined
+      if (this.state.homeTune?.loading) this.state.homeTune = undefined
       this.render()
       return
     }
@@ -2494,7 +2501,6 @@ export class TaskWraithTui {
         ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
       })
       this.state.overlay = 'none'
-      this.state.homeTune = undefined
       this.setNotice(
         `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}${
           reasoning ? ` / ${reasoning.label}` : ''
@@ -3331,7 +3337,6 @@ export class TaskWraithTui {
         'warning',
         4_000
       )
-      this.state.homeTune = undefined
       this.render()
       return
     }
@@ -3346,7 +3351,18 @@ export class TaskWraithTui {
       modelId: model.modelId,
       ...(savedReasoning ? { reasoningId: savedReasoning.reasoningId } : { reasoningId: undefined })
     })
-    this.state.homeTune = undefined
+    const providerIndex = providers.indexOf(provider)
+    const models = provider.offers.models.filter((candidate) => candidate.available)
+    const modelIndex = models.findIndex((candidate) => candidate.modelId === model.modelId)
+    const reasoning = model.reasoning.filter((candidate) => candidate.available)
+    this.state.homeTune = {
+      ...this.state.homeTune!,
+      providerIndex: Math.max(0, providerIndex),
+      modelIndex: Math.max(0, modelIndex),
+      reasoningIndex: savedReasoning
+        ? reasoning.findIndex((candidate) => candidate.reasoningId === savedReasoning.reasoningId)
+        : -1
+    }
     this.setNotice(
       `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}`,
       persisted ? 'good' : 'warning',

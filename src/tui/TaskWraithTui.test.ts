@@ -2353,10 +2353,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     cleanup.push(() => tui.stop())
     await tui.start()
 
-    await waitFor(
-      () => output.lastFrame.includes('No thread selected'),
-      'home frame after connecting'
-    )
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame after connecting')
     expect(output.lastFrame).not.toContain('Hello TaskWraith')
     expect(host.commands.filter((command) => command.name === 'thread.select')).toHaveLength(0)
   })
@@ -2396,9 +2393,24 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       }
     })
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
+    await waitFor(
+      () =>
+        Boolean(
+          (tui as unknown as { state: { homeTune?: { providers: unknown[] } } }).state.homeTune
+            ?.providers.length
+        ),
+      'home defaults loaded'
+    )
+    await waitFor(
+      () => output.lastFrame.includes('Claude Home') && output.lastFrame.includes('Default'),
+      'home default painted'
+    )
     feed(input, '/model gpt-home-choice\r')
-    await waitFor(() => output.lastFrame.includes('Codex / GPT Home'), 'home model persisted')
+    await waitFor(
+      () => output.lastFrame.includes('Codex GPT Home') && output.lastFrame.includes('Default'),
+      'home model persisted'
+    )
     expect(persisted).toContainEqual({
       providerId: 'codex',
       modelId: 'gpt-home-choice',
@@ -2571,7 +2583,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
     cleanup.push(() => tui.stop())
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
 
     feed(input, 'send this without choosing a chat\r')
     await waitFor(
@@ -2631,7 +2643,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
     cleanup.push(() => tui.stop())
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
 
     feed(input, 'keep this draft\r')
     await waitFor(() => output.lastFrame.includes('Sign in'), 'guided auth setup')
@@ -2659,7 +2671,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     cleanup.push(() => tui.stop())
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'requested thread opened')
-    expect(output.lastFrame).not.toContain('No thread selected')
+    expect(output.lastFrame).not.toContain('no active run')
     expect(persisted).toContainEqual({ workspaceId: 'ws-1' })
   })
 
@@ -3109,7 +3121,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       reconnectBaseDelayMs: 60_000
     })
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
     feed(input, '/new codex\r')
     await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
     feed(input, '\r')
@@ -3224,7 +3236,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       fullAccessPresence: mismatched
     })
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
     feed(input, '/new codex\r')
     await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
     feed(input, '\r')
