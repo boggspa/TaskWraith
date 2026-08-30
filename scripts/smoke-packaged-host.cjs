@@ -268,6 +268,54 @@ function resolveBundledNode(resources, target) {
   return selected
 }
 
+function seedReleaseScaleProfile(chatsPath) {
+  const threadCount = 41
+  const rowsPerThread = 50
+  let runRows = 0
+  let participantRows = 0
+  for (let threadIndex = 0; threadIndex < threadCount; threadIndex += 1) {
+    const threadId = `00000000-0000-4000-8000-${String(threadIndex).padStart(12, '0')}`
+    const participants = Array.from({ length: rowsPerThread }, (_, seatIndex) => ({
+      id: `seat-${threadIndex}-${seatIndex}`,
+      provider: 'codex',
+      role: `Worker ${seatIndex}`,
+      instructions: '',
+      order: seatIndex,
+      enabled: true
+    }))
+    const runs = Array.from({ length: rowsPerThread }, (_, runIndex) => {
+      const index = runRows + runIndex
+      return {
+        runId: `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        provider: 'codex',
+        status: 'success',
+        startedAt: new Date(index * 1_000).toISOString(),
+        endedAt: new Date(index * 1_000 + 500).toISOString()
+      }
+    })
+    runRows += runs.length
+    participantRows += participants.length
+    fs.writeFileSync(
+      path.join(chatsPath, `${threadId}.json`),
+      JSON.stringify({
+        appChatId: threadId,
+        scope: 'global',
+        chatKind: 'ensemble',
+        provider: 'codex',
+        title: `Release scale ${threadIndex}`,
+        archived: false,
+        messages: [],
+        runs,
+        ensemble: { participants },
+        updatedAt: threadIndex + 1,
+        persistenceRevision: 0
+      }),
+      { mode: 0o600 }
+    )
+  }
+  return { runRows, participantRows }
+}
+
 async function runProductionRoundTrip(launcher, target) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-packaged-host-smoke-'))
   const canonicalProfile = fs.realpathSync(profile)
@@ -286,6 +334,10 @@ async function runProductionRoundTrip(launcher, target) {
     // app-owned directory rather than fail before publishing discovery.
     fs.mkdirSync(legacyChatsPath, { mode: 0o755 })
     if (target.platform !== 'win32') fs.chmodSync(legacyChatsPath, 0o755)
+    const releaseScale = seedReleaseScaleProfile(legacyChatsPath)
+    if (releaseScale.runRows <= 2_000 || releaseScale.participantRows <= 2_000) {
+      fail('production Host release-scale fixture must exceed two thousand rows per family')
+    }
     const launcherArgs = ['--profile', canonicalProfile]
     const childEnv = {}
 
@@ -332,8 +384,26 @@ async function runProductionRoundTrip(launcher, target) {
       fail('production Host did not return an authenticated snapshot')
     }
     const snapshotProviders = response.frame.result.frame?.snapshot?.providers
+    const releaseScaleSnapshot = response.frame.result.frame?.snapshot
     if (!Array.isArray(snapshotProviders)) {
       fail('production Host snapshot must include a providers inventory')
+    }
+    const warningCodes = Array.isArray(releaseScaleSnapshot?.warnings)
+      ? releaseScaleSnapshot.warnings.map((warning) => `${warning.code}:${warning.warningId}`)
+      : []
+    if (
+      !Array.isArray(releaseScaleSnapshot?.runs) ||
+      releaseScaleSnapshot.runs.length >= 2_000 ||
+      !warningCodes.includes('projection_windowed:projection_windowed:runs')
+    ) {
+      fail('production Host must intentionally window oversized run history below the wire cap')
+    }
+    if (
+      !Array.isArray(releaseScaleSnapshot?.participants) ||
+      releaseScaleSnapshot.participants.length !== 2_000 ||
+      !warningCodes.includes('projection_truncated:projection_truncated:participants')
+    ) {
+      fail('production Host scale smoke must retain a genuinely truncated participant family')
     }
 
     const statusResponse = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
