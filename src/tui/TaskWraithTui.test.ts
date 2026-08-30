@@ -18,6 +18,7 @@ import {
   type HostDeltaEnvelope,
   type HostDeltaFamily,
   type HostDeltaKind,
+  type HostDeltasFrame,
   type HostDeltasSinceResult,
   type HostParticipantProjection,
   type HostResultRef,
@@ -35,6 +36,10 @@ import type {
   HostThreadHistoryPage,
   HostThreadHistoryRequest
 } from '../shared/hostHistoryProtocol'
+import {
+  HostPermissionConsentAuthority,
+  type HostPermissionConsentProofRequest
+} from '../host-runtime/HostPermissionConsent'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { taskWraithHostSocketPath } from '../shared/taskWraithHostPaths.node'
 import type {
@@ -44,7 +49,13 @@ import type {
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
 import { stripAnsi } from './ansi'
-import { TaskWraithTui, shouldAdvanceAnimationFrame } from './TaskWraithTui'
+import { createTuiFullAccessPresence } from './fullAccessConsent'
+import {
+  TaskWraithTui,
+  hostDeltasMayReleaseQueuedDraft,
+  shouldAdvanceAnimationFrame,
+  terminalRunIdsFromHostDeltas
+} from './TaskWraithTui'
 import { TUI_GLYPHS_ASCII } from './theme'
 
 const cleanup: Array<() => Promise<void> | void> = []
@@ -131,6 +142,11 @@ interface FakeHostHandlers {
     enabled: boolean
   }) => { kind: 'succeeded' } | { kind: 'denied'; reason: string }
   resultRef?: (command: HostCommand) => HostResultRef | undefined
+  resultSummary?: (command: HostCommand) => string | undefined
+  onCommand?: (command: HostCommand) => void
+  dropCommandResponse?: (command: HostCommand) => boolean
+  dropCommandBeforeHandling?: (command: HostCommand) => boolean
+  rejectCommandBeforeHandling?: (command: HostCommand) => boolean
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
 }
@@ -167,6 +183,7 @@ class FakeHostV2 {
   welcomeCount = 0
   helloCapabilities: HostCapability[] = []
   readonly commands: HostCommand[] = []
+  readonly commandAttempts: HostCommand[] = []
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
     this.userDataPath = userDataPath
@@ -198,7 +215,9 @@ class FakeHostV2 {
         socketPath: this.socketPath,
         tokenPath: join(canonicalUserDataPath, 'taskwraith-host-v2.token'),
         pid: process.pid,
-        startedAt: new Date(0).toISOString()
+        startedAt: new Date(0).toISOString(),
+        hostId: 'fake-host',
+        hostVersion: '1.9.1-preview'
       }),
       'utf8'
     )
@@ -389,7 +408,27 @@ class FakeHostV2 {
     }
     if (kind === 'command.submit') {
       const command = message.params as HostCommand
-      const receipt = this.handleCommand(command)
+      this.commandAttempts.push(command)
+      if (this.handlers.dropCommandBeforeHandling?.(command)) {
+        socket.destroy()
+        return
+      }
+      if (this.handlers.rejectCommandBeforeHandling?.(command)) {
+        this.write(socket, {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id,
+          ok: false,
+          error: { code: 'host_unavailable' }
+        })
+        return
+      }
+      const existing = this.receipts.get(command.commandId)
+      const receipt = existing ?? this.handleCommand(command)
+      if (!existing && this.handlers.dropCommandResponse?.(command)) {
+        socket.destroy()
+        return
+      }
       this.write(socket, {
         type: 'response',
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
@@ -539,6 +578,7 @@ class FakeHostV2 {
 
   private handleCommand(command: HostCommand): HostCommandReceipt {
     this.commands.push(command)
+    this.handlers.onCommand?.(command)
     if (command.name === 'approval.decide') {
       return this.handleApprovalDecide(command)
     }
@@ -566,10 +606,12 @@ class FakeHostV2 {
     const mode = this.handlers.mutationMode ?? 'allow'
     if (mode === 'allow' || command.name === 'ping') {
       const resultRef = this.handlers.resultRef?.(command)
+      const resultSummary = this.handlers.resultSummary?.(command)
       const receipt = this.makeReceipt(command, {
         status: 'succeeded',
         authority: { decision: 'allow' },
-        ...(resultRef ? { resultRef } : {})
+        ...(resultRef ? { resultRef } : {}),
+        ...(resultSummary ? { resultSummary } : {})
       })
       this.receipts.set(receipt.commandId, receipt)
       this.cursor += 1
@@ -631,7 +673,9 @@ class FakeHostV2 {
   private makeReceipt(
     command: HostCommand,
     overrides: Pick<HostCommandReceipt, 'status' | 'authority'> &
-      Partial<Pick<HostCommandReceipt, 'errorCode' | 'errorMessage' | 'resultRef'>>
+      Partial<
+        Pick<HostCommandReceipt, 'errorCode' | 'errorMessage' | 'resultRef' | 'resultSummary'>
+      >
   ): HostCommandReceipt {
     const now = new Date().toISOString()
     return {
@@ -650,7 +694,8 @@ class FakeHostV2 {
       updatedAt: now,
       ...(overrides.errorCode ? { errorCode: overrides.errorCode } : {}),
       ...(overrides.errorMessage ? { errorMessage: overrides.errorMessage } : {}),
-      ...(overrides.resultRef ? { resultRef: overrides.resultRef } : {})
+      ...(overrides.resultRef ? { resultRef: overrides.resultRef } : {}),
+      ...(overrides.resultSummary ? { resultSummary: overrides.resultSummary } : {})
     }
   }
 
@@ -987,12 +1032,33 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
     expect(output.lastFrame).not.toMatch(/read-only|Wave 4\.2b/i)
 
+    const sent = host.commands.find((command) => command.name === 'composer.send')!
+    const liveRun = {
+      runId: sent.commandId,
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    host.handlers.snapshot = () => makeHostSnapshot({ runs: [liveRun] })
+    host.pushDeltas([{ family: 'run', entityId: liveRun.runId, payload: liveRun }])
+    await waitFor(
+      () =>
+        (
+          tui as unknown as {
+            hostSnapshot: HostSnapshot | null
+          }
+        ).hostSnapshot?.runs.some((run) => run.runId === liveRun.runId) === true,
+      'live run projected'
+    )
     feed(input, '/cancel\r\r')
     await waitFor(
       () => output.lastFrame.includes('Host accepted run.cancel'),
       'run.cancel succeeded',
       5_000
     )
+    expect(host.commands.find((command) => command.name === 'run.cancel')?.arguments).toEqual({
+      expectedWorkId: liveRun.runId
+    })
 
     host.dropAllClients()
     await host.stop()
@@ -1033,6 +1099,566 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       5_000
     )
   }, 12_000)
+
+  it('queues active-run drafts FIFO and drains one only after each exact run lifecycle', async () => {
+    const initialRun = {
+      runId: 'run-initial',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({ runs: [initialRun] })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-prompt-fifo-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            ...current.runs.filter((run) => run.runId !== command.commandId),
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, 'first queued\r')
+    feed(input, 'second queued\r')
+    await waitFor(
+      () =>
+        ((tui as unknown as { state: { queuedDrafts?: unknown[] } }).state.queuedDrafts?.length ??
+          0) === 2,
+      'two local drafts queued'
+    )
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(0)
+
+    const initialDone = { ...initialRun, providerOutcome: 'completed' as const, endedAt: 20 }
+    current = { ...current, runs: [initialDone] }
+    host.pushDeltas([{ family: 'run', entityId: initialRun.runId, payload: initialDone }])
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'composer.send').length === 1,
+      'first queued draft dispatched'
+    )
+    const firstCommand = host.commands.find((command) => command.name === 'composer.send')!
+    expect(firstCommand.arguments.text).toBe('first queued')
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(1)
+    const firstDone = {
+      runId: firstCommand.commandId,
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'completed' as const,
+      endedAt: 30
+    }
+    current = { ...current, runs: [initialDone, firstDone] }
+    host.pushDeltas([{ family: 'run', entityId: firstCommand.commandId, payload: firstDone }])
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'composer.send').length === 2,
+      'second queued draft dispatched'
+    )
+    expect(
+      host.commands.filter((command) => command.name === 'composer.send')[1]?.arguments.text
+    ).toBe('second queued')
+  })
+
+  it('Esc captures the current draft, requests one cancel, and waits for terminal proof', async () => {
+    const active = {
+      runId: 'run-active',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({ runs: [active] })
+    let cancelResponseDropped = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-esc-steer-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      dropCommandResponse: (command) => {
+        if (command.name !== 'run.cancel' || cancelResponseDropped) return false
+        cancelResponseDropped = true
+        return true
+      },
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            ...current.runs,
+            {
+              runId: command.commandId,
+              threadId: 'thread-1',
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    const snapshotsBeforeEscape = host.snapshotRequests
+    host.pushDeltas([{ family: 'run', entityId: active.runId, payload: active }])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    feed(input, 'urgent steer')
+    ;(tui as unknown as { mutationInFlight: boolean }).mutationInFlight = true
+    ;(tui as unknown as { onKeypress: (input: string, key: { name: string }) => void }).onKeypress(
+      '',
+      { name: 'escape' }
+    )
+    await waitFor(
+      () => host.snapshotRequests > snapshotsBeforeEscape,
+      'cached projection refreshed for Escape'
+    )
+    expect(host.commands.filter((command) => command.name === 'run.cancel')).toHaveLength(0)
+    ;(tui as unknown as { mutationInFlight: boolean }).mutationInFlight = false
+    ;(tui as unknown as { flushPendingEscapeCancel: () => void }).flushPendingEscapeCancel()
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'run.cancel').length === 1,
+      'single Escape cancellation'
+    )
+    await waitFor(() => host.welcomeCount >= 2, 'cancel receipt reconnect', 4_000)
+    ;(tui as unknown as { onKeypress: (input: string, key: { name: string }) => void }).onKeypress(
+      '',
+      { name: 'escape' }
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(host.commands.filter((command) => command.name === 'run.cancel')).toHaveLength(1)
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(0)
+
+    const terminal = { ...active, providerOutcome: 'cancelled' as const, endedAt: 40 }
+    current = { ...current, runs: [terminal] }
+    host.pushDeltas([{ family: 'run', entityId: active.runId, payload: terminal }])
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'steer dispatched after terminal proof'
+    )
+    expect(host.commands.find((command) => command.name === 'composer.send')?.arguments.text).toBe(
+      'urgent steer'
+    )
+  })
+
+  it('fresh-reads then retries one uncertain same-socket Escape cancel by exact identity', async () => {
+    const active = {
+      runId: 'run-same-socket-cancel',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({ runs: [active] })
+    let rejected = false
+    const snapshotReadsAtAttempts: number[] = []
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-cancel-live-retry-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      rejectCommandBeforeHandling: (command) => {
+        if (command.name !== 'run.cancel' || rejected) return false
+        rejected = true
+        snapshotReadsAtAttempts.push(host.snapshotRequests)
+        return true
+      },
+      onCommand: (command) => {
+        if (command.name === 'run.cancel') snapshotReadsAtAttempts.push(host.snapshotRequests)
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, 'same socket steer')
+    ;(tui as unknown as { onKeypress: (input: string, key: { name: string }) => void }).onKeypress(
+      '',
+      { name: 'escape' }
+    )
+
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'run.cancel').length === 1,
+      'exact cancel accepted after fresh read',
+      4_000
+    )
+    const attempts = host.commandAttempts.filter((command) => command.name === 'run.cancel')
+    expect(host.welcomeCount).toBe(1)
+    expect(attempts).toHaveLength(2)
+    expect(new Set(attempts.map((command) => command.commandId)).size).toBe(1)
+    expect(new Set(attempts.map((command) => command.idempotencyKey)).size).toBe(1)
+    expect(new Set(attempts.map((command) => command.arguments.expectedWorkId))).toEqual(
+      new Set([active.runId])
+    )
+    expect(snapshotReadsAtAttempts[1]).toBeGreaterThan(snapshotReadsAtAttempts[0] ?? -1)
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(0)
+
+    const terminal = { ...active, providerOutcome: 'cancelled' as const, endedAt: 41 }
+    current = { ...current, runs: [terminal] }
+    host.pushDeltas([{ family: 'run', entityId: active.runId, payload: terminal }])
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'steer dispatched after terminal proof'
+    )
+    expect(host.commands.find((command) => command.name === 'composer.send')?.arguments.text).toBe(
+      'same socket steer'
+    )
+  })
+
+  it('recovers a lost send response by exact command identity without double dispatch', async () => {
+    let current = makeHostSnapshot()
+    let dropped = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-receipt-recovery-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      dropCommandResponse: (command) => {
+        if (command.name !== 'composer.send' || dropped) return false
+        dropped = true
+        return true
+      },
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 10,
+      projectionRefreshMs: 60_000
+    })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, 'send once across reconnect\r')
+    await waitFor(() => dropped, 'send response dropped')
+    await waitFor(() => host.welcomeCount >= 2, 'TUI reconnected', 4_000)
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(1)
+    const command = host.commands.find((candidate) => candidate.name === 'composer.send')!
+    const terminal = {
+      runId: command.commandId,
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'completed' as const,
+      endedAt: 50
+    }
+    current = { ...current, runs: [terminal] }
+    host.pushDeltas([{ family: 'run', entityId: command.commandId, payload: terminal }])
+    await waitFor(
+      () =>
+        ((tui as unknown as { state: { queuedDrafts?: unknown[] } }).state.queuedDrafts?.length ??
+          0) === 0,
+      'queued identity recovered'
+    )
+    expect(host.commands.filter((candidate) => candidate.name === 'composer.send')).toHaveLength(1)
+  })
+
+  it('retries the exact command after reconnect when the Host never accepted it', async () => {
+    let current = makeHostSnapshot()
+    let dropped = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-unaccepted-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      dropCommandBeforeHandling: (command) => {
+        if (command.name !== 'composer.send' || dropped) return false
+        dropped = true
+        return true
+      },
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 10,
+      projectionRefreshMs: 60_000
+    })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, 'retry exact identity\r')
+    await waitFor(() => dropped, 'first command dropped before acceptance')
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'composer.send').length === 1,
+      'same command accepted after reconnect',
+      4_000
+    )
+    const attempts = host.commandAttempts.filter((command) => command.name === 'composer.send')
+    expect(attempts).toHaveLength(2)
+    expect(new Set(attempts.map((command) => command.commandId)).size).toBe(1)
+    expect(new Set(attempts.map((command) => command.idempotencyKey)).size).toBe(1)
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(1)
+  })
+
+  it('backs off then retries the same command when a live socket rejects before acceptance', async () => {
+    let current = makeHostSnapshot()
+    let rejected = false
+    const snapshotReadsAtAttempts: number[] = []
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-live-retry-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      rejectCommandBeforeHandling: (command) => {
+        if (command.name !== 'composer.send' || rejected) return false
+        snapshotReadsAtAttempts.push(host.snapshotRequests)
+        rejected = true
+        return true
+      },
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        snapshotReadsAtAttempts.push(host.snapshotRequests)
+        current = {
+          ...current,
+          runs: [
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, 'retry without reconnect\r')
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'composer.send').length === 1,
+      'backoff retry accepted',
+      4_000
+    )
+    expect(host.welcomeCount).toBe(1)
+    const attempts = host.commandAttempts.filter((command) => command.name === 'composer.send')
+    expect(attempts).toHaveLength(2)
+    expect(new Set(attempts.map((command) => command.commandId)).size).toBe(1)
+    expect(new Set(attempts.map((command) => command.idempotencyKey)).size).toBe(1)
+    expect(snapshotReadsAtAttempts[1]).toBeGreaterThan(snapshotReadsAtAttempts[0] ?? -1)
+  })
+
+  it('keeps a queued draft bound to its original thread across a reader switch', async () => {
+    const active = {
+      runId: 'run-thread-a',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({
+      runs: [active],
+      threads: [
+        ...makeHostSnapshot().threads,
+        {
+          id: 'thread-2',
+          workspaceId: 'ws-1',
+          title: 'Thread B',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 5,
+          messageCount: 0,
+          providerId: 'claude'
+        }
+      ]
+    })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-thread-switch-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            ...current.runs,
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread A selected')
+    feed(input, 'stay on A\r')
+    await waitFor(
+      () =>
+        ((tui as unknown as { state: { queuedDrafts?: unknown[] } }).state.queuedDrafts?.length ??
+          0) === 1,
+      'draft queued on A'
+    )
+    ;(tui as unknown as { applyLocalThread: (threadId: string) => void }).applyLocalThread(
+      'thread-2'
+    )
+    const terminal = { ...active, providerOutcome: 'completed' as const, endedAt: 60 }
+    current = { ...current, runs: [terminal] }
+    host.pushDeltas([{ family: 'run', entityId: active.runId, payload: terminal }])
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'A draft dispatched'
+    )
+    const send = host.commands.find((command) => command.name === 'composer.send')!
+    expect(send.target.threadId).toBe('thread-1')
+    expect(send.arguments.text).toBe('stay on A')
+    expect(
+      (tui as unknown as { state: { selectedThreadId?: string } }).state.selectedThreadId
+    ).toBe('thread-2')
+  })
+
+  it('takes one fresh Host read before sending a draft queued onto cached idle state', async () => {
+    let current = makeHostSnapshot()
+    let snapshotsAtDispatch = -1
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-cached-idle-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        snapshotsAtDispatch = host.snapshotRequests
+        current = {
+          ...current,
+          runs: [
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    const before = host.snapshotRequests
+    const updatedThread = { ...current.threads[0], updatedAt: 99 }
+    current = { ...current, threads: [updatedThread] }
+    host.pushDeltas([{ family: 'thread', entityId: updatedThread.id, payload: updatedThread }])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    feed(input, 'send after cached delta\r')
+    await waitFor(() => snapshotsAtDispatch >= 0, 'cached queue dispatched')
+    expect(snapshotsAtDispatch).toBe(before + 1)
+    expect(host.commands.find((command) => command.name === 'composer.send')?.arguments.text).toBe(
+      'send after cached delta'
+    )
+  })
+
+  it('takes a fresh Host read before sending a draft queued onto connected stale state', async () => {
+    let current = makeHostSnapshot()
+    let snapshotsAtDispatch = -1
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-stale-idle-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        snapshotsAtDispatch = host.snapshotRequests
+        current = {
+          ...current,
+          runs: [
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    const before = host.snapshotRequests
+    ;(tui as unknown as { markHostProjectionStale: () => void }).markHostProjectionStale()
+    feed(input, 'send after stale projection\r')
+    await waitFor(() => snapshotsAtDispatch >= 0, 'stale queue dispatched')
+    expect(host.welcomeCount).toBe(1)
+    expect(snapshotsAtDispatch).toBeGreaterThan(before)
+    expect(host.commands.find((command) => command.name === 'composer.send')?.arguments.text).toBe(
+      'send after stale projection'
+    )
+  })
+
+  it('does not full-resnapshot for each nonterminal delta while a draft waits', async () => {
+    const active = {
+      runId: 'run-streaming',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({ runs: [active] })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-queue-stream-deltas-'))
+    const host = new FakeHostV2(userDataPath, { snapshot: () => current })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, 'wait behind stream\r')
+    await waitFor(
+      () =>
+        ((tui as unknown as { state: { queuedDrafts?: unknown[] } }).state.queuedDrafts?.length ??
+          0) === 1,
+      'draft queued'
+    )
+    const before = host.snapshotRequests
+    for (let index = 0; index < 3; index += 1) {
+      const update = { ...active, startedAt: index + 1 }
+      current = { ...current, runs: [update] }
+      host.pushDeltas([{ family: 'run', entityId: active.runId, payload: update }])
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(host.snapshotRequests).toBe(before)
+    expect(host.commands.filter((command) => command.name === 'composer.send')).toHaveLength(0)
+  })
 
   it('loads Host-v2 model offers, stages a choice, and sends only that offered selection', async () => {
     const { host, userDataPath } = await setupHost()
@@ -1735,6 +2361,112 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(host.commands.filter((command) => command.name === 'thread.select')).toHaveLength(0)
   })
 
+  it('persists a unique ready-provider model from Home without creating a thread', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-home-model-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot({ threads: [] }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        { providerId: 'claude', status: 'ready', label: 'Claude' },
+        { providerId: 'codex', status: 'ready', label: 'Codex' }
+      ],
+      providerOffers: (providerId) => ({
+        providerId,
+        offerRevision: `${providerId}-revision`,
+        models: [
+          {
+            modelId: providerId === 'codex' ? 'gpt-home-choice' : 'claude-home-choice',
+            label: providerId === 'codex' ? 'GPT Home' : 'Claude Home',
+            available: true,
+            default: true,
+            reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+          }
+        ],
+        postures: []
+      })
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const persisted: Array<Record<string, unknown>> = []
+    const { tui, input, output } = startTui(userDataPath, {
+      initialThreadId: undefined,
+      persistProfileSettings: (changes) => {
+        persisted.push({ ...changes })
+        return true
+      }
+    })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    feed(input, '/model gpt-home-choice\r')
+    await waitFor(() => output.lastFrame.includes('Codex / GPT Home'), 'home model persisted')
+    expect(persisted).toContainEqual({
+      providerId: 'codex',
+      modelId: 'gpt-home-choice',
+      reasoningId: undefined
+    })
+    expect(host.commands).toHaveLength(0)
+  })
+
+  it('opens a credential-free /login hub and begins only an advertised flow', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-login-hub-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [
+        {
+          providerId: 'pi',
+          status: 'auth_required',
+          label: 'Pi',
+          detail: 'Host environment key required.'
+        },
+        { providerId: 'claude', status: 'auth_required', label: 'Claude' }
+      ],
+      providerAuthStatus: (providerId) => ({ providerId, state: 'unauthenticated' }),
+      providerAuthFlows: (providerId) =>
+        providerId === 'claude'
+          ? [{ flowId: 'claude:login', kind: 'manual', label: 'Sign in', available: true }]
+          : [],
+      resultRef: (command) =>
+        command.name === 'provider.auth.begin'
+          ? {
+              kind: 'provider-auth',
+              providerId: command.target.providerId,
+              operationId: command.commandId
+            }
+          : undefined
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, '/login pi\r')
+    await waitFor(() => output.lastFrame.includes('Host environment key required'), 'Pi guidance')
+    expect(host.commands).toHaveLength(1) // initial thread.select only
+    ;(tui as unknown as { onKeypress: (input: string, key: { name: string }) => void }).onKeypress(
+      '',
+      { name: 'down' }
+    )
+    await waitFor(() => output.lastFrame.includes('Sign in'), 'Claude flow')
+    ;(tui as unknown as { onKeypress: (input: string, key: { name: string }) => void }).onKeypress(
+      '',
+      { name: 'enter' }
+    )
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'provider.auth.begin').length === 1,
+      'one auth begin'
+    )
+    expect(
+      host.commands.filter(
+        (command) => command.name === 'thread.create' || command.name === 'thread.configure'
+      )
+    ).toHaveLength(0)
+    expect(
+      host.commands.find((command) => command.name === 'provider.auth.begin')?.arguments
+    ).toEqual({ flowId: 'claude:login' })
+  })
+
   it('lazily creates a remembered default thread and sends the first ordinary prompt', async () => {
     const workspaces = [
       {
@@ -2284,6 +3016,237 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
   })
 
+  it('adds a launch-bound proof only when the user confirms Full Access', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-full-access-'))
+    const proofSecret = Buffer.alloc(32, 9)
+    const verifier = new HostPermissionConsentAuthority(proofSecret)
+    cleanup.push(() => verifier.dispose())
+    let proofAccepted = false
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces: [
+            {
+              id: 'ws-full-access',
+              name: 'Full Access workspace',
+              path: '/tmp/full-access',
+              pinned: false,
+              updatedAt: 1
+            }
+          ],
+          threads: []
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [{ providerId: 'codex', status: 'ready', label: 'Codex' }],
+      providerOffers: () => ({
+        providerId: 'codex',
+        offerRevision: 'full-access-offer-1',
+        models: [
+          {
+            modelId: 'gpt-5.6-terra',
+            label: 'GPT-5.6 Terra',
+            available: true,
+            default: true,
+            reasoning: []
+          }
+        ],
+        postures: [
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access',
+            detail: 'Verified Codex transport'
+          }
+        ]
+      }),
+      resultRef: (command) => {
+        if (command.name === 'thread.create') {
+          return { kind: 'thread', threadId: 'thread-full-access' }
+        }
+        if (command.name === 'thread.configure') {
+          return { kind: 'thread', threadId: 'thread-full-access' }
+        }
+        return undefined
+      },
+      onCommand: (command) => {
+        if (command.name !== 'thread.configure') return
+        const request: HostPermissionConsentProofRequest = {
+          commandId: command.commandId,
+          actor: command.actor,
+          threadId: command.target.threadId,
+          providerId: command.arguments.providerId as string,
+          modelId: command.arguments.modelId as string,
+          postureId: 'full_access',
+          offerRevision: command.arguments.offerRevision as string,
+          issuedAt: command.issuedAt
+        }
+        proofAccepted = verifier.verifyRequestProof(request, command.arguments.postureConsentProof)
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const source = Buffer.from(proofSecret)
+    proofSecret.fill(0)
+    const presence = createTuiFullAccessPresence(source, {
+      pid: process.pid,
+      startedAt: new Date(0).toISOString(),
+      hostId: 'fake-host',
+      hostVersion: '1.9.1-preview'
+    })
+    source.fill(0)
+    const { tui, input, output } = startTui(userDataPath, {
+      initialThreadId: undefined,
+      fullAccessPresence: presence,
+      reconnectBaseDelayMs: 60_000
+    })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    feed(input, '/new codex\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.create'),
+      'thread created'
+    )
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Accept Edits'), 'posture choices')
+    feed(input, '\u001b[C')
+    await waitFor(() => output.lastFrame.includes('Full Access (YOLO)'), 'Full Access selected')
+    feed(input, ' ')
+    await waitFor(
+      () => output.lastFrame.includes('Full Access (YOLO) · acknowledged'),
+      'Full Access acknowledged'
+    )
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.configure'),
+      'Full Access configure submitted'
+    )
+
+    const configure = host.commands.find((command) => command.name === 'thread.configure')!
+    expect(configure.target).toEqual({ threadId: 'thread-full-access' })
+    expect(configure.arguments).toMatchObject({
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access',
+      offerRevision: 'full-access-offer-1',
+      postureConsent: true,
+      postureConsentProof: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    expect(proofAccepted).toBe(true)
+    host.dropAllClients()
+    await waitFor(
+      () =>
+        (tui as unknown as { state: { connection: string } }).state.connection === 'reconnecting',
+      'presence connection dropped'
+    )
+    expect(
+      (
+        tui as unknown as { hasMatchingFullAccessPresence: () => boolean }
+      ).hasMatchingFullAccessPresence()
+    ).toBe(false)
+  })
+
+  it('keeps Host-offered Full Access unavailable without matching launch presence', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-full-access-mismatch-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces: [
+            {
+              id: 'ws-full-access',
+              name: 'Full Access workspace',
+              path: '/tmp/full-access',
+              pinned: false,
+              updatedAt: 1
+            }
+          ],
+          threads: []
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [{ providerId: 'codex', status: 'ready', label: 'Codex' }],
+      providerOffers: () => ({
+        providerId: 'codex',
+        offerRevision: 'full-access-offer-1',
+        models: [
+          {
+            modelId: 'gpt-5.6-terra',
+            label: 'GPT-5.6 Terra',
+            available: true,
+            default: true,
+            reasoning: []
+          }
+        ],
+        postures: [
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access',
+            detail: 'Verified Codex transport'
+          }
+        ]
+      }),
+      resultRef: (command) =>
+        command.name === 'thread.create'
+          ? { kind: 'thread', threadId: 'thread-full-access' }
+          : undefined
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const source = Buffer.alloc(32, 4)
+    const mismatched = createTuiFullAccessPresence(source, {
+      pid: process.pid + 1,
+      startedAt: new Date(0).toISOString(),
+      hostId: 'fake-host',
+      hostVersion: '1.9.1-preview'
+    })
+    source.fill(0)
+    const { tui, input, output } = startTui(userDataPath, {
+      initialThreadId: undefined,
+      fullAccessPresence: mismatched
+    })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('No thread selected'), 'home frame')
+    feed(input, '/new codex\r')
+    await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.create'),
+      'thread created'
+    )
+    feed(input, '\r')
+    await waitFor(
+      () => output.lastFrame.includes('fresh standalone Host'),
+      'Full Access presence warning'
+    )
+    ;(tui as unknown as { state: { coldStartPostureIndex?: number } }).state.coldStartPostureIndex =
+      1
+    feed(input, '\r')
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(host.commands.filter((command) => command.name === 'thread.configure')).toHaveLength(0)
+    expect(host.commandAttempts.some((command) => command.arguments.postureConsentProof)).toBe(
+      false
+    )
+  })
+
   it('retains provider-auth state across refresh/reconnect without replaying begin', async () => {
     let authenticated = false
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-auth-start-host-'))
@@ -2444,7 +3407,7 @@ describe('TaskWraithTui reconnect revival', () => {
       reviveFailureThreshold: 2,
       reviveHost: async () => {
         revives += 1
-        if (revives > 1) return
+        if (revives > 1) return { kind: 'existing' as const }
         const revived = new FakeHostV2(userDataPath, {
           snapshot: () =>
             makeHostSnapshot({
@@ -2468,6 +3431,7 @@ describe('TaskWraithTui reconnect revival', () => {
         })
         await revived.start()
         cleanup.push(() => revived.stop())
+        return { kind: 'launched' as const, pid: process.pid }
       }
     })
 
@@ -2496,6 +3460,7 @@ describe('TaskWraithTui reconnect revival', () => {
       reviveFailureThreshold: 1,
       reviveHost: async () => {
         revives += 1
+        return { kind: 'existing' as const }
       }
     })
     await tui.start()
@@ -2504,7 +3469,7 @@ describe('TaskWraithTui reconnect revival', () => {
     await new Promise((resolve) => setTimeout(resolve, 300))
     expect(revives).toBe(0)
     tui.stop()
-  })
+  }, 10_000)
 
   it('opens the /git overlay with a calm unavailable state when the Host has no git capability', async () => {
     // The fake Host offers no workspace-git — a normal configuration, NOT an
@@ -3273,6 +4238,49 @@ describe('seat lens (/seats)', () => {
 })
 
 describe('animation frame gating', () => {
+  it('requests fresh queue authority only for terminal-relevant run deltas', () => {
+    const frame = (payload: Record<string, unknown>): HostDeltasFrame => ({
+      type: 'host.deltas',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      result: {
+        kind: 'deltas',
+        generation: 3,
+        fromCursor: 1,
+        toCursor: 2,
+        deltas: [
+          {
+            protocolVersion: HOST_PROTOCOL_VERSION,
+            projectionVersion: HOST_PROJECTION_VERSION,
+            generation: 3,
+            previousCursor: 1,
+            cursor: 2,
+            kind: 'upsert',
+            family: 'run',
+            entityId: 'run-1',
+            payload,
+            at: new Date(0).toISOString()
+          }
+        ]
+      }
+    })
+    expect(hostDeltasMayReleaseQueuedDraft(frame({ providerOutcome: 'running' }))).toBe(false)
+    expect(
+      hostDeltasMayReleaseQueuedDraft(frame({ providerOutcome: 'completed', endedAt: 4 }))
+    ).toBe(true)
+    expect(terminalRunIdsFromHostDeltas(frame({ providerOutcome: 'completed' }))).toEqual(
+      new Set(['run-1'])
+    )
+    const removed = frame({ providerOutcome: 'running' })
+    if (removed.result.kind === 'deltas') {
+      removed.result.deltas[0] = {
+        ...removed.result.deltas[0],
+        kind: 'remove',
+        payload: undefined
+      }
+    }
+    expect(terminalRunIdsFromHostDeltas(removed)).toEqual(new Set(['run-1']))
+  })
+
   const gate = (over: Partial<Parameters<typeof shouldAdvanceAnimationFrame>[0]>) =>
     shouldAdvanceAnimationFrame({
       working: false,

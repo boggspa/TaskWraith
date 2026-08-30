@@ -19,6 +19,7 @@ describe('TaskWraith TUI slash-command registry', () => {
         '/goal',
         '/help',
         '/history',
+        '/login',
         '/missions',
         '/model',
         '/new',

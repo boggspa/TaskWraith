@@ -16,6 +16,7 @@ export type TuiSlashCommandName =
   | '/goal'
   | '/help'
   | '/history'
+  | '/login'
   | '/missions'
   | '/model'
   | '/new'
@@ -71,6 +72,13 @@ export const TUI_SLASH_COMMANDS: readonly TuiSlashCommandDefinition[] = [
     aliases: ['/provider'],
     usage: '/new [provider]',
     description: 'Start a fresh solo thread, optionally with a provider.',
+    destructive: false
+  },
+  {
+    name: '/login',
+    aliases: [],
+    usage: '/login [provider]',
+    description: 'Open provider sign-in and setup status.',
     destructive: false
   },
   {

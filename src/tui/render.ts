@@ -16,10 +16,14 @@ import {
   wrapPlainText
 } from './ansi'
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { resolveGhostBanner } from './ghostBanner'
 import { sweepGhostBanner } from './ghostBannerSweep'
 import { filterTuiSlashCommands } from './slashCommands'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
+import { queuedDraftsForThread } from './promptQueue'
+import { providerLoginGuidance } from './providerLoginFlow'
+import { permissionToneHex } from './permissionTone'
 import {
   TUI_AUTO_THEME_NAME,
   TUI_DEFAULT_THEME_NAME,
@@ -181,6 +185,10 @@ function tone(ansi: Ansi, text: string, value: TuiSemanticTone): string {
           ? palette.error
           : undefined
   return hex ? ansi.color(text, hex) : text
+}
+
+function permissionColor(ansi: Ansi, postureId: string | undefined): string {
+  return permissionToneHex(postureId, tones(ansi).permission)
 }
 
 function borderedLine(
@@ -546,7 +554,16 @@ function renderContextOverlay(
       glyphs
     )
   )
-  lines.push(overlayValue('permission', permissionLabel(context.permission), width, ansi, glyphs))
+  lines.push(
+    overlayValue(
+      'permission',
+      permissionLabel(context.permission),
+      width,
+      ansi,
+      glyphs,
+      permissionColor(ansi, context.permission)
+    )
+  )
   lines.push(
     overlayValue(
       'run',
@@ -635,7 +652,7 @@ function renderSetupOverlay(
   }
   if (cold?.kind === 'configure') {
     const models = cold.offers.models.filter((candidate) => candidate.available)
-    const postures = cold.offers.postures.filter((candidate) => candidate.available)
+    const postures = cold.offers.postures
     const selectedModel = models[state.coldStartModelIndex ?? 0]
     const reasoning = selectedModel?.reasoning.filter((candidate) => candidate.available) ?? []
     lines.push(borderedLine(ansi.dim(' model  ↑/↓'), width, ansi, glyphs))
@@ -661,20 +678,27 @@ function renderSetupOverlay(
     lines.push(borderedLine(ansi.dim(' posture  ←/→'), width, ansi, glyphs))
     lines.push(
       ...renderSetupChoiceWindow(
-        postures.map(
-          (posture) =>
+        postures.map((posture) =>
+          ansi.color(
             `${posture.label}${
+              !posture.available
+                ? ` · unavailable${posture.detail ? ` · ${terminalLabel(posture.detail)}` : ''}`
+                : ''
+            }${
               posture.requiresExplicitConsent
                 ? cold.acknowledgedPostureIds.includes(posture.postureId)
                   ? ' · acknowledged'
                   : ' · consent required · Space'
                 : ''
-            }`
+            }`,
+            permissionColor(ansi, posture.postureId)
+          )
         ),
         state.coldStartPostureIndex ?? 0,
         width,
         ansi,
-        glyphs
+        glyphs,
+        5
       )
     )
   }
@@ -687,12 +711,14 @@ function renderSetupChoiceWindow(
   selectedIndex: number,
   width: number,
   ansi: Ansi,
-  glyphs: TuiGlyphSet
+  glyphs: TuiGlyphSet,
+  windowSize = 3
 ): string[] {
   if (!labels.length) return [borderedLine(ansi.dim('  unavailable'), width, ansi, glyphs)]
   const selected = Math.max(0, Math.min(selectedIndex, labels.length - 1))
-  const start = Math.max(0, Math.min(labels.length - 3, selected - 1))
-  return labels.slice(start, start + 3).map((label, offset) => {
+  const size = Math.max(1, windowSize)
+  const start = Math.max(0, Math.min(labels.length - size, selected - Math.floor(size / 2)))
+  return labels.slice(start, start + size).map((label, offset) => {
     const index = start + offset
     const marker = index === selected ? glyphs.promptCaret : ' '
     return borderedLine(`${marker} ${label}`, width, ansi, glyphs)
@@ -1184,6 +1210,68 @@ function renderTuneOverlay(
   glyphs: TuiGlyphSet
 ): string[] {
   const thread = state.thread?.thread
+  const home = state.homeTune
+  if (!thread && home) {
+    const lines = [borderTitle('Default model', width, ansi, glyphs)]
+    if (home.loading) {
+      lines.push(borderedLine(ansi.dim('Fetching ready-provider offers…'), width, ansi, glyphs))
+    } else if (home.error) {
+      lines.push(
+        borderedLine(tone(ansi, terminalLabel(home.error), 'warning'), width, ansi, glyphs)
+      )
+    } else {
+      const provider = home.providers[home.providerIndex]
+      const models = provider?.offers.models.filter((candidate) => candidate.available) ?? []
+      const model = models[home.modelIndex]
+      const presentation = resolveTaskWraithProviderPresentation(
+        provider?.status.providerId,
+        model?.modelId,
+        model?.label
+      )
+      lines.push(
+        overlayValue(
+          'provider',
+          terminalLabel(provider?.status.label),
+          width,
+          ansi,
+          glyphs,
+          presentation.accent
+        )
+      )
+      const capacity = Math.max(1, height - 7)
+      const start = Math.max(0, home.modelIndex - Math.floor(capacity / 2))
+      for (let index = start; index < Math.min(models.length, start + capacity); index += 1) {
+        const candidate = models[index]
+        const selected = index === home.modelIndex
+        const line = `${selected ? glyphs.selection : ' '} ${terminalLabel(candidate.label)}${
+          candidate.default ? ` ${ansi.dim('(Host default)')}` : ''
+        }`
+        lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
+      }
+      const reasoning = model?.reasoning.filter((candidate) => candidate.available) ?? []
+      const reasoningRows = [
+        home.reasoningIndex === -1
+          ? ansi.provider('[provider default]', presentation.accent)
+          : 'provider default',
+        ...reasoning.map((candidate, index) =>
+          index === home.reasoningIndex
+            ? ansi.provider(`[${terminalLabel(candidate.label)}]`, presentation.accent)
+            : terminalLabel(candidate.label)
+        )
+      ].join(` ${ansi.dim(glyphs.separator)} `)
+      lines.push(overlayValue('reasoning', reasoningRows, width, ansi, glyphs))
+    }
+    lines.push(
+      borderedLine(
+        ansi.dim('Tab provider · ↑↓ model · ←→ reasoning · Enter save default · Esc close'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
   if (!thread) {
     return [
       borderTitle('Tune lens', width, ansi, glyphs),
@@ -1598,6 +1686,95 @@ function renderSeatsOverlay(
   return finish(body)
 }
 
+function renderProviderLoginOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const login = state.providerLogin
+  const lines = [borderTitle('Provider setup', width, ansi, glyphs)]
+  if (!login || login.loading) {
+    lines.push(
+      borderedLine(ansi.dim('Reading provider status from the Host…'), width, ansi, glyphs)
+    )
+  } else if (login.error) {
+    lines.push(borderedLine(tone(ansi, terminalLabel(login.error), 'error'), width, ansi, glyphs))
+  }
+  if (login?.providers.length) {
+    const selectedIndex = Math.max(
+      0,
+      login.providers.findIndex((provider) => provider.providerId === login.selectedProviderId)
+    )
+    const capacity = Math.max(1, Math.min(8, height - 8))
+    const start = Math.max(0, selectedIndex - Math.floor(capacity / 2))
+    for (
+      let index = start;
+      index < Math.min(login.providers.length, start + capacity);
+      index += 1
+    ) {
+      const provider = login.providers[index]
+      const selected = index === selectedIndex
+      const statusTone =
+        provider.status === 'ready'
+          ? 'good'
+          : provider.status === 'auth_required'
+            ? 'warning'
+            : provider.status === 'unavailable'
+              ? 'error'
+              : 'neutral'
+      const row = `${selected ? glyphs.selection : ' '} ${terminalLabel(provider.label)} ${tone(
+        ansi,
+        provider.status.replace('_', ' '),
+        statusTone
+      )}`
+      lines.push(borderedLine(selected ? ansi.inverse(row) : row, width, ansi, glyphs))
+    }
+    const provider = login.providers[selectedIndex]
+    if (login.authStatus) {
+      lines.push(
+        overlayValue(
+          'auth',
+          terminalLabel(login.authStatus.state.replace('_', ' ')),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+    if (login.flows.length) {
+      const flows = login.flows
+        .map((flow, index) =>
+          index === login.flowIndex
+            ? ansi.inverse(`[${terminalLabel(flow.label)}]`)
+            : terminalLabel(flow.label)
+        )
+        .join(` ${ansi.dim(glyphs.separator)} `)
+      lines.push(overlayValue('flow', flows, width, ansi, glyphs))
+      const detail = login.flows[login.flowIndex]?.detail
+      if (detail) lines.push(borderedLine(ansi.dim(terminalLabel(detail)), width, ansi, glyphs))
+    } else if (!login.loading) {
+      for (const wrapped of wrapPlainText(
+        providerLoginGuidance(provider),
+        Math.max(8, width - 4)
+      )) {
+        lines.push(borderedLine(ansi.dim(terminalLabel(wrapped)), width, ansi, glyphs))
+      }
+    }
+  }
+  lines.push(
+    borderedLine(
+      ansi.dim('↑↓ provider · Tab flow · Enter sign in/refresh · r refresh · Esc close'),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
 function renderOverlay(
   state: TaskWraithTuiState,
   width: number,
@@ -1610,6 +1787,9 @@ function renderOverlay(
   }
   if (state.overlay === 'setup') {
     return renderSetupOverlay(state, width, ansi, glyphs).slice(0, Math.max(1, height))
+  }
+  if (state.overlay === 'login') {
+    return renderProviderLoginOverlay(state, width, height, ansi, glyphs)
   }
   if (state.overlay === 'threads') {
     return renderThreadsOverlay(state, width, height, ansi, glyphs)
@@ -1704,6 +1884,8 @@ function renderHud(
   const elapsed = formatTuiDuration(currentWallTime(thread))
   const pendingApproval = selectedPendingApproval(state)
   const openQuestion = selectedOpenQuestion(state)
+  const queuedDrafts = queuedDraftsForThread(state, thread.id)
+  const blockedDraft = queuedDrafts.find((draft) => draft.phase === 'blocked')
   const status = pendingApproval
     ? tone(ansi, 'APPROVAL · y/n', 'warning')
     : openQuestion
@@ -1736,6 +1918,15 @@ function renderHud(
     pending,
     reasoningText,
     status,
+    blockedDraft
+      ? tone(
+          ansi,
+          `QUEUE BLOCKED${blockedDraft.error ? ` · ${terminalLabel(blockedDraft.error)}` : ''}`,
+          'error'
+        )
+      : queuedDrafts.length
+        ? ansi.dim(`${queuedDrafts.length} QUEUED`)
+        : undefined,
     elapsed !== '—' ? elapsed : undefined,
     cost
   ]
@@ -1756,6 +1947,26 @@ function renderComposer(
   const pendingApproval = selectedPendingApproval(state)
   const openQuestion = selectedOpenQuestion(state)
   const setupRequired = Boolean(state.coldStart && state.coldStart.kind !== 'ready')
+  const queuedDrafts = queuedDraftsForThread(state, state.selectedThreadId)
+  const live = Boolean(
+    state.selectedThreadId &&
+    state.hostProjection &&
+    state.hostProjection.freshness === 'live' &&
+    (state.hostProjection.runs.some(
+      (run) =>
+        run.threadId === state.selectedThreadId &&
+        run.endedAt === undefined &&
+        (run.providerOutcome === 'running' ||
+          run.providerOutcome === 'requires_action' ||
+          run.providerOutcome === 'unknown')
+    ) ||
+      state.hostProjection.rounds.some(
+        (round) =>
+          round.threadId === state.selectedThreadId &&
+          round.endedAt === undefined &&
+          (round.status === 'running' || round.status === 'unknown')
+      ))
+  )
   // Glyph-set aware: ↵/· on Unicode, \/. on ASCII so chrome never mojibakes.
   const sep = ` ${glyphs.separator} `
   const right = setupRequired
@@ -1766,11 +1977,17 @@ function renderComposer(
         ? density.composerHints === 'none'
           ? ansi.dim(`${glyphs.newline} answer`)
           : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
-        : density.composerHints === 'full'
-          ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
-          : density.composerHints === 'short'
-            ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
-            : ansi.dim(`${glyphs.newline} send`)
+        : live
+          ? ansi.dim(
+              `${glyphs.newline} queue${sep}Esc steer${
+                queuedDrafts.length ? `${sep}${queuedDrafts.length} waiting` : ''
+              }`
+            )
+          : density.composerHints === 'full'
+            ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
+            : density.composerHints === 'short'
+              ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
+              : ansi.dim(`${glyphs.newline} send`)
   const leftAvailable = Math.max(1, width - visibleWidth(right) - 1)
   const inputAvailable = Math.max(1, leftAvailable - visibleWidth(prompt) - 1)
   const input = setupRequired

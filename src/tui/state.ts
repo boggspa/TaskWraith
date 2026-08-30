@@ -6,7 +6,12 @@ import {
 } from '../shared/hostProtocol'
 import type { HostHistoryCursor } from '../shared/hostHistoryProtocol'
 import type { HostWorkspaceGitReadOutcome } from '../host-client/HostProjectionClient'
-import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
@@ -16,7 +21,7 @@ import type {
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
-import type { ColdStartFlowState } from './coldStartFlow'
+import type { ColdStartFlowState, ColdStartPendingCommand } from './coldStartFlow'
 
 export type TuiConnectionState =
   | 'connecting'
@@ -39,6 +44,7 @@ export type TuiOverlay =
   | 'workspaces'
   | 'goal'
   | 'theme'
+  | 'login'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'
@@ -57,6 +63,50 @@ export interface TuiPendingSelection {
   model: string
   label?: string
   reasoningEffort?: string
+}
+
+export type TuiQueuedDraftPhase = 'queued' | 'dispatching' | 'blocked'
+
+/** One immutable user draft, bound to the thread and tuning choice it was authored for. */
+export interface TuiQueuedDraft {
+  id: string
+  threadId: string
+  text: string
+  enqueuedAt: number
+  phase: TuiQueuedDraftPhase
+  selection?: TuiPendingSelection
+  /** Exact live run observed when the draft joined the queue. */
+  blockedByRunId?: string
+  error?: string
+}
+
+export interface TuiHomeTuneProvider {
+  status: HostProviderStatusProjection
+  offers: HostProviderOffersProjection
+}
+
+/** Home-frame model defaults. These are preferences, never configure authority. */
+export interface TuiHomeTuneState {
+  loading?: boolean
+  error?: string
+  providers: TuiHomeTuneProvider[]
+  providerIndex: number
+  modelIndex: number
+  /** -1 means the provider's own default; non-negative indexes an offered row. */
+  reasoningIndex: number
+}
+
+/** Dismissible provider setup hub. It never advances into thread creation. */
+export interface TuiProviderLoginState {
+  providers: HostProviderStatusProjection[]
+  selectedProviderId?: string
+  authStatus?: HostProviderAuthStatusProjection
+  flows: HostProviderAuthFlowProjection[]
+  flowIndex: number
+  loading?: boolean
+  error?: string
+  operationId?: string
+  pending?: ColdStartPendingCommand
 }
 
 /**
@@ -162,6 +212,12 @@ export interface TaskWraithTuiState {
   /** Reasoning column index for the highlighted tune-lens model row. */
   tuneEffortIndex: number
   pendingSelection?: TuiPendingSelection
+  /** In-session per-thread FIFO. The Host remains authoritative for run state. */
+  queuedDrafts?: TuiQueuedDraft[]
+  /** Home-frame provider/model/reasoning preference picker. */
+  homeTune?: TuiHomeTuneState
+  /** Provider authentication/setup hub. */
+  providerLogin?: TuiProviderLoginState
   /** Active deferred Host mutation, if any. */
   pendingHostMutation?: TuiPendingHostMutation
   /** Guided setup state shown before the Host has a configured conversation. */
@@ -416,6 +472,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
-    tuneEffortIndex: 0
+    tuneEffortIndex: 0,
+    queuedDrafts: []
   }
 }

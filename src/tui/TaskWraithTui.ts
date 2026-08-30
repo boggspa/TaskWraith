@@ -98,8 +98,20 @@ import {
   visibleThreadRows,
   type TaskWraithTuiState,
   type TuiOverlay,
-  type TuiPendingHostMutation
+  type TuiPendingHostMutation,
+  type TuiPendingSelection
 } from './state'
+import {
+  liveThreadWorkIds,
+  nextDispatchableDraft,
+  projectedThreadWorkIds,
+  queuedDraftsForThread,
+  removeQueuedDraft,
+  replaceQueuedDraft
+} from './promptQueue'
+import { matchProviderStatus } from './providerLoginFlow'
+import { projectTuiFullAccessPresence, type TuiFullAccessPresence } from './fullAccessConsent'
+import type { EnsureTuiHostAvailableResult } from './hostProcessManager'
 import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
 interface Keypress {
@@ -121,7 +133,9 @@ export interface TaskWraithTuiOptions {
    * dead Host process is relaunched instead of retried forever. The TUI class
    * itself stays launcher-agnostic; the CLI injects this.
    */
-  reviveHost?: () => Promise<void>
+  reviveHost?: () => Promise<EnsureTuiHostAvailableResult>
+  /** Opaque launch-bound signer; never persisted or exposed to provider code. */
+  fullAccessPresence?: TuiFullAccessPresence
   /** Base reconnect delay; doubles per attempt up to RECONNECT_MAX_DELAY_MS. */
   reconnectBaseDelayMs?: number
   /** Failed reconnects before reviveHost is invoked. */
@@ -158,6 +172,8 @@ const RECONNECT_DELAY_MS = 1_800
 const RECONNECT_MAX_DELAY_MS = 15_000
 /** Consecutive failed reconnects before the loop re-arms the Host launcher. */
 const HOST_REVIVE_FAILURE_THRESHOLD = 5
+const ESCAPE_CANCEL_MAX_RECOVERY_ATTEMPTS = 4
+const ESCAPE_CANCEL_RECOVERY_BASE_MS = 200
 const ANIMATION_INTERVAL_MS = 120
 
 /**
@@ -188,6 +204,57 @@ export function shouldAdvanceAnimationFrame(input: {
   if (input.working) return true
   if (!input.homeFrame) return false
   return input.tick % Math.max(1, input.stride) === 0
+}
+
+export function hostDeltasMayReleaseQueuedDraft(frame: HostDeltasFrame): boolean {
+  if (frame.result.kind !== 'deltas') return true
+  return frame.result.deltas.some((delta) => {
+    if (delta.family !== 'run' && delta.family !== 'round') return false
+    if (delta.kind === 'remove' || delta.kind === 'tombstone') return true
+    if (!delta.payload || typeof delta.payload !== 'object' || Array.isArray(delta.payload)) {
+      return false
+    }
+    const payload = delta.payload as Record<string, unknown>
+    if (delta.family === 'round') {
+      return (
+        typeof payload.endedAt === 'number' ||
+        payload.status === 'completed' ||
+        payload.status === 'cancelled' ||
+        payload.status === 'failed'
+      )
+    }
+    if (typeof payload.endedAt === 'number') return true
+    return (
+      typeof payload.providerOutcome === 'string' &&
+      payload.providerOutcome !== 'running' &&
+      payload.providerOutcome !== 'requires_action' &&
+      payload.providerOutcome !== 'unknown'
+    )
+  })
+}
+
+export function terminalRunIdsFromHostDeltas(frame: HostDeltasFrame): Set<string> {
+  const ids = new Set<string>()
+  if (frame.result.kind !== 'deltas') return ids
+  for (const delta of frame.result.deltas) {
+    if (delta.family !== 'run' || !delta.entityId) continue
+    if (delta.kind === 'remove' || delta.kind === 'tombstone') {
+      ids.add(delta.entityId)
+      continue
+    }
+    if (!delta.payload || typeof delta.payload !== 'object' || Array.isArray(delta.payload))
+      continue
+    const payload = delta.payload as Record<string, unknown>
+    if (
+      typeof payload.endedAt === 'number' ||
+      payload.providerOutcome === 'completed' ||
+      payload.providerOutcome === 'failed' ||
+      payload.providerOutcome === 'cancelled'
+    ) {
+      ids.add(delta.entityId)
+    }
+  }
+  return ids
 }
 const TRANSCRIPT_PAGE_ROWS = 8
 const HOST_FULL_REFRESH_MS = 5_000
@@ -230,7 +297,8 @@ function emptyState(): TaskWraithTuiState {
     missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
-    tuneEffortIndex: 0
+    tuneEffortIndex: 0,
+    queuedDrafts: []
   }
 }
 
@@ -325,6 +393,31 @@ export class TaskWraithTui {
   private gitReadGeneration = 0
   /** Monotonic seat-lens read/toggle generation — the staleness guard's backbone. */
   private seatsReadGeneration = 0
+  /** One client command at a time drains the in-session draft FIFO. */
+  private queueDrainScheduled = false
+  private queueDrainActive = false
+  private queueFreshReadInFlight = false
+  private queueFreshReadRequested = false
+  private readonly queuedDraftCommands = new Map<string, HostCommand>()
+  private readonly queueRetryFences = new Map<string, string>()
+  private readonly queueRetryAttempts = new Map<string, number>()
+  private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly acceptedQueueRuns = new Map<
+    string,
+    { commandId: string; observedLive: boolean }
+  >()
+  private readonly cancelRequestedWorkIds = new Set<string>()
+  private pendingEscapeCancel:
+    | { threadId: string; liveWorkId: string; command?: HostCommand }
+    | undefined
+  private escapeRefreshInFlight = false
+  private escapeCancelRecoveryInFlight = false
+  private escapeCancelRecoveryAttempts = 0
+  private escapeCancelRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private connectionEpoch = 0
+  private homeTuneReadGeneration = 0
+  private providerLoginReadGeneration = 0
+  private fullAccessPresence: TuiFullAccessPresence | null
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -338,6 +431,7 @@ export class TaskWraithTui {
     this.glyphs = options.glyphs ?? resolveTuiGlyphs(detectTuiUnicode())
     this.theme = options.theme ?? TUI_UNPAINTED_THEME
     this.profileSettings = { ...(options.profileSettings ?? {}) }
+    this.fullAccessPresence = options.fullAccessPresence ?? null
     this.state = options.demo ? createTaskWraithTuiDemoState(this.options.now()) : emptyState()
     this.state.themeName = options.themeName ?? this.theme.name
     this.state.activeWorkspaceId = this.profileSettings.workspaceId
@@ -426,10 +520,14 @@ export class TaskWraithTui {
     if (this.projectionRefreshTimer) clearTimeout(this.projectionRefreshTimer)
     if (this.animationTimer) clearInterval(this.animationTimer)
     if (this.demoReplyTimer) clearTimeout(this.demoReplyTimer)
+    for (const timer of this.queueRetryTimers.values()) clearTimeout(timer)
+    this.queueRetryTimers.clear()
+    this.clearEscapeCancelRecovery()
     this.reconnectTimer = null
     this.projectionRefreshTimer = null
     this.animationTimer = null
     this.demoReplyTimer = null
+    this.replaceFullAccessPresence()
     this.client?.close()
     this.options.input.off('keypress', this.onKeypress)
     this.options.output.off('resize', this.onResize)
@@ -482,6 +580,13 @@ export class TaskWraithTui {
   private bindClient(): void {
     if (!this.client) return
     this.client.on('welcome', (welcome) => {
+      this.connectionEpoch += 1
+      if (
+        this.fullAccessPresence &&
+        !this.fullAccessPresence.matches(this.client?.discoveryProcessIdentity ?? null)
+      ) {
+        this.replaceFullAccessPresence()
+      }
       this.state.hostVersion = welcome.hostVersion
       this.state.connection = 'connected'
       this.everConnected = true
@@ -529,6 +634,54 @@ export class TaskWraithTui {
       const detail = mapHostSnapshotToThreadDetail(snapshot, selectedThreadId)
       this.state.thread = detail?.thread
     }
+    const liveIds = new Set([
+      ...snapshot.runs
+        .filter(
+          (run) =>
+            run.endedAt === undefined &&
+            (run.providerOutcome === 'running' ||
+              run.providerOutcome === 'requires_action' ||
+              run.providerOutcome === 'unknown')
+        )
+        .map((run) => run.runId),
+      ...snapshot.rounds
+        .filter(
+          (round) =>
+            round.endedAt === undefined &&
+            (round.status === 'running' || round.status === 'unknown')
+        )
+        .map((round) => round.roundId)
+    ])
+    for (const id of this.cancelRequestedWorkIds) {
+      if (!liveIds.has(id)) this.cancelRequestedWorkIds.delete(id)
+    }
+    for (const [threadId, barrier] of this.acceptedQueueRuns) {
+      const run = snapshot.runs.find(
+        (candidate) => candidate.threadId === threadId && candidate.runId === barrier.commandId
+      )
+      const live = Boolean(
+        run &&
+        run.endedAt === undefined &&
+        (run.providerOutcome === 'running' ||
+          run.providerOutcome === 'requires_action' ||
+          run.providerOutcome === 'unknown')
+      )
+      const terminal = Boolean(
+        run &&
+        (run.endedAt !== undefined ||
+          run.providerOutcome === 'completed' ||
+          run.providerOutcome === 'failed' ||
+          run.providerOutcome === 'cancelled')
+      )
+      if (terminal || (barrier.observedLive && !run)) {
+        this.acceptedQueueRuns.delete(threadId)
+      } else if (live && !barrier.observedLive) {
+        this.acceptedQueueRuns.set(threadId, { ...barrier, observedLive: true })
+      }
+    }
+    this.restoreBlockedDraftIfSafe()
+    if (this.pendingEscapeCancel) queueMicrotask(() => this.flushPendingEscapeCancel())
+    else this.scheduleQueuedDraftDrain()
     return mapped
   }
 
@@ -556,7 +709,17 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    const terminalRunIds = terminalRunIdsFromHostDeltas(frame)
+    for (const [threadId, barrier] of this.acceptedQueueRuns) {
+      if (terminalRunIds.has(barrier.commandId)) this.acceptedQueueRuns.delete(threadId)
+    }
     this.applyHostSnapshot(applied.snapshot)
+    // Applied deltas are intentionally marked cached. A queued send may drain
+    // only from a fresh Host read, so terminal-looking cache state triggers one
+    // bounded resnapshot instead of being promoted as live authority.
+    if ((this.state.queuedDrafts?.length ?? 0) > 0 && hostDeltasMayReleaseQueuedDraft(frame)) {
+      await this.fetchAndApplyHostSnapshot()
+    }
     this.render()
   }
 
@@ -570,6 +733,7 @@ export class TaskWraithTui {
       this.reconnectAttempts = 0
       await this.refreshHostSnapshot()
       await this.resumeColdStartPending()
+      await this.resumeProviderLoginPending()
       const mapped = this.state.snapshot
       if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
       this.state.connection = 'connected'
@@ -680,7 +844,10 @@ export class TaskWraithTui {
     if (this.stopped || !this.client) return
     if (this.revivePending() && this.options.reviveHost) {
       try {
-        await this.options.reviveHost()
+        const revived = await this.options.reviveHost()
+        if (revived.kind === 'launched') {
+          this.replaceFullAccessPresence(revived.fullAccessPresence)
+        }
       } catch {
         // The launcher surfaces its own diagnostics; fall through to a plain
         // reconnect attempt either way.
@@ -773,6 +940,7 @@ export class TaskWraithTui {
     } finally {
       this.selectingThread = false
       this.render()
+      this.scheduleQueuedDraftDrain()
     }
   }
 
@@ -812,6 +980,7 @@ export class TaskWraithTui {
         1_800
       )
     }
+    this.restoreBlockedDraftIfSafe()
   }
 
   /** Puts a re-attached reader back where they were reading, never at the end. */
@@ -1080,6 +1249,43 @@ export class TaskWraithTui {
         this.render()
         return
       }
+      if (this.state.overlay === 'login') {
+        this.providerLoginReadGeneration += 1
+        this.state.providerLogin = undefined
+        this.state.overlay = 'none'
+        this.render()
+        return
+      }
+      if (this.state.overlay === 'none') {
+        const threadId = this.state.selectedThreadId
+        if (this.pendingEscapeCancel) {
+          this.setNotice('Cancellation already requested · waiting for the Host', 'warning', 2_000)
+          this.render()
+          return
+        }
+        const live = threadId ? liveThreadWorkIds(this.hostSnapshot, threadId) : []
+        if (live.length > 0) {
+          const draft = this.state.input.trim()
+          if (threadId && draft && !draft.startsWith('/') && !this.selectedOpenQuestion()) {
+            this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+            this.state.input = ''
+            this.state.inputCursor = 0
+            this.state.pendingSelection = undefined
+            this.state.scrollOffset = 0
+            this.scheduleQueuedDraftDrain()
+          }
+          void this.cancelRun({ shortcut: true, liveWorkIds: live })
+          return
+        }
+        if (threadId && this.hostSnapshot?.freshness === 'cached') {
+          void this.refreshThenHandleEscape(threadId, this.state.input)
+          return
+        }
+        if (threadId && this.hostSnapshot?.freshness !== 'live') {
+          this.retainEscapeIntent(threadId, this.state.input)
+          return
+        }
+      }
       this.commandPaletteAutomatic = false
       this.state.overlay = 'none'
       this.render()
@@ -1126,6 +1332,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'help') {
       this.handleCommandPaletteKey(input, key)
+      return
+    }
+    if (this.state.overlay === 'login') {
+      void this.handleProviderLoginKey(key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -1406,9 +1616,9 @@ export class TaskWraithTui {
       return
     }
     if (cold.kind === 'configure' && (key.name === 'left' || key.name === 'right')) {
-      this.state.coldStartPostureIndex = cycleIndex(
+      this.state.coldStartPostureIndex = cycleAvailableIndex(
+        cold.offers.postures,
         this.state.coldStartPostureIndex ?? 0,
-        cold.offers.postures.filter((candidate) => candidate.available).length,
         key.name === 'left' ? -1 : 1
       )
       this.render()
@@ -1443,9 +1653,12 @@ export class TaskWraithTui {
       return
     }
     if (key.name === 'space' && cold.kind === 'configure') {
-      const posture = cold.offers.postures.filter((candidate) => candidate.available)[
-        this.state.coldStartPostureIndex ?? 0
-      ]
+      const posture = cold.offers.postures[this.state.coldStartPostureIndex ?? 0]
+      if (posture && !posture.available) {
+        this.setNotice(posture.detail || `${posture.label} is unavailable.`, 'warning', 4_000)
+        this.render()
+        return
+      }
       if (posture?.requiresExplicitConsent)
         this.state.coldStart = acknowledgeColdStartPosture(cold, posture.postureId)
       this.render()
@@ -1495,10 +1708,13 @@ export class TaskWraithTui {
       const model = cold.offers.models.filter((candidate) => candidate.available)[
         this.state.coldStartModelIndex ?? 0
       ]
-      const posture = cold.offers.postures.filter((candidate) => candidate.available)[
-        this.state.coldStartPostureIndex ?? 0
-      ]
+      const posture = cold.offers.postures[this.state.coldStartPostureIndex ?? 0]
       if (!model || !posture) throw new Error('Host offers contain no available configuration.')
+      if (!posture.available) {
+        this.setNotice(posture.detail || `${posture.label} is unavailable.`, 'warning', 4_000)
+        this.render()
+        return
+      }
       const consented =
         !posture.requiresExplicitConsent || cold.acknowledgedPostureIds.includes(posture.postureId)
       const selection = selectColdStartConfiguration(cold, {
@@ -1520,7 +1736,9 @@ export class TaskWraithTui {
       this.state.coldStart = selection
       if (selection.kind !== 'configure' || !selection.selection) return
       await this.runColdStartCommand(
-        buildThreadConfigureCommand({ actor, selection: selection.selection })
+        this.authorizeConfigureCommand(
+          buildThreadConfigureCommand({ actor, selection: selection.selection })
+        )
       )
     }
     this.render()
@@ -1595,7 +1813,7 @@ export class TaskWraithTui {
     }
     this.state.coldStart = coldStartOffers(
       this.state.coldStart,
-      await this.client.getProviderOffers(providerId)
+      this.effectiveProviderOffers(await this.client.getProviderOffers(providerId))
     )
     this.resetColdStartConfigureIndices()
     this.setNotice('Provider authenticated · choose thread creation.', 'good')
@@ -1648,7 +1866,7 @@ export class TaskWraithTui {
         ? reasoningOffers.findIndex((candidate) => candidate.reasoningId === reasoning.reasoningId)
         : 0
     )
-    const postures = offers?.postures.filter((candidate) => candidate.available) ?? []
+    const postures = offers?.postures ?? []
     const posture = offers ? resolveStartupPosture(offers) : undefined
     this.state.coldStartPostureIndex = Math.max(
       0,
@@ -1706,9 +1924,9 @@ export class TaskWraithTui {
     })
   }
 
-  private rememberProfileSettings(changes: TuiProfileSettings): void {
+  private rememberProfileSettings(changes: TuiProfileSettings): boolean {
     this.profileSettings = { ...this.profileSettings, ...changes }
-    this.options.persistProfileSettings?.(changes)
+    return this.options.persistProfileSettings?.(changes) ?? true
   }
 
   private rememberWorkspaceId(workspaceId: string): void {
@@ -2030,14 +2248,25 @@ export class TaskWraithTui {
   private toggleTuneOverlay(): void {
     if (this.state.overlay === 'tune') {
       this.state.overlay = 'none'
+      this.homeTuneReadGeneration += 1
+      this.state.homeTune = undefined
       this.render()
       return
     }
     if (!this.state.thread) {
-      this.setNotice('Open a thread before tuning.', 'warning', 2_500)
+      this.state.overlay = 'tune'
+      this.state.homeTune = {
+        loading: true,
+        providers: [],
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1
+      }
+      void this.loadHomeTuneProviders(true)
       this.render()
       return
     }
+    this.state.homeTune = undefined
     this.state.overlay = 'tune'
     this.state.overlayIndex = 0
     this.state.tuneEffortIndex = 0
@@ -2112,6 +2341,10 @@ export class TaskWraithTui {
   }
 
   private handleTuneKey(key: Keypress): void {
+    if (this.state.homeTune) {
+      this.handleHomeTuneKey(key)
+      return
+    }
     const models = this.state.offers?.models ?? []
     if (this.state.offersLoading || !models.length) return
     const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, models.length - 1))
@@ -2133,6 +2366,142 @@ export class TaskWraithTui {
     } else if (key.name === 'return' || key.name === 'enter') {
       this.applyTuneSelection(models[safeIndex])
       return
+    } else {
+      return
+    }
+    this.render()
+  }
+
+  private resetHomeTuneIndices(providerIndex: number): void {
+    const home = this.state.homeTune
+    const provider = home?.providers[providerIndex]
+    if (!home || !provider) return
+    const savedForProvider = this.profileSettings.providerId === provider.status.providerId
+    const model = resolveStartupModel(
+      provider.offers,
+      savedForProvider ? this.profileSettings.modelId : undefined
+    )
+    const models = provider.offers.models.filter((candidate) => candidate.available)
+    const modelIndex = Math.max(
+      0,
+      model ? models.findIndex((candidate) => candidate.modelId === model.modelId) : 0
+    )
+    const reasoning = resolveStartupReasoning(
+      model,
+      savedForProvider && this.profileSettings.modelId === model?.modelId
+        ? this.profileSettings.reasoningId
+        : undefined
+    )
+    const reasoningRows = model?.reasoning.filter((candidate) => candidate.available) ?? []
+    this.state.homeTune = {
+      ...home,
+      providerIndex,
+      modelIndex,
+      reasoningIndex: reasoning
+        ? reasoningRows.findIndex((candidate) => candidate.reasoningId === reasoning.reasoningId)
+        : -1
+    }
+  }
+
+  private async loadHomeTuneProviders(showOverlay: boolean): Promise<void> {
+    const generation = ++this.homeTuneReadGeneration
+    if (!this.client?.connected || !this.client.supports('provider-catalog')) {
+      this.state.homeTune = {
+        providers: [],
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        error: 'Connected Host does not advertise provider model setup.'
+      }
+      this.render()
+      return
+    }
+    try {
+      const statuses = (await this.client.getProviderStatuses()).filter(
+        (status) => status.status === 'ready'
+      )
+      const loaded = await Promise.all(
+        statuses.map(async (status) => ({
+          status,
+          offers: this.effectiveProviderOffers(
+            await this.client!.getProviderOffers(status.providerId)
+          )
+        }))
+      )
+      if (generation !== this.homeTuneReadGeneration || this.state.selectedThreadId) return
+      const providers = loaded.filter(
+        ({ status, offers }) =>
+          offers.providerId === status.providerId && offers.models.some((model) => model.available)
+      )
+      const preferred = resolveStartupProvider(statuses, this.profileSettings.providerId)
+      const providerIndex = Math.max(
+        0,
+        preferred
+          ? providers.findIndex((provider) => provider.status.providerId === preferred.providerId)
+          : 0
+      )
+      this.state.homeTune = {
+        providers,
+        providerIndex,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        ...(providers.length ? {} : { error: 'No ready provider has selectable model offers.' })
+      }
+      this.resetHomeTuneIndices(providerIndex)
+      if (showOverlay) this.state.overlay = 'tune'
+    } catch (error) {
+      if (generation !== this.homeTuneReadGeneration) return
+      this.state.homeTune = {
+        providers: [],
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private handleHomeTuneKey(key: Keypress): void {
+    const home = this.state.homeTune
+    if (!home || home.loading || !home.providers.length) return
+    const provider = home.providers[home.providerIndex]
+    const models = provider?.offers.models.filter((candidate) => candidate.available) ?? []
+    if (key.name === 'tab') {
+      const next = cycleIndex(home.providerIndex, home.providers.length, key.shift ? -1 : 1)
+      this.resetHomeTuneIndices(next)
+    } else if (key.name === 'up' || key.name === 'down') {
+      const next = cycleIndex(home.modelIndex, models.length, key.name === 'up' ? -1 : 1)
+      this.state.homeTune = { ...home, modelIndex: next, reasoningIndex: -1 }
+    } else if (key.name === 'left' || key.name === 'right') {
+      const reasoning =
+        models[home.modelIndex]?.reasoning.filter((candidate) => candidate.available) ?? []
+      const slot = cycleIndex(
+        home.reasoningIndex + 1,
+        reasoning.length + 1,
+        key.name === 'left' ? -1 : 1
+      )
+      this.state.homeTune = { ...home, reasoningIndex: slot - 1 }
+    } else if (key.name === 'return' || key.name === 'enter') {
+      const model = models[home.modelIndex]
+      if (!provider || !model) return
+      const reasoning = model.reasoning.filter((candidate) => candidate.available)[
+        home.reasoningIndex
+      ]
+      const persisted = this.rememberProfileSettings({
+        providerId: provider.status.providerId,
+        modelId: model.modelId,
+        ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
+      })
+      this.state.overlay = 'none'
+      this.state.homeTune = undefined
+      this.setNotice(
+        `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}${
+          reasoning ? ` / ${reasoning.label}` : ''
+        }`,
+        persisted ? 'good' : 'warning',
+        4_000
+      )
     } else {
       return
     }
@@ -2222,7 +2591,7 @@ export class TaskWraithTui {
       await this.answerProjectedQuestion(question, original, 'answer', text)
       return
     }
-    if (this.sendingPrompt || this.mutationInFlight) {
+    if (this.sendingPrompt && !this.state.selectedThreadId) {
       this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
       this.render()
       return
@@ -2233,7 +2602,7 @@ export class TaskWraithTui {
       try {
         threadId = await this.prepareDefaultThreadForPrompt(original)
       } finally {
-        if (!threadId) this.sendingPrompt = false
+        this.sendingPrompt = false
       }
       if (!threadId) return
       if (this.state.input !== original) {
@@ -2259,32 +2628,19 @@ export class TaskWraithTui {
       return
     }
     const selection = this.state.pendingSelection
-    const args: Record<string, unknown> = { text }
-    if (selection?.model) args.model = selection.model
-    if (selection?.reasoningEffort) args.reasoningEffort = selection.reasoningEffort
-    const command = this.buildMutation('composer.send', { threadId }, args)
-    if (!command) {
-      this.sendingPrompt = false
-      this.restoreComposerText(original)
-      this.render()
-      return
-    }
-    this.sendingPrompt = true
-    try {
-      await this.runHostMutation(command, {
-        composerRestore: original,
-        onSucceeded: async () => {
-          this.state.pendingSelection = undefined
-          await this.refreshHostSnapshot()
-          if (this.state.selectedThreadId) {
-            this.applyLocalThread(this.state.selectedThreadId)
-          }
-        }
-      })
-    } finally {
-      this.sendingPrompt = false
-      this.render()
-    }
+    const liveWork = this.enqueuePromptDraft(threadId, text, selection)
+    this.state.pendingSelection = undefined
+    this.restoreBlockedDraftIfSafe()
+    const depth = queuedDraftsForThread(this.state, threadId).length
+    this.setNotice(
+      liveWork.length > 0 || this.queueDrainActive || this.mutationInFlight
+        ? `Queued ${depth} draft${depth === 1 ? '' : 's'} · Esc steers with the oldest`
+        : 'Sending queued draft',
+      'neutral',
+      2_500
+    )
+    this.scheduleQueuedDraftDrain()
+    this.render()
   }
 
   private async prepareDefaultThreadForPrompt(original: string): Promise<string | undefined> {
@@ -2376,7 +2732,7 @@ export class TaskWraithTui {
 
     let offers: HostProviderOffersProjection
     try {
-      offers = await this.client.getProviderOffers(status.providerId)
+      offers = this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
     } catch {
       await this.startNewSoloThread(status.providerId)
       return undefined
@@ -2427,7 +2783,9 @@ export class TaskWraithTui {
       ...(reasoning ? { reasoningId: reasoning.reasoningId } : {})
     }
     let configured = false
-    const configureCommand = buildThreadConfigureCommand({ actor, selection })
+    const configureCommand = this.authorizeConfigureCommand(
+      buildThreadConfigureCommand({ actor, selection })
+    )
     this.unresolvedLazySetupCommand = configureCommand
     await this.runHostMutation(configureCommand, {
       composerRestore: original,
@@ -2449,7 +2807,9 @@ export class TaskWraithTui {
           (candidate) => candidate.providerId === status.providerId && candidate.status === 'ready'
         )
         if (refreshedStatus) {
-          refreshedOffers = await this.client.getProviderOffers(refreshedStatus.providerId)
+          refreshedOffers = this.effectiveProviderOffers(
+            await this.client.getProviderOffers(refreshedStatus.providerId)
+          )
         }
       } catch {
         refreshedStatus = undefined
@@ -2572,6 +2932,15 @@ export class TaskWraithTui {
     }
     if (command === '/status') {
       this.showStatus()
+      return
+    }
+    if (command === '/login') {
+      if (arguments_.length > 1) {
+        this.setNotice('/login expects at most one provider id.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.openProviderLoginHub(arguments_[0])
       return
     }
     if (command === '/new' || command === '/provider') {
@@ -2925,6 +3294,10 @@ export class TaskWraithTui {
   }
 
   private async stageModel(modelId: string): Promise<void> {
+    if (!this.state.selectedThreadId) {
+      await this.stageHomeModel(modelId)
+      return
+    }
     const offers = await this.commandOffers()
     if (!offers) return
     const modelIndex = offers.models.findIndex((model) => model.id === modelId)
@@ -2940,6 +3313,46 @@ export class TaskWraithTui {
     this.state.overlayIndex = modelIndex
     this.state.tuneEffortIndex = this.effortIndexFor(offers, modelIndex)
     this.applyTuneSelection(offers.models[modelIndex])
+  }
+
+  private async stageHomeModel(modelId: string): Promise<void> {
+    await this.loadHomeTuneProviders(false)
+    const providers = this.state.homeTune?.providers ?? []
+    const matches = providers.flatMap((provider) =>
+      provider.offers.models
+        .filter((model) => model.available && model.modelId === modelId)
+        .map((model) => ({ provider, model }))
+    )
+    if (matches.length !== 1) {
+      this.setNotice(
+        matches.length > 1
+          ? `Model "${modelId}" is offered by multiple providers · use /model to choose.`
+          : `Unknown ready-provider model "${modelId}" · use /model to browse.`,
+        'warning',
+        4_000
+      )
+      this.state.homeTune = undefined
+      this.render()
+      return
+    }
+    const { provider, model } = matches[0]
+    const savedReasoning =
+      this.profileSettings.providerId === provider.status.providerId &&
+      this.profileSettings.modelId === model.modelId
+        ? resolveStartupReasoning(model, this.profileSettings.reasoningId)
+        : undefined
+    const persisted = this.rememberProfileSettings({
+      providerId: provider.status.providerId,
+      modelId: model.modelId,
+      ...(savedReasoning ? { reasoningId: savedReasoning.reasoningId } : { reasoningId: undefined })
+    })
+    this.state.homeTune = undefined
+    this.setNotice(
+      `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}`,
+      persisted ? 'good' : 'warning',
+      4_000
+    )
+    this.render()
   }
 
   private async stageReasoning(level?: string): Promise<void> {
@@ -2983,6 +3396,191 @@ export class TaskWraithTui {
     this.state.overlayIndex = selectedIndex
     this.state.tuneEffortIndex = effortIndex
     this.applyTuneSelection(model)
+  }
+
+  private async openProviderLoginHub(requestedProviderId?: string): Promise<void> {
+    if (!this.client?.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('provider-catalog')) {
+      this.setNotice('Provider setup is unavailable on this Host.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const generation = ++this.providerLoginReadGeneration
+    this.state.overlay = 'login'
+    this.state.providerLogin = { providers: [], flows: [], flowIndex: 0, loading: true }
+    this.render()
+    try {
+      const providers = [...(await this.client.getProviderStatuses())]
+      if (generation !== this.providerLoginReadGeneration || this.state.overlay !== 'login') return
+      const preferred = requestedProviderId
+        ? matchProviderStatus(providers, requestedProviderId)
+        : (providers.find((provider) => provider.providerId === this.profileSettings.providerId) ??
+          providers[0])
+      if (requestedProviderId && !preferred) {
+        this.state.providerLogin = {
+          providers,
+          flows: [],
+          flowIndex: 0,
+          error: `Unknown or ambiguous provider "${requestedProviderId}".`
+        }
+        this.render()
+        return
+      }
+      this.state.providerLogin = {
+        providers,
+        selectedProviderId: preferred?.providerId,
+        flows: [],
+        flowIndex: 0
+      }
+      if (preferred) await this.loadProviderLoginSelection(preferred.providerId)
+    } catch (error) {
+      if (generation !== this.providerLoginReadGeneration) return
+      this.state.providerLogin = {
+        providers: [],
+        flows: [],
+        flowIndex: 0,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private async loadProviderLoginSelection(providerId: string): Promise<void> {
+    if (!this.client?.connected || !this.state.providerLogin) return
+    const generation = ++this.providerLoginReadGeneration
+    this.state.providerLogin = {
+      ...this.state.providerLogin,
+      selectedProviderId: providerId,
+      flows: [],
+      flowIndex: 0,
+      loading: true,
+      error: undefined
+    }
+    this.render()
+    try {
+      const authStatus = this.client.supports('provider-auth')
+        ? await this.client.getProviderAuthStatus(providerId)
+        : undefined
+      const flows =
+        authStatus?.state === 'unauthenticated' && this.client.supports('provider-auth')
+          ? [...(await this.client.getProviderAuthFlows(providerId))].filter(
+              (flow) => flow.available
+            )
+          : []
+      if (
+        generation !== this.providerLoginReadGeneration ||
+        this.state.overlay !== 'login' ||
+        this.state.providerLogin?.selectedProviderId !== providerId
+      ) {
+        return
+      }
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        authStatus,
+        flows,
+        flowIndex: 0,
+        loading: false,
+        operationId:
+          authStatus?.state === 'authenticated' ? undefined : this.state.providerLogin.operationId
+      }
+    } catch (error) {
+      if (generation !== this.providerLoginReadGeneration) return
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        flows: [],
+        flowIndex: 0,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private async handleProviderLoginKey(key: Keypress): Promise<void> {
+    const login = this.state.providerLogin
+    if (!login || login.loading) return
+    const selectedIndex = Math.max(
+      0,
+      login.providers.findIndex((provider) => provider.providerId === login.selectedProviderId)
+    )
+    if (key.name === 'up' || key.name === 'down') {
+      const nextIndex = cycleIndex(
+        selectedIndex,
+        login.providers.length,
+        key.name === 'up' ? -1 : 1
+      )
+      const provider = login.providers[nextIndex]
+      if (provider) await this.loadProviderLoginSelection(provider.providerId)
+      return
+    }
+    if (key.name === 'tab' && login.flows.length > 1) {
+      this.state.providerLogin = {
+        ...login,
+        flowIndex: cycleIndex(login.flowIndex, login.flows.length, key.shift ? -1 : 1)
+      }
+      this.render()
+      return
+    }
+    if (key.name === 'r') {
+      await this.openProviderLoginHub(login.selectedProviderId)
+      return
+    }
+    if (key.name !== 'return' && key.name !== 'enter') return
+    if (login.pending || login.operationId) {
+      if (login.selectedProviderId) await this.loadProviderLoginSelection(login.selectedProviderId)
+      return
+    }
+    const flow = login.flows[login.flowIndex]
+    if (!flow || !login.selectedProviderId) {
+      await this.loadProviderLoginSelection(login.selectedProviderId ?? '')
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) return
+    const command = buildProviderAuthBeginCommand({
+      actor,
+      providerId: login.selectedProviderId,
+      flowId: flow.flowId
+    })
+    this.state.providerLogin = { ...login, pending: this.pendingFrom(command) }
+    const receipt = await this.runHostMutation(command)
+    if (!this.state.providerLogin) return
+    if (receipt?.status === 'succeeded' && receipt.resultRef?.kind === 'provider-auth') {
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        pending: undefined,
+        operationId: receipt.resultRef.operationId
+      }
+      this.setNotice('Provider setup opened · complete it, then press r to refresh.', 'neutral')
+      await this.loadProviderLoginSelection(login.selectedProviderId)
+    } else if (receipt && isTerminalHostReceiptStatus(receipt.status)) {
+      this.state.providerLogin = { ...this.state.providerLogin, pending: undefined }
+    }
+    this.render()
+  }
+
+  private async resumeProviderLoginPending(): Promise<void> {
+    const pending = this.state.providerLogin?.pending
+    if (!pending || !this.client?.connected) return
+    try {
+      const receipt = await this.client.lookupReceipt({ commandId: pending.commandId })
+      if (!this.state.providerLogin) return
+      if (receipt.status === 'succeeded' && receipt.resultRef?.kind === 'provider-auth') {
+        this.state.providerLogin = {
+          ...this.state.providerLogin,
+          pending: undefined,
+          operationId: receipt.resultRef.operationId
+        }
+      } else if (isTerminalHostReceiptStatus(receipt.status)) {
+        this.state.providerLogin = { ...this.state.providerLogin, pending: undefined }
+      }
+    } catch {
+      // Retain exact pending identity. Provider auth begin is never replayed automatically.
+    }
   }
 
   private async startNewSoloThread(requestedProviderId?: string): Promise<void> {
@@ -3115,7 +3713,10 @@ export class TaskWraithTui {
       const auth = await this.client.getProviderAuthStatus(status.providerId)
       this.state.coldStart =
         auth.state === 'authenticated'
-          ? coldStartOffers(provider, await this.client.getProviderOffers(status.providerId))
+          ? coldStartOffers(
+              provider,
+              this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
+            )
           : coldStartAuthFlows(
               provider,
               auth,
@@ -3125,7 +3726,7 @@ export class TaskWraithTui {
     } else {
       this.state.coldStart = coldStartOffers(
         provider,
-        await this.client.getProviderOffers(status.providerId)
+        this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
       )
     }
     this.resetColdStartConfigureIndices()
@@ -3185,8 +3786,278 @@ export class TaskWraithTui {
     this.render()
   }
 
-  private async cancelRun(): Promise<void> {
+  private enqueuePromptDraft(
+    threadId: string,
+    text: string,
+    selection?: TuiPendingSelection
+  ): string[] {
+    const liveWork = liveThreadWorkIds(this.hostSnapshot, threadId)
+    this.state.queuedDrafts = [
+      ...(this.state.queuedDrafts ?? []),
+      {
+        id: `tui-draft-${randomUUID()}`,
+        threadId,
+        text,
+        enqueuedAt: this.options.now(),
+        phase: 'queued',
+        ...(selection ? { selection: { ...selection } } : {}),
+        ...(liveWork[0] ? { blockedByRunId: liveWork[0] } : {})
+      }
+    ]
+    if (this.client?.connected && this.hostSnapshot?.freshness !== 'live') {
+      this.queueFreshReadRequested = true
+    }
+    return liveWork
+  }
+
+  private async refreshThenHandleEscape(threadId: string, originalInput: string): Promise<void> {
+    if (this.escapeRefreshInFlight) return
+    this.escapeRefreshInFlight = true
+    try {
+      await this.refreshHostSnapshot()
+      const live = liveThreadWorkIds(this.hostSnapshot, threadId)
+      if (!live.length) return
+      const draft = originalInput.trim()
+      if (
+        this.state.selectedThreadId === threadId &&
+        this.state.input === originalInput &&
+        draft &&
+        !draft.startsWith('/') &&
+        !this.selectedOpenQuestion()
+      ) {
+        this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+        this.state.input = ''
+        this.state.inputCursor = 0
+        this.state.pendingSelection = undefined
+        this.state.scrollOffset = 0
+      }
+      await this.cancelRun({ shortcut: true, liveWorkIds: live, targetThreadId: threadId })
+    } catch (error) {
+      this.retainEscapeIntent(threadId, originalInput)
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.escapeRefreshInFlight = false
+      this.render()
+    }
+  }
+
+  private retainEscapeIntent(threadId: string, originalInput: string): void {
+    const draft = originalInput.trim()
+    if (
+      this.state.selectedThreadId === threadId &&
+      this.state.input === originalInput &&
+      draft &&
+      !draft.startsWith('/') &&
+      !this.selectedOpenQuestion()
+    ) {
+      this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+      this.state.input = ''
+      this.state.inputCursor = 0
+      this.state.pendingSelection = undefined
+      this.state.scrollOffset = 0
+    }
+    const projected = projectedThreadWorkIds(this.hostSnapshot, threadId)
+    this.pendingEscapeCancel = projected[0] ? { threadId, liveWorkId: projected[0] } : undefined
+    this.setNotice(
+      projected[0]
+        ? 'Steer queued · waiting for a fresh Host connection'
+        : 'Draft queued · waiting for a fresh Host connection',
+      'warning'
+    )
+    this.render()
+  }
+
+  private restoreBlockedDraftIfSafe(): void {
     const threadId = this.state.selectedThreadId
+    if (!threadId || this.state.input) return
+    const blocked = queuedDraftsForThread(this.state, threadId)[0]
+    if (!blocked || blocked.phase !== 'blocked') return
+    this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, blocked.id)
+    this.queuedDraftCommands.delete(blocked.id)
+    this.clearQueuedDraftRetry(blocked.id)
+    this.state.input = blocked.text
+    this.state.inputCursor = Array.from(blocked.text).length
+    this.state.pendingSelection = blocked.selection ? { ...blocked.selection } : undefined
+    this.setNotice(`${blocked.error || 'Queued send was blocked'} · draft restored`, 'error', 4_500)
+  }
+
+  private projectionFence(): string {
+    const snapshot = this.hostSnapshot
+    return `${this.connectionEpoch}:${this.state.connection}:${snapshot?.generation ?? -1}:${snapshot?.cursor ?? -1}`
+  }
+
+  private scheduleQueuedDraftDrain(): void {
+    if (this.queueDrainScheduled || this.stopped) return
+    this.queueDrainScheduled = true
+    queueMicrotask(() => {
+      this.queueDrainScheduled = false
+      void this.drainQueuedDrafts()
+    })
+  }
+
+  private async refreshQueuedDraftAuthority(): Promise<void> {
+    if (this.queueFreshReadInFlight || !this.client?.connected) return
+    this.queueFreshReadInFlight = true
+    try {
+      await this.refreshHostSnapshot()
+    } catch (error) {
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.queueFreshReadInFlight = false
+      this.scheduleQueuedDraftDrain()
+    }
+  }
+
+  private scheduleQueuedDraftRetry(draftId: string): void {
+    if (this.queueRetryTimers.has(draftId) || this.stopped) return
+    const attempt = (this.queueRetryAttempts.get(draftId) ?? 0) + 1
+    this.queueRetryAttempts.set(draftId, attempt)
+    const delayMs = Math.min(4_000, 250 * 2 ** Math.min(4, attempt - 1))
+    const timer = setTimeout(() => {
+      this.queueRetryTimers.delete(draftId)
+      this.queueRetryFences.delete(draftId)
+      this.queueFreshReadRequested = true
+      this.scheduleQueuedDraftDrain()
+    }, delayMs)
+    timer.unref?.()
+    this.queueRetryTimers.set(draftId, timer)
+  }
+
+  private clearQueuedDraftRetry(draftId: string): void {
+    const timer = this.queueRetryTimers.get(draftId)
+    if (timer) clearTimeout(timer)
+    this.queueRetryTimers.delete(draftId)
+    this.queueRetryAttempts.delete(draftId)
+    this.queueRetryFences.delete(draftId)
+  }
+
+  private async drainQueuedDrafts(): Promise<void> {
+    if (
+      (this.state.queuedDrafts?.length ?? 0) > 0 &&
+      this.client?.connected &&
+      this.queueFreshReadRequested
+    ) {
+      this.queueFreshReadRequested = false
+      void this.refreshQueuedDraftAuthority()
+      return
+    }
+    if (
+      this.queueDrainActive ||
+      this.mutationInFlight ||
+      this.selectingThread ||
+      this.sendingPrompt ||
+      !this.client?.connected ||
+      this.hostSnapshot?.freshness !== 'live'
+    ) {
+      return
+    }
+    const fence = this.projectionFence()
+    const blocked = new Set(
+      [...this.queueRetryFences.entries()]
+        .filter(([, blockedAt]) => blockedAt === fence)
+        .map(([draftId]) => draftId)
+    )
+    const draft = nextDispatchableDraft(
+      this.state,
+      this.hostSnapshot,
+      blocked,
+      new Set(this.acceptedQueueRuns.keys())
+    )
+    if (!draft) return
+
+    this.queueDrainActive = true
+    this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+      phase: 'dispatching',
+      error: undefined
+    })
+    this.render()
+    let command = this.queuedDraftCommands.get(draft.id)
+    const recoveringCommand = Boolean(command)
+    if (!command) {
+      const args: Record<string, unknown> = { text: draft.text }
+      if (draft.selection?.model) args.model = draft.selection.model
+      if (draft.selection?.reasoningEffort) {
+        args.reasoningEffort = draft.selection.reasoningEffort
+      }
+      command = this.buildMutation('composer.send', { threadId: draft.threadId }, args) ?? undefined
+      if (command) this.queuedDraftCommands.set(draft.id, command)
+    }
+
+    try {
+      if (!command) {
+        this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+          phase: 'queued'
+        })
+        this.queueRetryFences.set(draft.id, fence)
+        this.scheduleQueuedDraftRetry(draft.id)
+        return
+      }
+      let receipt: HostCommandReceipt | undefined
+      if (recoveringCommand) {
+        try {
+          const recovered = await this.client.lookupReceipt({ commandId: command.commandId })
+          if (isTerminalHostReceiptStatus(recovered.status)) {
+            await this.applyTerminalReceipt(recovered, {})
+            receipt = recovered
+          }
+        } catch {
+          // Receipt absence is safe: resubmit the exact same command identity below.
+        }
+      }
+      receipt ??= await this.runHostMutation(command)
+      if (receipt?.status === 'succeeded') {
+        this.acceptedQueueRuns.set(draft.threadId, {
+          commandId: command.commandId,
+          observedLive: false
+        })
+        this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, draft.id)
+        this.queuedDraftCommands.delete(draft.id)
+        this.clearQueuedDraftRetry(draft.id)
+        try {
+          await this.refreshHostSnapshot()
+        } catch (error) {
+          this.surfaceProjectionSyncError(error)
+        }
+      } else if (receipt && isTerminalHostReceiptStatus(receipt.status)) {
+        const description = describeHostReceipt(receipt)
+        if (this.state.selectedThreadId === draft.threadId && !this.state.input) {
+          this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, draft.id)
+          this.queuedDraftCommands.delete(draft.id)
+          this.clearQueuedDraftRetry(draft.id)
+          this.state.input = draft.text
+          this.state.inputCursor = Array.from(draft.text).length
+          this.state.pendingSelection = draft.selection ? { ...draft.selection } : undefined
+          this.setNotice(`${description.text} · draft restored`, description.tone, 4_500)
+        } else {
+          this.clearQueuedDraftRetry(draft.id)
+          this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+            phase: 'blocked',
+            error: description.text
+          })
+        }
+      } else {
+        this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+          phase: 'queued'
+        })
+        this.queueRetryFences.set(draft.id, fence)
+        this.scheduleQueuedDraftRetry(draft.id)
+      }
+    } finally {
+      this.queueDrainActive = false
+      this.render()
+      this.scheduleQueuedDraftDrain()
+    }
+  }
+
+  private async cancelRun(
+    options: {
+      shortcut?: boolean
+      liveWorkIds?: readonly string[]
+      targetThreadId?: string
+      command?: HostCommand
+    } = {}
+  ): Promise<void> {
+    const threadId = options.targetThreadId ?? this.state.selectedThreadId
     if (!threadId) {
       this.setNotice('No selected thread to cancel.', 'warning', 3_000)
       this.render()
@@ -3201,21 +4072,191 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    if (this.mutationInFlight) {
-      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+    if (!options.liveWorkIds && this.hostSnapshot?.freshness !== 'live') {
+      try {
+        await this.refreshHostSnapshot()
+      } catch (error) {
+        this.surfaceProjectionSyncError(error)
+        this.setNotice('Could not prove the live run to cancel.', 'warning', 3_000)
+        return
+      }
+    }
+    const liveWork = [...(options.liveWorkIds ?? liveThreadWorkIds(this.hostSnapshot, threadId))]
+    const targetWorkId = liveWork[0]
+    if (!targetWorkId) {
+      this.setNotice('No live run is available to cancel.', 'warning', 2_000)
       this.render()
       return
     }
-    const command = this.buildMutation('run.cancel', { threadId }, {})
-    if (!command) return
-    await this.runHostMutation(command, {
-      onSucceeded: async () => {
-        await this.refreshHostSnapshot()
-        if (this.state.selectedThreadId) {
-          this.applyLocalThread(this.state.selectedThreadId)
-        }
+    if (this.mutationInFlight) {
+      if (options.shortcut && targetWorkId) {
+        this.pendingEscapeCancel = { threadId, liveWorkId: targetWorkId }
+        this.setNotice('Steer queued · cancellation follows the current Host command', 'warning')
+      } else {
+        this.setNotice('A Host command is already in flight.', 'warning', 2_000)
       }
+      this.render()
+      return
+    }
+    if (options.shortcut && targetWorkId && this.cancelRequestedWorkIds.has(targetWorkId)) {
+      this.setNotice('Cancellation already requested · waiting for the Host', 'warning', 2_000)
+      this.render()
+      return
+    }
+    if (targetWorkId) this.cancelRequestedWorkIds.add(targetWorkId)
+    const command =
+      options.command ??
+      this.buildMutation('run.cancel', { threadId }, { expectedWorkId: targetWorkId })
+    if (!command) {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      return
+    }
+    if (!options.command) this.clearEscapeCancelRecovery()
+    let receipt: HostCommandReceipt | undefined
+    if (options.command) {
+      try {
+        const recovered = await this.client.lookupReceipt({ commandId: command.commandId })
+        if (isTerminalHostReceiptStatus(recovered.status)) {
+          await this.applyTerminalReceipt(recovered, {})
+          receipt = recovered
+        }
+      } catch {
+        // The Host may not have accepted it; exact-id resubmission is idempotent.
+      }
+    }
+    receipt ??= await this.runHostMutation(command)
+    if (receipt?.status === 'succeeded') {
+      this.clearEscapeCancelRecovery()
+      try {
+        await this.refreshHostSnapshot()
+      } catch (error) {
+        this.surfaceProjectionSyncError(error)
+      }
+      if (options.shortcut) {
+        const queued = queuedDraftsForThread(this.state, threadId).length
+        this.setNotice(
+          queued > 0
+            ? 'Stopping current run · queued steer sends after terminal confirmation'
+            : 'Stopping current run',
+          'warning',
+          3_000
+        )
+      }
+    } else if (!receipt) {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      if (options.shortcut && targetWorkId) {
+        this.pendingEscapeCancel = {
+          threadId,
+          liveWorkId: targetWorkId,
+          command
+        }
+        this.scheduleEscapeCancelRecovery()
+      }
+    } else {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      this.clearEscapeCancelRecovery()
+    }
+    this.render()
+  }
+
+  private clearEscapeCancelRecovery(): void {
+    if (this.escapeCancelRecoveryTimer) clearTimeout(this.escapeCancelRecoveryTimer)
+    this.escapeCancelRecoveryTimer = null
+    this.escapeCancelRecoveryAttempts = 0
+  }
+
+  /**
+   * An uncertain same-socket cancel cannot wait for the periodic projection.
+   * Take a bounded fresh read, then retry the retained exact command only if
+   * that exact work item is still live.
+   */
+  private scheduleEscapeCancelRecovery(): void {
+    if (
+      this.stopped ||
+      !this.pendingEscapeCancel?.command ||
+      this.escapeCancelRecoveryTimer ||
+      this.escapeCancelRecoveryInFlight ||
+      this.escapeCancelRecoveryAttempts >= ESCAPE_CANCEL_MAX_RECOVERY_ATTEMPTS
+    ) {
+      return
+    }
+    const attempt = this.escapeCancelRecoveryAttempts + 1
+    this.escapeCancelRecoveryAttempts = attempt
+    const delayMs = Math.min(1_600, ESCAPE_CANCEL_RECOVERY_BASE_MS * 2 ** (attempt - 1))
+    this.escapeCancelRecoveryTimer = setTimeout(() => {
+      this.escapeCancelRecoveryTimer = null
+      void this.recoverPendingEscapeCancel()
+    }, delayMs)
+    this.escapeCancelRecoveryTimer.unref?.()
+  }
+
+  private async recoverPendingEscapeCancel(): Promise<void> {
+    if (
+      this.escapeCancelRecoveryInFlight ||
+      !this.pendingEscapeCancel?.command ||
+      !this.client?.connected
+    ) {
+      return
+    }
+    this.escapeCancelRecoveryInFlight = true
+    let refreshed = false
+    try {
+      await this.refreshHostSnapshot()
+      refreshed = this.hostSnapshot?.freshness === 'live'
+    } catch (error) {
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.escapeCancelRecoveryInFlight = false
+    }
+    if (refreshed) this.flushPendingEscapeCancel()
+    else this.scheduleEscapeCancelRecovery()
+  }
+
+  private flushPendingEscapeCancel(): void {
+    const pending = this.pendingEscapeCancel
+    if (!pending || this.mutationInFlight) return
+    if (!this.client?.connected || this.hostSnapshot?.freshness !== 'live') return
+    const live = liveThreadWorkIds(this.hostSnapshot, pending.threadId)
+    if (!live.includes(pending.liveWorkId)) {
+      this.pendingEscapeCancel = undefined
+      this.clearEscapeCancelRecovery()
+      this.scheduleQueuedDraftDrain()
+      return
+    }
+    this.pendingEscapeCancel = undefined
+    void this.cancelRun({
+      shortcut: true,
+      targetThreadId: pending.threadId,
+      liveWorkIds: [pending.liveWorkId],
+      ...(pending.command ? { command: pending.command } : {})
     })
+  }
+
+  private replaceFullAccessPresence(next?: TuiFullAccessPresence): void {
+    if (next === this.fullAccessPresence) return
+    this.fullAccessPresence?.dispose()
+    this.fullAccessPresence = next ?? null
+  }
+
+  private hasMatchingFullAccessPresence(): boolean {
+    return Boolean(
+      this.client?.connected &&
+      this.fullAccessPresence?.matches(this.client.discoveryProcessIdentity)
+    )
+  }
+
+  private effectiveProviderOffers(
+    offers: HostProviderOffersProjection
+  ): HostProviderOffersProjection {
+    return projectTuiFullAccessPresence(offers, this.hasMatchingFullAccessPresence())
+  }
+
+  private authorizeConfigureCommand(command: HostCommand): HostCommand {
+    if (command.arguments.postureId !== 'full_access') return command
+    if (!this.hasMatchingFullAccessPresence() || !this.fullAccessPresence) {
+      throw new Error('Full Access requires a fresh user-presence Host launch from this TUI.')
+    }
+    return this.fullAccessPresence.authorizeConfigure(command)
   }
 
   private actorIdentity(): HostActorIdentity | null {
@@ -3421,12 +4462,12 @@ export class TaskWraithTui {
       onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
       onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     } = {}
-  ): Promise<void> {
-    if (!this.client) return
+  ): Promise<HostCommandReceipt | undefined> {
+    if (!this.client) return undefined
     if (this.mutationInFlight) {
       this.setNotice('A Host command is already in flight.', 'warning', 2_000)
       this.render()
-      return
+      return undefined
     }
     this.mutationInFlight = true
     const pending: TuiPendingHostMutation = {
@@ -3469,16 +4510,20 @@ export class TaskWraithTui {
           }
         })
         await this.applyTerminalReceipt(terminal, options)
-        return
+        return terminal
       }
       await this.applyTerminalReceipt(initial, options)
+      return initial
     } catch (error) {
       if (options.composerRestore) this.restoreComposerText(options.composerRestore)
       this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+      return undefined
     } finally {
       this.mutationInFlight = false
       this.state.pendingHostMutation = undefined
       this.render()
+      if (this.pendingEscapeCancel) this.flushPendingEscapeCancel()
+      else this.scheduleQueuedDraftDrain()
     }
   }
 
@@ -3596,6 +4641,20 @@ export class TaskWraithTui {
 function cycleIndex(index: number, length: number, delta: number): number {
   if (length <= 0) return 0
   return (index + delta + length) % length
+}
+
+function cycleAvailableIndex(
+  items: readonly { available: boolean }[],
+  index: number,
+  delta: number
+): number {
+  if (!items.length || !items.some((item) => item.available)) return 0
+  let next = index
+  for (let attempts = 0; attempts < items.length; attempts += 1) {
+    next = cycleIndex(next, items.length, delta)
+    if (items[next]?.available) return next
+  }
+  return Math.max(0, Math.min(index, items.length - 1))
 }
 
 function mergeTranscriptRows(

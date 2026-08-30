@@ -1,18 +1,31 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn as spawnChild } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { posix, resolve, win32, type PlatformPath } from 'node:path'
+import type { Writable } from 'node:stream'
 
 import {
   HostProjectionClient,
-  HostProjectionIncompatibleProtocolError
+  HostProjectionIncompatibleProtocolError,
+  type HostProjectionDiscoveryProcessIdentity
 } from '../host-client/HostProjectionClient'
+import {
+  HOST_FULL_ACCESS_BOOTSTRAP_FD,
+  HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
+  hostFullAccessBootstrapFrame
+} from '../host-runtime/HostFullAccessBootstrap'
 import type { HostBootstrapWelcome, HostCapability } from '../shared/hostProtocol'
+import {
+  createTuiFullAccessPresence,
+  type TuiFullAccessPresence,
+  type TuiFullAccessHostProcessBinding
+} from './fullAccessConsent'
 
 const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500
+const DEFAULT_BOOTSTRAP_WRITE_TIMEOUT_MS = 2_000
 export const TUI_STANDALONE_HOST_CAPABILITY_FLOOR: readonly HostCapability[] = [
   'commands',
   'receipts',
@@ -59,19 +72,35 @@ type TuiHostSpawn = (
 
 export interface EnsureTuiHostAvailableInput extends ResolveTuiHostLaunchCommandInput {
   readonly userDataPath: string
+  /** Only an interactive TUI may retain a launch-bound Full Access signer. */
+  readonly enableFullAccessPresence?: boolean
   readonly timeoutMs?: number
   readonly pollMs?: number
   readonly probeTimeoutMs?: number
-  readonly probe?: (userDataPath: string, connectTimeoutMs: number) => Promise<void>
+  readonly bootstrapWriteTimeoutMs?: number
+  readonly probe?: (
+    userDataPath: string,
+    connectTimeoutMs: number
+  ) => Promise<TuiHostAuthenticatedProbe | void>
   readonly resolveLaunchCommand?: () => Promise<TuiHostLaunchCommand | null>
   readonly spawn?: TuiHostSpawn
+  readonly createFullAccessSecret?: () => Buffer
   readonly now?: () => number
   readonly delay?: (milliseconds: number) => Promise<void>
 }
 
 export type EnsureTuiHostAvailableResult =
   | { readonly kind: 'existing' }
-  | { readonly kind: 'launched'; readonly pid: number | null }
+  | {
+      readonly kind: 'launched'
+      readonly pid: number | null
+      readonly fullAccessPresence?: TuiFullAccessPresence
+    }
+
+export interface TuiHostAuthenticatedProbe {
+  readonly welcome: HostBootstrapWelcome
+  readonly process: HostProjectionDiscoveryProcessIdentity
+}
 
 export class TuiHostProductionCapabilityError extends HostProjectionIncompatibleProtocolError {
   constructor() {
@@ -211,7 +240,10 @@ export async function resolveTuiHostLaunchCommand(
   return null
 }
 
-async function authenticatedProbe(userDataPath: string, connectTimeoutMs: number): Promise<void> {
+async function authenticatedProbe(
+  userDataPath: string,
+  connectTimeoutMs: number
+): Promise<TuiHostAuthenticatedProbe> {
   const client = new HostProjectionClient({
     client: {
       clientId: `tui-launch-${randomUUID()}`,
@@ -227,6 +259,9 @@ async function authenticatedProbe(userDataPath: string, connectTimeoutMs: number
   try {
     const welcome = await client.connect()
     assertTuiStandaloneHostWelcome(welcome)
+    const processIdentity = client.discoveryProcessIdentity
+    if (!processIdentity) throw new Error('TaskWraith Host process identity is unavailable.')
+    return { welcome, process: processIdentity }
   } finally {
     client.close()
   }
@@ -262,6 +297,76 @@ function launchUnavailableMessage(profile: TuiHostLaunchProfile): string {
   return `TaskWraith Host is offline and the ${profile} Node runtime could not be located.`
 }
 
+function validSecret(value: Buffer): boolean {
+  return Buffer.isBuffer(value) && value.byteLength === 32
+}
+
+async function writeFullAccessBootstrap(
+  child: ChildProcess,
+  secret: Buffer,
+  timeoutMs: number
+): Promise<boolean> {
+  const pipe = child.stdio?.[3] as Writable | null | undefined
+  if (!pipe || typeof pipe.end !== 'function') return false
+  const frame = hostFullAccessBootstrapFrame(secret)
+  try {
+    return await new Promise<boolean>((resolveWrite) => {
+      let settled = false
+      const finish = (written: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolveWrite(written)
+      }
+      const onError = (): void => finish(false)
+      const onFinish = (): void => finish(true)
+      const timer = setTimeout(() => {
+        try {
+          pipe.destroy()
+        } catch {
+          // Destroy is best effort; timeout still means capability-off.
+        }
+        finish(false)
+      }, timeoutMs)
+      timer.unref?.()
+      pipe.once('error', onError)
+      pipe.once('finish', onFinish)
+      try {
+        // One bounded write followed by EOF. The Host does not continue until
+        // it has consumed this exact fd3 frame or failed closed.
+        pipe.end(frame)
+      } catch {
+        finish(false)
+      }
+    })
+  } finally {
+    frame.fill(0)
+  }
+}
+
+function exactOwnedBinding(
+  probe: TuiHostAuthenticatedProbe | void,
+  pid: number | undefined
+): TuiFullAccessHostProcessBinding | null {
+  if (
+    !probe ||
+    !pid ||
+    probe.process.pid !== pid ||
+    !probe.process.hostId ||
+    !probe.process.hostVersion ||
+    probe.process.hostId !== probe.welcome.hostId ||
+    probe.process.hostVersion !== probe.welcome.hostVersion
+  ) {
+    return null
+  }
+  return {
+    pid,
+    startedAt: probe.process.startedAt,
+    hostId: probe.process.hostId,
+    hostVersion: probe.process.hostVersion
+  }
+}
+
 const inFlightStarts = new Map<string, Promise<EnsureTuiHostAvailableResult>>()
 
 async function ensureTuiHostAvailableOnce(
@@ -289,13 +394,31 @@ async function ensureTuiHostAvailableOnce(
 
   const spawn =
     input.spawn ?? ((executable, args, options) => spawnChild(executable, [...args], options))
-  const child = spawn(command.executable, command.args, {
-    cwd: command.cwd,
-    env: command.env,
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true
-  })
+  let bootstrapSecret: Buffer | null = null
+  if (input.enableFullAccessPresence === true) {
+    const candidate = (input.createFullAccessSecret ?? (() => randomBytes(32)))()
+    if (validSecret(candidate)) bootstrapSecret = candidate
+    else candidate.fill(0)
+  }
+  let child: ChildProcess
+  try {
+    child = spawn(command.executable, command.args, {
+      cwd: command.cwd,
+      env: bootstrapSecret
+        ? {
+            ...command.env,
+            [HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV]: String(HOST_FULL_ACCESS_BOOTSTRAP_FD)
+          }
+        : command.env,
+      detached: true,
+      shell: false,
+      stdio: bootstrapSecret ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
+      windowsHide: true
+    })
+  } catch (error) {
+    bootstrapSecret?.fill(0)
+    throw error
+  }
   const outcome: {
     spawnError: Error | null
     exit: { code: number | null; signal: NodeJS.Signals | null } | null
@@ -306,6 +429,13 @@ async function ensureTuiHostAvailableOnce(
   child.once('exit', (code, signal) => {
     outcome.exit = { code, signal }
   })
+  const bootstrapWritten = bootstrapSecret
+    ? await writeFullAccessBootstrap(
+        child,
+        bootstrapSecret,
+        input.bootstrapWriteTimeoutMs ?? DEFAULT_BOOTSTRAP_WRITE_TIMEOUT_MS
+      )
+    : false
   child.unref()
 
   const now = input.now ?? (() => Date.now())
@@ -315,40 +445,56 @@ async function ensureTuiHostAvailableOnce(
   const startedAt = now()
   const deadline = startedAt + timeoutMs
 
-  while (now() < deadline) {
-    await delay(Math.min(pollMs, Math.max(1, deadline - now())))
-    try {
-      await probe(input.userDataPath, Math.min(probeTimeoutMs, Math.max(1, deadline - now())))
-      return { kind: 'launched', pid: child.pid ?? null }
-    } catch (error) {
-      if (incompatibleHost(error)) throw error
-      lastProbeError = error
-    }
-    if (outcome.spawnError) {
-      throw new Error(
-        `TaskWraith Host process could not be launched: ${outcome.spawnError.message}`,
-        {
-          cause: outcome.spawnError
+  try {
+    while (now() < deadline) {
+      await delay(Math.min(pollMs, Math.max(1, deadline - now())))
+      try {
+        const authenticated = await probe(
+          input.userDataPath,
+          Math.min(probeTimeoutMs, Math.max(1, deadline - now()))
+        )
+        const binding = bootstrapWritten ? exactOwnedBinding(authenticated, child.pid) : null
+        const fullAccessPresence =
+          binding && bootstrapSecret
+            ? createTuiFullAccessPresence(bootstrapSecret, binding)
+            : undefined
+        return {
+          kind: 'launched',
+          pid: child.pid ?? null,
+          ...(fullAccessPresence ? { fullAccessPresence } : {})
         }
-      )
+      } catch (error) {
+        if (incompatibleHost(error)) throw error
+        lastProbeError = error
+      }
+      if (outcome.spawnError) {
+        throw new Error(
+          `TaskWraith Host process could not be launched: ${outcome.spawnError.message}`,
+          {
+            cause: outcome.spawnError
+          }
+        )
+      }
+      if (
+        outcome.exit &&
+        outcome.exit.code !== 0 &&
+        now() - startedAt >= Math.max(1_000, pollMs * 2)
+      ) {
+        const detail = outcome.exit.signal
+          ? `signal ${outcome.exit.signal}`
+          : `exit code ${String(outcome.exit.code)}`
+        throw new Error(`TaskWraith Host process ended before authentication (${detail}).`, {
+          cause: lastProbeError
+        })
+      }
     }
-    if (
-      outcome.exit &&
-      outcome.exit.code !== 0 &&
-      now() - startedAt >= Math.max(1_000, pollMs * 2)
-    ) {
-      const detail = outcome.exit.signal
-        ? `signal ${outcome.exit.signal}`
-        : `exit code ${String(outcome.exit.code)}`
-      throw new Error(`TaskWraith Host process ended before authentication (${detail}).`, {
-        cause: lastProbeError
-      })
-    }
-  }
 
-  throw new Error('Timed out waiting for the TaskWraith Host to authenticate.', {
-    cause: lastProbeError
-  })
+    throw new Error('Timed out waiting for the TaskWraith Host to authenticate.', {
+      cause: lastProbeError
+    })
+  } finally {
+    bootstrapSecret?.fill(0)
+  }
 }
 
 /**
@@ -361,7 +507,10 @@ export async function ensureTuiHostAvailable(
 ): Promise<EnsureTuiHostAvailableResult> {
   const key = resolve(input.userDataPath)
   const existing = inFlightStarts.get(key)
-  if (existing) return existing
+  if (existing) {
+    await existing
+    return { kind: 'existing' }
+  }
   const operation = ensureTuiHostAvailableOnce(input)
   inFlightStarts.set(key, operation)
   try {

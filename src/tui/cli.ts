@@ -39,7 +39,7 @@ import {
   buildTaskWraithTuiJsonProjection,
   type TaskWraithTuiJsonProjectionSource
 } from './jsonProjection'
-import { ensureTuiHostAvailable } from './hostProcessManager'
+import { ensureTuiHostAvailable, type EnsureTuiHostAvailableResult } from './hostProcessManager'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
@@ -325,11 +325,13 @@ async function main(): Promise<void> {
       'Interactive mode requires a terminal. Use --snapshot, --json, --export, or --replay for redirected output.'
     )
   }
+  let initialHostLaunch: EnsureTuiHostAvailableResult | undefined
   if (!options.demo && options.startHost) {
     if (!options.userDataPath) throw new Error('TaskWraith Host userData path is unavailable.')
-    await ensureTuiHostAvailable({
+    initialHostLaunch = await ensureTuiHostAvailable({
       userDataPath: options.userDataPath,
-      profile: options.hostLaunchProfile
+      profile: options.hostLaunchProfile,
+      enableFullAccessPresence: interactive
     })
   }
   if (options.exportPath) {
@@ -364,14 +366,17 @@ async function main(): Promise<void> {
       : {}),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
     ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
+    ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.fullAccessPresence
+      ? { fullAccessPresence: initialHostLaunch.fullAccessPresence }
+      : {}),
     ...(!options.demo && options.startHost && options.userDataPath
       ? {
-          reviveHost: async () => {
-            await ensureTuiHostAvailable({
+          reviveHost: () =>
+            ensureTuiHostAvailable({
               userDataPath: options.userDataPath as string,
-              profile: options.hostLaunchProfile
+              profile: options.hostLaunchProfile,
+              enableFullAccessPresence: true
             })
-          }
         }
       : {})
   })

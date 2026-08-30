@@ -60,7 +60,16 @@ export interface TuiThemeInk {
   muted: string
 }
 
+export interface TuiPermissionTone {
+  info: string
+  primary: string
+  warning: string
+  error: string
+}
+
 export interface TuiThemeTone {
+  /** Dedicated permission ladder; independent from generic status tones. */
+  permission: TuiPermissionTone
   good: string
   warning: string
   error: string
@@ -108,6 +117,12 @@ export interface TuiTheme {
 
 /** House tones, carried by every dark theme that does not restate them. */
 const HOUSE_TONE: TuiThemeTone = {
+  permission: {
+    info: '#6FB6FF',
+    primary: '#FFFFFF',
+    warning: '#F59E0B',
+    error: '#DC2626'
+  },
   good: '#55B985',
   warning: '#D49A47',
   error: '#D45B62',
@@ -138,6 +153,12 @@ export const TUI_THEMES: readonly TuiTheme[] = [
     // Restated rather than shared: the house tones are tuned for a dark ground
     // and every one of them fails the accent floor against #FAF8FC.
     tone: {
+      permission: {
+        info: '#1976D2',
+        primary: '#1D1D1F',
+        warning: '#D97706',
+        error: '#991B1B'
+      },
       good: '#2F7D55',
       warning: '#8A5D14',
       error: '#A32F38',
@@ -157,6 +178,12 @@ export const TUI_THEMES: readonly TuiTheme[] = [
     ground: { background: '#1A1B26', surface: '#1F2335', panel: '#24283B' },
     ink: { primary: '#C0CAF5', muted: '#565F89' },
     tone: {
+      permission: {
+        info: '#6FB6FF',
+        primary: '#FFFFFF',
+        warning: '#F59E0B',
+        error: '#DC2626'
+      },
       good: '#9ECE6A',
       warning: '#E0AF68',
       error: '#F7768E',
@@ -174,6 +201,12 @@ export const TUI_THEMES: readonly TuiTheme[] = [
     ground: { background: '#232136', surface: '#2A273F', panel: '#393552' },
     ink: { primary: '#E0DEF4', muted: '#6E6A86' },
     tone: {
+      permission: {
+        info: '#6FB6FF',
+        primary: '#FFFFFF',
+        warning: '#F59E0B',
+        error: '#DC2626'
+      },
       good: '#9CCFD8',
       warning: '#F6C177',
       error: '#EB6F92',

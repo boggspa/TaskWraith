@@ -12,6 +12,7 @@ import {
   resolveGhostBanner
 } from './ghostBanner'
 import { renderTaskWraithTui } from './render'
+import { resolveTuiTheme } from './palette'
 import {
   createTaskWraithTuiDemoState,
   type TaskWraithTuiState,
@@ -108,25 +109,47 @@ describe('TaskWraith TUI renderer', () => {
         ],
         postures: [
           {
-            postureId: 'posture-read',
-            label: 'Read',
+            postureId: 'plan',
+            label: 'Plan',
             available: true,
             requiresExplicitConsent: false,
             ceiling: 'read'
           },
           {
-            postureId: 'posture-full',
-            label: 'Full access',
+            postureId: 'read_only',
+            label: 'Ask',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
             available: true,
             requiresExplicitConsent: true,
-            ceiling: 'full_access'
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: false,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access',
+            detail: 'Unavailable in the standalone Host.'
           }
         ]
       }
     }
     state.coldStartModelIndex = 0
     state.coldStartReasoningIndex = 0
-    state.coldStartPostureIndex = 1
+    state.coldStartPostureIndex = 2
 
     const output = stripAnsi(
       renderTaskWraithTui(state, {
@@ -141,8 +164,88 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Model One')
     expect(output).toContain('Model Two')
     expect(output).toContain('Low')
-    expect(output).toContain('Full access · consent required · Space')
+    expect(output).toContain('Plan')
+    expect(output).toContain('Ask')
+    expect(output).toContain('Accept Edits')
+    expect(output).toContain('Full WS Access · consent required · Space')
+    expect(output).toContain('Full Access (YOLO) · unavailable')
     expect(output).toContain('Complete Host setup to compose')
+  })
+
+  it('renders posture rows in the exact theme-adaptive permission colors', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStart = {
+      kind: 'configure',
+      providerId: 'codex',
+      threadId: 'thread-1',
+      acknowledgedPostureIds: [],
+      offers: {
+        providerId: 'codex',
+        offerRevision: 'revision',
+        models: [{ modelId: 'model', label: 'Model', available: true, reasoning: [] }],
+        postures: [
+          {
+            postureId: 'plan',
+            label: 'Plan',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'read_only',
+            label: 'Ask',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: false,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access'
+          }
+        ]
+      }
+    }
+    state.coldStartPostureIndex = 2
+    const dark = renderTaskWraithTui(state, {
+      width: 120,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      theme: resolveTuiTheme('wraith-night'),
+      animationEnabled: false
+    })
+    expect(dark).toContain('\u001b[38;2;111;182;255mPlan')
+    expect(dark).toContain('\u001b[38;2;255;255;255mAccept Edits')
+    expect(dark).toContain('\u001b[38;2;245;158;11mFull WS Access')
+    expect(dark).toContain('\u001b[38;2;220;38;38mFull Access (YOLO)')
+    const light = renderTaskWraithTui(state, {
+      width: 120,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      theme: resolveTuiTheme('wraith-day'),
+      animationEnabled: false
+    })
+    expect(light).toContain('\u001b[38;2;25;118;210mPlan')
+    expect(light).toContain('\u001b[38;2;29;29;31mAccept Edits')
+    expect(light).toContain('\u001b[38;2;217;119;6mFull WS Access')
+    expect(light).toContain('\u001b[38;2;153;27;27mFull Access (YOLO)')
   })
 
   it('titles a cancellable /new flow as a new solo thread', () => {
@@ -191,7 +294,8 @@ describe('TaskWraith TUI renderer', () => {
     expect(lines.every((line) => visibleWidth(line) === 64)).toBe(true)
     expect(lines.join('\n')).not.toContain('ENS')
     expect(lines.at(-2)).toContain('AGBench')
-    expect(lines.at(-1)).toContain('↵ send')
+    expect(lines.at(-1)).toContain('↵ queue')
+    expect(lines.at(-1)).toContain('Esc steer')
   })
 
   it('moves full workspace and roster detail into one context lens', () => {
@@ -631,7 +735,7 @@ describe('TaskWraith TUI renderer', () => {
   })
 
   it('renders the slash-command registry as a bounded selectable palette', () => {
-    const lines = renderedLines(80, 24, 'help')
+    const lines = renderedLines(80, 30, 'help')
     const output = lines.join('\n')
 
     for (const entry of [
@@ -641,6 +745,7 @@ describe('TaskWraith TUI renderer', () => {
       '/reasoning',
       '/new',
       '/provider',
+      '/login',
       '/status',
       '/clear',
       '/threads',

@@ -2,9 +2,15 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { HostProjectionIncompatibleProtocolError } from '../main/host/HostProjectionClient'
+import {
+  HOST_FULL_ACCESS_BOOTSTRAP_FD,
+  HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
+  hostFullAccessBootstrapFrame
+} from '../host-runtime/HostFullAccessBootstrap'
 import {
   assertTuiStandaloneHostWelcome,
   ensureTuiHostAvailable,
@@ -12,6 +18,7 @@ import {
   TuiHostProductionCapabilityError,
   TUI_STANDALONE_HOST_CAPABILITY_FLOOR,
   TUI_STANDALONE_HOST_PRODUCTION_VERSION,
+  type TuiHostAuthenticatedProbe,
   type TuiHostLaunchCommand
 } from './hostProcessManager'
 import type { HostBootstrapWelcome } from '../shared/hostProtocol'
@@ -21,9 +28,35 @@ class FakeChild extends EventEmitter {
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
   unref = vi.fn()
+  readonly bootstrapChunks: Buffer[] = []
+  readonly stdio: Array<null | NodeJS.ReadableStream | NodeJS.WritableStream>
+
+  constructor(bootstrapPipe: Writable = new PassThrough()) {
+    super()
+    const readable = bootstrapPipe as Writable & NodeJS.ReadableStream
+    readable.on?.('data', (chunk: Buffer) => this.bootstrapChunks.push(Buffer.from(chunk)))
+    this.stdio = [null, null, null, bootstrapPipe]
+  }
 
   asChildProcess(): ChildProcess {
     return this as unknown as ChildProcess
+  }
+}
+
+function authenticatedProbe(pid = 42): TuiHostAuthenticatedProbe {
+  const welcome = {
+    hostVersion: TUI_STANDALONE_HOST_PRODUCTION_VERSION,
+    hostId: 'host-1',
+    capabilities: [...TUI_STANDALONE_HOST_CAPABILITY_FLOOR]
+  } as HostBootstrapWelcome
+  return {
+    welcome,
+    process: {
+      pid,
+      startedAt: '2026-08-30T00:00:00.000Z',
+      hostId: welcome.hostId,
+      hostVersion: welcome.hostVersion
+    }
   }
 }
 
@@ -178,10 +211,12 @@ describe('TUI Host process manager', () => {
   it('serializes launch races and waits for an authenticated handshake', async () => {
     const child = new FakeChild()
     const spawn = vi.fn().mockReturnValue(child.asChildProcess())
+    const sourceSecret = Buffer.alloc(32, 0xab)
+    const expectedBootstrap = hostFullAccessBootstrapFrame(sourceSecret)
     const probe = vi
-      .fn<() => Promise<void>>()
+      .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
       .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(undefined)
+      .mockResolvedValue(authenticatedProbe())
     let releaseDelay: (() => void) | undefined
     const delay = vi.fn(
       () =>
@@ -192,6 +227,8 @@ describe('TUI Host process manager', () => {
     const input = {
       userDataPath: '/profiles/race',
       profile: 'production' as const,
+      enableFullAccessPresence: true,
+      createFullAccessSecret: () => sourceSecret,
       probe,
       spawn,
       resolveLaunchCommand: async () => command(),
@@ -203,17 +240,60 @@ describe('TUI Host process manager', () => {
     const second = ensureTuiHostAvailable(input)
     releaseDelay?.()
 
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { kind: 'launched', pid: 42 },
-      { kind: 'launched', pid: 42 }
-    ])
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult).toMatchObject({ kind: 'launched', pid: 42 })
+    expect(firstResult.kind === 'launched' && firstResult.fullAccessPresence).toBeDefined()
+    expect(secondResult).toEqual({ kind: 'existing' })
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(spawn.mock.calls[0][2]).toMatchObject({
       detached: true,
-      stdio: 'ignore',
+      shell: false,
+      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
       windowsHide: true
     })
+    expect(Buffer.concat(child.bootstrapChunks)).toEqual(expectedBootstrap)
+    expect(spawn.mock.calls[0]?.[2]?.env).toMatchObject({
+      [HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV]: String(HOST_FULL_ACCESS_BOOTSTRAP_FD)
+    })
+    expect(JSON.stringify(spawn.mock.calls[0]?.[2]?.env)).not.toContain(
+      sourceSecret.toString('hex')
+    )
+    expectedBootstrap.fill(0)
+    expect(sourceSecret).toEqual(Buffer.alloc(32))
     expect(child.unref).toHaveBeenCalledTimes(1)
+    if (firstResult.kind === 'launched') firstResult.fullAccessPresence?.dispose()
+  })
+
+  it('fails Full Access presence closed when fd3 write or process binding is unproven', async () => {
+    const rejectingPipe = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(new Error('pipe refused'))
+      }
+    })
+    const child = new FakeChild(rejectingPipe)
+    const sourceSecret = Buffer.alloc(32, 5)
+    const probe = vi
+      .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(authenticatedProbe(99))
+
+    await expect(
+      ensureTuiHostAvailable({
+        userDataPath: '/profiles/bootstrap-off',
+        profile: 'production',
+        enableFullAccessPresence: true,
+        createFullAccessSecret: () => sourceSecret,
+        probe,
+        spawn: vi.fn().mockReturnValue(child.asChildProcess()),
+        resolveLaunchCommand: async () => command(),
+        delay: async () => {},
+        now: (() => {
+          let now = 0
+          return () => (now += 10)
+        })()
+      })
+    ).resolves.toEqual({ kind: 'launched', pid: 42 })
+    expect(sourceSecret).toEqual(Buffer.alloc(32))
   })
 
   it('never launches a competing Host for an incompatible or custom profile', async () => {

@@ -123,8 +123,17 @@ describe('TaskWraith TUI palette', () => {
       const ground = theme.ground?.background as string
       for (const [name, hex] of Object.entries(theme.tone)) {
         if (name === 'highlight') continue // a blend target, never drawn alone
+        if (name === 'permission') {
+          for (const [permissionName, permissionHex] of Object.entries(hex)) {
+            expect(
+              contrastRatio(permissionHex as string, ground),
+              `${theme.name} ${permissionName} permission tone on its own canvas`
+            ).toBeGreaterThanOrEqual(3)
+          }
+          continue
+        }
         expect(
-          contrastRatio(hex, ground),
+          contrastRatio(hex as string, ground),
           `${theme.name} ${name} tone on its own canvas`
         ).toBeGreaterThanOrEqual(3)
       }
