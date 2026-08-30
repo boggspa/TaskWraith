@@ -7,6 +7,7 @@ import {
 } from './composerChipFormat'
 import { CURSOR_GROK_46_WIRE_MODEL_IDS } from '../../../shared/grok45Models'
 import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
+import type { OllamaReasoningEffort } from '../../../shared/ollamaReasoning'
 
 describe('shortModelName', () => {
   it('extracts Codex version digit + capitalised suffix', () => {
@@ -178,6 +179,31 @@ describe('reasoningDisplayLabel', () => {
     expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'off' })).toBe('')
     expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'low' })).toBe('Low')
     expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'high' })).toBe('High')
+  })
+
+  it('labels every stop the Ollama ladder can select, Max included', () => {
+    // `max` is the top stop of the GLM 5.3 and DeepSeek V4 ladders, and the
+    // stop the composer falls back to when a persisted effort is not on the
+    // model's ladder — so it was the most reachable value the chip rendered
+    // as an empty suffix. Keyed by OllamaReasoningEffort so a new stop added
+    // to the vocabulary cannot reach the chip without a label again.
+    const base = {
+      provider: 'ollama' as const,
+      composerStyle: 'default' as const,
+      modelId: 'glm-5.3:cloud',
+      modelLabel: 'GLM 5.3'
+    }
+    const expected: Record<OllamaReasoningEffort, string> = {
+      off: '',
+      on: 'Thinking',
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      max: 'Max'
+    }
+    for (const [effort, label] of Object.entries(expected)) {
+      expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: effort })).toBe(label)
+    }
   })
 
   it('Codex xhigh becomes Extra High', () => {

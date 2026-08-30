@@ -425,6 +425,10 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'low') return 'Low'
     if (value === 'medium') return 'Medium'
     if (value === 'high') return 'High'
+    // The top stop of the GLM 5.3 / DeepSeek V4 ladders, and the composer's
+    // fallback when a persisted effort is not on the model's ladder — so a
+    // missing case here blanked the suffix on the models most likely to use it.
+    if (value === 'max') return 'Max'
     if (value === 'ultratask') return 'UltraTask'
     return ''
   }

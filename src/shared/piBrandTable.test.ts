@@ -107,15 +107,9 @@ describe('resolvePiModelLabel', () => {
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {
-    expect(resolvePiModelLabel('openrouter/cohere/north-mini-code:free')).toBe(
-      'North Mini Code'
-    )
-    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe(
-      'MiniMax M3'
-    )
-    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling:free')).toBe(
-      'Inkling'
-    )
+    expect(resolvePiModelLabel('openrouter/cohere/north-mini-code:free')).toBe('North Mini Code')
+    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe('MiniMax M3')
+    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling:free')).toBe('Inkling')
     expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling-small:free')).toBe(
       'Inkling Small'
     )
