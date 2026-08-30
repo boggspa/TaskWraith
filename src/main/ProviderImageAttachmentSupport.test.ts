@@ -17,6 +17,13 @@ describe('providerDeliversImageAttachments', () => {
     expect(providerDeliversImageAttachments('mistral')).toBe(true)
     expect(providerDeliversImageAttachments('ollama')).toBe(true)
     expect(providerDeliversImageAttachments('pi', 'openrouter/stealth/ox-alpha')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/minimax/minimax-m3:free')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      true
+    )
+    expect(
+      providerDeliversImageAttachments('pi', 'openrouter/thinkingmachines/inkling-small:free')
+    ).toBe(true)
     expect(providerDeliversImageAttachments('antigravity', 'gemini-api:gemini-2.5-flash')).toBe(
       true
     )
@@ -30,6 +37,9 @@ describe('providerDeliversImageAttachments', () => {
     expect(providerDeliversImageAttachments('antigravity', 'gemini-api:claude-3')).toBe(false)
     expect(providerDeliversImageAttachments('antigravity')).toBe(false)
     expect(providerDeliversImageAttachments('pi', 'openrouter/z-ai/glm-5.2')).toBe(false)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/cohere/north-mini-code:free')).toBe(
+      false
+    )
   })
 
   it('fails closed for unknown provider strings', () => {

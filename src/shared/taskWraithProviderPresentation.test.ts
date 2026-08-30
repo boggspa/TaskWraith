@@ -60,6 +60,19 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(TASKWRAITH_PROVIDER_ACCENTS.xiaomi).not.toBe(TASKWRAITH_PROVIDER_ACCENTS.ensemble)
   })
 
+  it('humanises Thinking Machines OpenRouter models with the reviewed Inkling hue', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('pi', 'openrouter/thinkingmachines/inkling-small:free')
+    ).toMatchObject({
+      runtimeProvider: 'pi',
+      displayProvider: 'Thinking Machines',
+      hueKey: 'thinkingmachines',
+      accent: '#016EF6',
+      modelLabel: 'Inkling Small (OpenRouter Free)',
+      shortCode: 'TML'
+    })
+  })
+
   it('falls back to the runtime seat when no spoof is known', () => {
     const ollama = resolveTaskWraithProviderPresentation('ollama', 'private/model')
     const pi = resolveTaskWraithProviderPresentation('pi', 'private/model')

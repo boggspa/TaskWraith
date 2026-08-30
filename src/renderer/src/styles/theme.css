@@ -283,6 +283,10 @@
   --provider-cerebras-color: #BB584A;
   --provider-groq-color: #088482;
   --provider-openrouter-color: #E02948;
+  /* Thinking Machines has not published this as a corporate brand colour.
+   * TaskWraith takes the flagship Inkling card blue (#0155BF) and adjusts only
+   * its lightness to meet AA on both white and black. */
+  --provider-thinkingmachines-color: #016EF6;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

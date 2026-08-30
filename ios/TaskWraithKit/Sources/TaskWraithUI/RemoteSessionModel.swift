@@ -2807,7 +2807,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-25","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup (Mistral Medium 3, 3.1 and Latest, Mistral Large 3, Mistral Small 4, Devstral Small and Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3), Ollama Cloud GLM 5.2 and MiniMax M3 alongside local Ornith 1.5, Gemma 4 (31B-MLX), Qwen 3.8, Muse Glimmer, Nemotron 3.5 Lightning, North Mini Code, GLM-4.7-Flash and Rnj-1, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, OpenRouter, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-30","kind":"addition","title":"New Additions","body":"OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
@@ -2849,6 +2849,10 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
             ]},
             {"provider":"pi","label":"Pi","models":[
+              {"name":"North Mini Code (OpenRouter Free)","blurb":"Cohere's 256K agentic coder via OpenRouter, with interleaved reasoning and tool use.","accentProvider":"cohere"},
+              {"name":"MiniMax M3 (OpenRouter Free)","blurb":"MiniMax's free 1M multimodal agent model via OpenRouter, with reasoning and tools.","accentProvider":"minimax"},
+              {"name":"Inkling (OpenRouter Free)","blurb":"Thinking Machines' 1M multimodal model with Off-to-Max effort; free research traffic is logged.","accentProvider":"thinkingmachines"},
+              {"name":"Inkling Small (OpenRouter Free)","blurb":"A faster 1M Inkling with Off-to-Max effort; avoid sensitive data on the logged free endpoint.","accentProvider":"thinkingmachines"},
               {"name":"DeepSeek V4 Flash","blurb":"DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.","accentProvider":"deepseek"},
               {"name":"GLM-5.2","blurb":"Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.","accentProvider":"zai"},
               {"name":"Qwen3.8 Max","blurb":"Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},

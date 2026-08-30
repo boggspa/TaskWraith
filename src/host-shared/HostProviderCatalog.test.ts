@@ -9,6 +9,8 @@ import {
   hostProviderStatus,
   projectHostProviderOfferCapabilities
 } from './HostProviderCatalog'
+import { PI_STATIC_MODELS } from './pi/PiModels'
+import { isPiModelRetired } from '../shared/piModelLifecycle'
 
 describe('derived reasoning offers', () => {
   const efforts = (providerId: string, modelId: string): string[] =>
@@ -278,6 +280,24 @@ describe('HostProviderCatalog', () => {
     for (const model of offers!.models) {
       expect(model.modelId).toMatch(/^[a-z0-9-]+\//)
     }
+  })
+
+  it('derives the complete active Pi offer catalog from the shared static authority', () => {
+    const offers = hostProviderOffers('pi', true)
+    const activeStaticIds = PI_STATIC_MODELS.filter((model) => !isPiModelRetired(model.wireId)).map(
+      (model) => model.wireId
+    )
+
+    expect(offers?.models.map((model) => model.modelId)).toEqual(activeStaticIds)
+    expect(offers?.models.map((model) => model.modelId)).toEqual(
+      expect.arrayContaining([
+        'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+        'openrouter/cohere/north-mini-code:free',
+        'openrouter/minimax/minimax-m3:free',
+        'openrouter/thinkingmachines/inkling:free',
+        'openrouter/thinkingmachines/inkling-small:free'
+      ])
+    )
   })
 
   it('does not include retired Ox Alpha in the current Pi offer catalog', () => {

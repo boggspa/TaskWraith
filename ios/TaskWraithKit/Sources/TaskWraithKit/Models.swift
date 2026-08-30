@@ -682,6 +682,7 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public var kimiFastMode: Bool? = nil
     public var kimiReasoningEffort: String? = nil
     public var kimiThinkingEnabled: Bool? = nil
+    public var piReasoningEffort: String? = nil
     public var approvalMode: String? = nil
     public var workflowMode: String? = nil
     public var permissionPresetId: String? = nil

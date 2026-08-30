@@ -251,7 +251,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Qwen3.7 Max** `qwen-token-plan/qwen3.7-max`              | —            | —    | 1M context via the Qwen token plan.         |
 | **Qwen3.7 Plus** `qwen-token-plan/qwen3.7-plus`            | —            | —    | 1M context via the Qwen token plan.         |
 | **Qwen3.8 Max** `qwen-token-plan/qwen3.8-max`              | —            | —    | 1M context via the Qwen token plan. The `…-max-preview` id survives only as a legacy alias for older transcripts. |
-| **MiniMax M3** `minimax/MiniMax-M3`                        | —            | —    | 1M context via MiniMax.                     |
+| **MiniMax M3** `minimax/MiniMax-M3`                        | Off / High   | —    | 1M context via MiniMax; High is the on/adaptive control. |
 | **MiniMax M2.7** `minimax/MiniMax-M2.7`                    | —            | —    | ~200K context via MiniMax.                  |
 | **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan.       |
 | **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | —            | —    | 1M context via the Xiaomi token plan.       |
@@ -277,11 +277,22 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **GLM 5.2** `openrouter/z-ai/glm-5.2`                     | —            | —    | 256K context via OpenRouter.                |
 | **Laguna S 2.1** `openrouter/poolside/laguna-s-2.1`        | —            | —    | 256K context via OpenRouter.                |
 | **Nemotron 3 Ultra** `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | — | — | 1M context via OpenRouter.                  |
+| **North Mini Code (OpenRouter Free)** `openrouter/cohere/north-mini-code:free` | Off / High | — | 256K context, 64K output, text and tools via OpenRouter. |
+| **MiniMax M3 (OpenRouter Free)** `openrouter/minimax/minimax-m3:free` | Off / High | — | 1M multimodal context via OpenRouter.       |
+| **Inkling (OpenRouter Free)** `openrouter/thinkingmachines/inkling:free` | Off → Max | — | 1M text/image context, 256K output; Minimal, Low, Medium, High, and Max (no Extra High). |
+| **Inkling Small (OpenRouter Free)** `openrouter/thinkingmachines/inkling-small:free` | Off → Max | — | Faster Inkling route with the same 1M context and effort ladder. |
 
-Pi's sealed launch policy never sends a `--thinking` flag, so every row runs
-its upstream's own default and honestly shows no reasoning control. The one
-exception is Mistral Medium 3.5, whose upstream schema pins it at High — the
-same locked-single-stop shape as Kimi's "On (fixed)".
+Pi sends `--thinking` only when a reasoning choice is set, and every picker is
+filtered through the selected route's own ladder. Boolean routes expose only
+Off and High; always-on routes hide Off; Inkling keeps Off and Minimal distinct
+and omits unsupported Extra High. UltraTask/top-tier requests clamp to the
+selected model's real ceiling instead of forwarding a level that route ignores.
+Leaving the control unset preserves the upstream default.
+
+The two free Inkling endpoints are research, agentic-harness-only routes.
+Thinking Machines logs prompts and outputs for model improvement, so TaskWraith
+surfaces them without gating the user-approved capability and warns users not to
+send confidential or personal data through those free endpoints.
 
 <table>
   <tr>

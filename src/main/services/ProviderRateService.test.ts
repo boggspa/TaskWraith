@@ -149,6 +149,24 @@ describe('BAKED_IN_RATES', () => {
       expect(piRows.some((r) => r.modelId === 'groq/openai/gpt-oss-120b')).toBe(true)
     })
 
+    it('records every new OpenRouter free route at zero cost', () => {
+      for (const modelId of [
+        'openrouter/cohere/north-mini-code:free',
+        'openrouter/minimax/minimax-m3:free',
+        'openrouter/thinkingmachines/inkling:free',
+        'openrouter/thinkingmachines/inkling-small:free'
+      ]) {
+        expect(
+          piRows.find((row) => row.modelId === modelId),
+          modelId
+        ).toMatchObject({
+          inputUsdPerMillion: 0,
+          outputUsdPerMillion: 0,
+          freeModel: true
+        })
+      }
+    })
+
     it('has no duplicate model ids', () => {
       const ids = piRows.map((r) => r.modelId)
       expect(new Set(ids).size).toBe(ids.length)
@@ -172,7 +190,7 @@ describe('BAKED_IN_RATES', () => {
 
   it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
-    expect(RATE_TABLE_VERSION).toBe('2026-08-16')
+    expect(RATE_TABLE_VERSION).toBe('2026-08-30')
     expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,

@@ -19,12 +19,21 @@ describe('delegate_to_subthread MCP schema', () => {
     expect(properties?.model?.description).toMatch(/spawn-only/i)
     expect(properties?.model?.description).toMatch(/omit.*recall/i)
     expect(properties?.reasoningEffort?.enum).toEqual(
-      expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+      expect.arrayContaining([
+        'off',
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultracode'
+      ])
     )
     // Path-B Cursor is a live selectable seat; parents may spawn/recall a Cursor
     // child, and a broker-active Cursor parent can use this same governed tool.
     expect(properties?.provider?.enum).toContain('cursor')
-    expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*kimi.*grok/i)
+    expect(properties?.reasoningEffort?.description).toMatch(/provider\/model.*Off/i)
     expect(properties?.kimiThinking?.description).toMatch(/kimi/i)
     expect(properties?.subThreadId?.description).toMatch(/inherits.*model.*controls/i)
     expect(properties?.subThreadId?.description).toMatch(/active child.*durably queued/i)
@@ -78,6 +87,24 @@ describe('delegate_wave roster sizing is discoverable', () => {
     expect(workers?.maxItems).toBe(64)
     expect(workers?.description).toMatch(/ceiling/i)
     expect(workers?.description).toMatch(new RegExp(`${DEFAULT_MAX_WAVE_AGENTS}`))
+  })
+
+  it('lets Pi workers request a real Off stop through the advertised schema', () => {
+    const schema = waveDefinition()?.inputSchema as
+      | {
+          properties?: {
+            workers?: {
+              items?: {
+                properties?: Record<string, { enum?: string[]; description?: string }>
+              }
+            }
+          }
+        }
+      | undefined
+    const reasoning = schema?.properties?.workers?.items?.properties?.reasoningEffort
+
+    expect(reasoning?.enum).toEqual(expect.arrayContaining(['off', 'minimal', 'high', 'max']))
+    expect(reasoning?.description).toMatch(/Off.*provider\/model/i)
   })
 
   it('advertises concise lane roles while retaining the historical aliases', () => {

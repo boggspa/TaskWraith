@@ -2335,6 +2335,12 @@ private let twReasoningStops: [TWReasoningStop] = [
     TWReasoningStop(index: 6, effort: "ultracode", label: "Ultracode"),
 ]
 
+/// Pi exposes a distinct seven-value ladder. Keep every wire value on its own
+/// stop so `minimal` is not collapsed into Off or discarded between Off/Low.
+private let twPiReasoningEfforts = [
+    "off", "minimal", "low", "medium", "high", "xhigh", "max",
+]
+
 /// Coalesce provider synonyms onto the canonical ladder effort strings.
 /// Muse-specific floor/ceiling mapping lives in `twLadderIndex(for:provider:)`
 /// so Codex/Pi `minimal` and Mistral `ultra` are not remapped globally.
@@ -2346,12 +2352,16 @@ private func twNormalizeLadderEffort(_ effort: String) -> String {
     }
 }
 
-/// Map a wire effort onto the shared Off→Ultracode ladder. Muse Meta parks
+/// Map a wire effort onto the provider's seven-stop ladder. Pi uses its native
+/// Off→Max ordering (including a distinct Minimal stop); Muse Meta parks
 /// `minimal` at Off (0) and `ultra` at Ultracode (6) without rewriting those
 /// tokens for other providers.
 func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     guard let effort else { return nil }
     let token = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if provider?.lowercased() == "pi" {
+        return twPiReasoningEfforts.firstIndex(of: token)
+    }
     if provider?.lowercased() == "muse" {
         if token == "minimal" { return 0 }
         if token == "ultra" { return 6 }
@@ -2360,9 +2370,13 @@ func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     if normalized == "on" { return 1 }
     return twReasoningStops.first(where: { $0.effort == normalized })?.index
 }
-/// Canonical wire token for a ladder stop. Muse Meta uses `minimal`/`ultra`
+/// Canonical wire token for a ladder stop. Pi preserves its distinct
+/// Off→Minimal→Low→…→Max ordering. Muse Meta uses `minimal`/`ultra`
 /// (never `off`/`ultracode`) at the shared floor/ceiling indices.
 func twLadderWireEffort(index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "pi" {
+        return twPiReasoningEfforts[max(0, min(twPiReasoningEfforts.count - 1, index))]
+    }
     if provider?.lowercased() == "muse" {
         switch index {
         case 0: return "minimal"
@@ -2376,6 +2390,9 @@ func twLadderWireEffort(index: Int, provider: String?) -> String {
 /// Display label for a ladder stop, resolving Muse floor/ceiling and the top
 /// stop's provider-specific name ("Ultra" on Codex/Muse, "Ultracode" elsewhere).
 private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "pi" {
+        return twReasoningDisplayLabel(twPiReasoningEfforts[index], provider: provider)
+    }
     if provider?.lowercased() == "muse" {
         if index == 0 { return "Minimal" }
         if index == 6 { return "Ultra" }
@@ -2902,6 +2919,7 @@ func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     let providerId = provider?.lowercased()
     let isCodex = providerId == "codex"
     let isMuse = providerId == "muse"
+    let isPi = providerId == "pi"
     switch effort.lowercased() {
     case "off": return "Off"
     // Muse Meta floor stop — never "Off"/none on the Meta CLI.
@@ -2919,7 +2937,7 @@ func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     case "high": return "High"
     // Codex + Muse use "Extra High"; Claude renders the same wire token
     // ('xhigh') as "Extra".
-    case "xhigh", "extra": return (isCodex || isMuse) ? "Extra High" : "Extra"
+    case "xhigh", "extra": return (isCodex || isMuse || isPi) ? "Extra High" : "Extra"
     case "max": return "Max"
     // Wire token is 'ultracode' for Codex/Claude; Muse Meta uses wire `ultra`.
     // Both read "Ultra" on Muse/Codex; Claude keeps "Ultracode".

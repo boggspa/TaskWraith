@@ -16,6 +16,7 @@ import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
 import { resolvePiReasoningSupport } from '../shared/piReasoning'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
+import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from './pi/PiModels'
 import {
   KIMI_K27_MODEL_ID,
   KIMI_K3_256K_MODEL_ID,
@@ -316,47 +317,12 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
     pi: {
       displayProvider: 'Pi',
       shortCode: 'PI',
-      models: [
-        piModel('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro'),
-        piModel('deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash', true),
-        piModel('zai/glm-5.2', 'GLM-5.2'),
-        piModel('zai/glm-5.1', 'GLM-5.1'),
-        piModel('zai/glm-4.7', 'GLM-4.7'),
-        piModel('qwen-token-plan/qwen3.7-max', 'Qwen3.7 Max'),
-        piModel('qwen-token-plan/qwen3.7-plus', 'Qwen3.7 Plus'),
-        piModel('qwen-token-plan/qwen3.8-max', 'Qwen3.8 Max'),
-        piModel('minimax/MiniMax-M3', 'MiniMax M3'),
-        piModel('minimax/MiniMax-M2.7', 'MiniMax M2.7'),
-        piModel('xiaomi-token-plan-cn/mimo-v2-pro', 'MiMo V2 Pro (CN)'),
-        piModel('xiaomi-token-plan-cn/mimo-v2.5', 'MiMo V2.5 (CN)'),
-        piModel('xiaomi-token-plan-cn/mimo-v2.5-pro', 'MiMo V2.5 Pro (CN)'),
-        piModel('xiaomi-token-plan-sgp/mimo-v2-pro', 'MiMo V2 Pro (SGP)'),
-        piModel('xiaomi-token-plan-sgp/mimo-v2.5', 'MiMo V2.5 (SGP)'),
-        piModel('xiaomi-token-plan-sgp/mimo-v2.5-pro', 'MiMo V2.5 Pro (SGP)'),
-        piModel('xiaomi-token-plan-ams/mimo-v2-pro', 'MiMo V2 Pro (AMS)'),
-        piModel('xiaomi-token-plan-ams/mimo-v2.5', 'MiMo V2.5 (AMS)'),
-        piModel('xiaomi-token-plan-ams/mimo-v2.5-pro', 'MiMo V2.5 Pro (AMS)'),
-        piModel('mistral/zai-glm-5-2', 'GLM-5.2 (via Mistral)'),
-        piModel('mistral/mistral-medium-3.5', 'Mistral Medium 3.5'),
-        piModel('mistral/mistral-medium-latest', 'Mistral Medium (Latest)'),
-        piModel('mistral/mistral-small-2603', 'Mistral Small 4'),
-        piModel('mistral/mistral-large-2512', 'Mistral Large 3'),
-        piModel('mistral/devstral-2512', 'Devstral 2'),
-        piModel('mistral/codestral-2508', 'Codestral (Aug 2025)'),
-        piModel('mistral/labs-leanstral-1-5', 'Leanstral 1.5 (Labs)'),
-        piModel('mistral/mistral-medium-2508', 'Mistral Medium 3.1'),
-        piModel('mistral/mistral-medium-2505', 'Mistral Medium 3'),
-        piModel('mistral/ministral-14b-2512', 'Ministral 3 (14B)'),
-        piModel('mistral/ministral-8b-2512', 'Ministral 3 (8B)'),
-        piModel('mistral/ministral-3b-2512', 'Ministral 3 (3B)'),
-        piModel('groq/openai/gpt-oss-120b', 'GPT-OSS 120B (Groq)'),
-        piModel('groq/qwen/qwen3-32b', 'Qwen3 32B (Groq)'),
-        piModel('cerebras/zai-glm-4.7', 'GLM-4.7 (Cerebras)'),
-        piModel('cerebras/gpt-oss-120b', 'GPT-OSS 120B (Cerebras)'),
-        piModel('openrouter/stealth/ox-alpha', 'Ox Alpha'),
-        piModel('openrouter/z-ai/glm-5.2', 'GLM 5.2'),
-        piModel('openrouter/poolside/laguna-s-2.1', 'Laguna S 2.1')
-      ],
+      // Keep Host/TUI/iOS offers on the same complete Pi catalog as Electron.
+      // The old hand-maintained list had already dropped Nemotron and would
+      // silently miss every new OpenRouter route added to PI_STATIC_MODELS.
+      models: PI_STATIC_MODELS.map((entry) =>
+        piModel(entry.wireId, entry.label, entry.wireId === PI_DEFAULT_MODEL_WIRE_ID)
+      ),
       authFlows: []
     },
     mistral: {

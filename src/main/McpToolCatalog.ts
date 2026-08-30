@@ -3677,9 +3677,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           reasoningEffort: {
             type: 'string',
-            enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+            enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
             description:
-              'Spawn-only reasoning tier for Codex, Claude, Kimi K3, or Grok. Known provider/model incompatibilities fail before approval.'
+              'Spawn-only reasoning tier for the selected provider/model, including Off where that exact route permits it. Known incompatibilities fail before approval.'
           },
           kimiThinking: {
             type: 'boolean',
@@ -3762,8 +3762,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 },
                 reasoningEffort: {
                   type: 'string',
-                  enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
-                  description: 'Optional reasoning tier for this worker.'
+                  enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+                  description:
+                    'Optional reasoning tier for this worker, including Off where its exact provider/model route permits it.'
                 },
                 kimiThinking: {
                   type: 'boolean',

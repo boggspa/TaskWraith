@@ -236,6 +236,21 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('clamps the composer effort through the selected Pi model ladder before argv', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain(
+      'normalizePiReasoningEffortForModel(model, payload.reasoningEffort)'
+    )
+    expect(pi).toContain('...(piThinkingLevel ? { thinkingLevel: piThinkingLevel } : {})')
+    expect(pi).not.toContain(
+      'thinkingLevel: payload.reasoningEffort as import(\'./pi/PiCliArgs\').PiThinkingLevel'
+    )
+    expect(pi.indexOf('normalizePiReasoningEffortForModel(')).toBeLessThan(
+      pi.indexOf('const args = buildPiRpcArgs({')
+    )
+  })
+
   it('applies compatibility redaction to explicitly supported Pi upstreams before launch', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 

@@ -32,6 +32,12 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)
     expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(262_144)
     expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/cohere/north-mini-code:free')).toBe(256_000)
+    expect(resolveContextWindow('pi', 'openrouter/minimax/minimax-m3:free')).toBe(1_048_576)
+    expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(1_048_576)
+    expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      1_048_576
+    )
     expect(resolveContextWindow('grok', 'grok-composer-2.5-fast')).toBe(200_000)
     expect(resolveContextWindow('grok', 'grok-4.5')).toBe(500_000)
     expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)

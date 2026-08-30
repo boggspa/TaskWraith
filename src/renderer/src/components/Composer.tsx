@@ -116,6 +116,7 @@ import {
   nextFastModeToggle
 } from '../lib/fastModeToggle'
 import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPrompt'
+import { resolveComposerModelReasoningDefault } from '../lib/composerProviderReasoningSelection'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
 import {
@@ -4344,13 +4345,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 effectiveProvider,
                                 nextModel
                               )
-                              const nextReasoning =
-                                (mistralModelOption?.defaultReasoningEffort &&
-                                reasoningOptions.some(
-                                  (option) => option.value === mistralModelOption.defaultReasoningEffort
-                                )
-                                  ? mistralModelOption.defaultReasoningEffort
-                                  : reasoningOptions[0]?.value) || ''
+                              const nextReasoning = resolveComposerModelReasoningDefault({
+                                provider: effectiveProvider,
+                                modelId: nextModel,
+                                modelDefaultReasoningEffort:
+                                  mistralModelOption?.defaultReasoningEffort,
+                                reasoningOptions
+                              })
                               if (shouldUpdateLiveComposerState) {
                                 if (effectiveProvider === 'pi') {
                                   setPiReasoningEffort(nextReasoning)

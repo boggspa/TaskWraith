@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PI_FULL_LADDER, defaultPiReasoningEffort, resolvePiReasoningSupport } from './piReasoning'
+import {
+  PI_FULL_LADDER,
+  defaultPiReasoningEffort,
+  normalizePiReasoningEffortForModel,
+  resolvePiReasoningSupport
+} from './piReasoning'
 import { PI_STATIC_MODELS } from '../host-shared/pi/PiModels'
 
 describe('resolvePiReasoningSupport', () => {
@@ -25,7 +30,17 @@ describe('resolvePiReasoningSupport', () => {
     // OpenRouter's GLM copy advertises a different pair from Z.ai's own.
     ['openrouter/z-ai/glm-5.2', ['off', 'high', 'xhigh']],
     ['openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', ['off', 'medium', 'high']],
-    ['openrouter/poolside/laguna-s-2.1', ['off', 'high']]
+    ['openrouter/poolside/laguna-s-2.1', ['off', 'high']],
+    ['openrouter/cohere/north-mini-code:free', ['off', 'high']],
+    ['openrouter/minimax/minimax-m3:free', ['off', 'high']],
+    [
+      'openrouter/thinkingmachines/inkling:free',
+      ['off', 'minimal', 'low', 'medium', 'high', 'max']
+    ],
+    [
+      'openrouter/thinkingmachines/inkling-small:free',
+      ['off', 'minimal', 'low', 'medium', 'high', 'max']
+    ]
   ]
 
   it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {
@@ -116,6 +131,10 @@ describe('defaultPiReasoningEffort', () => {
     expect(defaultPiReasoningEffort('zai/glm-5.2')).toBe('max')
     expect(defaultPiReasoningEffort('deepseek/deepseek-v4-pro')).toBe('high')
     expect(defaultPiReasoningEffort('openrouter/zai/glm-5.2')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/cohere/north-mini-code:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/minimax/minimax-m3:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling-small:free')).toBe('high')
     // No reasoning axis at all, so there is nothing to start on.
     expect(defaultPiReasoningEffort('mistral/mistral-large-2512')).toBe('')
     // Unset (seat-level) and unresearched both keep the historical default.
@@ -130,5 +149,35 @@ describe('defaultPiReasoningEffort', () => {
       if (support.efforts.length === 0) expect(start, model.wireId).toBe('')
       else expect(support.efforts, model.wireId).toContain(start)
     }
+  })
+})
+
+describe('normalizePiReasoningEffortForModel', () => {
+  it('preserves every real Inkling stop, including distinct Off and Minimal', () => {
+    const model = 'openrouter/thinkingmachines/inkling:free'
+    for (const effort of ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const) {
+      expect(normalizePiReasoningEffortForModel(model, effort)).toBe(effort)
+    }
+  })
+
+  it('clamps TaskWraith top tiers to the selected route ceiling', () => {
+    for (const effort of ['ultra', 'ultracode', 'ultraTask']) {
+      expect(
+        normalizePiReasoningEffortForModel('openrouter/cohere/north-mini-code:free', effort)
+      ).toBe('high')
+      expect(
+        normalizePiReasoningEffortForModel('openrouter/thinkingmachines/inkling:free', effort)
+      ).toBe('max')
+    }
+  })
+
+  it('folds stale Pi stops onto the model default and drops invalid/non-reasoning values', () => {
+    expect(normalizePiReasoningEffortForModel('openrouter/minimax/minimax-m3:free', 'medium')).toBe(
+      'high'
+    )
+    expect(normalizePiReasoningEffortForModel('zai/glm-4.7', 'off')).toBe('high')
+    expect(normalizePiReasoningEffortForModel('mistral/mistral-large-2512', 'high')).toBeNull()
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'ludicrous')).toBeNull()
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', '')).toBeNull()
   })
 })

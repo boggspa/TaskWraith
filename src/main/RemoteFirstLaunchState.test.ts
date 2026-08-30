@@ -464,6 +464,10 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'North Mini Code (OpenRouter Free)',
+      'MiniMax M3 (OpenRouter Free)',
+      'Inkling (OpenRouter Free)',
+      'Inkling Small (OpenRouter Free)',
       'DeepSeek V4 Flash',
       'GLM-5.2',
       'Qwen3.8 Max',
@@ -473,6 +477,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'Nemotron 3 Ultra'
     ])
     expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'cohere',
+      'minimax',
+      'thinkingmachines',
+      'thinkingmachines',
       'deepseek',
       'zai',
       'qwen',

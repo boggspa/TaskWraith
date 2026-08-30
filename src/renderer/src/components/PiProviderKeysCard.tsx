@@ -34,7 +34,8 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
   {
     id: 'openrouter',
     label: 'OpenRouter',
-    keyHint: 'GLM 5.2, Laguna S 2.1 & Nemotron 3 Ultra · openrouter.ai/keys'
+    keyHint:
+      'North Mini Code, MiniMax M3, Inkling, GLM 5.2, Laguna S 2.1 & Nemotron 3 Ultra · openrouter.ai/keys'
   }
 ]
 
@@ -146,7 +147,7 @@ export function PiProviderKeysCardView({
       <p>
         Your own API keys for Pi&apos;s curated upstream models — DeepSeek, GLM, Qwen, MiniMax,
         Xiaomi&apos;s MiMo, Mistral, open-weights serving, and OpenRouter&apos;s GLM 5.2, Laguna S
-        2.1, and Nemotron 3 Ultra.
+        2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, and Inkling Small.
       </p>
       <div className="settings-provider-auth-command">
         <code>npm install -g @earendil-works/pi-coding-agent</code>

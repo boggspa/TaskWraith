@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-25'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-30'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup (Mistral Medium 3, 3.1 and Latest, Mistral Large 3, Mistral Small 4, Devstral Small and Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3), Ollama Cloud GLM 5.2 and MiniMax M3 alongside local Ornith 1.5, Gemma 4 (31B-MLX), Qwen 3.8, Muse Glimmer, Nemotron 3.5 Lightning, North Mini Code, GLM-4.7-Flash and Rnj-1, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, OpenRouter, Poolside, and NVIDIA.",
+    body: "OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -321,6 +321,30 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         provider: 'pi',
         label: 'Pi',
         models: [
+          {
+            name: 'North Mini Code (OpenRouter Free)',
+            blurb:
+              "Cohere's 256K agentic coder via OpenRouter, with interleaved reasoning and tool use.",
+            accentProvider: 'cohere'
+          },
+          {
+            name: 'MiniMax M3 (OpenRouter Free)',
+            blurb:
+              "MiniMax's free 1M multimodal agent model via OpenRouter, with reasoning and tools.",
+            accentProvider: 'minimax'
+          },
+          {
+            name: 'Inkling (OpenRouter Free)',
+            blurb:
+              "Thinking Machines' 1M multimodal model with Off-to-Max effort; free research traffic is logged.",
+            accentProvider: 'thinkingmachines'
+          },
+          {
+            name: 'Inkling Small (OpenRouter Free)',
+            blurb:
+              'A faster 1M Inkling with Off-to-Max effort; avoid sensitive data on the logged free endpoint.',
+            accentProvider: 'thinkingmachines'
+          },
           {
             name: 'DeepSeek V4 Flash',
             blurb: 'DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.',

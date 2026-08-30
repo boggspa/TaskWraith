@@ -453,7 +453,17 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
   { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' },
   { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
-  { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' }
+  { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' },
+  {
+    id: 'openrouter/cohere/north-mini-code:free',
+    label: 'North Mini Code (OpenRouter Free)'
+  },
+  { id: 'openrouter/minimax/minimax-m3:free', label: 'MiniMax M3 (OpenRouter Free)' },
+  { id: 'openrouter/thinkingmachines/inkling:free', label: 'Inkling (OpenRouter Free)' },
+  {
+    id: 'openrouter/thinkingmachines/inkling-small:free',
+    label: 'Inkling Small (OpenRouter Free)'
+  }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 
@@ -1049,12 +1059,24 @@ const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
   on: 1
 }
 
-function effortLadderRank(value?: string | null): number | null {
+const PI_EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
+  off: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+  ultra: 6,
+  ultracode: 6,
+  ultratask: 7
+}
+
+function effortLadderRank(value?: string | null, provider?: ProviderId): number | null {
   const token = normalizeReasoningEffortToken(value)
   if (!token) return null
-  return Object.prototype.hasOwnProperty.call(EFFORT_LADDER_RANK, token)
-    ? EFFORT_LADDER_RANK[token]!
-    : null
+  const ranks = provider === 'pi' ? PI_EFFORT_LADDER_RANK : EFFORT_LADDER_RANK
+  return Object.prototype.hasOwnProperty.call(ranks, token) ? ranks[token]! : null
 }
 
 /** Live catalog rows win; otherwise curated ensemble defaults. Unknown/custom
@@ -1102,13 +1124,13 @@ export function resolveReasoningEffortForSeatChange(options: {
   const exactPrevious = resolveEnabledEffortToken(normalizedPrevious, enabled)
   if (exactPrevious) return exactPrevious === 'ultratask' ? 'ultraTask' : exactPrevious
 
-  const previousRank = effortLadderRank(normalizedPrevious)
+  const previousRank = effortLadderRank(normalizedPrevious, provider)
   if (previousRank != null) {
     let best: string | undefined
     let bestDistance = Infinity
     let bestRank = -1
     for (const effort of enabled) {
-      const rank = effortLadderRank(effort)
+      const rank = effortLadderRank(effort, provider)
       if (rank == null) continue
       const distance = Math.abs(rank - previousRank)
       // Match CombinedModelPicker.nearestEnabledLadderIndex: ties → higher stop.

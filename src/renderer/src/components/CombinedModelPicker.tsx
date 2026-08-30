@@ -654,8 +654,9 @@ function FastBoltIcon({ className }: { className?: string } = {}): React.JSX.Ele
  * hierarchical reasoning row list, ported from the iOS composer's
  * `ReasoningLadder` (ios/.../TWSharedViews.swift). Bottom (index 0, Off) climbs
  * to top (index 7, UltraTask); the thumb snaps only to the stops the current
- * model actually supports. Provider synonyms (extra→xhigh, light→low, ultratask→ultraTask)
- * and Kimi's binary thinking flag (off/on → Off/Light) map onto the same ladder.
+ * model actually supports. Provider synonyms (extra→xhigh, light→low, ultratask→ultraTask),
+ * Kimi's binary thinking flag (off/on → Off/Light), and Pi's wider
+ * Off/Minimal/Low/Medium/High/Extra/Max vocabulary map onto the same rail.
  */
 const LADDER_STOPS: ReadonlyArray<{ index: number; effort: string; label: string }> = [
   { index: 0, effort: 'off', label: 'Off' },
@@ -780,14 +781,36 @@ function normalizeLadderEffort(effort: string): string {
   return value
 }
 
+const PI_LADDER_INDICES: Readonly<Record<string, number>> = {
+  off: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+  ultra: 6,
+  ultracode: 6,
+  ultratask: 7
+}
+
 /**
  * Map a reasoning-option value onto a ladder index, or null when it doesn't
  * belong on the ladder. K2.7 Coding's fixed `on` value rides the first active
- * stop; K3's Low/High/Max values use the ordinary effort ladder. Muse Meta
- * `/effort` parks `minimal` at Off (0), `ultra` at Ultracode (6), and `ultratask` at UltraTask (7)
- * without rewriting those wire tokens onto other providers' catalogs.
+ * stop; K3's Low/High/Max values use the ordinary effort ladder. Pi needs seven
+ * distinct ordinary stops because Inkling exposes BOTH Off and Minimal, so its
+ * vocabulary spans indices 0…6 while UltraTask remains index 7. Muse Meta
+ * `/effort` parks `minimal` at Off (0), `ultra` at Ultracode (6), and
+ * `ultratask` at UltraTask (7) without rewriting those wire tokens onto other
+ * providers' catalogs.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
+  if (provider === 'pi') {
+    const token = value.trim().toLowerCase()
+    return Object.prototype.hasOwnProperty.call(PI_LADDER_INDICES, token)
+      ? PI_LADDER_INDICES[token]!
+      : null
+  }
   if (provider === 'kimi' || provider === 'ollama') {
     const token = value.trim().toLowerCase()
     if (token === 'off') return 0

@@ -1242,6 +1242,23 @@ describe('mistral configurable reasoning support', () => {
     expect(pi.defaultReasoning).toBe('medium')
   })
 
+  it('keeps Pi Minimal distinct from Off when carrying effort between models', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'pi',
+        model: 'openrouter/thinkingmachines/inkling:free',
+        previousEffort: 'minimal'
+      })
+    ).toBe('minimal')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'pi',
+        model: 'openrouter/cohere/north-mini-code:free',
+        previousEffort: 'low'
+      })
+    ).toBe('high')
+  })
+
   it('keeps legacy Mistral aliases configurable for picker continuity', () => {
     expect(getEnsembleReasoningOptions('mistral', 'mistral-vibe-cli-latest')).toEqual([
       { value: 'off', label: 'Off' },
@@ -1290,6 +1307,52 @@ describe('mistral configurable reasoning support', () => {
  * helper so a retiring model can't make this look like drift.
  */
 describe('Pi add-participant model options', () => {
+  it('humanises the new OpenRouter rows and applies each model-specific reasoning default', () => {
+    const labels = Object.fromEntries(
+      getEnsembleModelDefaults('pi').modelOptions.map((option) => [option.id, option.label])
+    )
+    expect(labels).toMatchObject({
+      'openrouter/cohere/north-mini-code:free': 'North Mini Code (OpenRouter Free)',
+      'openrouter/minimax/minimax-m3:free': 'MiniMax M3 (OpenRouter Free)',
+      'openrouter/thinkingmachines/inkling:free': 'Inkling (OpenRouter Free)',
+      'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small (OpenRouter Free)'
+    })
+
+    const inklingLadder = [
+      { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ]
+    for (const model of [
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free'
+    ]) {
+      expect(getEnsembleReasoningOptions('pi', model), model).toEqual(inklingLadder)
+      expect(
+        resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null }),
+        model
+      ).toBe('high')
+    }
+
+    const booleanLadder = [
+      { value: 'off', label: 'Off' },
+      { value: 'high', label: 'High' }
+    ]
+    for (const model of [
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free'
+    ]) {
+      expect(getEnsembleReasoningOptions('pi', model), model).toEqual(booleanLadder)
+      expect(
+        resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null }),
+        model
+      ).toBe('high')
+    }
+  })
+
   it('offers exactly the active catalogued Pi models, with matching labels', () => {
     const now = new Date('2026-08-06T00:00:00.000Z')
     const offered = Object.fromEntries(

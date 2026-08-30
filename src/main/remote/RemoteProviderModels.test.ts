@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProviderModelsMessage } from '../BridgeBroadcaster'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from '../../shared/providerModelCatalogLimits'
 import {
   buildRemoteProviderModelsMessage,
   createRemoteProviderModelsPublisher,
@@ -27,7 +28,7 @@ describe('buildRemoteProviderModelsMessage', () => {
     ])
   })
 
-  it('normalizes wire fields, filters invalid rows, and caps each provider at 40', async () => {
+  it('normalizes wire fields, filters invalid rows, and applies the shared provider cap', async () => {
     const source = [
       null,
       { id: 7 },
@@ -49,12 +50,15 @@ describe('buildRemoteProviderModelsMessage', () => {
         defaultReasoningEffort: 'high',
         contextWindow: 1_048_576
       },
-      ...Array.from({ length: 45 }, (_, index) => ({ id: `model-${index}` }))
+      ...Array.from({ length: PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER + 5 }, (_, index) => ({
+        id: `model-${index}`
+      }))
     ]
     const message = await buildRemoteProviderModelsMessage(['codex'], async () => source)
     const models = message.providers[0].models
 
-    expect(models).toHaveLength(40)
+    expect(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER).toBe(64)
+    expect(models).toHaveLength(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER)
     expect(models[0]).toEqual({
       id: 'first',
       label: 'first',
@@ -72,6 +76,7 @@ describe('buildRemoteProviderModelsMessage', () => {
       defaultReasoningEffort: 'high',
       contextWindow: 1_048_576
     })
+    expect(models.at(-1)?.id).toBe(`model-${PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER - 2}`)
   })
 
   it('isolates provider failures and omits empty catalogs', async () => {

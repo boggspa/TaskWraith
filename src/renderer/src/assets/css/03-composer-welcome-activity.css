@@ -2397,6 +2397,10 @@
   background: var(--provider-openrouter-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-openrouter-color) 50%, transparent);
 }
+.welcome-usage-provider-card-dot.provider-thinkingmachines {
+  background: var(--provider-thinkingmachines-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-thinkingmachines-color) 50%, transparent);
+}
 .welcome-usage-provider-card-dot.provider-mistral {
   background: var(--provider-mistral-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-mistral-color) 50%, transparent);
@@ -2471,6 +2475,9 @@
 }
 .welcome-usage-provider-card-fill.provider-openrouter {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-openrouter-color) 70%, transparent), var(--provider-openrouter-color));
+}
+.welcome-usage-provider-card-fill.provider-thinkingmachines {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-thinkingmachines-color) 70%, transparent), var(--provider-thinkingmachines-color));
 }
 .welcome-usage-provider-card-fill.provider-mistral {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-mistral-color) 70%, transparent), var(--provider-mistral-color));
@@ -3131,6 +3138,9 @@
 .welcome-usage-model-dot.provider-openrouter,
 .welcome-usage-model-meter-fill.provider-openrouter,
 .welcome-usage-bar-segment.provider-openrouter { color: var(--provider-openrouter-color); }
+.welcome-usage-model-dot.provider-thinkingmachines,
+.welcome-usage-model-meter-fill.provider-thinkingmachines,
+.welcome-usage-bar-segment.provider-thinkingmachines { color: var(--provider-thinkingmachines-color); }
 .welcome-usage-model-dot.provider-deepseek,
 .welcome-usage-model-meter-fill.provider-deepseek,
 .welcome-usage-bar-segment.provider-deepseek { color: var(--provider-deepseek-color); }
@@ -13709,6 +13719,7 @@ button.diff-file-row {
 .activity-yield-target.provider-poolside { --provider-tint: var(--provider-poolside-color); }
 .activity-yield-target.provider-pi { --provider-tint: var(--provider-pi-color); }
 .activity-yield-target.provider-openrouter { --provider-tint: var(--provider-openrouter-color); }
+.activity-yield-target.provider-thinkingmachines { --provider-tint: var(--provider-thinkingmachines-color); }
 .activity-yield-target.provider-qwen { --provider-tint: var(--provider-qwen-color); }
 .activity-yield-target.provider-deepseek { --provider-tint: var(--provider-deepseek-color); }
 .activity-yield-target.provider-zai { --provider-tint: var(--provider-zai-color); }
@@ -14895,6 +14906,9 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-openrouter {
   color: var(--provider-openrouter-color, #e02948);
+}
+.notification-newadditions-model.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color, #016ef6);
 }
 
 .notification-newadditions-model.provider-groq {

@@ -108,6 +108,43 @@ struct ContextWindowsTests {
                 == 1_048_576)
     }
 
+    @Test("OpenRouter Pi additions keep exact windows and catalog labels")
+    func openRouterPiAdditions() {
+        let expected = [
+            (
+                id: "openrouter/cohere/north-mini-code:free",
+                label: "North Mini Code (OpenRouter Free)",
+                window: 256_000
+            ),
+            (
+                id: "openrouter/minimax/minimax-m3:free",
+                label: "MiniMax M3 (OpenRouter Free)",
+                window: 1_048_576
+            ),
+            (
+                id: "openrouter/thinkingmachines/inkling:free",
+                label: "Inkling (OpenRouter Free)",
+                window: 1_048_576
+            ),
+            (
+                id: "openrouter/thinkingmachines/inkling-small:free",
+                label: "Inkling Small (OpenRouter Free)",
+                window: 1_048_576
+            ),
+        ]
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let rowsById = Dictionary(uniqueKeysWithValues: piRows.map { ($0.modelId, $0) })
+
+        for entry in expected {
+            #expect(ContextWindows.resolve(provider: "pi", model: entry.id) == entry.window)
+            #expect(rowsById[entry.id]?.label == entry.label)
+            #expect(rowsById[entry.id]?.contextWindow == entry.window)
+        }
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)

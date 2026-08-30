@@ -116,7 +116,11 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // namespace at all, so the unhyphenated form 404s at dispatch.
   'z-ai/glm-5.2',
   'poolside/laguna-s-2.1',
-  'nvidia/nemotron-3-ultra-550b-a55b:free'
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'cohere/north-mini-code:free',
+  'minimax/minimax-m3:free',
+  'thinkingmachines/inkling:free',
+  'thinkingmachines/inkling-small:free'
 ] as const
 
 /**
@@ -165,7 +169,7 @@ export function piModelPolicyVerdict(
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra).`
+      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, and Inkling Small).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {

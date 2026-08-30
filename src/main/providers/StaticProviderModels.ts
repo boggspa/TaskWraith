@@ -22,6 +22,7 @@ import {
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
 import { activePiModelRows } from '../../shared/piModelLifecycle'
+import { resolvePiReasoningSupport } from '../../shared/piReasoning'
 import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_MEDIUM,
@@ -665,13 +666,20 @@ const KIMI_STATIC_MODELS = [
 // shared/contextWindows.ts, matching every other provider.
 function piStaticModelRows(now: Date = new Date()) {
   return activePiModelRows(
-    PI_STATIC_MODELS.map((model) => ({
-      id: model.wireId,
-      label: model.label,
-      description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
-      ultraTaskSupported: true,
-      ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
-    })),
+    PI_STATIC_MODELS.map((model) => {
+      const reasoning = resolvePiReasoningSupport(model.wireId)
+      return {
+        id: model.wireId,
+        label: model.label,
+        description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
+        ultraTaskSupported: true,
+        supportedReasoningEfforts: reasoning.efforts.map((reasoningEffort) => ({
+          reasoningEffort
+        })),
+        defaultReasoningEffort: reasoning.defaultEffort,
+        ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
+      }
+    }),
     now
   )
 }

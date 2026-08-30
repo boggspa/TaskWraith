@@ -384,6 +384,55 @@ describe('CombinedModelPicker', () => {
     }
   })
 
+  it.each([
+    {
+      id: 'openrouter/cohere/north-mini-code:free',
+      label: 'North Mini Code (OpenRouter Free)',
+      brand: 'Cohere',
+      hueClass: 'cohere'
+    },
+    {
+      id: 'openrouter/minimax/minimax-m3:free',
+      label: 'MiniMax M3 (OpenRouter Free)',
+      brand: 'MiniMax',
+      hueClass: 'minimax'
+    },
+    {
+      id: 'openrouter/thinkingmachines/inkling:free',
+      label: 'Inkling (OpenRouter Free)',
+      brand: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    },
+    {
+      id: 'openrouter/thinkingmachines/inkling-small:free',
+      label: 'Inkling Small (OpenRouter Free)',
+      brand: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    }
+  ])('humanises and brands the $label Pi picker row', ({ id, label, brand, hueClass }) => {
+    const model = { id, label: PI_MODEL_LABELS[id] }
+    expect(model.label).toBe(label)
+    const html = renderToStaticMarkup(
+      <CombinedModelPicker
+        provider="pi"
+        composerStyle="default"
+        modelOptions={[model]}
+        providerGroups={[{ provider: 'pi', label: 'Pi', modelOptions: [model] }]}
+        selectedModelId={model.id}
+        onSelectModel={() => undefined}
+        onSelectProviderModel={() => undefined}
+        reasoningOptions={[]}
+        selectedReasoning=""
+        onSelectReasoning={() => undefined}
+      />
+    )
+
+    expect(html).toContain(`>${brand}<`)
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain(`data-provider-hue="${hueClass}"`)
+    expect(html).toContain('data-provider-logo="pi"')
+  })
+
   it('uses the model-row accent variable for row interactions and affordances', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),

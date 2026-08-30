@@ -237,6 +237,10 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
+      'North Mini Code (OpenRouter Free)',
+      'MiniMax M3 (OpenRouter Free)',
+      'Inkling (OpenRouter Free)',
+      'Inkling Small (OpenRouter Free)',
       'DeepSeek V4 Flash',
       'GLM-5.2',
       'Qwen3.8 Max',
@@ -248,6 +252,10 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      'cohere',
+      'minimax',
+      'thinkingmachines',
+      'thinkingmachines',
       'deepseek',
       'zai',
       'qwen',
@@ -256,6 +264,12 @@ describe('notification registry', () => {
       'poolside',
       'nvidia'
     ])
+    expect(pi?.models.find((m) => m.name === 'Inkling (OpenRouter Free)')?.blurb).toMatch(
+      /Off-to-Max.*logged/i
+    )
+    expect(pi?.models.find((m) => m.name === 'Inkling Small (OpenRouter Free)')?.blurb).toMatch(
+      /avoid sensitive data.*logged free endpoint/i
+    )
     // Retired Pi rows stay out of New Additions, so no row wears either upstream hue.
     expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('cerebras')
     expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('openrouter')

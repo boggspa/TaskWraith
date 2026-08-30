@@ -202,6 +202,10 @@ public enum TWTheme {
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
         case "openrouter": return 0xE02948
+        // TaskWraith design token: the flagship Inkling card's #0155BF with
+        // lightness raised only enough for AA on white and black; not a claim
+        // that Thinking Machines publishes #016EF6 as a corporate brand colour.
+        case "thinkingmachines": return 0x016EF6
         default: return chroma1Hex
         }
     }
@@ -240,7 +244,8 @@ public enum TWTheme {
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
-        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi"
+        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
+        "thinkingmachines"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
@@ -291,6 +296,7 @@ public enum TWTheme {
         case "groq": return "Groq"
         case "cerebras": return "Cerebras"
         case "openrouter": return "OpenRouter"
+        case "thinkingmachines": return "Thinking Machines"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()
         case nil: return "Agent"
         }

@@ -33,6 +33,30 @@ struct PiBrandTableTests {
         #expect(PiBrandTable.brand(forWireModelId: "minimax/MiniMax-M3")?.label == "MiniMax")
     }
 
+    @Test("OpenRouter additions resolve to their original brands")
+    func resolvesOpenRouterBrands() {
+        let expected = [
+            (wireId: "openrouter/cohere/north-mini-code:free", label: "Cohere", hue: "cohere"),
+            (wireId: "openrouter/minimax/minimax-m3:free", label: "MiniMax", hue: "minimax"),
+            (
+                wireId: "openrouter/thinkingmachines/inkling:free",
+                label: "Thinking Machines",
+                hue: "thinkingmachines"
+            ),
+            (
+                wireId: "openrouter/thinkingmachines/inkling-small:free",
+                label: "Thinking Machines",
+                hue: "thinkingmachines"
+            ),
+        ]
+
+        for entry in expected {
+            let brand = PiBrandTable.brand(forWireModelId: entry.wireId)
+            #expect(brand?.label == entry.label)
+            #expect(brand?.hueClass == entry.hue)
+        }
+    }
+
     @Test("maps qwen-token-plan to the EXISTING qwen hue, not a new one")
     func qwenSharesHue() {
         // Qwen must read identically whether it arrives via Ollama or via Pi.
@@ -54,6 +78,20 @@ struct PiBrandTableTests {
         #expect(
             PiBrandTable.modelLabel(forWireModelId: "deepseek/deepseek-v4-flash")
                 == "DeepSeek V4 Flash")
+    }
+
+    @Test("humanises new OpenRouter model ids")
+    func humanisesOpenRouterModels() {
+        let expected = [
+            "openrouter/cohere/north-mini-code:free": "North Mini Code (OpenRouter Free)",
+            "openrouter/minimax/minimax-m3:free": "MiniMax M3 (OpenRouter Free)",
+            "openrouter/thinkingmachines/inkling:free": "Inkling (OpenRouter Free)",
+            "openrouter/thinkingmachines/inkling-small:free": "Inkling Small (OpenRouter Free)",
+        ]
+
+        for (wireId, label) in expected {
+            #expect(PiBrandTable.modelLabel(forWireModelId: wireId) == label)
+        }
     }
 
     @Test("keeps the disambiguating suffix on models two upstreams both serve")

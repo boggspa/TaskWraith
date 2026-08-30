@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -30,6 +30,8 @@ const NOW = Date.UTC(2026, 7, 26, 4, 0, 0)
 const TARGET: HostRunEventTarget = { id: 'client-1' }
 const WIRE_MODEL_ID = 'deepseek/deepseek-v4-pro'
 const UPSTREAM_ENV = PI_UPSTREAM_KEY_ENV.deepseek
+const OPENROUTER_WIRE_MODEL_ID = 'openrouter/thinkingmachines/inkling:free'
+const OPENROUTER_MODEL_ID = 'thinkingmachines/inkling:free'
 
 /**
  * Tests drive a real upstream-qualified wire id. The shipped catalog no longer
@@ -47,6 +49,22 @@ const PI_OFFERS: HostProviderOffersProjection = {
       reasoning: [
         { reasoningId: 'low', label: 'Low', available: true },
         { reasoningId: 'high', label: 'High', available: true }
+      ]
+    }
+  ]
+}
+
+const OPENROUTER_OFFERS: HostProviderOffersProjection = {
+  ...hostProviderOffers('pi', true)!,
+  models: [
+    {
+      modelId: OPENROUTER_WIRE_MODEL_ID,
+      label: 'Inkling (OpenRouter Free)',
+      available: true,
+      reasoning: [
+        { reasoningId: 'off', label: 'Off', available: true },
+        { reasoningId: 'high', label: 'High', available: true },
+        { reasoningId: 'max', label: 'Max', available: true }
       ]
     }
   ]
@@ -180,11 +198,12 @@ function providerWith(
   overrides: {
     resources?: HostNodeProviderResourcePort
     baseEnv?: Record<string, string | undefined>
+    offers?: HostProviderOffersProjection
   } = {}
 ): HostNodePiProvider {
   return new HostNodePiProvider({
     runPort,
-    offers: PI_OFFERS,
+    offers: overrides.offers ?? PI_OFFERS,
     resources: overrides.resources ?? resourcePort(),
     spawn,
     baseEnv: overrides.baseEnv ?? ENV_WITH_KEY,
@@ -373,6 +392,59 @@ describe('HostNodePiProvider containment', () => {
     expect(env.PI_TELEMETRY).toBe('0')
     expect(env.PI_SKIP_VERSION_CHECK).toBe('1')
     expect(env.PI_OFFLINE).toBe('1')
+  })
+
+  it('registers a curated OpenRouter model in the isolated home before spawn', async () => {
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({
+      modelId: OPENROUTER_WIRE_MODEL_ID,
+      reasoningId: 'max'
+    })
+    const scripted = scriptedSpawn({ stdout: SUCCESS_STREAM, replyToPrompt: true })
+    let registeredConfig: unknown
+    const spawn: HostNodePiSpawn = (input) => {
+      registeredConfig = JSON.parse(
+        readFileSync(join(String(input.env.PI_CODING_AGENT_DIR), 'models.json'), 'utf8')
+      )
+      return scripted.spawn(input)
+    }
+
+    const result = await providerWith(runPort, spawn, {
+      offers: OPENROUTER_OFFERS,
+      baseEnv: {
+        [PI_UPSTREAM_KEY_ENV.openrouter]: 'openrouter-secret-key',
+        PATH: '/usr/bin'
+      }
+    }).run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+
+    expect(result.status).toBe('completed')
+    expect(registeredConfig).toEqual({
+      providers: {
+        openrouter: {
+          models: [
+            expect.objectContaining({
+              id: OPENROUTER_MODEL_ID,
+              name: 'Inkling (OpenRouter Free)',
+              thinkingLevelMap: {
+                off: 'none',
+                minimal: 'minimal',
+                low: 'low',
+                medium: 'medium',
+                high: 'high',
+                xhigh: null,
+                max: 'max'
+              },
+              contextWindow: 1_048_576,
+              maxTokens: 262_144
+            })
+          ]
+        }
+      }
+    })
+    expect(scripted.captured[0].args).toEqual(
+      expect.arrayContaining(['--provider', 'openrouter', '--model', OPENROUTER_MODEL_ID])
+    )
+    expect(scripted.captured[0].args).toContain('max')
   })
 })
 

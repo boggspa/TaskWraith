@@ -558,7 +558,9 @@ public struct EnsembleRosterSheet: View {
                 entry.provider, modelId: entry.model, modelLabel: entry.model)
         let status = roundStatus(for: entry.id)
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
-        let subtitle = "\(TWTheme.providerLabel(entry.provider)) · \(entry.model ?? "CLI Default")"
+        let modelLabel =
+            twModelVariantLabel(provider: entry.provider, model: entry.model) ?? "CLI Default"
+        let subtitle = "\(TWTheme.providerLabel(entry.provider)) · \(modelLabel)"
         return HStack(spacing: 10) {
             // Combined-picker parity: the provider logo anchors the row (the
             // enabled state dims it), matching the picker rows + strip chips.
@@ -639,7 +641,8 @@ public struct EnsembleRosterSheet: View {
         } else {
             parts.append("waiting")
         }
-        parts.append(entry.model ?? "CLI Default")
+        parts.append(
+            twModelVariantLabel(provider: entry.provider, model: entry.model) ?? "CLI Default")
         return parts.joined(separator: ", ")
     }
 

@@ -25,6 +25,7 @@ import type {
   HostHealthFrame,
   HostSnapshotFrame
 } from './hostProtocol'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from './providerModelCatalogLimits'
 import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
 import {
   decodeHostHistoryDeltasFrame,
@@ -513,7 +514,12 @@ function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadO
   }
   if (!isOptionalBoundedString(value.provider.model, 200)) return false
   if (!isOptionalBoundedString(value.provider.modelLabel, 200)) return false
-  if (!Array.isArray(value.models) || value.models.length > 40) return false
+  if (
+    !Array.isArray(value.models) ||
+    value.models.length > PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER
+  ) {
+    return false
+  }
   return value.models.every((model) => {
     if (!isRecord(model) || !isOptionalBoundedString(model.id, 200) || model.id === undefined) {
       return false

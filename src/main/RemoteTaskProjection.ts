@@ -327,6 +327,7 @@ export interface RemoteTaskCard {
   kimiFastMode?: boolean
   kimiReasoningEffort?: string
   kimiThinkingEnabled?: boolean
+  piReasoningEffort?: string
   /** Host-authoritative composer permission selection. The workspace grant is
    * a separate outer gate; these fields describe this thread/lane only. */
   approvalMode?: string
@@ -1314,6 +1315,9 @@ export function buildRemoteTaskCard(
   }
   if (typeof providerMetadata.kimiThinkingEnabled === 'boolean') {
     card.kimiThinkingEnabled = providerMetadata.kimiThinkingEnabled
+  }
+  if (isString(providerMetadata.piReasoningEffort)) {
+    card.piReasoningEffort = providerMetadata.piReasoningEffort
   }
   if (isString(providerMetadata.approvalMode)) {
     card.approvalMode = providerMetadata.approvalMode

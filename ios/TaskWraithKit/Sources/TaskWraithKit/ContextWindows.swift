@@ -125,6 +125,10 @@ public enum ContextWindows {
         "openrouter/zai/glm-5.2": 256_000,
         "openrouter/poolside/laguna-s-2.1": 256_000,
         "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": 1_000_000,
+        "openrouter/cohere/north-mini-code:free": 256_000,
+        "openrouter/minimax/minimax-m3:free": 1_048_576,
+        "openrouter/thinkingmachines/inkling:free": 1_048_576,
+        "openrouter/thinkingmachines/inkling-small:free": 1_048_576,
         // Kimi
         "kimi-k3": 262_144,
         "kimi-k3-256k": 262_144,

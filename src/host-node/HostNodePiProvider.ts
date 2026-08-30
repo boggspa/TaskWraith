@@ -61,6 +61,7 @@ import {
   isPiUpstreamAllowed,
   type PiUpstreamId
 } from '../host-shared/pi/PiModelPolicy'
+import { writePiOpenRouterModelRegistration } from '../host-shared/pi/PiOpenRouterModelRegistration'
 import {
   PiRpcTurnReducer,
   parsePiStreamChunk,
@@ -536,6 +537,30 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
       // Isolated PI_CODING_AGENT_DIR: created and verified before the child
       // can ever see it, and cleaned up in `finally`.
       lease = createPiIsolatedHome({ temporaryRoot: this.temporaryRoot, runId: request.runId })
+
+      if (upstream === 'openrouter') {
+        try {
+          const registered = writePiOpenRouterModelRegistration({
+            isolatedHomeDir: lease.path,
+            modelId
+          })
+          if (!registered) {
+            return this.finishPrelaunchFailure({
+              request,
+              thread,
+              finishOnce,
+              message: `Pi OpenRouter model registration is unavailable for '${modelId}'.`
+            })
+          }
+        } catch {
+          return this.finishPrelaunchFailure({
+            request,
+            thread,
+            finishOnce,
+            message: `Could not prepare Pi's OpenRouter model registration for '${modelId}'.`
+          })
+        }
+      }
 
       const ephemeral = !this.options.sessionRoot
       const args = buildPiRpcArgs({

@@ -67,6 +67,7 @@ const STATIC_PROVIDER_COLORS = {
   cerebras: '#BB584A',
   groq: '#088482',
   openrouter: '#E02948',
+  thinkingmachines: '#016EF6',
   xiaomi: '#008844'
 } as const
 
@@ -97,7 +98,8 @@ const IOS_PROVIDER_CASES = [
   ['case "nvidia"', '#538200'],
   ['case "openbmb"', '#E22B17'],
   ['case "poolside"', '#0C8194'],
-  ['case "openrouter"', '#E02948']
+  ['case "openrouter"', '#E02948'],
+  ['case "thinkingmachines"', '#016EF6']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {
@@ -210,6 +212,24 @@ describe('provider palette contrast', () => {
     for (const reusedProvider of ['deepseek', 'zai']) {
       expect(pickerCss).toContain(`data-ollama-provider-class="${reusedProvider}"`)
     }
+  })
+
+  it('wires the Thinking Machines Pi upstream hue through every renderer consumer', () => {
+    expect(transcriptCss).toContain('.message-meta.provider-thinkingmachines')
+    expect(transcriptCss).toContain('.message-group:has(.message-meta.provider-thinkingmachines)')
+    expect(transcriptCss).toContain('.participant-health-chip.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-provider-card-dot.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-provider-card-fill.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-model-dot.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-model-meter-fill.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-bar-segment.provider-thinkingmachines')
+    expect(composerCss).toContain('.activity-yield-target.provider-thinkingmachines')
+    expect(composerCss).toContain('.notification-newadditions-model.provider-thinkingmachines')
+    expect(settingsCss).toContain('.settings-model-comparison-dot.provider-thinkingmachines')
+    expect(settingsCss).toContain('.settings-model-comparison-fill.provider-thinkingmachines')
+    expect(settingsCss).toContain('.run-card-provider.provider-thinkingmachines')
+    expect(ensembleCss).toContain('.ensemble-above-chip.provider-thinkingmachines')
+    expect(ensembleCss).toContain('.ensemble-above-chip-tooltip.provider-thinkingmachines')
   })
 
   it('keeps first-class seat hues on the Participants reachable chip strip', () => {

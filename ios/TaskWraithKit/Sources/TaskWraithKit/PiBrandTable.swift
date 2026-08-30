@@ -46,6 +46,10 @@ public enum PiBrandTable {
         "openrouter/z-ai": Brand(label: "Z.ai", hueClass: "zai"),
         "openrouter/poolside": Brand(label: "Poolside", hueClass: "poolside"),
         "openrouter/nvidia": Brand(label: "NVIDIA", hueClass: "nvidia"),
+        "openrouter/cohere": Brand(label: "Cohere", hueClass: "cohere"),
+        "openrouter/minimax": Brand(label: "MiniMax", hueClass: "minimax"),
+        "openrouter/thinkingmachines": Brand(
+            label: "Thinking Machines", hueClass: "thinkingmachines"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -99,6 +103,10 @@ public enum PiBrandTable {
         "openrouter/z-ai/glm-5.2": "GLM 5.2",
         "openrouter/poolside/laguna-s-2.1": "Laguna S 2.1",
         "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra",
+        "openrouter/cohere/north-mini-code:free": "North Mini Code (OpenRouter Free)",
+        "openrouter/minimax/minimax-m3:free": "MiniMax M3 (OpenRouter Free)",
+        "openrouter/thinkingmachines/inkling:free": "Inkling (OpenRouter Free)",
+        "openrouter/thinkingmachines/inkling-small:free": "Inkling Small (OpenRouter Free)",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

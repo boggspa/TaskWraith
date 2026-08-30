@@ -1771,6 +1771,7 @@ import {
 } from './pi/PiCerebrasCompletionCap'
 import { writePiMistralModelRegistration } from './pi/PiMistralModelRegistration'
 import { writePiOpenRouterModelRegistration } from './pi/PiOpenRouterModelRegistration'
+import { normalizePiReasoningEffortForModel } from '../shared/piReasoning'
 import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
@@ -22962,11 +22963,12 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     }
   }
 
+  const piThinkingLevel = normalizePiReasoningEffortForModel(model, payload.reasoningEffort)
   const args = buildPiRpcArgs({
     upstream: split.upstream,
     modelId: split.modelId,
     writeCapable,
-    ...(payload.reasoningEffort ? { thinkingLevel: payload.reasoningEffort as import('./pi/PiCliArgs').PiThinkingLevel } : {}),
+    ...(piThinkingLevel ? { thinkingLevel: piThinkingLevel } : {}),
     sessionDir,
     ...(ephemeralSession
       ? { ephemeralSession: true }

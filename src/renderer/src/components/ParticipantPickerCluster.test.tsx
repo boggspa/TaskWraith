@@ -310,6 +310,35 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('data-composer-control="permission"')
   })
 
+  it.each([
+    ['openrouter/cohere/north-mini-code:free', 'North Mini Code (OpenRouter Free)'],
+    ['openrouter/minimax/minimax-m3:free', 'MiniMax M3 (OpenRouter Free)'],
+    ['openrouter/thinkingmachines/inkling:free', 'Inkling (OpenRouter Free)'],
+    ['openrouter/thinkingmachines/inkling-small:free', 'Inkling Small (OpenRouter Free)']
+  ])('humanises the Pi Add Participant row for %s and starts it at High', (model, label) => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'pi',
+            model,
+            reasoningEffort: undefined,
+            permissionPresetId: 'default'
+          })
+        }
+        configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain('data-selected-reasoning="high"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
+  })
+
   it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster

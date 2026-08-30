@@ -242,6 +242,17 @@ describe('resolveProviderHueClass — Pi BYOK upstreams', () => {
     expect(resolveProviderHueClass('pi', 'groq/openai/gpt-oss-120b')).toBe('groq')
   })
 
+  it('uses the original provider hue for nested OpenRouter free models', () => {
+    expect(resolveProviderHueClass('pi', 'openrouter/cohere/north-mini-code:free')).toBe('cohere')
+    expect(resolveProviderHueClass('pi', 'openrouter/minimax/minimax-m3:free')).toBe('minimax')
+    expect(resolveProviderHueClass('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      'thinkingmachines'
+    )
+    expect(resolveProviderHueClass('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'thinkingmachines'
+    )
+  })
+
   it('reuses the existing qwen hue for qwen-token-plan', () => {
     expect(resolveProviderHueClass('pi', 'qwen-token-plan/qwen3.7-max')).toBe('qwen')
     // Same class the Ollama lane resolves Qwen to — one brand, one colour.
@@ -279,6 +290,17 @@ describe('resolveProviderBrandLabel', () => {
     expect(resolveProviderBrandLabel('pi', 'deepseek/deepseek-v4-flash')).toBe('DeepSeek')
     expect(resolveProviderBrandLabel('pi', 'groq/openai/gpt-oss-120b')).toBe('Groq')
     expect(resolveProviderBrandLabel('pi', 'qwen-token-plan/qwen3.7-max')).toBe('Qwen')
+  })
+
+  it('returns the original provider brand for nested OpenRouter free models', () => {
+    expect(resolveProviderBrandLabel('pi', 'openrouter/cohere/north-mini-code:free')).toBe('Cohere')
+    expect(resolveProviderBrandLabel('pi', 'openrouter/minimax/minimax-m3:free')).toBe('MiniMax')
+    expect(resolveProviderBrandLabel('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      'Thinking Machines'
+    )
+    expect(resolveProviderBrandLabel('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'Thinking Machines'
+    )
   })
 
   it('returns null for non-branded providers and unresolvable models', () => {

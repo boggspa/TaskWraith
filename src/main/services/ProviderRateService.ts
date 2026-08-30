@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-08-16'
+export const RATE_TABLE_VERSION = '2026-08-30'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -1409,7 +1409,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://openrouter.ai/stealth/ox-alpha',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Retired 2026-08-28; retained only so historical Pi chats and ensemble seats keep their cost records.'
+          'Formerly free on OpenRouter; retired 2026-08-28 and retained only so historical Pi chats and ensemble seats keep their cost records.'
       },
       {
         modelId: 'openrouter/z-ai/glm-5.2',
@@ -1440,6 +1440,46 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'OpenRouter :free variant (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/cohere/north-mini-code:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/cohere/north-mini-code:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/minimax/minimax-m3:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/minimax/minimax-m3:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/thinkingmachines/inkling:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/thinkingmachines/inkling:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/thinkingmachines/inkling-small:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/thinkingmachines/inkling-small:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
       }
     ]
   },

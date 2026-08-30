@@ -462,6 +462,46 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 65_536,
     thinking: true,
     images: false
+  },
+  {
+    wireId: 'openrouter/cohere/north-mini-code:free',
+    upstream: 'openrouter',
+    modelId: 'cohere/north-mini-code:free',
+    label: 'North Mini Code (OpenRouter Free)',
+    contextWindow: 256_000,
+    maxOutputTokens: 64_000,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'openrouter/minimax/minimax-m3:free',
+    upstream: 'openrouter',
+    modelId: 'minimax/minimax-m3:free',
+    label: 'MiniMax M3 (OpenRouter Free)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 943_718,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'openrouter/thinkingmachines/inkling:free',
+    upstream: 'openrouter',
+    modelId: 'thinkingmachines/inkling:free',
+    label: 'Inkling (OpenRouter Free)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'openrouter/thinkingmachines/inkling-small:free',
+    upstream: 'openrouter',
+    modelId: 'thinkingmachines/inkling-small:free',
+    label: 'Inkling Small (OpenRouter Free)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
   }
 ]
 

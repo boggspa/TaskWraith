@@ -47,7 +47,12 @@ describe('PiProviderKeysCardView', () => {
       expect(html, forbidden).not.toContain(`>${forbidden}<`)
     }
     expect(PI_CARD_UPSTREAMS).toHaveLength(9)
-    expect(html).toContain('GLM 5.2, Laguna S 2.1 &amp; Nemotron 3 Ultra')
+    expect(html).toContain(
+      'North Mini Code, MiniMax M3, Inkling, GLM 5.2, Laguna S 2.1 &amp; Nemotron 3 Ultra'
+    )
+    expect(html).toContain(
+      'GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, and Inkling Small.'
+    )
     expect(html).not.toContain('Ox Alpha')
   })
 

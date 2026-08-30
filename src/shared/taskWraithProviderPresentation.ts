@@ -39,7 +39,11 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   minimax: '#C044A4',
   cerebras: '#BB584A',
   groq: '#088482',
-  openrouter: '#E02948'
+  openrouter: '#E02948',
+  // TaskWraith token derived from Inkling's official #0155BF model-card blue;
+  // only lightness is raised so it clears the palette's two-sided AA floor.
+  // Thinking Machines does not publish this as a corporate brand colour.
+  thinkingmachines: '#016EF6'
 } as const
 
 export const TASKWRAITH_PROVIDER_ACCENT_ALIASES = {
@@ -65,7 +69,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   meta: 'Meta',
   cohere: 'Cohere',
   essential: 'Essential AI',
-  openrouter: 'OpenRouter'
+  openrouter: 'OpenRouter',
+  thinkingmachines: 'Thinking Machines'
 }
 
 const PROVIDER_SHORT_CODES: Record<string, string> = {
@@ -99,7 +104,8 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   minimax: 'MMX',
   cerebras: 'CBR',
   groq: 'GRQ',
-  openrouter: 'ORR'
+  openrouter: 'ORR',
+  thinkingmachines: 'TML'
 }
 
 type ProviderAccentKey = keyof typeof TASKWRAITH_PROVIDER_ACCENTS

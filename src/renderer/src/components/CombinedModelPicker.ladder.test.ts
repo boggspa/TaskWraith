@@ -58,7 +58,17 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('muse', 'ultraTask')).toBe(7)
     // Muse-scoped synonyms must not remap a foreign provider's minimal/ultra.
     expect(ladderIndexForOption('codex', 'minimal')).toBeNull()
-    expect(ladderIndexForOption('pi', 'minimal')).toBeNull()
+  })
+
+  it('keeps Pi Off and Minimal distinct across its full seven-stop vocabulary', () => {
+    expect(ladderIndexForOption('pi', 'off')).toBe(0)
+    expect(ladderIndexForOption('pi', 'minimal')).toBe(1)
+    expect(ladderIndexForOption('pi', 'low')).toBe(2)
+    expect(ladderIndexForOption('pi', 'medium')).toBe(3)
+    expect(ladderIndexForOption('pi', 'high')).toBe(4)
+    expect(ladderIndexForOption('pi', 'xhigh')).toBe(5)
+    expect(ladderIndexForOption('pi', 'max')).toBe(6)
+    expect(ladderIndexForOption('pi', 'ultraTask')).toBe(7)
   })
 })
 
@@ -133,6 +143,27 @@ describe('buildLadderModel', () => {
     expect(ladder.valueByIndex[0]).toBe('off')
     expect(ladder.valueByIndex[1]).toBe('on')
     expect(ladder.labelByIndex[1]).toBe('Thinking on')
+  })
+
+  it('builds Inkling with separate Off and Minimal stops and no fake Extra High', () => {
+    const ladder = buildLadderModel('pi', [
+      { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 6])
+    expect(ladder.valueByIndex).toEqual({
+      0: 'off',
+      1: 'minimal',
+      2: 'low',
+      3: 'medium',
+      4: 'high',
+      6: 'max'
+    })
+    expect(ladder.enabledSet.has(5)).toBe(false)
   })
 })
 

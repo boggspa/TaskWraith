@@ -21,6 +21,7 @@ import {
   type HostHealthFrame,
   type HostSnapshotFrame
 } from './hostProtocol'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from './providerModelCatalogLimits'
 import {
   HOST_LOCAL_TRANSPORT_ERROR_CODES,
   HOST_LOCAL_TRANSPORT_EVENT_KINDS,
@@ -802,6 +803,38 @@ describe('hostProtocolTransport Wave 3.2', () => {
             offers: { ...sampleThreadOffers(), models: [{ id: 'invented' }] }
           }
         })
+      ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+    })
+
+    it('accepts the shared provider model cap and rejects cap plus one', () => {
+      const responseWithModelCount = (modelCount: number) => ({
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'offers-model-cap',
+        ok: true,
+        result: {
+          kind: 'thread.offers',
+          offers: {
+            ...sampleThreadOffers(),
+            models: Array.from({ length: modelCount }, (_, index) => ({
+              id: `model-${index}`,
+              label: `Model ${index}`,
+              reasoningEfforts: []
+            }))
+          }
+        }
+      })
+
+      expect(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER).toBe(64)
+      expect(
+        decodeHostLocalTransportHostFrame(
+          responseWithModelCount(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER)
+        )
+      ).toMatchObject({ ok: true })
+      expect(
+        decodeHostLocalTransportHostFrame(
+          responseWithModelCount(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER + 1)
+        )
       ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
     })
 

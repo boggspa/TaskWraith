@@ -1610,6 +1610,9 @@
 .ensemble-above-chip.provider-openrouter .ensemble-above-chip-role {
   color: var(--provider-openrouter-color);
 }
+.ensemble-above-chip.provider-thinkingmachines .ensemble-above-chip-role {
+  color: var(--provider-thinkingmachines-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1867,6 +1870,9 @@
 }
 .ensemble-above-chip-tooltip.provider-openrouter .ensemble-above-chip-tooltip-title {
   color: var(--provider-openrouter-color);
+}
+.ensemble-above-chip-tooltip.provider-thinkingmachines .ensemble-above-chip-tooltip-title {
+  color: var(--provider-thinkingmachines-color);
 }
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);

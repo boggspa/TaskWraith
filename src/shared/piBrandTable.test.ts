@@ -24,6 +24,7 @@ function relativeLuminance(hex: string): number {
 }
 const onWhite = (hex: string): number => 1.05 / (relativeLuminance(hex) + 0.05)
 const onBlack = (hex: string): number => (relativeLuminance(hex) + 0.05) / 0.05
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 describe('splitPiWireModelId', () => {
   it('splits on the FIRST slash so Groq two-slash ids keep their upstream', () => {
@@ -70,6 +71,25 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('qwen-token-plan/qwen3.7-max')?.hueClass).toBe('qwen')
   })
 
+  it('resolves OpenRouter free models to their original provider brands', () => {
+    expect(resolvePiUpstreamBrand('openrouter/cohere/north-mini-code:free')).toEqual({
+      label: 'Cohere',
+      hueClass: 'cohere'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/minimax/minimax-m3:free')).toEqual({
+      label: 'MiniMax',
+      hueClass: 'minimax'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/thinkingmachines/inkling:free')).toEqual({
+      label: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/thinkingmachines/inkling-small:free')).toEqual({
+      label: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    })
+  })
+
   it.each([null, undefined, '', 'garbage', 'anthropic/claude-opus'])(
     'returns null for %o so callers fall back to the pi seat colour',
     (wire) => {
@@ -84,6 +104,21 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
     expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
+  })
+
+  it('humanises the new OpenRouter free-model wire ids', () => {
+    expect(resolvePiModelLabel('openrouter/cohere/north-mini-code:free')).toBe(
+      'North Mini Code (OpenRouter Free)'
+    )
+    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe(
+      'MiniMax M3 (OpenRouter Free)'
+    )
+    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling:free')).toBe(
+      'Inkling (OpenRouter Free)'
+    )
+    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'Inkling Small (OpenRouter Free)'
+    )
   })
 
   it('canonicalizes the retired Qwen preview id for dispatch and historical labels', () => {
@@ -207,8 +242,11 @@ describe('iOS PiBrandTable twin', () => {
   it.each(Object.entries(PI_UPSTREAM_BRANDS))(
     'mirrors the %s brand into Swift',
     (upstream, brand) => {
-      expect(swift).toContain(
-        `"${upstream}": Brand(label: "${brand.label}", hueClass: "${brand.hueClass}")`
+      expect(swift).toMatch(
+        new RegExp(
+          `"${escapeRegExp(upstream)}": Brand\\(\\s*label: "${escapeRegExp(brand.label)}",\\s*` +
+            `hueClass: "${escapeRegExp(brand.hueClass)}"\\s*\\)`
+        )
       )
     }
   )
@@ -237,7 +275,7 @@ describe('the renderer ensemble-editor mirror', () => {
   )
   const block = source.slice(source.indexOf('const PI_MODEL_ROWS'))
   const listed = [
-    ...block.slice(0, block.indexOf('\n]')).matchAll(/\{ id: '([^']+)', label: '([^']+)' \}/g)
+    ...block.slice(0, block.indexOf('\n]')).matchAll(/\{\s*id: '([^']+)',\s*label: '([^']+)'\s*\}/g)
   ]
 
   it('lists every catalogued model exactly once', () => {

@@ -609,6 +609,24 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects the exact Pi effort so remote composers do not reset existing chats', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'pi',
+        providerMetadata: {
+          selectedModelType: 'openrouter/thinkingmachines/inkling:free',
+          piReasoningEffort: 'minimal'
+        }
+      })
+    )
+
+    expect(card).toMatchObject({
+      provider: 'pi',
+      selectedModelType: 'openrouter/thinkingmachines/inkling:free',
+      piReasoningEffort: 'minimal'
+    })
+  })
+
   it('projects a queued provider change (Slice B) for the remote "switching at turn end" pill', () => {
     const card = buildRemoteTaskCard(
       chat({

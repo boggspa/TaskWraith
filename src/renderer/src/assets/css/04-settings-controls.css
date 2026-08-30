@@ -726,6 +726,11 @@
   color: var(--provider-openrouter-color);
 }
 
+.settings-model-comparison-dot.provider-thinkingmachines,
+.settings-model-comparison-fill.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color);
+}
+
 .settings-model-comparison-dot.provider-deepseek,
 .settings-model-comparison-fill.provider-deepseek {
   color: var(--provider-deepseek-color);
@@ -4517,6 +4522,9 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-openrouter {
   --run-card-provider-tint: var(--provider-openrouter-color);
 }
+.run-card-provider.provider-thinkingmachines {
+  --run-card-provider-tint: var(--provider-thinkingmachines-color);
+}
 .run-card-provider.provider-meta {
   --run-card-provider-tint: var(--provider-meta-color);
 }
@@ -4551,6 +4559,7 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider:is(
     .provider-pi,
     .provider-openrouter,
+    .provider-thinkingmachines,
     .provider-meta,
     .provider-cohere,
     .provider-essential,
@@ -4572,6 +4581,7 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider:is(
     .provider-pi,
     .provider-openrouter,
+    .provider-thinkingmachines,
     .provider-meta,
     .provider-cohere,
     .provider-essential,

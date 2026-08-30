@@ -43,12 +43,16 @@ describe('piModelPolicyVerdict', () => {
     ]) {
       const verdict = piModelPolicyVerdict('openrouter', modelId)
       expect(verdict.allowed, modelId).toBe(false)
-      expect(verdict.reason).toMatch(/GLM|Laguna|Nemotron/)
+      expect(verdict.reason).toMatch(/GLM|North Mini Code|Inkling/)
     }
     expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual([
       'z-ai/glm-5.2',
       'poolside/laguna-s-2.1',
-      'nvidia/nemotron-3-ultra-550b-a55b:free'
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free',
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free'
     ])
   })
 
@@ -65,6 +69,14 @@ describe('piModelPolicyVerdict', () => {
     expect(piModelPolicyVerdict('zai', 'glm-5.2').allowed).toBe(true)
     expect(piModelPolicyVerdict('groq', 'openai/gpt-oss-120b').allowed).toBe(true)
     expect(piModelPolicyVerdict('openrouter', 'z-ai/glm-5.2').allowed).toBe(true)
+    for (const modelId of [
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free',
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free'
+    ]) {
+      expect(piModelPolicyVerdict('openrouter', modelId).allowed, modelId).toBe(true)
+    }
     // The unhyphenated namespace does not exist on OpenRouter.
     expect(piModelPolicyVerdict('openrouter', 'zai/glm-5.2').allowed).toBe(false)
   })
@@ -131,7 +143,11 @@ describe('catalog/policy lockstep', () => {
     ).toEqual([
       'openrouter/z-ai/glm-5.2',
       'openrouter/poolside/laguna-s-2.1',
-      'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free'
+      'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free',
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free'
     ])
   })
 

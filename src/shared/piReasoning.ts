@@ -134,7 +134,19 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'openrouter/z-ai/glm-5.2': ladder(['high', 'xhigh'], 'high'),
   // Reasoning model, but it advertises no effort values at all.
   'openrouter/poolside/laguna-s-2.1': BOOLEAN,
-  'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': ladder(['medium', 'high'], 'high')
+  'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': ladder(['medium', 'high'], 'high'),
+  'openrouter/cohere/north-mini-code:free': BOOLEAN,
+  'openrouter/minimax/minimax-m3:free': BOOLEAN,
+  // Both Inkling routes advertise none/minimal/low/medium/high/max and default
+  // to High. Pi spells OpenRouter's `none` effort `off`; Extra High is absent.
+  'openrouter/thinkingmachines/inkling:free': ladder(
+    ['minimal', 'low', 'medium', 'high', 'max'],
+    'high'
+  ),
+  'openrouter/thinkingmachines/inkling-small:free': ladder(
+    ['minimal', 'low', 'medium', 'high', 'max'],
+    'high'
+  )
 }
 
 const FULL: PiReasoningSupport = Object.freeze({
@@ -166,4 +178,38 @@ export function resolvePiReasoningSupport(wireId?: string | null): PiReasoningSu
  */
 export function defaultPiReasoningEffort(wireId?: string | null): string {
   return resolvePiReasoningSupport(wireId).defaultEffort ?? ''
+}
+
+const PI_SYNTHETIC_TOP_TIER_EFFORTS: ReadonlySet<string> = new Set([
+  'ultra',
+  'ultracode',
+  'ultratask'
+])
+
+/**
+ * Clamp an ordinary persisted/composer effort to the selected model's real Pi
+ * ladder before argv construction. Top-tier TaskWraith aliases use that
+ * route's ceiling; stale Pi vocabulary falls back to the route default; an
+ * unrecognised token or a non-reasoning model emits no `--thinking` flag.
+ */
+export function normalizePiReasoningEffortForModel(
+  wireId: string | null | undefined,
+  effort: string | null | undefined
+): PiReasoningEffort | null {
+  const support = resolvePiReasoningSupport(wireId)
+  if (support.efforts.length === 0) return null
+  const token = String(effort || '')
+    .trim()
+    .toLowerCase()
+  if (!token) return null
+  if (PI_SYNTHETIC_TOP_TIER_EFFORTS.has(token)) {
+    return support.efforts[support.efforts.length - 1] ?? null
+  }
+  if (support.efforts.includes(token as PiReasoningEffort)) {
+    return token as PiReasoningEffort
+  }
+  if (PI_FULL_LADDER.includes(token as PiReasoningEffort)) {
+    return support.defaultEffort
+  }
+  return null
 }

@@ -31,6 +31,93 @@ describe('writePiOpenRouterModelRegistration', () => {
     )
   })
 
+  it('registers the four 2026-08-30 free routes with verified metadata', () => {
+    const additions = Object.fromEntries(
+      PI_OPENROUTER_CUSTOM_MODELS.slice(-4).map((model) => [model.modelId, model])
+    )
+    expect(additions).toEqual({
+      'cohere/north-mini-code:free': {
+        modelId: 'cohere/north-mini-code:free',
+        label: 'North Mini Code (OpenRouter Free)',
+        reasoning: true,
+        reasoningControl: 'toggle',
+        input: ['text'],
+        contextWindow: 256_000,
+        maxTokens: 64_000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      },
+      'minimax/minimax-m3:free': {
+        modelId: 'minimax/minimax-m3:free',
+        label: 'MiniMax M3 (OpenRouter Free)',
+        reasoning: true,
+        reasoningControl: 'toggle',
+        input: ['text', 'image'],
+        contextWindow: 1_048_576,
+        maxTokens: 943_718,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      },
+      'thinkingmachines/inkling:free': {
+        modelId: 'thinkingmachines/inkling:free',
+        label: 'Inkling (OpenRouter Free)',
+        reasoning: true,
+        thinkingLevelMap: {
+          off: 'none',
+          minimal: 'minimal',
+          low: 'low',
+          medium: 'medium',
+          high: 'high',
+          xhigh: null,
+          max: 'max'
+        },
+        input: ['text', 'image'],
+        contextWindow: 1_048_576,
+        maxTokens: 262_144,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      },
+      'thinkingmachines/inkling-small:free': {
+        modelId: 'thinkingmachines/inkling-small:free',
+        label: 'Inkling Small (OpenRouter Free)',
+        reasoning: true,
+        thinkingLevelMap: {
+          off: 'none',
+          minimal: 'minimal',
+          low: 'low',
+          medium: 'medium',
+          high: 'high',
+          xhigh: null,
+          max: 'max'
+        },
+        input: ['text', 'image'],
+        contextWindow: 1_048_576,
+        maxTokens: 262_144,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      }
+    })
+  })
+
+  it('preserves GLM 5.2 Extra High while keeping unsupported extended stops hidden', () => {
+    expect(
+      PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === 'z-ai/glm-5.2')
+        ?.thinkingLevelMap
+    ).toEqual({ xhigh: 'xhigh' })
+    for (const modelId of [
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free'
+    ]) {
+      expect(
+        PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === modelId)?.thinkingLevelMap
+          ?.xhigh,
+        modelId
+      ).toBeNull()
+    }
+    for (const modelId of ['cohere/north-mini-code:free', 'minimax/minimax-m3:free']) {
+      expect(
+        PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === modelId)?.thinkingLevelMap,
+        modelId
+      ).toBeUndefined()
+    }
+  })
+
   it('keeps the OpenRouter model registrations in lockstep with picker metadata', () => {
     for (const model of PI_OPENROUTER_CUSTOM_MODELS) {
       expect(findPiStaticModel(`openrouter/${model.modelId}`)).toMatchObject({
@@ -70,13 +157,19 @@ describe('writePiOpenRouterModelRegistration', () => {
               name: model.label,
               api: 'openai-completions',
               reasoning: model.reasoning,
+              ...(model.thinkingLevelMap
+                ? { thinkingLevelMap: { ...model.thinkingLevelMap } }
+                : {}),
               input: [...model.input],
               contextWindow: model.contextWindow,
               maxTokens: model.maxTokens,
               cost: model.cost,
               compat: {
                 supportsDeveloperRole: false,
-                thinkingFormat: 'openrouter'
+                ...(model.reasoningControl === 'toggle'
+                  ? { supportsReasoningEffort: false }
+                  : {}),
+                thinkingFormat: model.reasoningControl === 'toggle' ? 'together' : 'openrouter'
               }
             }
           ]
@@ -85,6 +178,23 @@ describe('writePiOpenRouterModelRegistration', () => {
     })
     if (process.platform !== 'win32') {
       expect(statSync(join(home, 'models.json')).mode & 0o777).toBe(0o600)
+    }
+  })
+
+  it('serializes toggle-only OpenRouter routes without a fake effort parameter', () => {
+    for (const modelId of [
+      'poolside/laguna-s-2.1',
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free'
+    ]) {
+      const home = isolatedHome()
+      writePiOpenRouterModelRegistration({ isolatedHomeDir: home, modelId })
+      const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+      expect(config.providers.openrouter.models[0].compat, modelId).toEqual({
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        thinkingFormat: 'together'
+      })
     }
   })
 

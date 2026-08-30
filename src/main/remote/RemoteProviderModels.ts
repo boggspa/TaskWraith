@@ -1,4 +1,5 @@
 import type { ProviderModelOption, ProviderModelsMessage } from '../BridgeBroadcaster'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from '../../shared/providerModelCatalogLimits'
 
 type ProviderModelLoader<Provider extends string> = (
   provider: Provider
@@ -88,7 +89,7 @@ export async function buildRemoteProviderModelsMessage<Provider extends string>(
       }
       const models = (Array.isArray(source) ? source : [])
         .filter(isProviderModelSourceRow)
-        .slice(0, 40)
+        .slice(0, PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER)
         .map(normalizeProviderModel)
       return { provider, models }
     })

@@ -82,6 +82,57 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
     expect(oxAlphaRetired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
     expect(oxAlphaRetired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
     expect(oxAlphaRetired.some((model) => model.id === 'openrouter/z-ai/glm-5.2')).toBe(true)
+    expect(
+      oxAlphaRetired
+        .filter((model) =>
+          [
+            'openrouter/cohere/north-mini-code:free',
+            'openrouter/minimax/minimax-m3:free',
+            'openrouter/thinkingmachines/inkling:free',
+            'openrouter/thinkingmachines/inkling-small:free'
+          ].includes(model.id)
+        )
+        .map((model) => [model.id, model.label])
+    ).toEqual([
+      ['openrouter/cohere/north-mini-code:free', 'North Mini Code (OpenRouter Free)'],
+      ['openrouter/minimax/minimax-m3:free', 'MiniMax M3 (OpenRouter Free)'],
+      ['openrouter/thinkingmachines/inkling:free', 'Inkling (OpenRouter Free)'],
+      ['openrouter/thinkingmachines/inkling-small:free', 'Inkling Small (OpenRouter Free)']
+    ])
+  })
+
+  it('projects the new OpenRouter reasoning ladders and defaults into picker rows', () => {
+    const models = new Map(
+      getStaticProviderModels('pi', { now: new Date(2026, 7, 30) }).map((model) => [
+        model.id,
+        model
+      ])
+    )
+    for (const modelId of [
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free'
+    ]) {
+      expect(models.get(modelId), modelId).toMatchObject({
+        supportedReasoningEfforts: [{ reasoningEffort: 'off' }, { reasoningEffort: 'high' }],
+        defaultReasoningEffort: 'high'
+      })
+    }
+    for (const modelId of [
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free'
+    ]) {
+      expect(models.get(modelId), modelId).toMatchObject({
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'off' },
+          { reasoningEffort: 'minimal' },
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'medium' },
+          { reasoningEffort: 'high' },
+          { reasoningEffort: 'max' }
+        ],
+        defaultReasoningEffort: 'high'
+      })
+    }
   })
 })
 

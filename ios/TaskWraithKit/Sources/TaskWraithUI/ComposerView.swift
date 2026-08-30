@@ -18,6 +18,28 @@ import TaskWraithKit
     private let twMaxComposerImageAttachments = ComposerMarkupWiring.maxComposerImageAttachments
 #endif
 
+/// Exact saved reasoning value used when the composer re-binds to an existing
+/// thread. Provider-specific fields must survive this hop or opening a thread
+/// silently replaces its effort with the model default on the next send.
+func twRemoteCardReasoningEffort(
+    _ card: RemoteTaskCard,
+    selectedProvider: String
+) -> String? {
+    let provider = (card.provider ?? selectedProvider).lowercased()
+    let value: String?
+    switch provider {
+    case "claude": value = card.claudeReasoningEffort
+    case "codex": value = card.codexReasoningEffort
+    case "kimi": value = card.kimiReasoningEffort
+    case "pi": value = card.piReasoningEffort
+    default: value = nil
+    }
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty
+    else { return nil }
+    return trimmed
+}
+
 struct Composer: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
@@ -212,17 +234,7 @@ struct Composer: View {
         return selected
     }
     private var cardReasoningEffort: String? {
-        let provider = (card.provider ?? selectedProvider).lowercased()
-        if provider == "claude" {
-            return nonEmpty(card.claudeReasoningEffort)
-        }
-        if provider == "codex" {
-            return nonEmpty(card.codexReasoningEffort)
-        }
-        if provider == "kimi" {
-            return nonEmpty(card.kimiReasoningEffort)
-        }
-        return nil
+        twRemoteCardReasoningEffort(card, selectedProvider: selectedProvider)
     }
     // Fast toggle + Kimi thinking the loaded thread last used (provider-specific
     // wire fields). Cursor/Claude are Bools; Codex uses a 'fast' service tier.

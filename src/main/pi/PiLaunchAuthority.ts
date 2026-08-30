@@ -26,7 +26,7 @@ export interface PiLaunchControls {
   readonly upstream: PiUpstreamId
   /** The id passed after `--model`, without the TaskWraith upstream prefix. */
   readonly modelId: string
-  /** Production omits `--thinking`, leaving the selected model's default. */
+  /** `provider-default` omits `--thinking`; a selected supported level is sent exactly. */
   readonly thinkingMode: 'provider-default' | import('./PiCliArgs').PiThinkingLevel
   /** Default mode after the signed read-only and shell/file deny clamps. */
   readonly writeCapable: boolean
