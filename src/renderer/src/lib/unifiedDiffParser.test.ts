@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff } from './unifiedDiffParser'
+import {
+  diffLineDisplayText,
+  diffLineNumber,
+  isRenderableDiffLine,
+  parseUnifiedDiff
+} from './unifiedDiffParser'
 
 describe('parseUnifiedDiff', () => {
   it('tracks old and new line numbers across a hunk', () => {
@@ -63,5 +68,44 @@ describe('parseUnifiedDiff', () => {
     expect(parsed.truncated).toBe(true)
     expect(parsed.renderedLineCount).toBe(0)
     expect(parsed.sections).toEqual([])
+  })
+})
+
+describe('diff line presentation', () => {
+  const parsed = parseUnifiedDiff(
+    [
+      'diff --git a/example.ts b/example.ts',
+      '--- a/example.ts',
+      '+++ b/example.ts',
+      '@@ -10,3 +10,4 @@',
+      ' context',
+      '-old line',
+      '+new line',
+      ' next context'
+    ].join('\n')
+  )
+  const meta = parsed.sections[0].lines[0]
+  const [context, deleted, added] = parsed.sections[1].lines
+
+  it('strips unified-diff markers for editor-style rendering', () => {
+    expect(diffLineDisplayText(context)).toBe('context')
+    expect(diffLineDisplayText(deleted)).toBe('old line')
+    expect(diffLineDisplayText(added)).toBe('new line')
+    expect(diffLineDisplayText(added, 'old')).toBe('')
+    expect(diffLineDisplayText(deleted, 'new')).toBe('')
+    expect(diffLineDisplayText(deleted, 'old')).toBe('old line')
+    expect(diffLineDisplayText(added, 'new')).toBe('new line')
+  })
+
+  it('hides git metadata from the editor-style view', () => {
+    expect(isRenderableDiffLine(meta)).toBe(false)
+    expect(isRenderableDiffLine(context)).toBe(true)
+    expect(isRenderableDiffLine(added)).toBe(true)
+  })
+
+  it('prefers the surviving side for the inline line number', () => {
+    expect(diffLineNumber(context)).toBe(10)
+    expect(diffLineNumber(deleted)).toBe(11)
+    expect(diffLineNumber(added)).toBe(11)
   })
 })

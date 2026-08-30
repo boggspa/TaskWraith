@@ -105,6 +105,30 @@ const classifyLine = (
   return parsedLine
 }
 
+const stripDiffMarker = (text: string, marker: string): string => {
+  return text.startsWith(marker) ? text.slice(marker.length) : text
+}
+
+/** Strip the unified-diff marker so a line can render as editor source. */
+export const diffLineDisplayText = (
+  line: ParsedDiffLine,
+  side?: 'old' | 'new'
+): string => {
+  if (side === 'old' && line.kind === 'add') return ''
+  if (side === 'new' && line.kind === 'del') return ''
+  if (line.kind === 'add') return stripDiffMarker(line.text, '+')
+  if (line.kind === 'del') return stripDiffMarker(line.text, '-')
+  if (line.kind === 'context') return stripDiffMarker(line.text, ' ')
+  return line.text
+}
+
+export const isRenderableDiffLine = (line: ParsedDiffLine): boolean => line.kind !== 'meta'
+
+export const diffLineNumber = (line: ParsedDiffLine): number | null => {
+  if (line.kind === 'del') return line.oldLine
+  return line.newLine ?? line.oldLine
+}
+
 export const parseUnifiedDiff = (
   text: string,
   options: ParseUnifiedDiffOptions = {}
