@@ -390,10 +390,10 @@ export function resolveTuiDensity(width: number): TuiDensity {
  * There is no masthead — the terminal's own title bar is the masthead.
  */
 export const TUI_LAYOUT = {
-  /** Footer rows for a solo thread: HUD + composer. */
-  soloFooterRows: 2,
-  /** Footer rows for an ensemble thread: baton + HUD + composer. */
-  ensembleFooterRows: 3,
+  /** Footer rows for a solo thread: permission rule + composer + rule + HUD. */
+  soloFooterRows: 4,
+  /** Footer rows for an ensemble thread: baton + permission-framed composer + HUD. */
+  ensembleFooterRows: 5,
   /** Left gutter for transcript speaker + prose. */
   transcriptGutter: 1,
   /** Left gutter for indented tool / thinking lines. */

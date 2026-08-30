@@ -67,7 +67,7 @@ describe('ghost banner sweep', () => {
     // The distinguishing property: each row's highlight sits one column left of
     // the row above it. A `column`-only phase lights identical columns on every
     // row, which is the vertical-scanner shape this exists to avoid.
-    const painted = sweep(12)
+    const painted = sweep(GHOST_BANNER_ROWS - 1)
     const perRow = painted.map(litColumns)
     expect(perRow.every((columns) => columns.length > 0)).toBe(true)
     for (let row = 1; row < perRow.length; row += 1) {

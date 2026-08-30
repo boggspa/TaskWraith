@@ -36,6 +36,58 @@ function homeState(connection: TuiConnectionState): TaskWraithTuiState {
   } as unknown as TaskWraithTuiState
 }
 
+function loadedHomeState(connection: TuiConnectionState = 'connected'): TaskWraithTuiState {
+  const state = homeState(connection)
+  state.snapshot = {
+    generatedAt: new Date(0).toISOString(),
+    sequence: 1,
+    workspaces: [
+      {
+        id: 'workspace',
+        name: 'AGBench',
+        path: '/Users/chrisizatt/Documents/AGBench',
+        pinned: true,
+        updatedAt: 1
+      }
+    ],
+    threads: []
+  }
+  state.activeWorkspaceId = 'workspace'
+  state.homeTune = {
+    providers: [
+      {
+        status: { providerId: 'codex', status: 'ready', label: 'Codex' },
+        offers: {
+          providerId: 'codex',
+          offerRevision: 'offer-1',
+          models: [
+            {
+              modelId: 'gpt-5.6-terra',
+              label: 'GPT-5.6-Terra',
+              available: true,
+              default: true,
+              reasoning: [{ reasoningId: 'ultra', label: 'Ultra', available: true }]
+            }
+          ],
+          postures: [
+            {
+              postureId: 'default',
+              label: 'Accept Edits',
+              available: true,
+              requiresExplicitConsent: false,
+              ceiling: 'workspace_write'
+            }
+          ]
+        }
+      }
+    ],
+    providerIndex: 0,
+    modelIndex: 0,
+    reasoningIndex: 0
+  }
+  return state
+}
+
 function renderedHome(
   width: number,
   height: number,
@@ -276,7 +328,7 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Choose a provider')
   })
 
-  it('uses exactly 80x24 with a transcript canvas and two-row solo footer', () => {
+  it('uses exactly 80x24 with a transcript canvas and permission-framed composer', () => {
     const lines = renderedLines(80, 24)
     expect(lines).toHaveLength(24)
     expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
@@ -284,8 +336,43 @@ describe('TaskWraith TUI renderer', () => {
     expect(lines.join('\n')).toContain('ᜊ Working…  2s · ≈386 tokens')
     expect(lines.join('\n')).not.toContain('ENS')
     expect(lines.join('\n')).not.toMatch(/ENSEMBLE/)
-    expect(lines.at(-2)).toContain('AGBench W+1')
-    expect(lines.at(-1)?.trimStart()).toMatch(/^› ▏ Ask TaskWraith…/)
+    expect(lines.at(-1)).toContain('AGBench W+1')
+    expect(lines.at(-3)?.trimStart()).toMatch(/^› ▏ Ask TaskWraith…/)
+    expect(lines.at(-4)).toContain('Full WS Access')
+    expect(stripAnsi(lines.at(-2) ?? '')).toMatch(/^─+$/)
+  })
+
+  it('paints both composer rules and the permission label with the resolved tier colour', () => {
+    const dark = resolveTuiTheme('wraith-night')
+    const light = resolveTuiTheme('wraith-day')
+    const cases = [
+      ['plan', 'Plan', '38;2;111;182;255', '38;2;25;118;210'],
+      ['read_only', 'Ask', '38;2;111;182;255', '38;2;25;118;210'],
+      ['default', 'Accept Edits', '38;2;255;255;255', '38;2;29;29;31'],
+      ['workspace_write', 'Full WS Access', '38;2;245;158;11', '38;2;217;119;6'],
+      ['full_access', 'Full Access (YOLO)', '38;2;220;38;38', '38;2;153;27;27']
+    ] as const
+
+    for (const [permission, label, darkCode, lightCode] of cases) {
+      const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+      if (!state.thread) throw new Error('Demo state is incomplete')
+      state.thread.context.permission = permission
+      for (const [theme, code] of [
+        [dark, darkCode],
+        [light, lightCode]
+      ] as const) {
+        const lines = renderTaskWraithTui(state, {
+          width: 80,
+          height: 24,
+          ansi: new Ansi('truecolor'),
+          animationEnabled: false,
+          theme
+        }).split('\n')
+        expect(stripAnsi(lines.at(-4) ?? '')).toContain(label)
+        expect(lines.at(-4)).toContain(code)
+        expect(lines.at(-2)).toContain(code)
+      }
+    }
   })
 
   it('keeps the same semantic checksum inside a tall, narrow terminal', () => {
@@ -293,9 +380,9 @@ describe('TaskWraith TUI renderer', () => {
     expect(lines).toHaveLength(30)
     expect(lines.every((line) => visibleWidth(line) === 64)).toBe(true)
     expect(lines.join('\n')).not.toContain('ENS')
-    expect(lines.at(-2)).toContain('AGBench')
-    expect(lines.at(-1)).toContain('↵ queue')
-    expect(lines.at(-1)).toContain('Esc steer')
+    expect(lines.at(-1)).toContain('AGBench')
+    expect(lines.at(-3)).toContain('↵ queue')
+    expect(lines.at(-3)).toContain('Esc steer')
   })
 
   it('moves full workspace and roster detail into one context lens', () => {
@@ -510,7 +597,7 @@ describe('TaskWraith TUI renderer', () => {
         now
       })
         .split('\n')
-        .at(-1) ?? ''
+        .at(-3) ?? ''
     )
     expect(line).toContain('live insertion point▏')
     expect(line).not.toContain('the beginning')
@@ -529,7 +616,7 @@ describe('TaskWraith TUI renderer', () => {
         now
       })
         .split('\n')
-        .at(-1) ?? ''
+        .at(-3) ?? ''
     )
     expect(line).toContain('first line↵second line▏')
     expect(line).not.toContain('\n')
@@ -633,8 +720,8 @@ describe('TaskWraith TUI renderer', () => {
   })
 
   it('keeps every ghost banner row a column-exact line of printable characters', () => {
-    // The home screen centres the banner as a block by centring each row on its
-    // own visible width, which is only correct while every row shares a width.
+    // The Home renderer treats the banner as one compact left-aligned block, so
+    // every row must retain the same visible width.
     for (const variant of ['unicode', 'ascii'] as const) {
       const art = ghostBannerArt(variant)
       expect(art).toHaveLength(GHOST_BANNER_ROWS)
@@ -660,19 +747,16 @@ describe('TaskWraith TUI renderer', () => {
     }
     expect(output).toContain('TaskWraith')
     expect(output).toContain('Looking for the TaskWraith Host')
-    expect(output).toContain('/help commands')
+    expect(output).toContain('Type /help for commands')
     // The TUI has spawned an ordinary Node Host since the pure-Node cutover.
     expect(output).not.toContain('Electron')
     expect(output).not.toContain('retrying locally')
   })
 
-  it('sweeps the home banner without costing the frame a column', () => {
-    // Every other home-screen test renders with `Ansi('none')`, which takes the
-    // sweep's early return -- so without this one the swept path has no coverage
-    // and a sweep that sheared the centred block would ship green.
+  it('keeps the ghost static while a special Home effort shimmers in provider hue', () => {
     const swept = (frame: number) =>
       renderTaskWraithTui(
-        { ...homeState('connecting'), animationFrame: frame },
+        { ...loadedHomeState(), animationFrame: frame },
         {
           width: 80,
           height: 24,
@@ -687,9 +771,10 @@ describe('TaskWraith TUI renderer', () => {
     for (const row of ghostBannerArt('unicode')) {
       expect(stripAnsi(first.join('\n'))).toContain(row.trim())
     }
-    // The home frame is the one surface where nothing else advances the frame
-    // counter, so this is what proves it reaches the banner at all.
+    expect(stripAnsi(first.join('\n'))).toContain('Codex GPT-5.6-Terra · ULTRA · AGBench')
+    expect(stripAnsi(first.join('\n'))).toContain('connected · workspace ready · no active run')
     expect(swept(1)).not.toEqual(first)
+    expect(stripAnsi(swept(1).join('\n'))).toBe(stripAnsi(first.join('\n')))
   })
 
   it('degrades the ghost banner to pure ASCII without changing its geometry', () => {
@@ -713,15 +798,14 @@ describe('TaskWraith TUI renderer', () => {
     const eyes = ghostBannerArt('unicode')[4].trim()
 
     const narrow = renderedHome(24, 24).join('\n')
-    expect(narrow).not.toContain(eyes)
-    expect(narrow).toContain(TUI_GLYPHS_UNICODE.ghost)
+    expect(narrow).toContain(eyes)
 
     const short = renderedHome(80, 12).join('\n')
     expect(short).not.toContain(eyes)
     expect(short).toContain(TUI_GLYPHS_UNICODE.ghost)
 
     expect(
-      resolveGhostBanner({ width: 24, height: 24, variant: 'unicode', markGlyph: 'x' })
+      resolveGhostBanner({ width: 15, height: 24, variant: 'unicode', markGlyph: 'x' })
     ).toEqual({ kind: 'mark', lines: ['x'], width: 1 })
     expect(
       resolveGhostBanner({ width: 80, height: 24, variant: 'unicode', markGlyph: 'x' }).kind

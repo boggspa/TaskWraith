@@ -61,15 +61,17 @@ describe('TaskWraith TUI region painting', () => {
     // the whole frame is a recolour, not a theme.
     const lines = frame(night)
     const ground = night.ground as { background: string; surface: string; panel: string }
-    const canvas = lines.slice(0, HEIGHT - 2)
+    const canvas = lines.slice(0, HEIGHT - 4)
     for (const line of canvas) expect(line).toContain(backgroundCode(ground.background))
-    expect(lines[HEIGHT - 2]).toContain(backgroundCode(ground.panel))
-    expect(lines[HEIGHT - 1]).toContain(backgroundCode(ground.surface))
+    for (const line of lines.slice(HEIGHT - 4, HEIGHT - 1)) {
+      expect(line).toContain(backgroundCode(ground.surface))
+    }
+    expect(lines[HEIGHT - 1]).toContain(backgroundCode(ground.panel))
   })
 
   it('raises the canvas to the surface ground while an overlay is open', () => {
     const ground = night.ground as { background: string; surface: string }
-    const canvas = frame(night, 'help').slice(0, HEIGHT - 2)
+    const canvas = frame(night, 'help').slice(0, HEIGHT - 4)
     for (const line of canvas) {
       expect(line).toContain(backgroundCode(ground.surface))
       expect(line).not.toContain(backgroundCode(ground.background))

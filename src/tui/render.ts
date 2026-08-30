@@ -18,7 +18,6 @@ import {
 import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { resolveGhostBanner } from './ghostBanner'
-import { sweepGhostBanner } from './ghostBannerSweep'
 import { filterTuiSlashCommands } from './slashCommands'
 import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
 import { queuedDraftsForThread } from './promptQueue'
@@ -97,8 +96,8 @@ function permissionLabel(value: string | undefined): string {
   const known: Record<string, string> = {
     workspace_write: 'Full WS Access',
     read_only: 'Ask',
-    full_access: 'Full Access',
-    auto_edit: 'Auto Edit',
+    full_access: 'Full Access (YOLO)',
+    auto_edit: 'Full WS Access',
     plan: 'Plan',
     default: 'Accept Edits'
   }
@@ -392,7 +391,112 @@ function homeConnectionStatus(state: TaskWraithTuiState, glyphs: TuiGlyphSet): s
   if (state.connection === 'incompatible-protocol') {
     return `Host protocol mismatch${sep}update TaskWraith`
   }
-  return 'No thread selected'
+  return 'connected'
+}
+
+function homeWorkspace(state: TaskWraithTuiState) {
+  const workspaces = state.snapshot?.workspaces ?? []
+  return workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? workspaces[0]
+}
+
+function homeIdentity(state: TaskWraithTuiState) {
+  const home = state.homeTune
+  const provider = home?.providers[home.providerIndex]
+  const models = provider?.offers.models.filter((candidate) => candidate.available) ?? []
+  const model = models[home?.modelIndex ?? 0]
+  if (!provider || !model) return undefined
+  const reasoning = model.reasoning.filter((candidate) => candidate.available)[
+    home?.reasoningIndex ?? -1
+  ]
+  return {
+    presentation: resolveTaskWraithProviderPresentation(
+      provider.status.providerId,
+      model.modelId,
+      model.label
+    ),
+    modelLabel: terminalLabel(model.label),
+    reasoning: reasoning?.label ?? reasoning?.reasoningId ?? 'Default'
+  }
+}
+
+function homeReasoningPresentation(
+  provider: string,
+  value: string
+): {
+  label: string
+  shimmer: boolean
+} {
+  const normalized = terminalLabel(value).trim().toLowerCase()
+  const words = normalized.replace(/[_-]+/g, ' ')
+  const label =
+    normalized === 'max'
+      ? 'MAX'
+      : normalized === 'ultra'
+        ? 'ULTRA'
+        : normalized === 'ultracode'
+          ? 'ULTRACODE'
+          : normalized === 'xhigh' || words === 'extra high'
+            ? 'Extra High'
+            : reasoningLabel(provider, value) || 'Default'
+  return {
+    label,
+    shimmer: ['extra', 'extra high', 'max', 'ultra', 'ultracode'].includes(label.toLowerCase())
+  }
+}
+
+function renderHomeIdentity(
+  state: TaskWraithTuiState,
+  ansi: Ansi,
+  animationEnabled: boolean,
+  glyphs: TuiGlyphSet
+): string {
+  const separator = ansi.dim(` ${glyphs.separator} `)
+  const parts = [ansi.bold('TaskWraith')]
+  const identity = homeIdentity(state)
+  if (identity) {
+    const provider = terminalLabel(identity.presentation.displayProvider)
+    const model = identity.modelLabel
+    const providerAndModel = model.toLowerCase().startsWith(provider.toLowerCase())
+      ? model
+      : `${provider} ${model}`
+    parts.push(ansi.provider(providerAndModel, identity.presentation.accent))
+    const effort = homeReasoningPresentation(
+      identity.presentation.runtimeProvider,
+      identity.reasoning
+    )
+    parts.push(
+      effort.shimmer
+        ? ansi.bold(
+            shimmerWorking(
+              effort.label,
+              identity.presentation.accent,
+              ansi,
+              state.animationFrame,
+              animationEnabled
+            )
+          )
+        : ansi.color(effort.label, identity.presentation.accent)
+    )
+  }
+  const workspace = homeWorkspace(state)
+  if (workspace) parts.push(ansi.bold(terminalLabel(workspace.name)))
+  return parts.join(separator)
+}
+
+function renderHomeStatus(state: TaskWraithTuiState, ansi: Ansi, glyphs: TuiGlyphSet): string {
+  if (
+    state.connection !== 'connected' &&
+    state.connection !== 'demo' &&
+    state.connection !== 'replay'
+  ) {
+    return ansi.dim(homeConnectionStatus(state, glyphs))
+  }
+  const workspace = homeWorkspace(state)
+  return [
+    `${ansi.color(glyphs.statusActive, tones(ansi).good)} ${ansi.color('connected', tones(ansi).good)}`,
+    workspace ? 'workspace ready' : 'global scope',
+    ansi.dim('no active run')
+  ].join(ansi.dim(` ${glyphs.separator} `))
 }
 
 function renderHome(
@@ -405,11 +509,9 @@ function renderHome(
 ): string[] {
   const canvasHeight = Math.max(1, height)
   const lines = Array.from({ length: canvasHeight }, () => '')
-  const center = Math.max(1, Math.floor(width / 2))
   const place = (row: number, text: string) => {
     if (row < 0 || row >= lines.length) return
-    const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2))
-    lines[row] = fitAnsiLine(`${' '.repeat(left)}${text}`, width)
+    lines[row] = fitAnsiLine(`  ${text}`, width)
   }
   const banner = resolveGhostBanner({
     width,
@@ -417,26 +519,18 @@ function renderHome(
     variant: tuiGlyphsAreUnicode(glyphs) ? 'unicode' : 'ascii',
     markGlyph: glyphs.ghost
   })
-  // Every banner row shares one visible width, so centring each row by its own
-  // width centres the block. `place` must not be given a per-row offset here.
-  // The sweep preserves each row's visible width exactly, which is what keeps
-  // that true frame to frame.
   const block = [
-    ...sweepGhostBanner({
-      lines: banner.lines,
-      ansi,
-      frame: state.animationFrame,
-      enabled: animationEnabled,
-      accent: tones(ansi).ensemble
-    }),
+    ...banner.lines.map((line) => ansi.bold(line.trimEnd())),
     '',
-    ansi.bold('TaskWraith'),
-    '',
-    ansi.dim(homeConnectionStatus(state, glyphs)),
-    '',
-    ansi.dim(`Ctrl+K threads ${glyphs.separator} /help commands`)
+    renderHomeIdentity(state, ansi, animationEnabled, glyphs),
+    renderHomeStatus(state, ansi, glyphs),
+    `Type ${ansi.color('/help', tones(ansi).permission.info)} for commands or ${ansi.color(
+      'Ctrl+K',
+      tones(ansi).permission.info
+    )} to switch threads`
   ]
-  const start = Math.max(0, Math.floor((canvasHeight - block.length) / 2))
+  const start =
+    banner.kind === 'full' ? 1 : Math.max(0, Math.floor((canvasHeight - block.length) / 3))
   block.forEach((text, index) => {
     if (text) place(start + index, text)
   })
@@ -1838,15 +1932,19 @@ function renderHud(
             : state.connection === 'incompatible-protocol'
               ? tone(ansi, 'Open TaskWraith to update the App', 'error')
               : tone(ansi, state.connection.toUpperCase(), 'neutral')
+    const workspace = homeWorkspace(state)
+    const left = workspace
+      ? ansi.bold(terminalLabel(workspace.path || workspace.name))
+      : ansi.bold('TaskWraith')
     // Wave 4.2b: deferred thread.select has no thread yet — still show the Host ask.
     if (state.notice && (!state.notice.expiresAt || state.notice.expiresAt > now)) {
       return joinLeftRight(
-        ansi.bold('TaskWraith'),
+        left,
         tone(ansi, terminalLabel(state.notice.text), state.notice.tone),
         width
       )
     }
-    return joinLeftRight(ansi.bold('TaskWraith'), connection, width)
+    return joinLeftRight(left, connection, width)
   }
   const workspace =
     state.snapshot?.workspaces.find((candidate) => candidate.id === thread.workspaceId)?.name ??
@@ -1935,13 +2033,42 @@ function renderHud(
   return joinLeftRight(left, right, width)
 }
 
+function selectedPermissionPostureId(state: TaskWraithTuiState): string {
+  const threadPermission = state.thread?.context.permission
+  if (threadPermission) return threadPermission
+  const cold = state.coldStart
+  if (cold?.kind === 'configure') {
+    return cold.offers.postures[state.coldStartPostureIndex ?? 0]?.postureId ?? 'default'
+  }
+  return 'default'
+}
+
+function renderComposerDivider(
+  state: TaskWraithTuiState,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet,
+  withLabel: boolean
+): string {
+  const postureId = selectedPermissionPostureId(state)
+  const color = permissionColor(ansi, postureId)
+  const rule = glyphs.boxHorizontal
+  if (!withLabel) return fitAnsiLine(ansi.color(rule.repeat(width), color), width)
+  const label = ` ${permissionLabel(postureId)} `
+  const tail = 2
+  const lead = Math.max(0, width - visibleWidth(label) - tail)
+  return fitAnsiLine(ansi.color(`${rule.repeat(lead)}${label}${rule.repeat(tail)}`, color), width)
+}
+
 function renderComposer(
   state: TaskWraithTuiState,
   width: number,
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string {
-  const accent = state.thread?.thread.provider.accent ?? tones(ansi).ensemble
+  const accent =
+    state.thread?.thread.provider.accent ??
+    permissionColor(ansi, selectedPermissionPostureId(state))
   const prompt = ansi.provider(glyphs.promptCaret, accent)
   const density = resolveTuiDensity(width)
   const pendingApproval = selectedPendingApproval(state)
@@ -2063,8 +2190,10 @@ export function renderTaskWraithTui(
     canvas = [...canvas, ...Array.from({ length: canvasHeight - canvas.length }, () => '')]
   }
   const footer: string[] = []
-  footer.push(renderHud(state, thread, width, ansi, now, glyphs))
+  footer.push(renderComposerDivider(state, width, ansi, glyphs, true))
   footer.push(renderComposer(state, width, ansi, glyphs))
+  footer.push(renderComposerDivider(state, width, ansi, glyphs, false))
+  footer.push(renderHud(state, thread, width, ansi, now, glyphs))
 
   // Region grounds, deepest first. An overlay raises the canvas to `surface`
   // rather than drawing a floating panel over `background`: the TUI has no
@@ -2075,10 +2204,13 @@ export function renderTaskWraithTui(
   const canvasGround = state.overlay === 'none' ? ground?.background : ground?.surface
 
   const lines = [...canvas, ...footer].slice(0, height)
-  const grounds = [...canvas.map(() => canvasGround), ground?.panel, ground?.surface].slice(
-    0,
-    height
-  )
+  const grounds = [
+    ...canvas.map(() => canvasGround),
+    ground?.surface,
+    ground?.surface,
+    ground?.surface,
+    ground?.panel
+  ].slice(0, height)
   while (lines.length < height) {
     lines.push('')
     grounds.push(canvasGround)

@@ -14,17 +14,13 @@
  *   3. a pleated hem rather than a straight bottom edge, and
  *   4. three wisps trailing below that hem.
  *
- * The stroke is drawn in the *heavy* Box Drawing weight. The SVG is a
- * stroke-width 3.25 monoline on a 128 viewBox — around 2.5% of the mark's
- * width — which the light weight under-reads at this raster size. Heavy costs
- * the rounded shoulders: Box Drawing has no heavy counterpart to the arcs
- * (U+256D..U+2570) or the diagonals (U+2571/U+2572), so the outward flare is
- * drawn as a stair of heavy corners instead. Flare is the load-bearing half of
- * that feature; the corner radius is not, and mixing a light arc into a heavy
- * outline reads as a rendering fault rather than as a curve.
+ * The compact Home layout draws this transcription in the light Box Drawing
+ * weight. At six rows it reads like the white PNG mark instead of a second
+ * headline competing with the provider/model identity beneath it. The
+ * outward-flaring shoulder remains load-bearing; sub-cell curvature does not.
  *
  * The SVG's hem is an irregular wave (two deep valleys and one shallow one).
- * That irregularity is below the resolution of a 21-column raster, so the hem
+ * That irregularity is below the resolution of a 12-column raster, so the hem
  * is regularised to three evenly spaced pleats. The four features above are
  * what make the mark recognisable; sub-cell wave asymmetry is not.
  *
@@ -40,10 +36,10 @@
  */
 
 /** Visible width of every banner row, in terminal columns. */
-export const GHOST_BANNER_COLUMNS = 21
+export const GHOST_BANNER_COLUMNS = 12
 
 /** Number of rows in the full banner. */
-export const GHOST_BANNER_ROWS = 11
+export const GHOST_BANNER_ROWS = 6
 
 /**
  * Columns the full banner needs before it is worth drawing: the art itself
@@ -58,29 +54,23 @@ export const GHOST_BANNER_MIN_COLUMNS = GHOST_BANNER_COLUMNS + 4
  * connection status, the hint strip, and the blank row separating each. The
  * banner is suppressed rather than clipped when it cannot coexist with them.
  */
-export const GHOST_BANNER_CHROME_ROWS = 6
+export const GHOST_BANNER_CHROME_ROWS = 4
 
 /** Rows the terminal must have before the full banner is drawn. */
 export const GHOST_BANNER_MIN_ROWS = GHOST_BANNER_ROWS + GHOST_BANNER_CHROME_ROWS
 
 /**
- * Box-drawing transcription in the heavy weight. Box Drawing (U+2500..U+257F)
- * is already the chrome vocabulary in `theme.ts`, so this introduces no new
- * font dependency — `━┃┏┓┗┛┳╹` sit in the same block as the light forms it
- * replaced.
+ * Compact box-drawing transcription. Box Drawing (U+2500..U+257F) is already
+ * the chrome vocabulary in `theme.ts`, so this introduces no new font
+ * dependency.
  */
 const GHOST_BANNER_UNICODE: readonly string[] = [
-  '      ┏━━━━━━━┓      ',
-  '    ┏━┛       ┗━┓    ',
-  '  ┏━┛           ┗━┓  ',
-  '  ┃               ┃  ',
-  '  ┃  ┏━━┓   ┏━━┓  ┃  ',
-  '  ┃  ┃  ┃   ┃  ┃  ┃  ',
-  '  ┃  ┗━━┛   ┗━━┛  ┃  ',
-  '  ┃               ┃  ',
-  '  ┗━━┳━━━━┳━━━━┳━━┛  ',
-  '     ┃    ┃    ┃     ',
-  '     ╹    ╹    ╹     '
+  '   ┌────┐   ',
+  ' ┌─┘    └─┐ ',
+  ' │  ┌┐ ┌┐ │ ',
+  ' │  └┘ └┘ │ ',
+  ' └─┬──┬──┬┘ ',
+  '   ╵  ╵  ╵  '
 ]
 
 /**
@@ -89,17 +79,12 @@ const GHOST_BANNER_UNICODE: readonly string[] = [
  * --ascii` must produce this variant rather than a mojibaked one.
  */
 const GHOST_BANNER_ASCII: readonly string[] = [
-  '      #=======#      ',
-  '    #=#       #=#    ',
-  '  #=#           #=#  ',
-  '  #               #  ',
-  '  #  #==#   #==#  #  ',
-  '  #  #  #   #  #  #  ',
-  '  #  #==#   #==#  #  ',
-  '  #               #  ',
-  '  #==#====#====#==#  ',
-  '     #    #    #     ',
-  "     '    '    '     "
+  '   +----+   ',
+  ' +-+    +-+ ',
+  ' |  [] [] | ',
+  ' |  [] [] | ',
+  ' +-+--+--++ ',
+  '   |  |  |  '
 ]
 
 export type GhostBannerVariant = 'unicode' | 'ascii'
