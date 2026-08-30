@@ -85,7 +85,7 @@ export const HOST_PROJECTION_CLIENT_MAX_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES
 
 /** Exact process identity from the authenticated discovery record used for this connection. */
 export type HostProjectionDiscoveryProcessIdentity = Readonly<
-  Pick<TaskWraithHostDiscovery, 'pid' | 'startedAt' | 'hostId' | 'hostVersion'>
+  Pick<TaskWraithHostDiscovery, 'pid' | 'startedAt' | 'hostId' | 'hostVersion' | 'payloadVersion'>
 >
 
 const DEFAULT_CLIENT_CAPABILITIES: readonly HostCapability[] = [
@@ -428,7 +428,8 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       pid: discovery.pid,
       startedAt: discovery.startedAt,
       ...(discovery.hostId ? { hostId: discovery.hostId } : {}),
-      ...(discovery.hostVersion ? { hostVersion: discovery.hostVersion } : {})
+      ...(discovery.hostVersion ? { hostVersion: discovery.hostVersion } : {}),
+      ...(discovery.payloadVersion ? { payloadVersion: discovery.payloadVersion } : {})
     }
 
     const hello = this.buildHello(token, baseOnly)

@@ -58,7 +58,8 @@ function startFakeHost(options: {
       pid: process.pid,
       startedAt: new Date().toISOString(),
       hostId: 'fake-host',
-      hostVersion: '1.9.6'
+      hostVersion: '1.9.6',
+      payloadVersion: `sha256:${'b'.repeat(64)}`
     }),
     { mode: 0o600 }
   )
@@ -197,12 +198,14 @@ describe('discovery readiness', () => {
       startedAt: string
       hostId: string
       hostVersion: string
+      payloadVersion: string
     }
     expect(client.discoveryProcessIdentity).toEqual({
       pid: published.pid,
       startedAt: published.startedAt,
       hostId: published.hostId,
-      hostVersion: published.hostVersion
+      hostVersion: published.hostVersion,
+      payloadVersion: published.payloadVersion
     })
     client.close()
     expect(client.discoveryProcessIdentity).toBeNull()

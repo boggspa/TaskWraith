@@ -1,11 +1,13 @@
 import { access } from 'node:fs/promises'
 import { posix, win32, type PlatformPath } from 'node:path'
+import { resolveHostPayloadVersion } from '../../host-runtime/HostPayloadIdentity'
 
 export interface HostExternalLaunchCommand {
   readonly executable: string
   readonly args: readonly string[]
   readonly cwd: string
   readonly env: NodeJS.ProcessEnv
+  readonly payloadVersion: string
 }
 
 export interface ResolveHostExternalLaunchInput {
@@ -19,6 +21,7 @@ export interface ResolveHostExternalLaunchInput {
   readonly nodeExecutable?: string
   readonly pathExists?: (path: string) => Promise<boolean>
   readonly isOrdinaryNode?: (path: string) => boolean
+  readonly resolvePayloadVersion?: (hostRoot: string) => string
 }
 
 function paths(platform: NodeJS.Platform): PlatformPath {
@@ -93,5 +96,14 @@ export async function resolveHostExternalLaunch(
     cli = api.resolve(root, 'out', 'host', 'host-runtime', 'cli.js')
   }
   if (!(await pathExists(executable)) || !(await pathExists(cli))) return null
-  return { executable, args: hostArgs(cli, profile), cwd: api.dirname(cli), env: environment }
+  const payloadVersion = (input.resolvePayloadVersion ?? resolveHostPayloadVersion)(
+    api.dirname(api.dirname(cli))
+  )
+  return {
+    executable,
+    args: hostArgs(cli, profile),
+    cwd: api.dirname(cli),
+    env: environment,
+    payloadVersion
+  }
 }

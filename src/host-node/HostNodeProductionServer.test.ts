@@ -34,6 +34,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let interactionTimeoutMs: number | undefined
   let domainProfilePath: string | undefined
   let domainPermissionConsentAuthority: unknown
+  let listenerPayloadVersion: string | undefined
   let composedGitReadProvider:
     | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
     | undefined
@@ -85,6 +86,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   const server = new HostNodeProductionServer({
     profilePath: '/profile',
     mode: 'production',
+    payloadVersion: `sha256:${'d'.repeat(64)}`,
     domainOptions: {} as never,
     signalTarget: {
       once: (signal, listener_) => {
@@ -122,6 +124,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     createListener: (input) => {
       order.push('listener')
       authenticatedShutdown = input.onAuthenticatedShutdown
+      listenerPayloadVersion = input.payloadVersion
       return listener
     },
     ...overrides
@@ -138,6 +141,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     gitReadProvider: () => composedGitReadProvider,
     domainProfilePath: () => domainProfilePath,
     domainPermissionConsentAuthority: () => domainPermissionConsentAuthority,
+    listenerPayloadVersion: () => listenerPayloadVersion,
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
     projectionDirty: () => projectionDirty?.(),
@@ -164,6 +168,7 @@ describe('HostNodeProductionServer', () => {
   it('constructs lease-first, then reconciles before starting the authenticated listener, and cleans in exact order', async () => {
     const h = harness()
     await h.server.start()
+    expect(h.listenerPayloadVersion()).toBe(`sha256:${'d'.repeat(64)}`)
     expect(h.order).toEqual([
       'lease.acquire',
       'lease.assert',

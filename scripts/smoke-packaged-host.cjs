@@ -301,6 +301,9 @@ async function runProductionRoundTrip(launcher, target) {
       'production Host did not publish owner-controlled discovery/token/lease'
     )
     const discovery = JSON.parse(fs.readFileSync(discoveryPath, 'utf8'))
+    if (!/^sha256:[a-f0-9]{64}$/.test(String(discovery.payloadVersion || ''))) {
+      fail('production Host discovery must identify the exact static payload')
+    }
     assertOwnerOnly(discoveryPath, 'production Host discovery')
     assertOwnerOnly(tokenPath, 'production Host token')
     assertOwnerOnly(leasePath, 'production Host authority lease')

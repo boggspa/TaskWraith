@@ -67,6 +67,7 @@ import {
   parseHostAuthorityReceiptLookup
 } from './HostAuthority'
 import { parseSetupMutationCommandName } from './HostCommandRouting'
+import { isHostPayloadVersion } from './HostPayloadIdentity'
 import { TW_MISSION_MAX_BUNDLE_BYTES } from '../host-shared/twmission'
 
 const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, HostCapability>> = {
@@ -134,6 +135,8 @@ export interface HostLocalServerOptions {
   hostId: string
   /** Host version string — carried into the welcome frame via HostSession. */
   hostVersion: string
+  /** Exact static payload identity — discovery-only, never Host identity. */
+  payloadVersion?: string
   /** Authenticated session binder. */
   session: HostSession
   /** Transport-neutral Authority facade for request routing.
@@ -347,6 +350,12 @@ export class HostLocalServer {
     ) {
       throw new Error('Host local handshake timeout is invalid.')
     }
+    if (
+      this.options.payloadVersion !== undefined &&
+      !isHostPayloadVersion(this.options.payloadVersion)
+    ) {
+      throw new Error('Host local payload identity is invalid.')
+    }
     this.token = randomBytes(32).toString('hex')
     const canonicalUserDataPath = realpathSync(options.userDataPath)
     this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath, this.options.platform)
@@ -419,7 +428,8 @@ export class HostLocalServer {
         pid: process.pid,
         startedAt: new Date(this.options.now()).toISOString(),
         hostId: this.options.hostId,
-        hostVersion: this.options.hostVersion
+        hostVersion: this.options.hostVersion,
+        ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {})
       }
       // Discovery is the readiness flag and is published only after token.
       this.discoveryArtifact = publishPrivateLocalControlArtifact(

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { resolveHostExternalLaunch } from './HostExternalLaunchResolver'
 
 describe('HostExternalLaunchResolver', () => {
+  const payloadVersion = `sha256:${'a'.repeat(64)}`
+
   it('resolves packaged Node/Host CLI paths without Electron arguments', async () => {
     const node = '/App/Resources/tui-runtime/darwin-arm64/node'
     const cli = '/App/Resources/host/host-runtime/cli.js'
@@ -13,13 +15,15 @@ describe('HostExternalLaunchResolver', () => {
         platform: 'darwin',
         architecture: 'arm64',
         env: { ELECTRON_RUN_AS_NODE: '1' },
+        resolvePayloadVersion: () => payloadVersion,
         pathExists: async (path) => path === node || path === cli
       })
     ).resolves.toEqual({
       executable: node,
       args: [cli, 'serve', '--mode', 'production', '--profile', '/profiles/a'],
       cwd: '/App/Resources/host/host-runtime',
-      env: {}
+      env: {},
+      payloadVersion
     })
   })
 
@@ -31,6 +35,7 @@ describe('HostExternalLaunchResolver', () => {
         repoRoot: '/repo',
         platform: 'darwin',
         nodeExecutable: '/repo/Electron',
+        resolvePayloadVersion: () => payloadVersion,
         pathExists: async () => true
       })
     ).rejects.toThrow('ordinary Node')
@@ -51,10 +56,12 @@ describe('HostExternalLaunchResolver', () => {
         resourcesPath,
         platform,
         architecture,
+        resolvePayloadVersion: () => payloadVersion,
         pathExists: async (value) => value === node || value === cli
       })
       expect(result?.executable).toBe(node)
       expect(result?.args).toEqual([cli, 'serve', '--mode', 'production', '--profile', profilePath])
+      expect(result?.payloadVersion).toBe(payloadVersion)
     }
   )
 })

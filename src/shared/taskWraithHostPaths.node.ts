@@ -70,6 +70,8 @@ export interface TaskWraithHostDiscovery {
   hostId?: string
   /** Stable Host version; absent only in legacy diagnostic discovery. */
   hostVersion?: string
+  /** Exact static Host payload identity; absent on Hosts predating upgrade handoff. */
+  payloadVersion?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,13 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
   if (value.hostVersion !== undefined && !isNonEmptyString(value.hostVersion, 80)) {
     return { ok: false, error: 'hostVersion must be a non-empty bounded string' }
   }
+  if (
+    value.payloadVersion !== undefined &&
+    (typeof value.payloadVersion !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.payloadVersion))
+  ) {
+    return { ok: false, error: 'payloadVersion must be a SHA-256 identity' }
+  }
 
   return {
     ok: true,
@@ -143,7 +152,10 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
       pid: value.pid as number,
       startedAt: value.startedAt as string,
       ...(value.hostId !== undefined ? { hostId: value.hostId as string } : {}),
-      ...(value.hostVersion !== undefined ? { hostVersion: value.hostVersion as string } : {})
+      ...(value.hostVersion !== undefined ? { hostVersion: value.hostVersion as string } : {}),
+      ...(value.payloadVersion !== undefined
+        ? { payloadVersion: value.payloadVersion as string }
+        : {})
     }
   }
 }

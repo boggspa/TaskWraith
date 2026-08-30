@@ -39,6 +39,7 @@ import { HostNodeProductionServer } from './HostNodeProductionServer'
 
 export interface HostNodeProductionFactoryOptions {
   readonly profilePath: string
+  readonly payloadVersion?: string
   readonly museBinary?: string
   readonly gitExecutable?: string
   readonly env?: NodeJS.ProcessEnv
@@ -154,6 +155,7 @@ export function createHostNodeProductionServer(
   return new HostNodeProductionServer({
     profilePath: options.profilePath,
     mode: 'production',
+    ...(options.payloadVersion ? { payloadVersion: options.payloadVersion } : {}),
     resolveIdentity: (profilePath, lease) =>
       loadOrCreateHostServerIdentity({
         profilePath,

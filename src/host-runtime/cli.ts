@@ -7,6 +7,8 @@ import { createHostNodeTerminalLauncher } from '../host-node/HostNodeTerminalLau
 import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
 import { HostShutdownClient } from '../host-client/HostShutdownClient'
+import { resolve } from 'node:path'
+import { resolveHostPayloadVersion } from './HostPayloadIdentity'
 import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD,
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
@@ -23,6 +25,7 @@ export interface HostProductionCliRuntime {
   readonly stdio?: HostProductionCliStdio
   readonly createTerminalLauncher?: () => HostNodeMuseTerminalLauncher
   readonly readFullAccessBootstrapSecret?: () => Buffer | null | Promise<Buffer | null>
+  readonly resolvePayloadVersion?: () => string
   readonly env?: NodeJS.ProcessEnv
 }
 
@@ -54,8 +57,12 @@ export async function runHostProductionCli(
     : null
   let host: ReturnType<typeof createHostNodeProductionFactory>
   try {
+    const payloadVersion = (
+      runtime.resolvePayloadVersion ?? (() => resolveHostPayloadVersion(resolve(__dirname, '..')))
+    )()
     host = createProduction({
       profilePath: command.profilePath,
+      payloadVersion,
       ...(command.museBinary ? { museBinary: command.museBinary } : {}),
       ...(terminalLauncher ? { terminalLauncher } : {}),
       ...(fullAccessBootstrapSecret ? { fullAccessBootstrapSecret } : {})

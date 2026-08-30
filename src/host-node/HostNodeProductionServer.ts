@@ -57,6 +57,7 @@ export interface HostNodeProductionSignalTarget {
 export interface HostNodeProductionServerOptions {
   readonly profilePath: string
   readonly mode: 'production'
+  readonly payloadVersion?: string
   readonly domainOptions?: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
   /** Lease-late resource assembly; runs only after lease → identity → store. */
   readonly createDomainResources?: (input: {
@@ -291,6 +292,7 @@ export class HostNodeProductionServer {
         userDataPath: this.lease.path,
         hostId: this.identity.hostId,
         hostVersion: this.identity.hostVersion,
+        ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {}),
         session: this.composition.session,
         authority: this.composition.authority,
         onAuthenticatedShutdown: () => this.stop(),

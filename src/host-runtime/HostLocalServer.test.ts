@@ -452,6 +452,7 @@ describe('HostLocalServer', () => {
       userDataPath,
       hostId: 'test-host',
       hostVersion: '0.0.0-test',
+      payloadVersion: `sha256:${'c'.repeat(64)}`,
       session: session as unknown as HostSession,
       authority: authority as unknown as HostAuthority,
       maxClients: 4,
@@ -487,6 +488,7 @@ describe('HostLocalServer', () => {
         expect(decoded.discovery.tokenPath).toBe(server.tokenPath)
         expect(decoded.discovery.pid).toBeGreaterThan(0)
         expect(decoded.discovery.startedAt).toBeTruthy()
+        expect(decoded.discovery.payloadVersion).toBe(`sha256:${'c'.repeat(64)}`)
       }
 
       const tokenRaw = readFileSync(server.tokenPath, 'utf8').trim()

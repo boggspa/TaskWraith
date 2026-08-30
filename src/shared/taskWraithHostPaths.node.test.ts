@@ -163,7 +163,8 @@ describe('TaskWraith Host v2 paths', () => {
       socketPath: '/tmp/twh2-501-abc123/taskwraith-host-v2.sock',
       tokenPath: '/Users/ada/.config/taskwraith/taskwraith-host-v2.token',
       pid: 42,
-      startedAt: '2026-08-04T08:00:00.000Z'
+      startedAt: '2026-08-04T08:00:00.000Z',
+      payloadVersion: `sha256:${'a'.repeat(64)}`
     })
     expect(result.ok).toBe(true)
     if (result.ok) {
@@ -174,6 +175,7 @@ describe('TaskWraith Host v2 paths', () => {
       )
       expect(result.discovery.pid).toBe(42)
       expect(result.discovery.startedAt).toBe('2026-08-04T08:00:00.000Z')
+      expect(result.discovery.payloadVersion).toBe(`sha256:${'a'.repeat(64)}`)
     }
   })
 
@@ -277,6 +279,17 @@ describe('TaskWraith Host v2 paths', () => {
         pid: 1
       })
     ).toEqual({ ok: false, error: 'startedAt must be a canonical ISO timestamp' })
+
+    expect(
+      decodeTaskWraithHostDiscovery({
+        protocolVersion: 2,
+        socketPath: '/tmp/s',
+        tokenPath: '/tmp/t',
+        pid: 1,
+        startedAt: '2026-08-24T00:00:00.000Z',
+        payloadVersion: 'not-a-digest'
+      })
+    ).toEqual({ ok: false, error: 'payloadVersion must be a SHA-256 identity' })
   })
 
   it('rejects extra fields gracefully (still decodes)', () => {

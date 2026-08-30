@@ -1,6 +1,9 @@
 import { expect, it, vi } from 'vitest'
 import { runHostProductionCli, runHostShutdownCli } from './cli'
 
+const PAYLOAD_VERSION = `sha256:${'a'.repeat(64)}`
+const resolvePayloadVersion = () => PAYLOAD_VERSION
+
 it('dispatches a parsed production server through an injected factory', async () => {
   const start = vi.fn(async () => {})
   const waitForShutdown = vi.fn(async () => {})
@@ -8,9 +11,12 @@ it('dispatches a parsed production server through an injected factory', async ()
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
     factory as never,
-    { readFullAccessBootstrapSecret: () => null }
+    { readFullAccessBootstrapSecret: () => null, resolvePayloadVersion }
   )
-  expect(factory).toHaveBeenCalledWith({ profilePath: '/tmp/host-cli-profile' })
+  expect(factory).toHaveBeenCalledWith({
+    profilePath: '/tmp/host-cli-profile',
+    payloadVersion: PAYLOAD_VERSION
+  })
   expect(start).toHaveBeenCalledOnce()
   expect(waitForShutdown).toHaveBeenCalledOnce()
 })
@@ -32,13 +38,15 @@ it('passes a terminal launcher only when every standard stream is an interactive
         stderr: { isTTY: true }
       },
       createTerminalLauncher,
-      readFullAccessBootstrapSecret: () => null
+      readFullAccessBootstrapSecret: () => null,
+      resolvePayloadVersion
     }
   )
 
   expect(createTerminalLauncher).toHaveBeenCalledOnce()
   expect(factory).toHaveBeenCalledWith({
     profilePath: '/tmp/host-cli-profile',
+    payloadVersion: PAYLOAD_VERSION,
     terminalLauncher
   })
 })
@@ -59,12 +67,16 @@ it('does not advertise a terminal handoff for background or detached stdio', asy
         stderr: { isTTY: true }
       },
       createTerminalLauncher,
-      readFullAccessBootstrapSecret: () => null
+      readFullAccessBootstrapSecret: () => null,
+      resolvePayloadVersion
     }
   )
 
   expect(createTerminalLauncher).not.toHaveBeenCalled()
-  expect(factory).toHaveBeenCalledWith({ profilePath: '/tmp/host-cli-profile' })
+  expect(factory).toHaveBeenCalledWith({
+    profilePath: '/tmp/host-cli-profile',
+    payloadVersion: PAYLOAD_VERSION
+  })
 })
 
 it('forwards an inherited-fd Full Access secret once and zeroes the source buffer', async () => {
@@ -78,7 +90,7 @@ it('forwards an inherited-fd Full Access secret once and zeroes the source buffe
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
     factory as never,
-    { readFullAccessBootstrapSecret: () => source }
+    { readFullAccessBootstrapSecret: () => source, resolvePayloadVersion }
   )
 
   expect(observed).toEqual(Buffer.alloc(32, 6))
