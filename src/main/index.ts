@@ -998,6 +998,7 @@ import {
   makeDebugLoggerSink,
   type RunEventChannel
 } from './RunEventBus'
+import { tryFlushBridgeRunTranscript } from './BridgeRunTranscriptFlushGuard'
 import { AppStore, registerPersistenceWriteEnqueue, type ChatSaveOptions } from './store'
 import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
 import {
@@ -13007,7 +13008,9 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
     if (modelMetadata.model) state.actualModel = modelMetadata.model
     if (modelMetadata.modelLabel) state.modelLabel = modelMetadata.modelLabel
     if (parsed.type === 'init' && (modelMetadata.model || modelMetadata.modelLabel)) {
-      if (!state.flushedOnce) flushBridgeRunTranscript(state.runId)
+      if (!state.flushedOnce) {
+        tryFlushBridgeRunTranscript(state.runId, flushBridgeRunTranscript)
+      }
       return
     }
     if (parsed.type === 'content' || parsed.type === 'token') {
@@ -13033,8 +13036,9 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
           lastPart.content.trim().length > 0
         if (itemId) state.lastContentItemId = itemId
         appendBridgeRunText(state, itemTransition ? `\n\n---\n\n${text}` : text)
-        if (!state.flushedOnce) flushBridgeRunTranscript(state.runId)
-        else scheduleBridgeRunFlush(state.runId)
+        if (!state.flushedOnce) {
+          tryFlushBridgeRunTranscript(state.runId, flushBridgeRunTranscript)
+        } else scheduleBridgeRunFlush(state.runId)
       }
       return
     }
@@ -13042,8 +13046,9 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
       // RAW provider lane — sanitize untrusted provider refs before persisting
       // (drops hostile paths/thumbnails/mimes; see transcriptMediaRefSanitize).
       appendBridgeRunMediaRefs(state, sanitizeRawProviderMediaRefs(parsed.mediaRefs))
-      if (!state.flushedOnce) flushBridgeRunTranscript(state.runId)
-      else scheduleBridgeRunFlush(state.runId)
+      if (!state.flushedOnce) {
+        tryFlushBridgeRunTranscript(state.runId, flushBridgeRunTranscript)
+      } else scheduleBridgeRunFlush(state.runId)
       return
     }
     if (parsed.type === 'result') {
@@ -13197,8 +13202,9 @@ function injectTrustedMediaRefs(
   const bridgeState = bridgeRunTranscripts.get(appRunId)
   if (bridgeState) {
     appendBridgeRunMediaRefs(bridgeState, refs)
-    if (!bridgeState.flushedOnce) flushBridgeRunTranscript(appRunId)
-    else scheduleBridgeRunFlush(appRunId)
+    if (!bridgeState.flushedOnce) {
+      tryFlushBridgeRunTranscript(appRunId, flushBridgeRunTranscript)
+    } else scheduleBridgeRunFlush(appRunId)
     return true
   }
 
@@ -13464,7 +13470,7 @@ function materializeBridgeRunProviderOutput(
     // shortened Ollama tag can still resolve its maker from the catalog name.
     const initModelLabel = bridgeModelMetadataFromEvent(payload).modelLabel
     if (initModelLabel) state.modelLabel = initModelLabel
-    if (!state.flushedOnce) flushBridgeRunTranscript(runId)
+    if (!state.flushedOnce) tryFlushBridgeRunTranscript(runId, flushBridgeRunTranscript)
     return
   }
   if (payload?.type === 'tool_use' || payload?.type === 'tool_call') {
@@ -13484,7 +13490,7 @@ function materializeBridgeRunProviderOutput(
   if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
     // RAW provider lane — sanitize untrusted provider refs before persisting.
     appendBridgeRunMediaRefs(state, sanitizeRawProviderMediaRefs(payload.mediaRefs))
-    if (!state.flushedOnce) flushBridgeRunTranscript(runId)
+    if (!state.flushedOnce) tryFlushBridgeRunTranscript(runId, flushBridgeRunTranscript)
     else scheduleBridgeRunFlush(runId)
     return
   }
@@ -13524,7 +13530,7 @@ function materializeBridgeRunProviderOutput(
         // carry ALL of the turn's text.
         appendBridgeRunText(state, text)
       }
-      if (!state.flushedOnce) flushBridgeRunTranscript(runId)
+      if (!state.flushedOnce) tryFlushBridgeRunTranscript(runId, flushBridgeRunTranscript)
       else scheduleBridgeRunFlush(runId)
     }
     return
