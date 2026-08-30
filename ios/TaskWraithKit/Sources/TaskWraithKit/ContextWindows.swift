@@ -130,7 +130,7 @@ public enum ContextWindows {
         "openrouter/thinkingmachines/inkling:free": 1_048_576,
         "openrouter/thinkingmachines/inkling-small:free": 1_048_576,
         // Kimi
-        "kimi-k3": 262_144,
+        "kimi-k3": 1_048_576,
         "kimi-k3-256k": 262_144,
         "kimi-k2.7-code": 262_144,
         "kimi-k2.6": 262_144,

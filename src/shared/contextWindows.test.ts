@@ -22,9 +22,7 @@ function extractBlock(source: string, pattern: RegExp, label: string): string {
 
 function parseTypeScriptEntries(block: string, label: string): ParsedEntry[] {
   const entries = [
-    ...block.matchAll(
-      /^\s*(?:'([^']+)'|([A-Za-z0-9_-]+)):\s*([0-9_]+),?\s*(?:\/\/.*)?$/gm
-    )
+    ...block.matchAll(/^\s*(?:'([^']+)'|([A-Za-z0-9_-]+)):\s*([0-9_]+),?\s*(?:\/\/.*)?$/gm)
   ].map((match) => ({
     key: match[1] ?? match[2],
     value: Number(match[3].replaceAll('_', ''))
@@ -96,6 +94,11 @@ describe('ContextWindows.swift drift guard', () => {
 })
 
 describe('resolveContextWindow provider-specific Grok windows', () => {
+  it('uses Kimi K3 long-context window for the K3 (1M) model', () => {
+    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(1_048_576)
+    expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)
+  })
+
   it('uses the direct Grok 4.6 500K window', () => {
     expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)
   })

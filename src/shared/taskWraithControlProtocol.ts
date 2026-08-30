@@ -5,6 +5,8 @@
  * can compile it independently.
  */
 
+import type { HostHistoryToolCommand, HostHistoryToolDiff } from './hostHistoryProtocol'
+
 export const TASKWRAITH_CONTROL_PROTOCOL_VERSION = 1 as const
 export const TASKWRAITH_CONTROL_CLIENT_NAME = 'taskwraith-tui' as const
 export const TASKWRAITH_CONTROL_MAX_LINE_BYTES = 1_000_000
@@ -107,6 +109,8 @@ export interface TaskWraithControlToolEntry {
   file?: string
   additions?: number
   deletions?: number
+  diff?: HostHistoryToolDiff
+  command?: HostHistoryToolCommand
 }
 
 export interface TaskWraithControlTranscriptRow {

@@ -7,11 +7,18 @@ export const HOST_HISTORY_MAX_ENTRY_LABEL = 200
 export const HOST_HISTORY_MAX_ENTRY_TOOLS = 32
 export const HOST_HISTORY_MAX_TOOL_NAME = 200
 export const HOST_HISTORY_MAX_TOOL_FILE = 512
+export const HOST_HISTORY_MAX_TOOL_HUNKS = 8
+export const HOST_HISTORY_MAX_TOOL_DIFF_LINES = 80
+export const HOST_HISTORY_MAX_TOOL_DIFF_HEADER = 240
+export const HOST_HISTORY_MAX_TOOL_DIFF_LINE_CHARS = 400
+export const HOST_HISTORY_MAX_TOOL_COMMAND_CHARS = 1_000
+export const HOST_HISTORY_MAX_TOOL_OUTPUT_CHARS = 4_000
 
 export type HostHistoryDecodeResult<T> = { ok: true; value: T } | { ok: false; error: string }
 export type HostTranscriptRole = 'user' | 'assistant' | 'system' | 'tool'
 export type HostHistoryToolCategory = 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
 export type HostHistoryToolStatus = 'running' | 'success' | 'error'
+export type HostHistoryToolDiffLineType = 'context' | 'add' | 'del'
 
 export interface HostHistoryCursor {
   readonly generation: number
@@ -24,6 +31,32 @@ export interface HostThreadHistoryRequest {
   readonly limit: number
 }
 
+export interface HostHistoryToolDiffLine {
+  readonly type: HostHistoryToolDiffLineType
+  readonly text: string
+  readonly oldLine?: number
+  readonly newLine?: number
+}
+
+export interface HostHistoryToolDiffHunk {
+  readonly header: string
+  readonly lines: readonly HostHistoryToolDiffLine[]
+}
+
+/** Bounded, display-only diff data. File contents never travel as raw payloads. */
+export interface HostHistoryToolDiff {
+  readonly hunks: readonly HostHistoryToolDiffHunk[]
+  readonly truncated?: boolean
+}
+
+/** Bounded command card data. Output is a presentation preview, not an audit log. */
+export interface HostHistoryToolCommand {
+  readonly command?: string
+  readonly output?: string
+  readonly exitCode?: number
+  readonly truncated?: boolean
+}
+
 /** Bounded display-only tool activity attached to its assistant transcript row. */
 export interface HostHistoryToolEntry {
   readonly id: string
@@ -33,6 +66,8 @@ export interface HostHistoryToolEntry {
   readonly file?: string
   readonly additions?: number
   readonly deletions?: number
+  readonly diff?: HostHistoryToolDiff
+  readonly command?: HostHistoryToolCommand
 }
 
 export interface HostTranscriptHistoryEntry {
@@ -132,6 +167,23 @@ function isSafeTranscriptText(value: unknown): value is string {
   return true
 }
 
+function isSafeToolLineText(value: unknown, max: number): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length > max ||
+    value.includes('\n') ||
+    value.includes('\r')
+  ) {
+    return false
+  }
+  for (const character of value) {
+    const code = character.charCodeAt(0)
+    if (code === 0x09) continue
+    if (code <= 0x1f || code === 0x7f) return false
+  }
+  return true
+}
+
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key))
 }
@@ -184,13 +236,134 @@ export function decodeHostHistorySinceRequest(
   return { ok: true, value: { threadId: value.threadId, since: since.value } }
 }
 
-function decodeHostHistoryToolEntry(
+function decodeHostHistoryToolDiffLine(
+  value: unknown,
+  index: number
+): HostHistoryDecodeResult<HostHistoryToolDiffLine> {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['type', 'text', 'oldLine', 'newLine']) ||
+    !['context', 'add', 'del'].includes(String(value.type)) ||
+    !isSafeToolLineText(value.text, HOST_HISTORY_MAX_TOOL_DIFF_LINE_CHARS)
+  ) {
+    return fail(`history diff line ${index} is invalid`)
+  }
+  for (const key of ['oldLine', 'newLine'] as const) {
+    if (
+      value[key] !== undefined &&
+      (!isNonNegativeInt(value[key]) || Number(value[key]) > 1_000_000_000)
+    ) {
+      return fail(`history diff line ${index} is invalid`)
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      type: value.type as HostHistoryToolDiffLineType,
+      text: value.text,
+      ...(value.oldLine !== undefined ? { oldLine: value.oldLine as number } : {}),
+      ...(value.newLine !== undefined ? { newLine: value.newLine as number } : {})
+    }
+  }
+}
+
+function decodeHostHistoryToolDiffHunk(
+  value: unknown,
+  index: number,
+  lineBudget: { count: number }
+): HostHistoryDecodeResult<HostHistoryToolDiffHunk> {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['header', 'lines']) ||
+    !isSafeToolLineText(value.header, HOST_HISTORY_MAX_TOOL_DIFF_HEADER) ||
+    !Array.isArray(value.lines)
+  ) {
+    return fail(`history diff hunk ${index} is invalid`)
+  }
+  const lines: HostHistoryToolDiffLine[] = []
+  for (let lineIndex = 0; lineIndex < value.lines.length; lineIndex += 1) {
+    lineBudget.count += 1
+    if (lineBudget.count > HOST_HISTORY_MAX_TOOL_DIFF_LINES) {
+      return fail(`history diff hunk ${index} is invalid`)
+    }
+    const decoded = decodeHostHistoryToolDiffLine(value.lines[lineIndex], lineIndex)
+    if (!decoded.ok) return fail(`history diff hunk ${index} is invalid`)
+    lines.push(decoded.value)
+  }
+  return { ok: true, value: { header: value.header, lines } }
+}
+
+function decodeHostHistoryToolDiff(value: unknown): HostHistoryDecodeResult<HostHistoryToolDiff> {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['hunks', 'truncated']) ||
+    !Array.isArray(value.hunks) ||
+    value.hunks.length > HOST_HISTORY_MAX_TOOL_HUNKS ||
+    (value.truncated !== undefined && typeof value.truncated !== 'boolean')
+  ) {
+    return fail('history tool diff is invalid')
+  }
+  const lineBudget = { count: 0 }
+  const hunks: HostHistoryToolDiffHunk[] = []
+  for (let index = 0; index < value.hunks.length; index += 1) {
+    const decoded = decodeHostHistoryToolDiffHunk(value.hunks[index], index, lineBudget)
+    if (!decoded.ok) return fail('history tool diff is invalid')
+    hunks.push(decoded.value)
+  }
+  return {
+    ok: true,
+    value: {
+      hunks,
+      ...(value.truncated === true ? { truncated: true } : {})
+    }
+  }
+}
+
+function decodeHostHistoryToolCommand(
+  value: unknown
+): HostHistoryDecodeResult<HostHistoryToolCommand> {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ['command', 'output', 'exitCode', 'truncated']) ||
+    (value.command !== undefined &&
+      !isSafeToolLineText(value.command, HOST_HISTORY_MAX_TOOL_COMMAND_CHARS)) ||
+    (value.output !== undefined && !isSafeTranscriptText(value.output)) ||
+    (value.output !== undefined && value.output.length > HOST_HISTORY_MAX_TOOL_OUTPUT_CHARS) ||
+    (value.exitCode !== undefined &&
+      (!Number.isSafeInteger(value.exitCode) || Math.abs(Number(value.exitCode)) > 1_000_000)) ||
+    (value.truncated !== undefined && typeof value.truncated !== 'boolean') ||
+    (value.command === undefined && value.output === undefined && value.exitCode === undefined)
+  ) {
+    return fail('history tool command is invalid')
+  }
+  return {
+    ok: true,
+    value: {
+      ...(value.command !== undefined ? { command: value.command } : {}),
+      ...(value.output !== undefined ? { output: value.output } : {}),
+      ...(value.exitCode !== undefined ? { exitCode: value.exitCode as number } : {}),
+      ...(value.truncated === true ? { truncated: true } : {})
+    }
+  }
+}
+
+export function decodeHostHistoryToolEntry(
   value: unknown,
   index: number
 ): HostHistoryDecodeResult<HostHistoryToolEntry> {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ['id', 'name', 'category', 'status', 'file', 'additions', 'deletions']) ||
+    !exactKeys(value, [
+      'id',
+      'name',
+      'category',
+      'status',
+      'file',
+      'additions',
+      'deletions',
+      'diff',
+      'command'
+    ]) ||
     !isCanonicalString(value.id, MAX_ID) ||
     !isCanonicalString(value.name, HOST_HISTORY_MAX_TOOL_NAME) ||
     !['task', 'read', 'write', 'search', 'shell', 'unknown'].includes(String(value.category)) ||
@@ -207,6 +380,18 @@ function decodeHostHistoryToolEntry(
   if (value.deletions !== undefined && !isNonNegativeInt(value.deletions)) {
     return fail(`history tool entry ${index} is invalid`)
   }
+  let diff: HostHistoryToolDiff | undefined
+  if (value.diff !== undefined) {
+    const decoded = decodeHostHistoryToolDiff(value.diff)
+    if (!decoded.ok) return fail(`history tool entry ${index} is invalid`)
+    diff = decoded.value
+  }
+  let command: HostHistoryToolCommand | undefined
+  if (value.command !== undefined) {
+    const decoded = decodeHostHistoryToolCommand(value.command)
+    if (!decoded.ok) return fail(`history tool entry ${index} is invalid`)
+    command = decoded.value
+  }
   return {
     ok: true,
     value: {
@@ -216,7 +401,9 @@ function decodeHostHistoryToolEntry(
       status: value.status as HostHistoryToolStatus,
       ...(value.file !== undefined ? { file: value.file } : {}),
       ...(value.additions !== undefined ? { additions: value.additions } : {}),
-      ...(value.deletions !== undefined ? { deletions: value.deletions } : {})
+      ...(value.deletions !== undefined ? { deletions: value.deletions } : {}),
+      ...(diff ? { diff } : {}),
+      ...(command ? { command } : {})
     }
   }
 }

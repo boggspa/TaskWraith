@@ -66,6 +66,41 @@ describe('host history protocol', () => {
     ).toEqual({ ok: false, error: 'thread history page is invalid' })
   })
 
+  it('decodes bounded diff and command presentation fields', () => {
+    const entry = {
+      ...ENTRY,
+      tools: [
+        {
+          id: 'tool-rich',
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          diff: {
+            hunks: [
+              {
+                header: '@@ -2,1 +2,2 @@',
+                lines: [
+                  { type: 'del', text: 'old', oldLine: 2 },
+                  { type: 'add', text: 'new', newLine: 2 },
+                  { type: 'add', text: 'next', newLine: 3 }
+                ]
+              }
+            ]
+          },
+          command: { command: 'npm test', output: 'passed', exitCode: 0 }
+        }
+      ]
+    }
+    expect(
+      decodeHostThreadHistoryPage({
+        threadId: 'thread-1',
+        generation: 2,
+        cursor: 4,
+        entries: [entry]
+      })
+    ).toMatchObject({ ok: true, value: { entries: [entry] } })
+  })
+
   it('decodes separate history deltas and their event frame', () => {
     const result = {
       kind: 'deltas',
