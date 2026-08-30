@@ -64,6 +64,13 @@ export interface ComposerDraftState {
   subscribeToChat(chatId: string, listener: Listener): () => void
   /** Fires only when the draft-holding SET changes, not on every keystroke. */
   subscribeToDraftChatIds(listener: Listener): () => void
+  /**
+   * Fires on ANY draft text change. This grain exists for non-rendering
+   * consumers only — the debounced localStorage write. A COMPONENT must never
+   * subscribe to it: doing so re-renders that component on every keystroke,
+   * which is the exact cost this module exists to remove.
+   */
+  subscribeToAnyChange(listener: Listener): () => void
 }
 
 export const createComposerDraftState = (
@@ -73,6 +80,7 @@ export const createComposerDraftState = (
   let cachedIds: ReadonlySet<string> | null = null
   const chatListeners = new Map<string, Set<Listener>>()
   const idListeners = new Set<Listener>()
+  const anyListeners = new Set<Listener>()
 
   const computeIds = (source: ComposerDraftMap): ReadonlySet<string> => {
     const ids = new Set<string>()
@@ -82,15 +90,32 @@ export const createComposerDraftState = (
     return ids
   }
 
+  // Copy before iterating so a listener added mid-notify waits for the next
+  // change, and isolate each call: one composer leaf throwing must not stop its
+  // siblings from updating. Mirrors `projectReferenceContextSelection`, the
+  // per-chat store this one is modelled on.
+  const notifyEach = (listeners: Iterable<Listener>): void => {
+    for (const listener of [...listeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('composer draft subscriber failed', error)
+      }
+    }
+  }
+
   const notifyChat = (chatId: string): void => {
     const listeners = chatListeners.get(chatId)
     if (!listeners) return
-    // Copy before iterating: a listener may unsubscribe during notification.
-    for (const listener of [...listeners]) listener()
+    notifyEach(listeners)
   }
 
   const notifyIds = (): void => {
-    for (const listener of [...idListeners]) listener()
+    notifyEach(idListeners)
+  }
+
+  const notifyAny = (): void => {
+    notifyEach(anyListeners)
   }
 
   return {
@@ -122,6 +147,7 @@ export const createComposerDraftState = (
         notifyIds()
       }
       notifyChat(chatId)
+      notifyAny()
     },
 
     replaceAll(nextMap) {
@@ -133,6 +159,7 @@ export const createComposerDraftState = (
         if (previous[chatId] !== map[chatId]) notifyChat(chatId)
       }
       notifyIds()
+      notifyAny()
     },
 
     subscribeToChat(chatId, listener) {
@@ -154,6 +181,13 @@ export const createComposerDraftState = (
       idListeners.add(listener)
       return () => {
         idListeners.delete(listener)
+      }
+    },
+
+    subscribeToAnyChange(listener) {
+      anyListeners.add(listener)
+      return () => {
+        anyListeners.delete(listener)
       }
     }
   }

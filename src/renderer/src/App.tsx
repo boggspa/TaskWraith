@@ -43,7 +43,11 @@ import {
   CHAT_UPDATE_MAX_RENDER_LATENCY_MS,
   shouldFlushChatUpdateImmediately
 } from './lib/chatUpdateRenderUrgency'
-import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
+import { writeComposerDrafts } from './lib/composerDraftStore'
+import {
+  composerDraftState,
+  useComposerDraftChatIds
+} from './hooks/useComposerDraft'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
@@ -1722,10 +1726,22 @@ function App(): React.JSX.Element {
     }
   }, [isChatPopoutWindow])
 
-  // Seed drafts synchronously from localStorage on first render (not an async
-  // effect) so a restored draft is present before the composer reads it and can't
-  // be clobbered by — or clobber — text the user starts typing on launch.
-  const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
+  // Composer drafts live in the external `composerDraftState` store, NOT in App
+  // state: a keystroke must not re-render this root (App ~32.5k lines ->
+  // MainAppLayout ~3k, neither memoized). App subscribes only to the
+  // identity-stable draft-id SET below; the live text is subscribed per-chat by
+  // the Composer that owns it, via useComposerDraft.
+  //
+  // The synchronous localStorage seed that used to be this hook's lazy
+  // initializer now happens at module load in `useComposerDraft`, which still
+  // runs before first render — so a restored draft is present before any
+  // composer reads it, and cannot clobber (or be clobbered by) text the user
+  // starts typing on launch.
+  const setComposerDraftForChat = useCallback(
+    (chatId: string | null | undefined, value: PerChatStateAction<string>) =>
+      composerDraftState.setDraft(chatId, value),
+    []
+  )
   const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
   // Full enabled-share list (for the Shares footer popover). Mirrors the Set
   // above but keeps the participant/mode detail the popover renders.
@@ -4235,28 +4251,38 @@ function App(): React.JSX.Element {
     openExecutionMap
   ])
 
-  const prompt = currentComposerChatId ? composerDraftsByChatId[currentComposerChatId] || '' : ''
-  const composerDraftsByChatIdRef = useRef(composerDraftsByChatId)
-  useEffect(() => {
-    composerDraftsByChatIdRef.current = composerDraftsByChatId
-  }, [composerDraftsByChatId])
+  // Non-reactive read: correct for THIS render, and the Composer that receives
+  // it keeps itself live through useComposerDraft. App is deliberately not
+  // subscribed, which is what keeps a keystroke off this render path.
+  const prompt = composerDraftState.getDraft(currentComposerChatId)
   // Persist composer drafts so typed-but-unsent text survives an app restart.
   // In-memory updates stay immediate (thread-switch is instant); only the disk
   // write is debounced (~800ms) so localStorage isn't hit on every keystroke.
-  // The map is sparse (usePerChatState deletes empty drafts), so a sent/cleared
+  // The map is sparse (the store deletes empty drafts), so a sent/cleared
   // prompt persists as "gone" and can't resurrect next launch. Only the main
   // window persists — the popout shares this origin and would clobber the blob;
   // its draft already flows back via the handoff channel.
+  //
+  // Subscribed to the store's any-change grain rather than to React state: this
+  // must re-arm on every keystroke, but it must NOT re-render App to do it.
   useEffect(() => {
     if (isChatPopoutWindow) return undefined
-    const handle = window.setTimeout(() => {
-      writeComposerDrafts(composerDraftsByChatId)
-    }, 800)
-    return () => window.clearTimeout(handle)
-  }, [composerDraftsByChatId, isChatPopoutWindow])
+    let handle: number | null = null
+    const unsubscribe = composerDraftState.subscribeToAnyChange(() => {
+      if (handle !== null) window.clearTimeout(handle)
+      handle = window.setTimeout(() => {
+        handle = null
+        writeComposerDrafts(composerDraftState.getDraftMap())
+      }, 800)
+    })
+    return () => {
+      if (handle !== null) window.clearTimeout(handle)
+      unsubscribe()
+    }
+  }, [isChatPopoutWindow])
   useEffect(() => {
     if (isChatPopoutWindow) return undefined
-    const flush = (): void => writeComposerDrafts(composerDraftsByChatIdRef.current)
+    const flush = (): void => writeComposerDrafts(composerDraftState.getDraftMap())
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'hidden') flush()
     }
@@ -4400,7 +4426,7 @@ function App(): React.JSX.Element {
     )
   }, [sideChatId, chats])
   const sideProvider = sideChat ? getChatProvider(sideChat) : currentProvider
-  const sidePrompt = sideChat ? composerDraftsByChatId[sideChat.appChatId] || '' : ''
+  const sidePrompt = sideChat ? composerDraftState.getDraft(sideChat.appChatId) : ''
   const sidePanelParentChat = sideChat?.parentChatId
     ? chatByIdRef.current.get(sideChat.parentChatId) ||
       chats.find((chat) => chat.appChatId === sideChat.parentChatId) ||
@@ -10204,9 +10230,7 @@ function App(): React.JSX.Element {
     for (const [id, selection] of Object.entries(discordContextSelectionByChatId)) {
       if (selection) protectedChatIds.add(id)
     }
-    const draftChatIds = Object.entries(composerDraftsByChatIdRef.current)
-      .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
-      .map(([id]) => id)
+    const draftChatIds = Array.from(composerDraftState.getDraftChatIds())
     void window.api
       .reapAbandonedChats({
         protectedChatIds: Array.from(protectedChatIds),
@@ -14140,7 +14164,15 @@ function App(): React.JSX.Element {
       appRunId: createAppRunId(),
       scope,
       provider,
-      prompt: target?.prompt !== undefined ? target.prompt : existingPrompt || prompt,
+      // Fallback reads the store at CALL time. Same reason as the popout handoff:
+      // App no longer re-renders per keystroke, so the render-time `prompt` const
+      // could send text older than what the user just typed. Keyed on
+      // currentComposerChatId to preserve the original meaning — "the focused
+      // composer's text" — even when `target.chat` points elsewhere.
+      prompt:
+        target?.prompt !== undefined
+          ? target.prompt
+          : existingPrompt || composerDraftState.getDraft(currentComposerChatId),
       ...(target?.displayPrompt !== undefined ? { displayPrompt: target.displayPrompt } : {}),
       overrideModel,
       existingPrompt,
@@ -16501,7 +16533,7 @@ function App(): React.JSX.Element {
         settleProjectReferenceContextForRequest(graphRequest, 'accepted')
         clearSubmittedExecutionStackContext(graphRequest, targetChatId)
         const submittedDraft = graphRequest.displayPrompt || graphRequest.prompt
-        if (composerDraftsByChatIdRef.current[targetChatId] === submittedDraft) {
+        if (composerDraftState.getDraft(targetChatId) === submittedDraft) {
           setChatPromptDraft(targetChatId, '')
         }
       })
@@ -16577,7 +16609,7 @@ function App(): React.JSX.Element {
           executeRun: (queued) => {
             void executeRun(queued)
           },
-          currentDraft: (chatId) => composerDraftsByChatIdRef.current[chatId] || '',
+          currentDraft: (chatId) => composerDraftState.getDraft(chatId),
           clearDraft: (chatId) => setChatPromptDraft(chatId, ''),
           clearSubmittedContext: clearSubmittedExecutionStackContext,
           reapAbandonedChats: reapAbandonedChatsAfterCreate,
@@ -16881,7 +16913,7 @@ function App(): React.JSX.Element {
       runWelcomeBackgroundTarget(
         {
           chat: sourceChat,
-          prompt: composerDraftsByChatIdRef.current[sourceChatId] || '',
+          prompt: composerDraftState.getDraft(sourceChatId),
           sessionTrust,
           imageAttachments:
             imageAttachmentsByChatIdRef.current[sourceChatId] || EMPTY_IMAGE_ATTACHMENTS,
@@ -17261,7 +17293,7 @@ function App(): React.JSX.Element {
       draft:
         typeof draftOverride === 'string'
           ? draftOverride
-          : composerDraftsByChatId[targetChat.appChatId] || '',
+          : composerDraftState.getDraft(targetChat.appChatId),
       scrollState: wasInlinePresentation
         ? captureChatScrollState(sideTranscriptScrollRef.current)
         : currentChat?.appChatId === targetChat.appChatId
@@ -19442,7 +19474,10 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
       return
     }
-    if (prompt.trim() !== review.rawText) {
+    // Read the store at CALL time, not the render-time `prompt` const: App no
+    // longer re-renders per keystroke, so a closed-over value would be stale and
+    // this guard would compare against text the user has since changed.
+    if (composerDraftState.getDraft(currentComposerChatId).trim() !== review.rawText) {
       setPendingPlanImport(null)
       window.alert('The composer changed after this plan was reviewed. Import the plan again.')
       return
@@ -19609,7 +19644,11 @@ function App(): React.JSX.Element {
   }, [goalPopoverOpen, updateGoalPopoverPosition])
 
   const openGoalPopover = (editing = false, draftOverride?: string): void => {
-    const fallbackDraft = draftOverride !== undefined ? draftOverride : prompt.trim()
+    // Call-time store read for the same reason as the plan-import guard above.
+    const fallbackDraft =
+      draftOverride !== undefined
+        ? draftOverride
+        : composerDraftState.getDraft(currentComposerChatId).trim()
     setGoalDraft(currentActiveGoal?.objective || fallbackDraft)
     setGoalEditing(editing)
     setGoalPopoverOpen(true)
@@ -20913,7 +20952,10 @@ function App(): React.JSX.Element {
   const openChatPopoutWindow = useCallback(() => {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
-      draft: prompt,
+      // Store read at CALL time: App no longer re-renders per keystroke, so the
+      // render-time `prompt` const would hand the popout a draft older than what
+      // is on screen and silently drop the user's most recent typing.
+      draft: composerDraftState.getDraft(currentChat.appChatId),
       scrollState: captureMainTranscriptScrollState(),
       roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
     })
@@ -20923,12 +20965,15 @@ function App(): React.JSX.Element {
       workspacePath: currentChat.workspacePath,
       presentation: 'full'
     })
-  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath, prompt])
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath])
 
   const openCompactChatCompanion = useCallback(() => {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
-      draft: prompt,
+      // Store read at CALL time: App no longer re-renders per keystroke, so the
+      // render-time `prompt` const would hand the popout a draft older than what
+      // is on screen and silently drop the user's most recent typing.
+      draft: composerDraftState.getDraft(currentChat.appChatId),
       scrollState: captureMainTranscriptScrollState(),
       roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
     })
@@ -20938,7 +20983,7 @@ function App(): React.JSX.Element {
       workspacePath: currentChat.workspacePath,
       presentation: 'compact'
     })
-  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath, prompt])
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath])
 
   const dockChatPopoutWindow = useCallback(
     (presentation: SidePanelPresentation) => {
@@ -20948,7 +20993,7 @@ function App(): React.JSX.Element {
         .dockSideChatPopout({
           chatId: currentChat.appChatId,
           presentation,
-          draft: prompt,
+          draft: composerDraftState.getDraft(currentChat.appChatId),
           scrollState: captureMainTranscriptScrollState(),
           roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
         })
@@ -20956,7 +21001,7 @@ function App(): React.JSX.Element {
           isDockingChatPopoutRef.current = false
         })
     },
-    [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow, prompt]
+    [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow]
   )
 
   const createNewChatFromKeyboard = (): boolean => {
@@ -28922,7 +28967,7 @@ function App(): React.JSX.Element {
     ) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
-      const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
+      const panePrompt = composerDraftState.getDraft(chatId)
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
@@ -28982,7 +29027,7 @@ function App(): React.JSX.Element {
     (paneIndex: number, chatId: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
-      const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
+      const panePrompt = composerDraftState.getDraft(chatId)
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
       // Steer is a composer gesture in this pane's transcript; relock the pane,
       // never the host transcript (handleSteer's own relock is focused-gated).
@@ -29702,7 +29747,7 @@ function App(): React.JSX.Element {
         (currentChatIdRef.current === chatId ? captureMainTranscriptScrollState() : undefined)
       focusPaneForChromeAction(paneIndex, chatId)
       writeChatPopoutHandoff(chatId, {
-        draft: composerDraftsByChatIdRef.current[chatId] || '',
+        draft: composerDraftState.getDraft(chatId),
         scrollState: paneScrollState,
         roundExpansion: captureSessionRoundExpansionForChat(chatId)
       })
@@ -30767,7 +30812,7 @@ function App(): React.JSX.Element {
         runWelcomeBackgroundTarget(
           {
             chat: sourceChat,
-            prompt: composerDraftsByChatIdRef.current[viewerChatId] || '',
+            prompt: composerDraftState.getDraft(viewerChatId),
             sessionTrust:
               viewerPaneIndex === multiview.focusedPaneIndex &&
               currentChatIdRef.current === viewerChatId
@@ -30867,7 +30912,7 @@ function App(): React.JSX.Element {
         compactableParticipantIds: undefined,
         speakingParticipantId: undefined,
         // ── per-chat identity / display ──
-        prompt: composerDraftsByChatId[viewerChatId] || '',
+        prompt: composerDraftState.getDraft(viewerChatId),
         // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
         // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
         // FOCUSED pane's flag, so override it with THIS pane's.
@@ -31286,7 +31331,6 @@ function App(): React.JSX.Element {
       agentModelsByProvider.claude,
       attachedWindow,
       codexModels,
-      composerDraftsByChatId,
       detachedComposerSurfaceBase,
       buildPaneComposerSlashCommands,
       discordContextSelectionByChatId,
@@ -31565,15 +31609,9 @@ function App(): React.JSX.Element {
   // Chats holding unsent composer text — kept visible in the sidebar across
   // thread switches (mirrors the reaper's draftChatIds protection; the "one
   // survivable New Chat" itself is derived inside the sidebar).
-  const composerDraftChatIds = useMemo(
-    () =>
-      new Set(
-        Object.entries(composerDraftsByChatId)
-          .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
-          .map(([id]) => id)
-      ),
-    [composerDraftsByChatId]
-  )
+  // Identity-stable across keystrokes inside an existing draft, so typing the
+  // 2nd..Nth character of a draft does not re-render App at all.
+  const composerDraftChatIds = useComposerDraftChatIds()
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,

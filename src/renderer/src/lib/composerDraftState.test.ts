@@ -153,6 +153,19 @@ describe('subscription grain', () => {
     expect(late).not.toHaveBeenCalled()
   })
 
+  it('keeps notifying siblings when one listener throws', () => {
+    const state = createComposerDraftState()
+    const sibling = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    state.subscribeToChat('a', () => {
+      throw new Error('one leaf blew up')
+    })
+    state.subscribeToChat('a', sibling)
+    expect(() => state.setDraft('a', 'x')).not.toThrow()
+    expect(sibling).toHaveBeenCalledTimes(1)
+    consoleError.mockRestore()
+  })
+
   it('does not notify a draft-id listener that subscribes during an in-flight notify', () => {
     const state = createComposerDraftState()
     const late = vi.fn()
@@ -161,6 +174,41 @@ describe('subscription grain', () => {
     })
     state.setDraft('a', 'x')
     expect(late).not.toHaveBeenCalled()
+  })
+})
+
+describe('subscribeToAnyChange (persistence grain, never for components)', () => {
+  it('fires on every text change, including within an existing draft', () => {
+    const state = createComposerDraftState({ a: 'a' })
+    const any = vi.fn()
+    state.subscribeToAnyChange(any)
+    state.setDraft('a', 'ab')
+    state.setDraft('a', 'abc')
+    expect(any).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays silent when the value is unchanged', () => {
+    const state = createComposerDraftState({ a: 'same' })
+    const any = vi.fn()
+    state.subscribeToAnyChange(any)
+    state.setDraft('a', 'same')
+    expect(any).not.toHaveBeenCalled()
+  })
+
+  it('fires once for a wholesale replace', () => {
+    const state = createComposerDraftState({ a: 'a' })
+    const any = vi.fn()
+    state.subscribeToAnyChange(any)
+    state.replaceAll({ b: 'b' })
+    expect(any).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops after unsubscribe', () => {
+    const state = createComposerDraftState()
+    const any = vi.fn()
+    state.subscribeToAnyChange(any)()
+    state.setDraft('a', 'x')
+    expect(any).not.toHaveBeenCalled()
   })
 })
 

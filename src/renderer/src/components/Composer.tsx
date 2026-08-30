@@ -33,6 +33,7 @@ import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPick
 import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { buildParticipantReasoningSelectionPatch } from '../components/ParticipantPickerCluster'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
+import { useComposerDraft } from '../hooks/useComposerDraft'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
@@ -639,7 +640,7 @@ export function shouldRenderWelcomeNotifications(
 
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
-    prompt,
+    prompt: promptFromProps,
     PLAN_IMPORT_RISK_LABELS,
     acknowledgedElevationDefaults,
     activeEnsembleFanoutPolicy,
@@ -927,6 +928,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
+
+  // Live draft text, subscribed for THIS composer's chat. The `prompt` prop is
+  // only a first-render seed now: App reads the store non-reactively and no
+  // longer re-renders when a character is typed, so this subscription is what
+  // keeps the textarea current. The payoff is that a keystroke re-renders this
+  // Composer alone instead of App (~32.5k lines) -> MainAppLayout (~3k) -> here.
+  // Falls back to the prop when there is no chat id, which is the one case the
+  // store cannot key on.
+  const liveComposerDraft = useComposerDraft(currentComposerChatId)
+  const prompt = currentComposerChatId ? liveComposerDraft : promptFromProps
 
   // Per-chat workspace terminal open state. Each pane's <Composer> owns its
   // own terminal toggle; the state is keyed by THIS composer's chatId so

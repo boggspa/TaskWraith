@@ -5,6 +5,7 @@ import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayNam
 import type { ComposerWorktreeSelection } from '../lib/composerWorktreeSelection'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
+import { useComposerDraft } from '../hooks/useComposerDraft'
 import './CompactChatComposer.css'
 
 export interface CompactWorkspaceStatus {
@@ -160,7 +161,7 @@ export interface CompactChatComposerProps {
 }
 
 export function CompactChatComposer({
-  prompt,
+  prompt: promptFromProps,
   currentComposerChatId,
   currentChat,
   currentWorkspace,
@@ -184,6 +185,12 @@ export function CompactChatComposer({
   isSteerBusyForCurrentChat,
   midRunInputBehavior
 }: CompactChatComposerProps): React.JSX.Element {
+  // Live draft, subscribed for this composer's chat. The prop is only a
+  // first-render seed: App reads the store non-reactively and no longer
+  // re-renders per keystroke, so without this subscription the controlled
+  // textarea below would freeze at whatever text App last happened to render.
+  const liveComposerDraft = useComposerDraft(currentComposerChatId)
+  const prompt = currentComposerChatId ? liveComposerDraft : promptFromProps
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const workspaceStatus = compactWorkspaceStatus({
     workspace: currentWorkspace,
