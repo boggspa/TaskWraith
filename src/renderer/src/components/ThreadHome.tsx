@@ -315,9 +315,7 @@ export function ThreadHomeTerminalWorkspacePicker({
               onClick={() => setSelectedCli(cli.id)}
             >
               <span className="thread-home-thread-provider" aria-hidden>
-                <div
-                  className={`thread-home-radio ${selectedCli === cli.id ? 'is-checked' : ''}`}
-                />
+                <AppleTerminalIcon />
               </span>
               <span className="thread-home-thread-copy">
                 <strong>{cli.label}</strong>

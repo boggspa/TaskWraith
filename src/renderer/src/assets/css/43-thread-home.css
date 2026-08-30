@@ -1215,28 +1215,6 @@
   padding-right: 8px;
 }
 
-.thread-home-radio {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid var(--text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.thread-home-radio.is-checked {
-  border-color: var(--accent);
-}
-
-.thread-home-radio.is-checked::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  background-color: var(--accent);
-  border-radius: 50%;
-}
-
 .thread-home-thread-row.is-selected {
   transform: translateY(-1px);
   -webkit-mask-image: linear-gradient(
