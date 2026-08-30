@@ -30,10 +30,13 @@ import {
 import type { BigIntStats } from 'node:fs'
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
+import { decodeHostHistoryToolEntry } from '../shared/hostHistoryProtocol'
 import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
   HostHistoryToolCategory,
+  HostHistoryToolCommand,
+  HostHistoryToolDiff,
   HostHistoryToolEntry,
   HostHistoryToolStatus,
   HostThreadHistoryPage,
@@ -430,34 +433,30 @@ function safeRunUsage(value: unknown): value is HostProfileRunUsage {
 }
 
 function safeProfileToolActivity(value: unknown): value is HostHistoryToolEntry {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const record = value as Record<string, unknown>
-  if (
-    !safeId(record.id) ||
-    !safeText(record.name, 200) ||
-    !['task', 'read', 'write', 'search', 'shell', 'unknown'].includes(String(record.category)) ||
-    !['running', 'success', 'error'].includes(String(record.status))
-  ) {
-    return false
+  return decodeHostHistoryToolEntry(value, 0).ok
+}
+
+function cloneToolDiff(diff: HostHistoryToolDiff): HostHistoryToolDiff {
+  return {
+    hunks: diff.hunks.map((hunk) => ({
+      header: hunk.header,
+      lines: hunk.lines.map((line) => ({ ...line }))
+    })),
+    ...(diff.truncated ? { truncated: true } : {})
   }
-  if (record.file !== undefined && !safeId(record.file)) return false
-  if (
-    record.additions !== undefined &&
-    (typeof record.additions !== 'number' ||
-      !Number.isSafeInteger(record.additions) ||
-      record.additions < 0)
-  ) {
-    return false
-  }
-  if (
-    record.deletions !== undefined &&
-    (typeof record.deletions !== 'number' ||
-      !Number.isSafeInteger(record.deletions) ||
-      record.deletions < 0)
-  ) {
-    return false
-  }
-  return true
+}
+
+function cloneToolCommand(command: HostHistoryToolCommand): HostHistoryToolCommand {
+  return { ...command }
+}
+
+function mergeToolCommand(
+  existing: HostHistoryToolCommand | undefined,
+  incoming: HostHistoryToolCommand | undefined
+): HostHistoryToolCommand | undefined {
+  if (!existing && !incoming) return undefined
+  const merged = { ...(existing ?? {}), ...(incoming ?? {}) }
+  return Object.keys(merged).length > 0 ? merged : undefined
 }
 
 function profileToolPresentation(toolName: string | undefined): {
@@ -1661,6 +1660,8 @@ export class HostProfileDomainStore {
     file?: string
     additions?: number
     deletions?: number
+    diff?: HostHistoryToolDiff
+    command?: HostHistoryToolCommand
   }): HostProfileThread {
     this.assertAuthority()
     this.requireId(input.threadId)
@@ -1689,6 +1690,18 @@ export class HostProfileDomainStore {
     ) {
       throw new Error('Invalid tool line counts')
     }
+    const presentationCheck = decodeHostHistoryToolEntry(
+      {
+        id: input.toolId,
+        name: input.toolName ?? 'Tool',
+        category: 'unknown',
+        status: input.status ?? 'running',
+        ...(input.diff !== undefined ? { diff: input.diff } : {}),
+        ...(input.command !== undefined ? { command: input.command } : {})
+      },
+      0
+    )
+    if (!presentationCheck.ok) throw new Error('Invalid tool presentation')
     const current = this.requireThread(input.threadId)
     const runs = [...(current.runs ?? [])]
     const runIndex = runs.findIndex((run) => run.runId === input.runId)
@@ -1699,6 +1712,8 @@ export class HostProfileDomainStore {
     const existing = existingIndex >= 0 ? activities[existingIndex] : undefined
     if (input.phase === 'started' && existing && existing.status !== 'running') return current
     const presentation = profileToolPresentation(input.toolName)
+    const command = mergeToolCommand(existing?.command, input.command)
+    const diff = input.diff ?? existing?.diff
     const activity: HostHistoryToolEntry = {
       id: input.toolId,
       name: input.toolName ? presentation.name : (existing?.name ?? presentation.name),
@@ -1720,7 +1735,9 @@ export class HostProfileDomainStore {
         ? { deletions: input.deletions }
         : existing?.deletions !== undefined
           ? { deletions: existing.deletions }
-          : {})
+          : {}),
+      ...(diff ? { diff: cloneToolDiff(diff) } : {}),
+      ...(command ? { command: cloneToolCommand(command) } : {})
     }
     if (existingIndex >= 0) activities[existingIndex] = activity
     else activities.push(activity)

@@ -482,7 +482,20 @@ describe('HostProfileDomainStore', () => {
       phase: 'started',
       file: 'src/example.ts',
       additions: 4,
-      deletions: 2
+      deletions: 2,
+      diff: {
+        hunks: [
+          {
+            header: '@@ -1,2 +1,3 @@',
+            lines: [
+              { type: 'context', text: 'one', oldLine: 1, newLine: 1 },
+              { type: 'del', text: 'two', oldLine: 2 },
+              { type: 'add', text: 'three', newLine: 2 },
+              { type: 'add', text: 'four', newLine: 3 }
+            ]
+          }
+        ]
+      }
     })
     store.recordRunTool({
       threadId: thread.appChatId,
@@ -534,7 +547,20 @@ describe('HostProfileDomainStore', () => {
               status: 'success',
               file: 'src/example.ts',
               additions: 4,
-              deletions: 2
+              deletions: 2,
+              diff: {
+                hunks: [
+                  {
+                    header: '@@ -1,2 +1,3 @@',
+                    lines: [
+                      { type: 'context', text: 'one', oldLine: 1, newLine: 1 },
+                      { type: 'del', text: 'two', oldLine: 2 },
+                      { type: 'add', text: 'three', newLine: 2 },
+                      { type: 'add', text: 'four', newLine: 3 }
+                    ]
+                  }
+                ]
+              }
             }
           ],
           usage: { inputTokens: 11, outputTokens: 13, estimatedCostUsd: 0.001 },
@@ -575,6 +601,44 @@ describe('HostProfileDomainStore', () => {
     expect(() =>
       restarted.updateRun({ threadId: thread.appChatId, runId: 'run-1', status: 'cancelled' })
     ).toThrow('Terminal run cannot change state')
+  })
+
+  it('merges command output into the compact persisted tool activity', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global' })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-command',
+      status: 'running',
+      provider: 'muse',
+      requestedModel: 'muse-spark-1.2',
+      phase: 'starting'
+    })
+    store.recordRunTool({
+      threadId: thread.appChatId,
+      runId: 'run-command',
+      toolId: 'tool-command',
+      toolName: 'run_shell_command',
+      phase: 'started',
+      command: { command: 'npm test' }
+    })
+    store.recordRunTool({
+      threadId: thread.appChatId,
+      runId: 'run-command',
+      toolId: 'tool-command',
+      phase: 'finished',
+      status: 'success',
+      command: { output: '203 tests passed', exitCode: 0 }
+    })
+    expect(store.getThread(thread.appChatId)?.runs?.[0]?.toolActivities).toEqual([
+      {
+        id: 'tool-command',
+        name: 'run_shell_command',
+        category: 'shell',
+        status: 'success',
+        command: { command: 'npm test', output: '203 tests passed', exitCode: 0 }
+      }
+    ])
   })
 
   it('persists explicit workspace-write posture consent and clears it for a lower posture', () => {

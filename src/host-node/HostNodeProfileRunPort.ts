@@ -359,7 +359,9 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
           ...(normalized.status ? { status: normalized.status } : {}),
           ...(normalized.file ? { file: normalized.file } : {}),
           ...(normalized.additions !== undefined ? { additions: normalized.additions } : {}),
-          ...(normalized.deletions !== undefined ? { deletions: normalized.deletions } : {})
+          ...(normalized.deletions !== undefined ? { deletions: normalized.deletions } : {}),
+          ...(normalized.diff ? { diff: normalized.diff } : {}),
+          ...(normalized.command ? { command: normalized.command } : {})
         })
       } catch {
         // Tool presentation is additive; a persistence hiccup must not turn a

@@ -126,6 +126,17 @@ describe('HostNodeProfileRunPort', () => {
         file: 'src/example.ts',
         additions: 4,
         deletions: 2,
+        diff: {
+          hunks: [
+            {
+              header: '@@ -1,1 +1,2 @@',
+              lines: [
+                { type: 'del', text: 'old', oldLine: 1 },
+                { type: 'add', text: 'new', newLine: 1 }
+              ]
+            }
+          ]
+        },
         phase: 'started',
         at: '2026-08-24T05:00:00.000Z'
       }
@@ -199,7 +210,18 @@ describe('HostNodeProfileRunPort', () => {
         status: 'success',
         file: 'src/example.ts',
         additions: 4,
-        deletions: 2
+        deletions: 2,
+        diff: {
+          hunks: [
+            {
+              header: '@@ -1,1 +1,2 @@',
+              lines: [
+                { type: 'del', text: 'old', oldLine: 1 },
+                { type: 'add', text: 'new', newLine: 1 }
+              ]
+            }
+          ]
+        }
       })
     ])
   })

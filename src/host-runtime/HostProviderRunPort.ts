@@ -1,5 +1,7 @@
 import { isAbsolute } from 'node:path'
 
+import { decodeHostHistoryToolEntry } from '../shared/hostHistoryProtocol'
+import type { HostHistoryToolCommand, HostHistoryToolDiff } from '../shared/hostHistoryProtocol'
 import type { HostRunEventTarget } from './HostRunEventTarget'
 
 /**
@@ -131,6 +133,10 @@ export type HostProviderRunEvent =
       /** Optional exact line counts derived from the provider tool input/result. */
       readonly additions?: number
       readonly deletions?: number
+      /** Bounded inline diff presentation, never raw provider payload. */
+      readonly diff?: HostHistoryToolDiff
+      /** Bounded command/output presentation, never an audit-log substitute. */
+      readonly command?: HostHistoryToolCommand
       readonly phase: 'started' | 'finished'
       readonly status?: 'success' | 'error'
       readonly at: string
@@ -418,6 +424,21 @@ export function normalizeHostProviderRunEvent(
     }
     if (!['started', 'finished'].includes(value.phase)) return null
     if (value.status !== undefined && !['success', 'error'].includes(value.status)) return null
+    const presentation = decodeHostHistoryToolEntry(
+      {
+        id: value.toolId,
+        name: value.toolName ?? 'Tool',
+        category: 'unknown',
+        status: value.status ?? (value.phase === 'started' ? 'running' : 'success'),
+        ...(value.file !== undefined ? { file: value.file } : {}),
+        ...(value.additions !== undefined ? { additions: value.additions } : {}),
+        ...(value.deletions !== undefined ? { deletions: value.deletions } : {}),
+        ...(value.diff !== undefined ? { diff: value.diff } : {}),
+        ...(value.command !== undefined ? { command: value.command } : {})
+      },
+      0
+    )
+    if (!presentation.ok) return null
     return { ...value }
   }
   if (

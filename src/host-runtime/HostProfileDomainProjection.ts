@@ -16,6 +16,7 @@ import {
   type HostProviderModelProjection,
   type HostRunProjection,
   type HostThreadGoalProjection,
+  type HostUsageObservation,
   type HostWarningProjection
 } from '../shared/hostProtocol'
 import {
@@ -152,6 +153,29 @@ function providerOutcome(
 type ProfileThread = ReturnType<HostProfileDomainStore['listThreadSummaries']>[number]
 type ProfileRun = NonNullable<ProfileThread['runs']>[number]
 
+function profileRunUsage(run: ProfileRun): HostUsageObservation | undefined {
+  const input = run.usage?.inputTokens ?? 0
+  const output = run.usage?.outputTokens ?? 0
+  const tokens = input + output
+  if (!Number.isSafeInteger(tokens) || tokens <= 0) return undefined
+  return { availability: 'estimated', tokens, confidence: 'estimated' }
+}
+
+function latestProfileRunUsage(
+  runs: readonly ProfileRun[] | undefined
+): HostUsageObservation | undefined {
+  let latest: { at: number; usage: HostUsageObservation } | undefined
+  for (const run of runs ?? []) {
+    const usage = profileRunUsage(run)
+    if (!usage) continue
+    const endedAt = timestamp(run.endedAt)
+    const startedAt = timestamp(run.startedAt)
+    const at = endedAt ?? startedAt ?? 0
+    if (!latest || at >= latest.at) latest = { at, usage }
+  }
+  return latest?.usage
+}
+
 /**
  * Leave headroom below the public per-family cap for future live-source joins.
  * This is a working-set projection, not retention: complete run history remains
@@ -197,7 +221,8 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
           providerOutcome: providerOutcome(run.status),
           ...(startedAt !== undefined ? { startedAt } : {}),
           ...(endedAt !== undefined ? { endedAt } : {}),
-          ...(run.requestedModel ? { modelId: run.requestedModel } : {})
+          ...(run.requestedModel ? { modelId: run.requestedModel } : {}),
+          ...(profileRunUsage(run) ? { usage: profileRunUsage(run) } : {})
         },
         active: runIsActive(run),
         recency: endedAt ?? startedAt ?? thread.updatedAt
@@ -390,6 +415,7 @@ export function projectHostProfileDomainSnapshot(
         thread.workflowMode === 'plan' && storedPermission === 'read_only'
           ? 'plan'
           : storedPermission
+      const usage = latestProfileRunUsage(thread.runs)
       return {
         id: thread.appChatId,
         workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
@@ -404,6 +430,7 @@ export function projectHostProfileDomainSnapshot(
         ...(modelId ? { modelId } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(permissionPresetId ? { permissionPresetId } : {}),
+        ...(usage ? { usage } : {}),
         ...(goal ? { goal } : {})
       }
     }),

@@ -99,6 +99,60 @@ it('projects profile workspaces/threads/providers with honest empty unsupported 
   expect('position' in donor).toBe(false)
 })
 
+it('projects the latest run usage as an honest estimated thread meter', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-usage-projection-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-usage-workspace-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-usage'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({
+    scope: 'workspace',
+    workspaceId: registered.id,
+    title: 'Usage'
+  })
+  store.updateRun({
+    threadId: thread.appChatId,
+    runId: 'run-usage',
+    status: 'running',
+    provider: 'kimi',
+    requestedModel: 'kimi-k3',
+    phase: 'starting',
+    startedAt: '2026-08-24T05:00:00.000Z'
+  })
+  store.updateRun({
+    threadId: thread.appChatId,
+    runId: 'run-usage',
+    status: 'completed',
+    provider: 'kimi',
+    requestedModel: 'kimi-k3',
+    startedAt: '2026-08-24T05:00:00.000Z',
+    endedAt: '2026-08-24T05:01:00.000Z',
+    usage: { inputTokens: 200_000, outputTokens: 20_000 }
+  })
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+  expect(donor.threads).toEqual([
+    expect.objectContaining({
+      id: thread.appChatId,
+      usage: { availability: 'estimated', tokens: 220_000, confidence: 'estimated' }
+    })
+  ])
+  expect(donor.runs).toEqual([
+    expect.objectContaining({
+      runId: 'run-usage',
+      usage: { availability: 'estimated', tokens: 220_000, confidence: 'estimated' }
+    })
+  ])
+})
+
 it('windows oversized run history by active-first recency without emitting a fatal truncation', () => {
   const profile = mkdtempSync(join(tmpdir(), 'host-profile-run-window-'))
   const workspace = mkdtempSync(join(tmpdir(), 'host-profile-run-window-workspace-'))

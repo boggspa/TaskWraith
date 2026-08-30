@@ -317,8 +317,35 @@ describe('HostNodeKimiProvider', () => {
         }
       }) + '\n'
     )
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tool-command',
+            title: 'Bash',
+            input: { command: 'npm test -- --runInBand' }
+          }
+        }
+      }) + '\n'
+    )
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tool-command',
+            title: 'Bash',
+            status: 'completed',
+            output: '203 tests passed\n7 files passed'
+          }
+        }
+      }) + '\n'
+    )
 
-    await vi.waitFor(() => events.filter((event) => event.type === 'run.tool').length === 2)
+    await vi.waitFor(() => events.filter((event) => event.type === 'run.tool').length === 4)
     const toolEvents = events.filter((event) => event.type === 'run.tool')
     expect(toolEvents).toEqual([
       expect.objectContaining({
@@ -326,13 +353,38 @@ describe('HostNodeKimiProvider', () => {
         toolName: 'Edit',
         phase: 'started',
         file: 'src/example.ts',
-        additions: 3,
-        deletions: 2
+        additions: 2,
+        deletions: 1,
+        diff: {
+          hunks: [
+            {
+              header: '@@ -1,2 +1,3 @@',
+              lines: [
+                { type: 'context', text: 'one', oldLine: 1, newLine: 1 },
+                { type: 'del', text: 'two', oldLine: 2 },
+                { type: 'add', text: 'three', newLine: 2 },
+                { type: 'add', text: 'four', newLine: 3 }
+              ]
+            }
+          ]
+        }
       }),
       expect.objectContaining({
         toolId: 'tool-edit',
         phase: 'finished',
         status: 'success'
+      }),
+      expect.objectContaining({
+        toolId: 'tool-command',
+        toolName: 'Bash',
+        phase: 'started',
+        command: { command: 'npm test -- --runInBand' }
+      }),
+      expect.objectContaining({
+        toolId: 'tool-command',
+        phase: 'finished',
+        status: 'success',
+        command: { output: '203 tests passed\n7 files passed' }
       })
     ])
 

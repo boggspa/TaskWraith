@@ -27,6 +27,8 @@ import {
   hostProviderOffers
 } from '../host-shared/HostProviderCatalog'
 import { kimiExplicitCliModelAlias } from '../shared/kimiModels'
+import { buildHostToolPresentation } from '../shared/hostToolPresentation'
+import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../main/kimi/KimiAcpUsage'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -98,6 +100,7 @@ function safeOperationId(value: string): boolean {
     value.length > 0 &&
     value.length <= 512 &&
     value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- run ids and tool ids reject C0 controls.
     !/[\u0000-\u001f\u007f]/.test(value)
   )
 }
@@ -136,16 +139,6 @@ function firstString(record: Record<string, unknown> | null, keys: readonly stri
   return ''
 }
 
-function nonNegativeCount(value: unknown): number | undefined {
-  const numeric =
-    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
-  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : undefined
-}
-
-function lineCount(value: string): number {
-  return value ? value.split(/\r?\n/).length : 0
-}
-
 function toolInput(
   update: Record<string, unknown>,
   tool: Record<string, unknown>
@@ -170,49 +163,10 @@ function toolInput(
   return {}
 }
 
-function toolFileAndDiff(
-  name: string,
-  input: Record<string, unknown>
-): { file?: string; additions?: number; deletions?: number } {
-  const file = firstString(input, [
-    'file_path',
-    'filePath',
-    'path',
-    'target',
-    'target_file',
-    'target_file_path'
-  ])
-  const additions = nonNegativeCount(
-    input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
+function toolOutput(update: Record<string, unknown>, tool: Record<string, unknown>): unknown {
+  return (
+    tool.output ?? tool.result ?? tool.content ?? update.output ?? update.result ?? update.content
   )
-  const deletions = nonNegativeCount(
-    input.deletions ??
-      input.deleted ??
-      input.linesDeleted ??
-      input.linesRemoved ??
-      input.lines_removed ??
-      input.removals
-  )
-  const oldText = firstString(input, ['old_string', 'oldString', 'oldText', 'old_text'])
-  const newText = firstString(input, ['new_string', 'newString', 'newText', 'new_text'])
-  const content = firstString(input, ['content', 'text', 'new_content', 'newContent'])
-  const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-  return {
-    ...(file ? { file } : {}),
-    ...(additions !== undefined || deletions !== undefined
-      ? {
-          ...(additions !== undefined ? { additions } : {}),
-          ...(deletions !== undefined ? { deletions } : {})
-        }
-      : oldText || newText
-        ? {
-            additions: lineCount(newText),
-            deletions: lineCount(oldText)
-          }
-        : content && /(?:write|create|replace|edit|patch)/.test(normalized)
-          ? { additions: lineCount(content), deletions: 0 }
-          : {})
-  }
 }
 
 function providerModelIsSelectable(
@@ -423,6 +377,8 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       let sessionRpcId = 2
       let resumeAttempted = false
       let promptText = request.prompt
+      let kimiInputChars = request.prompt.length
+      let kimiOutputChars = 0
       const resumeFallbackPrompt =
         request.resumeFallbackPrompt && validateHostProviderRunPrompt(request.resumeFallbackPrompt)
           ? request.resumeFallbackPrompt
@@ -458,11 +414,21 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
             createdAt: timestamp()
           })
         }
+        const usageStats = estimateKimiAcpTokenUsage({
+          inputChars: kimiInputChars,
+          outputChars: kimiOutputChars,
+          model: thread.modelId,
+          durationMs: Date.now() - Date.parse(startedAt)
+        })
         this.runPort.finishRun({
           runId: request.runId,
           status,
           finishedAt: timestamp(),
           ...(sessionId ? { providerSessionId: sessionId } : {}),
+          usage: {
+            inputTokens: usageStats.input_tokens,
+            outputTokens: usageStats.output_tokens
+          },
           warningSummaries: failure ? [failure.slice(0, 300)] : [],
           ...(errorCode ? { errorCode } : {})
         })
@@ -488,7 +454,10 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         sessionRpcId = fallback ? 4 : 2
         resumeAttempted = false
         sessionId = ''
-        if (fallback && resumeFallbackPrompt) promptText = resumeFallbackPrompt
+        if (fallback && resumeFallbackPrompt) {
+          promptText = resumeFallbackPrompt
+          kimiInputChars = promptText.length
+        }
         write(sessionRpcId, 'session/new', {
           cwd: thread.workspace.canonicalPath,
           mcpServers: [],
@@ -507,6 +476,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         const text = normalizeHostProviderRunPresentationText(value)
         if (!text) return
         assistantText += text
+        kimiOutputChars += text.length
         this.runPort.updateRun({ runId: request.runId, phase: 'streaming', updatedAt: timestamp() })
         this.runPort.publishRunEvent(request.target, {
           type: 'run.content',
@@ -529,7 +499,14 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         const toolName =
           firstString(tool, ['name', 'toolName', 'title', 'kind']) ||
           firstString(update, ['toolName', 'title', 'kind'])
-        const details = toolFileAndDiff(toolName, toolInput(update, tool))
+        const input = toolInput(update, tool)
+        const output = toolOutput(update, tool)
+        const details = buildHostToolPresentation({ toolName, input, output })
+        if (phase === 'started') {
+          kimiOutputChars += toolName.length + kimiAcpVisiblePayloadChars(input)
+        } else {
+          kimiInputChars += kimiAcpVisiblePayloadChars(output)
+        }
         this.runPort.publishRunEvent(request.target, {
           type: 'run.tool',
           runId: request.runId,
@@ -539,6 +516,8 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           ...(details.file ? { file: details.file } : {}),
           ...(details.additions !== undefined ? { additions: details.additions } : {}),
           ...(details.deletions !== undefined ? { deletions: details.deletions } : {}),
+          ...(details.diff ? { diff: details.diff } : {}),
+          ...(details.command ? { command: details.command } : {}),
           phase,
           ...(status ? { status } : {}),
           at: timestamp()
