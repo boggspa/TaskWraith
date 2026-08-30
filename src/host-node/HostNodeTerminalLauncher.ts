@@ -45,7 +45,7 @@ export interface HostNodeTerminalLoginHandoff {
 export interface HostNodeProviderTerminalLauncher {
   launchForProvider(
     providerId: string,
-    input: { readonly argv: readonly string[] }
+    input: { readonly argv: readonly string[]; readonly env?: Record<string, string> }
   ): void | Promise<void | HostNodeTerminalLoginHandoff>
 }
 
@@ -55,7 +55,8 @@ const LOGIN_ARGV: Readonly<Record<string, readonly string[]>> = {
   claude: ['auth', 'login'],
   kimi: ['login'],
   cursor: ['login'],
-  ollama: ['login'],
+  ollama: ['signin'],
+  antigravity: [],
   mistral: ['login'],
   muse: ['login'],
   grok: ['login']
@@ -110,7 +111,7 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
   /** Catalogued login launch for any provider with a manual login flow. */
   async launchForProvider(
     providerId: string,
-    input: { readonly argv: readonly string[] }
+    input: { readonly argv: readonly string[]; readonly env?: Record<string, string> }
   ): Promise<HostNodeTerminalLoginHandoff> {
     const argv = validateLoginArgv(providerId, input.argv)
     const binary = argv[0]
@@ -123,7 +124,8 @@ export class HostNodeTerminalLauncher implements HostNodeMuseTerminalLauncher {
     try {
       child = (this.options.spawn ?? nodeSpawn)(binary, argv.slice(1), {
         shell: false,
-        stdio: 'inherit'
+        stdio: 'inherit',
+        ...(input.env ? { env: input.env } : {})
       })
     } catch {
       this.pendingBinaries.delete(binary)

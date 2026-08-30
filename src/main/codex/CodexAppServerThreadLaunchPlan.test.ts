@@ -60,4 +60,24 @@ describe('Codex app-server immutable thread launch plan', () => {
     expect(plan.request.params).not.toHaveProperty('approvalPolicy')
     expect(plan.request.params).not.toHaveProperty('sandbox')
   })
+
+  it('carries the shared Full Access sandbox onto a fresh thread request', () => {
+    const plan = buildCodexAppServerThreadLaunchPlan({
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'high',
+      serviceTier: null,
+      workspacePath: '/workspace',
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      resumableThreadId: null
+    })
+
+    expect(plan.request).toMatchObject({
+      method: 'thread/start',
+      params: {
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access'
+      }
+    })
+  })
 })

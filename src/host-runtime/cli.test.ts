@@ -7,7 +7,8 @@ it('dispatches a parsed production server through an injected factory', async ()
   const factory = vi.fn(() => ({ start, waitForShutdown }))
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
-    factory as never
+    factory as never,
+    { readFullAccessBootstrapSecret: () => null }
   )
   expect(factory).toHaveBeenCalledWith({ profilePath: '/tmp/host-cli-profile' })
   expect(start).toHaveBeenCalledOnce()
@@ -30,7 +31,8 @@ it('passes a terminal launcher only when every standard stream is an interactive
         stdout: { isTTY: true },
         stderr: { isTTY: true }
       },
-      createTerminalLauncher
+      createTerminalLauncher,
+      readFullAccessBootstrapSecret: () => null
     }
   )
 
@@ -56,12 +58,31 @@ it('does not advertise a terminal handoff for background or detached stdio', asy
         stdout: { isTTY: false },
         stderr: { isTTY: true }
       },
-      createTerminalLauncher
+      createTerminalLauncher,
+      readFullAccessBootstrapSecret: () => null
     }
   )
 
   expect(createTerminalLauncher).not.toHaveBeenCalled()
   expect(factory).toHaveBeenCalledWith({ profilePath: '/tmp/host-cli-profile' })
+})
+
+it('forwards an inherited-fd Full Access secret once and zeroes the source buffer', async () => {
+  const source = Buffer.alloc(32, 6)
+  let observed: Buffer | null = null
+  const factory = vi.fn((input: { fullAccessBootstrapSecret?: Buffer }) => {
+    observed = input.fullAccessBootstrapSecret ? Buffer.from(input.fullAccessBootstrapSecret) : null
+    return { start: vi.fn(async () => {}), waitForShutdown: vi.fn(async () => {}) }
+  })
+
+  await runHostProductionCli(
+    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    factory as never,
+    { readFullAccessBootstrapSecret: () => source }
+  )
+
+  expect(observed).toEqual(Buffer.alloc(32, 6))
+  expect(source).toEqual(Buffer.alloc(32, 0))
 })
 
 it('dispatches stop through an injected authenticated shutdown client', async () => {

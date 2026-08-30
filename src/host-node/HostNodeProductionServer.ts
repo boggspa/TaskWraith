@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import type { HostLocalServerOptions } from '../host-runtime/HostLocalServer'
 import { HostLocalServer } from '../host-runtime/HostLocalServer'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
+import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
   assertHostMayOpenProfileWriters,
   writeHostProfileWriterFence
@@ -44,6 +45,10 @@ export interface HostNodeProductionListener {
   stop(): Promise<void>
 }
 
+export interface HostNodePermissionConsentAuthority extends HostPermissionConsentAuthorityPort {
+  dispose(): void
+}
+
 export interface HostNodeProductionSignalTarget {
   once(signal: NodeJS.Signals, listener: () => void): unknown
   removeListener(signal: NodeJS.Signals, listener: () => void): unknown
@@ -72,6 +77,10 @@ export interface HostNodeProductionServerOptions {
     profilePath: string,
     lease: HostNodeProductionLease
   ) => HostSessionHostIdentity
+  readonly createPermissionConsentAuthority?: (
+    profilePath: string,
+    lease: HostNodeProductionLease
+  ) => HostNodePermissionConsentAuthority
   readonly createStore?: (input: {
     profilePath: string
     authority: { assertProfileAuthority(): void }
@@ -120,6 +129,7 @@ export class HostNodeProductionServer {
   private composition: HostStandaloneComposition | null = null
   private listener: HostNodeProductionListener | null = null
   private disposeResources: (() => boolean | Promise<boolean>) | null = null
+  private permissionConsentAuthority: HostNodePermissionConsentAuthority | null = null
   identity: HostSessionHostIdentity | null = null
 
   constructor(options: HostNodeProductionServerOptions) {
@@ -187,6 +197,9 @@ export class HostNodeProductionServer {
       if (this.stopRequested) return
 
       this.identity = this.options.resolveIdentity(this.lease.path, this.lease)
+      this.permissionConsentAuthority = this.options.createPermissionConsentAuthority
+        ? this.options.createPermissionConsentAuthority(this.lease.path, this.lease)
+        : null
       if (usingDefaultAcquire) {
         writeHostProfileWriterFence(this.lease.path, {
           state: 'host-owned',
@@ -227,6 +240,9 @@ export class HostNodeProductionServer {
         profilePath: this.lease.path,
         store,
         events,
+        ...(this.permissionConsentAuthority
+          ? { permissionConsentAuthority: this.permissionConsentAuthority }
+          : {}),
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
         onProjectionDirty: () => projectionDirtyRef.current?.()
       })
@@ -237,7 +253,11 @@ export class HostNodeProductionServer {
         host: this.identity,
         hostCapabilityOffer: capabilities,
         snapshotDonor: () => this.domain!.snapshotDonor(),
-        authorityEvaluator: (command, context) => {
+        authorityEvaluator: async (command, context) => {
+          const prepared = await this.domain!.prepareAuthorityEvaluation?.(context, command)
+          if (prepared === false) {
+            return { decision: 'denied' as const, reason: 'provider_offers_unavailable' }
+          }
           const decision = this.domain!.evaluateAuthority(context, command)
           return decision.decision === 'allow'
             ? { decision: 'allowed', ...(decision.reason ? { reason: decision.reason } : {}) }
@@ -358,6 +378,7 @@ export class HostNodeProductionServer {
         cause: listenerFailure
       })
     }
+    this.permissionConsentAuthority?.dispose()
     if (this.lease && this.lease.release() !== true) {
       throw new Error('Production Host could not prove profile authority release.')
     }
@@ -365,6 +386,7 @@ export class HostNodeProductionServer {
     this.domain = null
     this.composition = null
     this.disposeResources = null
+    this.permissionConsentAuthority = null
     this.lease = null
   }
 

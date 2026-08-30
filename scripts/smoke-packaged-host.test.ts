@@ -31,6 +31,8 @@ describe('packaged production Host smoke', () => {
     expect(smoke).toContain('legacyChatsPath')
     expect(smoke).toContain('must tighten a legacy chats directory to owner-only')
     expect(smoke).toContain('MistralCredentialLane.js')
+    expect(smoke).toContain('conditionalOnlyStatuses')
+    expect(smoke).toContain("status.providerId !== 'antigravity'")
     expect(smoke).not.toContain('exact production main/muse closure')
     expect(smoke).toContain('main provider closure mismatch')
     for (const provider of [

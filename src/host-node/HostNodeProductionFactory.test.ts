@@ -45,7 +45,31 @@ it('creates a production server for a cold profile without touching Desktop stat
   expect(server.phase).toBe('idle')
 })
 
-it('composes all nine live providers on a cold profile', async () => {
+it('keeps Full Access capability off without an exact copied bootstrap secret', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'host-node-factory-consent-'))
+  paths.push(parent)
+  expect(() =>
+    createHostNodeProductionServer({
+      profilePath: join(parent, 'invalid-profile'),
+      fullAccessBootstrapSecret: Buffer.alloc(31)
+    })
+  ).toThrow(/32-byte key/)
+
+  const source = Buffer.alloc(32, 7)
+  const server = createHostNodeProductionServer({
+    profilePath: join(parent, 'valid-profile'),
+    fullAccessBootstrapSecret: source
+  })
+  source.fill(0)
+  expect(server.phase).toBe('idle')
+
+  const defaultOff = createHostNodeProductionServer({
+    profilePath: join(parent, 'default-off-profile')
+  })
+  expect(defaultOff.phase).toBe('idle')
+})
+
+it('composes all static live providers plus guarded AntiGravity on a cold profile', async () => {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-nine-')))
   paths.push(parent)
   const profile = join(parent, 'cold-profile')
@@ -76,19 +100,179 @@ it('composes all nine live providers on a cold profile', async () => {
   expect(client.welcome?.capabilities).not.toContain('workspace-git')
   const statuses = await client.getProviderStatuses()
   const ids = statuses.map((status) => status.providerId).sort()
-  expect(ids).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS].sort())
   expect(ids).toEqual([...hostStandaloneComposedProviderIds()].sort())
-  expect(ids).not.toContain('antigravity')
+  expect(ids).toEqual(expect.arrayContaining([...LIVE_SELECTABLE_PROVIDER_IDS]))
+  expect(ids).toContain('antigravity')
   expect(hostStandaloneAntigravityStatus()).toMatchObject({
     providerId: 'antigravity',
     kind: 'conditional',
-    standaloneHost: 'unavailable',
-    run: 'unavailable'
+    standaloneHost: 'composed',
+    run: 'conditional'
   })
   // Missing binaries are unavailable, never omitted.
   for (const status of statuses) {
     expect(['ready', 'auth_required', 'unavailable', 'degraded']).toContain(status.status)
   }
+  client.close()
+  await server.stop()
+})
+
+it('admits AntiGravity only from existing consent plus a live nonempty agy models proof', async () => {
+  if (process.platform === 'win32') return
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-agy-')))
+  paths.push(parent)
+  const profile = join(parent, 'profile')
+  const bin = join(parent, 'bin')
+  const workspace = join(parent, 'workspace')
+  const runArgs = join(parent, 'agy-run-args')
+  mkdirSync(profile)
+  mkdirSync(bin)
+  mkdirSync(workspace)
+  writeFileSync(
+    join(profile, 'settings.json'),
+    JSON.stringify({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000
+    }),
+    { mode: 0o600 }
+  )
+  const agy = join(bin, 'agy')
+  // @portability-ok: the test returns before creating or executing this POSIX agy fixture on Windows.
+  writeFileSync(
+    agy,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "models" ]; then',
+      '  printf \'%s\\n\' \'[{"id":"gemini-3.7-flash-high"},{"id":"gemini-3.7-flash-medium"},{"id":"gemini-3.7-flash-low"}]\'',
+      '  exit 0',
+      'fi',
+      `printf '%s\\n' "$@" > "${runArgs}"`,
+      "printf '%s\\n' 'standalone agy response'"
+    ].join('\n')
+  )
+  chmodSync(agy, 0o700)
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: { PATH: bin },
+    temporaryParent: parent
+  })
+  await server.start()
+  const client = new HostProjectionClient({
+    userDataPath: profile,
+    client: { clientId: 'agy-client', clientClass: 'test', clientVersion: '1.0' },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ]
+  })
+  await client.connect()
+
+  await expect(client.getProviderStatuses()).resolves.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ providerId: 'antigravity', status: 'ready' })
+    ])
+  )
+  await expect(client.getProviderAuthStatus('antigravity')).resolves.toMatchObject({
+    providerId: 'antigravity',
+    state: 'authenticated'
+  })
+  const offers = await client.getProviderOffers('antigravity')
+  expect(offers.models).toEqual([
+    expect.objectContaining({
+      label: 'Gemini 3.7 Flash',
+      default: true,
+      reasoning: expect.arrayContaining([expect.objectContaining({ reasoningId: 'low' })])
+    })
+  ])
+
+  const make = (
+    name: HostCommand['name'],
+    target: Record<string, string>,
+    arguments_: Record<string, unknown>,
+    id: string
+  ): HostCommand => ({
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: id,
+    idempotencyKey: `key-${id}`,
+    actor: { actorId: 'agy-client', clientId: 'agy-client', clientClass: 'test' },
+    name,
+    target,
+    arguments: arguments_,
+    issuedAt: '2026-08-30T00:00:00.000Z'
+  })
+  const workspaceReceipt = await client.submitCommand(
+    make('workspace.register', {}, { path: workspace }, 'agy-workspace')
+  )
+  const workspaceId =
+    workspaceReceipt.resultRef?.kind === 'workspace' ? workspaceReceipt.resultRef.workspaceId : ''
+  const threadReceipt = await client.submitCommand(
+    make(
+      'thread.create',
+      {},
+      { scope: 'workspace', workspaceId, title: 'AntiGravity integration' },
+      'agy-thread'
+    )
+  )
+  const threadId =
+    threadReceipt.resultRef?.kind === 'thread' ? threadReceipt.resultRef.threadId : ''
+  await expect(
+    client.submitCommand(
+      make(
+        'thread.configure',
+        { threadId },
+        {
+          providerId: 'antigravity',
+          modelId: offers.models[0].modelId,
+          reasoningId: 'low',
+          postureId: 'plan',
+          offerRevision: offers.offerRevision
+        },
+        'agy-configure'
+      )
+    )
+  ).resolves.toMatchObject({ status: 'succeeded' })
+  await expect(
+    client.submitCommand(
+      make('composer.send', { threadId }, { text: 'Inspect this workspace.' }, 'agy-run')
+    )
+  ).resolves.toMatchObject({ status: 'succeeded', resultSummary: 'run_started' })
+  await vi.waitFor(
+    async () => {
+      const snapshot = await client.getSnapshot()
+      expect(snapshot.snapshot.runs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'agy-run', providerOutcome: 'completed' })
+        ])
+      )
+    },
+    { timeout: 5_000 }
+  )
+  expect(readFileSync(runArgs, 'utf8').split(/\r?\n/)).toEqual(
+    expect.arrayContaining([
+      '--sandbox',
+      '--mode',
+      'plan',
+      '--model',
+      'gemini-3.7-flash-low',
+      '-p',
+      'Inspect this workspace.'
+    ])
+  )
+  await expect(client.getThreadHistory({ threadId, limit: 20 })).resolves.toMatchObject({
+    entries: expect.arrayContaining([
+      expect.objectContaining({ role: 'assistant', text: 'standalone agy response' })
+    ])
+  })
+
   client.close()
   await server.stop()
 })

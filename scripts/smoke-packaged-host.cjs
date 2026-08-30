@@ -344,11 +344,7 @@ async function runProductionRoundTrip(launcher, target) {
     if (statusResponse.frame?.ok !== true || !Array.isArray(statuses)) {
       fail('production Host did not return provider statuses')
     }
-    if (statuses.length !== snapshotProviders.length) {
-      fail(
-        `production Host provider statuses (${statuses.length}) do not match the snapshot inventory (${snapshotProviders.length})`
-      )
-    }
+    const statusIds = new Set()
     for (const status of statuses) {
       if (
         typeof status?.providerId !== 'string' ||
@@ -356,6 +352,24 @@ async function runProductionRoundTrip(launcher, target) {
       ) {
         fail('production Host provider status row is invalid')
       }
+      if (statusIds.has(status.providerId))
+        fail('production Host provider statuses contain duplicates')
+      statusIds.add(status.providerId)
+    }
+    for (const provider of snapshotProviders) {
+      if (typeof provider?.providerId !== 'string' || !statusIds.has(provider.providerId)) {
+        fail('production Host snapshot inventory must have a matching provider status')
+      }
+    }
+    const conditionalOnlyStatuses = statuses.filter(
+      (status) => !snapshotProviders.some((provider) => provider.providerId === status.providerId)
+    )
+    if (
+      conditionalOnlyStatuses.some(
+        (status) => status.providerId !== 'antigravity' || status.status === 'ready'
+      )
+    ) {
+      fail('production Host exposed an unexpected non-selectable provider status')
     }
 
     if (target.platform !== 'win32') {
@@ -477,7 +491,11 @@ async function runProductionRoundTrip(launcher, target) {
     const stopped = await waitForExit(child)
     child = null
     if (stopped.code !== 0)
-      fail(`production Host launcher exited ${String(stopped.code)} during cleanup`)
+      fail(
+        `production Host launcher exited ${String(stopped.code)}` +
+          `${stopped.signal ? ` (${stopped.signal})` : ''} during cleanup` +
+          `${stopped.stderr ? `: ${stopped.stderr}` : ''}`
+      )
     if (fs.existsSync(discoveryPath) || fs.existsSync(tokenPath) || fs.existsSync(leasePath)) {
       fail('production Host did not clean discovery/token/lease on shutdown')
     }
@@ -610,9 +628,9 @@ async function waitForExit(child) {
       () => reject(new Error('production Host launcher did not exit')),
       timeoutMs
     )
-    child.once('exit', (code) => {
+    child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      resolve({ code, stderr })
+      resolve({ code, signal, stderr })
     })
   })
 }

@@ -70,13 +70,6 @@ const MUSE_REASONING = [
 
 const POSTURES: readonly HostPermissionPostureOffer[] = [
   {
-    postureId: 'read_only',
-    label: 'Read only',
-    available: true,
-    requiresExplicitConsent: false,
-    ceiling: 'read'
-  },
-  {
     postureId: 'plan',
     label: 'Plan',
     available: true,
@@ -84,20 +77,61 @@ const POSTURES: readonly HostPermissionPostureOffer[] = [
     ceiling: 'read'
   },
   {
+    postureId: 'read_only',
+    label: 'Ask',
+    available: true,
+    requiresExplicitConsent: false,
+    ceiling: 'read'
+  },
+  {
     postureId: 'default',
-    label: 'Default',
+    label: 'Accept Edits',
     available: true,
     requiresExplicitConsent: false,
     ceiling: 'workspace_write'
   },
   {
     postureId: 'workspace_write',
-    label: 'Workspace write',
+    label: 'Full WS Access',
     available: true,
     requiresExplicitConsent: true,
     ceiling: 'workspace_write'
+  },
+  {
+    postureId: 'full_access',
+    label: 'Full Access (YOLO)',
+    available: false,
+    requiresExplicitConsent: true,
+    ceiling: 'full_access',
+    detail:
+      'Unavailable in the standalone Host because no provider transport proves an unrestricted Full Access boundary.'
   }
 ]
+
+const FULL_ACCESS_TRANSPORT_DETAIL: Readonly<Record<string, string>> = {
+  codex:
+    'Codex Full Access uses the app-server danger-full-access sandbox with provider approvals disabled after signed consent verification.',
+  claude:
+    'Claude Full Access uses the CLI dangerous permission bypass only after signed consent verification.'
+}
+
+export interface HostProviderCatalogCapabilities {
+  /** True only while this Host owns process-local proof, signing, and live-grant authority. */
+  readonly fullAccessConsentAuthority?: boolean
+}
+
+function posturesForProvider(
+  providerId: string,
+  capabilities: HostProviderCatalogCapabilities
+): readonly HostPermissionPostureOffer[] {
+  return POSTURES.map((posture) => {
+    if (posture.postureId !== 'full_access') return { ...posture }
+    const detail = FULL_ACCESS_TRANSPORT_DETAIL[providerId]
+    return detail && capabilities.fullAccessConsentAuthority === true
+      ? { ...posture, available: true, detail }
+      : { ...posture }
+  })
+}
 
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
   off: 'Off',
@@ -174,9 +208,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       shortCode: 'CODEX',
       models: [
         model('gpt-5.6-sol', 'GPT-5.6-Sol'),
-        model('gpt-5.6-terra', 'GPT-5.6-Terra'),
+        model('gpt-5.6-terra', 'GPT-5.6-Terra', STANDARD_REASONING, true),
         model('gpt-5.6-luna', 'GPT-5.6-Luna'),
-        model('gpt-5.5', 'GPT-5.5', STANDARD_REASONING, true),
+        model('gpt-5.5', 'GPT-5.5'),
         model('gpt-5.4', 'GPT-5.4'),
         model('gpt-5.4-mini', 'GPT-5.4 Mini'),
         model('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark')
@@ -187,9 +221,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Claude',
       shortCode: 'CL',
       models: [
-        model('claude-opus-5', 'Opus 5', CLAUDE_REASONING),
+        model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
         model('claude-fable-5', 'Fable 5', CLAUDE_REASONING),
-        model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING, true),
+        model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),
         model('claude-sonnet-4-6', 'Sonnet 4.6 Legacy', CLAUDE_REASONING),
         model('claude-opus-4-8-1m', 'Opus 4.8 1M Legacy', CLAUDE_REASONING),
         model('claude-opus-4-7-1m', 'Opus 4.7 1M Legacy', CLAUDE_REASONING),
@@ -283,8 +317,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Pi',
       shortCode: 'PI',
       models: [
-        piModel('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro', true),
-        piModel('deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash'),
+        piModel('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro'),
+        piModel('deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash', true),
         piModel('zai/glm-5.2', 'GLM-5.2'),
         piModel('zai/glm-5.1', 'GLM-5.1'),
         piModel('zai/glm-4.7', 'GLM-4.7'),
@@ -329,8 +363,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Mistral',
       shortCode: 'MISTRAL',
       models: [
-        model('devstral-small', 'Devstral Small', STANDARD_REASONING, true),
-        model('mistral-medium-3.5', 'Mistral Medium 3.5', STANDARD_REASONING),
+        model('devstral-small', 'Devstral Small'),
+        model('mistral-medium-3.5', 'Mistral Medium 3.5', STANDARD_REASONING, true),
         model('mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
         model('zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
         model('codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),
@@ -382,7 +416,10 @@ function hashEntry(entry: Omit<HostProviderCatalogEntry, 'providerId'>): string 
 }
 
 /** Full static catalog entry for one live provider. */
-export function hostProviderCatalogEntry(providerId: string): HostProviderCatalogEntry | null {
+export function hostProviderCatalogEntry(
+  providerId: string,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderCatalogEntry | null {
   const entry = CATALOG[providerId]
   if (!entry) return null
   const activeModels =
@@ -400,7 +437,7 @@ export function hostProviderCatalogEntry(providerId: string): HostProviderCatalo
       ...(m.default === true ? { default: true } : {}),
       reasoning: m.reasoning.map((r) => ({ ...r }))
     })),
-    postures: POSTURES.map((p) => ({ ...p })),
+    postures: posturesForProvider(providerId, capabilities),
     authFlows: entry.authFlows.map((f) => ({ ...f }))
   }
 }
@@ -408,9 +445,10 @@ export function hostProviderCatalogEntry(providerId: string): HostProviderCatalo
 /** Offers projection for one provider, derived from the static catalog. */
 export function hostProviderOffers(
   providerId: string,
-  available: boolean
+  available: boolean,
+  capabilities: HostProviderCatalogCapabilities = {}
 ): HostProviderOffersProjection | null {
-  const entry = hostProviderCatalogEntry(providerId)
+  const entry = hostProviderCatalogEntry(providerId, capabilities)
   if (!entry) return null
   return {
     providerId,
@@ -427,6 +465,50 @@ export function hostProviderOffers(
       }))
     })),
     postures: entry.postures.map((p) => ({ ...p, available: p.available && available }))
+  }
+}
+
+/** Overlay Host-owned capability onto the exact registry offer without rebuilding it. */
+export function projectHostProviderOfferCapabilities(
+  base: HostProviderOffersProjection,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection {
+  const detail = FULL_ACCESS_TRANSPORT_DETAIL[base.providerId]
+  const baseAvailable =
+    base.models.some((model) => model.available) &&
+    base.postures.some((posture) => posture.postureId !== 'full_access' && posture.available)
+  const fullAccessAvailable = Boolean(
+    detail && baseAvailable && capabilities.fullAccessConsentAuthority === true
+  )
+  const currentFullAccess = base.postures.find((posture) => posture.postureId === 'full_access')
+  if (!currentFullAccess || currentFullAccess.available === fullAccessAvailable) {
+    return {
+      ...base,
+      models: base.models.map((model) => ({
+        ...model,
+        reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+      })),
+      postures: base.postures.map((posture) => ({ ...posture }))
+    }
+  }
+  return {
+    ...base,
+    offerRevision: createHash('sha256')
+      .update(`${base.offerRevision}:full-access-consent-authority:${fullAccessAvailable}`)
+      .digest('hex'),
+    models: base.models.map((model) => ({
+      ...model,
+      reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+    })),
+    postures: base.postures.map((posture) =>
+      posture.postureId === 'full_access'
+        ? {
+            ...posture,
+            available: fullAccessAvailable,
+            ...(detail ? { detail } : {})
+          }
+        : { ...posture }
+    )
   }
 }
 

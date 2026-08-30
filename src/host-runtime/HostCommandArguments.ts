@@ -278,13 +278,36 @@ function validateComposerSend(command: HostCommand): HostDecodeResult<CanonicalP
 
 function validateThreadOnlyEmptyArgs(
   command: HostCommand,
-  label: 'run.cancel' | 'thread.select'
+  label: 'thread.select'
 ): HostDecodeResult<CanonicalParts> {
   const target = exactStringTarget(command.target, 'threadId', label)
   if (!target.ok) return target
   const args = emptyArguments(command.arguments, label)
   if (!args.ok) return args
   return { ok: true, value: { target: target.value, arguments: args.value } }
+}
+
+function validateRunCancel(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'threadId', 'run.cancel')
+  if (!target.ok) return target
+  const keys = Object.keys(command.arguments)
+  if (keys.length === 0) {
+    // Legacy clients remain decodable; new TUI commands always bind exact work.
+    return { ok: true, value: { target: target.value, arguments: {} } }
+  }
+  if (keys.length !== 1 || keys[0] !== 'expectedWorkId') {
+    return fail('run.cancel arguments must be empty or exactly { expectedWorkId }')
+  }
+  if (!isNonEmptyString(command.arguments.expectedWorkId, HOST_PROTOCOL_MAX_ID)) {
+    return fail('run.cancel expectedWorkId is required and bounded')
+  }
+  return {
+    ok: true,
+    value: {
+      target: target.value,
+      arguments: { expectedWorkId: command.arguments.expectedWorkId }
+    }
+  }
 }
 
 function validateEnsembleSeatToggle(command: HostCommand): HostDecodeResult<CanonicalParts> {
@@ -628,7 +651,8 @@ function validateThreadConfigure(command: HostCommand): HostDecodeResult<Canonic
     'providerId',
     'reasoningId',
     'title',
-    'postureConsent'
+    'postureConsent',
+    'postureConsentProof'
   ]
   if (
     keys.some((key) => !allowed.includes(key)) ||
@@ -650,6 +674,19 @@ function validateThreadConfigure(command: HostCommand): HostDecodeResult<Canonic
   if (args.postureConsent !== undefined && args.postureConsent !== true) {
     return fail('thread.configure postureConsent must be true when present')
   }
+  if (
+    args.postureConsentProof !== undefined &&
+    (typeof args.postureConsentProof !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(args.postureConsentProof))
+  ) {
+    return fail('thread.configure postureConsentProof must be a SHA-256 HMAC')
+  }
+  if (
+    args.postureConsentProof !== undefined &&
+    (args.postureId !== 'full_access' || args.postureConsent !== true)
+  ) {
+    return fail('thread.configure postureConsentProof requires Full Access consent')
+  }
   const output: Record<string, unknown> = {
     providerId: args.providerId,
     modelId: args.modelId,
@@ -659,6 +696,7 @@ function validateThreadConfigure(command: HostCommand): HostDecodeResult<Canonic
   if (args.reasoningId !== undefined) output.reasoningId = args.reasoningId
   if (args.title !== undefined) output.title = args.title
   if (args.postureConsent === true) output.postureConsent = true
+  if (args.postureConsentProof !== undefined) output.postureConsentProof = args.postureConsentProof
   return { ok: true, value: { target: target.value, arguments: output } }
 }
 
@@ -720,7 +758,7 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'deltas.since': validateDeltasSince,
   'receipt.lookup': validateReceiptLookup,
   'composer.send': validateComposerSend,
-  'run.cancel': (command) => validateThreadOnlyEmptyArgs(command, 'run.cancel'),
+  'run.cancel': validateRunCancel,
   'question.answer': validateQuestionAnswer,
   'approval.decide': validateApprovalDecide,
   'ensemble.seat.toggle': validateEnsembleSeatToggle,

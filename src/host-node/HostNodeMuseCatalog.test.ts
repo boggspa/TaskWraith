@@ -14,11 +14,24 @@ it('offers Muse Spark 1.2 with the exact bounded reasoning and posture catalog',
     HOST_NODE_MUSE_REASONING
   )
   expect(offers.postures.map((posture) => posture.postureId)).toEqual([
-    'read_only',
     'plan',
+    'read_only',
     'default',
-    'workspace_write'
+    'workspace_write',
+    'full_access'
   ])
+  expect(offers.postures.map((posture) => posture.label)).toEqual([
+    'Plan',
+    'Ask',
+    'Accept Edits',
+    'Full WS Access',
+    'Full Access (YOLO)'
+  ])
+  expect(offers.postures.at(-1)).toMatchObject({
+    available: false,
+    requiresExplicitConsent: true,
+    ceiling: 'full_access'
+  })
   expect(hostNodeMuseInventory(true)[0]).toMatchObject({ providerId: 'muse', available: true })
   expect(HOST_NODE_MUSE_MODEL_ID).toBe(MUSE_DEFAULT_MODEL)
   expect(HOST_NODE_MUSE_REASONING).toEqual(MUSE_REASONING_EFFORTS)

@@ -6,7 +6,8 @@ import {
   hostProviderCatalogEntry,
   hostProviderCatalogIds,
   hostProviderOffers,
-  hostProviderStatus
+  hostProviderStatus,
+  projectHostProviderOfferCapabilities
 } from './HostProviderCatalog'
 
 describe('derived reasoning offers', () => {
@@ -72,7 +73,13 @@ describe('HostProviderCatalog', () => {
       expect(entry).not.toBeNull()
       expect(entry!.providerId).toBe(id)
       expect(entry!.models.length).toBeGreaterThan(0)
-      expect(entry!.postures.length).toBe(4)
+      expect(entry!.postures.map((posture) => posture.label)).toEqual([
+        'Plan',
+        'Ask',
+        'Accept Edits',
+        'Full WS Access',
+        'Full Access (YOLO)'
+      ])
     }
   })
 
@@ -103,13 +110,83 @@ describe('HostProviderCatalog', () => {
     expect(muse!.models[0].default).toBe(true)
     expect(muse!.models[0].available).toBe(true)
     expect(muse!.models[0].reasoning.length).toBe(6)
-    expect(muse!.postures.every((p) => p.available)).toBe(true)
+    expect(muse!.postures.slice(0, 4).every((p) => p.available)).toBe(true)
+    expect(muse!.postures[4]).toMatchObject({
+      postureId: 'full_access',
+      available: false,
+      requiresExplicitConsent: true,
+      ceiling: 'full_access'
+    })
 
     const offline = hostProviderOffers('muse', false)
     expect(offline).not.toBeNull()
     expect(offline!.models[0].available).toBe(false)
     expect(offline!.models[0].reasoning.every((r) => !r.available)).toBe(true)
     expect(offline!.postures.every((p) => !p.available)).toBe(true)
+  })
+
+  it('flags the requested default model for each provider without fabricating availability', () => {
+    expect(hostProviderCatalogEntry('codex')?.models.find((model) => model.default)?.modelId).toBe(
+      'gpt-5.6-terra'
+    )
+    expect(hostProviderCatalogEntry('claude')?.models.find((model) => model.default)?.modelId).toBe(
+      'claude-opus-5'
+    )
+    expect(
+      hostProviderCatalogEntry('mistral')?.models.find((model) => model.default)?.modelId
+    ).toBe('mistral-medium-3.5')
+    expect(hostProviderCatalogEntry('pi')?.models.find((model) => model.default)?.modelId).toBe(
+      'deepseek/deepseek-v4-flash'
+    )
+  })
+
+  it('offers Full Access only for transports with an exact verified mapping', () => {
+    for (const providerId of hostProviderCatalogIds()) {
+      const withoutAuthority = hostProviderCatalogEntry(providerId)?.postures.find(
+        (posture) => posture.postureId === 'full_access'
+      )
+      expect(withoutAuthority?.available).toBe(false)
+      const fullAccess = hostProviderCatalogEntry(providerId, {
+        fullAccessConsentAuthority: true
+      })?.postures.find((posture) => posture.postureId === 'full_access')
+      expect(fullAccess).toMatchObject({
+        label: 'Full Access (YOLO)',
+        requiresExplicitConsent: true,
+        ceiling: 'full_access',
+        available: providerId === 'codex' || providerId === 'claude'
+      })
+    }
+  })
+
+  it('overlays consent capability onto the exact dynamic offer and revision', () => {
+    const base = hostProviderOffers('codex', true)!
+    const dynamic = {
+      ...base,
+      offerRevision: 'dynamic-runtime-revision',
+      models: [
+        ...base.models,
+        { modelId: 'runtime-model', label: 'Runtime model', available: true, reasoning: [] }
+      ]
+    }
+    const disabled = projectHostProviderOfferCapabilities(dynamic)
+    expect(disabled.offerRevision).toBe('dynamic-runtime-revision')
+    expect(disabled.models).toEqual(dynamic.models)
+    expect(
+      disabled.postures.find((posture) => posture.postureId === 'full_access')?.available
+    ).toBe(false)
+
+    const enabled = projectHostProviderOfferCapabilities(dynamic, {
+      fullAccessConsentAuthority: true
+    })
+    expect(enabled.models).toEqual(dynamic.models)
+    expect(enabled.postures.filter((posture) => posture.postureId !== 'full_access')).toEqual(
+      dynamic.postures.filter((posture) => posture.postureId !== 'full_access')
+    )
+    expect(enabled.offerRevision).not.toBe(dynamic.offerRevision)
+    expect(enabled.postures.find((posture) => posture.postureId === 'full_access')).toMatchObject({
+      available: true,
+      ceiling: 'full_access'
+    })
   })
 
   it('matches HostNodeMuseCatalog for Muse', () => {

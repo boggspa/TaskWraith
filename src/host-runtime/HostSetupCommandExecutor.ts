@@ -10,11 +10,14 @@
 import type { HostCommand, HostResultRef } from '../shared/hostProtocol'
 import type {
   HostProviderAuthFlowProjection,
-  HostProviderOffersProjection
+  HostProviderOffersProjection,
+  HostPermissionPostureOffer
 } from '../shared/hostSetupProtocol'
 import { validateHostCommandArguments } from './HostCommandArguments'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
+import { fingerprintHostCommand } from './HostCommandFingerprint'
 import { isExactHostActorIdentity, type HostAuthorityCallContext } from './HostAuthority'
+import type { HostPermissionConsentRequest } from './HostPermissionConsent'
 import { isHostSetupCommand } from './HostSetupCommand'
 
 export interface HostSetupWorkspacePort {
@@ -41,6 +44,9 @@ export interface HostSetupThreadPort {
     readonly postureId?: string
     readonly offerRevision?: string
     readonly postureConsent?: true
+    readonly postureConsentProof?: string
+    /** Host-derived authenticated command binding; never accepted from wire arguments. */
+    readonly postureConsentProvenance?: HostPermissionConsentRequest
     readonly title?: string
   }): { readonly threadId: string } | Promise<{ readonly threadId: string }>
   archive(input: {
@@ -171,7 +177,7 @@ export class HostSetupCommandExecutor {
         case 'thread.create':
           return await this.createThread(command)
         case 'thread.configure':
-          return await this.configureThread(command)
+          return await this.configureThread(command, context)
         case 'thread.archive':
           return await this.archiveThread(command)
         case 'provider.auth.begin':
@@ -222,13 +228,52 @@ export class HostSetupCommandExecutor {
     return succeeded({ kind: 'thread', threadId: result.threadId })
   }
 
-  private async configureThread(command: HostCommand): Promise<HostCommandExecutionResult> {
+  private async configureThread(
+    command: HostCommand,
+    context: HostAuthorityCallContext
+  ): Promise<HostCommandExecutionResult> {
     const threadId = command.target.threadId
     const providerId = command.arguments.providerId
     const isSelection = typeof providerId === 'string'
+    let selectedPosture: HostPermissionPostureOffer | undefined
     if (isSelection) {
-      if (!isSafeResultId(providerId) || !(await this.selectionIsCurrent(providerId, command))) {
+      const selection = isSafeResultId(providerId)
+        ? await this.currentSelection(providerId, command)
+        : null
+      if (!selection) {
         return failed('setup_stale_offer')
+      }
+      selectedPosture = selection.posture
+    }
+    let postureConsent: true | undefined
+    let postureConsentProvenance: HostPermissionConsentRequest | undefined
+    if (selectedPosture?.requiresExplicitConsent) {
+      if (command.arguments.postureConsent !== true) {
+        throw new HostSetupConsentRequiredError()
+      }
+      if (
+        selectedPosture.postureId !== 'workspace_write' &&
+        selectedPosture.postureId !== 'full_access'
+      ) {
+        throw new HostSetupConsentRequiredError()
+      }
+      if (
+        selectedPosture.postureId === 'full_access' &&
+        typeof command.arguments.postureConsentProof !== 'string'
+      ) {
+        throw new HostSetupConsentRequiredError()
+      }
+      postureConsent = true
+      postureConsentProvenance = {
+        commandId: command.commandId,
+        commandFingerprint: fingerprintHostCommand(command).fingerprint,
+        actor: { ...context.actor },
+        threadId,
+        providerId: providerId as string,
+        modelId: command.arguments.modelId as string,
+        postureId: selectedPosture.postureId,
+        offerRevision: command.arguments.offerRevision as string,
+        issuedAt: command.issuedAt
       }
     }
     const result = await this.ports.thread.configure({
@@ -252,7 +297,11 @@ export class HostSetupCommandExecutor {
       ...(typeof command.arguments.offerRevision === 'string'
         ? { offerRevision: command.arguments.offerRevision }
         : {}),
-      ...(command.arguments.postureConsent === true ? { postureConsent: true as const } : {}),
+      ...(postureConsent ? { postureConsent } : {}),
+      ...(typeof command.arguments.postureConsentProof === 'string'
+        ? { postureConsentProof: command.arguments.postureConsentProof }
+        : {}),
+      ...(postureConsentProvenance ? { postureConsentProvenance } : {}),
       ...(typeof command.arguments.title === 'string' ? { title: command.arguments.title } : {})
     })
     if (!isSafeResultId(result?.threadId) || result.threadId !== threadId) {
@@ -324,14 +373,17 @@ export class HostSetupCommandExecutor {
     })
   }
 
-  private async selectionIsCurrent(providerId: string, command: HostCommand): Promise<boolean> {
+  private async currentSelection(
+    providerId: string,
+    command: HostCommand
+  ): Promise<{ readonly posture: HostPermissionPostureOffer } | null> {
     const offers = await this.ports.currentOffers.read(providerId)
     if (
       !offers ||
       offers.providerId !== providerId ||
       offers.offerRevision !== command.arguments.offerRevision
     ) {
-      return false
+      return null
     }
     const modelId = command.arguments.modelId
     const reasoningId = command.arguments.reasoningId
@@ -340,22 +392,19 @@ export class HostSetupCommandExecutor {
       typeof modelId === 'string'
         ? offers.models.find((item) => item.modelId === modelId && item.available)
         : undefined
-    if (typeof modelId === 'string' && !model) return false
+    if (typeof modelId === 'string' && !model) return null
     if (
       typeof reasoningId === 'string' &&
       (!model ||
         !model.reasoning.some((item) => item.reasoningId === reasoningId && item.available))
     ) {
-      return false
+      return null
     }
-    if (typeof postureId === 'string') {
-      const posture = offers.postures.find((item) => item.postureId === postureId && item.available)
-      if (!posture) return false
-      if (posture.requiresExplicitConsent && command.arguments.postureConsent !== true) {
-        throw new HostSetupConsentRequiredError()
-      }
-    }
-    return true
+    const posture =
+      typeof postureId === 'string'
+        ? offers.postures.find((item) => item.postureId === postureId && item.available)
+        : undefined
+    return posture ? { posture } : null
   }
 
   private async flowIsCurrent(providerId: string, flowId: string): Promise<boolean> {

@@ -7,7 +7,13 @@
  * composed set exactly matches the live static set before the listener opens.
  */
 
-import { LIVE_SELECTABLE_PROVIDER_IDS, isLiveSelectableProvider } from '../shared/retiredProviders'
+import { createHash } from 'node:crypto'
+
+import {
+  ANTIGRAVITY_PROVIDER_ID,
+  LIVE_SELECTABLE_PROVIDER_IDS,
+  isLiveSelectableProvider
+} from '../shared/retiredProviders'
 import type { HostProviderModelProjection } from '../shared/hostProtocol'
 import type {
   HostProviderAuthFlowProjection,
@@ -26,6 +32,7 @@ export interface IHostNodeProviderRegistry {
   hasProvider(providerId: string): boolean
   getInstance(providerId: string): HostNodeProviderInstance | undefined
   getOffers(providerId: string): HostProviderOffersProjection | undefined
+  refreshOffers(providerId: string): Promise<HostProviderOffersProjection | undefined>
   providerStatuses(): Promise<readonly HostProviderStatusProjection[]>
   providerAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection | null>
   providerAuthFlows(providerId: string): Promise<readonly HostProviderAuthFlowProjection[] | null>
@@ -64,7 +71,10 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
     let approvals = false
     let questions = false
     for (const factory of options.providers) {
-      if (!isLiveSelectableProvider(factory.providerId)) {
+      const conditionallyAdmitted =
+        factory.providerId === ANTIGRAVITY_PROVIDER_ID &&
+        factory.conditionalAdmission === 'antigravity-live-guarded'
+      if (!isLiveSelectableProvider(factory.providerId) && !conditionallyAdmitted) {
         throw new Error(
           `HostNodeProviderRegistry rejected non-live provider: ${factory.providerId}`
         )
@@ -103,12 +113,14 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
   }
 
   providerInventory(): readonly HostProviderModelProjection[] {
-    return this.providerIds.map((providerId) => {
+    const inventory: HostProviderModelProjection[] = []
+    for (const providerId of this.providerIds) {
       const factory = this.factories.get(providerId)!
       const offers = this.offers.get(providerId)!
       const defaultModel = offers.models.find((model) => model.default && model.available)
-      const availableModel = offers.models.find((model) => model.available) ?? defaultModel
-      return {
+      const availableModel = defaultModel ?? offers.models.find((model) => model.available)
+      if (factory.conditionalAdmission && !availableModel) continue
+      inventory.push({
         providerId,
         displayProvider: factory.displayProvider,
         shortCode: factory.shortCode,
@@ -116,8 +128,9 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
         ...(availableModel
           ? { modelId: availableModel.modelId, modelLabel: availableModel.label }
           : {})
-      }
-    })
+      })
+    }
+    return inventory
   }
 
   hasProvider(providerId: string): boolean {
@@ -132,9 +145,37 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
     return this.offers.get(providerId)
   }
 
+  async refreshOffers(providerId: string): Promise<HostProviderOffersProjection | undefined> {
+    const instance = this.providers.get(providerId)
+    const previous = this.offers.get(providerId)
+    if (!instance || !previous || !instance.getOffers) return previous
+    try {
+      const current = await instance.getOffers()
+      if (current.providerId !== providerId) {
+        throw new Error('Dynamic provider offers changed provider identity')
+      }
+      this.offers.set(providerId, current)
+      return current
+    } catch {
+      const unavailable: HostProviderOffersProjection = {
+        providerId,
+        offerRevision: createHash('sha256')
+          .update(`${previous.offerRevision}:dynamic-unavailable`)
+          .digest('hex'),
+        models: [],
+        postures: previous.postures.map((posture) => ({ ...posture, available: false }))
+      }
+      this.offers.set(providerId, unavailable)
+      return unavailable
+    }
+  }
+
   async providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {
     const statuses = await Promise.all(
-      [...this.providers.values()].map((instance) => instance.getStatus())
+      [...this.providers.values()].map(async (instance) => {
+        await this.refreshOffers(instance.providerId)
+        return instance.getStatus()
+      })
     )
     return statuses
   }
@@ -142,6 +183,7 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
   async providerAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection | null> {
     const instance = this.providers.get(providerId)
     if (!instance) return null
+    await this.refreshOffers(providerId)
     return instance.getAuthStatus()
   }
 
@@ -150,6 +192,7 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
   ): Promise<readonly HostProviderAuthFlowProjection[] | null> {
     const instance = this.providers.get(providerId)
     if (!instance) return null
+    await this.refreshOffers(providerId)
     return instance.getAuthFlows()
   }
 

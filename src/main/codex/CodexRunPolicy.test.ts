@@ -1,12 +1,13 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, parse, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   codexGitMetadataRootsForWorkspace,
   codexNativeAutoApprovalFromPosture,
-  codexSandboxForMode
+  codexSandboxForMode,
+  resolveDesktopCodexSandboxControls
 } from './CodexRunPolicy'
 
 const tempRoots: string[] = []
@@ -48,6 +49,85 @@ describe('codexSandboxForMode', () => {
     // leaked onto a plan run the read-only floor must still win — the floor
     // outranks the widening, not the other way round.
     expect(codexSandboxForMode('plan', true)).toBe('read-only')
+  })
+})
+
+describe('resolveDesktopCodexSandboxControls', () => {
+  it('keeps ordinary workspace runs on the exact-mutation read-only boundary', () => {
+    const workspace = makeTempRoot()
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'auto_edit',
+        workspace,
+        scope: 'workspace',
+        fullAccessGranted: false,
+        networkAccess: true
+      })
+    ).toEqual({
+      sandbox: 'read-only',
+      sandboxPolicy: {
+        type: 'readOnly',
+        readableRoots: [resolve(workspace)],
+        networkAccess: false
+      }
+    })
+  })
+
+  it.each(['workspace', 'global'] as const)(
+    'uses the exact Full Access pair for %s scope',
+    (scope) => {
+      expect(
+        resolveDesktopCodexSandboxControls({
+          approvalMode: 'auto_edit',
+          workspace: makeTempRoot(),
+          scope,
+          fullAccessGranted: true,
+          networkAccess: false
+        })
+      ).toEqual({
+        sandbox: 'danger-full-access',
+        sandboxPolicy: { type: 'dangerFullAccess' }
+      })
+    }
+  )
+
+  it('preserves the global host-root and network projection below Full Access', () => {
+    const workspace = makeTempRoot()
+    const hostRoot = parse(resolve(workspace)).root
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'default',
+        workspace,
+        scope: 'global',
+        fullAccessGranted: false,
+        networkAccess: true
+      })
+    ).toEqual({
+      sandbox: 'workspace-write',
+      sandboxPolicy: {
+        type: 'workspaceWrite',
+        readableRoots: [hostRoot],
+        writableRoots: [hostRoot],
+        networkAccess: true,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false
+      }
+    })
+  })
+
+  it('keeps Plan read-only even with a Full Access flag', () => {
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'plan',
+        workspace: makeTempRoot(),
+        scope: 'global',
+        fullAccessGranted: true,
+        networkAccess: true
+      })
+    ).toMatchObject({
+      sandbox: 'read-only',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false }
+    })
   })
 })
 

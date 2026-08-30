@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createHostNodeProviderResourcePort,
@@ -8,12 +11,29 @@ import {
   resolveHostNodeProviderBinary
 } from './HostNodeProviderResources'
 
+const paths: string[] = []
+afterEach(() => {
+  while (paths.length > 0) rmSync(paths.pop()!, { recursive: true, force: true })
+})
+
 describe('HostNodeProviderResources', () => {
   it('resolves binary candidates without AppStore fallback', () => {
     const missing = resolveHostNodeProviderBinary('nonexistent-provider')
     expect(missing.binaryPath).toBeNull()
     expect(missing.source).toBe('missing')
     expect(typeof missing.error).toBe('string')
+  })
+
+  it('resolves the conditional AntiGravity provider to the official agy binary', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'host-provider-resources-'))
+    paths.push(bin)
+    const agy = join(bin, 'agy')
+    writeFileSync(agy, '')
+    chmodSync(agy, 0o700)
+    expect(resolveHostNodeProviderBinary('antigravity', { PATH: bin })).toEqual({
+      binaryPath: agy,
+      source: 'path'
+    })
   })
 
   it('normalizes missing binary to unavailable, never omits the row', () => {

@@ -64,6 +64,18 @@ function open(
   const finishes: unknown[] = []
   const events: unknown[] = []
   const child = new FakeChild()
+  const spawn = vi.fn(
+    (
+      _command: string,
+      _args: string[],
+      _options: {
+        cwd: string
+        env: NodeJS.ProcessEnv
+        shell: false
+        stdio: 'pipe'
+      }
+    ) => child as never
+  )
   const port: HostProviderRunPort = {
     getThread: () => input.configuredThread ?? thread(),
     appendTranscript: (value) => appends.push(value),
@@ -86,7 +98,7 @@ function open(
     },
     ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
-    spawn: () => child as never
+    spawn
   })
   const instance = factory.create({
     runPort: port,
@@ -96,7 +108,7 @@ function open(
         register: () => new Promise<never>(() => {})
       } satisfies HostNodeInteractionResolver)
   } satisfies HostNodeProviderCreateInput)
-  return { factory, instance, child, appends, finishes, events }
+  return { factory, instance, child, spawn, appends, finishes, events }
 }
 
 function frames(child: FakeChild): string[] {
@@ -107,13 +119,13 @@ function frames(child: FakeChild): string[] {
 
 describe('HostNodeCodexProvider', () => {
   it.each([
-    ['read_only', 'plan', 'read-only', 'readOnly'],
-    ['plan', 'plan', 'read-only', 'readOnly'],
-    ['default', 'default', 'workspace-write', 'workspaceWrite'],
-    ['workspace_write', 'default', 'workspace-write', 'workspaceWrite']
+    ['read_only', 'plan', 'on-request', 'read-only', 'readOnly'],
+    ['plan', 'plan', 'never', 'read-only', 'readOnly'],
+    ['default', 'default', 'on-request', 'workspace-write', 'workspaceWrite'],
+    ['workspace_write', 'default', 'never', 'workspace-write', 'workspaceWrite']
   ] as const)(
-    'maps %s posture to the exact Codex sandbox and interactive approval policy',
-    (postureId, approvalMode, sandbox, sandboxPolicyType) => {
+    'maps %s posture to the exact Codex sandbox and approval policy',
+    (postureId, approvalMode, approvalPolicy, sandbox, sandboxPolicyType) => {
       const base = thread()
       const controls = resolveHostNodeCodexPosture({
         workspace: base.workspace,
@@ -127,7 +139,7 @@ describe('HostNodeCodexProvider', () => {
         }
       })
       expect(controls).toMatchObject({
-        approvalPolicy: 'on-request',
+        approvalPolicy,
         sandbox,
         sandboxPolicy: { type: sandboxPolicyType, networkAccess: false }
       })
@@ -143,6 +155,43 @@ describe('HostNodeCodexProvider', () => {
       }
     }
   )
+
+  it('maps only verified Full Access onto Codex danger-full-access with no approvals', () => {
+    const base = thread()
+    const verified = resolveHostNodeCodexPosture({
+      workspace: base.workspace,
+      posture: {
+        postureId: 'full_access',
+        approvalMode: 'auto_edit',
+        requiresExplicitConsent: true,
+        explicitConsentAcknowledged: true,
+        verifiedConsent: {
+          authority: 'host-signed',
+          commandId: 'command-1',
+          commandFingerprint: 'a'.repeat(64),
+          actorClientClass: 'tui',
+          offerRevision: 'revision-1',
+          acknowledgedAt: '2026-08-29T23:30:00.000Z'
+        }
+      }
+    })
+    expect(verified).toEqual({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      sandboxPolicy: { type: 'dangerFullAccess' }
+    })
+    expect(
+      resolveHostNodeCodexPosture({
+        workspace: base.workspace,
+        posture: {
+          postureId: 'full_access',
+          approvalMode: 'auto_edit',
+          requiresExplicitConsent: true,
+          explicitConsentAcknowledged: true
+        }
+      })
+    ).toMatchObject({ approvalPolicy: 'on-request', sandbox: 'read-only' })
+  })
 
   it('keeps a missing binary visible as unavailable and reports a setup failure', async () => {
     const { instance, finishes } = open({ missingBinary: true })
@@ -161,6 +210,27 @@ describe('HostNodeCodexProvider', () => {
     expect(finishes).toEqual([
       expect.objectContaining({ status: 'failed', errorCode: 'provider_setup_unavailable' })
     ])
+  })
+
+  it('never inherits Host elevation material into the Codex child environment', async () => {
+    process.env.TASKWRAITH_FULL_ACCESS_BOOTSTRAP_SECRET = 'host-secret-sentinel'
+    try {
+      const { instance, child, spawn } = open()
+      const running = instance.run({
+        runId: 'run-env',
+        threadId: 'thread-1',
+        prompt: 'hello',
+        target: { id: 'client' }
+      })
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv }
+      expect(options.env?.TASKWRAITH_FULL_ACCESS_BOOTSTRAP_SECRET).toBeUndefined()
+      expect(JSON.stringify(options.env)).not.toContain('host-secret-sentinel')
+      child.emit('close', 1)
+      await expect(running).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      delete process.env.TASKWRAITH_FULL_ACCESS_BOOTSTRAP_SECRET
+    }
   })
 
   it('drives the Node-only app-server handshake and settles on its terminal turn notification', async () => {
@@ -210,6 +280,59 @@ describe('HostNodeCodexProvider', () => {
       expect.arrayContaining([expect.objectContaining({ type: 'run.content' })])
     )
     expect(finishes).toEqual([expect.objectContaining({ status: 'completed' })])
+  })
+
+  it('keeps verified Full Access atomic across thread/start and turn/start wire controls', async () => {
+    const configuredThread = thread({
+      posture: {
+        postureId: 'full_access',
+        approvalMode: 'auto_edit',
+        requiresExplicitConsent: true,
+        explicitConsentAcknowledged: true,
+        verifiedConsent: {
+          authority: 'host-signed',
+          commandId: 'command-1',
+          commandFingerprint: 'a'.repeat(64),
+          actorClientClass: 'tui',
+          offerRevision: 'revision-1',
+          acknowledgedAt: '2026-08-29T23:30:00.000Z'
+        }
+      }
+    })
+    const { instance, child } = open({ configuredThread })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-full',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"thread/start"'))
+    const threadStart = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"thread/start"')) ?? '{}'
+    ) as { params?: Record<string, unknown> }
+    expect(threadStart.params).toMatchObject({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access'
+    })
+
+    child.stdout.write(
+      JSON.stringify({ id: 2, result: { thread: { id: 'native-thread-full' } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"turn/start"'))
+    const turnStart = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"turn/start"')) ?? '{}'
+    ) as { params?: Record<string, unknown> }
+    expect(turnStart.params).toMatchObject({
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'dangerFullAccess' }
+    })
+    child.stdout.write(JSON.stringify({ id: 3, result: { turn: { id: 'turn-full' } } }) + '\n')
+    child.stdout.write(JSON.stringify({ method: 'turn/completed', params: {} }) + '\n')
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('cancels only the exact active Codex run', async () => {

@@ -34,7 +34,8 @@ import {
   SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
   SEAL_EVIDENCE_ARGV_ROUTE_PLACEHOLDER,
   canonicalEvidenceEncode,
-  launchArgsTemplateSha256
+  launchArgsTemplateSha256,
+  sha256HexOfCanonicalJson
 } from './SealEvidenceCore'
 import {
   SealEvidenceVersionProbe,
@@ -138,6 +139,22 @@ function readOnlyPermissions(): EffectiveRunPermissions {
     externalPathGrants: [],
     workspaceGrantServiceIds: [],
     readOnly: true
+  }
+}
+
+function fullAccessPermissions(): EffectiveRunPermissions {
+  const base = readOnlyPermissions()
+  return {
+    ...base,
+    presetId: 'full_access',
+    approvalMode: 'auto_edit',
+    agenticServices: {
+      ...base.agenticServices,
+      shellCommands: 'allow',
+      fileChanges: 'allow'
+    },
+    networkAccess: 'allow',
+    readOnly: false
   }
 }
 
@@ -323,21 +340,7 @@ describe('cursor seal evidence', () => {
 describe('codex seal evidence', () => {
   const policy = {
     approvalPolicyForMode: (approvalMode: string | undefined): 'never' | 'on-request' =>
-      approvalMode === 'plan' ? 'never' : 'on-request',
-    sandboxPolicyForMode: (approvalMode: string | undefined, workspace: string) =>
-      approvalMode === 'plan'
-        ? {
-            type: 'readOnly' as const,
-            readableRoots: [workspace],
-            writableRoots: null,
-            networkAccess: false
-          }
-        : {
-            type: 'workspaceWrite' as const,
-            readableRoots: null,
-            writableRoots: [workspace],
-            networkAccess: false
-          }
+      approvalMode === 'plan' || approvalMode === 'auto_edit' ? 'never' : 'on-request'
   }
 
   it('builds canonical app-server authority and placeholds bridge/user-MCP secrets', async () => {
@@ -430,6 +433,48 @@ describe('codex seal evidence', () => {
         policy
       })
     ).rejects.toThrow(/does not match the app-server MCP configuration/i)
+  })
+
+  it('seals the atomic Full Access thread and turn sandbox pair', async () => {
+    const binary = fakeBinary('codex-full-access')
+    const evidence = await buildCodexSealEvidence(deps(), {
+      model: 'gpt-5.6-terra',
+      promptEnvelope: PROMPT_ENVELOPE,
+      session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
+      processLaunchPlan: codexProcessLaunchPlan(
+        binary,
+        { CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
+        null
+      ),
+      workspacePath: WORKSPACE,
+      approvalMode: 'auto_edit',
+      effectivePermissions: fullAccessPermissions(),
+      reasoningEffort: 'high',
+      serviceTier: null,
+      settings: { agenticServices: { networkAccess: 'allow' } } as unknown as AppSettings,
+      codexMcpConfig: null,
+      taskWraithMcpAdvertised: false,
+      taskWraithMcpProfileId: null,
+      capabilityContract: {},
+      userMcpConfiguration: {},
+      policy
+    })
+
+    expect(evidence.controls).toMatchObject({
+      approvalPolicy: 'never',
+      sandboxMode: 'danger-full-access'
+    })
+    expect(evidence.tools.nativeToolPolicySha256).toBe(
+      sha256HexOfCanonicalJson({
+        schemaVersion: 1,
+        policy: {
+          kind: 'codex-native-sandboxed',
+          approvalPolicy: 'never',
+          sandboxMode: 'danger-full-access',
+          sandboxPolicy: { type: 'dangerFullAccess' }
+        }
+      })
+    )
   })
 
   it('rejects the post-seal fast-service-tier compatibility spawn', async () => {

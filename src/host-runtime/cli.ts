@@ -7,6 +7,11 @@ import { createHostNodeTerminalLauncher } from '../host-node/HostNodeTerminalLau
 import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
 import { HostShutdownClient } from '../host-client/HostShutdownClient'
+import {
+  HOST_FULL_ACCESS_BOOTSTRAP_FD,
+  HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
+  readHostFullAccessBootstrapSecret
+} from './HostFullAccessBootstrap'
 
 export interface HostProductionCliStdio {
   readonly stdin?: { readonly isTTY?: boolean }
@@ -17,6 +22,8 @@ export interface HostProductionCliStdio {
 export interface HostProductionCliRuntime {
   readonly stdio?: HostProductionCliStdio
   readonly createTerminalLauncher?: () => HostNodeMuseTerminalLauncher
+  readonly readFullAccessBootstrapSecret?: () => Buffer | null | Promise<Buffer | null>
+  readonly env?: NodeJS.ProcessEnv
 }
 
 export async function runHostDiagnosticCli(
@@ -36,11 +43,26 @@ export async function runHostProductionCli(
   const command = parseHostProductionCli(argv)
   if (command.command !== 'serve') throw new HostProductionCliError('Expected serve command.')
   const terminalLauncher = interactiveTerminalLauncher(runtime)
-  const host = createProduction({
-    profilePath: command.profilePath,
-    ...(command.museBinary ? { museBinary: command.museBinary } : {}),
-    ...(terminalLauncher ? { terminalLauncher } : {})
-  })
+  const environment = runtime.env ?? process.env
+  const injectedBootstrapReader = runtime.readFullAccessBootstrapSecret
+  const bootstrapAdvertised =
+    Boolean(injectedBootstrapReader) ||
+    environment[HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV] === String(HOST_FULL_ACCESS_BOOTSTRAP_FD)
+  if (environment === process.env) delete process.env[HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV]
+  const fullAccessBootstrapSecret = bootstrapAdvertised
+    ? await (injectedBootstrapReader ?? readHostFullAccessBootstrapSecret)()
+    : null
+  let host: ReturnType<typeof createHostNodeProductionFactory>
+  try {
+    host = createProduction({
+      profilePath: command.profilePath,
+      ...(command.museBinary ? { museBinary: command.museBinary } : {}),
+      ...(terminalLauncher ? { terminalLauncher } : {}),
+      ...(fullAccessBootstrapSecret ? { fullAccessBootstrapSecret } : {})
+    })
+  } finally {
+    fullAccessBootstrapSecret?.fill(0)
+  }
   await host.start()
   await host.waitForShutdown()
 }

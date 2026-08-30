@@ -34,6 +34,8 @@ export interface HostNodeProviderRunResult {
 /** Runtime instance returned by a provider factory. */
 export interface HostNodeProviderInstance {
   readonly providerId: string
+  /** Optional live offer refresh for providers whose runnable catalog is account-dependent. */
+  getOffers?(): Promise<HostProviderOffersProjection>
   getStatus(): Promise<HostProviderStatusProjection>
   getAuthStatus(): Promise<HostProviderAuthStatusProjection>
   getAuthFlows(): Promise<readonly HostProviderAuthFlowProjection[]>
@@ -56,6 +58,8 @@ export interface HostNodeProviderCreateInput {
  */
 export interface HostNodeProvider {
   readonly providerId: string
+  /** Explicit marker for the one non-static provider whose adapter rechecks its consent/auth wall. */
+  readonly conditionalAdmission?: 'antigravity-live-guarded'
   readonly displayProvider: string
   readonly shortCode: string
   readonly offers: HostProviderOffersProjection

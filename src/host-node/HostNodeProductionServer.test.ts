@@ -11,6 +11,7 @@ import {
 } from '../host-runtime/HostProfileWriterFence'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
+import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 
 const profiles: string[] = []
 
@@ -32,6 +33,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let projectionDirty: (() => void) | null = null
   let interactionTimeoutMs: number | undefined
   let domainProfilePath: string | undefined
+  let domainPermissionConsentAuthority: unknown
   let composedGitReadProvider:
     | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
     | undefined
@@ -105,6 +107,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     createDomain: (input) => {
       order.push('domain')
       domainProfilePath = input.profilePath
+      domainPermissionConsentAuthority = input.permissionConsentAuthority
       eventPublish = () => input.events.publish({} as never, {} as never)
       projectionDirty = input.onProjectionDirty ?? null
       interactionTimeoutMs = input.interactionTimeoutMs
@@ -134,6 +137,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     capabilityOffer: () => capabilityOffer,
     gitReadProvider: () => composedGitReadProvider,
     domainProfilePath: () => domainProfilePath,
+    domainPermissionConsentAuthority: () => domainPermissionConsentAuthority,
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
     projectionDirty: () => projectionDirty?.(),
@@ -142,6 +146,21 @@ function harness(overrides: Record<string, unknown> = {}) {
 }
 
 describe('HostNodeProductionServer', () => {
+  it('keeps Full Access capability off unless an ephemeral authority is explicitly composed', async () => {
+    const absent = harness()
+    await absent.server.start()
+    expect(absent.domainPermissionConsentAuthority()).toBeUndefined()
+    await absent.server.stop()
+
+    const authority = new HostPermissionConsentAuthority(Buffer.alloc(32, 7))
+    const dispose = vi.spyOn(authority, 'dispose')
+    const present = harness({ createPermissionConsentAuthority: () => authority })
+    await present.server.start()
+    expect(present.domainPermissionConsentAuthority()).toBe(authority)
+    await present.server.stop()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
   it('constructs lease-first, then reconciles before starting the authenticated listener, and cleans in exact order', async () => {
     const h = harness()
     await h.server.start()

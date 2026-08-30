@@ -33,6 +33,10 @@ import type {
   HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
 import {
+  resolveCodexSandboxControls,
+  type CodexSandboxControls
+} from '../shared/codexSandboxControls'
+import {
   createHostNodeProviderResourcePort,
   hostNodeProviderAuthFlows,
   hostNodeProviderAuthStatus,
@@ -49,6 +53,7 @@ import type {
 } from './HostNodeProvider'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
+import { hostNodeProviderEnvironment } from './HostNodeProviderEnvironment'
 
 const PROVIDER_ID = 'codex'
 
@@ -93,6 +98,7 @@ function safeOperationId(value: string): boolean {
     value.length > 0 &&
     value.length <= 512 &&
     value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- provider ids reject C0 controls.
     !/[\u0000-\u001f\u007f]/.test(value)
   )
 }
@@ -128,60 +134,51 @@ function modelIsSelectable(
   )
 }
 
-export interface HostNodeCodexPostureControls {
-  readonly approvalPolicy: 'on-request'
-  readonly sandbox: 'read-only' | 'workspace-write'
-  readonly sandboxPolicy:
-    | {
-        readonly type: 'readOnly'
-        readonly readableRoots: readonly string[]
-        readonly networkAccess: false
-      }
-    | {
-        readonly type: 'workspaceWrite'
-        readonly readableRoots: readonly string[]
-        readonly writableRoots: readonly string[]
-        readonly networkAccess: false
-        readonly excludeTmpdirEnvVar: false
-        readonly excludeSlashTmp: false
-      }
+export interface HostNodeCodexPostureControls extends CodexSandboxControls {
+  readonly approvalPolicy: 'on-request' | 'never'
 }
 
 /**
- * Node Host posture mapping. The Host only advertises Codex approvals when the
- * child is configured to emit them, so every supported posture uses
- * on-request; a never policy would make the continuation path unreachable.
+ * Exact standalone Codex posture mapping. Plan disables mutations without
+ * manufacturing approval cards; Ask retains interactive approval; Full WS and
+ * verified Full Access deliberately suppress provider prompts inside their
+ * respective workspace / host-wide boundaries.
  */
 export function resolveHostNodeCodexPosture(
   thread: Pick<HostProviderRunThread, 'workspace' | 'posture'>
 ): HostNodeCodexPostureControls {
+  const requestsFullAccess =
+    thread.posture.postureId === 'full_access' || thread.posture.approvalMode === 'full_access'
+  const verifiedFullAccess =
+    thread.posture.postureId === 'full_access' &&
+    thread.posture.approvalMode === 'auto_edit' &&
+    thread.posture.requiresExplicitConsent === true &&
+    thread.posture.explicitConsentAcknowledged === true &&
+    thread.posture.verifiedConsent?.authority === 'host-signed'
   const readOnly =
     thread.posture.postureId === 'read_only' ||
     thread.posture.postureId === 'plan' ||
     thread.posture.approvalMode === 'plan'
   const root = thread.workspace.canonicalPath
-  if (readOnly) {
-    return {
-      approvalPolicy: 'on-request',
-      sandbox: 'read-only',
-      sandboxPolicy: {
-        type: 'readOnly',
-        readableRoots: [root],
-        networkAccess: false
-      }
-    }
-  }
+  const failClosedFullRequest = requestsFullAccess && !verifiedFullAccess
+  const sandboxControls = resolveCodexSandboxControls({
+    planMode: thread.posture.postureId === 'plan',
+    fullAccessGranted: verifiedFullAccess,
+    allowNativeWorkspaceWrite: !readOnly && !failClosedFullRequest,
+    readableRoots: [root],
+    writableRoots: [root],
+    networkAccess: false
+  })
+  const approvalPolicy = verifiedFullAccess
+    ? 'never'
+    : failClosedFullRequest
+      ? 'on-request'
+      : thread.posture.postureId === 'plan' || thread.posture.postureId === 'workspace_write'
+        ? 'never'
+        : 'on-request'
   return {
-    approvalPolicy: 'on-request',
-    sandbox: 'workspace-write',
-    sandboxPolicy: {
-      type: 'workspaceWrite',
-      readableRoots: [root],
-      writableRoots: [root],
-      networkAccess: false,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false
-    }
+    approvalPolicy,
+    ...sandboxControls
   }
 }
 
@@ -222,6 +219,7 @@ function questionOptions(params: Record<string, unknown> | null): readonly strin
       typeof raw === 'string' ? raw : (rec?.label ?? rec?.id ?? rec?.value),
       512
     )
+    // eslint-disable-next-line no-control-regex -- provider option labels reject C0 controls.
     if (!label || seen.has(label) || /[\u0000-\u001f\u007f]/.test(label)) return
     seen.add(label)
     collected.push(label)
@@ -425,13 +423,13 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
       child = this.options.spawn
         ? this.options.spawn(resolved.binaryPath, ['app-server'], {
             cwd: thread.workspace.canonicalPath,
-            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+            env: hostNodeProviderEnvironment(process.env, { FORCE_COLOR: '0', NO_COLOR: '1' }),
             shell: false,
             stdio: 'pipe'
           })
         : nodeSpawn(resolved.binaryPath, ['app-server'], {
             cwd: thread.workspace.canonicalPath,
-            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+            env: hostNodeProviderEnvironment(process.env, { FORCE_COLOR: '0', NO_COLOR: '1' }),
             shell: false,
             stdio: 'pipe'
           })

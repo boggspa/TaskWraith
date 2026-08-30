@@ -12,6 +12,7 @@ const SHARED_ROOT = resolve(REPO_ROOT, 'src/shared')
 const HOST_SHARED_ROOT = resolve(REPO_ROOT, 'src/host-shared')
 const MAIN_MUSE_ROOT = resolve(REPO_ROOT, 'src/main/muse')
 const MAIN_MISTRAL_ROOT = resolve(REPO_ROOT, 'src/main/mistral')
+const HOST_NODE_AGY_PTY_CAPTURE = resolve(HOST_NODE_ROOT, 'HostNodeAgyPtyCapture.ts')
 const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeProfileRunPort.ts'),
@@ -57,6 +58,10 @@ const PINNED_MAIN_PROVIDER_CLOSURES = new Map<string, ReadonlySet<string>>([
   [MAIN_MISTRAL_ROOT, PURE_MISTRAL_CLOSURE]
 ])
 
+const PINNED_EXTERNAL_IMPORTS = new Map<string, ReadonlySet<string>>([
+  [HOST_NODE_AGY_PTY_CAPTURE, new Set(['node-pty'])]
+])
+
 function isWithin(path: string, root: string): boolean {
   const rel = relative(root, path)
   return rel === '' || (!rel.startsWith('..') && !rel.includes('../'))
@@ -84,10 +89,17 @@ function collectImports(source: ts.SourceFile): string[] {
       const specifier = moduleSpecifier(node)
       if (specifier) imports.push(specifier)
     }
-    if (
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const [argument] = node.arguments
+      if (node.arguments.length === 1 && argument && ts.isStringLiteral(argument)) {
+        imports.push(argument.text)
+      } else {
+        forbiddenCalls.push(node.getText(source))
+      }
+    } else if (
       ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'require'
     ) {
       forbiddenCalls.push(node.getText(source))
     }
@@ -96,7 +108,7 @@ function collectImports(source: ts.SourceFile): string[] {
   visit(source)
   if (forbiddenCalls.length) {
     throw new Error(
-      `Host Node provider closure forbids dynamic import/require: ${forbiddenCalls.join(', ')}`
+      `Host Node provider closure forbids non-literal dynamic import/require: ${forbiddenCalls.join(', ')}`
     )
   }
   return imports
@@ -123,6 +135,7 @@ describe('HostNode import boundary', () => {
       for (const specifier of collectImports(source)) {
         if (specifier.startsWith('node:')) continue
         if (!specifier.startsWith('.')) {
+          if (PINNED_EXTERNAL_IMPORTS.get(file)?.has(specifier)) continue
           throw new Error(`Host Node provider closure forbids external import ${specifier}`)
         }
         const target = resolveRelativeModule(file, specifier)

@@ -213,11 +213,10 @@ import {
   type RunItemEventDraft
 } from '../shared/runItemEvents'
 import {
-  codexSandboxForMode,
   buildCodexUserInput,
-  codexGitMetadataRootsForWorkspace,
   codexNativeAutoApprovalFromPosture,
-  normalizeCodexTurnStatus
+  normalizeCodexTurnStatus,
+  resolveDesktopCodexSandboxControls
 } from './codex/CodexRunPolicy'
 import { createCodexLiveSteerTransport } from './codex/CodexLiveSteerTransport'
 import { isCodexUserInputRequestMethod } from './codex/CodexUserInput'
@@ -27655,39 +27654,6 @@ function externalPathGrantsToGeminiIncludeDirArgs(_grants?: ExternalPathGrant[])
   return []
 }
 
-function codexSandboxPolicyForMode(
-  approvalMode: string | undefined,
-  workspace: string,
-  _externalPathGrants?: ExternalPathGrant[],
-  settings: AppSettings = AppStore.getSettings(),
-  scope: ChatScope = 'workspace',
-  _fullAccessGranted = false
-) {
-  const workspaceRoot = resolve(workspace)
-  const hostRoot = parse(workspaceRoot).root || sep
-  const gitMetadataRoots =
-    scope === 'global' ? [] : codexGitMetadataRootsForWorkspace(workspaceRoot)
-  const readableRoots =
-    scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
-  const writableRoots =
-    scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
-  if (scope !== 'global' || approvalMode === 'plan') {
-    return { type: 'readOnly', readableRoots, networkAccess: false }
-  }
-  return {
-    type: 'workspaceWrite',
-    writableRoots,
-    readableRoots,
-    networkAccess: settings.agenticServices?.networkAccess !== 'deny',
-    excludeTmpdirEnvVar: false,
-    excludeSlashTmp: false
-  }
-}
-
-function uniqueRoots(roots: string[]): string[] {
-  return [...new Set(roots.map((root) => resolve(root)))]
-}
-
 function createCodexRunState(
   sender: Electron.WebContents,
   threadId: string,
@@ -32555,17 +32521,20 @@ async function runCodexAppServerWithClient(
       ? 'on-request'
       : codexApprovalPolicyForMode(payload.approvalMode, settings, payload.effectivePermissions)
   const fullAccessGranted = isFullShellAccessGranted(payload.effectivePermissions)
-  const sandbox =
-    payload.scope === 'global'
-      ? codexSandboxForMode(payload.approvalMode, fullAccessGranted)
-      : 'read-only'
+  const sandboxControls = resolveDesktopCodexSandboxControls({
+    approvalMode: payload.approvalMode,
+    workspace: payload.workspace!,
+    scope: payload.scope,
+    fullAccessGranted,
+    networkAccess: settings.agenticServices?.networkAccess !== 'deny'
+  })
   const threadLaunchPlan = buildCodexAppServerThreadLaunchPlan({
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     serviceTier: payload.serviceTier,
     workspacePath: payload.workspace!,
     approvalPolicy,
-    sandbox,
+    sandbox: sandboxControls.sandbox,
     resumableThreadId
   })
   const model = threadLaunchPlan.model
@@ -32748,14 +32717,7 @@ async function runCodexAppServerWithClient(
           input: buildCodexUserInput(payload.prompt, payload.imagePaths),
           cwd: payload.workspace!,
           approvalPolicy,
-          sandboxPolicy: codexSandboxPolicyForMode(
-            payload.approvalMode,
-            payload.workspace!,
-            payload.externalPathGrants,
-            settings,
-            payload.scope,
-            fullAccessGranted
-          ),
+          sandboxPolicy: sandboxControls.sandboxPolicy,
           model,
           ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
         },

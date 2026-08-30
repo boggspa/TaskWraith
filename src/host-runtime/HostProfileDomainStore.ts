@@ -39,6 +39,10 @@ import type {
 } from '../shared/hostHistoryProtocol'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import {
+  decodeHostPermissionConsentEnvelope,
+  type HostPermissionConsentEnvelope
+} from './HostPermissionConsent'
 
 export const HOST_PROFILE_WORKSPACES_FILENAME = 'workspaces.json'
 export const HOST_PROFILE_CHATS_DIRECTORY = 'chats'
@@ -1122,8 +1126,9 @@ export class HostProfileDomainStore {
     providerId?: string
     modelId?: string
     reasoningId?: string
-    postureId?: 'read_only' | 'plan' | 'default' | 'workspace_write'
-    postureConsent?: true
+    postureId?: 'read_only' | 'plan' | 'default' | 'workspace_write' | 'full_access'
+    offerRevision?: string
+    postureConsent?: true | HostPermissionConsentEnvelope
   }): HostProfileThread {
     this.assertAuthority()
     const current = this.requireThread(input.threadId)
@@ -1136,16 +1141,58 @@ export class HostProfileDomainStore {
     let workflowMode = current.workflowMode
     if (input.postureId !== undefined) {
       const posture = this.posture(input.postureId)
-      if (input.postureConsent !== undefined && input.postureConsent !== true) {
-        throw new Error('Invalid posture consent')
+      const elevated = input.postureId === 'workspace_write' || input.postureId === 'full_access'
+      const signedConsent = decodeHostPermissionConsentEnvelope(input.postureConsent)
+      const selectedProvider = input.providerId ?? current.provider
+      const selectedModel = input.modelId ?? metadata.selectedModelType
+      const workspace = current.workspaceId
+        ? this.listWorkspaces().find(
+            (candidate) =>
+              candidate.id === current.workspaceId &&
+              (candidate.path === current.workspacePath ||
+                candidate.realPath === current.workspacePath)
+          )
+        : undefined
+      const consentMatches = Boolean(
+        signedConsent &&
+        selectedProvider &&
+        typeof selectedModel === 'string' &&
+        workspace &&
+        input.offerRevision &&
+        signedConsent.provenance.threadId === current.appChatId &&
+        signedConsent.provenance.providerId === selectedProvider &&
+        signedConsent.provenance.workspaceId === workspace.id &&
+        signedConsent.provenance.workspacePath === workspace.realPath &&
+        signedConsent.provenance.modelId === selectedModel &&
+        signedConsent.provenance.postureId === input.postureId &&
+        signedConsent.provenance.offerRevision === input.offerRevision
+      )
+      if (elevated && input.postureConsent !== true && (!signedConsent || !consentMatches)) {
+        throw new Error(
+          input.postureId === 'workspace_write'
+            ? 'Workspace-write posture requires explicit consent'
+            : 'Elevated posture requires exact consent provenance'
+        )
       }
-      if (input.postureId === 'workspace_write' && input.postureConsent !== true) {
-        throw new Error('Workspace-write posture requires explicit consent')
+      if (input.postureId === 'full_access' && !consentMatches) {
+        throw new Error('Full-access posture requires signed consent provenance')
       }
       metadata.approvalMode = posture.approvalMode
       metadata.permissionPresetId = posture.permissionPresetId
-      if (input.postureId === 'workspace_write') metadata.explicitConsentAcknowledged = true
-      else delete metadata.explicitConsentAcknowledged
+      if (elevated) {
+        metadata.explicitConsentAcknowledged = true
+        if (signedConsent) {
+          metadata.hostPermissionConsent = signedConsent
+          metadata.hostOfferRevision = signedConsent.provenance.offerRevision
+        } else {
+          delete metadata.hostPermissionConsent
+          delete metadata.hostOfferRevision
+        }
+      } else {
+        delete metadata.explicitConsentAcknowledged
+        delete metadata.hostPermissionConsent
+        delete metadata.hostOfferRevision
+      }
       workflowMode = posture.workflowMode
     }
     const next: HostProfileThread = {
@@ -1876,7 +1923,7 @@ export class HostProfileDomainStore {
 
   private posture(posture: string): {
     approvalMode: string
-    permissionPresetId: 'read_only' | 'default' | 'workspace_write'
+    permissionPresetId: 'read_only' | 'default' | 'workspace_write' | 'full_access'
     workflowMode: 'normal' | 'plan'
   } {
     switch (posture) {
@@ -1890,6 +1937,12 @@ export class HostProfileDomainStore {
         return {
           approvalMode: 'default',
           permissionPresetId: 'workspace_write',
+          workflowMode: 'normal'
+        }
+      case 'full_access':
+        return {
+          approvalMode: 'auto_edit',
+          permissionPresetId: 'full_access',
           workflowMode: 'normal'
         }
       default:

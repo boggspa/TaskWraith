@@ -83,6 +83,11 @@ import {
 /** Bounded compact export plus its transport envelope. */
 export const HOST_PROJECTION_CLIENT_MAX_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 
+/** Exact process identity from the authenticated discovery record used for this connection. */
+export type HostProjectionDiscoveryProcessIdentity = Readonly<
+  Pick<TaskWraithHostDiscovery, 'pid' | 'startedAt' | 'hostId' | 'hostVersion'>
+>
+
 const DEFAULT_CLIENT_CAPABILITIES: readonly HostCapability[] = [
   'bootstrap',
   'snapshot',
@@ -309,6 +314,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   private eventSequenceSeen = -1
   private connectAccepted = false
   private discoveryIdentity: Pick<TaskWraithHostDiscovery, 'hostId' | 'hostVersion'> | null = null
+  private discoveryProcess: HostProjectionDiscoveryProcessIdentity | null = null
 
   welcome: HostBootstrapWelcome | null = null
   /**
@@ -342,6 +348,15 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   /** Bound Host cursor from the last welcome, or null when disconnected. */
   get cursor(): number | null {
     return this.welcome?.cursor ?? null
+  }
+
+  /**
+   * Process identity read from the same discovery artifact as the socket/token.
+   * This is intentionally not a credential. It lets a launcher bind an
+   * in-memory user-presence secret to the exact Host process it started.
+   */
+  get discoveryProcessIdentity(): HostProjectionDiscoveryProcessIdentity | null {
+    return this.discoveryProcess ? { ...this.discoveryProcess } : null
   }
 
   /** Capability support is authoritative only after Host welcome intersection. */
@@ -409,6 +424,12 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       ...(discovery.hostId ? { hostId: discovery.hostId } : {}),
       ...(discovery.hostVersion ? { hostVersion: discovery.hostVersion } : {})
     }
+    this.discoveryProcess = {
+      pid: discovery.pid,
+      startedAt: discovery.startedAt,
+      ...(discovery.hostId ? { hostId: discovery.hostId } : {}),
+      ...(discovery.hostVersion ? { hostVersion: discovery.hostVersion } : {})
+    }
 
     const hello = this.buildHello(token, baseOnly)
     const encoded = encodeHostLocalTransportClientFrame(hello)
@@ -448,6 +469,8 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     this.socket?.destroy()
     this.socket = null
     this.welcome = null
+    this.discoveryIdentity = null
+    this.discoveryProcess = null
     this.rejectPending(new Error('TaskWraith Host projection client closed.'))
   }
 
@@ -817,6 +840,8 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     )
     this.socket = null
     this.welcome = null
+    this.discoveryIdentity = null
+    this.discoveryProcess = null
     this.buffer = ''
     this.markCacheStale()
     this.rejectPending(error ?? new Error('TaskWraith Host disconnected.'))

@@ -21,7 +21,12 @@ import {
   type HostProviderRunUpdate
 } from '../host-runtime/HostProviderRunPort'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
-import { isLiveSelectableProvider } from '../shared/retiredProviders'
+import type {
+  HostFullAccessGrantRegistry,
+  HostPermissionConsentAuthorityPort,
+  HostPermissionConsentExpectedSelection
+} from '../host-runtime/HostPermissionConsent'
+import { isEnsembleSeatProvider } from '../shared/retiredProviders'
 
 export interface HostNodeRunEventSink {
   publish(target: HostRunEventTarget, event: HostProviderRunEvent): void
@@ -30,6 +35,8 @@ export interface HostNodeRunEventSink {
 export interface HostNodeProfileRunPortOptions {
   readonly store: HostProfileDomainStore
   readonly events: HostNodeRunEventSink
+  readonly permissionConsentAuthority?: HostPermissionConsentAuthorityPort
+  readonly fullAccessGrants?: Pick<HostFullAccessGrantRegistry, 'matches'>
 }
 
 type ActiveRun = {
@@ -57,17 +64,80 @@ function providerMetadata(thread: HostProfileThread): Record<string, unknown> | 
     : null
 }
 
-function postureFromThread(thread: HostProfileThread) {
+function postureFromThread(
+  thread: HostProfileThread,
+  modelId: unknown,
+  canonicalWorkspacePath: string | null,
+  consentAuthority?: HostPermissionConsentAuthorityPort,
+  fullAccessGrants?: Pick<HostFullAccessGrantRegistry, 'matches'>
+) {
   const metadata = providerMetadata(thread)
   const preset = metadata?.permissionPresetId
   const approvalMode = metadata?.approvalMode
   const explicitConsentAcknowledged = metadata?.explicitConsentAcknowledged === true
+  const offerRevision = metadata?.hostOfferRevision
+  const expected: HostPermissionConsentExpectedSelection | null =
+    isCanonicalId(thread.provider) &&
+    isCanonicalId(thread.workspaceId) &&
+    isCanonicalId(modelId) &&
+    canonicalWorkspacePath &&
+    isCanonicalId(offerRevision) &&
+    (preset === 'workspace_write' || preset === 'full_access')
+      ? {
+          threadId: thread.appChatId,
+          providerId: thread.provider,
+          workspaceId: thread.workspaceId,
+          workspacePath: canonicalWorkspacePath,
+          modelId,
+          postureId: preset,
+          offerRevision
+        }
+      : null
+  const consent =
+    consentAuthority && expected
+      ? consentAuthority.verify(metadata?.hostPermissionConsent, expected)
+      : null
+  const liveFullAccess = Boolean(
+    consent &&
+    expected?.postureId === 'full_access' &&
+    fullAccessGrants?.matches(metadata?.hostPermissionConsent, consent, expected)
+  )
+  const verifiedConsent =
+    consent &&
+    (consent.actor.clientClass === 'desktop' ||
+      consent.actor.clientClass === 'tui' ||
+      consent.actor.clientClass === 'test')
+      ? {
+          authority: 'host-signed' as const,
+          commandId: consent.commandId,
+          commandFingerprint: consent.commandFingerprint,
+          actorClientClass: consent.actor.clientClass,
+          offerRevision: consent.offerRevision,
+          acknowledgedAt: consent.acknowledgedAt
+        }
+      : undefined
+  if (
+    preset === 'full_access' &&
+    approvalMode === 'auto_edit' &&
+    explicitConsentAcknowledged &&
+    verifiedConsent &&
+    liveFullAccess
+  ) {
+    return {
+      postureId: 'full_access',
+      approvalMode,
+      requiresExplicitConsent: true,
+      explicitConsentAcknowledged: true,
+      verifiedConsent
+    } as const
+  }
   if (preset === 'workspace_write' && approvalMode === 'default') {
     return {
       postureId: 'workspace_write',
       approvalMode,
       requiresExplicitConsent: true,
-      explicitConsentAcknowledged
+      explicitConsentAcknowledged,
+      ...(verifiedConsent ? { verifiedConsent } : {})
     } as const
   }
   if (preset === 'default' && approvalMode === 'default') {
@@ -117,7 +187,8 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       !thread ||
       thread.archived ||
       thread.scope !== 'workspace' ||
-      !isLiveSelectableProvider(thread.provider) ||
+      !isCanonicalId(thread.provider) ||
+      !isEnsembleSeatProvider(thread.provider) ||
       !isCanonicalId(thread.workspaceId) ||
       typeof thread.workspacePath !== 'string'
     ) {
@@ -133,7 +204,6 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     const metadata = providerMetadata(thread)
     const modelId = metadata?.selectedModelType
     const reasoningId = metadata?.reasoningEffort
-    const posture = postureFromThread(thread)
     const persistedSessionId = [...(thread.runs ?? [])]
       .reverse()
       .map((run) => run.providerSessionId)
@@ -142,6 +212,13 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     const canonicalWorkspacePath = workspace
       ? this.verifyWorkspacePath(workspace.path, workspace.realPath)
       : null
+    const posture = postureFromThread(
+      thread,
+      modelId,
+      canonicalWorkspacePath,
+      this.options.permissionConsentAuthority,
+      this.options.fullAccessGrants
+    )
     if (!workspace || !canonicalWorkspacePath || !isCanonicalId(modelId) || !posture) return null
     const candidate: HostProviderRunThread = {
       threadId: thread.appChatId,
@@ -183,7 +260,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     if (this.active.has(normalized.runId)) return { kind: 'duplicate' as const }
     const thread = this.options.store.getThread(normalized.threadId)
     if (!thread) throw new Error('Host profile run thread is unavailable')
-    if (!isLiveSelectableProvider(thread.provider) || normalized.providerId !== thread.provider) {
+    if (!isEnsembleSeatProvider(thread.provider) || normalized.providerId !== thread.provider) {
       throw new Error('Host profile run provider does not match thread')
     }
     if ((thread.runs ?? []).some((run) => run.status === 'running')) {
@@ -271,13 +348,20 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   }
 
   /** Exact thread-scoped cancellation for Host `run.cancel`; never target-lifetime driven. */
-  cancelThread(threadId: string): 'cancelled' | 'not_found' | 'not_cancellable' {
+  cancelThread(
+    threadId: string,
+    expectedWorkId?: string
+  ): 'cancelled' | 'not_found' | 'not_cancellable' | 'identity_mismatch' {
     if (!isCanonicalId(threadId)) return 'not_found'
+    if (expectedWorkId !== undefined && !isCanonicalId(expectedWorkId)) {
+      return 'identity_mismatch'
+    }
     const entry = [...this.active.entries()].find(
       ([, active]) => active.threadId === threadId && !active.terminal
     )
     if (!entry) return 'not_found'
-    const [, active] = entry
+    const [runId, active] = entry
+    if (expectedWorkId !== undefined && runId !== expectedWorkId) return 'identity_mismatch'
     if (!active.cancel || active.cancelInvoked) return 'not_cancellable'
     active.cancelInvoked = true
     active.cancel()

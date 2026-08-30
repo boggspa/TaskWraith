@@ -5,24 +5,64 @@ import {
   statSync,
   type Stats
 } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, parse, resolve, sep } from 'node:path'
+
+import {
+  resolveCodexSandboxControls,
+  type CodexSandboxControls
+} from '../../shared/codexSandboxControls'
 
 export function codexSandboxForMode(
   approvalMode?: string,
   fullAccessGranted?: boolean
 ): 'read-only' | 'workspace-write' | 'danger-full-access' {
-  // Plan is always the read-only floor, and it outranks a full-access grant:
-  // if the flag ever leaks onto a plan run the floor still wins.
-  if (approvalMode === 'plan') return 'read-only'
-  // A signed Full Access grant drops the native sandbox outright, so the run's
-  // real posture matches what the permissions picker promised the user. The
-  // blast radius is the point — Full Access exists to reach the login keychain
-  // and ~/Library for signing/archiving, and the user is warned before granting
-  // it. Callers must pass `isFullShellAccessGranted(effectivePermissions)`,
-  // which already requires presetId === 'full_access' AND the global shell
-  // kill-switch to be open; anything short of that stays workspace-confined.
-  if (fullAccessGranted) return 'danger-full-access'
-  return 'workspace-write'
+  return resolveCodexSandboxControls({
+    planMode: approvalMode === 'plan',
+    fullAccessGranted: fullAccessGranted === true,
+    allowNativeWorkspaceWrite: true,
+    readableRoots: [],
+    writableRoots: [],
+    networkAccess: false
+  }).sandbox
+}
+
+export interface ResolveDesktopCodexSandboxControlsInput {
+  readonly approvalMode?: string
+  readonly workspace: string
+  readonly scope: 'workspace' | 'global'
+  readonly fullAccessGranted: boolean
+  readonly networkAccess: boolean
+}
+
+/**
+ * Desktop root/network projection around the shared Codex permission mapping.
+ * Ordinary workspace chats retain the exact-mutation read-only native boundary;
+ * a verified Full Access grant deliberately outranks that boundary. Global
+ * chats retain their host-root workspace policy below Full Access.
+ */
+export function resolveDesktopCodexSandboxControls(
+  input: ResolveDesktopCodexSandboxControlsInput
+): CodexSandboxControls {
+  const workspaceRoot = resolve(input.workspace)
+  const hostRoot = parse(workspaceRoot).root || sep
+  const gitMetadataRoots =
+    input.scope === 'global' ? [] : codexGitMetadataRootsForWorkspace(workspaceRoot)
+  const readableRoots =
+    input.scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
+  const writableRoots =
+    input.scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
+  return resolveCodexSandboxControls({
+    planMode: input.approvalMode === 'plan',
+    fullAccessGranted: input.fullAccessGranted,
+    allowNativeWorkspaceWrite: input.scope === 'global',
+    readableRoots,
+    writableRoots,
+    networkAccess: input.networkAccess
+  })
+}
+
+function uniqueRoots(roots: readonly string[]): string[] {
+  return [...new Set(roots.map((root) => resolve(root)))]
 }
 
 export interface CodexGitMetadataFs {

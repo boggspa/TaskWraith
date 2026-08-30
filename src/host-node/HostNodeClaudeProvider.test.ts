@@ -341,7 +341,8 @@ describe('HostNodeClaudeProvider status and auth', () => {
 
 describe('HostNodeClaudeProvider argv', () => {
   it('maps postures fail-closed so an unknown mode never writes', () => {
-    expect(claudePermissionModeFor('full_access')).toBe('bypassPermissions')
+    expect(claudePermissionModeFor('full_access')).toBe('plan')
+    expect(claudePermissionModeFor('auto_edit', true)).toBe('bypassPermissions')
     expect(claudePermissionModeFor('auto_edit')).toBe('acceptEdits')
     expect(claudePermissionModeFor('read_only')).toBe('plan')
     expect(claudePermissionModeFor('plan')).toBe('plan')
@@ -402,6 +403,35 @@ describe('HostNodeClaudeProvider argv', () => {
       })
     ).not.toContain('--resume')
   })
+
+  it('emits Claude dangerous bypass only with verified Full Access', () => {
+    expect(
+      buildHostNodeClaudeArgs({
+        prompt: 'Do the thing',
+        modelId: 'claude-opus-5',
+        approvalMode: 'auto_edit',
+        verifiedFullAccess: true
+      })
+    ).toEqual([
+      '-p',
+      'Do the thing',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--model',
+      'claude-opus-5',
+      '--permission-mode',
+      'bypassPermissions',
+      '--dangerously-skip-permissions'
+    ])
+    expect(
+      buildHostNodeClaudeArgs({
+        prompt: 'Do the thing',
+        modelId: 'claude-opus-5',
+        approvalMode: 'auto_edit'
+      })
+    ).not.toContain('bypassPermissions')
+  })
 })
 
 describe('HostNodeClaudeProvider stream parsing', () => {
@@ -460,6 +490,25 @@ describe('HostNodeClaudeProvider selection validation', () => {
 })
 
 describe('HostNodeClaudeProvider run', () => {
+  it('never inherits Host elevation material into the Claude child environment', async () => {
+    process.env.TASKWRAITH_PERMISSION_CONSENT_SECRET = 'host-secret-sentinel'
+    try {
+      const runPort = new FakeRunPort()
+      const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM, exitCode: 0 })
+      const provider = providerWith(runPort, spawn)
+      await provider.run({
+        runId: 'run-env',
+        threadId: 'thread-1',
+        prompt: 'Say hello',
+        target: TARGET
+      })
+      expect(captured[0].env.TASKWRAITH_PERMISSION_CONSENT_SECRET).toBeUndefined()
+      expect(JSON.stringify(captured[0].env)).not.toContain('host-secret-sentinel')
+    } finally {
+      delete process.env.TASKWRAITH_PERMISSION_CONSENT_SECRET
+    }
+  })
+
   it('streams content and tools, records usage, and completes', async () => {
     const runPort = new FakeRunPort()
     const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM, exitCode: 0 })
@@ -565,6 +614,7 @@ describe('HostNodeClaudeProvider run', () => {
   it('cancels only the exact run id and reports cancelled', async () => {
     const runPort = new FakeRunPort()
     const killed: string[] = []
+    // eslint-disable-next-line prefer-const -- assigned after spawn closes over the reference.
     let provider: HostNodeClaudeProvider | undefined
     const spawn: HostNodeClaudeSpawn = (input) => {
       // Cancel mid-stream, exactly as an out-of-band run.cancel would.

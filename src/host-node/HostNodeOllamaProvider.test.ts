@@ -65,7 +65,9 @@ class FakeRunPort implements HostProviderRunPort {
     this.begins.push(input)
     return { kind: 'started' as const }
   }
-  updateRun(_input: HostProviderRunUpdate): void {}
+  updateRun(input: HostProviderRunUpdate): void {
+    void input
+  }
   finishRun(input: HostProviderRunFinish): void {
     this.finish = input
   }
@@ -124,34 +126,54 @@ const mockFetchCatalog = vi.mocked(fetchOllamaModelCatalog)
 const mockUnloadModel = vi.mocked(unloadOllamaModel)
 const mockRunChatLoop = vi.mocked(runOllamaChatLoop)
 
-function mockCatalog(models: Array<{ id: string; disabled?: boolean; disabledReason?: string }>) {
+function mockCatalog(
+  models: Array<{
+    id: string
+    source?: 'local' | 'cloud'
+    transport?: 'local-daemon' | 'cloud-daemon' | 'cloud-direct'
+    isDefault?: boolean
+    disabled?: boolean
+    disabledReason?: string
+  }>,
+  options: { localReachable?: boolean; cloudAuthenticated?: boolean | null } = {}
+) {
+  const projected = models.map((model) => ({
+    id: model.id,
+    label: model.id === 'minimax-m3:cloud' ? 'MiniMax M3' : model.id,
+    source: model.source ?? ('local' as const),
+    transport:
+      model.transport ?? (model.source === 'cloud' ? 'cloud-daemon' : ('local-daemon' as const)),
+    isCloud: model.source === 'cloud',
+    installed: model.source !== 'cloud',
+    isDefault: model.isDefault ?? false,
+    ...(model.disabled !== undefined ? { disabled: model.disabled } : {}),
+    ...(model.disabledReason ? { disabledReason: model.disabledReason } : {})
+  }))
   return {
-    models: models.map((model) => ({
-      id: model.id,
-      label: model.id,
-      source: 'local' as const,
-      isCloud: false,
-      installed: true,
-      isDefault: false,
-      ...(model.disabled !== undefined ? { disabled: model.disabled } : {}),
-      ...(model.disabledReason ? { disabledReason: model.disabledReason } : {})
-    })),
-    localModels: [],
-    cloudModels: [],
-    cloud: { supported: false, enabled: true, authenticated: null, models: [] },
-    localReachable: true
+    models: projected,
+    localModels: projected.filter((model) => model.source === 'local'),
+    cloudModels: projected.filter((model) => model.source === 'cloud'),
+    cloud: {
+      supported: options.cloudAuthenticated !== undefined,
+      enabled: true,
+      authenticated: options.cloudAuthenticated ?? null,
+      models: projected.filter((model) => model.source === 'cloud')
+    },
+    localReachable: options.localReachable ?? true
   }
 }
 
 function provider(
   resources: HostNodeProviderResourcePort = resourcePort(),
-  runPort: FakeRunPort = new FakeRunPort()
+  runPort: FakeRunPort = new FakeRunPort(),
+  options: Partial<ConstructorParameters<typeof HostNodeOllamaProvider>[0]> = {}
 ): HostNodeOllamaProvider {
   return new HostNodeOllamaProvider({
     runPort,
     offers: OLLAMA_OFFERS,
     resources,
-    baseUrl: 'http://127.0.0.1:11434'
+    baseUrl: 'http://127.0.0.1:11434',
+    ...options
   })
 }
 
@@ -169,6 +191,14 @@ describe('HostNodeOllamaProvider status and auth', () => {
     expect(status.label).toBe('Ollama')
   })
 
+  it('coalesces adjacent offer and status reads onto one account/catalog proof', async () => {
+    const instance = provider()
+    await instance.getOffers()
+    await instance.getStatus()
+    await instance.getAuthStatus()
+    expect(mockFetchCatalog).toHaveBeenCalledTimes(1)
+  })
+
   it('reports an unreachable daemon as a present unavailable row, never an omission', async () => {
     mockFetchCatalog.mockRejectedValue(new Error('connection refused'))
     const status = await provider().getStatus()
@@ -178,7 +208,11 @@ describe('HostNodeOllamaProvider status and auth', () => {
     expect(status.detail).toContain('not reachable')
   })
 
-  it('reports auth status honestly', async () => {
+  it('reports Cloud auth status independently from local daemon reachability', async () => {
+    expect((await provider().getAuthStatus()).state).toBe('unknown')
+    mockFetchCatalog.mockResolvedValue(
+      mockCatalog([{ id: OLLAMA_MODEL_ID }], { cloudAuthenticated: true })
+    )
     expect((await provider().getAuthStatus()).state).toBe('authenticated')
   })
 
@@ -189,8 +223,55 @@ describe('HostNodeOllamaProvider status and auth', () => {
     expect(await provider().cancelAuth()).toBe(false)
   })
 
-  it('refuses a terminal login because daemon reachability is the auth evidence', async () => {
-    await expect(provider().beginAuth('auth-1')).rejects.toThrow(/daemon reachability/i)
+  it('offers and launches the exact Ollama Cloud signin handoff without treating spawn as auth', async () => {
+    mockFetchCatalog.mockResolvedValue(
+      mockCatalog([{ id: OLLAMA_MODEL_ID }], { cloudAuthenticated: false })
+    )
+    const launchForProvider = vi.fn(async () => ({ providerId: 'ollama', spawned: true as const }))
+    const instance = provider(resourcePort(), new FakeRunPort(), {
+      terminalLauncher: { launchForProvider }
+    })
+    await expect(instance.getAuthFlows()).resolves.toEqual([
+      expect.objectContaining({ flowId: 'ollama:signin', available: true })
+    ])
+    await expect(instance.beginAuth('auth-1')).resolves.toBeUndefined()
+    expect(launchForProvider).toHaveBeenCalledWith('ollama', {
+      argv: ['/usr/local/bin/ollama', 'signin']
+    })
+    expect((await instance.getAuthStatus()).state).toBe('unauthenticated')
+  })
+
+  it('refreshes offers across sign-out, sign-in, and sign-out on one provider instance', async () => {
+    const local = { id: 'qwen3.5:9b', isDefault: true }
+    mockFetchCatalog
+      .mockResolvedValueOnce(mockCatalog([local], { cloudAuthenticated: false }))
+      .mockResolvedValueOnce(
+        mockCatalog(
+          [
+            { ...local, isDefault: false },
+            { id: 'minimax-m3:cloud', source: 'cloud', isDefault: true }
+          ],
+          { cloudAuthenticated: true }
+        )
+      )
+      .mockResolvedValueOnce(mockCatalog([local], { cloudAuthenticated: false }))
+    const instance = provider()
+
+    const signedOut = await instance.getOffers()
+    instance['catalogCache'] = undefined
+    const signedIn = await instance.getOffers()
+    instance['catalogCache'] = undefined
+    const signedOutAgain = await instance.getOffers()
+
+    expect(signedOut.models.map((model) => model.modelId)).toEqual(['qwen3.5:9b'])
+    expect(signedIn.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ modelId: 'minimax-m3:cloud', default: true })
+      ])
+    )
+    expect(signedOutAgain.models.map((model) => model.modelId)).toEqual(['qwen3.5:9b'])
+    expect(signedIn.offerRevision).not.toBe(signedOut.offerRevision)
+    expect(signedOutAgain.offerRevision).toBe(signedOut.offerRevision)
   })
 })
 
@@ -286,6 +367,128 @@ describe('HostNodeOllamaProvider run path', () => {
     expect(runPort.finish?.usage?.outputTokens).toBe(5)
   })
 
+  it('routes a proven direct Cloud model to ollama.com with its base id', async () => {
+    const cloudOffers = {
+      ...OLLAMA_OFFERS,
+      models: [
+        {
+          modelId: 'minimax-m3:cloud',
+          label: 'MiniMax M3',
+          available: true,
+          default: true,
+          reasoning: [
+            { reasoningId: 'off', label: 'Off', available: true },
+            { reasoningId: 'on', label: 'On', available: true }
+          ]
+        }
+      ]
+    }
+    mockFetchCatalog.mockResolvedValue(
+      mockCatalog(
+        [
+          {
+            id: 'minimax-m3:cloud',
+            source: 'cloud',
+            transport: 'cloud-direct',
+            isDefault: true
+          }
+        ],
+        { localReachable: false, cloudAuthenticated: true }
+      )
+    )
+    mockRunChatLoop.mockResolvedValue({
+      content: 'cloud done',
+      toolCalls: [],
+      toolResults: [],
+      usage: {}
+    })
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({
+      modelId: 'minimax-m3:cloud',
+      reasoningId: 'on'
+    })
+    const instance = provider(resourcePort(), runPort, {
+      offers: cloudOffers,
+      cloudApiKey: 'ollama-cloud-key'
+    })
+
+    await expect(
+      instance.run({
+        runId: 'run-cloud',
+        threadId: 'thread-1',
+        prompt: 'hello cloud',
+        target: TARGET
+      })
+    ).resolves.toMatchObject({ status: 'completed' })
+    expect(mockRunChatLoop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://ollama.com',
+        apiKey: 'ollama-cloud-key',
+        model: 'minimax-m3'
+      })
+    )
+  })
+
+  it('keeps daemon-authenticated Cloud on the local daemon even when a direct key also exists', async () => {
+    const cloudOffers = {
+      ...OLLAMA_OFFERS,
+      models: [
+        {
+          modelId: 'minimax-m3:cloud',
+          label: 'MiniMax M3',
+          available: true,
+          default: true,
+          reasoning: [
+            { reasoningId: 'off', label: 'Off', available: true },
+            { reasoningId: 'on', label: 'On', available: true }
+          ]
+        }
+      ]
+    }
+    mockFetchCatalog.mockResolvedValue(
+      mockCatalog(
+        [
+          {
+            id: 'minimax-m3:cloud',
+            source: 'cloud',
+            transport: 'cloud-daemon',
+            isDefault: true
+          }
+        ],
+        { localReachable: true, cloudAuthenticated: true }
+      )
+    )
+    mockRunChatLoop.mockResolvedValue({
+      content: 'daemon cloud done',
+      toolCalls: [],
+      toolResults: [],
+      usage: {}
+    })
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({
+      modelId: 'minimax-m3:cloud',
+      reasoningId: 'on'
+    })
+    const instance = provider(resourcePort(), runPort, {
+      offers: cloudOffers,
+      cloudApiKey: 'also-configured'
+    })
+
+    await instance.run({
+      runId: 'run-daemon-cloud',
+      threadId: 'thread-1',
+      prompt: 'hello daemon cloud',
+      target: TARGET
+    })
+    expect(mockRunChatLoop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'minimax-m3:cloud'
+      })
+    )
+    expect(mockRunChatLoop.mock.calls[0]?.[0]).not.toHaveProperty('apiKey')
+  })
+
   it('records a failed run when the daemon is unreachable', async () => {
     mockFetchCatalog.mockRejectedValue(new Error('connection refused'))
     const runPort = new FakeRunPort()
@@ -317,13 +520,21 @@ describe('HostNodeOllamaProvider run path', () => {
 
   it('cancels an active run exactly once and unloads the model', async () => {
     let resolveRun:
-      | ((value: { content: string; toolCalls: []; toolResults: []; usage: {} }) => void)
+      | ((value: {
+          content: string
+          toolCalls: []
+          toolResults: []
+          usage: Record<string, never>
+        }) => void)
       | undefined
-    const runPromise = new Promise<{ content: string; toolCalls: []; toolResults: []; usage: {} }>(
-      (resolve) => {
-        resolveRun = resolve
-      }
-    )
+    const runPromise = new Promise<{
+      content: string
+      toolCalls: []
+      toolResults: []
+      usage: Record<string, never>
+    }>((resolve) => {
+      resolveRun = resolve
+    })
     mockRunChatLoop.mockImplementation(async (options) => {
       options.signal.addEventListener('abort', () => {
         resolveRun?.({ content: '', toolCalls: [], toolResults: [], usage: {} })

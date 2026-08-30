@@ -11,6 +11,10 @@ import {
 } from '../shared/hostProtocol'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
 import {
+  HostPermissionConsentAuthority,
+  createHostPermissionConsentProof
+} from '../host-runtime/HostPermissionConsent'
+import {
   hostThreadRecordTransferPath,
   publishHostThreadRecordTransfer
 } from '../host-runtime/HostThreadRecordTransfer'
@@ -22,6 +26,7 @@ import {
 import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
 import type { HostNodeProvider, HostNodeProviderInstance } from './HostNodeProvider'
 import { HostNodeDomainPorts } from './HostNodeDomainPorts'
+import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
 
 const paths: string[] = []
 const actor = { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const }
@@ -203,6 +208,112 @@ afterEach(() => {
 })
 
 describe('HostNodeDomainPorts', () => {
+  it('requires one-use launch proof plus a live grant for Full Access and cannot revive it from profile bytes', async () => {
+    const { domainOptions, store, workspace } = open()
+    const bootstrapSecret = Buffer.alloc(32, 4)
+    const permissionConsentAuthority = new HostPermissionConsentAuthority(
+      bootstrapSecret,
+      () => '2026-08-24T05:00:00.000Z',
+      Buffer.alloc(32, 5)
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        createHostNodeCodexProvider({
+          resources: {
+            resolveBinary: async () => ({ binaryPath: '/usr/local/bin/codex', source: 'path' }),
+            getAuthState: async () => 'authenticated',
+            getVersion: async () => 'test'
+          }
+        })
+      ],
+      permissionConsentAuthority
+    })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const offers = await domain.providerOffers('codex')
+    expect(offers.postures.find((posture) => posture.postureId === 'full_access')).toMatchObject({
+      available: true,
+      requiresExplicitConsent: true
+    })
+    const commandId = '11111111-1111-4111-8111-111111111111'
+    const proofRequest = {
+      commandId,
+      actor,
+      threadId: thread.appChatId,
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access' as const,
+      offerRevision: offers.offerRevision,
+      issuedAt: '2026-08-24T05:00:00.000Z'
+    }
+    const postureConsentProof = createHostPermissionConsentProof(bootstrapSecret, proofRequest)
+    const configure = command(
+      'thread.configure',
+      commandId,
+      { threadId: thread.appChatId },
+      {
+        providerId: proofRequest.providerId,
+        modelId: proofRequest.modelId,
+        postureId: proofRequest.postureId,
+        offerRevision: proofRequest.offerRevision,
+        postureConsent: true,
+        postureConsentProof
+      }
+    )
+
+    await expect(domain.setupExecutor.execute(configure, context)).resolves.toMatchObject({
+      status: 'succeeded'
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      posture: { postureId: 'full_access', verifiedConsent: { authority: 'host-signed' } }
+    })
+    const elevatedRecord = store.getThread(thread.appChatId)!
+    expect(JSON.stringify(elevatedRecord)).not.toContain(postureConsentProof)
+    const snapshot = JSON.stringify(domain.snapshotDonor())
+    expect(snapshot).not.toContain(postureConsentProof)
+    expect(snapshot).not.toContain(
+      String(
+        (
+          elevatedRecord.providerMetadata?.hostPermissionConsent as
+            | { signature?: unknown }
+            | undefined
+        )?.signature
+      )
+    )
+    expect(snapshot).not.toMatch(/effectivePermissions|agenticServices|shellCommands/i)
+
+    const lower = command(
+      'thread.configure',
+      '22222222-2222-4222-8222-222222222222',
+      { threadId: thread.appChatId },
+      {
+        providerId: 'codex',
+        modelId: 'gpt-5.6-terra',
+        postureId: 'default',
+        offerRevision: offers.offerRevision
+      }
+    )
+    await expect(domain.setupExecutor.execute(lower, context)).resolves.toMatchObject({
+      status: 'succeeded'
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      posture: { postureId: 'default' }
+    })
+    await expect(domain.setupExecutor.execute(configure, context)).resolves.toMatchObject({
+      status: 'failed'
+    })
+
+    const loweredRecord = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: loweredRecord.persistenceRevision ?? 0,
+      record: { ...elevatedRecord, persistenceRevision: loweredRecord.persistenceRevision }
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toBeNull()
+    await domain.shutdown()
+  })
+
   it('refuses unregistered or unclaimed Git workspace scope before the service can spawn', async () => {
     const { domainOptions, store, workspace } = open()
     const read = vi.fn().mockResolvedValue({
@@ -735,9 +846,21 @@ describe('HostNodeDomainPorts', () => {
       ])
     )
     await expect(
-      domain.executeCommand(context, command('run.cancel', 'cmd-cancel', { threadId }, {}), {
-        id: 'disconnected-client'
-      })
+      domain.executeCommand(
+        context,
+        command('run.cancel', 'cmd-cancel-stale', { threadId }, { expectedWorkId: 'run-old' }),
+        { id: 'disconnected-client' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'run_identity_mismatch' })
+    expect(store.getThread(threadId)?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-1', status: 'running' })
+    ])
+    await expect(
+      domain.executeCommand(
+        context,
+        command('run.cancel', 'cmd-cancel', { threadId }, { expectedWorkId: 'run-1' }),
+        { id: 'disconnected-client' }
+      )
     ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
     await vi.waitFor(() =>
       expect(store.getThread(threadId)?.runs).toEqual([
@@ -953,7 +1076,7 @@ describe('HostNodeDomainPorts', () => {
     expect(bareOffers.models).toEqual([])
     expect(bareOffers.locked).toBeTruthy()
 
-    expect(() => domain.threadOffers('id-absent')).toThrow(/Unknown standalone thread/)
+    await expect(domain.threadOffers('id-absent')).rejects.toThrow(/Unknown standalone thread/)
   })
 
   it('prepends the App-authored work state when the thread carries a live goal', async () => {

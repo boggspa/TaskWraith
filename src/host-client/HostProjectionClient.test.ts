@@ -192,6 +192,20 @@ describe('discovery readiness', () => {
     cleanups.push(() => client.close())
 
     await expect(client.connect()).resolves.toMatchObject({ hostId: 'fake-host' })
+    const published = JSON.parse(discovery) as {
+      pid: number
+      startedAt: string
+      hostId: string
+      hostVersion: string
+    }
+    expect(client.discoveryProcessIdentity).toEqual({
+      pid: published.pid,
+      startedAt: published.startedAt,
+      hostId: published.hostId,
+      hostVersion: published.hostVersion
+    })
+    client.close()
+    expect(client.discoveryProcessIdentity).toBeNull()
   })
 
   it('returns typed host_unavailable after discovery stays absent for the connect budget', async () => {

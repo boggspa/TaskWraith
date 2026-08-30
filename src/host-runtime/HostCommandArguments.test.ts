@@ -263,20 +263,36 @@ describe('validateHostCommandArguments', () => {
     expect(HOST_COMPOSER_SEND_TEXT_MAX_CHARS).toBe(12_000)
   })
 
-  it('run.cancel and thread.select require exact threadId and empty arguments', () => {
-    for (const name of ['run.cancel', 'thread.select'] as const) {
-      expect(validateHostCommandArguments(command(name, { threadId: 't' }, {})).ok).toBe(true)
-      expect(
-        validateHostCommandArguments(command(name, { threadId: 't' }, { force: true }))
-      ).toEqual({
-        ok: false,
-        error: `${name} arguments must be empty`
-      })
-      expect(validateHostCommandArguments(command(name, {}, {}))).toEqual({
-        ok: false,
-        error: `${name} target must be exactly { threadId }`
-      })
-    }
+  it('run.cancel preserves legacy empty args and binds new clients to exact work', () => {
+    expect(validateHostCommandArguments(command('run.cancel', { threadId: 't' }, {})).ok).toBe(true)
+    expect(
+      validateHostCommandArguments(
+        command('run.cancel', { threadId: 't' }, { expectedWorkId: 'run-1' })
+      )
+    ).toMatchObject({ ok: true, value: { arguments: { expectedWorkId: 'run-1' } } })
+    expect(
+      validateHostCommandArguments(command('run.cancel', { threadId: 't' }, { force: true }))
+    ).toEqual({
+      ok: false,
+      error: 'run.cancel arguments must be empty or exactly { expectedWorkId }'
+    })
+    expect(validateHostCommandArguments(command('run.cancel', {}, {}))).toEqual({
+      ok: false,
+      error: 'run.cancel target must be exactly { threadId }'
+    })
+  })
+
+  it('thread.select requires exact threadId and empty arguments', () => {
+    expect(validateHostCommandArguments(command('thread.select', { threadId: 't' }, {})).ok).toBe(
+      true
+    )
+    expect(
+      validateHostCommandArguments(command('thread.select', { threadId: 't' }, { force: true }))
+    ).toEqual({ ok: false, error: 'thread.select arguments must be empty' })
+    expect(validateHostCommandArguments(command('thread.select', {}, {}))).toEqual({
+      ok: false,
+      error: 'thread.select target must be exactly { threadId }'
+    })
   })
 
   it('accepts only the closed setup command shapes', () => {
@@ -364,6 +380,62 @@ describe('validateHostCommandArguments', () => {
         )
       )
     ).toEqual({ ok: false, error: 'provider.auth.cancel arguments must be empty' })
+  })
+
+  it('accepts only a bounded Full Access user-presence proof', () => {
+    const base = {
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access',
+      offerRevision: 'revision-1',
+      postureConsent: true
+    }
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.configure',
+          { threadId: 'thread-id' },
+          {
+            ...base,
+            postureConsentProof: 'a'.repeat(64)
+          }
+        )
+      )
+    ).toMatchObject({
+      ok: true,
+      value: { arguments: { ...base, postureConsentProof: 'a'.repeat(64) } }
+    })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.configure',
+          { threadId: 'thread-id' },
+          {
+            ...base,
+            postureConsentProof: 'A'.repeat(64)
+          }
+        )
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.configure postureConsentProof must be a SHA-256 HMAC'
+    })
+    expect(
+      validateHostCommandArguments(
+        command(
+          'thread.configure',
+          { threadId: 'thread-id' },
+          {
+            ...base,
+            postureId: 'workspace_write',
+            postureConsentProof: 'a'.repeat(64)
+          }
+        )
+      )
+    ).toEqual({
+      ok: false,
+      error: 'thread.configure postureConsentProof requires Full Access consent'
+    })
   })
 
   it('ensemble.seat.toggle requires participantId and boolean enabled', () => {

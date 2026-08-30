@@ -52,7 +52,8 @@ const BINARY_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
   ollama: ['ollama'],
   pi: ['pi'],
   mistral: ['vibe', 'vibe-acp'],
-  muse: ['muse']
+  muse: ['muse'],
+  antigravity: ['agy']
 }
 
 function fileExists(candidate: string): boolean {
@@ -71,8 +72,10 @@ function cliBinaryNameCandidates(providerId: string): readonly string[] {
   return BINARY_CANDIDATES[providerId] ?? [providerId]
 }
 
-function getCliSearchDirs(): readonly string[] {
-  const path = process.env.PATH ?? ''
+function getCliSearchDirs(
+  environment: Readonly<NodeJS.ProcessEnv> = process.env
+): readonly string[] {
+  const path = environment.PATH ?? ''
   return path.split(delimiter).filter(Boolean)
 }
 
@@ -92,10 +95,14 @@ function commonBinaryDirs(providerId: string): readonly string[] {
 }
 
 /** Resolve a provider binary without any AppStore fallback. */
-export function resolveHostNodeProviderBinary(providerId: string): HostNodeResolvedBinary {
+export function resolveHostNodeProviderBinary(
+  providerId: string,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env
+): HostNodeResolvedBinary {
   const candidates = cliBinaryNameCandidates(providerId)
   const seen = new Set<string>()
-  for (const dir of [...getCliSearchDirs(), ...commonBinaryDirs(providerId)]) {
+  const searchDirs = getCliSearchDirs(environment)
+  for (const dir of [...searchDirs, ...commonBinaryDirs(providerId)]) {
     for (const name of candidates) {
       const candidate = join(dir, name)
       if (!candidate || seen.has(candidate)) continue
@@ -103,7 +110,7 @@ export function resolveHostNodeProviderBinary(providerId: string): HostNodeResol
       if (fileExists(candidate)) {
         return {
           binaryPath: candidate,
-          source: getCliSearchDirs().includes(dir) ? 'path' : 'common'
+          source: searchDirs.includes(dir) ? 'path' : 'common'
         }
       }
     }
@@ -161,11 +168,12 @@ export function hostNodeProviderAuthFlows(
 
 /** Per-provider resource port backed by local CLI discovery. */
 export function createHostNodeProviderResourcePort(
-  providerId: string
+  providerId: string,
+  options: { readonly environment?: Readonly<NodeJS.ProcessEnv> } = {}
 ): HostNodeProviderResourcePort {
   return {
     async resolveBinary() {
-      return resolveHostNodeProviderBinary(providerId)
+      return resolveHostNodeProviderBinary(providerId, options.environment)
     },
     async getAuthState() {
       // Node Host does not have a safe auth probe for most providers; the

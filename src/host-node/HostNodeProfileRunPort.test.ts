@@ -9,8 +9,13 @@ import {
   HOST_PROFILE_WORKSPACES_FILENAME,
   HostProfileDomainStore
 } from '../host-runtime/HostProfileDomainStore'
+import {
+  HostFullAccessGrantRegistry,
+  HostPermissionConsentAuthority
+} from '../host-runtime/HostPermissionConsent'
 import type { HostProviderRunEvent } from '../host-runtime/HostProviderRunPort'
 import { HostNodeProfileRunPort } from './HostNodeProfileRunPort'
+import { resolveHostNodeCodexPosture } from './HostNodeCodexProvider'
 
 const paths: string[] = []
 
@@ -187,6 +192,45 @@ describe('HostNodeProfileRunPort', () => {
     expect(calls).toBe(1)
   })
 
+  it('never lets a stale cancel identity stop a newer run on the same thread', () => {
+    const { store, threadId } = openStore()
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    port.beginRun({
+      runId: 'run-old',
+      threadId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    port.registerCancel('run-old', () => {})
+    port.finishRun({
+      runId: 'run-old',
+      status: 'completed',
+      finishedAt: '2026-08-24T05:00:01.000Z',
+      warningSummaries: []
+    })
+    port.clearCancel('run-old')
+
+    port.beginRun({
+      runId: 'run-new',
+      threadId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:02.000Z'
+    })
+    let cancelled = 0
+    port.registerCancel('run-new', () => {
+      cancelled += 1
+    })
+    expect(port.cancelThread(threadId, 'run-old')).toBe('identity_mismatch')
+    expect(cancelled).toBe(0)
+    expect(port.cancelThread(threadId, 'run-new')).toBe('cancelled')
+    expect(cancelled).toBe(1)
+  })
+
   it('accepts any live-selectable provider and rejects provider mismatches', () => {
     const { store, workspace } = openStore()
     const registered = store.registerWorkspace({ path: workspace })
@@ -224,6 +268,130 @@ describe('HostNodeProfileRunPort', () => {
         startedAt: '2026-08-24T05:00:00.000Z'
       })
     ).toThrow('provider does not match')
+  })
+
+  it('retains the conditionally admitted AntiGravity identity for registry-gated runs', () => {
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'antigravity',
+      modelId: 'gemini-3.7-flash',
+      postureId: 'read_only'
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(thread.appChatId)).toMatchObject({
+      providerId: 'antigravity',
+      modelId: 'gemini-3.7-flash',
+      posture: { postureId: 'read_only' }
+    })
+  })
+
+  it('projects Full Access only after exact signed consent and live-grant verification', () => {
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const created = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const consentAuthority = new HostPermissionConsentAuthority(
+      Buffer.alloc(32, 6),
+      () => '2026-08-29T23:30:00.000Z'
+    )
+    const selection = {
+      threadId: created.appChatId,
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access' as const,
+      offerRevision: 'codex-offer-revision'
+    }
+    const consent = consentAuthority.issue({
+      commandId: '11111111-1111-4111-8111-111111111111',
+      commandFingerprint: 'c'.repeat(64),
+      actor: { actorId: 'tui-user', clientId: 'tui-client', clientClass: 'tui' },
+      ...selection,
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      issuedAt: '2026-08-29T23:29:59.000Z'
+    })
+    store.configureThread({ ...selection, postureConsent: consent })
+    const events = { publish: (_target: unknown, _event: HostProviderRunEvent) => undefined }
+    const expected = {
+      threadId: created.appChatId,
+      providerId: 'codex',
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access' as const,
+      offerRevision: 'codex-offer-revision'
+    }
+    const verifiedConsent = consentAuthority.verify(consent, expected)!
+    const fullAccessGrants = new HostFullAccessGrantRegistry()
+    fullAccessGrants.activateVerified(consent, verifiedConsent)
+
+    const verified = new HostNodeProfileRunPort({
+      store,
+      events,
+      permissionConsentAuthority: consentAuthority,
+      fullAccessGrants
+    }).getThread(created.appChatId)
+    expect(verified).toMatchObject({
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      posture: {
+        postureId: 'full_access',
+        approvalMode: 'auto_edit',
+        explicitConsentAcknowledged: true,
+        verifiedConsent: {
+          authority: 'host-signed',
+          commandId: '11111111-1111-4111-8111-111111111111'
+        }
+      }
+    })
+    expect(resolveHostNodeCodexPosture(verified!)).toEqual({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      sandboxPolicy: { type: 'dangerFullAccess' }
+    })
+    expect(new HostNodeProfileRunPort({ store, events }).getThread(created.appChatId)).toBeNull()
+    expect(
+      new HostNodeProfileRunPort({
+        store,
+        events,
+        permissionConsentAuthority: consentAuthority,
+        fullAccessGrants: new HostFullAccessGrantRegistry()
+      }).getThread(created.appChatId)
+    ).toBeNull()
+    expect(
+      new HostNodeProfileRunPort({
+        store,
+        events,
+        permissionConsentAuthority: new HostPermissionConsentAuthority(Buffer.alloc(32, 5)),
+        fullAccessGrants
+      }).getThread(created.appChatId)
+    ).toBeNull()
+
+    const current = store.getThread(created.appChatId)!
+    store.persistThreadRecord({
+      threadId: created.appChatId,
+      expectedRevision: current.persistenceRevision ?? 0,
+      record: {
+        ...current,
+        providerMetadata: {
+          ...current.providerMetadata,
+          selectedModelType: 'gpt-5.6-sol'
+        }
+      }
+    })
+    expect(
+      new HostNodeProfileRunPort({
+        store,
+        events,
+        permissionConsentAuthority: consentAuthority,
+        fullAccessGrants
+      }).getThread(created.appChatId)
+    ).toBeNull()
   })
 
   it('accepts a valid legacy workspace path alias when the store-owned realPath matches', () => {

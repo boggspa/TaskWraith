@@ -19,10 +19,12 @@ import {
 } from '../shared/ollamaReasoning'
 import {
   fetchOllamaModelCatalog,
+  OLLAMA_CLOUD_API_BASE_URL,
   unloadOllamaModel,
   type OllamaChatMessage,
   type OllamaModelInfo
 } from '../host-shared/ollama/OllamaDaemonClient'
+import { isOllamaCloudModelId, ollamaCloudBaseModelId } from '../shared/ollamaModelAvailability'
 import {
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
@@ -33,12 +35,7 @@ import {
   type OllamaSessionMemory
 } from '../host-shared/ollama/OllamaContextBudget'
 import { runOllamaChatLoop, type OllamaToolCall } from '../host-shared/ollama/OllamaChatLoop'
-import {
-  hostNodeProviderAuthFlows,
-  hostNodeProviderAuthStatus,
-  normalizeHostNodeProviderStatus,
-  type HostNodeProviderResourcePort
-} from './HostNodeProviderResources'
+import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import {
   normalizeHostProviderRunThread,
   type HostProviderRunPort,
@@ -58,8 +55,11 @@ import type {
   HostNodeProviderRunRequest,
   HostNodeProviderRunResult
 } from './HostNodeProvider'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
 const OLLAMA_PROVIDER_ID = 'ollama'
+const OLLAMA_CATALOG_CACHE_MS = 1_000
 const SAFE_IDENTIFIER_MAX_CHARS = 512
 const CONTROL_MAX_CODE_POINT = 0x1f
 const DELETE_CODE_POINT = 0x7f
@@ -111,6 +111,7 @@ export interface HostNodeOllamaProviderOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly baseUrl?: string
   readonly cloudApiKey?: string | null
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
 }
 
@@ -119,75 +120,152 @@ interface ActiveOllamaRun {
   abortController: AbortController
   modelId: string
   baseUrl: string
+  directCloud: boolean
 }
 
 export class HostNodeOllamaProvider implements HostNodeProviderInstance {
   readonly providerId = OLLAMA_PROVIDER_ID
   private readonly baseUrl: string
   private readonly cloudApiKey: string | null
+  private readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  private currentOffers: HostProviderOffersProjection
   private readonly executeTool?: (
     toolCall: OllamaToolCall
   ) => Promise<{ ok: boolean; result: string }>
   private readonly activeRuns = new Map<string, ActiveOllamaRun>()
   private readonly sessionMemoryByThreadModel = new Map<string, OllamaSessionMemory>()
+  private catalogCache:
+    | {
+        readonly value: Awaited<ReturnType<typeof fetchOllamaModelCatalog>>
+        readonly expiresAt: number
+      }
+    | undefined
+  private catalogInFlight: Promise<Awaited<ReturnType<typeof fetchOllamaModelCatalog>>> | null =
+    null
 
   constructor(private readonly options: HostNodeOllamaProviderOptions) {
     this.baseUrl = options.baseUrl ?? 'http://127.0.0.1:11434'
     this.cloudApiKey = options.cloudApiKey ?? null
+    this.terminalLauncher = options.terminalLauncher
+    this.currentOffers = options.offers
     this.executeTool = options.executeTool
   }
 
-  private async daemonReachable(): Promise<boolean> {
+  private async catalog(defaultModel?: string) {
+    if (!defaultModel && this.catalogCache && this.catalogCache.expiresAt > Date.now()) {
+      return this.catalogCache.value
+    }
+    if (!defaultModel && this.catalogInFlight) return this.catalogInFlight
+    const pending = fetchOllamaModelCatalog(this.baseUrl, {
+      timeoutMs: 2_000,
+      cloudApiKey: this.cloudApiKey,
+      ...(defaultModel ? { defaultModel } : {})
+    })
+    if (defaultModel) return pending
+    this.catalogInFlight = pending
     try {
-      const catalog = await fetchOllamaModelCatalog(this.baseUrl, {
-        timeoutMs: 2_000,
-        cloudApiKey: this.cloudApiKey
-      })
-      return catalog.localReachable
-    } catch {
-      return false
+      const value = await pending
+      this.catalogCache = { value, expiresAt: Date.now() + OLLAMA_CATALOG_CACHE_MS }
+      return value
+    } finally {
+      this.catalogInFlight = null
     }
   }
 
   private async runtimeStatus() {
-    const reachable = await this.daemonReachable()
-    return {
-      providerId: OLLAMA_PROVIDER_ID,
-      available: reachable,
-      binaryAvailable: reachable,
-      authState: reachable ? ('authenticated' as const) : ('unknown' as const)
+    try {
+      const catalog = await this.catalog()
+      const runnable = catalog.models.some((model) => !model.disabled)
+      return { catalog, runnable }
+    } catch {
+      return { catalog: null, runnable: false }
     }
+  }
+
+  async getOffers(): Promise<HostProviderOffersProjection> {
+    const status = await this.runtimeStatus()
+    this.currentOffers = hostNodeOllamaOffersFromCatalog({
+      models: status.catalog?.models ?? []
+    })
+    return this.currentOffers
   }
 
   /** A missing daemon is a present `unavailable` row, never an omission. */
   async getStatus(): Promise<HostProviderStatusProjection> {
     const status = await this.runtimeStatus()
-    if (!status.available) {
+    if (!status.catalog || !status.runnable) {
       return {
         providerId: OLLAMA_PROVIDER_ID,
         status: 'unavailable',
         label: 'Ollama',
-        detail: 'Ollama daemon is not reachable.'
+        detail: status.catalog
+          ? 'No installed local model or authenticated Ollama Cloud model is available.'
+          : 'Ollama daemon and direct Cloud API are not reachable.'
       }
     }
-    return normalizeHostNodeProviderStatus(OLLAMA_PROVIDER_ID, status)
+    return {
+      providerId: OLLAMA_PROVIDER_ID,
+      status: 'ready',
+      label: 'Ollama',
+      detail:
+        status.catalog.cloud.authenticated === true
+          ? status.catalog.localReachable
+            ? 'Local Ollama and authenticated Cloud models are available.'
+            : 'Authenticated Ollama Cloud models are available.'
+          : 'Local Ollama models are available.'
+    }
   }
 
   async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {
-    return hostNodeProviderAuthStatus(OLLAMA_PROVIDER_ID, await this.runtimeStatus())
+    const status = await this.runtimeStatus()
+    const authenticated = status.catalog?.cloud.authenticated
+    return {
+      providerId: OLLAMA_PROVIDER_ID,
+      state:
+        authenticated === true
+          ? 'authenticated'
+          : authenticated === false
+            ? 'unauthenticated'
+            : status.catalog
+              ? 'unknown'
+              : 'unavailable',
+      detail:
+        authenticated === true
+          ? 'Ollama Cloud account verified.'
+          : 'Local models do not require an account; Cloud models require `ollama signin` or OLLAMA_API_KEY.'
+    }
   }
 
   async getAuthFlows(): Promise<readonly HostProviderAuthFlowProjection[]> {
-    return hostNodeProviderAuthFlows(OLLAMA_PROVIDER_ID, await this.runtimeStatus())
+    if (!this.terminalLauncher || !this.options.resources) return []
+    const status = await this.runtimeStatus()
+    if (status.catalog?.cloud.authenticated === true) return []
+    const binary = await this.options.resources.resolveBinary()
+    if (!binary.binaryPath) return []
+    return [
+      {
+        flowId: 'ollama:signin',
+        kind: 'manual',
+        label: 'Sign in to Ollama Cloud',
+        available: true,
+        detail:
+          'Runs `ollama signin`; Cloud offers appear only after the daemon proves the account.'
+      }
+    ]
   }
 
   async beginAuth(operationId: string): Promise<void> {
     if (!isCanonicalIdentifier(operationId)) {
       throw new HostNodeOllamaValidationError('Ollama auth operation id is not canonical.')
     }
-    throw new HostNodeOllamaValidationError(
-      'Ollama authenticates by daemon reachability, not a terminal login. Start the Ollama service and refresh; process launch is never treated as success.'
-    )
+    if (!this.terminalLauncher || !this.options.resources) {
+      throw new HostNodeOllamaValidationError('Ollama Cloud sign-in handoff is unavailable.')
+    }
+    const binary = await this.options.resources.resolveBinary()
+    if (!binary.binaryPath) throw new HostNodeOllamaValidationError('Ollama CLI is unavailable.')
+    await this.terminalLauncher.launchForProvider(OLLAMA_PROVIDER_ID, {
+      argv: [binary.binaryPath, 'signin']
+    })
   }
 
   async cancelAuth(): Promise<boolean> {
@@ -203,7 +281,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     if (normalized.providerId !== OLLAMA_PROVIDER_ID) {
       throw new HostNodeOllamaValidationError('Thread is not configured for Ollama.')
     }
-    const model = this.options.offers.models.find((entry) => entry.modelId === normalized.modelId)
+    const model = this.currentOffers.models.find((entry) => entry.modelId === normalized.modelId)
     if (!model) {
       throw new HostNodeOllamaValidationError('Ollama model is not offered by the Host catalog.')
     }
@@ -233,7 +311,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     return normalized
   }
 
-  private async ensureModelInstalled(modelId: string): Promise<OllamaModelInfo> {
+  private async ensureModelAvailable(modelId: string): Promise<OllamaModelInfo> {
     let catalog
     try {
       catalog = await fetchOllamaModelCatalog(this.baseUrl, {
@@ -241,9 +319,6 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         defaultModel: modelId
       })
     } catch {
-      throw new HostNodeOllamaDaemonUnavailableError()
-    }
-    if (!catalog.localReachable) {
       throw new HostNodeOllamaDaemonUnavailableError()
     }
     const model = catalog.models.find(
@@ -256,6 +331,12 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       throw new HostNodeOllamaValidationError(
         model.disabledReason ?? `Ollama model ${modelId} is not available.`
       )
+    }
+    if (model.source === 'local' && !catalog.localReachable) {
+      throw new HostNodeOllamaDaemonUnavailableError()
+    }
+    if (model.source === 'cloud' && !this.cloudApiKey && !catalog.localReachable) {
+      throw new HostNodeOllamaDaemonUnavailableError()
     }
     return model
   }
@@ -296,7 +377,8 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       cancelled: false,
       abortController,
       modelId: thread.modelId,
-      baseUrl: this.baseUrl
+      baseUrl: this.baseUrl,
+      directCloud: false
     }
     this.activeRuns.set(request.runId, active)
 
@@ -360,7 +442,11 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     let usage: HostProviderRunUsage | undefined
 
     try {
-      const model = await this.ensureModelInstalled(thread.modelId)
+      const model = await this.ensureModelAvailable(thread.modelId)
+      const directCloud = model.transport === 'cloud-direct'
+      active.directCloud = directCloud
+      const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : this.baseUrl
+      const transportModelId = directCloud ? ollamaCloudBaseModelId(thread.modelId) : thread.modelId
       const memoryKey = `${request.threadId}:${thread.modelId}`
       const sessionMemory =
         this.sessionMemoryByThreadModel.get(memoryKey) ??
@@ -384,10 +470,10 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         : messages
 
       const result = await runOllamaChatLoop({
-        baseUrl: this.baseUrl,
-        ...(this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
+        baseUrl: transportBaseUrl,
+        ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
         signal: abortController.signal,
-        model: thread.modelId,
+        model: transportModelId,
         messages: compressedMessages,
         tools: this.executeTool ? [] : undefined, // Tool definitions would come from the tool tier system
         executeTool: this.executeTool
@@ -440,7 +526,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     } finally {
       this.options.runPort.clearCancel(request.runId)
       this.activeRuns.delete(request.runId)
-      if (status === 'cancelled') {
+      if (status === 'cancelled' && !active.directCloud) {
         await unloadOllamaModel(this.baseUrl, active.modelId).catch(() => undefined)
       }
     }
@@ -493,9 +579,11 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       active.abortController.abort()
     }
     this.activeRuns.clear()
+    this.catalogCache = undefined
+    this.catalogInFlight = null
     // Best-effort unload of the most recent model per thread.
     for (const memory of this.sessionMemoryByThreadModel.values()) {
-      if (memory.modelId) {
+      if (memory.modelId && !isOllamaCloudModelId(memory.modelId)) {
         await unloadOllamaModel(this.baseUrl, memory.modelId).catch(() => undefined)
       }
     }
@@ -508,6 +596,7 @@ export interface HostNodeOllamaProviderFactoryOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly baseUrl?: string
   readonly cloudApiKey?: string | null
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
 }
 
@@ -534,6 +623,7 @@ export function createHostNodeOllamaProviderFactory(
         ...(options.resources ? { resources: options.resources } : {}),
         ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
         ...(options.cloudApiKey !== undefined ? { cloudApiKey: options.cloudApiKey } : {}),
+        ...(options.terminalLauncher ? { terminalLauncher: options.terminalLauncher } : {}),
         ...(options.executeTool ? { executeTool: options.executeTool } : {})
       })
     }

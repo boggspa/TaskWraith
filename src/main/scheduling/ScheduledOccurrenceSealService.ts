@@ -145,12 +145,6 @@ export interface ScheduledOccurrenceSealServiceDeps {
     approvalMode: string | undefined,
     settings: AppSettings
   ): 'never' | 'on-request'
-  codexSandboxPolicyForMode(
-    approvalMode: string | undefined,
-    workspace: string,
-    settings: AppSettings,
-    fullAccessGranted: boolean
-  ): CanonicalEvidenceValue
   claudeMcpFacts(input: {
     appRunId: string
     appChatId: string
@@ -612,8 +606,7 @@ export class ScheduledOccurrenceSealService {
         capabilityContract,
         userMcpConfiguration,
         policy: {
-          approvalPolicyForMode: this.deps.codexApprovalPolicyForMode,
-          sandboxPolicyForMode: this.deps.codexSandboxPolicyForMode
+          approvalPolicyForMode: this.deps.codexApprovalPolicyForMode
         }
       })
       return {

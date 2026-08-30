@@ -38,6 +38,7 @@ import type {
 } from '../shared/hostSetupProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import { projectHostProviderOfferCapabilities } from '../host-shared/HostProviderCatalog'
 import { buildAgentWorkState, type AgentWorkGoalFacts } from '../host-shared/AgentWorkContract'
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
@@ -58,6 +59,12 @@ import {
   isHostProfileRecordMutationName
 } from '../host-runtime/HostProfileRecordCommandExecutor'
 import { HostSetupCommandExecutor } from '../host-runtime/HostSetupCommandExecutor'
+import type {
+  HostPermissionConsentAuthorityPort,
+  HostPermissionConsentEnvelope,
+  HostPermissionConsentRequest
+} from '../host-runtime/HostPermissionConsent'
+import { HostFullAccessGrantRegistry } from '../host-runtime/HostPermissionConsent'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
 import {
   HostNodeInteractionRegistry,
@@ -85,6 +92,8 @@ export interface HostNodeDomainPortsOptions {
   readonly interactionTimeoutMs?: number
   /** Real reconciliation callback; the server plumbs its projector here. */
   readonly onProjectionDirty?: () => void
+  /** Required for standalone Full Access; lower postures remain compatible without it. */
+  readonly permissionConsentAuthority?: HostPermissionConsentAuthorityPort
 }
 
 type AuthOperation = {
@@ -324,6 +333,7 @@ export class HostNodeDomainPorts {
   readonly registry: HostNodeProviderRegistry
   readonly interactions: HostNodeInteractionRegistry
   readonly setupExecutor: HostSetupCommandExecutor
+  private readonly fullAccessGrants = new HostFullAccessGrantRegistry()
   private readonly profileRecordExecutor: HostProfileRecordCommandExecutor
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
@@ -340,7 +350,14 @@ export class HostNodeDomainPorts {
       ...(options.profilePath ? { profilePath: options.profilePath } : {}),
       store: options.store
     })
-    this.runPort = new HostNodeProfileRunPort({ store: options.store, events: options.events })
+    this.runPort = new HostNodeProfileRunPort({
+      store: options.store,
+      events: options.events,
+      ...(options.permissionConsentAuthority
+        ? { permissionConsentAuthority: options.permissionConsentAuthority }
+        : {}),
+      fullAccessGrants: this.fullAccessGrants
+    })
     this.interactions = new HostNodeInteractionRegistry({
       timeoutMs: options.interactionTimeoutMs,
       onRegistered: () => this.notifyProjectionDirty(),
@@ -365,6 +382,7 @@ export class HostNodeDomainPorts {
         },
         configure: (input) => this.configureThread(input),
         archive: (input) => {
+          this.fullAccessGrants.revokeThread(input.threadId)
           this.interactions.cancelByThreadId(
             input.threadId,
             'HostNodeInteractionRegistry: thread archived'
@@ -415,10 +433,24 @@ export class HostNodeDomainPorts {
     }
   }
 
-  providerOffers(providerId: string): HostProviderOffersProjection {
-    const offers = this.registry.getOffers(providerId)
+  async providerOffers(providerId: string): Promise<HostProviderOffersProjection> {
+    const base = await this.registry.refreshOffers(providerId)
+    const offers = base ? this.effectiveProviderOffers(base) : null
     if (!offers) throw new Error('Unknown standalone provider')
     return offers
+  }
+
+  private cachedProviderOffers(providerId: string): HostProviderOffersProjection | null {
+    const base = this.registry.getOffers(providerId)
+    return base ? this.effectiveProviderOffers(base) : null
+  }
+
+  private effectiveProviderOffers(
+    base: HostProviderOffersProjection
+  ): HostProviderOffersProjection {
+    return projectHostProviderOfferCapabilities(base, {
+      fullAccessConsentAuthority: Boolean(this.options.permissionConsentAuthority)
+    })
   }
 
   /**
@@ -432,7 +464,7 @@ export class HostNodeDomainPorts {
    * not compose, returns an empty catalogue with `locked` set: an honest
    * refusal, never an invented list of models that could not actually run.
    */
-  threadOffers(threadId: string): TaskWraithControlThreadOffers {
+  async threadOffers(threadId: string): Promise<TaskWraithControlThreadOffers> {
     const thread = this.options.store.getThread(threadId)
     if (!thread) throw new Error('Unknown standalone thread')
     const providerId = typeof thread.provider === 'string' ? thread.provider : undefined
@@ -441,7 +473,8 @@ export class HostNodeDomainPorts {
       typeof metadata.selectedModelType === 'string' ? metadata.selectedModelType : undefined
     const currentReasoning =
       typeof metadata.reasoningEffort === 'string' ? metadata.reasoningEffort : undefined
-    const offers = providerId ? this.registry.getOffers(providerId) : undefined
+    const refreshed = providerId ? await this.registry.refreshOffers(providerId) : null
+    const offers = refreshed ? this.effectiveProviderOffers(refreshed) : undefined
     const catalogue = offers?.models ?? []
     const currentLabel = catalogue.find((model) => model.modelId === currentModel)?.label
     const unavailable = 'Not available on this Host'
@@ -712,8 +745,19 @@ export class HostNodeDomainPorts {
       if (!this.registry.hasProvider(thread.providerId)) {
         return { decision: 'deny', reason: 'standalone_provider_not_composed' }
       }
-      const offers = this.registry.getOffers(thread.providerId)
-      if (!offers || !this.sendSelectionIsCurrent(thread, command.arguments, offers)) {
+      const offers = this.cachedProviderOffers(thread.providerId)
+      const metadata = (profileThread.providerMetadata ?? {}) as Record<string, unknown>
+      const fullAccessOfferIsCurrent =
+        metadata.permissionPresetId !== 'full_access' ||
+        metadata.hostOfferRevision === offers?.offerRevision
+      if (!fullAccessOfferIsCurrent) {
+        this.fullAccessGrants.revokeThread(profileThread.appChatId)
+      }
+      if (
+        !offers ||
+        !fullAccessOfferIsCurrent ||
+        !this.sendSelectionIsCurrent(thread, command.arguments, offers)
+      ) {
         return { decision: 'deny', reason: 'standalone_configuration_mismatch' }
       }
     }
@@ -725,6 +769,9 @@ export class HostNodeDomainPorts {
     command: HostCommand,
     target: HostRunEventTarget
   ): Promise<HostCommandExecutionResult> {
+    if (!(await this.prepareAuthorityEvaluation(context, command))) {
+      return failed('provider_offers_unavailable')
+    }
     const authority = this.evaluateAuthority(context, command)
     if (authority.decision !== 'allow') return failed('authority_denied')
     if (isSetupMutationName(command.name)) return this.setupExecutor.execute(command, context)
@@ -732,14 +779,27 @@ export class HostNodeDomainPorts {
     if (!decoded.ok) return failed('command_invalid')
 
     if (isHostProfileRecordMutationName(command.name)) {
+      if (isCanonicalId(command.target.threadId)) {
+        this.fullAccessGrants.revokeThread(command.target.threadId)
+      }
       return this.profileRecordExecutor.execute(decoded.value)
     }
 
     if (command.name === 'run.cancel') {
-      const outcome = this.runPort.cancelThread(command.target.threadId)
+      const expectedWorkId = decoded.value.arguments.expectedWorkId
+      const outcome = this.runPort.cancelThread(
+        command.target.threadId,
+        typeof expectedWorkId === 'string' ? expectedWorkId : undefined
+      )
       return outcome === 'cancelled'
         ? { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
-        : failed(outcome === 'not_found' ? 'run_not_found' : 'run_not_cancellable')
+        : failed(
+            outcome === 'identity_mismatch'
+              ? 'run_identity_mismatch'
+              : outcome === 'not_found'
+                ? 'run_not_found'
+                : 'run_not_cancellable'
+          )
     }
 
     if (command.name === 'approval.decide') {
@@ -824,6 +884,21 @@ export class HostNodeDomainPorts {
     return { status: 'succeeded', resultSummary: 'run_started' }
   }
 
+  /** Refresh dynamic provider offers before any composer-send authority decision. */
+  async prepareAuthorityEvaluation(
+    context: HostAuthorityCallContext,
+    command: HostCommand
+  ): Promise<boolean> {
+    if (command.name !== 'composer.send' || !localContext(context, command)) return true
+    const providerId = this.options.store.getThread(command.target.threadId)?.provider
+    if (!isCanonicalId(providerId)) return true
+    try {
+      return Boolean(await this.registry.refreshOffers(providerId))
+    } catch {
+      return false
+    }
+  }
+
   private toggleEnsembleSeat(command: HostCommand): HostCommandExecutionResult {
     try {
       const current = this.options.store.getThread(command.target.threadId)
@@ -886,9 +961,23 @@ export class HostNodeDomainPorts {
     readonly modelId?: string
     readonly reasoningId?: string
     readonly postureId?: string
+    readonly offerRevision?: string
     readonly postureConsent?: true
+    readonly postureConsentProof?: string
+    readonly postureConsentProvenance?: HostPermissionConsentRequest
     readonly title?: string
   }): { readonly threadId: string } {
+    // An authority-bearing reconfiguration first revokes any active elevation.
+    // A failed write stays revoked; profile bytes alone can never revive a grant.
+    // Title-only edits do not change the exact run selection and retain it.
+    if (
+      input.chatKind !== undefined ||
+      input.providerId !== undefined ||
+      input.modelId !== undefined ||
+      input.postureId !== undefined
+    ) {
+      this.fullAccessGrants.revokeThread(input.threadId)
+    }
     if (input.chatKind !== undefined) {
       const thread = this.options.store.setThreadKind({
         threadId: input.threadId,
@@ -902,9 +991,71 @@ export class HostNodeDomainPorts {
     }
     const postureId = input.postureId
     if (postureId !== undefined) {
-      const offers = input.providerId ? this.registry.getOffers(input.providerId) : undefined
+      const offers = input.providerId ? this.cachedProviderOffers(input.providerId) : undefined
       const posture = offers?.postures.find((p) => p.postureId === postureId && p.available)
       if (!posture) throw new Error('Unknown posture')
+    }
+    let storedConsent: true | HostPermissionConsentEnvelope | undefined
+    let verifiedFullAccess:
+      | {
+          readonly envelope: HostPermissionConsentEnvelope
+          readonly provenance: NonNullable<ReturnType<HostPermissionConsentAuthorityPort['verify']>>
+        }
+      | undefined
+    if (postureId === 'workspace_write' || postureId === 'full_access') {
+      if (input.postureConsent !== true) throw new Error('Elevated posture requires consent')
+      const request = input.postureConsentProvenance
+      const authority = this.options.permissionConsentAuthority
+      const current = this.options.store.getThread(input.threadId)
+      const workspace = current?.workspaceId
+        ? this.options.store
+            .listWorkspaces()
+            .find(
+              (candidate) =>
+                candidate.id === current.workspaceId &&
+                (candidate.path === current.workspacePath ||
+                  candidate.realPath === current.workspacePath)
+            )
+        : undefined
+      const exactRequest = Boolean(
+        request &&
+        request.threadId === input.threadId &&
+        request.providerId === input.providerId &&
+        request.modelId === input.modelId &&
+        request.postureId === postureId &&
+        request.offerRevision === input.offerRevision
+      )
+      if (authority && request && current?.scope === 'workspace' && workspace && exactRequest) {
+        const { commandFingerprint: _commandFingerprint, ...proofRequest } = request
+        if (
+          postureId === 'full_access' &&
+          !authority.verifyRequestProof(proofRequest, input.postureConsentProof)
+        ) {
+          throw new Error('Full-access posture requires live user-presence proof')
+        }
+        storedConsent = authority.issue({
+          ...request,
+          workspaceId: workspace.id,
+          workspacePath: workspace.realPath
+        })
+        if (postureId === 'full_access') {
+          const provenance = authority.verify(storedConsent, {
+            threadId: input.threadId,
+            providerId: request.providerId,
+            workspaceId: workspace.id,
+            workspacePath: workspace.realPath,
+            modelId: request.modelId,
+            postureId,
+            offerRevision: request.offerRevision
+          })
+          if (!provenance) throw new Error('Full-access consent verification failed')
+          verifiedFullAccess = { envelope: storedConsent, provenance }
+        }
+      } else if (postureId === 'full_access') {
+        throw new Error('Full-access posture requires authenticated signed consent')
+      } else {
+        storedConsent = true
+      }
     }
     const thread = this.options.store.configureThread({
       threadId: input.threadId,
@@ -912,11 +1063,25 @@ export class HostNodeDomainPorts {
       ...(input.modelId ? { modelId: input.modelId } : {}),
       ...(input.reasoningId ? { reasoningId: input.reasoningId } : {}),
       ...(postureId
-        ? { postureId: postureId as 'read_only' | 'plan' | 'default' | 'workspace_write' }
+        ? {
+            postureId: postureId as
+              | 'read_only'
+              | 'plan'
+              | 'default'
+              | 'workspace_write'
+              | 'full_access'
+          }
         : {}),
-      ...(input.postureConsent ? { postureConsent: true as const } : {}),
+      ...(input.offerRevision ? { offerRevision: input.offerRevision } : {}),
+      ...(storedConsent ? { postureConsent: storedConsent } : {}),
       ...(input.title ? { title: input.title } : {})
     })
+    if (verifiedFullAccess) {
+      this.fullAccessGrants.activateVerified(
+        verifiedFullAccess.envelope,
+        verifiedFullAccess.provenance
+      )
+    }
     return { threadId: thread.appChatId }
   }
 
@@ -1074,7 +1239,7 @@ export class HostNodeDomainPorts {
     readonly providerSessionId?: string
     readonly posture: { readonly postureId: string; readonly approvalMode: string }
   } | null {
-    const offers = this.registry.getOffers(thread.providerId)
+    const offers = this.cachedProviderOffers(thread.providerId)
     if (!offers) return null
     if (!this.sendSelectionIsCurrent(thread, args, offers)) return null
     const modelId = typeof args.model === 'string' ? (args.model as string) : thread.modelId
@@ -1098,6 +1263,7 @@ export class HostNodeDomainPorts {
     readonly alreadyStopped: boolean
     readonly cancelledRuns: number
   }> {
+    this.fullAccessGrants.clear()
     const cancelledRuns = this.runPort.cancelAll()
     const completions = [...this.runCompletions.values()]
     await Promise.all([this.registry.shutdown(), this.interactions.shutdown()])

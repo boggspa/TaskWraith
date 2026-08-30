@@ -21,13 +21,6 @@ export const HOST_NODE_MUSE_REASONING = [
 
 const postures = [
   {
-    postureId: 'read_only',
-    label: 'Read only',
-    available: true,
-    requiresExplicitConsent: false,
-    ceiling: 'read' as const
-  },
-  {
     postureId: 'plan',
     label: 'Plan',
     available: true,
@@ -35,18 +28,34 @@ const postures = [
     ceiling: 'read' as const
   },
   {
+    postureId: 'read_only',
+    label: 'Ask',
+    available: true,
+    requiresExplicitConsent: false,
+    ceiling: 'read' as const
+  },
+  {
     postureId: 'default',
-    label: 'Default',
+    label: 'Accept Edits',
     available: true,
     requiresExplicitConsent: false,
     ceiling: 'workspace_write' as const
   },
   {
     postureId: 'workspace_write',
-    label: 'Workspace write',
+    label: 'Full WS Access',
     available: true,
     requiresExplicitConsent: true,
     ceiling: 'workspace_write' as const
+  },
+  {
+    postureId: 'full_access',
+    label: 'Full Access (YOLO)',
+    available: false,
+    requiresExplicitConsent: true,
+    ceiling: 'full_access' as const,
+    detail:
+      'Unavailable in the standalone Host because Muse deliberately keeps its sandbox enabled.'
   }
 ]
 const reasoningLabels: Readonly<Record<(typeof HOST_NODE_MUSE_REASONING)[number], string>> = {
@@ -85,7 +94,10 @@ export function hostNodeMuseOffers(available = true): HostProviderOffersProjecti
       )
       .digest('hex'),
     models,
-    postures: postures.map((posture) => ({ ...posture, available }))
+    postures: postures.map((posture) => ({
+      ...posture,
+      available: posture.available && available
+    }))
   }
   const decoded = decodeHostProviderOffersProjection(offer)
   if (!decoded.ok) throw new Error('Muse Host catalog is invalid')

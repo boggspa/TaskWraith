@@ -11,18 +11,28 @@
  */
 
 import { taskWraithModelLabel } from '../../shared/taskWraithProviderPresentation'
+import {
+  isOllamaCloudModelId,
+  normalizeOllamaModelKey,
+  ollamaCloudBaseModelId,
+  ollamaCloudModelId,
+  ollamaModelIdsMatch
+} from '../../shared/ollamaModelAvailability'
 
 export const OLLAMA_CLOUD_API_BASE_URL = 'https://ollama.com'
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 
 const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750, 2_000] as const
 const SAFE_CLOUD_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/
+const MAX_CLOUD_API_KEY_CHARS = 4_096
+const PREFERRED_OLLAMA_CLOUD_DEFAULT = 'minimax-m3'
 
 export interface OllamaModelInfo {
   id: string
   label: string
   description?: string
   source: 'local' | 'cloud'
+  transport?: 'local-daemon' | 'cloud-daemon' | 'cloud-direct'
   isCloud: boolean
   installed: boolean
   isDefault: boolean
@@ -37,6 +47,7 @@ export interface OllamaTagsResponse {
   models?: Array<{
     name: string
     model: string
+    remote_host?: string
     modified_at?: string
     size?: number
     digest?: string
@@ -46,6 +57,33 @@ export interface OllamaTagsResponse {
       quantization_level?: string
     }
   }>
+}
+
+interface OllamaCloudRecommendationResponse {
+  recommendations?: Array<{
+    model?: unknown
+    description?: unknown
+    context_length?: unknown
+    max_output_tokens?: unknown
+    required_plan?: unknown
+  }>
+}
+
+export interface OllamaCloudDiscoverySnapshot {
+  supported: boolean
+  enabled: boolean
+  authenticated: boolean | null
+  plan?: string
+  source?: string
+  apiKeyConfigured?: boolean
+  models: OllamaModelInfo[]
+}
+
+interface BoundedJsonResult {
+  reachable: boolean
+  ok: boolean
+  status: number
+  value: unknown
 }
 
 export interface OllamaModelShowResponse {
@@ -146,6 +184,56 @@ function endpoint(baseUrl: string, path: string): string {
   return `${normalizeOllamaBaseUrl(baseUrl)}${path}`
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number) || number <= 0) return undefined
+  return Math.trunc(number)
+}
+
+function isConfiguredCloudApiKey(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= MAX_CLOUD_API_KEY_CHARS &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- bearer keys must be one control-free token.
+    !/[\s\u0000-\u001f\u007f]/.test(value)
+  )
+}
+
+async function readJsonWithDeadline(
+  url: string,
+  init: RequestInit,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<BoundedJsonResult> {
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  if (options.signal?.aborted) controller.abort()
+  else options.signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(abort, options.timeoutMs ?? 1_500)
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    let value: unknown = null
+    if (response.ok) {
+      try {
+        value = await response.json()
+      } catch {
+        value = null
+      }
+    }
+    return { reachable: true, ok: response.ok, status: response.status, value }
+  } catch {
+    return { reachable: false, ok: false, status: 0, value: null }
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abort)
+  }
+}
+
 function ollamaCloudApiHeaders(
   apiKey: string,
   options: { json?: boolean } = {}
@@ -223,12 +311,14 @@ export async function fetchOllamaLocalModels(
     const json = (await response.json()) as OllamaTagsResponse
     return (json.models ?? []).map((entry) => {
       const id = entry.model || entry.name
+      const cloud = isOllamaCloudModelId(id) || Boolean(entry.remote_host)
       return {
         id,
-        label: humanizeOllamaModelId(id),
-        source: 'local' as const,
-        isCloud: false,
-        installed: true,
+        label: humanizeOllamaModelId(cloud ? ollamaCloudBaseModelId(id) : id),
+        source: cloud ? ('cloud' as const) : ('local' as const),
+        transport: cloud ? ('cloud-daemon' as const) : ('local-daemon' as const),
+        isCloud: cloud,
+        installed: !cloud,
         isDefault: false,
         ...(entry.details?.family ? { description: entry.details.family } : {})
       }
@@ -270,7 +360,7 @@ export async function discoverOllamaCloud(
   authenticated: boolean | null
   models: OllamaModelInfo[]
 }> {
-  if (!SAFE_CLOUD_MODEL_ID.test(apiKey)) {
+  if (!isConfiguredCloudApiKey(apiKey)) {
     return { supported: false, enabled: true, authenticated: null, models: [] }
   }
   try {
@@ -283,11 +373,12 @@ export async function discoverOllamaCloud(
     }
     const json = (await response.json()) as OllamaTagsResponse
     const models = (json.models ?? []).map((entry) => {
-      const id = entry.model || entry.name
+      const id = ollamaCloudModelId(entry.model || entry.name)
       return {
         id,
-        label: humanizeOllamaModelId(id),
+        label: humanizeOllamaModelId(ollamaCloudBaseModelId(id)),
         source: 'cloud' as const,
+        transport: 'cloud-direct' as const,
         isCloud: true,
         installed: false,
         isDefault: false
@@ -296,6 +387,139 @@ export async function discoverOllamaCloud(
     return { supported: true, enabled: true, authenticated: true, models }
   } catch {
     return { supported: true, enabled: true, authenticated: null, models: [] }
+  }
+}
+
+function normalizeDaemonCloudRecommendations(payload: unknown): OllamaModelInfo[] {
+  const recommendations =
+    payload && typeof payload === 'object'
+      ? ((payload as OllamaCloudRecommendationResponse).recommendations ?? [])
+      : []
+  const seen = new Set<string>()
+  const models: OllamaModelInfo[] = []
+  for (const recommendation of recommendations) {
+    if (!recommendation || typeof recommendation !== 'object') continue
+    const raw = optionalString(recommendation.model)
+    if (!raw || !SAFE_CLOUD_MODEL_ID.test(raw) || !isOllamaCloudModelId(raw)) continue
+    const id = ollamaCloudModelId(raw)
+    const key = normalizeOllamaModelKey(id)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    const description = optionalString(recommendation.description)
+    const contextLength = positiveInteger(recommendation.context_length)
+    const maxOutputTokens = positiveInteger(recommendation.max_output_tokens)
+    const requiredPlan = optionalString(recommendation.required_plan)
+    models.push({
+      id,
+      label: humanizeOllamaModelId(ollamaCloudBaseModelId(id)),
+      source: 'cloud',
+      transport: 'cloud-daemon',
+      isCloud: true,
+      installed: false,
+      isDefault: false,
+      ...(description ? { description } : {}),
+      ...(contextLength ? { contextLength } : {}),
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
+      ...(requiredPlan ? { requiredPlan } : {})
+    })
+  }
+  return models
+}
+
+function mergeCloudModels(...sources: readonly OllamaModelInfo[][]): OllamaModelInfo[] {
+  const models = new Map<string, OllamaModelInfo>()
+  for (const source of sources) {
+    for (const model of source) {
+      const key = normalizeOllamaModelKey(ollamaCloudBaseModelId(model.id))
+      const previous = models.get(key)
+      models.set(key, previous ? { ...previous, ...model } : { ...model })
+    }
+  }
+  return [...models.values()]
+}
+
+/**
+ * Ask the local daemon for its account state and Cloud recommendations. A
+ * recommendation or remote tag is catalog data only: rows become runnable
+ * only after `/api/me` proves the daemon is signed in. A direct API key is
+ * admitted independently only after ollama.com accepts that key.
+ */
+export async function discoverOllamaCloudAccount(
+  baseUrl: string,
+  options: {
+    signal?: AbortSignal
+    timeoutMs?: number
+    cloudApiKey?: string | null
+    daemonCloudModels?: readonly OllamaModelInfo[]
+  } = {}
+): Promise<OllamaCloudDiscoverySnapshot> {
+  const normalizedBaseUrl = normalizeOllamaBaseUrl(baseUrl)
+  const requestOptions = { signal: options.signal, timeoutMs: options.timeoutMs }
+  const apiKey = String(options.cloudApiKey || '').trim()
+  const [status, account, recommendations, direct] = await Promise.all([
+    readJsonWithDeadline(
+      endpoint(normalizedBaseUrl, '/api/status'),
+      { method: 'GET' },
+      requestOptions
+    ),
+    readJsonWithDeadline(
+      endpoint(normalizedBaseUrl, '/api/me'),
+      { method: 'POST' },
+      requestOptions
+    ),
+    readJsonWithDeadline(
+      endpoint(normalizedBaseUrl, '/api/experimental/model-recommendations'),
+      { method: 'GET' },
+      requestOptions
+    ),
+    apiKey
+      ? discoverOllamaCloud(apiKey, { signal: options.signal })
+      : Promise.resolve({
+          supported: false,
+          enabled: true,
+          authenticated: null,
+          models: [] as OllamaModelInfo[]
+        })
+  ])
+  const statusCloud =
+    status.ok && status.value && typeof status.value === 'object'
+      ? (status.value as { cloud?: unknown }).cloud
+      : null
+  const cloudRecord =
+    statusCloud && typeof statusCloud === 'object'
+      ? (statusCloud as { disabled?: unknown; source?: unknown })
+      : null
+  const daemonAuthenticated = account.ok ? true : account.status === 401 ? false : null
+  const directAuthenticated = apiKey ? direct.authenticated : null
+  const authenticated =
+    daemonAuthenticated === true || directAuthenticated === true
+      ? true
+      : daemonAuthenticated === false && (directAuthenticated === false || !apiKey)
+        ? false
+        : null
+  const enabled = apiKey ? true : cloudRecord?.disabled !== true
+  const daemonRecommendations = normalizeDaemonCloudRecommendations(recommendations.value)
+  const daemonModels =
+    daemonAuthenticated === true && enabled
+      ? mergeCloudModels([...(options.daemonCloudModels ?? [])], daemonRecommendations)
+      : []
+  const directModels = directAuthenticated === true ? direct.models : []
+  const accountValue =
+    account.ok && account.value && typeof account.value === 'object'
+      ? (account.value as { plan?: unknown })
+      : null
+  const plan = optionalString(accountValue?.plan)
+  const source = optionalString(cloudRecord?.source)
+  return {
+    supported: Boolean(
+      direct.supported || status.ok || recommendations.ok || account.ok || account.status === 401
+    ),
+    enabled,
+    authenticated,
+    ...(plan ? { plan } : {}),
+    ...(source ? { source } : {}),
+    ...(apiKey ? { apiKeyConfigured: true } : {}),
+    models: enabled ? mergeCloudModels(daemonModels, directModels) : directModels
   }
 }
 
@@ -337,11 +561,24 @@ export function mergeOllamaLocalAndCloudModels(
   const configuredDefault = String(defaultModel || '')
     .trim()
     .toLowerCase()
+  const preferredCloudDefault =
+    cloud.authenticated === true
+      ? models.find(
+          (model) =>
+            model.source === 'cloud' &&
+            !model.disabled &&
+            normalizeOllamaModelKey(ollamaCloudBaseModelId(model.id)) ===
+              PREFERRED_OLLAMA_CLOUD_DEFAULT
+        )?.id
+      : undefined
   const defaultId =
     (configuredDefault
-      ? models.find((model) => model.id.toLowerCase() === configuredDefault)?.id
+      ? models.find((model) => ollamaModelIdsMatch(model.id, configuredDefault) && !model.disabled)
+          ?.id
       : '') ||
+    preferredCloudDefault ||
     models.find((model) => model.source === 'local' && model.isDefault)?.id ||
+    models.find((model) => model.source === 'local' && !model.disabled)?.id ||
     models.find((model) => !model.disabled)?.id
   for (const model of models) model.isDefault = Boolean(defaultId && model.id === defaultId)
   return {
@@ -376,12 +613,17 @@ export async function fetchOllamaModelCatalog(
     localError = error instanceof Error ? error.message : String(error)
     if (!options.cloudApiKey) throw error
   }
+  const daemonCloudModels = localModels.filter((model) => model.source === 'cloud')
+  localModels = localModels.filter((model) => model.source !== 'cloud')
   const cloud =
     options.signal?.aborted || options.launchAuthorized?.() === false
       ? { supported: false, enabled: true, authenticated: null, models: [] }
-      : options.cloudApiKey
-        ? await discoverOllamaCloud(options.cloudApiKey, { signal: options.signal })
-        : { supported: false, enabled: true, authenticated: null, models: [] }
+      : await discoverOllamaCloudAccount(normalizedBaseUrl, {
+          signal: options.signal,
+          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500),
+          cloudApiKey: options.cloudApiKey,
+          daemonCloudModels
+        })
   return mergeOllamaLocalAndCloudModels(localModels, cloud, options.defaultModel, {
     reachable: localReachable,
     error: localError

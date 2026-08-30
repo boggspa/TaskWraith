@@ -106,6 +106,146 @@ describe('HostNodeProviderRegistry', () => {
           interactions
         })
     ).toThrow('non-live')
+    expect(
+      () =>
+        new HostNodeProviderRegistry({
+          providers: [fakeProvider('antigravity')],
+          runPort,
+          interactions
+        })
+    ).toThrow('non-live')
+    expect(
+      () =>
+        new HostNodeProviderRegistry({
+          providers: [
+            fakeProvider('gemini', {
+              conditionalAdmission: 'antigravity-live-guarded'
+            })
+          ],
+          runPort,
+          interactions
+        })
+    ).toThrow('non-live')
+  })
+
+  it('accepts only an explicitly guarded conditional AntiGravity adapter', () => {
+    const registry = new HostNodeProviderRegistry({
+      providers: [
+        fakeProvider('antigravity', {
+          conditionalAdmission: 'antigravity-live-guarded'
+        })
+      ],
+      runPort,
+      interactions
+    })
+    expect(registry.hasProvider('antigravity')).toBe(true)
+  })
+
+  it('refreshes dynamic offers before status/auth reads and updates the cached revision', async () => {
+    const instance = fakeInstance('ollama')
+    const getOffers = vi
+      .fn<NonNullable<HostNodeProviderInstance['getOffers']>>()
+      .mockResolvedValueOnce({
+        providerId: 'ollama',
+        offerRevision: 'signed-out',
+        models: [
+          { modelId: 'local', label: 'Local', available: true, default: true, reasoning: [] }
+        ],
+        postures: []
+      })
+      .mockResolvedValueOnce({
+        providerId: 'ollama',
+        offerRevision: 'signed-in',
+        models: [
+          {
+            modelId: 'minimax-m3:cloud',
+            label: 'MiniMax M3',
+            available: true,
+            default: true,
+            reasoning: []
+          }
+        ],
+        postures: []
+      })
+      .mockResolvedValueOnce({
+        providerId: 'ollama',
+        offerRevision: 'signed-out-again',
+        models: [
+          { modelId: 'local', label: 'Local', available: true, default: true, reasoning: [] }
+        ],
+        postures: []
+      })
+    instance.getOffers = getOffers
+    const registry = new HostNodeProviderRegistry({
+      providers: [fakeProvider('ollama', { create: () => instance })],
+      runPort,
+      interactions
+    })
+
+    await registry.providerStatuses()
+    expect(registry.getOffers('ollama')?.offerRevision).toBe('signed-out')
+    await registry.providerAuthStatus('ollama')
+    expect(registry.getOffers('ollama')?.offerRevision).toBe('signed-in')
+    await registry.providerAuthFlows('ollama')
+    expect(registry.getOffers('ollama')?.offerRevision).toBe('signed-out-again')
+    expect(getOffers).toHaveBeenCalledTimes(3)
+  })
+
+  it('fails a dynamic offer refresh closed instead of retaining a stale selectable row', async () => {
+    const instance = fakeInstance('ollama')
+    instance.getOffers = vi.fn(async () => {
+      throw new Error('probe unavailable')
+    })
+    const registry = new HostNodeProviderRegistry({
+      providers: [fakeProvider('ollama', { create: () => instance })],
+      runPort,
+      interactions
+    })
+
+    await registry.refreshOffers('ollama')
+    expect(registry.getOffers('ollama')).toMatchObject({ providerId: 'ollama', models: [] })
+    expect(registry.getOffers('ollama')?.offerRevision).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('keeps guarded AntiGravity out of inventory until live offers exist', async () => {
+    const instance = fakeInstance('antigravity')
+    instance.getOffers = vi.fn(async () => ({
+      providerId: 'antigravity',
+      offerRevision: 'live-proof',
+      models: [
+        {
+          modelId: 'gemini-3.7-flash-high',
+          label: 'Gemini 3.7 Flash',
+          available: true,
+          default: true,
+          reasoning: []
+        }
+      ],
+      postures: []
+    }))
+    const conditional = fakeProvider('antigravity', {
+      conditionalAdmission: 'antigravity-live-guarded',
+      offers: {
+        providerId: 'antigravity',
+        offerRevision: 'not-admitted',
+        models: [],
+        postures: []
+      },
+      create: () => instance
+    })
+    const registry = new HostNodeProviderRegistry({
+      providers: [conditional],
+      runPort,
+      interactions
+    })
+    expect(registry.providerInventory()).toEqual([])
+    await registry.refreshOffers('antigravity')
+    expect(registry.providerInventory()).toEqual([
+      expect.objectContaining({
+        providerId: 'antigravity',
+        modelId: 'gemini-3.7-flash-high'
+      })
+    ])
   })
 
   it('aggregates interaction support flags', () => {
@@ -137,6 +277,29 @@ describe('HostNodeProviderRegistry', () => {
         modelLabel: 'muse Model'
       }
     ])
+  })
+
+  it('projects the flagged default model rather than the first available row', () => {
+    const provider = fakeProvider('muse', {
+      offers: {
+        ...fakeProvider('muse').offers,
+        models: [
+          { modelId: 'first', label: 'First', available: true, reasoning: [] },
+          {
+            modelId: 'preferred',
+            label: 'Preferred',
+            available: true,
+            default: true,
+            reasoning: []
+          }
+        ]
+      }
+    })
+    const registry = new HostNodeProviderRegistry({ providers: [provider], runPort, interactions })
+    expect(registry.providerInventory()[0]).toMatchObject({
+      modelId: 'preferred',
+      modelLabel: 'Preferred'
+    })
   })
 
   it('shuts down every instance', async () => {

@@ -13,10 +13,12 @@ import {
   hostGitEnvironment
 } from '../host-shared/git/HostGitSecurity'
 import { loadOrCreateHostServerIdentity } from '../host-runtime/HostServerIdentity'
+import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 import {
   HostNodeMuseAuthHandoff,
   type HostNodeMuseTerminalLauncher
 } from './HostNodeMuseAuthHandoff'
+import { hostStandaloneAntigravityOffers } from '../host-shared/antigravity/HostStandaloneAntigravityAdmission'
 import { hostNodeMuseOffers } from './HostNodeMuseCatalog'
 import { createHostNodeMuseResources } from './HostNodeMuseResources'
 import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
@@ -27,8 +29,12 @@ import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 import { createHostNodeGrokProvider } from './HostNodeGrokProvider'
 import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
 import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+import { createHostNodeProviderResourcePort } from './HostNodeProviderResources'
 import { createHostNodePiProviderFactory } from './HostNodePiProvider'
 import { createHostNodeCursorProviderFactory } from './HostNodeCursorProvider'
+import { createHostNodeAntigravityProviderFactory } from './HostNodeAntigravityProvider'
+import { captureHostStandaloneAgyModels } from './HostNodeAgyPtyCapture'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
 
 export interface HostNodeProductionFactoryOptions {
@@ -38,6 +44,8 @@ export interface HostNodeProductionFactoryOptions {
   readonly env?: NodeJS.ProcessEnv
   readonly temporaryParent?: string
   readonly terminalLauncher?: HostNodeMuseTerminalLauncher
+  /** Copied synchronously; caller must zero its source buffer after construction. */
+  readonly fullAccessBootstrapSecret?: Buffer
 }
 
 function appendBounded(
@@ -140,6 +148,9 @@ function providerTerminalLauncher(
 export function createHostNodeProductionServer(
   options: HostNodeProductionFactoryOptions
 ): HostNodeProductionServer {
+  const permissionConsentAuthority = options.fullAccessBootstrapSecret
+    ? new HostPermissionConsentAuthority(options.fullAccessBootstrapSecret)
+    : null
   return new HostNodeProductionServer({
     profilePath: options.profilePath,
     mode: 'production',
@@ -148,6 +159,9 @@ export function createHostNodeProductionServer(
         profilePath,
         authority: { assertHeld: () => lease.assertHeld() }
       }),
+    ...(permissionConsentAuthority
+      ? { createPermissionConsentAuthority: () => permissionConsentAuthority }
+      : {}),
     createDomainResources: async ({ profilePath }) => {
       const resources = createHostNodeMuseResources({
         executablePath: options.museBinary,
@@ -182,6 +196,8 @@ export function createHostNodeProductionServer(
             ? new HostNodeMuseAuthHandoff(binary.binaryPath, options.terminalLauncher)
             : undefined
         const launcher = providerTerminalLauncher(options.terminalLauncher)
+        const environment = options.env ?? process.env
+        const ollamaCloudApiKey = String(environment.OLLAMA_API_KEY || '').trim() || null
         return {
           domainOptions: {
             ...(gitReadService ? { gitReadService } : {}),
@@ -206,9 +222,22 @@ export function createHostNodeProductionServer(
               createHostNodeMistralProvider({
                 ...(launcher ? { terminalLauncher: launcher } : {})
               }),
-              createHostNodeOllamaProviderFactory(),
+              createHostNodeOllamaProviderFactory({
+                offers: hostNodeOllamaOffersFromCatalog({ models: [] }),
+                resources: createHostNodeProviderResourcePort('ollama', { environment }),
+                ...(launcher ? { terminalLauncher: launcher } : {}),
+                ...(ollamaCloudApiKey ? { cloudApiKey: ollamaCloudApiKey } : {})
+              }),
               createHostNodePiProviderFactory(),
               createHostNodeCursorProviderFactory({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeAntigravityProviderFactory({
+                profilePath,
+                offers: hostStandaloneAntigravityOffers([]),
+                resources: createHostNodeProviderResourcePort('antigravity', { environment }),
+                captureModels: captureHostStandaloneAgyModels,
+                environment,
                 ...(launcher ? { terminalLauncher: launcher } : {})
               })
             ],

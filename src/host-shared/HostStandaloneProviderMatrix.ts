@@ -3,9 +3,9 @@
  *
  * Inventory and boundary only: this module does not admit providers, mint
  * credentials, or implement a second consent wall. The production Node Host
- * still composes exactly `LIVE_SELECTABLE_PROVIDER_IDS`. AntiGravity remains
- * desktop-conditional (`isAntigravityOptInEnabled` + configured key in Electron
- * settings). The standalone Host must not duplicate or substitute that consent.
+ * composes the static `LIVE_SELECTABLE_PROVIDER_IDS` plus one explicitly guarded
+ * AntiGravity adapter. That adapter reads the existing profile consent and
+ * requires a current nonempty `agy models` proof before it exposes any model.
  */
 
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
@@ -13,7 +13,11 @@ import { PI_UPSTREAM_KEY_ENV } from './pi/PiModelPolicy'
 
 export type HostStandaloneProviderKind = 'live' | 'conditional'
 export type HostStandaloneHostAvailability = 'composed' | 'unavailable'
-export type HostStandaloneRunAvailability = 'available' | 'setup-only' | 'unavailable'
+export type HostStandaloneRunAvailability =
+  | 'available'
+  | 'conditional'
+  | 'setup-only'
+  | 'unavailable'
 
 export interface HostStandaloneProviderMatrixRow {
   readonly providerId: string
@@ -29,15 +33,15 @@ export interface HostStandaloneProviderMatrixRow {
 export interface HostStandaloneAntigravityStatus {
   readonly providerId: 'antigravity'
   readonly kind: 'conditional'
-  readonly standaloneHost: 'unavailable'
-  readonly run: 'unavailable'
+  readonly standaloneHost: 'composed'
+  readonly run: 'conditional'
   readonly detail: string
 }
 
 const GROK_ENV_KEYS = ['XAI_API_KEY', 'GROK_API_KEY'] as const
 
 const ANTIGRAVITY_DETAIL =
-  'Desktop-conditional only (Electron opt-in + configured key). Standalone Node Host does not compose or admit AntiGravity.'
+  'Conditionally composed. Standalone runs require the existing two-part profile consent plus a current nonempty authenticated `agy models` proof.'
 
 interface LiveStandaloneFacts {
   readonly displayProvider: string
@@ -88,10 +92,10 @@ const LIVE_STANDALONE: Readonly<Record<string, LiveStandaloneFacts>> = {
   ollama: {
     displayProvider: 'Ollama',
     run: 'available',
-    catalogManualFlow: false,
+    catalogManualFlow: true,
     envKeys: [],
     detail:
-      'Local Ollama daemon. No terminal login and no begin-able catalog flow; Host uses daemon reachability as auth evidence.'
+      'Local models need no account. Cloud models require a proven daemon sign-in or OLLAMA_API_KEY; an interactive `ollama signin` handoff is offered when the Host has a terminal launcher.'
   },
   pi: {
     displayProvider: 'Pi',
@@ -122,9 +126,9 @@ const ANTIGRAVITY_ROW: HostStandaloneProviderMatrixRow = {
   providerId: 'antigravity',
   displayProvider: 'AntiGravity',
   kind: 'conditional',
-  standaloneHost: 'unavailable',
-  run: 'unavailable',
-  catalogManualFlow: false,
+  standaloneHost: 'composed',
+  run: 'conditional',
+  catalogManualFlow: true,
   envKeys: [],
   detail: ANTIGRAVITY_DETAIL
 }
@@ -142,23 +146,23 @@ function liveRow(providerId: string): HostStandaloneProviderMatrixRow {
   }
 }
 
-/** Every standalone-relevant provider row: the nine composed live ids, then AntiGravity. */
+/** Every standalone-relevant provider row: the static live ids, then guarded AntiGravity. */
 export function hostStandaloneProviderMatrix(): readonly HostStandaloneProviderMatrixRow[] {
   return [...LIVE_SELECTABLE_PROVIDER_IDS.map(liveRow), ANTIGRAVITY_ROW]
 }
 
 /** Provider ids the production Node Host actually composes. */
 export function hostStandaloneComposedProviderIds(): readonly string[] {
-  return [...LIVE_SELECTABLE_PROVIDER_IDS]
+  return [...LIVE_SELECTABLE_PROVIDER_IDS, 'antigravity']
 }
 
-/** Explicit AntiGravity projection: conditional on desktop, unavailable standalone. */
+/** Explicit AntiGravity projection: composed, but never admitted without live proof. */
 export function hostStandaloneAntigravityStatus(): HostStandaloneAntigravityStatus {
   return {
     providerId: 'antigravity',
     kind: 'conditional',
-    standaloneHost: 'unavailable',
-    run: 'unavailable',
+    standaloneHost: 'composed',
+    run: 'conditional',
     detail: ANTIGRAVITY_DETAIL
   }
 }

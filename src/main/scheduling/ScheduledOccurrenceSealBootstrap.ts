@@ -66,7 +66,6 @@ export function createCursorScheduledOccurrenceSealService(input: {
     // fail closed.
     codexMcpConfig: () => null,
     codexApprovalPolicyForMode: () => 'never',
-    codexSandboxPolicyForMode: () => ({}),
     claudeMcpFacts: () => ({ mcpServers: null, allowedTools: null }),
     claudeSdkPackageJsonPath: () => '',
     claudeSdkBundledCliPath: () => '',

@@ -66,6 +66,7 @@ import type {
   HostNodeProviderRunRequest,
   HostNodeProviderRunResult
 } from './HostNodeProvider'
+import { hostNodeProviderEnvironment } from './HostNodeProviderEnvironment'
 
 const CLAUDE_PROVIDER_ID = 'claude'
 const SAFE_IDENTIFIER_MAX_CHARS = 512
@@ -118,6 +119,7 @@ export interface HostNodeClaudeSpawnInput {
   readonly binaryPath: string
   readonly args: readonly string[]
   readonly cwd: string
+  readonly env: NodeJS.ProcessEnv
   readonly onStdout: (chunk: string) => void
   readonly onStderr: (chunk: string) => void
 }
@@ -133,6 +135,7 @@ export type HostNodeClaudeSpawn = (input: HostNodeClaudeSpawnInput) => HostNodeC
 export const hostNodeClaudeSpawn: HostNodeClaudeSpawn = (input) => {
   const child = nodeSpawn(input.binaryPath, [...input.args], {
     cwd: input.cwd,
+    env: input.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true
@@ -174,6 +177,7 @@ export type HostNodeClaudeAuthProbe = (
 export const hostNodeClaudeAuthProbe: HostNodeClaudeAuthProbe = (input) =>
   new Promise((resolve) => {
     const child = nodeSpawn(input.binaryPath, [...input.args], {
+      env: hostNodeProviderEnvironment(process.env),
       stdio: ['ignore', 'ignore', 'ignore'],
       shell: false,
       windowsHide: true
@@ -270,8 +274,8 @@ export const CLAUDE_CLI_PERMISSION_MODES: readonly string[] = [
  * ("permissions work normally", i.e. prompt the user) cannot be honoured
  * headlessly, and there is no CLI token for it.
  */
-export function claudePermissionModeFor(approvalMode: string): string {
-  if (approvalMode === 'full_access') return 'bypassPermissions'
+export function claudePermissionModeFor(approvalMode: string, verifiedFullAccess = false): string {
+  if (verifiedFullAccess) return 'bypassPermissions'
   if (approvalMode === 'auto_edit') return 'acceptEdits'
   return 'plan'
 }
@@ -281,8 +285,13 @@ export function buildHostNodeClaudeArgs(input: {
   readonly prompt: string
   readonly modelId: string
   readonly approvalMode: string
+  readonly verifiedFullAccess?: boolean
   readonly providerSessionId?: string
 }): string[] {
+  const permissionMode = claudePermissionModeFor(
+    input.approvalMode,
+    input.verifiedFullAccess === true
+  )
   const args = [
     '-p',
     input.prompt,
@@ -292,8 +301,9 @@ export function buildHostNodeClaudeArgs(input: {
     '--model',
     input.modelId,
     '--permission-mode',
-    claudePermissionModeFor(input.approvalMode)
+    permissionMode
   ]
+  if (input.verifiedFullAccess === true) args.push('--dangerously-skip-permissions')
   if (isCanonicalIdentifier(input.providerSessionId)) {
     args.push('--resume', input.providerSessionId)
   }
@@ -610,11 +620,18 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
           prompt,
           modelId: thread.modelId,
           approvalMode: thread.posture.approvalMode,
+          ...(thread.posture.postureId === 'full_access' &&
+          thread.posture.requiresExplicitConsent === true &&
+          thread.posture.explicitConsentAcknowledged === true &&
+          thread.posture.verifiedConsent?.authority === 'host-signed'
+            ? { verifiedFullAccess: true }
+            : {}),
           ...(isCanonicalIdentifier(thread.providerSessionId)
             ? { providerSessionId: thread.providerSessionId }
             : {})
         }),
         cwd: thread.workspace.canonicalPath,
+        env: hostNodeProviderEnvironment(process.env, { FORCE_COLOR: '0', NO_COLOR: '1' }),
         onStdout: (chunk) => {
           const parsed = parseHostNodeClaudeChunk(chunk, carry)
           carry = parsed.carry

@@ -56,8 +56,7 @@ describe('scheduled seal producer production readiness', () => {
         'post-seal-private-home-continuity-rewrite',
         'post-seal-mcp-prompt-rewrite',
         'reusable-daemon-launch-generation-not-bound',
-        'runtime-profile-posture-applied-after-seal',
-        'full-access-native-sandbox-verifier-mismatch'
+        'runtime-profile-posture-applied-after-seal'
       ])
     )
   })

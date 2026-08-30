@@ -70,6 +70,21 @@ describe('HostNodeTerminalLauncher', () => {
     })
   })
 
+  it('launches Ollama Cloud sign-in with the official signin argv', async () => {
+    const spawn = fakeSpawn()
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    await expect(
+      launcher.launchForProvider('ollama', { argv: ['/usr/local/bin/ollama', 'signin'] })
+    ).resolves.toEqual({ providerId: 'ollama', spawned: true })
+    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/ollama', ['signin'], {
+      shell: false,
+      stdio: 'inherit'
+    })
+    await expect(
+      launcher.launchForProvider('ollama', { argv: ['/usr/local/bin/ollama', 'login'] })
+    ).rejects.toThrow('Terminal launcher requires an exact login command.')
+  })
+
   it('rejects Pi because it has no catalogued terminal login', async () => {
     const launcher = createHostNodeTerminalLauncher()
     await expect(
@@ -86,11 +101,23 @@ describe('HostNodeTerminalLauncher', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('rejects providers with no catalogued login flow', async () => {
-    const launcher = createHostNodeTerminalLauncher()
+  it('launches the official bare agy login with its supplied credential-stripped environment', async () => {
+    const spawn = fakeSpawn()
+    const launcher = createHostNodeTerminalLauncher({ spawn })
+    await expect(
+      launcher.launchForProvider('antigravity', {
+        argv: ['/usr/local/bin/agy'],
+        env: { PATH: '/usr/local/bin', FORCE_COLOR: '0' }
+      })
+    ).resolves.toEqual({ providerId: 'antigravity', spawned: true })
+    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/agy', [], {
+      shell: false,
+      stdio: 'inherit',
+      env: { PATH: '/usr/local/bin', FORCE_COLOR: '0' }
+    })
     await expect(
       launcher.launchForProvider('antigravity', { argv: ['/usr/local/bin/agy', 'login'] })
-    ).rejects.toThrow('Provider antigravity has no catalogued login flow.')
+    ).rejects.toThrow('Terminal launcher requires an exact login command.')
   })
 
   it('rejects non-absolute binary paths', async () => {

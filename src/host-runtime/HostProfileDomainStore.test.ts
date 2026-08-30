@@ -20,6 +20,7 @@ import {
   HOST_PROFILE_WORKSPACES_FILENAME,
   HostProfileDomainStore
 } from './HostProfileDomainStore'
+import { HostPermissionConsentAuthority } from './HostPermissionConsent'
 import { isPlaceholderThreadTitle } from '../shared/threadTitles'
 
 const profiles: string[] = []
@@ -514,6 +515,54 @@ describe('HostProfileDomainStore', () => {
     const lowered = store.configureThread({ threadId: thread.appChatId, postureId: 'read_only' })
     expect(lowered.providerMetadata).toMatchObject({ permissionPresetId: 'read_only' })
     expect(lowered.providerMetadata).not.toHaveProperty('explicitConsentAcknowledged')
+  })
+
+  it('persists Full Access only with exact signed provenance and clears it when lowered', () => {
+    const { store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const selection = {
+      threadId: thread.appChatId,
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access' as const,
+      offerRevision: 'revision-full-access'
+    }
+    expect(() =>
+      store.configureThread({
+        ...selection,
+        postureConsent: true
+      })
+    ).toThrow(/signed consent provenance/i)
+
+    const consent = new HostPermissionConsentAuthority(
+      Buffer.alloc(32, 3),
+      () => '2026-08-29T23:30:00.000Z'
+    ).issue({
+      commandId: '11111111-1111-4111-8111-111111111111',
+      commandFingerprint: 'b'.repeat(64),
+      actor: { actorId: 'tui-user', clientId: 'tui-client', clientClass: 'tui' },
+      ...selection,
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      issuedAt: '2026-08-29T23:29:59.000Z'
+    })
+    const elevated = store.configureThread({
+      ...selection,
+      postureConsent: consent
+    })
+    expect(elevated.providerMetadata).toMatchObject({
+      approvalMode: 'auto_edit',
+      permissionPresetId: 'full_access',
+      explicitConsentAcknowledged: true,
+      hostOfferRevision: 'revision-full-access',
+      hostPermissionConsent: consent
+    })
+
+    const lowered = store.configureThread({ threadId: thread.appChatId, postureId: 'default' })
+    expect(lowered.providerMetadata).toMatchObject({ permissionPresetId: 'default' })
+    expect(lowered.providerMetadata).not.toHaveProperty('hostPermissionConsent')
+    expect(lowered.providerMetadata).not.toHaveProperty('hostOfferRevision')
   })
 
   it('retains legacy tool/error message carriers inertly while excluding them from history', () => {

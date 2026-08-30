@@ -33,6 +33,15 @@ export interface HostProviderRunPosture {
   readonly approvalMode: string
   readonly requiresExplicitConsent: boolean
   readonly explicitConsentAcknowledged: boolean
+  /** Bounded projection emitted only after Host HMAC verification. */
+  readonly verifiedConsent?: {
+    readonly authority: 'host-signed'
+    readonly commandId: string
+    readonly commandFingerprint: string
+    readonly actorClientClass: 'desktop' | 'tui' | 'test'
+    readonly offerRevision: string
+    readonly acknowledgedAt: string
+  }
 }
 
 /** Configuration a provider adapter may consume for one already-created thread. */
@@ -211,6 +220,31 @@ export function normalizeHostProviderRunThread(
   ) {
     return null
   }
+  const verifiedConsent = value.posture.verifiedConsent
+  if (verifiedConsent !== undefined) {
+    if (
+      verifiedConsent.authority !== 'host-signed' ||
+      !canonicalIdentifier(verifiedConsent.commandId) ||
+      !/^[a-f0-9]{64}$/.test(verifiedConsent.commandFingerprint) ||
+      !['desktop', 'tui', 'test'].includes(verifiedConsent.actorClientClass) ||
+      !canonicalIdentifier(verifiedConsent.offerRevision) ||
+      !canonicalTimestamp(verifiedConsent.acknowledgedAt)
+    ) {
+      return null
+    }
+  }
+  const requestsFullAccess =
+    value.posture.postureId === 'full_access' || value.posture.approvalMode === 'full_access'
+  if (
+    requestsFullAccess &&
+    (value.posture.postureId !== 'full_access' ||
+      value.posture.approvalMode !== 'auto_edit' ||
+      value.posture.requiresExplicitConsent !== true ||
+      value.posture.explicitConsentAcknowledged !== true ||
+      verifiedConsent === undefined)
+  ) {
+    return null
+  }
   if (
     !canonicalIdentifier(value.posture.postureId) ||
     !canonicalIdentifier(value.posture.approvalMode) ||
@@ -224,7 +258,10 @@ export function normalizeHostProviderRunThread(
   return {
     ...value,
     workspace: { ...value.workspace },
-    posture: { ...value.posture }
+    posture: {
+      ...value.posture,
+      ...(verifiedConsent ? { verifiedConsent: { ...verifiedConsent } } : {})
+    }
   }
 }
 

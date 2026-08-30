@@ -114,8 +114,7 @@ describe('HostSetupCommandExecutor', () => {
         modelId: 'model-1',
         reasoningId: 'reasoning-1',
         postureId: 'posture-1',
-        offerRevision: 'revision-1',
-        postureConsent: true
+        offerRevision: 'revision-1'
       }
     )
 
@@ -129,8 +128,7 @@ describe('HostSetupCommandExecutor', () => {
       modelId: 'model-1',
       reasoningId: 'reasoning-1',
       postureId: 'posture-1',
-      offerRevision: 'revision-1',
-      postureConsent: true
+      offerRevision: 'revision-1'
     })
 
     await expect(
@@ -221,6 +219,65 @@ describe('HostSetupCommandExecutor', () => {
       )
     ).resolves.toEqual({ status: 'failed', errorCode: 'setup_consent_required' })
     expect(injected.thread.configure).not.toHaveBeenCalled()
+  })
+
+  it('derives exact authenticated Full Access provenance instead of forwarding only a boolean', async () => {
+    const injected = ports()
+    vi.mocked(injected.currentOffers.read).mockReturnValue({
+      providerId: 'provider-1',
+      offerRevision: 'revision-1',
+      models: [{ modelId: 'model-1', label: 'Model', available: true, reasoning: [] }],
+      postures: [
+        {
+          postureId: 'full_access',
+          label: 'Full Access (YOLO)',
+          available: true,
+          requiresExplicitConsent: true,
+          ceiling: 'full_access'
+        }
+      ]
+    })
+    const executor = new HostSetupCommandExecutor(injected)
+
+    await expect(
+      executor.execute(
+        command(
+          'thread.configure',
+          { threadId: 'thread-1' },
+          {
+            providerId: 'provider-1',
+            modelId: 'model-1',
+            postureId: 'full_access',
+            offerRevision: 'revision-1',
+            postureConsent: true,
+            postureConsentProof: 'd'.repeat(64)
+          }
+        ),
+        context
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(injected.thread.configure).toHaveBeenCalledWith({
+      threadId: 'thread-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      postureId: 'full_access',
+      offerRevision: 'revision-1',
+      postureConsent: true,
+      postureConsentProof: 'd'.repeat(64),
+      postureConsentProvenance: expect.objectContaining({
+        commandId: 'command-1',
+        commandFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        actor,
+        threadId: 'thread-1',
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        postureId: 'full_access',
+        offerRevision: 'revision-1'
+      })
+    })
+    expect(JSON.stringify(vi.mocked(injected.thread.configure).mock.calls[0])).not.toMatch(
+      /effectivePermissions|agenticServices|shellCommands|apiKey/i
+    )
   })
 
   it('uses commandId as the deterministic auth operation identity', async () => {
