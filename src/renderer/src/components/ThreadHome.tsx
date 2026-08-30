@@ -410,6 +410,30 @@ export function ThreadHome({
 }: ThreadHomeProps) {
   const surfaceDisabled = !authorityChatId || Boolean(busySurface)
   const showOverviewSections = variant === 'main' && Boolean(overviewSections?.heatmaps)
+  const renderTerminalRow = (term: { sessionId: string; workspacePath: string }) => {
+    const dirName = term.workspacePath.split(/[/\\]/).pop() || 'Terminal'
+    return (
+      <button
+        key={term.sessionId}
+        type="button"
+        className="thread-home-thread-row"
+        onClick={() => openExistingTerminal(term)}
+        aria-label={`Open terminal session in ${dirName}`}
+      >
+        <span className="thread-home-thread-provider" aria-hidden>
+          <AppleTerminalIcon />
+        </span>
+        <span className="thread-home-thread-copy">
+          <strong>{dirName}</strong>
+          <span className="thread-home-thread-subline">
+            <small>{term.workspacePath}</small>
+          </span>
+        </span>
+        <span className="thread-home-thread-provider-label">Terminal</span>
+      </button>
+    )
+  }
+
   const renderThreadRow = (thread: ThreadHomeThreadOption) => (
     <button
       key={thread.chatId}
@@ -526,6 +550,14 @@ export function ThreadHome({
               Active
             </div>
             {threads.map(renderThreadRow)}
+            {activeTerminals.length > 0 && (
+              <>
+                <div className="thread-home-list-heading" role="heading" aria-level={3}>
+                  Active Terminals
+                </div>
+                {activeTerminals.map(renderTerminalRow)}
+              </>
+            )}
             <div className="thread-home-list-heading" role="heading" aria-level={3}>
               Recents
             </div>
@@ -901,6 +933,9 @@ function ThreadHomeWorkspaceInner(
     sessionId: string
     workspacePath: string
   } | null>(null)
+  const [activeTerminals, setActiveTerminals] = useState<
+    { sessionId: string; workspacePath: string }[]
+  >([])
   const [busyTerminalWorkspacePath, setBusyTerminalWorkspacePath] = useState<string | null>(null)
   const canvasIdRef = useRef<string | null>(null)
   const terminalSessionRef = useRef(terminalSession)
@@ -934,6 +969,24 @@ function ThreadHomeWorkspaceInner(
       }),
     []
   )
+
+  useEffect(() => {
+    let mounted = true
+    const fetchTerminals = async () => {
+      try {
+        const terminals = await window.api.terminal.list()
+        if (mounted) setActiveTerminals(terminals)
+      } catch (err) {
+        // Ignore IPC errors if closed
+      }
+    }
+    void fetchTerminals()
+    const interval = setInterval(() => void fetchTerminals(), 2000)
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
+  }, [])
 
   const authorityChatId = authorityChat?.appChatId ?? null
   const { threads, recentThreads } = useMemo(
@@ -1088,6 +1141,12 @@ function ThreadHomeWorkspaceInner(
       onDiscarded: (discardedSessionId) => window.api.terminal.kill(discardedSessionId)
     })
     if (isCurrent()) setBusyTerminalWorkspacePath(null)
+  }
+
+  const openExistingTerminal = (term: { sessionId: string; workspacePath: string }): void => {
+    terminalSessionRef.current = term
+    setTerminalSession(term)
+    setSurface('terminal')
   }
 
   if (
