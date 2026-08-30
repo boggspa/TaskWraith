@@ -58,6 +58,7 @@ import {
   isDispatchableProviderForRun,
   isAntigravityRendererAdmitted,
   useAntigravityGeminiApiSecretRefreshIdentity,
+  antigravityAdmittedProviderSnapshot,
   type ConfiguredProviderSnapshot
 } from './hooks/useConfiguredProviderSnapshot'
 import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
@@ -1876,17 +1877,13 @@ function App(): React.JSX.Element {
     isDispatchableProviderForRun(provider, antigravityAdmissibleRef.current)
   // The main process starts a fresh cache generation after a settings change,
   // but do not render a prior successful AntiGravity snapshot for even one
-  // renderer frame after BOTH lanes' consent is withdrawn.
+  // renderer frame after BOTH lanes' consent is withdrawn. Conversely, when
+  // EITHER lane is admitted, keep the picker row visible even if the discovery
+  // snapshot is still warming up or missed under a cache-key race — dispatch
+  // already uses the same admission union, so the picker must not hide a
+  // fully-consented provider just because a bounded probe was slow.
   const configuredProviderSnapshot = useMemo<ConfiguredProviderSnapshot>(
-    () =>
-      antigravityAdmissible
-        ? rawConfiguredProviderSnapshot
-        : {
-            ready: rawConfiguredProviderSnapshot.ready,
-            providerIds: rawConfiguredProviderSnapshot.providerIds.filter(
-              (provider) => provider !== 'antigravity'
-            )
-          },
+    () => antigravityAdmittedProviderSnapshot(rawConfiguredProviderSnapshot, antigravityAdmissible),
     [antigravityAdmissible, rawConfiguredProviderSnapshot]
   )
   const configuredAntigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []

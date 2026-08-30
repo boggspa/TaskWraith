@@ -11,6 +11,7 @@ import {
 import { HostProjectionProvider } from '../components/HostProjectionProvider'
 import { HostProjectionStore, type HostProjectionState } from '../lib/host/HostProjectionStore'
 import {
+  antigravityAdmittedProviderSnapshot,
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
   configuredProviderSnapshotFromHostProjection,
@@ -571,6 +572,46 @@ describe('isDispatchableProviderForRun', () => {
   it('fails closed on a non-boolean admission flag', () => {
     expect(isDispatchableProviderForRun('antigravity', 'yes' as unknown as boolean)).toBe(false)
     expect(isDispatchableProviderForRun('antigravity', 1 as unknown as boolean)).toBe(false)
+  })
+})
+
+describe('antigravityAdmittedProviderSnapshot', () => {
+  it('injects the antigravity row when admitted but the snapshot has not settled', () => {
+    expect(antigravityAdmittedProviderSnapshot({ ready: false, providerIds: [] }, true)).toEqual({
+      ready: false,
+      providerIds: ['antigravity']
+    })
+  })
+
+  it('keeps antigravity when already present and admitted', () => {
+    const snapshot: ConfiguredProviderSnapshot = {
+      ready: true,
+      providerIds: ['codex', 'antigravity'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    }
+    expect(antigravityAdmittedProviderSnapshot(snapshot, true)).toEqual(snapshot)
+  })
+
+  it('removes antigravity from the offered set when admission is withdrawn', () => {
+    const snapshot: ConfiguredProviderSnapshot = {
+      ready: true,
+      providerIds: ['codex', 'antigravity'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    }
+    expect(antigravityAdmittedProviderSnapshot(snapshot, false)).toEqual({
+      ready: true,
+      providerIds: ['codex'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    })
+  })
+
+  it('does not duplicate antigravity when injecting into a nonempty snapshot', () => {
+    expect(
+      antigravityAdmittedProviderSnapshot(
+        { ready: false, providerIds: ['claude', 'antigravity'] },
+        true
+      )
+    ).toEqual({ ready: false, providerIds: ['claude', 'antigravity'] })
   })
 })
 

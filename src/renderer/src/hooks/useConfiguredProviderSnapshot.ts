@@ -78,6 +78,37 @@ export function isDispatchableProviderForRun(
   )
 }
 
+/**
+ * Derive the provider snapshot that renderer pickers should offer.
+ *
+ * AntiGravity is conditionally offered, so its row must follow the SAME
+ * admission union that dispatch uses (`isAntigravityRendererAdmitted`), not
+ * only the momentary main-process discovery snapshot. A slow probe, a cache-key
+ * race, or a Host projection that has not yet settled can therefore no longer
+ * hide a fully-consented provider from every picker surface.
+ *
+ * When admission is withdrawn, any cached antigravity row is removed so stale
+ * consent does not linger.
+ */
+export function antigravityAdmittedProviderSnapshot(
+  snapshot: ConfiguredProviderSnapshot,
+  antigravityAdmitted: boolean
+): ConfiguredProviderSnapshot {
+  const hasAntigravity = snapshot.providerIds.includes(ANTIGRAVITY_PROVIDER_ID)
+  if (!antigravityAdmitted) {
+    if (!hasAntigravity) return snapshot
+    return {
+      ...snapshot,
+      providerIds: snapshot.providerIds.filter((id) => id !== ANTIGRAVITY_PROVIDER_ID)
+    }
+  }
+  if (hasAntigravity) return snapshot
+  return {
+    ...snapshot,
+    providerIds: [...snapshot.providerIds, ANTIGRAVITY_PROVIDER_ID]
+  }
+}
+
 export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
   const [identity, setIdentity] = useState('')
   const [mutationGeneration, setMutationGeneration] = useState(0)
