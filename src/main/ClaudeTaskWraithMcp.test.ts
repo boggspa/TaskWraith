@@ -16,7 +16,7 @@ import {
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
   GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V17_MCP_ADVERTISE_TOOLS
+  taskWraithMcpAdvertisedToolNamesForProfile
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
@@ -178,9 +178,12 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args).not.toContain('--core-subset')
 
+    const profileTools = taskWraithMcpAdvertisedToolNamesForProfile(
+      TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    )
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V17_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V17_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(profileTools.length * 2)
+    for (const tool of profileTools) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
