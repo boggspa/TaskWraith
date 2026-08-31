@@ -98,6 +98,16 @@ export interface TuiHomeTuneState {
   reasoningIndex: number
 }
 
+/**
+ * Explicit in-session permission choice for the next thread created from Home.
+ * It is intentionally not persisted: selecting an elevated tier is live human
+ * consent for this TUI session, not a reusable authorization claim.
+ */
+export interface TuiHomePermissionSelection {
+  providerId: string
+  postureId: string
+}
+
 /** Dismissible provider setup hub. It never advances into thread creation. */
 export interface TuiProviderLoginState {
   providers: HostProviderStatusProjection[]
@@ -220,6 +230,8 @@ export interface TaskWraithTuiState {
   queuedDrafts?: TuiQueuedDraft[]
   /** Home-frame provider/model/reasoning preference picker. */
   homeTune?: TuiHomeTuneState
+  /** Shift+Tab choice applied to the next lazy-created Home thread. */
+  homePermission?: TuiHomePermissionSelection
   /** Provider authentication/setup hub. */
   providerLogin?: TuiProviderLoginState
   /** Active deferred Host mutation, if any. */

@@ -2,7 +2,7 @@ import type {
   HostPermissionPostureOffer,
   HostProviderModelOffer
 } from '../shared/hostSetupProtocol'
-import type { TuiHomeTuneProvider } from './state'
+import type { TuiHomePermissionSelection, TuiHomeTuneProvider } from './state'
 
 export interface TuiModelChoice {
   readonly providerIndex: number
@@ -44,6 +44,28 @@ export function findTuiModelChoiceIndex(
     return choices.findIndex((choice) => choice.provider.status.providerId === providerId)
   }
   return choices.findIndex((choice) => choice.model.modelId === modelId)
+}
+
+/**
+ * Resolve Home's permission chip against the currently selected provider.
+ * An explicit Shift+Tab choice wins only while that exact posture remains
+ * available; otherwise Home falls back to the Host's standard edit posture.
+ */
+export function resolveTuiHomePosture(
+  providers: readonly TuiHomeTuneProvider[],
+  modelIndex: number,
+  selection?: TuiHomePermissionSelection
+): HostPermissionPostureOffer | undefined {
+  const choice = tuiModelChoices(providers)[modelIndex]
+  if (!choice) return undefined
+  const postures = choice.provider.offers.postures
+  const explicit =
+    selection?.providerId === choice.provider.status.providerId
+      ? postures.find((posture) => posture.postureId === selection.postureId && posture.available)
+      : undefined
+  return (
+    explicit ?? postures.find((posture) => posture.postureId === 'default' && posture.available)
+  )
 }
 
 export function nextAvailableTuiPosture(

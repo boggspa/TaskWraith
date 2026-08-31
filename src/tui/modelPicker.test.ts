@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type { TuiHomeTuneProvider } from './state'
-import { findTuiModelChoiceIndex, nextAvailableTuiPosture, tuiModelChoices } from './modelPicker'
+import {
+  findTuiModelChoiceIndex,
+  nextAvailableTuiPosture,
+  resolveTuiHomePosture,
+  tuiModelChoices
+} from './modelPicker'
 
 const providers: TuiHomeTuneProvider[] = [
   {
@@ -13,7 +18,22 @@ const providers: TuiHomeTuneProvider[] = [
         { modelId: 'sol', label: 'Sol', available: true, reasoning: [] },
         { modelId: 'terra', label: 'Terra', available: true, default: true, reasoning: [] }
       ],
-      postures: []
+      postures: [
+        {
+          postureId: 'default',
+          label: 'Accept Edits',
+          available: true,
+          requiresExplicitConsent: false,
+          ceiling: 'workspace_write'
+        },
+        {
+          postureId: 'workspace_write',
+          label: 'Full WS Access',
+          available: true,
+          requiresExplicitConsent: true,
+          ceiling: 'workspace_write'
+        }
+      ]
     }
   },
   {
@@ -77,5 +97,21 @@ describe('combined TUI model picker', () => {
     ]
     expect(nextAvailableTuiPosture(postures, 'workspace_write')?.postureId).toBe('plan')
     expect(nextAvailableTuiPosture(postures, 'plan')?.postureId).toBe('read_only')
+  })
+
+  it('binds a Home permission choice to the selected provider and live offer', () => {
+    expect(resolveTuiHomePosture(providers, 0)?.postureId).toBe('default')
+    expect(
+      resolveTuiHomePosture(providers, 0, {
+        providerId: 'codex',
+        postureId: 'workspace_write'
+      })?.postureId
+    ).toBe('workspace_write')
+    expect(
+      resolveTuiHomePosture(providers, 2, {
+        providerId: 'codex',
+        postureId: 'workspace_write'
+      })
+    ).toBeUndefined()
   })
 })
