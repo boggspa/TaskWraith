@@ -117,6 +117,11 @@ const KIMI_PROCESS_ENV_ALLOWLIST = [
   'TASKWRAITH_CHAT_ID'
 ] as const
 
+/** TaskWraith's longest bounded MCP call is a 600-second ensemble await. Kimi
+ * Code reads this supported process-level override; the ACP mcpServers schema
+ * intentionally drops unknown per-server timeout fields. */
+export const KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS = 630_000
+
 /**
  * Build a Kimi-specific allowlisted spawn environment. In particular, do not
  * forward runtime-profile/process loader hooks (DYLD_*, LD_PRELOAD,
@@ -139,6 +144,7 @@ export function buildKimiContainedProcessEnv(
   const privateHome = environment.KIMI_CODE_HOME || environment.HOME || privateCwd
   return {
     ...contained,
+    KIMI_MCP_TOOL_TIMEOUT_MS: String(KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS),
     NO_PROXY: loopbackNoProxy,
     no_proxy: loopbackNoProxy,
     HOME: privateHome,
@@ -405,8 +411,6 @@ export interface KimiProductionGatewayHandle {
  * bounded join may legitimately wait up to 10 minutes, so the one main-owned
  * gateway receives a slightly larger per-server budget than TaskWraith's
  * 600-second tool clamp. */
-export const KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS = 630_000
-
 export interface KimiProductionLaunchResult<T> {
   snapshot: KimiProductionAcpSnapshot
   handle: T
@@ -527,12 +531,7 @@ export function buildKimiProductionAcpSnapshot(input: {
   return {
     cwd: input.privateCwd,
     initializeParams: buildKimiProductionInitializeParams(input.appVersion),
-    mcpServers: [
-      {
-        ...gateway,
-        toolTimeoutMs: KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS
-      }
-    ],
+    mcpServers: [gateway],
     deniedNativeTools: KIMI_ACP_DENY_TOOLS,
     session: buildKimiProductionSessionPlan(input)
   }

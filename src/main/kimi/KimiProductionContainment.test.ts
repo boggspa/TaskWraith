@@ -310,6 +310,7 @@ describe('Kimi production ACP containment', () => {
       PATH: '/bin',
       KIMI_CODE_HOME: '/private/home',
       RUNNER_TRACKING_ID: 'actions-orphan-reaper',
+      KIMI_MCP_TOOL_TIMEOUT_MS: '1000',
       HTTPS_PROXY: 'http://proxy.example:8080',
       NO_PROXY: 'internal.example',
       PWD: '/real/workspace',
@@ -333,6 +334,7 @@ describe('Kimi production ACP containment', () => {
       PATH: '/bin',
       KIMI_CODE_HOME: '/private/home',
       RUNNER_TRACKING_ID: 'actions-orphan-reaper',
+      KIMI_MCP_TOOL_TIMEOUT_MS: String(KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS),
       HOME: '/private/home',
       USERPROFILE: '/private/home',
       PWD: '/private/run',
@@ -592,9 +594,7 @@ describe('Kimi production ACP containment', () => {
       prompt: 'work'
     })
     expect(snapshot.cwd).toBe('/private/empty')
-    expect(snapshot.mcpServers).toEqual([
-      { ...gateway, toolTimeoutMs: KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS }
-    ])
+    expect(snapshot.mcpServers).toEqual([gateway])
     expect(snapshot.deniedNativeTools).toEqual(
       expect.arrayContaining([
         'Read',
