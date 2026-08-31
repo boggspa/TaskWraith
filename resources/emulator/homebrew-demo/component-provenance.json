@@ -9,8 +9,8 @@
     "gameId": "homebrew-demo",
     "runtimeManifest": {
       "path": "manifest.json",
-      "sha256": "b7961ee252b2739dfc4da5433d7fd2f80bca9100d7fb1b60b36f43902c9ea095",
-      "byteLength": 1038
+      "sha256": "aa5374afeed377cce7012719128d371243c021642b825bc83a1324f811bfde55",
+      "byteLength": 1039
     },
     "artifacts": [
       {

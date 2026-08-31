@@ -37,8 +37,8 @@ const EXPECTED_ASSETS = [
   },
   {
     path: 'bootstrap.mjs',
-    sha256: 'd80fd11df58102f9d1765beba6251fe750b33b0ef3bee7a8d3a40039ad00cdb9',
-    byteLength: 9267,
+    sha256: '8b593040c0799df9db22478148087f86bcc6ee8438f8079027329123e8b89efe',
+    byteLength: 12508,
     mimeType: 'application/javascript'
   },
   {
@@ -145,8 +145,8 @@ describe('homebrew emulator package layout', () => {
     })
     expect(provenance.bundle.runtimeManifest).toEqual({
       path: 'manifest.json',
-      sha256: 'b7961ee252b2739dfc4da5433d7fd2f80bca9100d7fb1b60b36f43902c9ea095',
-      byteLength: 1038
+      sha256: 'aa5374afeed377cce7012719128d371243c021642b825bc83a1324f811bfde55',
+      byteLength: 1039
     })
     expect(provenance.bundle.artifacts).toEqual([
       {
@@ -205,7 +205,7 @@ describe('homebrew emulator package layout', () => {
     const extraResourcesBlock = /extraResources:\n([\s\S]*?)\nasarUnpack:/.exec(builder)?.[1]
     expect(filesBlock).toContain('!resources/emulator/**')
     expect(extraResourcesBlock).toMatch(
-      /- from: resources\/emulator\n    to: emulator\n    filter:\n      - '\*\*\/\*'/
+      /- from: resources\/emulator\n {4}to: emulator\n {4}filter:\n {6}- '\*\*\/\*'/
     )
     expect(builder.match(/from: resources\/emulator/g)).toHaveLength(1)
     expect(filesBlock).not.toMatch(/^\s*-\s+'resources\/emulator\//m)
@@ -241,8 +241,17 @@ describe('homebrew emulator package layout', () => {
     expect(bootstrap).toContain('Duplicate twemu button')
     expect(bootstrap).toContain('opposite direction pairs')
     expect(bootstrap).toContain('function enqueueOperation(operation)')
-    expect(bootstrap).toContain('return enqueueOperation(() => stepOneFrame(buttons))')
+    expect(bootstrap).toContain(
+      'return enqueueOperation(() => stepOneFrame(buttons, expectedFrameId, expectedInputEpoch))'
+    )
     expect(bootstrap).toContain('await yieldToEventLoop()')
+    expect(bootstrap).toContain("screen.toDataURL('image/png')")
+    expect(bootstrap).toContain('pngDataUrl')
+    expect(bootstrap).toContain('trustedHumanInputEpoch')
+    expect(bootstrap).toContain('event.isTrusted !== true')
+    expect(bootstrap).toContain("kind: 'refusal'")
+    expect(bootstrap).toContain("return 'stale_observation'")
+    expect(bootstrap).toContain("return 'stale_input_epoch'")
     expect(bootstrap).toContain('Framebuffer lies outside the Emscripten heap')
     expect(bootstrap).toContain('source.byteLength !== byteLength')
     expect(bootstrap).toContain('Number.isSafeInteger(ramPointer)')

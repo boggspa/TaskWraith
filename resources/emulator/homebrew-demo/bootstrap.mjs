@@ -8,6 +8,8 @@ const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42]
 const TWGB_SCHEMA = 1
 const READY_STATUS = 0x03
 const BOOT_FRAME_LIMIT = 600
+const PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
+const MAX_PNG_DATA_URL_CHARS = 512 * 1024
 const BUTTON_BITS = Object.freeze({
   B: 1 << 0,
   SELECT: 1 << 2,
@@ -50,18 +52,31 @@ let moduleInstance = null
 let closed = false
 let listenersAttached = false
 let operationTail = Promise.resolve()
+let trustedHumanInputEpoch = 0
+
+function recordTrustedButtonTransition(event, button, pressed) {
+  // This slice records trusted human transitions for agent-arbitration only.
+  // It deliberately does not start a free-running emulation loop: actual human
+  // keyboard play is a remaining final-release gate, not a claim made here.
+  if (event.isTrusted !== true) return
+  const changed = pressed ? !pressedButtons.has(button) : pressedButtons.has(button)
+  if (!changed) return
+  if (pressed) pressedButtons.add(button)
+  else pressedButtons.delete(button)
+  trustedHumanInputEpoch += 1
+}
 
 function onKeyDown(event) {
   const button = KEY_BUTTONS[event.code]
   if (!button) return
-  pressedButtons.add(button)
+  recordTrustedButtonTransition(event, button, true)
   event.preventDefault()
 }
 
 function onKeyUp(event) {
   const button = KEY_BUTTONS[event.code]
   if (!button) return
-  pressedButtons.delete(button)
+  recordTrustedButtonTransition(event, button, false)
   event.preventDefault()
 }
 
@@ -181,7 +196,20 @@ async function rgbaHash(bytes) {
   return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
 }
 
-async function drawAndObserve() {
+function pngDataUrlFromCanvas() {
+  const value = screen.toDataURL('image/png')
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith(PNG_DATA_URL_PREFIX) ||
+    value.length <= PNG_DATA_URL_PREFIX.length ||
+    value.length > MAX_PNG_DATA_URL_CHARS
+  ) {
+    throw new Error('Canvas PNG encoding is unavailable or exceeds its cap')
+  }
+  return value
+}
+
+function paintCurrentFrame() {
   if (closed || !moduleInstance) throw new Error('twemu is shut down')
   const width = moduleInstance._twemu_framebuffer_width()
   const height = moduleInstance._twemu_framebuffer_height()
@@ -207,19 +235,67 @@ async function drawAndObserve() {
   context.putImageData(image, 0, 0)
   const abi = assertObservableAbi()
   const frameId = moduleInstance._twemu_frames_presented()
-  const frameHash = await rgbaHash(image.data)
-  status.value = `frame ${frameId} · x ${abi.x} · y ${abi.y}`
+  if (!Number.isSafeInteger(frameId) || frameId <= 0) {
+    throw new Error('TWGB fixture did not provide a positive frame identity')
+  }
+  const pngDataUrl = pngDataUrlFromCanvas()
+  const inputEpoch = trustedHumanInputEpoch
+  return { image, abi, frameId, pngDataUrl, inputEpoch }
+}
+
+async function drawAndObserve() {
+  // The framebuffer swizzle, canvas paint, PNG encoding, ABI, frame id, and
+  // human input epoch are captured before the asynchronous hash yields. The
+  // enclosing operation queue keeps agent observe/step calls serialized.
+  const snapshot = paintCurrentFrame()
+  const frameHash = await rgbaHash(snapshot.image.data)
+  status.value = `frame ${snapshot.frameId} · x ${snapshot.abi.x} · y ${snapshot.abi.y}`
   return Object.freeze({
-    frameId,
+    frameId: snapshot.frameId,
     frameHash,
-    width,
-    height,
-    ...abi
+    width: WIDTH,
+    height: HEIGHT,
+    pngDataUrl: snapshot.pngDataUrl,
+    inputEpoch: snapshot.inputEpoch,
+    magic: Object.freeze([...snapshot.abi.magic]),
+    schema: snapshot.abi.schema,
+    status: snapshot.abi.status,
+    x: snapshot.abi.x,
+    y: snapshot.abi.y,
+    input: snapshot.abi.input,
+    frameCounter: snapshot.abi.frameCounter
   })
 }
 
-async function stepOneFrame(buttons) {
+function staleStepCode(expectedFrameId, expectedInputEpoch) {
+  if (!Number.isSafeInteger(expectedFrameId) || expectedFrameId <= 0) {
+    throw new Error('twemu expectedFrameId must be a positive integer')
+  }
+  if (!Number.isSafeInteger(expectedInputEpoch) || expectedInputEpoch < 0) {
+    throw new Error('twemu expectedInputEpoch must be a non-negative integer')
+  }
+  if (expectedInputEpoch !== trustedHumanInputEpoch) {
+    return 'stale_input_epoch'
+  }
+  if (closed || !moduleInstance || moduleInstance._twemu_frames_presented() !== expectedFrameId) {
+    return 'stale_observation'
+  }
+  return null
+}
+
+async function stepOneFrame(buttons, expectedFrameId, expectedInputEpoch) {
   if (closed || !moduleInstance) throw new Error('twemu is shut down')
+  // Both freshness checks run INSIDE the serialized operation queue, before
+  // `_twemu_step`, so two callers planned from the same observation cannot
+  // both advance the emulator.
+  const refusalCode = staleStepCode(expectedFrameId, expectedInputEpoch)
+  if (refusalCode) {
+    return Object.freeze({
+      kind: 'refusal',
+      code: refusalCode,
+      observation: await drawAndObserve()
+    })
+  }
   const beforeFrame = moduleInstance._twemu_frames_presented()
   const mask = namedButtonMask(buttons)
   if (moduleInstance._twemu_step(mask, 1) !== 1) {
@@ -230,7 +306,7 @@ async function stepOneFrame(buttons) {
   if (observation.frameId !== beforeFrame + 1) {
     throw new Error(`Frame identity mismatch (${beforeFrame} -> ${observation.frameId})`)
   }
-  return observation
+  return Object.freeze({ kind: 'observation', observation })
 }
 
 async function initialize() {
@@ -287,9 +363,9 @@ const facade = Object.freeze({
     await readyPromise
     return enqueueOperation(drawAndObserve)
   },
-  async step(buttons = undefined) {
+  async step(buttons = undefined, expectedFrameId = undefined, expectedInputEpoch = undefined) {
     await readyPromise
-    return enqueueOperation(() => stepOneFrame(buttons))
+    return enqueueOperation(() => stepOneFrame(buttons, expectedFrameId, expectedInputEpoch))
   },
   async shutdown() {
     await readyPromise.catch(() => undefined)

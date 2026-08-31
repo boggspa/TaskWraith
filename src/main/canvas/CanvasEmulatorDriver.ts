@@ -2,13 +2,17 @@
  * CanvasEmulatorDriver — internal, packaged WebAssembly-emulator surface.
  *
  * This driver is admitted only through CanvasService's internal fixed-game dock
- * path; no production factory or MCP route is wired yet. It proves the lifecycle
- * seam only: a fixed `twemu://app` entry URL is passed to an injected trusted
- * runtime bridge, and pixels come from the same live Canvas host surface the
- * human will later see. Eval, typed observation, and bounded input integration
- * intentionally land in later slices.
+ * path; no public MCP route is wired yet. It passes a fixed `twemu://app` entry
+ * URL to an injected trusted runtime bridge and exposes internal-only atomic
+ * observation plus one-frame input. Generic Canvas snapshot/eval and public
+ * agent control remain intentionally out of scope.
  */
 import { createHash } from 'node:crypto'
+import {
+  isEmulatorButton,
+  type EmulatorButton,
+  type EmulatorObservationToken
+} from '../../shared/emulatorCanvas'
 import { emulatorEntryUrl } from '../emulator/EmulatorAssetManifest'
 import type { CanvasHostSurface, CanvasSurfaceOptions } from './CanvasHostSurface'
 import type {
@@ -48,6 +52,69 @@ export interface CanvasEmulatorRuntimeBridge {
   shutdown?(input: { gameId: CanvasEmulatorGameId; surface: CanvasHostSurface }): Promise<void>
 }
 
+/**
+ * Bounded state copied from the page-owned TWGB ABI. This intentionally has no
+ * Module, HEAP, RAM pointer, or arbitrary memory range.
+ */
+export interface CanvasEmulatorRuntimeState {
+  readonly magic: readonly [number, number, number, number]
+  readonly schema: 1
+  readonly status: 3
+  readonly x: number
+  readonly y: number
+  readonly input: number
+  readonly frameCounter: number
+  /** SHA-256 of the page's swizzled RGBA frame, distinct from PNG `frame.hash`. */
+  readonly rgbaHash: string
+}
+
+/** Main-owned projection of one exact page canvas/ABI transaction. */
+export interface CanvasEmulatorAtomicObservation extends EmulatorObservationToken {
+  readonly schemaVersion: 1
+  readonly capturedAt: string
+  readonly frame: Readonly<CanvasFrame>
+  readonly state: Readonly<CanvasEmulatorRuntimeState>
+}
+
+/**
+ * Internal-only runtime extension. CanvasEmulatorDriver's normal lifecycle
+ * bridge stays source-compatible for factory callers; observation/input are
+ * reachable only when the concrete bridge explicitly implements this seam.
+ */
+export interface CanvasEmulatorObservationRuntimeBridge extends CanvasEmulatorRuntimeBridge {
+  observe(input: {
+    gameId: CanvasEmulatorGameId
+    surface: CanvasHostSurface
+  }): Promise<CanvasEmulatorAtomicObservation>
+  step(input: {
+    gameId: CanvasEmulatorGameId
+    surface: CanvasHostSurface
+    buttons: readonly EmulatorButton[]
+    expectedFrameId: number
+    expectedInputEpoch: number
+  }): Promise<CanvasEmulatorAtomicObservation>
+}
+
+/** Typed refusal for a human transition that invalidated a planned internal step. */
+export class CanvasEmulatorInputEpochStaleError extends Error {
+  readonly code = 'stale_input_epoch' as const
+
+  constructor(readonly observation?: CanvasEmulatorAtomicObservation) {
+    super('Emulator human input changed since the expected observation epoch.')
+    this.name = 'CanvasEmulatorInputEpochStaleError'
+  }
+}
+
+/** Typed refusal for a page frame that no longer matches the cached observation. */
+export class CanvasEmulatorObservationStaleError extends Error {
+  readonly code = 'stale_observation' as const
+
+  constructor(readonly observation?: CanvasEmulatorAtomicObservation) {
+    super('Emulator frame changed since the expected observation.')
+    this.name = 'CanvasEmulatorObservationStaleError'
+  }
+}
+
 export interface CanvasEmulatorDriverDeps {
   /** Required: product wiring later supplies a dock-owned CanvasEmbedController surface. */
   createSurface: (options: CanvasSurfaceOptions) => CanvasHostSurface
@@ -76,6 +143,7 @@ export class CanvasEmulatorDriver implements CanvasDriver {
   private viewport: CanvasViewport = { width: 1280, height: 800 }
   private closeRequested = false
   private closePromise: Promise<void> | null = null
+  private lastObservation: CanvasEmulatorAtomicObservation | null = null
 
   constructor(
     sessionId: string,
@@ -105,6 +173,14 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     } finally {
       if (!surface.isDestroyed()) surface.destroy()
     }
+  }
+
+  private observationRuntime(): CanvasEmulatorObservationRuntimeBridge {
+    const runtime = this.deps.runtime as Partial<CanvasEmulatorObservationRuntimeBridge>
+    if (typeof runtime.observe !== 'function' || typeof runtime.step !== 'function') {
+      throw new Error('Emulator runtime does not support the internal observation contract yet.')
+    }
+    return runtime as CanvasEmulatorObservationRuntimeBridge
   }
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
@@ -139,6 +215,7 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     const url = emulatorEntryUrl(gameId)
     this.surface = surface
     this.viewport = viewport
+    this.lastObservation = null
     surface.onClosed(() => {
       if (this.surface !== surface || this.closedSurfaces.has(surface)) return
       this.surface = null
@@ -179,6 +256,60 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     }
   }
 
+  /**
+   * Internal-only exact observation. It deliberately does not implement the
+   * generic Canvas snapshot contract and is not wired to any public tool.
+   */
+  async observeEmulator(): Promise<CanvasEmulatorAtomicObservation> {
+    const observation = await this.observationRuntime().observe({
+      gameId: this.gameId,
+      surface: this.requireSurface()
+    })
+    this.lastObservation = observation
+    return observation
+  }
+
+  /**
+   * Internal-only one-frame control. The optional opaque id must match the
+   * driver's latest trusted observation; the frame/input token never comes
+   * from a caller. The page re-checks both values inside its operation queue.
+   */
+  async stepEmulator(
+    buttons: readonly EmulatorButton[],
+    expectedObservationId?: string
+  ): Promise<CanvasEmulatorAtomicObservation> {
+    if (!Array.isArray(buttons) || buttons.some((button) => !isEmulatorButton(button))) {
+      throw new Error('Emulator step requires only supported named buttons.')
+    }
+    const expected = this.lastObservation
+    if (!expected) {
+      throw new Error('Observe the emulator before stepping.')
+    }
+    if (expectedObservationId !== undefined && expectedObservationId !== expected.observationId) {
+      throw new CanvasEmulatorObservationStaleError()
+    }
+    try {
+      const observation = await this.observationRuntime().step({
+        gameId: this.gameId,
+        surface: this.requireSurface(),
+        buttons: [...buttons],
+        expectedFrameId: expected.frameId,
+        expectedInputEpoch: expected.inputEpoch
+      })
+      this.lastObservation = observation
+      return observation
+    } catch (error) {
+      if (
+        (error instanceof CanvasEmulatorInputEpochStaleError ||
+          error instanceof CanvasEmulatorObservationStaleError) &&
+        error.observation
+      ) {
+        this.lastObservation = error.observation
+      }
+      throw error
+    }
+  }
+
   async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
     const next = resolveViewport({ width: viewport.width, height: viewport.height })
     this.requireSurface().setContentSize(next.width, next.height)
@@ -191,6 +322,7 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     this.closeRequested = true
     const surface = this.surface
     this.surface = null
+    this.lastObservation = null
     this.closePromise = surface ? this.teardown(surface, this.gameId) : Promise.resolve()
     return this.closePromise
   }

@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { CanvasEmulatorDriver, type CanvasEmulatorRuntimeBridge } from './CanvasEmulatorDriver'
+import {
+  CanvasEmulatorDriver,
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError,
+  type CanvasEmulatorAtomicObservation,
+  type CanvasEmulatorObservationRuntimeBridge,
+  type CanvasEmulatorRuntimeBridge
+} from './CanvasEmulatorDriver'
 import type { CanvasHostSurface } from './CanvasHostSurface'
 import type { CanvasDriver } from './canvasTypes'
 
@@ -42,6 +49,54 @@ function runtime(): CanvasEmulatorRuntimeBridge & {
   return {
     boot: vi.fn(async () => {}),
     shutdown: vi.fn(async () => {})
+  }
+}
+
+function atomicObservation(
+  overrides: Partial<CanvasEmulatorAtomicObservation> = {}
+): CanvasEmulatorAtomicObservation {
+  const capturedAt = '2026-08-31T19:00:00.000Z'
+  return {
+    schemaVersion: 1,
+    observationId: 'obs:canvas:1',
+    emulationGeneration: 1,
+    frameId: 9,
+    inputEpoch: 4,
+    capturedAt,
+    frame: {
+      mimeType: 'image/png',
+      data: PNG.toString('base64'),
+      width: 4,
+      height: 3,
+      byteLength: PNG.byteLength,
+      hash: createHash('sha256').update(PNG).digest('hex'),
+      capturedAt
+    },
+    state: {
+      magic: [0x54, 0x57, 0x47, 0x42],
+      schema: 1,
+      status: 3,
+      x: 12,
+      y: 8,
+      input: 0,
+      frameCounter: 9,
+      rgbaHash: 'a'.repeat(64)
+    },
+    ...overrides
+  }
+}
+
+function observationRuntime(): CanvasEmulatorObservationRuntimeBridge & {
+  boot: ReturnType<typeof vi.fn>
+  shutdown: ReturnType<typeof vi.fn>
+  observe: ReturnType<typeof vi.fn>
+  step: ReturnType<typeof vi.fn>
+} {
+  return {
+    boot: vi.fn(async () => {}),
+    shutdown: vi.fn(async () => {}),
+    observe: vi.fn(async () => atomicObservation()),
+    step: vi.fn(async () => atomicObservation({ frameId: 10, inputEpoch: 4 }))
   }
 }
 
@@ -107,6 +162,63 @@ describe('CanvasEmulatorDriver', () => {
     expect(host.surface.destroy).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps internal observation and one-frame input behind a guarded runtime extension', async () => {
+    const host = fakeSurface()
+    const bridge = observationRuntime()
+    const driver = new CanvasEmulatorDriver('canvas-observe', {
+      createSurface: () => host.surface,
+      runtime: bridge
+    })
+    await driver.open({ driver: 'emulator' })
+
+    await expect(driver.stepEmulator(['right'])).rejects.toThrow(/Observe the emulator/i)
+    const observed = await driver.observeEmulator()
+    const stepped = await driver.stepEmulator(['right'])
+
+    expect(observed.observationId).toBe('obs:canvas:1')
+    expect(bridge.observe).toHaveBeenCalledWith({ gameId: 'homebrew-demo', surface: host.surface })
+    expect(bridge.step).toHaveBeenCalledWith({
+      gameId: 'homebrew-demo',
+      surface: host.surface,
+      buttons: ['right'],
+      expectedFrameId: 9,
+      expectedInputEpoch: 4
+    })
+    expect(stepped.frameId).toBe(10)
+    await expect(driver.stepEmulator(['right'], 'other-observation')).rejects.toBeInstanceOf(
+      CanvasEmulatorObservationStaleError
+    )
+  })
+
+  it('preserves a typed stale human-input refusal from the runtime extension', async () => {
+    const host = fakeSurface()
+    const bridge = observationRuntime()
+    const refreshed = atomicObservation({
+      observationId: 'obs:canvas:refreshed',
+      frameId: 10,
+      inputEpoch: 5
+    })
+    bridge.step.mockRejectedValueOnce(new CanvasEmulatorInputEpochStaleError(refreshed))
+    const driver = new CanvasEmulatorDriver('canvas-stale-input', {
+      createSurface: () => host.surface,
+      runtime: bridge
+    })
+    await driver.open({ driver: 'emulator' })
+    await driver.observeEmulator()
+
+    await expect(driver.stepEmulator(['right'])).rejects.toBeInstanceOf(
+      CanvasEmulatorInputEpochStaleError
+    )
+    await driver.stepEmulator(['right'])
+    expect(bridge.step).toHaveBeenLastCalledWith({
+      gameId: 'homebrew-demo',
+      surface: host.surface,
+      buttons: ['right'],
+      expectedFrameId: 10,
+      expectedInputEpoch: 5
+    })
+  })
+
   it('cleans up a partially booted runtime when opening fails', async () => {
     const host = fakeSurface()
     const bridge = runtime()
@@ -130,12 +242,11 @@ describe('CanvasEmulatorDriver', () => {
       releaseShutdown = resolve
     })
     bridge.shutdown.mockImplementationOnce(() => shutdown)
-    let driver!: CanvasEmulatorDriver
     let closeFromHost: Promise<void> | null = null
     const onSurfaceClosed = vi.fn(() => {
       closeFromHost = driver.close()
     })
-    driver = new CanvasEmulatorDriver('canvas-4', {
+    const driver = new CanvasEmulatorDriver('canvas-4', {
       createSurface: () => host.surface,
       runtime: bridge,
       onSurfaceClosed

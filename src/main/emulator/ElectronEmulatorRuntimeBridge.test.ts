@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { Script } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError
+} from '../canvas/CanvasEmulatorDriver'
 import type { CanvasHostSurface } from '../canvas/CanvasHostSurface'
 import { createEmulatorAssetRegistry, emulatorEntryUrl } from './EmulatorAssetManifest'
 import {
@@ -29,6 +34,46 @@ const READY = {
   y: 72,
   input: 0,
   frameCounter: 1
+}
+
+const ATOMIC_PNG = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x90
+])
+
+function atomicProjection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    facadeFrozen: true,
+    facadeKeys: ['observe', 'ready', 'shutdown', 'step'],
+    resultFrozen: true,
+    observationFrozen: true,
+    outcome: 'observation',
+    refusalCode: null,
+    moduleGlobal: 'undefined',
+    heapGlobal: 'undefined',
+    requireGlobal: 'undefined',
+    frameId: 89,
+    frameHash: 'b'.repeat(64),
+    pngDataUrl: `data:image/png;base64,${ATOMIC_PNG.toString('base64')}`,
+    width: 160,
+    height: 144,
+    magic: [0x54, 0x57, 0x47, 0x42],
+    schema: 1,
+    status: 3,
+    x: 81,
+    y: 72,
+    input: 0,
+    inputEpoch: 4,
+    frameCounter: 2,
+    ...overrides
+  }
+}
+
+function atomicRefusal(
+  code: 'stale_observation' | 'stale_input_epoch',
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return atomicProjection({ outcome: 'refusal', refusalCode: code, ...overrides })
 }
 
 function hash(bytes: Uint8Array): string {
@@ -251,29 +296,29 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     }
     await bridge.boot(input)
 
-    let navigationReceiver: unknown = null
+    let navigationReceiverWasEvent = false
     const navigationEvent = {
       preventDefault(this: unknown) {
-        navigationReceiver = this
+        navigationReceiverWasEvent = this === navigationEvent
       }
     }
     fakeContents.emit('will-navigate', navigationEvent, 'https://example.test/escape')
-    expect(navigationReceiver).toBe(navigationEvent)
+    expect(navigationReceiverWasEvent).toBe(true)
 
     const downloadListener = fakeSession.session.on.mock.calls.find(
       ([event]) => event === 'will-download'
     )?.[1]
     expect(downloadListener).toBeTypeOf('function')
-    let downloadReceiver: unknown = null
+    let downloadReceiverWasEvent = false
     const downloadEvent = {
       preventDefault(this: unknown) {
-        downloadReceiver = this
+        downloadReceiverWasEvent = this === downloadEvent
       }
     }
     if (typeof downloadListener !== 'function')
       throw new Error('Expected download denial listener.')
     downloadListener(downloadEvent)
-    expect(downloadReceiver).toBe(downloadEvent)
+    expect(downloadReceiverWasEvent).toBe(true)
   })
 
   it('cleans protocol, policies, and only its own listeners on shutdown', async () => {
@@ -300,6 +345,241 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     expect(
       fakeContents.contents.executeJavaScript.mock.calls.every((call) => call[1] !== true)
     ).toBe(true)
+  })
+
+  it('returns one main-stamped atomic PNG/ABI observation and routes a guarded RIGHT step', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({
+      registry,
+      capturedAt: () => '2026-08-31T19:00:00.000Z',
+      createObservationId: vi.fn(() => 'obs:1')
+    })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicProjection())
+    const observed = await bridge.observe(input)
+    expect(observed).toMatchObject({
+      schemaVersion: 1,
+      observationId: 'obs:1',
+      emulationGeneration: 1,
+      frameId: 89,
+      inputEpoch: 4,
+      capturedAt: '2026-08-31T19:00:00.000Z',
+      frame: {
+        mimeType: 'image/png',
+        width: 160,
+        height: 144,
+        byteLength: ATOMIC_PNG.byteLength,
+        hash: hash(ATOMIC_PNG),
+        capturedAt: '2026-08-31T19:00:00.000Z'
+      },
+      state: { x: 81, y: 72, input: 0, rgbaHash: 'b'.repeat(64) }
+    })
+    expect(Object.isFrozen(observed)).toBe(true)
+    expect(Object.isFrozen(observed.frame)).toBe(true)
+    expect(Object.isFrozen(observed.state)).toBe(true)
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicProjection({ frameId: 90, input: 16, inputEpoch: 4, frameCounter: 3, x: 82 })
+    )
+    const stepped = await bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+    expect(stepped.frameId).toBe(90)
+    expect(stepped.state).toMatchObject({ input: 16, x: 82 })
+    const stepCode = fakeContents.contents.executeJavaScript.mock.calls
+      .map(([code]) => code)
+      .find((code) => code.includes('api.step(["right"], 89, 4)'))
+    expect(stepCode).toBeTypeOf('string')
+    if (typeof stepCode !== 'string') throw new Error('Expected fixed internal step probe.')
+    expect(() => new Script(stepCode)).not.toThrow()
+  })
+
+  it('rejects non-PNG, oversized, or untrusted page observation projections before minting a frame', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const createObservationId = vi.fn(() => 'obs:rejected')
+    const onFatal = vi.fn()
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry, createObservationId, onFatal })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicProjection({ pngDataUrl: 'data:image/png;base64,AAAA' })
+    )
+    await expect(bridge.observe(input)).rejects.toThrow(/PNG/i)
+    expect(createObservationId).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+    expect(onFatal).toHaveBeenCalledOnce()
+    await expect(bridge.observe(input)).rejects.toThrow(/binding is absent/i)
+  })
+
+  it('translates the fixed page stale-input sentinel into a typed main-side refusal', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_input_epoch')
+    )
+
+    const rejected = bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+    await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorInputEpochStaleError)
+    await expect(rejected).rejects.toMatchObject({
+      observation: expect.objectContaining({ frameId: 89, inputEpoch: 4 })
+    })
+    expect(fakeSurface.surface.isDestroyed()).toBe(false)
+  })
+
+  it('translates a stale frame envelope without retiring a still-live surface', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_observation')
+    )
+
+    const rejected = bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+    await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorObservationStaleError)
+    await expect(rejected).rejects.toMatchObject({
+      observation: expect.objectContaining({ frameId: 89, inputEpoch: 4 })
+    })
+    expect(fakeSurface.surface.isDestroyed()).toBe(false)
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicProjection())
+    await expect(bridge.observe(input)).resolves.toMatchObject({ frameId: 89 })
+  })
+
+  it('allows exactly one of two same-observation steps and returns a typed stale frame with a current observation', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const createObservationId = vi
+      .fn<() => string>()
+      .mockReturnValueOnce('obs:first')
+      .mockReturnValueOnce('obs:stale')
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry, createObservationId })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicProjection({ frameId: 90, frameCounter: 3 })
+    )
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_observation', { frameId: 90, frameCounter: 3 })
+    )
+
+    const first = bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+    const second = bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+
+    await expect(first).resolves.toMatchObject({ observationId: 'obs:first', frameId: 90 })
+    await expect(second).rejects.toMatchObject({
+      code: 'stale_observation',
+      observation: expect.objectContaining({ observationId: 'obs:stale', frameId: 90 })
+    })
+  })
+
+  it('fatal-retires an unrelated page error that merely contains a stale sentinel string', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockRejectedValueOnce(
+      new Error('unexpected text TWEMU_INPUT_EPOCH_STALE is not an envelope')
+    )
+
+    await expect(
+      bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4
+      })
+    ).rejects.toThrow(/unexpected text/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+  })
+
+  it('retires a timed-out atomic operation and refuses later calls on that surface', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry, operationTimeoutMs: 100 })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockImplementationOnce(
+      () => new Promise<unknown>(() => {})
+    )
+
+    await expect(bridge.observe(input)).rejects.toThrow(/timed out/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+    await expect(bridge.observe(input)).rejects.toThrow(/binding is absent/i)
   })
 
   it('cleans after a malformed ready projection rather than leaving a session handler behind', async () => {

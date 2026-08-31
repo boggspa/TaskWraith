@@ -2,14 +2,22 @@
  * ElectronEmulatorRuntimeBridge — the main-owned, session-scoped loader for one
  * fixed packaged emulator surface.
  *
- * It intentionally implements only CanvasEmulatorDriver's boot/shutdown seam.
- * Typed observation, agent input, and eval policy remain separate future slices.
- * The renderer receives only its bundle's frozen `__twemu` facade; this bridge
- * never exports raw Module, HEAP, preload, or IPC authority.
+ * It owns boot/shutdown plus the internal atomic observation/one-frame seam.
+ * There is still no public Canvas, MCP, AppDrive, or generic eval path. The
+ * renderer receives only its bundle's frozen `__twemu` facade; this bridge
+ * never exports raw Module, HEAP, preload, IPC authority, or arbitrary RAM.
  */
-import type { CanvasEmulatorRuntimeBridge } from '../canvas/CanvasEmulatorDriver'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError,
+  type CanvasEmulatorAtomicObservation,
+  type CanvasEmulatorObservationRuntimeBridge,
+  type CanvasEmulatorRuntimeState
+} from '../canvas/CanvasEmulatorDriver'
 import type { CanvasHostSurface } from '../canvas/CanvasHostSurface'
 import type { CanvasEmulatorGameId } from '../canvas/canvasTypes'
+import { isEmulatorButton, type EmulatorButton } from '../../shared/emulatorCanvas'
 import {
   emulatorEntryUrl,
   resolveEmulatorAsset,
@@ -27,6 +35,10 @@ const READY_POLL_MS = 25
 const EXPECTED_FACADE_KEYS = ['observe', 'ready', 'shutdown', 'step']
 const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42] as const
 const EXTERNAL_REQUEST_FILTER = { urls: ['*://*/*'] }
+const PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
+const MAX_OBSERVATION_PNG_BYTES = 512 * 1024
+const MAX_OBSERVATION_BASE64_CHARS = Math.ceil((MAX_OBSERVATION_PNG_BYTES * 4) / 3) + 4
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const
 
 class EmulatorOperationTimeout extends Error {}
 
@@ -93,6 +105,10 @@ export interface ElectronEmulatorRuntimeBridgeDeps {
   readyTimeoutMs?: number
   operationTimeoutMs?: number
   now?: () => number
+  /** One main-owned timestamp is stamped onto both the observation and its PNG frame. */
+  capturedAt?: () => string
+  /** Main-owned opaque observation identity; injectable for deterministic tests. */
+  createObservationId?: () => string
   delay?: (milliseconds: number) => Promise<void>
   /** Main-owned notification for a post-ready load/process fatality. */
   onFatal?: (input: { surface: CanvasHostSurface; reason: Error }) => void
@@ -104,6 +120,7 @@ interface LiveRuntime {
   readonly session: ElectronEmulatorSession
   readonly gameId: CanvasEmulatorGameId
   readonly entryUrl: string
+  readonly emulationGeneration: number
   registration: EmulatorAssetProtocolRegistration | null
   cancelled: boolean
   loadFailure: Error | null
@@ -211,6 +228,133 @@ export function validateEmulatorStableReady(value: unknown): EmulatorStableReady
   })
 }
 
+interface ValidatedPageObservation {
+  readonly frameId: number
+  readonly inputEpoch: number
+  readonly png: Buffer
+  readonly state: CanvasEmulatorRuntimeState
+}
+
+type ValidatedPageAtomicResult =
+  | { readonly kind: 'observation'; readonly observation: ValidatedPageObservation }
+  | {
+      readonly kind: 'refusal'
+      readonly code: 'stale_observation' | 'stale_input_epoch'
+      readonly observation: ValidatedPageObservation
+    }
+
+function positiveSafeInteger(value: unknown): number | null {
+  const parsed = safeInteger(value)
+  return parsed !== null && parsed > 0 ? parsed : null
+}
+
+function decodeObservationPng(value: unknown): Buffer {
+  if (typeof value !== 'string' || !value.startsWith(PNG_DATA_URL_PREFIX)) {
+    throw new Error('Emulator observation did not provide a PNG data URL.')
+  }
+  const encoded = value.slice(PNG_DATA_URL_PREFIX.length)
+  if (
+    !encoded ||
+    encoded.length > MAX_OBSERVATION_BASE64_CHARS ||
+    encoded.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+  ) {
+    throw new Error('Emulator observation PNG base64 is malformed or exceeds its cap.')
+  }
+  const png = Buffer.from(encoded, 'base64')
+  if (
+    png.byteLength === 0 ||
+    png.byteLength > MAX_OBSERVATION_PNG_BYTES ||
+    png.toString('base64') !== encoded
+  ) {
+    throw new Error('Emulator observation PNG is non-canonical or exceeds its cap.')
+  }
+  if (
+    png.byteLength < 24 ||
+    PNG_SIGNATURE.some((byte, index) => png[index] !== byte) ||
+    png.readUInt32BE(8) !== 13 ||
+    png.toString('ascii', 12, 16) !== 'IHDR' ||
+    png.readUInt32BE(16) !== 160 ||
+    png.readUInt32BE(20) !== 144
+  ) {
+    throw new Error('Emulator observation PNG is not the exact 160×144 framebuffer.')
+  }
+  return png
+}
+
+function validatePageObservationFields(input: Record<string, unknown>): ValidatedPageObservation {
+  const frameId = positiveSafeInteger(input.frameId)
+  const inputEpoch = safeInteger(input.inputEpoch)
+  const frameCounter = positiveSafeInteger(input.frameCounter)
+  const x = safeInteger(input.x)
+  const y = safeInteger(input.y)
+  const inputMask = safeInteger(input.input)
+  if (
+    !isExactMagic(input.magic) ||
+    input.schema !== 1 ||
+    input.status !== 3 ||
+    input.width !== 160 ||
+    input.height !== 144 ||
+    frameId === null ||
+    inputEpoch === null ||
+    frameCounter === null ||
+    x === null ||
+    x > 159 ||
+    y === null ||
+    y > 143 ||
+    inputMask === null ||
+    (inputMask & ~0x1fd) !== 0 ||
+    typeof input.frameHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(input.frameHash)
+  ) {
+    throw new Error('Emulator page did not provide a bounded atomic observation.')
+  }
+  const png = decodeObservationPng(input.pngDataUrl)
+  return {
+    frameId,
+    inputEpoch,
+    png,
+    state: Object.freeze({
+      magic: Object.freeze([...TWGB_MAGIC]) as unknown as readonly [number, number, number, number],
+      schema: 1,
+      status: 3,
+      x,
+      y,
+      input: inputMask,
+      frameCounter,
+      rgbaHash: input.frameHash
+    })
+  }
+}
+
+/** Validate the fixed facade's bounded atomic result, never the page object itself. */
+function validatePageObservation(value: unknown): ValidatedPageAtomicResult {
+  const input = asRecord(value)
+  if (
+    !input ||
+    input.facadeFrozen !== true ||
+    input.resultFrozen !== true ||
+    input.observationFrozen !== true ||
+    input.moduleGlobal !== 'undefined' ||
+    input.heapGlobal !== 'undefined' ||
+    input.requireGlobal !== 'undefined' ||
+    JSON.stringify(input.facadeKeys) !== JSON.stringify(EXPECTED_FACADE_KEYS)
+  ) {
+    throw new Error('Emulator page did not provide a bounded atomic result.')
+  }
+  const observation = validatePageObservationFields(input)
+  if (input.outcome === 'refusal') {
+    if (input.refusalCode === 'stale_observation' || input.refusalCode === 'stale_input_epoch') {
+      return { kind: 'refusal', code: input.refusalCode, observation }
+    }
+    throw new Error('Emulator page returned an invalid atomic refusal.')
+  }
+  if (input.outcome !== 'observation') {
+    throw new Error('Emulator page returned an invalid atomic outcome.')
+  }
+  return { kind: 'observation', observation }
+}
+
 const READY_PROBE = `(() => {
   const api = globalThis.__twemu;
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, '__twemu');
@@ -238,6 +382,59 @@ const READY_PROBE = `(() => {
   }));
 })()`
 
+function facadeObservationProbe(invocation: string): string {
+  return `(() => {
+  const api = globalThis.__twemu;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, '__twemu');
+  if (!api || typeof api.observe !== 'function' || typeof api.step !== 'function' ||
+      !Object.isFrozen(api) || !descriptor || descriptor.writable !== false ||
+      descriptor.configurable !== false) {
+    throw new Error('twemu facade is unavailable');
+  }
+  return Promise.resolve(${invocation}).then((result) => {
+    const refusal = result && result.kind === 'refusal' ? result : null;
+    const observation = result && result.kind === 'observation' ? result.observation :
+      refusal ? refusal.observation : result;
+    return {
+      facadeFrozen: Object.isFrozen(api),
+      facadeKeys: Object.keys(api).sort(),
+      resultFrozen: Object.isFrozen(result),
+      observationFrozen: Object.isFrozen(observation),
+      outcome: refusal ? 'refusal' : 'observation',
+      refusalCode: refusal && refusal.code,
+      moduleGlobal: typeof globalThis.Module,
+      heapGlobal: typeof globalThis.HEAPU8,
+      requireGlobal: typeof globalThis.require,
+      frameId: observation && observation.frameId,
+      frameHash: observation && observation.frameHash,
+      pngDataUrl: observation && observation.pngDataUrl,
+      width: observation && observation.width,
+      height: observation && observation.height,
+      magic: observation && observation.magic,
+      schema: observation && observation.schema,
+      status: observation && observation.status,
+      x: observation && observation.x,
+      y: observation && observation.y,
+      input: observation && observation.input,
+      inputEpoch: observation && observation.inputEpoch,
+      frameCounter: observation && observation.frameCounter
+    };
+  });
+})()`
+}
+
+const OBSERVE_PROBE = facadeObservationProbe('api.observe()')
+
+function stepProbe(
+  buttons: readonly EmulatorButton[],
+  expectedFrameId: number,
+  expectedInputEpoch: number
+): string {
+  return facadeObservationProbe(
+    `api.step(${JSON.stringify(buttons)}, ${JSON.stringify(expectedFrameId)}, ${JSON.stringify(expectedInputEpoch)})`
+  )
+}
+
 const SHUTDOWN_PROBE = `(() => {
   const api = globalThis.__twemu;
   if (!api || typeof api.shutdown !== 'function') return Promise.resolve(null);
@@ -248,12 +445,15 @@ function bridgeContents(surface: CanvasHostSurface): ElectronEmulatorWebContents
   return surface.webContents as unknown as ElectronEmulatorWebContents
 }
 
-export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridge {
+export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationRuntimeBridge {
   private live: LiveRuntime | null = null
   private readonly readyTimeoutMs: number
   private readonly operationTimeoutMs: number
   private readonly now: () => number
+  private readonly capturedAt: () => string
+  private readonly createObservationId: () => string
   private readonly sleep: (milliseconds: number) => Promise<void>
+  private nextEmulationGeneration = 0
 
   constructor(private readonly deps: ElectronEmulatorRuntimeBridgeDeps) {
     this.readyTimeoutMs = Math.max(100, Math.min(30_000, deps.readyTimeoutMs ?? READY_TIMEOUT_MS))
@@ -262,6 +462,8 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
       Math.min(10_000, deps.operationTimeoutMs ?? OPERATION_TIMEOUT_MS)
     )
     this.now = deps.now ?? Date.now
+    this.capturedAt = deps.capturedAt ?? (() => new Date(this.now()).toISOString())
+    this.createObservationId = deps.createObservationId ?? randomUUID
     this.sleep = deps.delay ?? delay
   }
 
@@ -278,7 +480,14 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
     const contents = bridgeContents(input.surface)
     if (contents.isDestroyed()) throw new Error('Emulator WebContents was destroyed before boot.')
     const session = contents.session
-    const live = this.createLive(input.surface, contents, session, input.gameId, entryUrl)
+    const live = this.createLive(
+      input.surface,
+      contents,
+      session,
+      input.gameId,
+      entryUrl,
+      ++this.nextEmulationGeneration
+    )
     this.live = live
 
     try {
@@ -307,14 +516,140 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
     await this.cleanup(live, true)
   }
 
+  async observe(input: {
+    gameId: CanvasEmulatorGameId
+    surface: CanvasHostSurface
+  }): Promise<CanvasEmulatorAtomicObservation> {
+    return this.runAtomicObservation(input, OBSERVE_PROBE, 'Emulator observation')
+  }
+
+  async step(input: {
+    gameId: CanvasEmulatorGameId
+    surface: CanvasHostSurface
+    buttons: readonly EmulatorButton[]
+    expectedFrameId: number
+    expectedInputEpoch: number
+  }): Promise<CanvasEmulatorAtomicObservation> {
+    if (
+      !Array.isArray(input.buttons) ||
+      input.buttons.length > 8 ||
+      input.buttons.some((button) => !isEmulatorButton(button)) ||
+      new Set(input.buttons).size !== input.buttons.length ||
+      (input.buttons.includes('up') && input.buttons.includes('down')) ||
+      (input.buttons.includes('left') && input.buttons.includes('right'))
+    ) {
+      throw new Error('Emulator step requires a bounded non-conflicting button set.')
+    }
+    if (
+      !Number.isSafeInteger(input.expectedFrameId) ||
+      input.expectedFrameId <= 0 ||
+      !Number.isSafeInteger(input.expectedInputEpoch) ||
+      input.expectedInputEpoch < 0
+    ) {
+      throw new Error('Emulator step requires trusted frame and input epochs.')
+    }
+    return this.runAtomicObservation(
+      input,
+      stepProbe(input.buttons, input.expectedFrameId, input.expectedInputEpoch),
+      'Emulator one-frame step'
+    )
+  }
+
+  private requireLive(input: {
+    gameId: CanvasEmulatorGameId
+    surface: CanvasHostSurface
+  }): LiveRuntime {
+    const live = this.live
+    if (!live || live.surface !== input.surface || live.gameId !== input.gameId) {
+      throw new Error('Emulator observation binding is absent or belongs to another surface.')
+    }
+    this.assertCurrent(live)
+    return live
+  }
+
+  private async runAtomicObservation(
+    input: { gameId: CanvasEmulatorGameId; surface: CanvasHostSurface },
+    probe: string,
+    label: string
+  ): Promise<CanvasEmulatorAtomicObservation> {
+    const live = this.requireLive(input)
+    try {
+      const raw = await withTimeout(
+        live.contents.executeJavaScript(probe),
+        this.operationTimeoutMs,
+        label
+      )
+      this.assertCurrent(live)
+      const pageResult = validatePageObservation(raw)
+      if (pageResult.kind === 'refusal') {
+        const observation = this.materializeAtomicObservation(live, pageResult.observation)
+        if (pageResult.code === 'stale_input_epoch') {
+          throw new CanvasEmulatorInputEpochStaleError(observation)
+        }
+        throw new CanvasEmulatorObservationStaleError(observation)
+      }
+      return this.materializeAtomicObservation(live, pageResult.observation)
+    } catch (error) {
+      if (
+        error instanceof CanvasEmulatorInputEpochStaleError ||
+        error instanceof CanvasEmulatorObservationStaleError
+      ) {
+        throw error
+      }
+      const reason = error instanceof Error ? error : new Error(String(error))
+      await this.handleFatal(live, reason)
+      throw reason
+    }
+  }
+
+  private materializeAtomicObservation(
+    live: LiveRuntime,
+    page: ValidatedPageObservation
+  ): CanvasEmulatorAtomicObservation {
+    const observationId = this.createObservationId()
+    if (
+      typeof observationId !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(observationId)
+    ) {
+      throw new Error('Emulator observation id factory returned an invalid opaque id.')
+    }
+    const capturedAt = this.capturedAt()
+    if (
+      typeof capturedAt !== 'string' ||
+      !Number.isFinite(new Date(capturedAt).getTime()) ||
+      new Date(capturedAt).toISOString() !== capturedAt
+    ) {
+      throw new Error('Emulator observation timestamp factory returned invalid ISO-8601.')
+    }
+    const frame = Object.freeze({
+      mimeType: 'image/png' as const,
+      data: page.png.toString('base64'),
+      width: 160,
+      height: 144,
+      byteLength: page.png.byteLength,
+      hash: createHash('sha256').update(page.png).digest('hex'),
+      capturedAt
+    })
+    return Object.freeze({
+      schemaVersion: 1 as const,
+      observationId,
+      emulationGeneration: live.emulationGeneration,
+      frameId: page.frameId,
+      inputEpoch: page.inputEpoch,
+      capturedAt,
+      frame,
+      state: page.state
+    })
+  }
+
   private createLive(
     surface: CanvasHostSurface,
     contents: ElectronEmulatorWebContents,
     session: ElectronEmulatorSession,
     gameId: CanvasEmulatorGameId,
-    entryUrl: string
+    entryUrl: string,
+    emulationGeneration: number
   ): LiveRuntime {
-    let live!: LiveRuntime
     const onNavigate: LiveRuntime['onNavigate'] = (...args) => {
       const [event, target] = args
       if (target === entryUrl) return
@@ -354,12 +689,13 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
       }
       callback({ cancel: !allowed })
     }
-    live = {
+    const live: LiveRuntime = {
       surface,
       contents,
       session,
       gameId,
       entryUrl,
+      emulationGeneration,
       registration: null,
       cancelled: false,
       loadFailure: null,
@@ -468,27 +804,41 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
       } finally {
         try {
           live.contents.removeListener('will-navigate', live.onNavigate)
-        } catch {}
+        } catch {
+          // The renderer may have destroyed its event host already.
+        }
         try {
           live.contents.removeListener('did-fail-load', live.onLoadFailure)
-        } catch {}
+        } catch {
+          // The renderer may have destroyed its event host already.
+        }
         try {
           live.contents.removeListener('render-process-gone', live.onProcessGone)
-        } catch {}
+        } catch {
+          // The renderer may have destroyed its event host already.
+        }
         // The driver supplies a unique in-memory partition, so clearing this
         // WebRequest slot removes only the bridge's own session policy.
         try {
           live.session.webRequest.onBeforeRequest(EXTERNAL_REQUEST_FILTER, null)
-        } catch {}
+        } catch {
+          // The unique session may already be disposed.
+        }
         try {
           live.session.removeListener('will-download', live.onDownload)
-        } catch {}
+        } catch {
+          // The unique session may already be disposed.
+        }
         try {
           live.session.setPermissionCheckHandler(null)
-        } catch {}
+        } catch {
+          // The unique session may already be disposed.
+        }
         try {
           live.session.setPermissionRequestHandler(null)
-        } catch {}
+        } catch {
+          // The unique session may already be disposed.
+        }
         if (live.registration) {
           try {
             await live.registration.unregister()
@@ -503,7 +853,9 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
         if ((forceDestroySurface || pageShutdownTimedOut) && !live.surface.isDestroyed()) {
           try {
             live.surface.destroy()
-          } catch {}
+          } catch {
+            // A racing renderer close already supplied containment.
+          }
         }
       }
       if (strictError) throw strictError
