@@ -25,7 +25,7 @@ const READY_TIMEOUT_MS = 10_000
 const OPERATION_TIMEOUT_MS = 2_000
 const READY_POLL_MS = 25
 const EXPECTED_FACADE_KEYS = ['observe', 'ready', 'shutdown', 'step']
-const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42]
+const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42] as const
 const EXTERNAL_REQUEST_FILTER = { urls: ['*://*/*'] }
 
 class EmulatorOperationTimeout extends Error {}
@@ -147,6 +147,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+function hasPreventDefault(value: unknown): value is { preventDefault(): void } {
+  return typeof asRecord(value)?.preventDefault === 'function'
+}
+
 function safeInteger(value: unknown): number | null {
   return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null
 }
@@ -197,7 +201,7 @@ export function validateEmulatorStableReady(value: unknown): EmulatorStableReady
     frameHash: input.frameHash,
     width: 160,
     height: 144,
-    magic: [TWGB_MAGIC[0], TWGB_MAGIC[1], TWGB_MAGIC[2], TWGB_MAGIC[3]],
+    magic: TWGB_MAGIC,
     schema: 1,
     status: 3,
     x,
@@ -310,27 +314,13 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
     gameId: CanvasEmulatorGameId,
     entryUrl: string
   ): LiveRuntime {
-    const live = {
-      surface,
-      contents,
-      session,
-      gameId,
-      entryUrl,
-      registration: null,
-      cancelled: false,
-      loadFailure: null,
-      cleanup: null,
-      onNavigate: () => {},
-      onLoadFailure: () => {},
-      onProcessGone: () => {},
-      onDownload: () => {},
-      onBeforeRequest: () => {}
-    } as LiveRuntime
-    live.onNavigate = (event: { preventDefault?: () => void }, target: unknown) => {
+    let live!: LiveRuntime
+    const onNavigate: LiveRuntime['onNavigate'] = (...args) => {
+      const [event, target] = args
       if (target === entryUrl) return
-      event.preventDefault?.()
+      if (hasPreventDefault(event)) event.preventDefault()
     }
-    live.onLoadFailure = (
+    const onLoadFailure = (
       _event: unknown,
       code: unknown,
       description: unknown,
@@ -344,15 +334,18 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
       live.loadFailure = reason
       void this.handleFatal(live, reason)
     }
-    live.onProcessGone = () => {
+    const onProcessGone = () => {
       const reason = new Error('Emulator renderer process exited.')
       live.loadFailure = reason
       void this.handleFatal(live, reason)
     }
-    live.onDownload = (event: { preventDefault?: () => void }) => {
-      event.preventDefault?.()
+    const onDownload: LiveRuntime['onDownload'] = (...args) => {
+      if (hasPreventDefault(args[0])) args[0].preventDefault()
     }
-    live.onBeforeRequest = (details, callback) => {
+    const onBeforeRequest = (
+      details: { url: string },
+      callback: (result: { cancel: boolean }) => void
+    ) => {
       let allowed = false
       try {
         allowed = resolveEmulatorAsset(this.deps.registry, details.url) !== null
@@ -360,6 +353,22 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorRuntimeBridg
         allowed = false
       }
       callback({ cancel: !allowed })
+    }
+    live = {
+      surface,
+      contents,
+      session,
+      gameId,
+      entryUrl,
+      registration: null,
+      cancelled: false,
+      loadFailure: null,
+      cleanup: null,
+      onNavigate,
+      onLoadFailure,
+      onProcessGone,
+      onDownload,
+      onBeforeRequest
     }
     return live
   }

@@ -87,13 +87,14 @@ function makeFakeContents(session: ElectronEmulatorSession) {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   let windowOpenHandler: ((details: unknown) => { action: 'deny' }) | null = null
   let destroyed = false
+  const executeJavaScript = vi.fn<(code: string, userGesture?: boolean) => Promise<unknown>>(
+    async (code: string) => (code.includes('shutdown') ? { closed: true } : READY)
+  )
   const contents = {
     session,
     isDestroyed: () => destroyed,
     loadURL: vi.fn(async () => {}),
-    executeJavaScript: vi.fn(async (code: string) =>
-      code.includes('shutdown') ? { closed: true } : READY
-    ),
+    executeJavaScript,
     setWindowOpenHandler: vi.fn((handler: (details: unknown) => { action: 'deny' }) => {
       windowOpenHandler = handler
     }),
@@ -236,6 +237,43 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     ).rejects.toThrow(/non-canonical/i)
     expect(fakeSession.session.protocol.handle).not.toHaveBeenCalled()
     expect(fakeContents.contents.loadURL).not.toHaveBeenCalled()
+  })
+
+  it('preserves Electron event receivers while denying navigation and downloads', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+
+    let navigationReceiver: unknown = null
+    const navigationEvent = {
+      preventDefault(this: unknown) {
+        navigationReceiver = this
+      }
+    }
+    fakeContents.emit('will-navigate', navigationEvent, 'https://example.test/escape')
+    expect(navigationReceiver).toBe(navigationEvent)
+
+    const downloadListener = fakeSession.session.on.mock.calls.find(
+      ([event]) => event === 'will-download'
+    )?.[1]
+    expect(downloadListener).toBeTypeOf('function')
+    let downloadReceiver: unknown = null
+    const downloadEvent = {
+      preventDefault(this: unknown) {
+        downloadReceiver = this
+      }
+    }
+    if (typeof downloadListener !== 'function')
+      throw new Error('Expected download denial listener.')
+    downloadListener(downloadEvent)
+    expect(downloadReceiver).toBe(downloadEvent)
   })
 
   it('cleans protocol, policies, and only its own listeners on shutdown', async () => {
