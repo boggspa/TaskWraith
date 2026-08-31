@@ -208,7 +208,11 @@ export function readHostStandaloneAntigravityInventory(
       if (!isApiModelId(entry.id)) appendUnique(rows, seen, inventoryRow(entry.id, entry.label))
     }
     for (const row of readAgyCache(profilePath)) appendUnique(rows, seen, row)
-    for (const row of staticAgyRows()) appendUnique(rows, seen, row)
+    // Match Electron main's live-wins contract: the floor recovers an empty
+    // catalogue, but must not append aliases or withdrawn rows to a healthy one.
+    if (rows.length === 0) {
+      for (const row of staticAgyRows()) appendUnique(rows, seen, row)
+    }
   }
 
   const settings = readSettings(profilePath)

@@ -50,7 +50,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
     )
   })
 
-  it('prefers the main-written live rows and keeps the API/AGY lanes separate', () => {
+  it('prefers main-written live AGY rows without appending the static AGY floor', () => {
     const path = profile({
       antigravityEnabled: true,
       antigravityOptInAcceptedAt: 1_700_000_000_000,
@@ -75,6 +75,28 @@ describe('readHostStandaloneAntigravityInventory', () => {
     expect(rows[0]).toEqual({ modelId: 'agy-live', label: 'AGY Live' })
     expect(rows).toContainEqual({ modelId: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' })
     expect(rows.map((row) => row.modelId)).not.toContain('gemini-api:not safe!')
+    expect(rows.map((row) => row.modelId)).not.toContain('gemini-3.7-flash-high')
+    expect(rows.map((row) => row.modelId)).not.toContain('flash-3.7')
+  })
+
+  it('prefers the authenticated AGY cache without appending the static AGY floor', () => {
+    const path = profile({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000
+    })
+    writeFileSync(
+      join(path, 'antigravity-agy-models.json'),
+      JSON.stringify({
+        version: 1,
+        updatedAt: '2026-08-30T23:01:00.000Z',
+        models: [{ id: 'gemini-live', label: 'Gemini Live' }]
+      }),
+      { mode: 0o600 }
+    )
+
+    const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
+
+    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'Gemini Live' }])
   })
 
   it('does not publish AGY rows without its binary and does not publish API rows without disclosure', () => {
