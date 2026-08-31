@@ -139,6 +139,42 @@ describe('TUI Host process manager', () => {
     })
   })
 
+  it('resolves an npm-packaged Host through the invoking ordinary Node executable', async () => {
+    const executable = '/opt/homebrew/bin/node'
+    const cli = '/npm/taskwraith/dist/host/host-runtime/cli.js'
+    const required = new Set([executable, cli])
+    const result = await resolveTuiHostLaunchCommand({
+      profile: 'node-package',
+      platform: 'darwin',
+      moduleDir: '/npm/taskwraith/dist/tui/tui',
+      userDataPath: '/profiles/npm',
+      nodeExecutable: executable,
+      env: { ELECTRON_RUN_AS_NODE: '1', TASKWRAITH_CLI_PACKAGE: '1' },
+      pathExists: async (path) => required.has(path)
+    })
+
+    expect(result).toEqual({
+      executable,
+      cwd: '/npm/taskwraith/dist/host/host-runtime',
+      args: [cli, 'serve', '--mode', 'production', '--profile', '/profiles/npm'],
+      env: { TASKWRAITH_CLI_PACKAGE: '1' }
+    })
+  })
+
+  it('refuses an npm package launch through Electron', async () => {
+    await expect(
+      resolveTuiHostLaunchCommand({
+        profile: 'node-package',
+        platform: 'darwin',
+        moduleDir: '/npm/taskwraith/dist/tui/tui',
+        userDataPath: '/profiles/npm',
+        nodeExecutable: '/Applications/Electron.app/Contents/MacOS/Electron',
+        isOrdinaryNode: () => false,
+        pathExists: async () => true
+      })
+    ).rejects.toThrow(/ordinary Node executable/)
+  })
+
   it('uses Windows path semantics for packaged Node and Host CLI', async () => {
     const executable = 'C:\\Apps\\TaskWraith\\resources\\tui-runtime\\win32-x64\\node.exe'
     const cli = 'C:\\Apps\\TaskWraith\\resources\\host\\host-runtime\\cli.js'

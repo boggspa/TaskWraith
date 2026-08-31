@@ -37,7 +37,12 @@ export const TUI_STANDALONE_HOST_CAPABILITY_FLOOR: readonly HostCapability[] = [
 ]
 export const TUI_STANDALONE_HOST_PRODUCTION_VERSION = 'node-host-v1'
 
-export type TuiHostLaunchProfile = 'production' | 'development' | 'package-smoke' | 'custom'
+export type TuiHostLaunchProfile =
+  | 'production'
+  | 'development'
+  | 'package-smoke'
+  | 'node-package'
+  | 'custom'
 
 export interface TuiHostLaunchCommand {
   readonly executable: string
@@ -152,6 +157,31 @@ function packagedCandidate(
   }
 }
 
+/**
+ * The npm CLI package ships the same pure-Node Host payload as the desktop
+ * package, but deliberately does not duplicate TaskWraith's 100+ MB pinned
+ * Node runtime. npm has already admitted an ordinary Node executable before
+ * this profile is selected; keep that boundary explicit instead of silently
+ * falling back from a broken desktop package.
+ */
+function nodePackageCandidate(
+  platform: NodeJS.Platform,
+  resourcesDir: string,
+  env: NodeJS.ProcessEnv,
+  userDataPath: string,
+  nodeExecutable: string
+): TuiHostLaunchCandidate {
+  const api = pathApi(platform)
+  const cli = api.resolve(resourcesDir, 'host', 'host-runtime', 'cli.js')
+  return {
+    executable: nodeExecutable,
+    args: hostCliArgs(cli, api.resolve(userDataPath)),
+    cwd: api.dirname(cli),
+    env: hostEnvironment(env),
+    requiredPaths: [nodeExecutable, cli]
+  }
+}
+
 function developmentCandidates(
   platform: NodeJS.Platform,
   moduleDir: string,
@@ -215,8 +245,11 @@ export async function resolveTuiHostLaunchCommand(
   const isOrdinaryNode =
     input.isOrdinaryNode ??
     ((path: string) => ordinaryNodeExecutable(path, platform) && !process.versions.electron)
-  if (input.profile === 'development' && !isOrdinaryNode(nodeExecutable)) {
-    throw new Error('TUI development Host launch requires an ordinary Node executable.')
+  if (
+    (input.profile === 'development' || input.profile === 'node-package') &&
+    !isOrdinaryNode(nodeExecutable)
+  ) {
+    throw new Error(`TUI ${input.profile} Host launch requires an ordinary Node executable.`)
   }
   const candidates =
     input.profile === 'development'
@@ -228,7 +261,9 @@ export async function resolveTuiHostLaunchCommand(
           userDataPath,
           nodeExecutable
         )
-      : [packagedCandidate(platform, resourcesDir, architecture, env, userDataPath)]
+      : input.profile === 'node-package'
+        ? [nodePackageCandidate(platform, resourcesDir, env, userDataPath, nodeExecutable)]
+        : [packagedCandidate(platform, resourcesDir, architecture, env, userDataPath)]
 
   for (const candidate of candidates) {
     const availability = await Promise.all(candidate.requiredPaths.map((path) => pathExists(path)))

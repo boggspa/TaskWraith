@@ -7,6 +7,8 @@ import {
 import { detectAnsiColorMode, type AnsiColorMode } from './ansi'
 import type { TuiHostLaunchProfile } from './hostProcessManager'
 
+export const TASKWRAITH_NODE_PACKAGE_ENV = 'TASKWRAITH_CLI_PACKAGE'
+
 export interface TaskWraithTuiCliOptions {
   demo: boolean
   dev: boolean
@@ -171,6 +173,7 @@ export function parseTaskWraithTuiArgs(
   if (!options.userDataPath)
     options.userDataPath = defaultTaskWraithUserDataPath(process.platform, env)
   const packageSmoke = env.TASKWRAITH_TUI_PACKAGE_SMOKE === '1'
+  const nodePackage = env[TASKWRAITH_NODE_PACKAGE_ENV] === '1'
   options.hostLaunchProfile =
     packageSmoke && explicitUserData
       ? 'package-smoke'
@@ -178,7 +181,9 @@ export function parseTaskWraithTuiArgs(
         ? 'custom'
         : options.dev
           ? 'development'
-          : 'production'
+          : nodePackage
+            ? 'node-package'
+            : 'production'
   if (options.json && options.snapshot) {
     throw new Error('--json and --snapshot select different output formats.')
   }

@@ -39,6 +39,17 @@ describe('TaskWraith TUI CLI options', () => {
       startHost: true,
       hostLaunchProfile: 'package-smoke'
     })
+    expect(parseTaskWraithTuiArgs([], { TASKWRAITH_CLI_PACKAGE: '1' })).toMatchObject({
+      startHost: true,
+      hostLaunchProfile: 'node-package'
+    })
+    // An explicit profile keeps the existing connect-only safety boundary,
+    // even when the CLI itself came from npm.
+    expect(
+      parseTaskWraithTuiArgs(['--user-data', './private-profile'], {
+        TASKWRAITH_CLI_PACKAGE: '1'
+      })
+    ).toMatchObject({ hostLaunchProfile: 'custom' })
   })
 
   it('rejects ambiguous or state-mutating replay combinations', () => {
