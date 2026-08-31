@@ -5207,7 +5207,10 @@
  * repeating the ghost, provider/model meta row, or outer chrome. Four columns
  * match the approved desktop mock; narrower panes collapse progressively. */
 .message-working-unified {
-  --message-working-accent: var(--provider-ensemble-color, var(--accent));
+  /* The shared signal is app-owned, not another participant. Keep it neutral:
+   * `--text-primary` resolves light on dark themes and dark on light themes.
+   * Each seat still supplies its own inline provider accent below this row. */
+  --message-working-accent: var(--text-primary);
   container: working-indicator / inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1fr);

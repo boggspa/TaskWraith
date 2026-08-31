@@ -8,6 +8,15 @@ const css = readFileSync(
 )
 
 describe('unified Ensemble working seat grid', () => {
+  it('uses theme-contrast ink for the shared signal instead of a participant hue', () => {
+    const unifiedRule = css.slice(
+      css.indexOf('.message-working-unified {'),
+      css.indexOf('.message-working-unified > .message-working')
+    )
+    expect(unifiedRule).toContain('--message-working-accent: var(--text-primary);')
+    expect(unifiedRule).not.toContain('var(--provider-ensemble-color')
+  })
+
   it('uses four bare close-out-style seat columns below one Working signal', () => {
     expect(css).toContain('.message-working-unified {')
     expect(css).toContain('container: working-indicator / inline-size;')
