@@ -1,15 +1,194 @@
-import { useEffect, useState } from 'react'
-import { useTerminalRecipes, terminalLaunchBus } from './TerminalSidebarStore'
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useTerminalRecipes, terminalLaunchBus, type TerminalRecipe } from './TerminalSidebarStore'
 import type { WorkspaceRecord } from '../../../main/store/types'
 
 interface TerminalSidebarViewProps {
   workspaces: readonly WorkspaceRecord[]
 }
 
+interface TerminalSession {
+  sessionId: string
+  workspacePath: string
+}
+
+interface TerminalSidebarContentProps extends TerminalSidebarViewProps {
+  recipes: readonly TerminalRecipe[]
+  runningSessions: readonly TerminalSession[]
+  onLaunch: (workspacePath: string) => void
+  onAttach: (workspacePath: string, sessionId: string) => void
+  onKill: (event: MouseEvent, sessionId: string) => void
+}
+
+function TerminalSection({
+  title,
+  count,
+  children
+}: {
+  title: string
+  count: number
+  children: ReactNode
+}) {
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  return (
+    <section className="sidebar-hierarchy-section terminal-sidebar-section">
+      <div className="sidebar-section-header">
+        <button
+          type="button"
+          className="sidebar-section-header-toggle"
+          onClick={() => setIsExpanded((current) => !current)}
+          aria-expanded={isExpanded}
+          title={`${isExpanded ? 'Collapse' : 'Expand'} ${title}`}
+        >
+          <span
+            className={`sf-symbol-icon sidebar-tree-chevron ${isExpanded ? 'is-expanded' : ''}`}
+            aria-hidden
+          >
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6.2 4.7 10 8.1 6.2 11.5" />
+            </svg>
+          </span>
+          <h4 className="sidebar-section-title">{title}</h4>
+          {count > 0 && <span className="sidebar-section-count">{count}</span>}
+        </button>
+      </div>
+      {isExpanded && <div className="terminal-sidebar-list">{children}</div>}
+    </section>
+  )
+}
+
+function TerminalRowCopy({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <span className="terminal-sidebar-row-copy">
+      <span className="terminal-sidebar-row-title" title={title}>
+        {title}
+      </span>
+      {detail && (
+        <span className="terminal-sidebar-row-detail" title={detail}>
+          {detail}
+        </span>
+      )}
+    </span>
+  )
+}
+
+export function TerminalSidebarContent({
+  workspaces,
+  recipes,
+  runningSessions,
+  onLaunch,
+  onAttach,
+  onKill
+}: TerminalSidebarContentProps) {
+  const workspaceByPath = new Map(workspaces.map((workspace) => [workspace.path, workspace]))
+  const pinned = recipes.filter((recipe) => recipe.pinned)
+  const recents = recipes
+    .filter((recipe) => !recipe.pinned)
+    .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+
+  const renderRecipe = (recipe: TerminalRecipe) => {
+    const workspace = workspaceByPath.get(recipe.workspacePath)
+    const title = workspace?.displayName || recipe.workspacePath
+    return (
+      <button
+        key={recipe.id}
+        type="button"
+        className="sidebar-item terminal-sidebar-row"
+        onClick={() => onLaunch(recipe.workspacePath)}
+        aria-label={`Open terminal — ${title}`}
+      >
+        <TerminalRowCopy title={title} detail={recipe.command} />
+      </button>
+    )
+  }
+
+  return (
+    <div className="sidebar-terminal-panel">
+      {runningSessions.length > 0 && (
+        <TerminalSection title="Running" count={runningSessions.length}>
+          {runningSessions.map((session) => {
+            const workspace = workspaceByPath.get(session.workspacePath)
+            const sessionName = workspace?.displayName || session.workspacePath
+            return (
+              <div
+                key={session.sessionId}
+                className="sidebar-item terminal-sidebar-row terminal-sidebar-running-row"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open terminal session — ${sessionName}`}
+                onClick={() => onAttach(session.workspacePath, session.sessionId)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onAttach(session.workspacePath, session.sessionId)
+                  }
+                }}
+              >
+                <span className="terminal-sidebar-running-dot" aria-hidden />
+                <TerminalRowCopy title={sessionName} detail="Running terminal" />
+                <button
+                  type="button"
+                  className="sidebar-item-action terminal-sidebar-row-action"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onAttach(session.workspacePath, session.sessionId)
+                  }}
+                  title="Attach to session"
+                  aria-label={`Attach to terminal session — ${sessionName}`}
+                >
+                  ↗
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-item-action terminal-sidebar-row-action terminal-sidebar-row-action-kill"
+                  onClick={(event) => onKill(event, session.sessionId)}
+                  title="Kill session"
+                  aria-label={`Kill terminal session — ${sessionName}`}
+                >
+                  &times;
+                </button>
+              </div>
+            )
+          })}
+        </TerminalSection>
+      )}
+
+      <TerminalSection title="Pinned" count={pinned.length}>
+        {pinned.map(renderRecipe)}
+      </TerminalSection>
+
+      <TerminalSection title="Recents" count={recents.length}>
+        {recents.map(renderRecipe)}
+      </TerminalSection>
+
+      <TerminalSection title="Workspaces" count={workspaces.length}>
+        {workspaces.map((workspace) => (
+          <button
+            key={workspace.id}
+            type="button"
+            className="sidebar-item terminal-sidebar-row"
+            onClick={() => onLaunch(workspace.path)}
+            aria-label={`Open terminal — ${workspace.displayName}`}
+          >
+            <TerminalRowCopy title={workspace.displayName} detail={workspace.path} />
+          </button>
+        ))}
+      </TerminalSection>
+    </div>
+  )
+}
+
 export function TerminalSidebarView({ workspaces }: TerminalSidebarViewProps) {
   const recipes = useTerminalRecipes()
-  const [runningSessions, setRunningSessions] = useState<{ sessionId: string; workspacePath: string }[]>([])
-  const [filter, setFilter] = useState<'recents' | 'pinned' | 'workspaces'>('recents')
+  const [runningSessions, setRunningSessions] = useState<TerminalSession[]>([])
 
   useEffect(() => {
     let mounted = true
@@ -29,122 +208,30 @@ export function TerminalSidebarView({ workspaces }: TerminalSidebarViewProps) {
     }
   }, [])
 
-  const handleLaunch = (workspacePath: string) => {
-    terminalLaunchBus.emit(workspacePath)
+  const handleKill = (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation()
+    window.api.terminal
+      .kill(sessionId)
+      .then(() => {
+        setRunningSessions((current) =>
+          current.filter((session) => session.sessionId !== sessionId)
+        )
+      })
+      .catch((err) => {
+        console.error('[TerminalSidebarView] terminal.kill failed', err)
+      })
   }
-
-  const handleAttach = (workspacePath: string, sessionId: string) => {
-    terminalLaunchBus.emitAttach(workspacePath, sessionId)
-  }
-
-  const handleKill = (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation()
-    window.api.terminal.kill(sessionId).then(() => {
-      setRunningSessions((prev) => prev.filter((s) => s.sessionId !== sessionId))
-    }).catch((err) => {
-      console.error('[TerminalSidebarView] terminal.kill failed', err)
-    })
-  }
-
-  const pinned = recipes.filter((r) => r.pinned)
-  const recents = recipes.filter((r) => !r.pinned).sort((a, b) => b.lastUsedAt - a.lastUsedAt)
 
   return (
-    <div className="sidebar-terminal-panel">
-      <div className="sidebar-section-header">
-        <div className="segmented-control">
-          {(['recents', 'pinned', 'workspaces'] as const).map((f) => (
-            <button
-              key={f}
-              className={`segmented-control-segment ${filter === f ? 'is-active' : ''}`}
-              onClick={() => setFilter(f)}
-              style={{ textTransform: 'capitalize' }}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {runningSessions.length > 0 && (
-        <div className="sidebar-section">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">Running</span>
-          </div>
-          <div className="sidebar-section-list">
-            {runningSessions.map((session) => {
-              const ws = workspaces.find((w) => w.path === session.workspacePath)
-              const sessionName = ws?.displayName || session.workspacePath
-              return (
-                <div
-                  key={session.sessionId}
-                  className="sidebar-item"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open terminal session — ${sessionName}`}
-                  onClick={() => handleAttach(session.workspacePath, session.sessionId)}
-                  onKeyDown={(e) => {
-                    // Row-only: Enter/Space on the nested kill button must not also attach.
-                    if (e.target !== e.currentTarget) return
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      handleAttach(session.workspacePath, session.sessionId)
-                    }
-                  }}
-                >
-                  <div className="sidebar-item-title">{sessionName}</div>
-                  <div className="sidebar-item-subtitle">Running</div>
-                  <button
-                    type="button"
-                    className="sidebar-item-action sidebar-item-action-kill"
-                    onClick={(e) => handleKill(e, session.sessionId)}
-                    title="Kill session"
-                    aria-label={`Kill terminal session — ${sessionName}`}>
-                    &times;
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      <div className="sidebar-section">
-        <div className="sidebar-section-header">
-          <span className="sidebar-section-title">
-            {filter === 'recents' ? 'Recent' : filter === 'pinned' ? 'Pinned' : 'Workspaces'}
-          </span>
-        </div>
-        <div className="sidebar-section-list">
-          {filter === 'recents' &&
-            recents.map((r) => {
-              const ws = workspaces.find((w) => w.path === r.workspacePath)
-              return (
-                <div key={r.id} className="sidebar-item" onClick={() => handleLaunch(r.workspacePath)}>
-                  <div className="sidebar-item-title">{ws?.displayName || r.workspacePath}</div>
-                  {r.command && <div className="sidebar-item-subtitle">{r.command}</div>}
-                </div>
-              )
-            })}
-          {filter === 'pinned' &&
-            pinned.map((r) => {
-              const ws = workspaces.find((w) => w.path === r.workspacePath)
-              return (
-                <div key={r.id} className="sidebar-item" onClick={() => handleLaunch(r.workspacePath)}>
-                  <div className="sidebar-item-title">{ws?.displayName || r.workspacePath}</div>
-                  {r.command && <div className="sidebar-item-subtitle">{r.command}</div>}
-                </div>
-              )
-            })}
-          {filter === 'workspaces' &&
-            workspaces.map((w) => (
-              <div key={w.id} className="sidebar-item" onClick={() => handleLaunch(w.path)}>
-                <div className="sidebar-item-title">{w.displayName}</div>
-                <div className="sidebar-item-subtitle">{w.path}</div>
-              </div>
-            ))}
-        </div>
-      </div>
-    </div>
+    <TerminalSidebarContent
+      workspaces={workspaces}
+      recipes={recipes}
+      runningSessions={runningSessions}
+      onLaunch={(workspacePath) => terminalLaunchBus.emit(workspacePath)}
+      onAttach={(workspacePath, sessionId) =>
+        terminalLaunchBus.emitAttach(workspacePath, sessionId)
+      }
+      onKill={handleKill}
+    />
   )
 }

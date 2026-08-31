@@ -336,3 +336,102 @@
 .terminal-workbench-pane-wrapper .terminal-panel-body {
   height: 100%;
 }
+
+/* Terminal tab sidebar: use the same stacked hierarchy as Chat and Code.
+ * Row copy owns one compact column so long commands and workspace paths never
+ * become the oversized second column produced by the generic flex row. */
+.sidebar-terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.terminal-sidebar-section {
+  gap: var(--sidebar-section-body-gap, 4px);
+}
+
+.terminal-sidebar-section .sidebar-section-header {
+  margin-bottom: 0;
+}
+
+.terminal-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-sidebar .terminal-sidebar-row {
+  min-height: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  gap: 6px;
+}
+
+.terminal-sidebar-row-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.terminal-sidebar-row-title,
+.terminal-sidebar-row-detail {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-sidebar-row-title {
+  color: color-mix(in srgb, var(--sidebar-text) 92%, transparent);
+  font-size: var(--sidebar-row-font-size);
+  font-weight: 550;
+}
+
+.terminal-sidebar-row-detail {
+  color: var(--sidebar-text-secondary);
+  font-size: calc(var(--sidebar-row-font-size) * 0.82);
+}
+
+.terminal-sidebar-running-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--success, #34d399);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success, #34d399) 16%, transparent);
+}
+
+.app-sidebar .terminal-sidebar-row-action {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sidebar-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.app-sidebar .terminal-sidebar-row-action:hover,
+.app-sidebar .terminal-sidebar-row-action:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent) !important;
+  color: var(--text-primary);
+  opacity: 1;
+  outline: none;
+}
+
+.app-sidebar .terminal-sidebar-row-action-kill:hover,
+.app-sidebar .terminal-sidebar-row-action-kill:focus-visible {
+  color: var(--danger, #e2554f);
+}
