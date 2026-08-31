@@ -394,7 +394,7 @@ function attachedPathOptionValue(head: string, token: string): string | null {
   return null
 }
 
-function existingGlobPrefix(value: string, cwd: string): string {
+function existingGlobPrefix(value: string): string {
   const wildcard = value.search(/[?*\[]/)
   if (wildcard < 0) return value
   const prefix = value.slice(0, wildcard)
@@ -413,7 +413,7 @@ function tokenStaysInsideWorkspace(
   if (!value || value.startsWith('-')) return true
   if (value.startsWith('~') || value.startsWith('file://')) return false
   if (value.split(/[\\/]/).includes('..')) return false
-  const pathValue = existingGlobPrefix(value, cwd)
+  const pathValue = existingGlobPrefix(value)
   const lexical = path.isAbsolute(pathValue)
     ? path.resolve(pathValue)
     : path.resolve(cwd, pathValue)
