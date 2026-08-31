@@ -131,6 +131,21 @@ interface Keypress {
   sequence?: string
 }
 
+const SHIFT_TAB_SEQUENCES = new Set(['\u001b[Z', '\u001b[1;2Z', '\u001b[9;2u'])
+
+/**
+ * Node readline decodes the traditional xterm sequence as tab + shift, but
+ * newer terminals may send Kitty's CSI-u form. Node 22 preserves that raw
+ * sequence while naming the key "undefined", so the semantic check alone
+ * silently drops a real Shift+Tab press.
+ */
+function isShiftTabKey(key: Keypress | undefined): key is Keypress {
+  if (!key) return false
+  if (key.name === 'btab' || key.name === 'backtab') return true
+  if (key.name === 'tab' && key.shift === true) return true
+  return Boolean(key.sequence && SHIFT_TAB_SEQUENCES.has(key.sequence))
+}
+
 export interface TaskWraithTuiOptions {
   clientVersion: string
   userDataPath?: string
@@ -1127,7 +1142,7 @@ export class TaskWraithTui {
 
   private readonly onKeypress = (input: string, key: Keypress | undefined): void => {
     if (this.stopped) return
-    if (key?.name === 'btab') {
+    if (isShiftTabKey(key)) {
       key = { ...key, name: 'tab', shift: true }
     }
     if (!key) return
@@ -2635,7 +2650,26 @@ export class TaskWraithTui {
   private async cycleThreadPermission(): Promise<void> {
     const threadId = this.state.selectedThreadId
     const thread = this.state.thread?.thread
-    if (!threadId || !thread || !this.client?.connected || this.mutationInFlight) return
+    if (!threadId || !thread) {
+      this.setNotice('Open a thread with Ctrl+K before changing permissions.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client) {
+      this.setNotice('Demo mode cannot change Host permissions.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
     try {
       const [current, refreshed] = await Promise.all([
         this.client.getThreadOffers(threadId),

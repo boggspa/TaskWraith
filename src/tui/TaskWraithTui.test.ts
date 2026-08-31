@@ -2388,7 +2388,15 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
 
     await waitFor(() => output.lastFrame.includes('no active run'), 'home frame after connecting')
     expect(output.lastFrame).not.toContain('Hello TaskWraith')
+    expect(output.lastFrame).not.toContain('Shift+Tab permissions')
     expect(host.commands.filter((command) => command.name === 'thread.select')).toHaveLength(0)
+
+    feed(input, '\u001b[Z')
+    await waitFor(
+      () => output.lastFrame.includes('Open a thread with Ctrl+K before changing permissions.'),
+      'permission shortcut guidance on Home'
+    )
+    expect(host.commands.filter((command) => command.name === 'thread.configure')).toHaveLength(0)
   })
 
   it('persists a unique ready-provider model from Home without creating a thread', async () => {
@@ -2671,19 +2679,14 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       hostVersion: '1.9.1-preview'
     })
     secret.fill(0)
-    const { tui, output } = startTui(userDataPath, { fullAccessPresence: presence })
+    const { tui, input, output } = startTui(userDataPath, { fullAccessPresence: presence })
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
 
-    const press = () =>
-      (
-        tui as unknown as {
-          onKeypress: (input: string, key: { name: string; shift: boolean }) => void
-        }
-      ).onKeypress('', { name: 'btab', shift: true })
+    const sequences = ['\u001b[Z', '\u001b[9;2u', '\u001b[1;2Z', '\u001b[Z', '\u001b[9;2u']
     const expected = ['workspace_write', 'full_access', 'plan', 'read_only', 'default']
     for (let index = 0; index < expected.length; index += 1) {
-      press()
+      feed(input, sequences[index])
       await waitFor(
         () =>
           host.commands.filter((command) => command.name === 'thread.configure').length > index &&
