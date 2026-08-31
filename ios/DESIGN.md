@@ -1225,6 +1225,43 @@ chosen layout fits, every refusal was genuinely unaffordable (without that
 second half the suite passes by always returning the narrowest bar), and the
 back control's wording outlives the action wording at every width.
 
+## v0.49 — side-chat and transcript follow-state hardening (2026-08-31)
+
+A cluster of small, user-visible breaks appeared once side chats and transcript
+follow-state ran on real devices and fast Mac projections. They share one theme:
+iOS state must survive view remounts, shell rebuilds, and stale projections
+without re-deriving it from the latest frame.
+
+**Side-chat selection and follow state.** The inspector's selected side chat was
+kept in view-local state, so a remount or shell rebuild closed the panel and
+lost the user's place. The selection now lives on `RemoteSessionModel`, and the
+panel's follow-state store (`TranscriptFollowStateStore`) is preserved across
+remounts so an active side chat stays open and scrolled to the same position.
+A lightweight mini-transcript surface lets the follow store observe its own
+thread without coupling to the full `ThreadDetailViews` lifecycle.
+
+**Transcript pointer-scroll tracking.** Scroll-driven "unfollow" detection was
+attached to a scroll view that did not always exist at construction time,
+making pointer scrolls ignore follow state or attach to the wrong coordinate
+space. `TranscriptIndirectScrollTracker` now resolves the live scroll view and
+converts pointer events correctly; explicit pointer scrolls unfollow the
+transcript, while programmatic scrolls do not.
+
+**Live projection resync.** A Mac projection could go stale on the wire while
+the iOS cached copy kept presenting it as current. `PairedHostProjection` now
+recognizes stale snapshots and resyncs before the user acts on them, with tests
+in `PairedHostSessionControllerTests` covering the boundary.
+
+**Composer pill and git sheet.** A layout pass swallowed the composer workspace
+pill's tap target, and the git workspace sheet lost its content inset on
+compact widths. Both are restored; the pill opens the branch/worktree/PR
+surface and the git sheet keeps its header and action rows anchored.
+
+**Bundled image caching.** Marks, provider logos, and identicons were rebuilt
+from bundle data on every render pass. `BundledImageCache` caches them by
+asset name and dark/light variant, backed by `BundledImageCacheTests` for
+correctness and eviction.
+
 ## Current follow-ups
 
 **P0 distribution gate (established 2026-08-27):** Chris Izatt owns the
