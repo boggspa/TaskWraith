@@ -1397,6 +1397,7 @@ import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
+import { createEmulatorCanvasDriverFactory } from './emulator/EmulatorDriverFactory'
 import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
 import { resolveNativeWindowCanvasOpenTarget } from './canvas/NativeWindowCanvasOpenResolver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
@@ -1409,6 +1410,7 @@ import { createCanvasPopoutElectronWindowDeps } from './canvas/CanvasPopoutElect
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type {
   CanvasDriverKind,
+  CanvasEmulatorGameId,
   CanvasEvalApprovalReceipt,
   CanvasEventRecord,
   CanvasNavigateInput,
@@ -4684,6 +4686,14 @@ const canvasEmbedController = new CanvasEmbedController({
   },
   createView: createElectronEmbedView
 })
+const createEmulatorCanvasDriver = createEmulatorCanvasDriverFactory({
+  appPath: app.getAppPath(),
+  resourcesPath: process.resourcesPath,
+  isPackaged: app.isPackaged,
+  createSurface: (sessionId, surfaceHostId) =>
+    canvasEmbedController.surfaceFor(sessionId, surfaceHostId),
+  logger: console
+})
 // One shared offscreen image engine for both the image_* tools and the canvas
 // `html` driver (canvas_render_html) — its renderHtmlToPng is the hardened,
 // JS-off, egress-cut rasterizer.
@@ -4838,6 +4848,7 @@ const canvasService = new CanvasService({
       ownerParticipantId?: string
       deviceTarget?: { udid: string; bundleId: string }
       provider?: string
+      gameId?: CanvasEmulatorGameId
       windowTarget?: CanvasWindowOpenTarget
       siteId?: string
       initialSketchDocument?: CanvasSketchDocument
@@ -4850,6 +4861,17 @@ const canvasService = new CanvasService({
       onSurfaceClosed?: () => void
     }
   ) => {
+    if (kind === 'emulator') {
+      return createEmulatorCanvasDriver({
+        sessionId,
+        embedded: opts?.embedded === true,
+        ...(typeof opts?.surfaceHostId === 'number' && Number.isSafeInteger(opts.surfaceHostId)
+          ? { surfaceHostId: opts.surfaceHostId }
+          : {}),
+        gameId: opts?.gameId,
+        onSurfaceClosed: opts?.onSurfaceClosed
+      })
+    }
     if (kind === 'window') {
       const factory = canvasWindowDriverFactoryRef
       if (!factory) throw new Error('Native-window Canvas is not ready.')
