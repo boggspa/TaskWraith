@@ -7,21 +7,33 @@ import { createEmulatorAssetRegistry, emulatorEntryUrl } from './EmulatorAssetMa
 import {
   EMULATOR_DOCUMENT_CSP,
   registerEmulatorAssetProtocol,
-  TWEMU_PRIVILEGE
+  TWEMU_PRIVILEGE,
+  type EmulatorAssetProtocolHandler,
+  type EmulatorSessionProtocol
 } from './EmulatorAssetProtocol'
-
-vi.mock('electron', () => ({ protocol: { handle: vi.fn() } }))
-
-import { protocol } from 'electron'
-
-type ProtocolHandler = (request: Request) => Promise<Response>
 
 function hash(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-function registeredHandler(): ProtocolHandler {
-  const handler = vi.mocked(protocol.handle).mock.calls.at(-1)?.[1] as ProtocolHandler | undefined
+function fakeSessionProtocol() {
+  let handler: EmulatorAssetProtocolHandler | null = null
+  const protocol = {
+    handle: vi.fn(async (scheme: string, next: EmulatorAssetProtocolHandler) => {
+      expect(scheme).toBe('twemu')
+      handler = next
+    }),
+    unhandle: vi.fn(async (scheme: string) => {
+      expect(scheme).toBe('twemu')
+    })
+  } satisfies EmulatorSessionProtocol
+  return { protocol, handler: () => handler }
+}
+
+function registeredHandler(
+  session: ReturnType<typeof fakeSessionProtocol>
+): EmulatorAssetProtocolHandler {
+  const handler = session.handler()
   expect(handler).toBeTypeOf('function')
   if (!handler) throw new Error('twemu protocol handler was not registered')
   return handler
@@ -30,6 +42,7 @@ function registeredHandler(): ProtocolHandler {
 describe('registerEmulatorAssetProtocol', () => {
   let root: string
   let registry: ReturnType<typeof createEmulatorAssetRegistry>
+  let session: ReturnType<typeof fakeSessionProtocol>
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-twemu-protocol-'))
@@ -61,7 +74,7 @@ describe('registerEmulatorAssetProtocol', () => {
         }
       }
     ])
-    vi.mocked(protocol.handle).mockReset()
+    session = fakeSessionProtocol()
   })
 
   afterEach(() => {
@@ -70,8 +83,10 @@ describe('registerEmulatorAssetProtocol', () => {
   })
 
   it('serves only a listed entry page with strict CSP and public-package posture', async () => {
-    registerEmulatorAssetProtocol(registry)
-    const response = await registeredHandler()(new Request(emulatorEntryUrl('homebrew-demo')))
+    await registerEmulatorAssetProtocol(session.protocol, registry)
+    const response = await registeredHandler(session)(
+      new Request(emulatorEntryUrl('homebrew-demo'))
+    )
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Content-Type')).toBe('text/html; charset=utf-8')
@@ -88,8 +103,8 @@ describe('registerEmulatorAssetProtocol', () => {
   })
 
   it('returns a bodyless HEAD response with the same authoritative metadata', async () => {
-    registerEmulatorAssetProtocol(registry)
-    const response = await registeredHandler()(
+    await registerEmulatorAssetProtocol(session.protocol, registry)
+    const response = await registeredHandler(session)(
       new Request(emulatorEntryUrl('homebrew-demo'), { method: 'HEAD' })
     )
 
@@ -102,8 +117,10 @@ describe('registerEmulatorAssetProtocol', () => {
   })
 
   it('uses fixed MIME metadata for non-document assets without widening CSP', async () => {
-    registerEmulatorAssetProtocol(registry)
-    const response = await registeredHandler()(new Request('twemu://app/homebrew-demo/runtime.js'))
+    await registerEmulatorAssetProtocol(session.protocol, registry)
+    const response = await registeredHandler(session)(
+      new Request('twemu://app/homebrew-demo/runtime.js')
+    )
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Content-Type')).toBe('application/javascript; charset=utf-8')
@@ -112,8 +129,8 @@ describe('registerEmulatorAssetProtocol', () => {
   })
 
   it('returns one opaque 404 for writes, remote URLs, traversal, and unlisted assets', async () => {
-    registerEmulatorAssetProtocol(registry)
-    const handler = registeredHandler()
+    await registerEmulatorAssetProtocol(session.protocol, registry)
+    const handler = registeredHandler(session)
     for (const request of [
       new Request(emulatorEntryUrl('homebrew-demo'), { method: 'POST' }),
       new Request('https://example.test/index.html'),
@@ -124,6 +141,25 @@ describe('registerEmulatorAssetProtocol', () => {
       expect(response.status).toBe(404)
       expect(await response.text()).toBe('Not found')
     }
+  })
+
+  it('binds and coalesces concurrent unregistration on only the injected Canvas session protocol', async () => {
+    const registration = await registerEmulatorAssetProtocol(session.protocol, registry)
+    expect(session.protocol.handle).toHaveBeenCalledTimes(1)
+    expect(session.protocol.unhandle).not.toHaveBeenCalled()
+
+    await Promise.all([registration.unregister(), registration.unregister()])
+    await registration.unregister()
+    expect(session.protocol.unhandle).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a failed unhandle retryable instead of reporting false cleanup', async () => {
+    session.protocol.unhandle.mockRejectedValueOnce(new Error('session busy'))
+    const registration = await registerEmulatorAssetProtocol(session.protocol, registry)
+
+    await expect(registration.unregister()).rejects.toThrow('session busy')
+    await expect(registration.unregister()).resolves.toBeUndefined()
+    expect(session.protocol.unhandle).toHaveBeenCalledTimes(2)
   })
 
   it('declares an isolated, non-worker, non-service-worker origin before app readiness', () => {
