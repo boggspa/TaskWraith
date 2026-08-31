@@ -7,8 +7,16 @@
  * invokes a renderer/runtime behind these validated DTOs.
  */
 
-export const EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION = 1 as const
-export const EMULATOR_STATE_ADAPTER_SCHEMA_VERSION = 1 as const
+export const EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1 = 1 as const
+export const EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2 = 2 as const
+/** Legacy v1 export retained for existing descriptor consumers. */
+export const EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION = EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1
+export const EMULATOR_PACKAGE_MANIFEST_LATEST_SCHEMA_VERSION = EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2
+export const EMULATOR_STATE_ADAPTER_SCHEMA_V1 = 1 as const
+export const EMULATOR_STATE_ADAPTER_SCHEMA_V2 = 2 as const
+/** Legacy v1 export retained for existing descriptor consumers. */
+export const EMULATOR_STATE_ADAPTER_SCHEMA_VERSION = EMULATOR_STATE_ADAPTER_SCHEMA_V1
+export const EMULATOR_STATE_ADAPTER_LATEST_SCHEMA_VERSION = EMULATOR_STATE_ADAPTER_SCHEMA_V2
 export const EMULATOR_OBSERVATION_SCHEMA_VERSION = 1 as const
 
 export const EMULATOR_MAX_MANIFEST_BYTES = 64 * 1024
@@ -72,7 +80,7 @@ export type EmulatorValidation<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly reason: string }
 
-/** A package-owned instruction for reading one bounded scalar from emulator RAM. */
+/** A package-owned instruction for reading one bounded scalar from an adapter buffer. */
 export interface EmulatorRamRead {
   readonly address: number
   readonly encoding: EmulatorRamEncoding
@@ -95,8 +103,7 @@ export interface EmulatorStateAdapterFieldManifest {
  * It is never accepted from an MCP caller; package loading validates it before
  * the emulator becomes observable.
  */
-export interface EmulatorStateAdapterManifest {
-  readonly schemaVersion: typeof EMULATOR_STATE_ADAPTER_SCHEMA_VERSION
+interface EmulatorStateAdapterManifestBase {
   readonly adapterId: string
   readonly adapterRevision: string
   readonly schemaSha256: string
@@ -106,19 +113,56 @@ export interface EmulatorStateAdapterManifest {
   readonly fields: readonly EmulatorStateAdapterFieldManifest[]
 }
 
+/** Legacy v1 adapters describe only their supplied bounded decoder buffer. */
+export interface EmulatorStateAdapterManifestV1 extends EmulatorStateAdapterManifestBase {
+  readonly schemaVersion: typeof EMULATOR_STATE_ADAPTER_SCHEMA_V1
+}
+
+/** Explicit source provenance for a bounded adapter buffer. */
+export interface EmulatorStateWindow {
+  readonly source: 'system_ram'
+  readonly startAddress: number
+  readonly byteLength: number
+}
+
+/** V2 adapters bind window-relative reads to one exact emulator memory window. */
+export interface EmulatorStateAdapterManifestV2 extends EmulatorStateAdapterManifestBase {
+  readonly schemaVersion: typeof EMULATOR_STATE_ADAPTER_SCHEMA_V2
+  readonly stateWindow: EmulatorStateWindow
+}
+
+export type EmulatorStateAdapterManifest =
+  | EmulatorStateAdapterManifestV1
+  | EmulatorStateAdapterManifestV2
+
 /**
  * One package the host is prepared to run. Asset locations intentionally stay
  * out of this cross-process contract; package resolution owns them in main.
  */
-export interface EmulatorPackageManifest {
-  readonly schemaVersion: typeof EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION
+export interface EmulatorPackageManifestV1 {
+  readonly schemaVersion: typeof EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1
   readonly gameId: string
   readonly coreId: string
+  /** Legacy v1 core identity; preserved exactly for existing descriptors. */
   readonly coreSha256: string
   readonly romSha256: string
   /** Explicitly null when the package has no verified mapped-state schema yet. */
-  readonly stateAdapter: EmulatorStateAdapterManifest | null
+  readonly stateAdapter: EmulatorStateAdapterManifestV1 | null
 }
+
+/** V2 separates pure core-object provenance from the combined browser runtime artifact. */
+export interface EmulatorPackageManifestV2 {
+  readonly schemaVersion: typeof EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2
+  readonly gameId: string
+  readonly coreId: string
+  /** Pure core-object identity, retained under the established package field name. */
+  readonly coreSha256: string
+  readonly runtimeWasmSha256: string
+  readonly romSha256: string
+  readonly stateAdapter: EmulatorStateAdapterManifestV2 | null
+}
+
+export type EmulatorPackageManifest = EmulatorPackageManifestV1 | EmulatorPackageManifestV2
 
 /**
  * Internal driver identity. It is returned in observations, but MCP input must
@@ -230,13 +274,21 @@ function canonicalId(value: unknown, maxChars = MAX_ID_CHARS): value is string {
   )
 }
 
+function containsAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
+}
+
 function displayString(value: unknown, maxChars: number): value is string {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
     value.length <= maxChars &&
     value.trim() === value &&
-    !/[\u0000-\u001F\u007F]/.test(value)
+    !containsAsciiControlCharacter(value)
   )
 }
 
@@ -403,6 +455,34 @@ function validateAdapterField(
   return { ok: true, value: { key: raw.key, kind: 'enum', read: read.value, enumValues } }
 }
 
+function validateStateWindow(
+  raw: unknown,
+  memoryBytes: number
+): EmulatorValidation<EmulatorStateWindow> {
+  if (!isRecord(raw)) return fail('V2 adapter stateWindow must be an object.')
+  if (raw.source !== 'system_ram') return fail('V2 adapter stateWindow source must be system_ram.')
+  if (!finiteInteger(raw.startAddress, 0, 0xffffffff)) {
+    return fail('V2 adapter stateWindow startAddress must be a non-negative 32-bit integer.')
+  }
+  if (!finiteInteger(raw.byteLength, 1, EMULATOR_MAX_RAM_BYTES)) {
+    return fail('V2 adapter stateWindow byteLength is invalid.')
+  }
+  if (raw.byteLength !== memoryBytes) {
+    return fail('V2 adapter memoryBytes must exactly match stateWindow byteLength.')
+  }
+  if (raw.startAddress + raw.byteLength > 0x1_0000_0000) {
+    return fail('V2 adapter stateWindow exceeds the 32-bit system RAM address space.')
+  }
+  return {
+    ok: true,
+    value: {
+      source: 'system_ram',
+      startAddress: raw.startAddress,
+      byteLength: raw.byteLength
+    }
+  }
+}
+
 export function isEmulatorButton(value: unknown): value is EmulatorButton {
   return typeof value === 'string' && (EMULATOR_BUTTONS as readonly string[]).includes(value)
 }
@@ -425,9 +505,12 @@ export function validateEmulatorStateAdapterManifest(
       `Emulator state adapter manifest exceeds ${EMULATOR_MAX_STATE_ADAPTER_BYTES} bytes.`
     )
   }
-  if (raw.schemaVersion !== EMULATOR_STATE_ADAPTER_SCHEMA_VERSION) {
+  if (
+    raw.schemaVersion !== EMULATOR_STATE_ADAPTER_SCHEMA_V1 &&
+    raw.schemaVersion !== EMULATOR_STATE_ADAPTER_SCHEMA_V2
+  ) {
     return fail(
-      `Unsupported emulator adapter schemaVersion (expected ${EMULATOR_STATE_ADAPTER_SCHEMA_VERSION}).`
+      `Unsupported emulator adapter schemaVersion (expected ${EMULATOR_STATE_ADAPTER_SCHEMA_V1} or ${EMULATOR_STATE_ADAPTER_SCHEMA_V2}).`
     )
   }
   if (!canonicalId(raw.adapterId)) return fail('Adapter requires a canonical `adapterId`.')
@@ -465,17 +548,35 @@ export function validateEmulatorStateAdapterManifest(
     fields.push(field.value)
   }
 
+  if (raw.schemaVersion === EMULATOR_STATE_ADAPTER_SCHEMA_V1) {
+    return {
+      ok: true,
+      value: {
+        schemaVersion: EMULATOR_STATE_ADAPTER_SCHEMA_V1,
+        adapterId: raw.adapterId,
+        adapterRevision: raw.adapterRevision,
+        schemaSha256: raw.schemaSha256,
+        coreId: raw.coreId,
+        romSha256: raw.romSha256,
+        memoryBytes: raw.memoryBytes,
+        fields
+      }
+    }
+  }
+  const stateWindow = validateStateWindow(raw.stateWindow, raw.memoryBytes)
+  if (!stateWindow.ok) return stateWindow
   return {
     ok: true,
     value: {
-      schemaVersion: EMULATOR_STATE_ADAPTER_SCHEMA_VERSION,
+      schemaVersion: EMULATOR_STATE_ADAPTER_SCHEMA_V2,
       adapterId: raw.adapterId,
       adapterRevision: raw.adapterRevision,
       schemaSha256: raw.schemaSha256,
       coreId: raw.coreId,
       romSha256: raw.romSha256,
       memoryBytes: raw.memoryBytes,
-      fields
+      fields,
+      stateWindow: stateWindow.value
     }
   }
 }
@@ -516,6 +617,9 @@ export function canonicalEmulatorStateAdapterSchemaJson(
     coreId: adapter.coreId,
     romSha256: adapter.romSha256,
     memoryBytes: adapter.memoryBytes,
+    ...(adapter.schemaVersion === EMULATOR_STATE_ADAPTER_SCHEMA_V2
+      ? { stateWindow: adapter.stateWindow }
+      : {}),
     fields
   })
 }
@@ -528,25 +632,69 @@ export function validateEmulatorPackageManifest(
   if (encodedBytes === null || encodedBytes > EMULATOR_MAX_MANIFEST_BYTES) {
     return fail(`Emulator package manifest exceeds ${EMULATOR_MAX_MANIFEST_BYTES} bytes.`)
   }
-  if (raw.schemaVersion !== EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION) {
+  if (
+    raw.schemaVersion !== EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1 &&
+    raw.schemaVersion !== EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2
+  ) {
     return fail(
-      `Unsupported emulator package schemaVersion (expected ${EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION}).`
+      `Unsupported emulator package schemaVersion (expected ${EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1} or ${EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2}).`
     )
   }
   if (!canonicalId(raw.gameId)) return fail('Package requires a canonical `gameId`.')
   if (!canonicalId(raw.coreId)) return fail('Package requires a canonical `coreId`.')
-  if (!isEmulatorSha256(raw.coreSha256))
-    return fail('Package requires a lowercase SHA-256 `coreSha256`.')
   if (!isEmulatorSha256(raw.romSha256))
     return fail('Package requires a lowercase SHA-256 `romSha256`.')
+  if (raw.schemaVersion === EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1) {
+    if (!isEmulatorSha256(raw.coreSha256))
+      return fail('Package requires a lowercase SHA-256 `coreSha256`.')
+    if (raw.stateAdapter === null) {
+      return {
+        ok: true,
+        value: {
+          schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1,
+          gameId: raw.gameId,
+          coreId: raw.coreId,
+          coreSha256: raw.coreSha256,
+          romSha256: raw.romSha256,
+          stateAdapter: null
+        }
+      }
+    }
+    const adapter = validateEmulatorStateAdapterManifest(raw.stateAdapter)
+    if (!adapter.ok) return adapter
+    if (adapter.value.schemaVersion !== EMULATOR_STATE_ADAPTER_SCHEMA_V1) {
+      return fail('V1 package requires a v1 state adapter.')
+    }
+    if (adapter.value.coreId !== raw.coreId || adapter.value.romSha256 !== raw.romSha256) {
+      return fail('State adapter coreId and romSha256 must match its package.')
+    }
+    return {
+      ok: true,
+      value: {
+        schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_V1,
+        gameId: raw.gameId,
+        coreId: raw.coreId,
+        coreSha256: raw.coreSha256,
+        romSha256: raw.romSha256,
+        stateAdapter: adapter.value
+      }
+    }
+  }
+  if (!isEmulatorSha256(raw.coreSha256)) {
+    return fail('V2 package requires a lowercase SHA-256 `coreSha256`.')
+  }
+  if (!isEmulatorSha256(raw.runtimeWasmSha256)) {
+    return fail('V2 package requires a lowercase SHA-256 `runtimeWasmSha256`.')
+  }
   if (raw.stateAdapter === null) {
     return {
       ok: true,
       value: {
-        schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION,
+        schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2,
         gameId: raw.gameId,
         coreId: raw.coreId,
         coreSha256: raw.coreSha256,
+        runtimeWasmSha256: raw.runtimeWasmSha256,
         romSha256: raw.romSha256,
         stateAdapter: null
       }
@@ -554,16 +702,20 @@ export function validateEmulatorPackageManifest(
   }
   const adapter = validateEmulatorStateAdapterManifest(raw.stateAdapter)
   if (!adapter.ok) return adapter
+  if (adapter.value.schemaVersion !== EMULATOR_STATE_ADAPTER_SCHEMA_V2) {
+    return fail('V2 package requires a v2 state adapter.')
+  }
   if (adapter.value.coreId !== raw.coreId || adapter.value.romSha256 !== raw.romSha256) {
     return fail('State adapter coreId and romSha256 must match its package.')
   }
   return {
     ok: true,
     value: {
-      schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION,
+      schemaVersion: EMULATOR_PACKAGE_MANIFEST_SCHEMA_V2,
       gameId: raw.gameId,
       coreId: raw.coreId,
       coreSha256: raw.coreSha256,
+      runtimeWasmSha256: raw.runtimeWasmSha256,
       romSha256: raw.romSha256,
       stateAdapter: adapter.value
     }

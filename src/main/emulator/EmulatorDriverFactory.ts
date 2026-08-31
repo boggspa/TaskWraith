@@ -13,6 +13,11 @@ import {
   type EmulatorAssetRegistry
 } from './EmulatorAssetManifest'
 import {
+  loadEmulatorPackageManifest,
+  validateTwgbHomebrewDemoPackage
+} from './EmulatorPackageManifest'
+import type { EmulatorPackageManifest } from '../../shared/emulatorCanvas'
+import {
   ElectronEmulatorRuntimeBridge,
   type ElectronEmulatorRuntimeBridgeDeps
 } from './ElectronEmulatorRuntimeBridge'
@@ -28,6 +33,7 @@ export interface EmulatorCanvasDriverFactoryDeps {
     surfaceHostId: number | undefined
   ) => (options: CanvasSurfaceOptions) => CanvasHostSurface
   readonly loadBundle?: (rootPath: string) => EmulatorAssetBundle
+  readonly loadPackage?: (rootPath: string) => EmulatorPackageManifest
   readonly createRuntime?: (deps: ElectronEmulatorRuntimeBridgeDeps) => CanvasEmulatorRuntimeBridge
   readonly logger?: Pick<Console, 'warn'>
 }
@@ -66,6 +72,8 @@ export function createEmulatorCanvasDriverFactory(
     if (bundle.manifest.gameId !== BUILT_IN_EMULATOR_GAME_ID) {
       throw new Error('Packaged emulator bundle does not match the built-in game id.')
     }
+    const descriptor = (deps.loadPackage ?? loadEmulatorPackageManifest)(root)
+    validateTwgbHomebrewDemoPackage(descriptor, bundle)
     registry = createEmulatorAssetRegistry([bundle])
     return registry
   }

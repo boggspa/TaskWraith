@@ -135,7 +135,8 @@ describe('registerEmulatorAssetProtocol', () => {
       new Request(emulatorEntryUrl('homebrew-demo'), { method: 'POST' }),
       new Request('https://example.test/index.html'),
       new Request('twemu://app/homebrew-demo/../index.html'),
-      new Request('twemu://app/homebrew-demo/missing.wasm')
+      new Request('twemu://app/homebrew-demo/missing.wasm'),
+      new Request('twemu://app/homebrew-demo/emulator-package.json')
     ]) {
       const response = await handler(request)
       expect(response.status).toBe(404)

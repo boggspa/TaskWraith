@@ -12,6 +12,10 @@ import {
   sha256Hex
 } from './EmulatorAssetManifest'
 import { EMULATOR_DOCUMENT_CSP } from './EmulatorAssetProtocol'
+import {
+  loadEmulatorPackageManifest,
+  validateTwgbHomebrewDemoPackage
+} from './EmulatorPackageManifest'
 
 const require = createRequire(import.meta.url)
 const prettier = require('prettier') as {
@@ -98,6 +102,7 @@ describe('homebrew emulator package layout', () => {
       entryPath: 'index.html',
       assets: EXPECTED_ASSETS
     })
+    expect(bundle.manifest.assets.map((asset) => asset.path)).not.toContain('emulator-package.json')
     const registry = createEmulatorAssetRegistry([bundle])
     for (const expected of EXPECTED_ASSETS) {
       const resolved = resolveEmulatorAsset(
@@ -110,6 +115,7 @@ describe('homebrew emulator package layout', () => {
     }
     for (const protectedPath of [
       'manifest.json',
+      'emulator-package.json',
       'component-provenance.json',
       'LICENSES/SameBoy-libretro-MIT.txt',
       'LICENSES/Libretro-common-MIT.txt',
@@ -121,10 +127,39 @@ describe('homebrew emulator package layout', () => {
       ).toBeNull()
     }
 
+    const statePackage = loadEmulatorPackageManifest(BUNDLE_ROOT)
+    expect(validateTwgbHomebrewDemoPackage(statePackage, bundle)).toMatchObject({
+      schemaVersion: 2,
+      coreId: 'sameboy-libretro',
+      coreSha256: 'd22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611',
+      runtimeWasmSha256: 'b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf',
+      romSha256: '2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7',
+      stateAdapter: {
+        schemaVersion: 2,
+        stateWindow: { source: 'system_ram', startAddress: 49408, byteLength: 13 },
+        fields: [
+          { key: 'x', read: { address: 6, encoding: 'u8' }, unit: 'px' },
+          { key: 'y', read: { address: 7, encoding: 'u8' }, unit: 'px' },
+          { key: 'input', read: { address: 8, encoding: 'u8' }, unit: 'mask' },
+          { key: 'frame-counter', read: { address: 9, encoding: 'u32le' }, unit: 'frames' }
+        ]
+      }
+    })
+
     const provenance = JSON.parse(readBundleFile('component-provenance.json')) as {
       bundle: {
         artifacts: unknown[]
         runtimeManifest: { byteLength: number; path: string; sha256: string }
+        statePackage: {
+          byteLength: number
+          coreSha256: string
+          path: string
+          romSha256: string
+          runtimeWasmSha256: string
+          schemaVersion: number
+          sha256: string
+          stateAdapterSchemaSha256: string
+        }
       }
       components: Array<{
         embeddedArtifacts: string[]
@@ -147,6 +182,16 @@ describe('homebrew emulator package layout', () => {
       path: 'manifest.json',
       sha256: '535a00bb271552b0577f7379ded8bfe40746773d0323ee5953e6a8bd57aec61e',
       byteLength: 1040
+    })
+    expect(provenance.bundle.statePackage).toEqual({
+      path: 'emulator-package.json',
+      sha256: '632243f233a8a94c53a73c4bd0c7322fe183fd8f8278d65f1fb1aa9c11e52e9a',
+      byteLength: 1394,
+      schemaVersion: 2,
+      coreSha256: 'd22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611',
+      runtimeWasmSha256: 'b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf',
+      romSha256: '2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7',
+      stateAdapterSchemaSha256: '3555c44a29fcd601c5800d2984e4a64fc6f74b709d53f7145cf0153e52030925'
     })
     expect(provenance.bundle.artifacts).toEqual([
       {
@@ -292,6 +337,7 @@ describe('homebrew emulator package layout', () => {
       'style.css',
       'bootstrap.mjs',
       'manifest.json',
+      'emulator-package.json',
       'component-provenance.json'
     ]) {
       const filePath = path.join(BUNDLE_ROOT, relativePath)

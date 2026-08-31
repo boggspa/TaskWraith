@@ -14,12 +14,14 @@ const asar = require('@electron/asar') as {
 }
 const {
   NOTICE_FILES,
+  canonicalEmulatorStateAdapter,
   generateThirdPartyNotices,
   packageRootForManifest,
   readEmulatorNotice,
   validatePackagedNotices
 }: {
   NOTICE_FILES: Record<'app' | 'chromium' | 'inventory' | 'thirdParty', string>
+  canonicalEmulatorStateAdapter: (adapter: unknown) => string
   generateThirdPartyNotices: (options: {
     resourcesDir: string
     repoRoot: string
@@ -54,6 +56,97 @@ function write(filePath: string, value: string | Buffer): void {
 
 function writeJson(filePath: string, value: unknown): void {
   write(filePath, `${JSON.stringify(value, null, 2)}\n`)
+}
+
+interface EmulatorStatePackageFixture {
+  schemaVersion: number
+  coreSha256: string
+  runtimeWasmSha256: string
+  romSha256: string
+  stateAdapter: {
+    schemaVersion: number
+    adapterId: string
+    adapterRevision: string
+    schemaSha256: string
+    coreId: string
+    romSha256: string
+    memoryBytes: number
+    stateWindow: { source: string; startAddress: number; byteLength: number }
+    fields: Array<{
+      key: string
+      kind: string
+      read: { address: number; encoding: string }
+      unit: string
+    }>
+  }
+}
+
+interface EmulatorStatePackageProvenanceFixture {
+  bundle: {
+    statePackage: {
+      byteLength: number
+      coreSha256: string
+      path: string
+      romSha256: string
+      runtimeWasmSha256: string
+      schemaVersion: number
+      sha256: string
+      stateAdapterSchemaSha256: string
+    }
+  }
+}
+
+function canonicalStateAdapterFixture(
+  adapter: EmulatorStatePackageFixture['stateAdapter']
+): string {
+  return JSON.stringify({
+    schemaVersion: adapter.schemaVersion,
+    adapterId: adapter.adapterId,
+    adapterRevision: adapter.adapterRevision,
+    coreId: adapter.coreId,
+    romSha256: adapter.romSha256,
+    memoryBytes: adapter.memoryBytes,
+    stateWindow: {
+      source: adapter.stateWindow.source,
+      startAddress: adapter.stateWindow.startAddress,
+      byteLength: adapter.stateWindow.byteLength
+    },
+    fields: adapter.fields.map((field) => ({
+      key: field.key,
+      kind: field.kind,
+      read: { address: field.read.address, encoding: field.read.encoding },
+      unit: field.unit
+    }))
+  })
+}
+
+function rewriteEmulatorStatePackage(
+  root: string,
+  mutate: (descriptor: EmulatorStatePackageFixture) => void
+): void {
+  const descriptorPath = path.join(root, 'emulator-package.json')
+  const provenancePath = path.join(root, 'component-provenance.json')
+  const descriptor = JSON.parse(
+    fs.readFileSync(descriptorPath, 'utf8')
+  ) as EmulatorStatePackageFixture
+  mutate(descriptor)
+  descriptor.stateAdapter.schemaSha256 = hash(canonicalStateAdapterFixture(descriptor.stateAdapter))
+  writeJson(descriptorPath, descriptor)
+  const bytes = fs.readFileSync(descriptorPath)
+  const provenance = JSON.parse(
+    fs.readFileSync(provenancePath, 'utf8')
+  ) as EmulatorStatePackageProvenanceFixture
+  provenance.bundle.statePackage = {
+    byteLength: bytes.byteLength,
+    coreSha256: descriptor.coreSha256,
+    path: 'emulator-package.json',
+    romSha256: descriptor.romSha256,
+    runtimeWasmSha256: descriptor.runtimeWasmSha256,
+    schemaVersion: descriptor.schemaVersion,
+    sha256: hash(bytes),
+    stateAdapterSchemaSha256: descriptor.stateAdapter.schemaSha256
+  }
+  writeJson(provenancePath, provenance)
 }
 
 function writeEmulatorBundle(resourcesDir: string, repoRoot: string): void {
@@ -128,6 +221,50 @@ function writeEmulatorBundle(resourcesDir: string, repoRoot: string): void {
   }
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)
   write(path.join(root, 'manifest.json'), manifestBytes)
+  const stateAdapter = {
+    schemaVersion: 2,
+    adapterId: 'twgb-state-window',
+    adapterRevision: 'v1',
+    schemaSha256: '',
+    coreId: 'sameboy-libretro',
+    romSha256: sourceReceipt.source.fixture.rom.sha256,
+    memoryBytes: 13,
+    stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 13 },
+    fields: [
+      { key: 'x', kind: 'integer', read: { address: 6, encoding: 'u8' }, unit: 'px' },
+      { key: 'y', kind: 'integer', read: { address: 7, encoding: 'u8' }, unit: 'px' },
+      { key: 'input', kind: 'integer', read: { address: 8, encoding: 'u8' }, unit: 'mask' },
+      {
+        key: 'frame-counter',
+        kind: 'integer',
+        read: { address: 9, encoding: 'u32le' },
+        unit: 'frames'
+      }
+    ]
+  }
+  stateAdapter.schemaSha256 = hash(
+    JSON.stringify({
+      schemaVersion: stateAdapter.schemaVersion,
+      adapterId: stateAdapter.adapterId,
+      adapterRevision: stateAdapter.adapterRevision,
+      coreId: stateAdapter.coreId,
+      romSha256: stateAdapter.romSha256,
+      memoryBytes: stateAdapter.memoryBytes,
+      stateWindow: stateAdapter.stateWindow,
+      fields: stateAdapter.fields
+    })
+  )
+  const statePackage = {
+    schemaVersion: 2,
+    gameId: 'homebrew-demo',
+    coreId: 'sameboy-libretro',
+    coreSha256: sourceReceipt.pins.shippedCore.object.sha256,
+    runtimeWasmSha256: manifest.assets.find((asset) => asset.path === 'twgb.wasm')?.sha256,
+    romSha256: sourceReceipt.source.fixture.rom.sha256,
+    stateAdapter
+  }
+  const statePackageBytes = Buffer.from(`${JSON.stringify(statePackage, null, 2)}\n`)
+  write(path.join(root, 'emulator-package.json'), statePackageBytes)
 
   const licenses = {
     'LICENSES/SameBoy-libretro-MIT.txt': 'SameBoy MIT license\n',
@@ -156,6 +293,16 @@ function writeEmulatorBundle(resourcesDir: string, repoRoot: string): void {
         path: 'manifest.json',
         sha256: hash(manifestBytes),
         byteLength: manifestBytes.byteLength
+      },
+      statePackage: {
+        path: 'emulator-package.json',
+        sha256: hash(statePackageBytes),
+        byteLength: statePackageBytes.byteLength,
+        schemaVersion: statePackage.schemaVersion,
+        coreSha256: statePackage.coreSha256,
+        runtimeWasmSha256: statePackage.runtimeWasmSha256,
+        romSha256: statePackage.romSha256,
+        stateAdapterSchemaSha256: stateAdapter.schemaSha256
       },
       artifacts: manifest.assets.filter((asset) => asset.path.startsWith('twgb.'))
     },
@@ -344,6 +491,21 @@ describe('packaged third-party notices', () => {
     }
   })
 
+  it('uses the same fixed TWGB adapter schema bytes as the shipped descriptor', () => {
+    const descriptor = JSON.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), 'resources', 'emulator', 'homebrew-demo', 'emulator-package.json'),
+        'utf8'
+      )
+    ) as { stateAdapter: { schemaSha256: string } }
+    expect(hash(canonicalEmulatorStateAdapter(descriptor.stateAdapter))).toBe(
+      '3555c44a29fcd601c5800d2984e4a64fc6f74b709d53f7145cf0153e52030925'
+    )
+    expect(descriptor.stateAdapter.schemaSha256).toBe(
+      '3555c44a29fcd601c5800d2984e4a64fc6f74b709d53f7145cf0153e52030925'
+    )
+  })
+
   it('generates deterministic coverage from packaged legal files and reviewed mappings', async () => {
     const bundledText = 'Bundled exact upstream MIT notice\n'
     const bundledRelative = 'build/third-party-license-texts/bundled.LICENSE.txt'
@@ -506,6 +668,128 @@ describe('packaged third-party notices', () => {
     expect(() => validatePackagedNotices(resourcesDir, { repoRoot })).toThrow(
       /missing or unexpected files/
     )
+  })
+
+  it('rejects a missing or tampered disk-only emulator state package after generation', async () => {
+    const { repoRoot, resourcesDir } = await fixture((appDir) => {
+      addPackage(appDir, 'good', '1.0.0', { legalFile: 'LICENSE' })
+    })
+    generateThirdPartyNotices({ resourcesDir, repoRoot })
+    const descriptorPath = path.join(
+      resourcesDir,
+      'emulator',
+      'homebrew-demo',
+      'emulator-package.json'
+    )
+    fs.rmSync(descriptorPath)
+    expect(() => validatePackagedNotices(resourcesDir, { repoRoot })).toThrow(
+      /missing or unexpected files/
+    )
+
+    writeEmulatorBundle(resourcesDir, repoRoot)
+    fs.appendFileSync(descriptorPath, '\n')
+    expect(() => validatePackagedNotices(resourcesDir, { repoRoot })).toThrow(
+      /state package.*(?:byte length|SHA-256 mismatch)/i
+    )
+  })
+
+  it('rejects an unexpected or source-unbound emulator state package descriptor', async () => {
+    const { repoRoot, resourcesDir } = await fixture((appDir) => {
+      addPackage(appDir, 'good', '1.0.0', { legalFile: 'LICENSE' })
+    })
+    generateThirdPartyNotices({ resourcesDir, repoRoot })
+    const root = path.join(resourcesDir, 'emulator', 'homebrew-demo')
+    const descriptorPath = path.join(root, 'emulator-package.json')
+    const provenancePath = path.join(root, 'component-provenance.json')
+    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8')) as {
+      coreSha256: string
+      unsafe?: boolean
+    }
+    const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8')) as {
+      bundle: { statePackage: { byteLength: number; coreSha256: string; sha256: string } }
+    }
+    descriptor.unsafe = true
+    writeJson(descriptorPath, descriptor)
+    const unexpectedBytes = fs.readFileSync(descriptorPath)
+    provenance.bundle.statePackage.sha256 = hash(unexpectedBytes)
+    provenance.bundle.statePackage.byteLength = unexpectedBytes.byteLength
+    writeJson(provenancePath, provenance)
+    expect(() => validatePackagedNotices(resourcesDir, { repoRoot })).toThrow(/unexpected shape/)
+
+    delete descriptor.unsafe
+    descriptor.coreSha256 = '0'.repeat(64)
+    writeJson(descriptorPath, descriptor)
+    const changedBytes = fs.readFileSync(descriptorPath)
+    provenance.bundle.statePackage.sha256 = hash(changedBytes)
+    provenance.bundle.statePackage.byteLength = changedBytes.byteLength
+    provenance.bundle.statePackage.coreSha256 = descriptor.coreSha256
+    writeJson(provenancePath, provenance)
+    expect(() => validatePackagedNotices(resourcesDir, { repoRoot })).toThrow(
+      /reviewed package binding/
+    )
+  })
+
+  it('rejects semantic state-package tampering even after its file receipt is updated', async () => {
+    const { repoRoot, resourcesDir } = await fixture((appDir) => {
+      addPackage(appDir, 'good', '1.0.0', { legalFile: 'LICENSE' })
+    })
+    generateThirdPartyNotices({ resourcesDir, repoRoot })
+    const root = path.join(resourcesDir, 'emulator', 'homebrew-demo')
+    const cases: Array<{
+      label: string
+      mutate: (descriptor: EmulatorStatePackageFixture) => void
+      expected: RegExp
+    }> = [
+      {
+        label: 'schema version',
+        mutate: (descriptor) => {
+          descriptor.schemaVersion = 1
+        },
+        expected: /reviewed package binding/
+      },
+      {
+        label: 'core object',
+        mutate: (descriptor) => {
+          descriptor.coreSha256 = '0'.repeat(64)
+        },
+        expected: /reviewed package binding/
+      },
+      {
+        label: 'runtime WASM',
+        mutate: (descriptor) => {
+          descriptor.runtimeWasmSha256 = '0'.repeat(64)
+        },
+        expected: /reviewed package binding/
+      },
+      {
+        label: 'fixture ROM',
+        mutate: (descriptor) => {
+          descriptor.romSha256 = '0'.repeat(64)
+        },
+        expected: /reviewed package binding/
+      },
+      {
+        label: 'state window',
+        mutate: (descriptor) => {
+          descriptor.stateAdapter.stateWindow.startAddress = 0xc101
+        },
+        expected: /unexpected state adapter/
+      },
+      {
+        label: 'state field',
+        mutate: (descriptor) => {
+          descriptor.stateAdapter.fields[0].read.address = 5
+        },
+        expected: /TWGB ABI/
+      }
+    ]
+    for (const testCase of cases) {
+      writeEmulatorBundle(resourcesDir, repoRoot)
+      rewriteEmulatorStatePackage(root, testCase.mutate)
+      expect(() => validatePackagedNotices(resourcesDir, { repoRoot }), testCase.label).toThrow(
+        testCase.expected
+      )
+    }
   })
 
   it('rejects an unexpected packaged emulator payload file after generation', async () => {

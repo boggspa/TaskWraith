@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION,
   EMULATOR_MAX_STATE_FIELDS,
+  EMULATOR_STATE_ADAPTER_SCHEMA_VERSION,
   EMULATOR_STEP_MAX_SEGMENTS,
   canonicalEmulatorStateAdapterSchemaJson,
   decodeEmulatorMappedState,
@@ -50,6 +52,44 @@ function packageManifest(overrides: Record<string, unknown> = {}): Record<string
     coreSha256: HASH_C,
     romSha256: HASH_B,
     stateAdapter: adapter(),
+    ...overrides
+  }
+}
+
+function v2Adapter(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    adapterId: 'twgb-state-window',
+    adapterRevision: 'v1',
+    schemaSha256: HASH_A,
+    coreId: 'sameboy-libretro',
+    romSha256: HASH_B,
+    memoryBytes: 13,
+    stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 13 },
+    fields: [
+      { key: 'x', kind: 'integer', read: { address: 6, encoding: 'u8' }, unit: 'px' },
+      { key: 'y', kind: 'integer', read: { address: 7, encoding: 'u8' }, unit: 'px' },
+      { key: 'input', kind: 'integer', read: { address: 8, encoding: 'u8' }, unit: 'mask' },
+      {
+        key: 'frame-counter',
+        kind: 'integer',
+        read: { address: 9, encoding: 'u32le' },
+        unit: 'frames'
+      }
+    ],
+    ...overrides
+  }
+}
+
+function v2PackageManifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    gameId: 'homebrew-demo',
+    coreId: 'sameboy-libretro',
+    coreSha256: HASH_C,
+    runtimeWasmSha256: 'd'.repeat(64),
+    romSha256: HASH_B,
+    stateAdapter: v2Adapter(),
     ...overrides
   }
 }
@@ -118,6 +158,65 @@ describe('emulator package and state adapter manifests', () => {
     expect(body.fields[0]).toMatchObject({ key: 'health' })
   })
 
+  it('retains v1 schema JSON and validates an explicit v2 system-RAM window', () => {
+    expect(EMULATOR_PACKAGE_MANIFEST_SCHEMA_VERSION).toBe(1)
+    expect(EMULATOR_STATE_ADAPTER_SCHEMA_VERSION).toBe(1)
+    const v1 = validateEmulatorStateAdapterManifest(adapter())
+    const v2 = validateEmulatorStateAdapterManifest(v2Adapter())
+    if (!v1.ok) throw new Error(v1.reason)
+    if (!v2.ok) throw new Error(v2.reason)
+
+    expect(canonicalEmulatorStateAdapterSchemaJson(v1.value)).toBe(
+      JSON.stringify({
+        schemaVersion: 1,
+        adapterId: 'homebrew-gb-state',
+        adapterRevision: 'v1',
+        coreId: 'sameboy-wasm',
+        romSha256: HASH_B,
+        memoryBytes: 32,
+        fields: adapter().fields
+      })
+    )
+    expect(JSON.parse(canonicalEmulatorStateAdapterSchemaJson(v2.value))).toMatchObject({
+      schemaVersion: 2,
+      stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 13 }
+    })
+    expect(validateEmulatorPackageManifest(v2PackageManifest())).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 2,
+        coreSha256: HASH_C,
+        runtimeWasmSha256: 'd'.repeat(64),
+        stateAdapter: expect.objectContaining({ schemaVersion: 2 })
+      }
+    })
+    expect(
+      validateEmulatorStateAdapterManifest(
+        v2Adapter({ stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 12 } })
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/memoryBytes/i) })
+    expect(
+      validateEmulatorStateAdapterManifest(
+        v2Adapter({
+          stateWindow: { source: 'system_ram', startAddress: 0xffff_fff3, byteLength: 13 }
+        })
+      )
+    ).toMatchObject({ ok: true })
+    expect(
+      validateEmulatorStateAdapterManifest(
+        v2Adapter({
+          stateWindow: { source: 'system_ram', startAddress: 0xffff_fff4, byteLength: 13 }
+        })
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/32-bit/i) })
+    expect(
+      validateEmulatorPackageManifest(v2PackageManifest({ coreSha256: 'not-a-hash' }))
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/coreSha256/i) })
+    expect(
+      validateEmulatorPackageManifest(v2PackageManifest({ runtimeWasmSha256: 'not-a-hash' }))
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/runtimeWasmSha256/i) })
+  })
+
   it('bounds adapter fields, reads, and enum declarations', () => {
     expect(
       validateEmulatorStateAdapterManifest(
@@ -153,6 +252,21 @@ describe('emulator package and state adapter manifests', () => {
         })
       )
     ).toMatchObject({ ok: false, reason: expect.stringMatching(/canonical safe integer/i) })
+
+    expect(
+      validateEmulatorStateAdapterManifest(
+        adapter({
+          fields: [
+            {
+              key: 'bad-unit',
+              kind: 'integer',
+              read: { address: 0, encoding: 'u8' },
+              unit: 'hearts\u0001'
+            }
+          ]
+        })
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/unit/i) })
 
     expect(
       validateEmulatorStateAdapterManifest(

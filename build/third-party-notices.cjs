@@ -13,6 +13,18 @@ const LEGAL_FILE_NAME = /^(?:licen[cs]e|copying|notice)(?:[._-].*)?$/i
 const MAX_LEGAL_FILE_BYTES = 2 * 1024 * 1024
 const EMULATOR_GAME_ID = 'homebrew-demo'
 const EMULATOR_ROOT = path.posix.join('emulator', EMULATOR_GAME_ID)
+const EMULATOR_STATE_PACKAGE_PATH = 'emulator-package.json'
+const EMULATOR_STATE_WINDOW = Object.freeze({
+  source: 'system_ram',
+  startAddress: 0xc100,
+  byteLength: 13
+})
+const EMULATOR_STATE_FIELDS = Object.freeze([
+  Object.freeze({ key: 'x', address: 6, encoding: 'u8', unit: 'px' }),
+  Object.freeze({ key: 'y', address: 7, encoding: 'u8', unit: 'px' }),
+  Object.freeze({ key: 'input', address: 8, encoding: 'u8', unit: 'mask' }),
+  Object.freeze({ key: 'frame-counter', address: 9, encoding: 'u32le', unit: 'frames' })
+])
 const EMULATOR_ASSET_MIME_TYPES = Object.freeze({
   'index.html': 'text/html',
   'style.css': 'text/css',
@@ -59,6 +71,7 @@ const EMULATOR_PACKAGED_FILES = Object.freeze([
   'twgb.mjs',
   'twgb.wasm',
   'manifest.json',
+  EMULATOR_STATE_PACKAGE_PATH,
   'component-provenance.json',
   ...Object.values(EMULATOR_LICENSE_PATHS)
 ])
@@ -497,6 +510,175 @@ function exactStringArray(value, expected, label) {
   return actual
 }
 
+function requireExactRecordKeys(value, expectedKeys, label) {
+  const record = requireRecord(value, label)
+  const actual = Object.keys(record).sort()
+  const expected = [...expectedKeys].sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} has an unexpected shape.`)
+  }
+  return record
+}
+
+function canonicalEmulatorStateAdapter(adapter) {
+  return JSON.stringify({
+    schemaVersion: adapter.schemaVersion,
+    adapterId: adapter.adapterId,
+    adapterRevision: adapter.adapterRevision,
+    coreId: adapter.coreId,
+    romSha256: adapter.romSha256,
+    memoryBytes: adapter.memoryBytes,
+    stateWindow: {
+      source: adapter.stateWindow.source,
+      startAddress: adapter.stateWindow.startAddress,
+      byteLength: adapter.stateWindow.byteLength
+    },
+    fields: adapter.fields.map((field) => ({
+      key: field.key,
+      kind: field.kind,
+      read: {
+        address: field.read.address,
+        encoding: field.read.encoding
+      },
+      unit: field.unit
+    }))
+  })
+}
+
+function assertEmulatorStatePackage({ assetsByPath, bundle, receipt, root }) {
+  const declared = requireExactRecordKeys(
+    bundle.statePackage,
+    [
+      'path',
+      'sha256',
+      'byteLength',
+      'schemaVersion',
+      'coreSha256',
+      'runtimeWasmSha256',
+      'romSha256',
+      'stateAdapterSchemaSha256'
+    ],
+    'Emulator provenance state package'
+  )
+  const file = verifyEmulatorFile(root, declared, 'Emulator provenance state package')
+  if (file.path !== EMULATOR_STATE_PACKAGE_PATH) {
+    throw new Error('Emulator provenance state package has an unexpected path.')
+  }
+  const descriptor = requireExactRecordKeys(
+    parseJson(file.bytes, 'Emulator state package descriptor'),
+    [
+      'schemaVersion',
+      'gameId',
+      'coreId',
+      'coreSha256',
+      'runtimeWasmSha256',
+      'romSha256',
+      'stateAdapter'
+    ],
+    'Emulator state package descriptor'
+  )
+  const shippedCore = requireRecord(receipt?.pins?.shippedCore, 'Committed SameBoy core receipt')
+  const coreObject = requireRecord(shippedCore.object, 'Committed SameBoy core object receipt')
+  const fixture = requireRecord(receipt?.source?.fixture, 'Committed fixture receipt')
+  const fixtureRom = requireRecord(fixture.rom, 'Committed fixture ROM receipt')
+  const wasm = assetsByPath.get('twgb.wasm')
+  if (
+    !wasm ||
+    descriptor.schemaVersion !== 2 ||
+    descriptor.gameId !== EMULATOR_GAME_ID ||
+    descriptor.coreId !== 'sameboy-libretro' ||
+    descriptor.coreSha256 !== coreObject.sha256 ||
+    descriptor.runtimeWasmSha256 !== wasm.sha256 ||
+    descriptor.romSha256 !== fixtureRom.sha256
+  ) {
+    throw new Error(
+      'Emulator state package descriptor does not match the reviewed package binding.'
+    )
+  }
+  const adapter = requireExactRecordKeys(
+    descriptor.stateAdapter,
+    [
+      'schemaVersion',
+      'adapterId',
+      'adapterRevision',
+      'schemaSha256',
+      'coreId',
+      'romSha256',
+      'memoryBytes',
+      'stateWindow',
+      'fields'
+    ],
+    'Emulator state adapter descriptor'
+  )
+  const stateWindow = requireExactRecordKeys(
+    adapter.stateWindow,
+    ['source', 'startAddress', 'byteLength'],
+    'Emulator state adapter window'
+  )
+  if (
+    adapter.schemaVersion !== 2 ||
+    adapter.adapterId !== 'twgb-state-window' ||
+    adapter.adapterRevision !== 'v1' ||
+    adapter.coreId !== descriptor.coreId ||
+    adapter.romSha256 !== descriptor.romSha256 ||
+    adapter.memoryBytes !== EMULATOR_STATE_WINDOW.byteLength ||
+    stateWindow.source !== EMULATOR_STATE_WINDOW.source ||
+    stateWindow.startAddress !== EMULATOR_STATE_WINDOW.startAddress ||
+    stateWindow.byteLength !== EMULATOR_STATE_WINDOW.byteLength ||
+    !Array.isArray(adapter.fields) ||
+    adapter.fields.length !== EMULATOR_STATE_FIELDS.length
+  ) {
+    throw new Error('Emulator state package descriptor has an unexpected state adapter.')
+  }
+  for (const [index, expected] of EMULATOR_STATE_FIELDS.entries()) {
+    const field = requireExactRecordKeys(
+      adapter.fields[index],
+      ['key', 'kind', 'read', 'unit'],
+      `Emulator state adapter field ${index}`
+    )
+    const read = requireExactRecordKeys(
+      field.read,
+      ['address', 'encoding'],
+      `Emulator state adapter field ${index} read`
+    )
+    if (
+      field.key !== expected.key ||
+      field.kind !== 'integer' ||
+      field.unit !== expected.unit ||
+      read.address !== expected.address ||
+      read.encoding !== expected.encoding
+    ) {
+      throw new Error(`Emulator state adapter field ${index} does not match the TWGB ABI.`)
+    }
+  }
+  if (!SHA256_HEX.test(String(adapter.schemaSha256 || ''))) {
+    throw new Error('Emulator state adapter descriptor has no valid schema SHA-256.')
+  }
+  const calculatedSchemaSha256 = sha256(Buffer.from(canonicalEmulatorStateAdapter(adapter), 'utf8'))
+  if (adapter.schemaSha256 !== calculatedSchemaSha256) {
+    throw new Error('Emulator state adapter descriptor schema SHA-256 does not match.')
+  }
+  if (
+    declared.schemaVersion !== descriptor.schemaVersion ||
+    declared.coreSha256 !== descriptor.coreSha256 ||
+    declared.runtimeWasmSha256 !== descriptor.runtimeWasmSha256 ||
+    declared.romSha256 !== descriptor.romSha256 ||
+    declared.stateAdapterSchemaSha256 !== adapter.schemaSha256
+  ) {
+    throw new Error('Emulator provenance state package does not bind its descriptor.')
+  }
+  return {
+    byteLength: file.byteLength,
+    path: file.path,
+    sha256: file.sha256,
+    schemaVersion: descriptor.schemaVersion,
+    coreSha256: descriptor.coreSha256,
+    runtimeWasmSha256: descriptor.runtimeWasmSha256,
+    romSha256: descriptor.romSha256,
+    stateAdapterSchemaSha256: adapter.schemaSha256
+  }
+}
+
 function assertEmulatorSourceReceiptBinding({
   componentById,
   provenance,
@@ -586,6 +768,7 @@ function assertEmulatorSourceReceiptBinding({
       throw new Error(`Validation-only SameBoy ${key} does not match the committed source receipt.`)
     }
   }
+  return receipt
 }
 
 function verifyEmulatorFile(root, value, label) {
@@ -768,12 +951,13 @@ function readEmulatorNotice(resourcesDir, repoRoot = path.resolve(__dirname, '..
   ) {
     throw new Error('Emulator component provenance has an invalid validation-only SameBoy record.')
   }
-  assertEmulatorSourceReceiptBinding({
+  const receipt = assertEmulatorSourceReceiptBinding({
     componentById,
     provenance,
     repoRoot,
     validationSameBoy
   })
+  const statePackage = assertEmulatorStatePackage({ assetsByPath, bundle, receipt, root })
   return {
     assets: [...assetsByPath.entries()]
       .map(([assetPath, asset]) => ({
@@ -790,6 +974,7 @@ function readEmulatorNotice(resourcesDir, repoRoot = path.resolve(__dirname, '..
       path: 'manifest.json',
       sha256: sha256(manifestFile.bytes)
     },
+    statePackage,
     provenance: {
       byteLength: provenanceFile.bytes.byteLength,
       path: 'component-provenance.json',
@@ -818,6 +1003,7 @@ function emulatorInventoryRecord(emulator) {
     })),
     gameId: emulator.gameId,
     manifest: emulator.manifest,
+    statePackage: emulator.statePackage,
     provenance: emulator.provenance,
     root: emulator.root
   }
@@ -855,6 +1041,8 @@ function renderNotices({ app, electron, emulator, nodeRuntime, packages, summary
     `Emulator bundle ${emulator.gameId}`,
     `Runtime manifest: ${emulator.root}/${emulator.manifest.path}`,
     `Runtime manifest SHA-256: ${emulator.manifest.sha256}`,
+    `Disk-only state package: ${emulator.root}/${emulator.statePackage.path}`,
+    `State package SHA-256: ${emulator.statePackage.sha256}`,
     `Component provenance: ${emulator.root}/${emulator.provenance.path}`,
     `Source receipt: ${emulator.provenance.sourceReceipt.path}@${emulator.provenance.sourceReceipt.commit}`
   )
@@ -1152,6 +1340,7 @@ function validatePackagedNotices(resourcesDir, { repoRoot = path.resolve(__dirna
 module.exports = {
   NOTICE_FILES,
   NOTICE_SCHEMA_VERSION,
+  canonicalEmulatorStateAdapter,
   collectPackagedDependencies,
   emulatorInventoryRecord,
   generateThirdPartyNotices,

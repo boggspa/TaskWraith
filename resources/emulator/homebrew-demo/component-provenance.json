@@ -12,6 +12,16 @@
       "sha256": "535a00bb271552b0577f7379ded8bfe40746773d0323ee5953e6a8bd57aec61e",
       "byteLength": 1040
     },
+    "statePackage": {
+      "path": "emulator-package.json",
+      "sha256": "632243f233a8a94c53a73c4bd0c7322fe183fd8f8278d65f1fb1aa9c11e52e9a",
+      "byteLength": 1394,
+      "schemaVersion": 2,
+      "coreSha256": "d22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611",
+      "runtimeWasmSha256": "b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf",
+      "romSha256": "2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7",
+      "stateAdapterSchemaSha256": "3555c44a29fcd601c5800d2984e4a64fc6f74b709d53f7145cf0153e52030925"
+    },
     "artifacts": [
       {
         "path": "twgb.mjs",
