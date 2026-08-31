@@ -22,6 +22,7 @@ import type {
   CanvasChartSeries,
   CanvasChartValidation
 } from '../../shared/canvasChart'
+import type { EmulatorObservation, EmulatorStepToolInput } from '../../shared/emulatorCanvas'
 import type {
   AppDriveActionReport,
   AppDriveObservationReceipt,
@@ -248,6 +249,39 @@ export interface CanvasFrame {
    * trail) should be able to see that the redaction ran.
    */
   secretsRedacted?: number
+}
+
+/** Public-safe emulator observation plus its separately delivered PNG bytes. */
+export interface CanvasEmulatorObservationResult {
+  readonly observation: EmulatorObservation
+  readonly frame: Readonly<CanvasFrame>
+  readonly driveObservation?: AppDriveObservationReceipt
+}
+
+export type CanvasEmulatorStepRefusalReason =
+  | 'stale_observation'
+  | 'stale_input_epoch'
+  | 'user_active'
+  | Extract<
+      CanvasActRefusalReason,
+      | 'appdrive_lease_required'
+      | 'appdrive_lease_expired'
+      | 'appdrive_step_budget_exhausted'
+      | 'appdrive_binding_mismatch'
+      | 'appdrive_independent_verifier_required'
+    >
+
+/** Honest whole-macro status; `executed` may be true while `partial` is true. */
+export interface CanvasEmulatorStepResult extends CanvasEmulatorObservationResult {
+  readonly outcome: 'completed' | 'refused' | 'interrupted'
+  readonly refusalReason?: CanvasEmulatorStepRefusalReason
+  readonly framesRequested: number
+  readonly framesCompleted: number
+  readonly executed: boolean
+  readonly partial: boolean
+  readonly driveReportId?: string
+  readonly driveActionId?: string
+  readonly independentVerificationRequired?: boolean
 }
 
 export interface CanvasElementDetail {
@@ -824,6 +858,29 @@ export interface CanvasCallContext {
   participantId?: string
   /** Required by CanvasService for the signed-elevated canvas_eval verb. */
   canvasEvalApproval?: CanvasEvalApprovalReceipt
+}
+
+/**
+ * Separate internal emulator seam. CanvasController remains unchanged so every
+ * existing generic Canvas fake need not pretend to expose emulator controls.
+ */
+export interface CanvasEmulatorController {
+  observeEmulator(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorObservationResult>
+  stepEmulator(
+    canvasId: string,
+    input: EmulatorStepToolInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorStepResult>
+}
+
+/** Main-only exact-surface resolution for future AppDrive composition wiring. */
+export type CanvasEmulatorSurfaceResolution = 'emulator' | 'other' | 'missing'
+
+export interface CanvasEmulatorSurfaceResolver {
+  resolveEmulatorSurface(canvasId: string, ctx: CanvasCallContext): CanvasEmulatorSurfaceResolution
 }
 
 // ---------------------------------------------------------------------------

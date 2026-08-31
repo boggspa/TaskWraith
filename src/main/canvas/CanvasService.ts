@@ -25,7 +25,12 @@ import type {
   CanvasControlActionKind,
   CanvasDriver,
   CanvasDriverKind,
+  CanvasEmulatorController,
   CanvasEmulatorGameId,
+  CanvasEmulatorObservationResult,
+  CanvasEmulatorSurfaceResolver,
+  CanvasEmulatorStepRefusalReason,
+  CanvasEmulatorStepResult,
   CanvasElementDetail,
   CanvasElementTree,
   CanvasEvalResult,
@@ -47,6 +52,12 @@ import type {
   CanvasViewport,
   CanvasWindowOpenTarget
 } from './canvasTypes'
+import {
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError,
+  type CanvasEmulatorAtomicObservation
+} from './CanvasEmulatorDriver'
 import { assertCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import {
   assessConsequentialTarget,
@@ -70,9 +81,18 @@ import type {
 } from '../appDrive/AppDriveLease'
 import type {
   AppDriveActionReport,
+  AppDriveObservationReceipt,
   AppDriveSessionReport,
   AppDriveVerificationVerdict
 } from '../appDrive/AppDriveSessionReport'
+import {
+  validateEmulatorObservation,
+  validateEmulatorStepToolInput,
+  type EmulatorButton,
+  type EmulatorObservation,
+  type EmulatorObservationState,
+  type EmulatorStepToolInput
+} from '../../shared/emulatorCanvas'
 
 export interface CanvasServiceDeps {
   createDriver: (
@@ -188,6 +208,10 @@ interface LiveSession {
   evals: number
   generation: number
   presentation?: 'dock'
+  /** Live-only; never persisted or shared across a closed/reopened canvas. */
+  emulatorObservation?: CanvasEmulatorAtomicObservation
+  /** Pending macro report completed before lifecycle invalidation ends its lease. */
+  emulatorDriveAction?: { action: EmulatorDriveAction; ctx: CanvasCallContext }
 }
 
 interface PendingOpen {
@@ -299,7 +323,110 @@ function canvasTargetAudit(args: {
   }
 }
 
-export class CanvasService implements CanvasController {
+interface CanvasEmulatorControlDriver extends CanvasDriver {
+  observeEmulator(): Promise<CanvasEmulatorAtomicObservation>
+  stepEmulator(
+    buttons: readonly EmulatorButton[],
+    expectedObservationId?: string
+  ): Promise<CanvasEmulatorAtomicObservation>
+}
+
+interface EmulatorDriveAction {
+  readonly leaseId: string
+  readonly reportId: string
+  readonly actionId: string
+  readonly independentVerificationRequired: boolean
+}
+
+function isCanvasEmulatorControlDriver(
+  driver: CanvasDriver
+): driver is CanvasEmulatorControlDriver {
+  const candidate = driver as Partial<CanvasEmulatorControlDriver>
+  return (
+    driver.kind === 'emulator' &&
+    typeof candidate.observeEmulator === 'function' &&
+    typeof candidate.stepEmulator === 'function'
+  )
+}
+
+function freezeEmulatorObservationState(state: EmulatorObservationState): EmulatorObservationState {
+  if (state.kind === 'unavailable') {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'no_verified_adapter' as const })
+  }
+  return Object.freeze({
+    kind: 'mapped' as const,
+    adapterId: state.adapterId,
+    adapterRevision: state.adapterRevision,
+    schemaSha256: state.schemaSha256,
+    fields: Object.freeze(state.fields.map((field) => Object.freeze({ ...field }))),
+    truncated: state.truncated
+  })
+}
+
+function projectEmulatorObservation(
+  atomic: CanvasEmulatorAtomicObservation
+): CanvasEmulatorObservationResult {
+  const candidate = {
+    schemaVersion: 1,
+    token: {
+      observationId: atomic.observationId,
+      emulationGeneration: atomic.emulationGeneration,
+      frameId: atomic.frameId,
+      inputEpoch: atomic.inputEpoch
+    },
+    capturedAt: atomic.capturedAt,
+    humanActive: atomic.humanActive,
+    frame: {
+      mimeType: atomic.frame.mimeType,
+      width: atomic.frame.width,
+      height: atomic.frame.height,
+      byteLength: atomic.frame.byteLength,
+      hash: atomic.frame.hash,
+      capturedAt: atomic.frame.capturedAt
+    },
+    state: atomic.mappedState
+  }
+  const validated = validateEmulatorObservation(candidate)
+  if (!validated.ok) {
+    throw new Error(`Emulator observation projection was invalid: ${validated.reason}`)
+  }
+  const observation: EmulatorObservation = Object.freeze({
+    schemaVersion: validated.value.schemaVersion,
+    token: Object.freeze({ ...validated.value.token }),
+    capturedAt: validated.value.capturedAt,
+    humanActive: validated.value.humanActive,
+    frame: Object.freeze({ ...validated.value.frame }),
+    state: freezeEmulatorObservationState(validated.value.state)
+  })
+  const frame = Object.freeze({ ...atomic.frame })
+  return Object.freeze({ observation, frame })
+}
+
+function emulatorAuditDetail(atomic: CanvasEmulatorAtomicObservation): Record<string, unknown> {
+  const mappedState =
+    atomic.mappedState.kind === 'mapped'
+      ? {
+          kind: 'mapped',
+          adapterId: atomic.mappedState.adapterId,
+          adapterRevision: atomic.mappedState.adapterRevision,
+          schemaSha256: atomic.mappedState.schemaSha256,
+          fieldCount: atomic.mappedState.fields.length
+        }
+      : { kind: 'unavailable', reason: 'no_verified_adapter' }
+  return {
+    emulationGeneration: atomic.emulationGeneration,
+    frameId: atomic.frameId,
+    frameHash: atomic.frame.hash,
+    width: atomic.frame.width,
+    height: atomic.frame.height,
+    byteLength: atomic.frame.byteLength,
+    mappedState
+  }
+}
+
+export class CanvasService
+  implements CanvasController, CanvasEmulatorController, CanvasEmulatorSurfaceResolver
+{
   private readonly sessions = new Map<string, LiveSession>()
   private readonly pendingOpens = new Map<string, PendingOpen>()
   private readonly closingSessions = new Map<string, ClosingSession>()
@@ -520,16 +647,27 @@ export class CanvasService implements CanvasController {
   }
 
   /**
-   * Ordinary Canvas sessions remain chat-scoped for compatibility. A native
-   * window is an actuation capability and is reachable only from the exact
-   * canonical chat AND run that adopted it; legacy/incomplete window records
-   * therefore fail closed.
+   * Ordinary Canvas sessions remain chat-scoped for compatibility. Native
+   * windows and fixed emulator surfaces are actuation capabilities, reachable
+   * only from the exact canonical chat AND run that adopted them.
    */
   private owns(record: CanvasSessionRecord, ctx: CanvasCallContext): boolean {
     const sameChat = (record.chatId ?? null) === (ctx.chatId ?? null)
-    if (record.driver !== 'window') return sameChat
+    if (record.driver !== 'window' && record.driver !== 'emulator') return sameChat
     const chatId = canonicalAuthority(record.chatId)
     const runId = canonicalAuthority(record.runId)
+    const surfaceHostId = ctx.surfaceHostId
+    // A positive host id is stamped by trusted renderer IPC. It grants only
+    // same-chat human presentation authority; tool contexts carry no host id
+    // and therefore remain exact chat+run bound below.
+    if (
+      record.driver === 'emulator' &&
+      typeof surfaceHostId === 'number' &&
+      Number.isSafeInteger(surfaceHostId) &&
+      surfaceHostId > 0
+    ) {
+      return Boolean(chatId) && chatId === canonicalAuthority(ctx.chatId)
+    }
     return (
       Boolean(chatId && runId) &&
       chatId === canonicalAuthority(ctx.chatId) &&
@@ -711,6 +849,9 @@ export class CanvasService implements CanvasController {
       recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
       eventHost = undefined
     } else if (driverKind === 'emulator') {
+      if (!canonicalAuthority(ctx.chatId) || !canonicalAuthority(ctx.runId)) {
+        throw new Error('The emulator driver requires canonical chat and run authority.')
+      }
       if (input.embed !== true || input.presentation !== 'dock') {
         throw new Error(
           'The emulator driver is available only as an embedded Canvas dock presentation.'
@@ -1054,6 +1195,30 @@ export class CanvasService implements CanvasController {
     return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
   }
 
+  resolveEmulatorSurface(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): 'emulator' | 'other' | 'missing' {
+    if (this.contextHistoryBlocked(ctx)) return 'missing'
+    const session = this.sessions.get(canvasId)
+    if (
+      !session ||
+      session.generation !== this.generation ||
+      this.canvasGenerations.get(canvasId) !== session.generation
+    ) {
+      return 'missing'
+    }
+    const chatId = canonicalAuthority(ctx.chatId)
+    const runId = canonicalAuthority(ctx.runId)
+    const recordChatId = canonicalAuthority(session.record.chatId)
+    const recordRunId = canonicalAuthority(session.record.runId)
+    if (!chatId || !runId || !recordChatId || recordChatId !== chatId) return 'missing'
+    if (recordRunId && recordRunId !== runId) return 'missing'
+    if (session.record.driver !== 'emulator') return 'other'
+    if (!recordRunId) return 'missing'
+    return 'emulator'
+  }
+
   driveReports(
     input: { reportId?: string; surfaceId?: string; limit?: number },
     ctx: CanvasCallContext
@@ -1146,6 +1311,420 @@ export class CanvasService implements CanvasController {
       byteLength: frame.byteLength
     })
     return frame
+  }
+
+  private requireEmulatorDriver(session: LiveSession): CanvasEmulatorControlDriver {
+    if (session.record.driver !== 'emulator' || !isCanvasEmulatorControlDriver(session.driver)) {
+      throw new Error('This Canvas is not an active emulator surface.')
+    }
+    return session.driver
+  }
+
+  private cacheEmulatorObservation(
+    session: LiveSession,
+    atomic: CanvasEmulatorAtomicObservation
+  ): CanvasEmulatorObservationResult {
+    const projection = projectEmulatorObservation(atomic)
+    session.emulatorObservation = atomic
+    return projection
+  }
+
+  private completeEmulatorDriveAction(
+    action: EmulatorDriveAction,
+    ctx: CanvasCallContext,
+    executed: boolean | null,
+    refusalCode?: string
+  ): void {
+    this.deps.appDriveLeases?.completeAction({
+      leaseId: action.leaseId,
+      actionId: action.actionId,
+      actor: {
+        runId: ctx.runId!,
+        provider: ctx.provider!,
+        participantId: ctx.participantId ?? null
+      },
+      executed,
+      surfaceVerification: executed === true ? 'changed' : 'unknown',
+      ...(refusalCode ? { refusalCode } : {})
+    })
+  }
+
+  private settlePendingEmulatorDriveAction(
+    session: LiveSession,
+    executed: boolean | null,
+    refusalCode?: string
+  ): void {
+    const pending = session.emulatorDriveAction
+    if (!pending) return
+    session.emulatorDriveAction = undefined
+    this.completeEmulatorDriveAction(pending.action, pending.ctx, executed, refusalCode)
+  }
+
+  private recordEmulatorDriveObservation(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    action?: EmulatorDriveAction
+  ): AppDriveObservationReceipt | undefined {
+    if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) return undefined
+    return (
+      this.deps.appDriveLeases.recordObservation({
+        chatId: ctx.chatId,
+        ...(action ? { reportId: action.reportId } : {}),
+        surfaceId: canvasId,
+        surfaceKind: 'emulator',
+        ...(action ? { actionId: action.actionId } : {}),
+        observer: {
+          runId: ctx.runId,
+          provider: ctx.provider,
+          participantId: ctx.participantId ?? null
+        }
+      }) ?? undefined
+    )
+  }
+
+  private emulatorStepResult(input: {
+    projection: CanvasEmulatorObservationResult
+    outcome: CanvasEmulatorStepResult['outcome']
+    framesRequested: number
+    framesCompleted: number
+    refusalReason?: CanvasEmulatorStepRefusalReason
+    driveAction?: EmulatorDriveAction
+    driveObservation?: AppDriveObservationReceipt
+  }): CanvasEmulatorStepResult {
+    const executed = input.framesCompleted > 0
+    return Object.freeze({
+      ...input.projection,
+      outcome: input.outcome,
+      framesRequested: input.framesRequested,
+      framesCompleted: input.framesCompleted,
+      executed,
+      partial: executed && input.framesCompleted < input.framesRequested,
+      ...(input.refusalReason ? { refusalReason: input.refusalReason } : {}),
+      ...(input.driveAction
+        ? {
+            driveReportId: input.driveAction.reportId,
+            driveActionId: input.driveAction.actionId,
+            independentVerificationRequired: input.driveAction.independentVerificationRequired
+          }
+        : {}),
+      ...(input.driveObservation ? { driveObservation: input.driveObservation } : {})
+    })
+  }
+
+  private emulatorStepAuditDetail(input: {
+    observation: CanvasEmulatorAtomicObservation
+    startFrameId?: number
+    segmentCount: number
+    framesRequested: number
+    buttonCount: number
+    framesCompleted?: number
+    outcome?: CanvasEmulatorStepResult['outcome'] | 'error'
+    refusalReason?: CanvasEmulatorStepRefusalReason | 'driver_error'
+  }): Record<string, unknown> {
+    return {
+      action: 'emulator_step',
+      startFrameId: input.startFrameId ?? input.observation.frameId,
+      endFrameId: input.observation.frameId,
+      segmentCount: input.segmentCount,
+      framesRequested: input.framesRequested,
+      buttonCount: input.buttonCount,
+      ...(input.framesCompleted !== undefined ? { framesCompleted: input.framesCompleted } : {}),
+      ...(input.outcome ? { outcome: input.outcome } : {}),
+      ...(input.refusalReason ? { refusalReason: input.refusalReason } : {}),
+      ...emulatorAuditDetail(input.observation)
+    }
+  }
+
+  /**
+   * Internal public-safe emulator observation. It keeps bridge-minted token
+   * identity intact and never persists the atomic state or PNG bytes.
+   */
+  async observeEmulator(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorObservationResult> {
+    return this.serializeInteraction(canvasId, async () => {
+      const session = this.require(canvasId, ctx)
+      const driver = this.requireEmulatorDriver(session)
+      const atomic = await driver.observeEmulator()
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator observation')
+      const projection = this.cacheEmulatorObservation(session, atomic)
+      this.emit(canvasId, 'screenshot', ctx, emulatorAuditDetail(atomic))
+      const driveObservation = this.recordEmulatorDriveObservation(canvasId, ctx)
+      return driveObservation ? Object.freeze({ ...projection, driveObservation }) : projection
+    })
+  }
+
+  /**
+   * Execute one bounded emulator macro. Each individual emulator frame remains
+   * serialized and freshness-checked; AppDrive sees one action for the macro.
+   */
+  async stepEmulator(
+    canvasId: string,
+    input: EmulatorStepToolInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorStepResult> {
+    const validated = validateEmulatorStepToolInput(input)
+    if (!validated.ok) throw new Error(validated.reason)
+    const request = validated.value
+    const framesRequested = request.segments.reduce((total, segment) => total + segment.frames, 0)
+    const buttonCount = request.segments.reduce(
+      (total, segment) => total + segment.buttons.length,
+      0
+    )
+
+    return this.serializeInteraction(canvasId, async () => {
+      const session = this.require(canvasId, ctx)
+      const driver = this.requireEmulatorDriver(session)
+      let current = session.emulatorObservation
+      if (!current) throw new Error('Observe the emulator before stepping.')
+      const startFrameId = current.frameId
+
+      this.chargeInteraction(session)
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator step')
+      this.emit(canvasId, 'interaction', ctx, {
+        phase: 'intent',
+        ...this.emulatorStepAuditDetail({
+          observation: current,
+          startFrameId,
+          segmentCount: request.segments.length,
+          framesRequested,
+          buttonCount
+        })
+      })
+
+      if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) {
+        const projection = this.cacheEmulatorObservation(session, current)
+        const refusalReason: CanvasEmulatorStepRefusalReason =
+          !ctx.chatId || !ctx.runId || !ctx.provider
+            ? 'appdrive_binding_mismatch'
+            : 'appdrive_lease_required'
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason,
+          framesRequested,
+          framesCompleted: 0
+        })
+      }
+
+      const lease = this.deps.appDriveLeases.acquireAndConsume({
+        surfaceId: canvasId,
+        surfaceKind: 'emulator',
+        chatId: ctx.chatId,
+        runId: ctx.runId,
+        provider: ctx.provider,
+        ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
+        verb: 'emulator_step',
+        independentVerificationRequired: request.requireIndependentVerifier === true
+      })
+      if (!lease.ok) {
+        const refusalReason: CanvasEmulatorStepRefusalReason =
+          lease.code === 'expired'
+            ? 'appdrive_lease_expired'
+            : lease.code === 'step-budget-exhausted'
+              ? 'appdrive_step_budget_exhausted'
+              : lease.code === 'binding-mismatch'
+                ? 'appdrive_binding_mismatch'
+                : lease.code === 'independent-verifier-required'
+                  ? 'appdrive_independent_verifier_required'
+                  : 'appdrive_lease_required'
+        const projection = this.cacheEmulatorObservation(session, current)
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason,
+          framesRequested,
+          framesCompleted: 0
+        })
+      }
+      const driveAction: EmulatorDriveAction = {
+        leaseId: lease.lease.leaseId,
+        reportId: lease.reportId,
+        actionId: lease.actionId,
+        independentVerificationRequired: lease.independentVerificationRequired
+      }
+      session.emulatorDriveAction = { action: driveAction, ctx }
+
+      if (current.observationId !== request.expectedObservationId) {
+        const projection = this.cacheEmulatorObservation(session, current)
+        this.settlePendingEmulatorDriveAction(session, false, 'stale_observation')
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason: 'stale_observation'
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason: 'stale_observation',
+          framesRequested,
+          framesCompleted: 0,
+          driveAction
+        })
+      }
+
+      let framesCompleted = 0
+      try {
+        for (const segment of request.segments) {
+          for (let frame = 0; frame < segment.frames; frame += 1) {
+            let next: CanvasEmulatorAtomicObservation | undefined
+            let failure: unknown
+            try {
+              next = await driver.stepEmulator(segment.buttons, current.observationId)
+            } catch (error) {
+              failure = error
+            }
+            this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator frame step')
+
+            if (!failure && next) {
+              if (
+                next.emulationGeneration !== current.emulationGeneration ||
+                next.frameId !== current.frameId + 1
+              ) {
+                throw new Error('Emulator frame transition did not advance exactly one frame.')
+              }
+              current = next
+              this.cacheEmulatorObservation(session, current)
+              framesCompleted += 1
+              continue
+            }
+
+            const typed =
+              failure instanceof CanvasEmulatorObservationStaleError ||
+              failure instanceof CanvasEmulatorInputEpochStaleError ||
+              failure instanceof CanvasEmulatorUserActiveError
+                ? failure
+                : null
+            if (!typed) throw failure instanceof Error ? failure : new Error(String(failure))
+
+            const framesAdvanced = typed.framesAdvanced
+            if (!typed.observation) {
+              throw new Error('Emulator typed interruption did not carry a current observation.')
+            }
+            if (
+              typed.observation.emulationGeneration !== current.emulationGeneration ||
+              typed.observation.frameId < current.frameId ||
+              typed.observation.inputEpoch < current.inputEpoch ||
+              (framesAdvanced === 1 && typed.observation.frameId !== current.frameId + 1)
+            ) {
+              throw new Error('Emulator typed interruption did not carry one exact frame advance.')
+            }
+            current = typed.observation
+            this.cacheEmulatorObservation(session, current)
+            framesCompleted += framesAdvanced
+            const humanInterruption =
+              typed.code === 'stale_input_epoch' || typed.code === 'user_active'
+            const outcome: CanvasEmulatorStepResult['outcome'] =
+              framesCompleted === 0 ? 'refused' : 'interrupted'
+            const projection = this.cacheEmulatorObservation(session, current)
+            this.settlePendingEmulatorDriveAction(
+              session,
+              framesCompleted === 0 ? false : null,
+              typed.code
+            )
+            if (humanInterruption) {
+              this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
+            }
+            this.emit(canvasId, 'interaction', ctx, {
+              phase: 'outcome',
+              ...this.emulatorStepAuditDetail({
+                observation: current,
+                startFrameId,
+                segmentCount: request.segments.length,
+                framesRequested,
+                buttonCount,
+                framesCompleted,
+                outcome,
+                refusalReason: typed.code
+              })
+            })
+            return this.emulatorStepResult({
+              projection,
+              outcome,
+              refusalReason: typed.code,
+              framesRequested,
+              framesCompleted,
+              driveAction
+            })
+          }
+        }
+      } catch (error) {
+        this.settlePendingEmulatorDriveAction(session, null, 'driver_error')
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted,
+            outcome: 'error',
+            refusalReason: 'driver_error'
+          })
+        })
+        throw error
+      }
+
+      const projection = this.cacheEmulatorObservation(session, current)
+      this.settlePendingEmulatorDriveAction(session, true)
+      const driveObservation = this.recordEmulatorDriveObservation(canvasId, ctx, driveAction)
+      this.emit(canvasId, 'interaction', ctx, {
+        phase: 'outcome',
+        ...this.emulatorStepAuditDetail({
+          observation: current,
+          startFrameId,
+          segmentCount: request.segments.length,
+          framesRequested,
+          buttonCount,
+          framesCompleted,
+          outcome: 'completed'
+        })
+      })
+      return this.emulatorStepResult({
+        projection,
+        outcome: 'completed',
+        framesRequested,
+        framesCompleted,
+        driveAction,
+        ...(driveObservation ? { driveObservation } : {})
+      })
+    })
   }
 
   async inspect(
@@ -1823,8 +2402,12 @@ export class CanvasService implements CanvasController {
 
   presentInDock(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary {
     const session = this.require(canvasId, ctx)
-    if (session.record.driver !== 'web' && session.record.driver !== 'sketch') {
-      throw new Error('Only live Browser and Sketch canvases can return to the dock.')
+    if (
+      session.record.driver !== 'web' &&
+      session.record.driver !== 'sketch' &&
+      session.record.driver !== 'emulator'
+    ) {
+      throw new Error('Only live Browser, Sketch, and Emulator canvases can return to the dock.')
     }
     session.presentation = 'dock'
     return this.liveSummary(session)
@@ -1923,7 +2506,9 @@ export class CanvasService implements CanvasController {
     session: LiveSession,
     ctx: CanvasCallContext
   ): Promise<void> {
+    this.settlePendingEmulatorDriveAction(session, null, 'driver_error')
     this.invalidateSurfaceAuthority(canvasId, session, ctx, 'surface-closed')
+    session.emulatorObservation = undefined
     this.sessions.delete(canvasId)
     // Drop the interaction chain with the session so the map cannot grow across
     // a long-lived app run. Anything still queued will fail its own `require`.
@@ -1969,7 +2554,7 @@ export class CanvasService implements CanvasController {
     ctx: CanvasCallContext,
     reason: 'navigation' | 'surface-closed' | 'human-takeover'
   ): void {
-    if (session.record.driver !== 'web') return
+    if (session.record.driver !== 'web' && session.record.driver !== 'emulator') return
     try {
       this.deps.onSurfaceAuthorityInvalidated?.({ canvasId, record: session.record, ctx, reason })
     } catch {

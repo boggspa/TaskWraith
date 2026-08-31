@@ -360,6 +360,7 @@ describe('emulator observations', () => {
         schemaVersion: 1,
         token: token(),
         capturedAt: TIMESTAMP,
+        humanActive: false,
         frame,
         state
       })
@@ -369,6 +370,7 @@ describe('emulator observations', () => {
         schemaVersion: 1,
         token: token(),
         capturedAt: '2026-08-31T16:00:00.001Z',
+        humanActive: false,
         frame,
         state
       })
@@ -378,10 +380,21 @@ describe('emulator observations', () => {
         schemaVersion: 1,
         token: token(),
         capturedAt: TIMESTAMP,
+        humanActive: false,
         frame,
         state: { kind: 'unavailable', reason: 'no_verified_adapter' }
       })
     ).toMatchObject({ ok: true })
+    expect(
+      validateEmulatorObservation({
+        schemaVersion: 1,
+        token: token(),
+        capturedAt: TIMESTAMP,
+        humanActive: 'yes',
+        frame,
+        state
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/humanActive/i) })
   })
 })
 

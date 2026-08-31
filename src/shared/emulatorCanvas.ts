@@ -222,6 +222,8 @@ export interface EmulatorObservation {
   readonly schemaVersion: typeof EMULATOR_OBSERVATION_SCHEMA_VERSION
   readonly token: EmulatorObservationToken
   readonly capturedAt: string
+  /** True only while the trusted human Play loop owns frame advancement. */
+  readonly humanActive: boolean
   readonly frame: EmulatorFrameMetadata
   readonly state: EmulatorObservationState
 }
@@ -897,6 +899,9 @@ export function validateEmulatorObservation(raw: unknown): EmulatorValidation<Em
   if (!token.ok) return token
   if (!canonicalTimestamp(raw.capturedAt))
     return fail('Emulator observation capturedAt must be canonical ISO-8601.')
+  if (typeof raw.humanActive !== 'boolean') {
+    return fail('Emulator observation requires a boolean humanActive flag.')
+  }
   const frame = validateEmulatorFrameMetadata(raw.frame)
   if (!frame.ok) return frame
   if (raw.capturedAt !== frame.value.capturedAt) {
@@ -910,6 +915,7 @@ export function validateEmulatorObservation(raw: unknown): EmulatorValidation<Em
       schemaVersion: EMULATOR_OBSERVATION_SCHEMA_VERSION,
       token: token.value,
       capturedAt: raw.capturedAt,
+      humanActive: raw.humanActive,
       frame: frame.value,
       state: state.value
     }
