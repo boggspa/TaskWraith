@@ -173,6 +173,7 @@ export function validateEmulatorAssetManifest(
       return { ok: false, reason: 'Emulator asset manifest has an unsupported MIME type.' }
     }
     if (
+      typeof byteLength !== 'number' ||
       !Number.isSafeInteger(byteLength) ||
       byteLength <= 0 ||
       byteLength > MAX_EMULATOR_ASSET_BYTES ||
@@ -279,21 +280,15 @@ export function createEmulatorAssetRegistry(
   return { bundleFor: (gameId) => byGame.get(gameId) ?? null }
 }
 
-/**
- * Resolve the resources/emulator root in dev or an electron-builder package.
- * The existing global `asarUnpack: resources/**` rule places packaged assets at
- * `<resources>/app.asar.unpacked/resources/emulator`. This is foundation
- * posture only; the reviewed asset slice may move to explicit extraResources.
- */
+/** Resolve the fixed emulator root in dev or from electron-builder extraResources. */
 export function emulatorAssetRoot(input: {
   appPath: string
   resourcesPath: string
   isPackaged: boolean
 }): string {
-  const base = input.isPackaged
-    ? path.join(path.resolve(input.resourcesPath), 'app.asar.unpacked')
-    : path.resolve(input.appPath)
-  return path.join(base, 'resources', 'emulator')
+  return input.isPackaged
+    ? path.join(path.resolve(input.resourcesPath), 'emulator')
+    : path.join(path.resolve(input.appPath), 'resources', 'emulator')
 }
 
 /** Parse only exact `twemu://app/<known-game>/<manifest-listed-path>` URLs. */

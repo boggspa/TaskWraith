@@ -9,6 +9,15 @@
 *.jpeg binary
 *.ico binary
 *.icns binary
+*.wasm binary
+
+# Preserve the upstream Emscripten license byte-for-byte, including its lone
+# historical trailing space, without presenting that legal text as a source diff error.
+resources/emulator/homebrew-demo/LICENSES/Emscripten-MIT-AND-NCSA.txt -whitespace
+
+# The generated Emscripten module is hash-pinned and ignored by Prettier; keep
+# its exact generated whitespace while still checking all authored bundle files.
+resources/emulator/**/twgb.mjs -whitespace
 
 # Windows-only helper scripts genuinely need CRLF.
 *.ps1 text eol=crlf

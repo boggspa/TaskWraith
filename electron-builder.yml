@@ -84,6 +84,10 @@ files:
   # The 1.9.9-only, hash-pinned identity payload is installed by afterPack.
   # Excluding it from app.asar avoids a self-referential 0.1.0 artifact hash.
   - '!resources/identity-handoff.json'
+  # The reviewed emulator bundle is copied once to process.resourcesPath/emulator
+  # through extraResources below. Keeping it out of app.asar avoids duplicate
+  # bytes and lets the main-process manifest resolve one fixed packaged root.
+  - '!resources/emulator/**'
   # relay/src is statically imported into out/main at build time (bundled),
   # so the source tree itself is dead weight in the package.
   - '!relay/**'
@@ -130,6 +134,11 @@ files:
 # shares tui-runtime Node but does not change TUI/Desktop authority. Do NOT
 # re-enable FuseV1 RunAsNode for the App binary.
 extraResources:
+  - from: resources/emulator
+    to: emulator
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
   - from: out/tui
     to: tui
     filter:

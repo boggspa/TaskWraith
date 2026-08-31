@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "gameId": "homebrew-demo",
+  "entryPath": "index.html",
+  "assets": [
+    {
+      "path": "index.html",
+      "sha256": "6cf7eedb15d00cb478496c15874aa95baefe8e7b313d5e12d1df387f2cf7ecea",
+      "byteLength": 568,
+      "mimeType": "text/html"
+    },
+    {
+      "path": "style.css",
+      "sha256": "0d61b800937f2e46c14b8f7a836edc6932a1e22f2e01bf1f3dac2b9fb9bdb1e8",
+      "byteLength": 633,
+      "mimeType": "text/css"
+    },
+    {
+      "path": "bootstrap.mjs",
+      "sha256": "d80fd11df58102f9d1765beba6251fe750b33b0ef3bee7a8d3a40039ad00cdb9",
+      "byteLength": 9267,
+      "mimeType": "application/javascript"
+    },
+    {
+      "path": "twgb.mjs",
+      "sha256": "01550656c449f123de6f6519c0820433c3d48c1a9496e20d0a4d2dc6ffe26d6c",
+      "byteLength": 64092,
+      "mimeType": "application/javascript"
+    },
+    {
+      "path": "twgb.wasm",
+      "sha256": "b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf",
+      "byteLength": 214835,
+      "mimeType": "application/wasm"
+    }
+  ]
+}

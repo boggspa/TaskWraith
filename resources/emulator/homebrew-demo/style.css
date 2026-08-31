@@ -1,0 +1,40 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: #101216;
+  color: #e8edf2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+}
+
+main {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  padding: 16px;
+}
+
+#screen {
+  width: min(640px, calc(100vw - 32px));
+  height: auto;
+  aspect-ratio: 160 / 144;
+  border: 1px solid #44505e;
+  background: #000;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#status {
+  color: #a7c7df;
+  font-size: 12px;
+  text-align: center;
+}

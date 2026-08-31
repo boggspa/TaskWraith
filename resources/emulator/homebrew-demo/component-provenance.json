@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "sourceReceipt": {
+    "commit": "e57e122dc282f87420e52f506092967b6717fc2a",
+    "path": "scripts/emulator/build-receipt.json",
+    "sha256": "ba354d0732ca21431122754a701f027a96a2453ef0a8b30b0ab5ca8c2ba47df3"
+  },
+  "bundle": {
+    "gameId": "homebrew-demo",
+    "runtimeManifest": {
+      "path": "manifest.json",
+      "sha256": "b7961ee252b2739dfc4da5433d7fd2f80bca9100d7fb1b60b36f43902c9ea095",
+      "byteLength": 1038
+    },
+    "artifacts": [
+      {
+        "path": "twgb.mjs",
+        "sha256": "01550656c449f123de6f6519c0820433c3d48c1a9496e20d0a4d2dc6ffe26d6c",
+        "byteLength": 64092
+      },
+      {
+        "path": "twgb.wasm",
+        "sha256": "b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf",
+        "byteLength": 214835
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "taskwraith-twemu-host",
+      "license": "Apache-2.0",
+      "source": {
+        "path": "scripts/emulator/twemu_host.c",
+        "sha256": "bd4e2f2e420d91a2e95a619acfe962ed2199842068a15fca7f48682c4e1345b7"
+      },
+      "embeddedArtifacts": ["twgb.wasm"]
+    },
+    {
+      "id": "sameboy-libretro",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSES/SameBoy-libretro-MIT.txt",
+        "sha256": "00b4b03270ea21b70b4b51fbc93c6eb43876e46ceb742e74918e459ea2481f21",
+        "byteLength": 1073
+      },
+      "source": {
+        "repository": "https://github.com/libretro/SameBoy.git",
+        "ref": "buildbot",
+        "commit": "aa158a889a48b538a0302873704a34577c8eb67d",
+        "version": "0.15.4",
+        "coreObjectSha256": "d22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611"
+      },
+      "embeddedArtifacts": ["twgb.wasm"]
+    },
+    {
+      "id": "libretro-common",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSES/Libretro-common-MIT.txt",
+        "sha256": "376ce330786c201893e52981576d4907780c6de11b26f972ba3cb023c58a7f6c",
+        "byteLength": 1067
+      },
+      "source": {
+        "vendoredWithSameBoyCommit": "aa158a889a48b538a0302873704a34577c8eb67d",
+        "path": "libretro/libretro-common/include/libretro.h",
+        "copyright": "The RetroArch team (2010-2020)"
+      },
+      "embeddedArtifacts": ["twgb.wasm"]
+    },
+    {
+      "id": "emscripten-runtime",
+      "license": {
+        "spdx": "MIT OR NCSA",
+        "path": "LICENSES/Emscripten-MIT-AND-NCSA.txt",
+        "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86",
+        "byteLength": 5093
+      },
+      "source": {
+        "repository": "https://github.com/emscripten-core/emscripten.git",
+        "version": "3.1.46",
+        "emsdkCommit": "93360d3670018769b424e4e8f1d3d9b26d32c977",
+        "emscriptenSourceCommit": "19607820c447a13fd8d0b7680c56148427d6e1b8"
+      },
+      "embeddedArtifacts": ["twgb.mjs", "twgb.wasm"]
+    },
+    {
+      "id": "taskwraith-fixture",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSES/TaskWraith-fixture-MIT.txt",
+        "sha256": "e7eb982b2ff9dc303bfcb68ee2046667d6c745001f9785ce02d7ba5b253ddeee",
+        "byteLength": 1080
+      },
+      "source": {
+        "mainAsmSha256": "6f1ad60dee29f0fb49aaf04d3ac3f26aab037e44f46654c47cae2e301238f56e",
+        "hardwareIncludeSha256": "fceec9a80e137b652b8814094dbf1e0b3530e184f15983bef38d51f5dc09467f",
+        "romSha256": "2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7",
+        "romByteLength": 32768
+      },
+      "embeddedArtifacts": ["twgb.wasm"]
+    }
+  ],
+  "validationOnly": {
+    "sameboy": {
+      "repository": "https://github.com/LIJI32/SameBoy.git",
+      "commit": "208ba4afabffab9edde416f2dbb8ae459e34adb8",
+      "version": "1.0.3",
+      "purpose": "Native fixture validation only; never substitute this for the shipped libretro core pin."
+    }
+  }
+}

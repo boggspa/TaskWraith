@@ -45,7 +45,7 @@ function bundle(
   return {
     rootPath: bundleRoot,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       gameId: 'homebrew-demo' as const,
       entryPath: 'index.html' as const,
       assets: [
@@ -195,6 +195,6 @@ describe('EmulatorAssetManifest', () => {
         resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
         isPackaged: true
       })
-    ).toBe('/Applications/TaskWraith.app/Contents/Resources/app.asar.unpacked/resources/emulator')
+    ).toBe('/Applications/TaskWraith.app/Contents/Resources/emulator')
   })
 })
