@@ -126,6 +126,17 @@ const FORBIDDEN_PAYLOAD_KEYS = new Set([
   'rawfile'
 ])
 
+const HOST_USAGE_PAYLOAD_KEYS = new Set([
+  'availability',
+  'tokens',
+  'costText',
+  'confidence',
+  'band'
+])
+const HOST_USAGE_AVAILABILITY = new Set(['available', 'estimated', 'unavailable'])
+const HOST_USAGE_CONFIDENCE = new Set(['exact', 'derived', 'estimated', 'unknown'])
+const HOST_USAGE_BAND = new Set(['low', 'medium', 'high', 'critical', 'unknown'])
+
 export type HostDeltaPayloadPrepareResult =
   | { ok: true; payload: unknown }
   | { ok: false; code: HostDeltaPayloadPrivacyCode; detail: string }
@@ -1128,6 +1139,41 @@ function normalizePayloadKey(key: string): string {
   return key.toLowerCase().replace(/[_-]/g, '')
 }
 
+/**
+ * `HostUsageObservation.tokens` is a bounded numeric meter, not credential
+ * material. Keep the generic `tokens` deny-wall everywhere else and admit the
+ * field only when its complete containing object is the closed wire shape.
+ */
+function isBoundedHostUsageObservation(value: Record<string, unknown>): boolean {
+  if (Object.keys(value).some((key) => !HOST_USAGE_PAYLOAD_KEYS.has(key))) return false
+  if (typeof value.availability !== 'string' || !HOST_USAGE_AVAILABILITY.has(value.availability)) {
+    return false
+  }
+  if (
+    typeof value.tokens !== 'number' ||
+    !Number.isFinite(value.tokens) ||
+    value.tokens < 0 ||
+    value.availability === 'unavailable'
+  ) {
+    return false
+  }
+  if (
+    value.costText !== undefined &&
+    (typeof value.costText !== 'string' || value.costText.length > 200)
+  ) {
+    return false
+  }
+  if (
+    value.confidence !== undefined &&
+    (typeof value.confidence !== 'string' || !HOST_USAGE_CONFIDENCE.has(value.confidence))
+  ) {
+    return false
+  }
+  return (
+    value.band === undefined || (typeof value.band === 'string' && HOST_USAGE_BAND.has(value.band))
+  )
+}
+
 function findForbiddenPayloadKey(value: unknown, path: string[] = []): string | null {
   if (value === null || value === undefined) return null
   if (Array.isArray(value)) {
@@ -1138,8 +1184,13 @@ function findForbiddenPayloadKey(value: unknown, path: string[] = []): string | 
     return null
   }
   if (typeof value === 'object') {
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (FORBIDDEN_PAYLOAD_KEYS.has(normalizePayloadKey(key))) {
+    const record = value as Record<string, unknown>
+    for (const [key, child] of Object.entries(record)) {
+      const normalizedKey = normalizePayloadKey(key)
+      if (
+        FORBIDDEN_PAYLOAD_KEYS.has(normalizedKey) &&
+        !(normalizedKey === 'tokens' && isBoundedHostUsageObservation(record))
+      ) {
         return [...path, key].join('.')
       }
       const hit = findForbiddenPayloadKey(child, [...path, key])

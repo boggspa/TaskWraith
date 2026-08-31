@@ -277,6 +277,39 @@ describe('HostDomainDeltaPublisher', () => {
     expect(journal).not.toMatch(/sk-live|Bearer x|secret_token=1|FULL FILE|under-limit-secret/)
   })
 
+  it('admits bounded numeric usage tokens without weakening the generic token deny-wall', () => {
+    const { store, publisher } = openPublisher()
+    const usage = {
+      availability: 'estimated',
+      tokens: 17,
+      confidence: 'estimated'
+    }
+    const published = publisher.publish([
+      upsert('thread-with-usage', { id: 'thread-with-usage', usage }),
+      upsert('run-with-usage', { runId: 'run-with-usage', usage }, 'run'),
+      upsert('usage', usage, 'usage')
+    ])
+
+    expect(published).toMatchObject({ kind: 'published', count: 3 })
+    expect(store.getByCursor(1)?.envelope.payload).toMatchObject({ usage })
+    expect(store.getByCursor(2)?.envelope.payload).toMatchObject({ usage })
+    expect(store.getByCursor(3)?.envelope.payload).toEqual(usage)
+
+    for (const payload of [
+      { tokens: ['credential-shaped'] },
+      { usage: { ...usage, tokens: '17' } },
+      { usage: { ...usage, extra: true } },
+      { usage: { ...usage, availability: 'unavailable' } }
+    ]) {
+      const rejected = publisher.publish([upsert('unsafe-token-payload', payload)])
+      expect(rejected).toMatchObject({
+        kind: 'rejected',
+        failures: [expect.objectContaining({ reason: 'forbidden_payload' })]
+      })
+    }
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 3 })
+  })
+
   it('oversized safe payload persists digest/length only with no raw prefix', () => {
     const { store, publisher } = openPublisher()
     const bigNote = 'n'.repeat(9000)
