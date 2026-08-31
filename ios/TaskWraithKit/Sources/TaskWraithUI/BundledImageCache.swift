@@ -1,5 +1,6 @@
-// Memoization for bundled-resource image loads (marks, provider logos,
-// identicons) that are resolved from inside SwiftUI `body`.
+// Memoization for bundled-resource image loads (provider logos, identicons)
+// that are resolved from inside SwiftUI `body`. Fixed marks are not routed
+// through this cache; they load once via their own static caches.
 
 import SwiftUI
 

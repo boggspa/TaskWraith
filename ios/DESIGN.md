@@ -1257,10 +1257,11 @@ pill's tap target, and the git workspace sheet lost its content inset on
 compact widths. Both are restored; the pill opens the branch/worktree/PR
 surface and the git sheet keeps its header and action rows anchored.
 
-**Bundled image caching.** Marks, provider logos, and identicons were rebuilt
-from bundle data on every render pass. `BundledImageCache` caches them by
-asset name and dark/light variant, backed by `BundledImageCacheTests` for
-correctness and eviction.
+**Bundled image caching.** Provider logos and identicons were rebuilt from
+bundle data on every render pass. Fixed marks load once via their own static
+caches; logos and identicons now memoize by resolved asset name or slug via
+`BundledImageCache`, backed by `BundledImageCacheTests` for hit/miss, key,
+and fixture behavior.
 
 ## Current follow-ups
 

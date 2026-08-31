@@ -140,10 +140,13 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 
 ### kimi — Kimi
 > **Accent source of truth:** the live desktop shell keys every kimi accent off
-> `var(--provider-kimi-color)` = **#0073E6** (07-composer-shells.css:2867-2870,
-> 3016). iOS matches via `providerAccent("kimi")`
-> (ComposerShellResolver.swift:617-619). Any hardcoded #4da6ff/#1a8cff hexes
-> below are historical recipe detail; the provider token is the source of truth.
+> `var(--provider-kimi-color)` = **#0073E6** (defined in `theme.css`; consumed
+> by the kimi rules in `07-composer-shells.css` — chip wash, `:focus-within`
+> border + ring, ensemble/run fills). iOS matches via
+> `TWTheme.providerAccent("kimi")` (`Theme.swift` `providerAccentHex` returns
+> `0x0073E6`; `ComposerShellResolver.swift` `kimiRecipe` uses it for
+> `focusAccent`). Any hardcoded #4da6ff/#1a8cff hexes below are historical
+> recipe detail; the provider token is the source of truth.
 
 **Essence:** Single solid near-black rounded rectangle (no glass, no card-in-card) with a blue (#4da6ff) accent surfacing only on focus and hover/active. Textarea sits directly on the surface; footer is a flat strip of mostly-transparent outlined pills; send button is a 32px filled circle whose hover flips to blue.
 **Material:** Solid, opaque — NOT glass. Base fill `color-mix(#0a0a0c 96%, transparent)` ≈ `rgba(10,10,12,0.96)` (07:2577). No backdrop-filter ever; reduce-transparency swaps are no-ops. Base blue edge-gradient ::before suppressed (display:none). Light (light/mist/sage/alabaster) `var(--unified-soft-surface-bg)`. Obsidian forces solid **#202124** surface / **#1f2023** above-bar. Ensemble dark contexts force surface #202124, above-bar #1f2023.
