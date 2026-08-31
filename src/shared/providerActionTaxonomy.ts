@@ -60,6 +60,7 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'blackboard',
   'launch-control',
   'canvas',
+  'emulator',
   'mesh-canvas',
   'simulator-canvas',
   'theme-control',
@@ -2009,6 +2010,37 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'canvasEval',
     'application.mutate',
     'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  // Fixed package admission; no agent-authored URL/game/ROM reaches this
+  // branch. It still opens a live main-owned surface and therefore stays on
+  // the ordinary grantable mcpTools approval path.
+  emulator_open: tool(
+    'orchestration',
+    'mcpTools',
+    'application.mutate',
+    'emulator',
+    'host-state',
+    'application-resource'
+  ),
+  // Pixel + bounded mapped-state egress mirrors canvas_screenshot: it remains
+  // mcpTools-gated rather than silently joining the read auto-allow set.
+  emulator_observe: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'emulator',
+    'host-state',
+    'application-resource'
+  ),
+  // Exact reviewed emulator surface actuation; AppDrive resolves its lease
+  // descriptor from the canonical canvasId before the executor steps frames.
+  emulator_step: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'emulator',
     'attached-application',
     'application-resource'
   ),

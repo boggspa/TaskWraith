@@ -63,6 +63,13 @@ export const SIMULATOR_MUTATING_MCP_TOOL_NAMES = [
   'simulator_scroll'
 ] as const
 
+/** Fixed packaged-emulator surface; no arbitrary ROM, URL, or raw-RAM verbs exist. */
+export const EMULATOR_MCP_TOOL_NAMES = [
+  'emulator_open',
+  'emulator_observe',
+  'emulator_step'
+] as const
+
 export const TASKWRAITH_MCP_TOOLS = [
   'run_shell_command',
   'write_file',
@@ -316,6 +323,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // accept opens a 12h exact-live-surface window across navigation/later turns;
   // every execution remains receipt-bound, audited, and egress-cut while running.
   'canvas_eval',
+  // Fixed first-party Game Boy demo. Open is main-owned and exact-surface;
+  // observation exports only a reviewed state projection plus one PNG; step
+  // accepts bounded controller segments through the AppDrive lease boundary.
+  ...EMULATOR_MCP_TOOL_NAMES,
   // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
   // sandboxed web canvas, auto-opening one in the chat dock when none is open.
   // Gated by the dedicated webBrowsing service: allowed under Accept Edits+,
@@ -471,6 +482,7 @@ export type MeshTopologyMcpToolName = (typeof MESH_TOPOLOGY_MCP_TOOL_NAMES)[numb
 export type MeshMcpToolName = (typeof MESH_MCP_TOOL_NAMES)[number]
 export type SimulatorMcpToolName = (typeof SIMULATOR_MCP_TOOL_NAMES)[number]
 export type SimulatorMutatingMcpToolName = (typeof SIMULATOR_MUTATING_MCP_TOOL_NAMES)[number]
+export type EmulatorMcpToolName = (typeof EMULATOR_MCP_TOOL_NAMES)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 

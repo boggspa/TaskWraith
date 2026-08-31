@@ -1063,6 +1063,7 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
     [
       'taskwraith-full-v1',
       'taskwraith-full-v2',
+      'taskwraith-full-v3',
       'taskwraith-core-v1',
       'taskwraith-core-v2',
       'taskwraith-gateway-v1',
@@ -1095,8 +1096,11 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
       'taskwraith-gateway-v17-mesh',
       'taskwraith-gateway-v18',
       'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
       'taskwraith-gateway-solo-v1',
-      'taskwraith-gateway-solo-v2'
+      'taskwraith-gateway-solo-v2',
+      'taskwraith-gateway-solo-v3'
     ],
     'TaskWraith MCP profile'
   )

@@ -278,6 +278,7 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
     (tool) =>
       tool === 'canvas_navigate' ||
       tool === 'canvas_render_chart' ||
+      tool === 'emulator_open' ||
       tool === 'delegate_to_subthread' ||
       tool === 'delegate_wave' ||
       tool === 'ultra_task' ||
@@ -341,6 +342,7 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_scroll' ||
       tool === 'canvas_hover' ||
       tool === 'canvas_select' ||
+      tool === 'emulator_step' ||
       tool === 'canvas_sketch_update' ||
       // Shared with Ask's recon tier (explicit overlap keeps Plan bridge complete).
       tool === 'canvas_render_chart' ||

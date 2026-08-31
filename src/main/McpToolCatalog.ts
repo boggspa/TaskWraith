@@ -5,6 +5,12 @@ import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
 import {
+  EMULATOR_BUTTONS,
+  EMULATOR_STEP_MAX_FRAMES_PER_SEGMENT,
+  EMULATOR_STEP_MAX_SEGMENTS,
+  EMULATOR_STEP_MAX_TOTAL_FRAMES
+} from '../shared/emulatorCanvas'
+import {
   ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
   ULTRA_TASK_MAX_EFFECTIVE_WORKERS
 } from './ultraTask/UltraTaskToolRequest'
@@ -4828,6 +4834,101 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           }
         },
         required: ['canvasId', 'script']
+      }
+    },
+    {
+      name: 'emulator_open',
+      description:
+        'Open the fixed TaskWraith homebrew emulator demo in the active chat Canvas dock. This accepts NO game, ROM, URL, or browser override: it always opens the reviewed packaged homebrew demo. Returns only the chat-owned canvasId, title, and dock presentation; use emulator_observe for the safe mapped state and PNG frame.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'emulator_observe',
+      description:
+        'Capture one atomic observation of a chat-owned packaged emulator surface: safe mapped state plus exactly one PNG image. The result never exposes ROM bytes, raw emulator RAM, internal URLs, or base64 pixels in structured data. Gated like canvas_screenshot because it exports pixels.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+          }
+        },
+        required: ['canvasId'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'emulator_step',
+      description:
+        'Advance a chat-owned packaged emulator from one observed token through bounded controller segments. Provide canvasId, expectedObservationId, and 1–12 segments; each segment holds zero or more non-opposing buttons for 1–120 frames, with at most 240 total frames. This is exact-surface AppDrive control: approval/grants bind only the reviewed emulator canvas. Returns the final safe observation and one PNG image; check outcome, executed, partial, and framesCompleted before assuming every requested frame ran.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+          },
+          expectedObservationId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+          },
+          segments: {
+            type: 'array',
+            minItems: 1,
+            maxItems: EMULATOR_STEP_MAX_SEGMENTS,
+            items: {
+              type: 'object',
+              properties: {
+                buttons: {
+                  type: 'array',
+                  maxItems: EMULATOR_BUTTONS.length,
+                  uniqueItems: true,
+                  items: { type: 'string', enum: EMULATOR_BUTTONS }
+                },
+                frames: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: EMULATOR_STEP_MAX_FRAMES_PER_SEGMENT
+                }
+              },
+              required: ['buttons', 'frames'],
+              additionalProperties: false
+            },
+            description: `At most ${EMULATOR_STEP_MAX_TOTAL_FRAMES} total frames across all segments.`
+          },
+          requireIndependentVerifier: { type: 'boolean' }
+        },
+        required: ['canvasId', 'expectedObservationId', 'segments'],
+        additionalProperties: false
       }
     },
     {

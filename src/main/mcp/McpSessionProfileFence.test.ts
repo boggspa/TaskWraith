@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_FULL_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V2_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
@@ -33,8 +35,11 @@ import {
   TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V18_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V18_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID,
   TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
@@ -86,6 +91,53 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileReceiptCanPersist: false
       }).profileId
     ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
+  })
+
+  it('recognizes dormant emulator-capable successors without activating any fresh selector', () => {
+    expect(TASKWRAITH_FULL_V3_MCP_PROFILE_ID).toBe('taskwraith-full-v3')
+    expect(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID).toBe('taskwraith-gateway-v19')
+    expect(TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID).toBe('taskwraith-gateway-v19-mesh')
+    expect(TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID).toBe('taskwraith-gateway-solo-v3')
+    for (const profileId of [
+      TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+    ]) {
+      expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
+    }
+    expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V18_MCP_PROFILE_ID)
+    expect(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID).toBe(
+      TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID
+    )
+    expect(
+      resolveTaskWraithMcpProfile({
+        provider: 'claude',
+        providerSessionId: null,
+        profileReceiptCanPersist: false
+      }).profileId
+    ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
+    expect(TASKWRAITH_FULL_V2_MCP_PROFILE_ID).toBe('taskwraith-full-v2')
+    expect(isPortableEnsembleControlMcpProfile(TASKWRAITH_FULL_V3_MCP_PROFILE_ID)).toBe(true)
+    expect(
+      isPermissionOpportunityDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID)
+    ).toBe(true)
+    expect(
+      isPermissionOpportunityDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID)
+    ).toBe(true)
+    expect(
+      isPermissionOpportunityDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID)
+    ).toBe(true)
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID)).toBe(
+      true
+    )
+    expect(
+      isMeshTopologyDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID)
+    ).toBe(true)
+    expect(isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID)).toBe(
+      true
+    )
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID)).toBe(true)
   })
 
   it('selects the lean immutable profile only for fresh single-provider threads', () => {
@@ -226,8 +278,11 @@ describe('resolveTaskWraithMcpProfile', () => {
       TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V18_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V18_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
       // Load-bearing: this predicate drives the gateway-subset launch arg and
@@ -249,6 +304,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID)).toBe(false)
     expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)).toBe(true)
     expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID)).toBe(true)
+    expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID)).toBe(true)
     expect(isSoloTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V17_MCP_PROFILE_ID)).toBe(false)
   })
 

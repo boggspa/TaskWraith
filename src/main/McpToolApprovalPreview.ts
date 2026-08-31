@@ -722,6 +722,37 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
+    if (toolName === 'emulator_step') {
+      const segments = Array.isArray(args.segments) ? args.segments : []
+      const frameCount = segments.reduce(
+        (total, segment) =>
+          total +
+          (segment &&
+          typeof segment === 'object' &&
+          Number.isSafeInteger((segment as { frames?: unknown }).frames)
+            ? Math.max(0, (segment as { frames: number }).frames)
+            : 0),
+        0
+      )
+      return {
+        title: `Approve ${providerName} emulator interaction`,
+        body: `emulator_step (${segments.length} segment${segments.length === 1 ? '' : 's'}, ${frameCount} frame${frameCount === 1 ? '' : 's'})`,
+        service: 'canvasInteraction',
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: {
+            canvasId: typeof args.canvasId === 'string' ? args.canvasId : '',
+            segmentCount: segments.length,
+            frameCount,
+            ...(args.requireIndependentVerifier === true
+              ? { requireIndependentVerifier: true }
+              : {})
+          }
+        }
+      }
+    }
+
     if (toolName === 'canvas_sketch_update') {
       return {
         title: `Approve ${providerName} Sketch Canvas edit`,

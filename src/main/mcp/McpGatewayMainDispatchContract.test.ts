@@ -188,6 +188,34 @@ describe('main capability gateway dispatch contract', () => {
     const transcriptUse = canonicalDispatchSource.slice(transcriptUseStart)
     expect(transcriptUse).toContain('redactPermissionOpportunityIdsForDurableStorage(')
   })
+
+  it('keeps emulator images out of raw transcript content while preserving the trusted media spine', () => {
+    const canvasLikeStart = indexSource.indexOf('function isCanvasLikeMcpToolName(')
+    const canvasLike = indexSource.slice(canvasLikeStart, canvasLikeStart + 220)
+    expect(canvasLikeStart).toBeGreaterThan(-1)
+    expect(canvasLike).toContain('isCanvasMcpToolName(toolName)')
+    expect(canvasLike).toContain('isEmulatorMcpToolName(toolName)')
+    expect(canonicalDispatchSource).toContain('} else if (isEmulatorMcpToolName(toolName)) {')
+    expect(canonicalDispatchSource).toContain("markDispatchHandled('emulator')")
+    expect(canonicalDispatchSource).toContain(
+      'await emulatorToolExecutors.executeEmulatorTool(\n        toolName,\n        args,\n        context,\n        parentProvider'
+    )
+    expect(canonicalDispatchSource).toContain(
+      'if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority))'
+    )
+    expect(canonicalDispatchSource).toContain('return staleCanvasMcpResult(toolName)')
+    expect(canonicalDispatchSource).toContain(
+      'isCanvasLikeMcpToolName(toolName) || isMeshMcpToolName(toolName)'
+    )
+    expect(canonicalDispatchSource).toContain(
+      'publicFinalRichResult?.content && !isCanvasLikeMcpToolName(toolName)'
+    )
+    expect(canonicalDispatchSource).toContain(
+      'const resultImageBlocks = (publicFinalRichResult?.content ?? []).filter('
+    )
+    expect(canonicalDispatchSource).toContain('createOwnedToolResultMediaRefs({')
+    expect(canonicalDispatchSource).toContain('...publicFinalRichResult')
+  })
 })
 
 // The suites below resolve their own copy of the dispatch source so they can be

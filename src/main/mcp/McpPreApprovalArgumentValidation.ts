@@ -1,6 +1,7 @@
 import type { TaskWraithMcpToolDefinition } from '../McpToolCatalog'
 import type { TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import { validateGatewayToolArguments, type GatewayArgumentValidationIssue } from './McpToolGateway'
+import { validateEmulatorStepToolInput } from '../../shared/emulatorCanvas'
 
 /**
  * Direct tools whose provider-emitted arguments must be schema-checked before
@@ -9,7 +10,10 @@ import { validateGatewayToolArguments, type GatewayArgumentValidationIssue } fro
  */
 const PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
   'ensemble_bossman_control',
-  'ensemble_control'
+  'ensemble_control',
+  'emulator_open',
+  'emulator_observe',
+  'emulator_step'
 ])
 
 export type McpPreApprovalArgumentValidationResult =
@@ -74,7 +78,23 @@ export function validateMcpToolArgumentsBeforeApproval(
   }
 
   const validation = validateGatewayToolArguments(definition.inputSchema, args)
-  if (validation.ok) return validation
+  if (validation.ok) {
+    if (toolName !== 'emulator_step') return validation
+    const emulatorInput = validateEmulatorStepToolInput({
+      expectedObservationId: args.expectedObservationId,
+      segments: args.segments,
+      ...(args.requireIndependentVerifier !== undefined
+        ? { requireIndependentVerifier: args.requireIndependentVerifier }
+        : {})
+    })
+    if (emulatorInput.ok) return validation
+    return {
+      ok: false,
+      code: 'invalid_arguments',
+      message: `${toolName} was rejected before approval because its bounded emulator input is invalid. ${emulatorInput.reason} Do not retry the same invalid invocation.`,
+      issues: []
+    }
+  }
   if (validation.code === 'invalid_schema') {
     return {
       ok: false,

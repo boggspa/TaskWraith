@@ -133,6 +133,20 @@ import {
   taskWraithMcpAdvertisedToolNamesForProfile,
   shouldUseCoreMcpProfile
 } from './McpToolProfiles'
+import {
+  FULL_V3_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V19_ADDED_TOOL_NAMES,
+  GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V19_MCP_DIRECT_TOOLS,
+  GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V19_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES
+} from './McpToolProfiles'
+import { EMULATOR_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
 
 function nameHash(names: readonly string[]): string {
   return createHash('sha256').update(JSON.stringify(names)).digest('hex')
@@ -153,6 +167,7 @@ describe('immutable v1 MCP profile snapshots', () => {
     for (const profile of [
       FULL_MCP_ADVERTISE_TOOLS,
       FULL_V2_MCP_ADVERTISE_TOOLS,
+      FULL_V3_MCP_ADVERTISE_TOOLS,
       CORE_MCP_ADVERTISE_TOOLS,
       CORE_V2_MCP_ADVERTISE_TOOLS,
       GATEWAY_MCP_DIRECT_TOOLS,
@@ -199,13 +214,23 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
       GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
       GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V19_ADDED_TOOL_NAMES,
+      GATEWAY_V19_MCP_DIRECT_TOOLS,
+      GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V19_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
       GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
       GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
       GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
       GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
-      GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -840,6 +865,7 @@ describe('catalogue reachability', () => {
     const reachable = new Set<string>([
       ...FULL_MCP_ADVERTISE_TOOLS,
       ...FULL_V2_MCP_ADVERTISE_TOOLS,
+      ...FULL_V3_MCP_ADVERTISE_TOOLS,
       ...CORE_MCP_ADVERTISE_TOOLS,
       ...CORE_V2_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_MCP_ADVERTISE_TOOLS,
@@ -892,8 +918,14 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
-      ...GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -1060,6 +1092,37 @@ describe('catalogue reachability', () => {
       ...GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
       ...CAPABILITY_GATEWAY_TOOL_NAMES
     ])
+  })
+
+  it('adds the fixed emulator family only to immutable v3/v19 discovery successors', () => {
+    expect(GATEWAY_V19_ADDED_TOOL_NAMES).toEqual([...EMULATOR_MCP_TOOL_NAMES])
+    expect(FULL_V3_MCP_ADVERTISE_TOOLS).toEqual([
+      ...FULL_V2_MCP_ADVERTISE_TOOLS,
+      ...EMULATOR_MCP_TOOL_NAMES
+    ])
+    expect(GATEWAY_V19_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V18_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_V19_MESH_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V18_MESH_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS).toEqual(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS)
+    for (const tool of EMULATOR_MCP_TOOL_NAMES) {
+      expect(FULL_V2_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V18_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_V19_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V19_MESH_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v3')).toContain(tool)
+    }
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v19')).toEqual(
+      GATEWAY_V19_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v19')).toEqual(
+      GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES
+    )
   })
 
   it('keeps every frozen pre-v18 profile free of direct or hidden opportunity redemption', () => {

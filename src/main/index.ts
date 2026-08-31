@@ -1438,6 +1438,7 @@ import {
   readPngDimensions
 } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
+import { createEmulatorToolExecutors, isEmulatorMcpToolName } from './mcp/EmulatorToolExecutors'
 import { createMeshToolExecutors, isMeshMcpToolName } from './mcp/MeshToolExecutors'
 import {
   createSimulatorToolExecutors,
@@ -5065,6 +5066,7 @@ const canvasToolExecutors = createCanvasToolExecutors({
     })
   }
 })
+const emulatorToolExecutors = createEmulatorToolExecutors({ controller: canvasService })
 // Assigned during app init once LaunchManager + workspace/local-server deps exist
 // (see the registerLaunchHandlers wiring). Held at module scope so the shared MCP
 // dispatcher (executeGeminiMcpTool) can reach it.
@@ -37775,6 +37777,10 @@ function staleCanvasMcpResult(toolName: string): McpToolExecutionResult {
   }
 }
 
+function isCanvasLikeMcpToolName(toolName: string): boolean {
+  return isCanvasMcpToolName(toolName) || isEmulatorMcpToolName(toolName)
+}
+
 function staleProviderMcpResult(toolName: string): McpToolExecutionResult {
   return {
     ...mcpStructuredJsonResult({
@@ -38675,7 +38681,7 @@ async function executeGeminiMcpTool(
     tool_name: toolName,
     parameters: redactPermissionOpportunityIdsForDurableStorage(
       redactCanvasFillValueForDurableStorage(
-        isCanvasMcpToolName(toolName) || isMeshMcpToolName(toolName)
+        isCanvasLikeMcpToolName(toolName) || isMeshMcpToolName(toolName)
           ? canvasMcpArgumentsForDurableProjection(args)
           : { ...args, cwd }
       )
@@ -39748,6 +39754,18 @@ async function executeGeminiMcpTool(
         return staleCanvasMcpResult(toolName)
       }
       applyRichResult(canvasResult)
+    } else if (isEmulatorMcpToolName(toolName)) {
+      markDispatchHandled('emulator')
+      const emulatorResult = await emulatorToolExecutors.executeEmulatorTool(
+        toolName,
+        args,
+        context,
+        parentProvider
+      )
+      if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+        return staleCanvasMcpResult(toolName)
+      }
+      applyRichResult(emulatorResult)
     } else if (isMeshMcpToolName(toolName)) {
       markDispatchHandled('mesh-canvas')
       const meshResult = await meshToolExecutors.executeMeshTool(
@@ -42788,7 +42806,7 @@ async function executeGeminiMcpTool(
       ) {
         await rollbackPendingToolMediaPersistence(pendingToolMediaPersistence)
         pendingToolMediaPersistence = undefined
-        return isCanvasMcpToolName(toolName)
+        return isCanvasLikeMcpToolName(toolName)
           ? staleCanvasMcpResult(toolName)
           : staleProviderMcpResult(toolName)
       }
@@ -42802,7 +42820,7 @@ async function executeGeminiMcpTool(
         settlementCandidate instanceof Promise ? await settlementCandidate : settlementCandidate
       pendingToolMediaPersistence = undefined
       if (!settlement.authorityLive || !producedMediaAuthorityLive()) {
-        return isCanvasMcpToolName(toolName)
+        return isCanvasLikeMcpToolName(toolName)
           ? staleCanvasMcpResult(toolName)
           : staleProviderMcpResult(toolName)
       }
@@ -42810,7 +42828,7 @@ async function executeGeminiMcpTool(
     if (!producedMediaAuthorityLive()) {
       await rollbackPendingToolMediaPersistence(pendingToolMediaPersistence)
       pendingToolMediaPersistence = undefined
-      return isCanvasMcpToolName(toolName)
+      return isCanvasLikeMcpToolName(toolName)
         ? staleCanvasMcpResult(toolName)
         : staleProviderMcpResult(toolName)
     }
@@ -42835,7 +42853,7 @@ async function executeGeminiMcpTool(
         tool_name: toolName,
         status: toolIsError ? 'error' : 'success',
         output: transcriptOutput,
-        ...(publicFinalRichResult?.content && !isCanvasMcpToolName(toolName)
+        ...(publicFinalRichResult?.content && !isCanvasLikeMcpToolName(toolName)
           ? { content: publicFinalRichResult.content }
           : {}),
         ...(publicFinalRichResult?.structuredContent
@@ -42963,7 +42981,7 @@ async function executeGeminiMcpTool(
       if (!committedProjection.authorityLive) {
         await rollbackPendingToolMediaPersistence(pending)
         pendingToolMediaPersistence = undefined
-        return isCanvasMcpToolName(toolName)
+        return isCanvasLikeMcpToolName(toolName)
           ? staleCanvasMcpResult(toolName)
           : staleProviderMcpResult(toolName)
       }
@@ -42985,7 +43003,7 @@ async function executeGeminiMcpTool(
         )
       }
     }
-    if (isCanvasMcpToolName(toolName)) {
+    if (isCanvasLikeMcpToolName(toolName)) {
       return staleCanvasMcpResult(toolName)
     }
     const errorResult = mcpStructuredJsonResult({

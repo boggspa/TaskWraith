@@ -493,6 +493,33 @@ describe('provider action taxonomy', () => {
     ).toMatchObject({ ok: true, service: 'mcpTools' })
   })
 
+  it('classifies fixed emulator open, pixel observation, and exact-surface step separately', () => {
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_open).toMatchObject({
+      toolClass: 'orchestration',
+      service: 'mcpTools',
+      operation: 'application.mutate',
+      dispatchOwner: 'emulator',
+      mutation: 'host-state',
+      lock: 'application-resource'
+    })
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_observe).toMatchObject({
+      toolClass: 'orchestration',
+      service: 'mcpTools',
+      operation: 'application.read',
+      dispatchOwner: 'emulator',
+      mutation: 'host-state',
+      lock: 'application-resource'
+    })
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_step).toMatchObject({
+      toolClass: 'workspace_write',
+      service: 'canvasInteraction',
+      operation: 'application.mutate',
+      dispatchOwner: 'emulator',
+      mutation: 'attached-application',
+      lock: 'application-resource'
+    })
+  })
+
   it('gives every mutation scope an explicit matching lock policy', () => {
     for (const [toolName, metadata] of Object.entries(TASKWRAITH_OWNED_MCP_ACTIONS)) {
       if (metadata.mutation === 'target-derived') continue

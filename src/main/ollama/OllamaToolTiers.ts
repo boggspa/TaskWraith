@@ -121,7 +121,9 @@ export function ollamaDirectToolNamesForProfile(
                           ? 'taskwraith-gateway-v17'
                           : profileId === 'taskwraith-gateway-v18-mesh'
                             ? 'taskwraith-gateway-v18'
-                          : profileId
+                            : profileId === 'taskwraith-gateway-v19-mesh'
+                              ? 'taskwraith-gateway-v19'
+                              : profileId
   return localProfileId
     ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
     : OLLAMA_ADVERTISED_TOOL_NAMES

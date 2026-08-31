@@ -944,6 +944,7 @@ export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer' | 'background'
 export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
   | 'taskwraith-full-v2'
+  | 'taskwraith-full-v3'
   | 'taskwraith-core-v1'
   | 'taskwraith-core-v2'
   | 'taskwraith-gateway-v1'
@@ -998,8 +999,11 @@ export type TaskWraithMcpProfileId =
   // verb. Existing receipts retain v1-v17 exact memberships.
   | 'taskwraith-gateway-v18'
   | 'taskwraith-gateway-v18-mesh'
+  | 'taskwraith-gateway-v19'
+  | 'taskwraith-gateway-v19-mesh'
   // Solo-v2 is the lean v18-derived birth catalogue; solo-v1 remains frozen.
   | 'taskwraith-gateway-solo-v2'
+  | 'taskwraith-gateway-solo-v3'
   // Solo-v1 retains the v17 capability universe while moving specialist
   // coordination and Canvas tools behind capability discovery.
   | 'taskwraith-gateway-solo-v1'

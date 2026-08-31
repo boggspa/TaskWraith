@@ -3,8 +3,10 @@ import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/
 import {
   GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
   GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS,
   GATEWAY_V17_MCP_DIRECT_TOOLS,
-  GATEWAY_V18_MCP_DIRECT_TOOLS
+  GATEWAY_V18_MCP_DIRECT_TOOLS,
+  GATEWAY_V19_MCP_DIRECT_TOOLS
 } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
@@ -73,6 +75,15 @@ describe('Ollama tool surface governance', () => {
     )
     expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-solo-v2')).toBe(
       GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v19')).toBe(
+      GATEWAY_V19_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v19-mesh')).toBe(
+      GATEWAY_V19_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-solo-v3')).toBe(
+      GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS
     )
     expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v18')).toContain(
       'redeem_permission_opportunity'

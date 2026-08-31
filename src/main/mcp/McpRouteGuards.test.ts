@@ -12,6 +12,9 @@ describe('MCP route guards', () => {
   it('treats workspace writes and app-state mutations as mutating', () => {
     expect(isMutatingTaskWraithMcpTool('write_file')).toBe(true)
     expect(isMutatingTaskWraithMcpTool('ensemble_fanout')).toBe(true)
+    expect(isMutatingTaskWraithMcpTool('emulator_open')).toBe(false)
+    expect(isMutatingTaskWraithMcpTool('emulator_step')).toBe(true)
+    expect(isMutatingTaskWraithMcpTool('emulator_observe')).toBe(false)
     expect(isMutatingTaskWraithMcpTool('read_file')).toBe(false)
     expect(isMutatingTaskWraithMcpTool('capability_search')).toBe(false)
     expect(
@@ -132,6 +135,12 @@ describe('mcpToolAlwaysPrompts', () => {
     // The approval orchestrator checks the exact-live-surface 12h window after
     // this generic hold. A live window may auto-resolve there.
     expect(mcpToolAlwaysPrompts('canvas_eval')).toBe(true)
+  })
+
+  it('keeps emulator observation on normal mcpTools gating, never the always-prompt hold', () => {
+    expect(mcpToolAlwaysPrompts('emulator_open')).toBe(false)
+    expect(mcpToolAlwaysPrompts('emulator_observe')).toBe(false)
+    expect(mcpToolAlwaysPrompts('emulator_step')).toBe(false)
   })
 
   it('forces a human on every appearance WRITE, so no grant can silence a restyle', () => {

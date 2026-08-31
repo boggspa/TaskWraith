@@ -348,6 +348,7 @@ describe('createMcpToolApprovalPreviewer', () => {
     ['canvas_scroll', 'canvasInteraction'],
     ['canvas_hover', 'canvasInteraction'],
     ['canvas_select', 'canvasInteraction'],
+    ['emulator_step', 'canvasInteraction'],
     ['canvas_sketch_update', 'sketchCanvas'],
     ['canvas_eval', 'canvasEval'],
     ['mesh_scene_present', 'meshCanvas'],
@@ -384,6 +385,39 @@ describe('createMcpToolApprovalPreviewer', () => {
         'claude'
       ).service
     ).toBe('simulatorCanvas')
+  })
+
+  it('projects emulator-step approval as exact surface plus value-free counts', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'emulator_step',
+      {
+        canvasId: 'canvas-1',
+        expectedObservationId: 'eobs:canvas-1:7',
+        segments: [
+          { buttons: ['right'], frames: 2 },
+          { buttons: ['a', 'start'], frames: 3 }
+        ],
+        requireIndependentVerifier: true
+      },
+      '/repo',
+      context,
+      'codex'
+    )
+
+    expect(preview).toMatchObject({
+      service: 'canvasInteraction',
+      preview: {
+        toolName: 'emulator_step',
+        params: {
+          canvasId: 'canvas-1',
+          segmentCount: 2,
+          frameCount: 5,
+          requireIndependentVerifier: true
+        }
+      }
+    })
+    expect(JSON.stringify(preview.preview)).not.toContain('right')
+    expect(JSON.stringify(preview.preview)).not.toContain('eobs:canvas-1:7')
   })
 
   it('falls back to a provider-labelled generic MCP approval', () => {

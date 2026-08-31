@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canonicalTaskWraithToolName,
+  EMULATOR_MCP_TOOL_NAMES,
   isEnsembleControlToolName,
   isPortableEnsembleControlToolName,
   normalizeEnsembleMcpToolArguments,
@@ -166,5 +167,15 @@ describe('fresh permission-opportunity redemption identity', () => {
       'redeem_permission_opportunity'
     )
     expect(canonicalTaskWraithToolName('request_tool_permission')).toBe('request_tool_permission')
+  })
+})
+
+describe('fixed packaged emulator catalog identity', () => {
+  it('keeps the public surface closed to open, observe, and bounded step', () => {
+    expect(EMULATOR_MCP_TOOL_NAMES).toEqual(['emulator_open', 'emulator_observe', 'emulator_step'])
+    for (const toolName of EMULATOR_MCP_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS).toContain(toolName)
+      expect(canonicalTaskWraithToolName(toolName)).toBe(toolName)
+    }
   })
 })

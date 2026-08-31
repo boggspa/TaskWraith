@@ -72,6 +72,63 @@ describe('validateMcpToolArgumentsBeforeApproval', () => {
     ).toEqual({ ok: true })
   })
 
+  it('rejects malformed emulator stepping before approval and accepts the bounded shared shape', () => {
+    const malformed = validateMcpToolArgumentsBeforeApproval(
+      'emulator_step',
+      {
+        canvasId: 'canvas-1',
+        expectedObservationId: 'eobs:canvas-1:1',
+        segments: [{ buttons: ['left', 'right'], frames: 1 }]
+      },
+      definitions
+    )
+    expect(malformed).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    if (!malformed.ok) expect(malformed.message).toContain('before approval')
+
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'emulator_step',
+        {
+          canvasId: 'canvas-1',
+          expectedObservationId: 'eobs:canvas-1:1',
+          segments: [{ buttons: ['right'], frames: 2 }],
+          requireIndependentVerifier: true
+        },
+        definitions
+      )
+    ).toEqual({ ok: true })
+  })
+
+  it('rejects emulator open overrides and malformed observation requests before prompting', () => {
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'emulator_open',
+        { url: 'https://example.test' },
+        definitions
+      )
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    expect(
+      validateMcpToolArgumentsBeforeApproval('emulator_open', { gameId: 'other' }, definitions)
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    expect(
+      validateMcpToolArgumentsBeforeApproval('emulator_observe', {}, definitions)
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'emulator_observe',
+        { canvasId: 'canvas-1', includeRawRam: true },
+        definitions
+      )
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'emulator_observe',
+        { canvasId: 'canvas\n1' },
+        definitions
+      )
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' })
+  })
+
   it('does not impose new schema enforcement on compatibility-heavy direct tools', () => {
     expect(validateMcpToolArgumentsBeforeApproval('read_file', {}, definitions)).toEqual({
       ok: true

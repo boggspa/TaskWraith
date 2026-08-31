@@ -222,6 +222,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'cancel_subthread',
         'canvas_navigate',
         'canvas_render_chart',
+        'emulator_open',
         'delegate_to_subthread',
         'delegate_wave',
         'ultra_task',
@@ -242,6 +243,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.service).toBe('mcpTools')
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_open.service).toBe('mcpTools')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.ultra_task.service).toBe('subThreadDelegation')
@@ -424,6 +426,17 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.toolClass).toBe('orchestration')
   })
 
+  it('advertises only fixed emulator open to Ask, while pixels and stepping remain gated', () => {
+    expect(isReadOnlyAdvertisedTool('emulator_open')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_open')).toBe(true)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toContain('emulator_open')
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_open')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('emulator_observe')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('emulator_step')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_observe')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_step')).toBe(false)
+  })
+
   it('advertises every Mesh Canvas action to Ask as an approval-queued instrument', () => {
     for (const tool of MESH_MCP_TOOL_NAMES) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
@@ -448,6 +461,8 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
     expect(isPlanAdvertisedTool('canvas_scroll')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_hover')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_select')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_step')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_observe')).toBe(false)
     expect(isPlanAdvertisedTool('canvas_wait_for')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_sketch_update')).toBe(true)
     for (const tool of MEDIA_EDITING_TOOLS) {

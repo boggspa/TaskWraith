@@ -350,6 +350,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'creative_midi_dispatch',
         'creative_timeline_import',
         'delete_path',
+        'emulator_step',
         'get_diagnostics',
         'git_commit',
         'git_create_pr',
@@ -500,6 +501,9 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('simulator_open', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('simulator_boot', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('simulator_screenshot', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('emulator_open', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('emulator_observe', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('emulator_step', ro)).toBe(true)
     expect(classifyTool('canvas_sketch_open')).toBe('orchestration')
     expect(isReadOnlyBlockedTool('canvas_sketch_open', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('canvas_sketch_get', ro)).toBe(false)
