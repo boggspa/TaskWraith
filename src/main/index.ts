@@ -152,7 +152,10 @@ import {
   KimiMeshApprovalRelay,
   kimiMeshArgumentsFromAcpToolCall
 } from './kimi/KimiMeshApprovalRelay'
-import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from './kimi/KimiAcpUsage'
+import {
+  estimateKimiAcpTokenUsage,
+  kimiAcpVisiblePayloadChars
+} from '../host-shared/KimiAcpUsage'
 import { createAcpTurnAbortController, type AcpSessionConfigSelection } from './acp/AcpTurnClient'
 import type {
   CodexRunState,

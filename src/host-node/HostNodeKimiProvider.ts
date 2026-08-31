@@ -22,13 +22,19 @@ import {
   validateHostProviderRunPrompt
 } from '../host-runtime/HostProviderRunPort'
 import {
+  hostKimiManagedFallbackRows,
   hostProviderAuthFlows,
   hostProviderCatalogEntry,
+  hostProviderKimiOffers,
   hostProviderOffers
 } from '../host-shared/HostProviderCatalog'
+import {
+  discoverKimiManagedModelRows,
+  type KimiManagedModelRow
+} from '../host-shared/kimi/KimiManagedModelCatalog'
 import { kimiExplicitCliModelAlias } from '../shared/kimiModels'
 import { buildHostToolPresentation } from '../shared/hostToolPresentation'
-import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../main/kimi/KimiAcpUsage'
+import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../host-shared/KimiAcpUsage'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -52,7 +58,8 @@ import type {
 } from './HostNodeProvider'
 import {
   createHostAcpSessionConfigApplicator,
-  hostAcpModelAndEffortSelections
+  hostAcpModelAndEffortSelections,
+  readHostAcpAdvertisedConfigOptions
 } from './HostNodeAcpSessionConfig'
 import {
   createHostNodeAcpTurnCompletion,
@@ -86,6 +93,12 @@ export interface HostNodeKimiProviderOptions {
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   /** Non-secret configured-state probe; explicit resource auth wins when known. */
   readonly isConfigured?: () => boolean | Promise<boolean>
+  /** Seat-isolated Kimi home used only to read credential-free model tables. */
+  readonly kimiHome?: string
+  /** Override managed-catalog discovery. `null` keeps the static Host fallback. */
+  readonly discoverManagedModels?: (
+    fallbackRows: readonly KimiManagedModelRow[]
+  ) => Promise<KimiManagedModelRow[] | null>
 }
 
 function hasConfiguredKimiCredential(): boolean {
@@ -232,13 +245,34 @@ function interactionDecision(decision: string): 'allow' | 'deny' | 'cancel' {
 class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
   readonly providerId = PROVIDER_ID
   private readonly activeRuns = new Map<string, ActiveRun>()
+  private liveOffers: HostProviderOffersProjection
 
   constructor(
     private readonly runPort: HostProviderRunPort,
     private readonly interactions: HostNodeInteractionResolver,
-    private readonly offers: HostProviderOffersProjection,
+    offers: HostProviderOffersProjection,
     private readonly options: HostNodeKimiProviderOptions
-  ) {}
+  ) {
+    this.liveOffers = offers
+  }
+
+  async getOffers(): Promise<HostProviderOffersProjection> {
+    const fallback = hostKimiManagedFallbackRows()
+    let discovered: KimiManagedModelRow[] | null = null
+    try {
+      discovered = this.options.discoverManagedModels
+        ? await this.options.discoverManagedModels(fallback)
+        : await discoverKimiManagedModelRows(
+            this.options.kimiHome ?? join(homedir(), '.kimi-code'),
+            fallback
+          )
+    } catch {
+      discovered = null
+    }
+    const gated = hostProviderKimiOffers(true, discovered)
+    if (gated) this.liveOffers = gated
+    return this.liveOffers
+  }
 
   private get resources(): HostNodeProviderResourcePort {
     return this.options.resources ?? createHostNodeProviderResourcePort(PROVIDER_ID)
@@ -315,10 +349,11 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
       throw new Error(PROVIDER_DISPLAY_NAME + ' prompt must be bounded and control-free.')
     }
     const thread = normalizeHostProviderRunThread(this.runPort.getThread(request.threadId))
+    const selectableOffers = await this.getOffers()
     if (
       !thread ||
       thread.providerId !== PROVIDER_ID ||
-      !providerModelIsSelectable(this.offers, thread)
+      !providerModelIsSelectable(selectableOffers, thread)
     ) {
       throw new Error(PROVIDER_DISPLAY_NAME + ' thread configuration is not selectable.')
     }
@@ -481,11 +516,26 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
         onComplete: sendPrompt
       })
       const applySessionConfig = (result: unknown): void => {
+        const desiredModel = kimiExplicitCliModelAlias(thread.modelId)
+        const advertised = readHostAcpAdvertisedConfigOptions(result)
+        const modelOption = advertised.find((option) => option.id === 'model')
+        if (
+          modelOption &&
+          modelOption.values.length > 0 &&
+          !modelOption.values.includes(desiredModel)
+        ) {
+          failure =
+            'Kimi ACP session does not offer selected model "' +
+            desiredModel +
+            '"; refusing to fall back to another alias.'
+          completion.requestStop()
+          return
+        }
         sessionConfig.begin({
           sessionId,
           result,
           selections: hostAcpModelAndEffortSelections({
-            modelValue: kimiExplicitCliModelAlias(thread.modelId),
+            modelValue: desiredModel,
             reasoningId: thread.reasoningId
           })
         })

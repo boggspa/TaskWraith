@@ -3,7 +3,11 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { deriveChatRecordMutation } from './ChatRecordMutation'
-import { createIncrementalChatJournal, type IncrementalChatJournal } from './IncrementalChatJournal'
+import {
+  createIncrementalChatJournal,
+  MAX_PENDING_DEFERRED_FSYNCS,
+  type IncrementalChatJournal
+} from './IncrementalChatJournal'
 import type { ChatRecord } from './types'
 
 function chat(chatId = 'chat-1', revision = 1, content = 'initial'): ChatRecord {
@@ -184,6 +188,40 @@ describe('IncrementalChatJournal', () => {
       deferred.append(deriveChatRecordMutation(third, fourth), { durability: 'deferred' })
       expect(captured).toHaveLength(2)
       captured[1].done(null)
+    })
+
+    it('falls back to a synchronous fsync once 64 deferred flushes are pending', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      let current = chat()
+      deferred.initialize('chat-1', current)
+      for (let i = 0; i < MAX_PENDING_DEFERRED_FSYNCS; i += 1) {
+        const next = advance(current, `streamed ${i}`)
+        deferred.append(deriveChatRecordMutation(current, next), { durability: 'deferred' })
+        current = next
+      }
+      expect(captured).toHaveLength(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.stats().deferredAppends).toBe(MAX_PENDING_DEFERRED_FSYNCS)
+
+      const overflow = advance(current, 'saturated sync fallback')
+      deferred.append(deriveChatRecordMutation(current, overflow), { durability: 'deferred' })
+      expect(captured).toHaveLength(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.stats().deferredAppends).toBe(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.replay('chat-1').record).toEqual(overflow)
+
+      for (const pending of captured) pending.done(null)
+    })
+
+    it('replays D1 bytes after a restart even when the deferred fsync never completed', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const after = advance(before, 'unflushed stream')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, after), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+
+      const recovered = createIncrementalChatJournal(baseDir, { now: () => nowMs })
+      expect(recovered.replay('chat-1').record).toEqual(after)
+      captured[0].done(null)
     })
 
     it('drains deferred flushes before a shutdown checkpoint', () => {

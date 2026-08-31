@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   hasHostProviderCatalogEntry,
+  hostKimiManagedFallbackRows,
   hostProviderAuthFlows,
   hostProviderCatalogEntry,
   hostProviderCatalogIds,
+  hostProviderKimiOffers,
   hostProviderOffers,
   hostProviderStatus,
   projectHostProviderOfferCapabilities
@@ -225,6 +227,57 @@ describe('HostProviderCatalog', () => {
         { reasoningId: 'high', label: 'High', available: true },
         { reasoningId: 'max', label: 'Max', available: true }
       ])
+    }
+  })
+
+  it('keeps the static Kimi picker when managed discovery is unavailable', () => {
+    const fallback = hostProviderOffers('kimi', true)
+    const gated = hostProviderKimiOffers(true, null)
+    expect(gated).toEqual(fallback)
+    expect(hostKimiManagedFallbackRows().map((row) => row.id)).toEqual([
+      'kimi-k2.7-code',
+      'kimi-k3',
+      'kimi-k3-256k'
+    ])
+  })
+
+  it('gates Host Kimi offers to verified managed rows without remapping aliases', () => {
+    const gated = hostProviderKimiOffers(true, [
+      {
+        id: 'kimi-k3',
+        label: 'K3 (plan-capped 256K)',
+        description: 'K3 route - 256K limit on this Kimi plan - Low, High, or Max thinking',
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'max' },
+          { reasoningEffort: 'invented' }
+        ]
+      },
+      {
+        id: 'kimi-k2.7-code',
+        label: 'K2.7 Coding',
+        disabled: true
+      }
+    ])
+    expect(gated?.models.map((model) => model.modelId)).toEqual(['kimi-k3'])
+    expect(gated?.models[0]).toMatchObject({
+      label: 'K3 (plan-capped 256K)',
+      default: true,
+      reasoning: [
+        { reasoningId: 'low', label: 'Low', available: true },
+        { reasoningId: 'max', label: 'Max', available: true }
+      ]
+    })
+    expect(gated?.models.some((model) => model.modelId === 'kimi-k2.7-code')).toBe(false)
+    expect(gated?.offerRevision).not.toBe(hostProviderOffers('kimi', true)?.offerRevision)
+  })
+
+  it('does not change Grok, Mistral, Codex, Claude, or Cursor offers', () => {
+    for (const providerId of ['grok', 'mistral', 'codex', 'claude', 'cursor']) {
+      const offers = hostProviderOffers(providerId, true)
+      expect(offers?.providerId).toBe(providerId)
+      expect(offers?.models.length).toBeGreaterThan(0)
+      expect(offers?.models.every((model) => model.available)).toBe(true)
     }
   })
 

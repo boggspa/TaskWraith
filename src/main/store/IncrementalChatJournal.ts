@@ -11,6 +11,8 @@ import type { ChatRecord } from './types'
 
 export const INCREMENTAL_CHAT_CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint' as const
 export const INCREMENTAL_CHAT_CHECKPOINT_VERSION = 1 as const
+/** Backpressure bound for D1 deferred fsyncs. Saturation falls back to sync. */
+export const MAX_PENDING_DEFERRED_FSYNCS = 64
 
 export type IncrementalChatCheckpointReason =
   | 'initial'
@@ -248,10 +250,6 @@ export function createIncrementalChatJournal(
   const pendingDeferredByPath = new Map<string, Set<PendingDeferredFsync>>()
   const fsyncEscalatedChatIds = new Set<string>()
   let pendingDeferredCount = 0
-  /** Backpressure bound: an unbounded queue in front of fsync is how this
-   * layer once produced a 44 GB artifact. Saturation falls back to sync. */
-  const MAX_PENDING_DEFERRED_FSYNCS = 64
-
   if (canWrite()) fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
 
   const assertChatId = (chatId: string): void => {

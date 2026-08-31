@@ -910,3 +910,53 @@ These are **not** architecture freezes; they are calibration/measurement items:
 | Work/Review seats | Implement only after gate + explicit writeScopes; no production tranche until T2 authoritative artifact. |
 
 **Next action after this amendment lands:** Boss reviews this commit; Captain updates ledger to ADR-freeze-closed; harness owners implement §7.3 correctness/capability fields + baseline-class scale; then T2 clean-worktree HEAD baseline.
+
+---
+
+## 17. 2026-08-30 Host follow-up reconciliation (T3a/T3b/T3c)
+
+This is an honesty amendment, not a performance claim. T1/T2 authoritative artifacts are still absent from this checkout (`docs/performance/` has no `authoritativeBaseline` report). Do not treat any T3 timing number as official.
+
+### T3a — coalescer leftover; live D1/D2 is the T4 journal
+
+Landed and still true:
+
+- Per-chat `saveCoalescer` exists and unit-tests barrier bypass, discard-on-delete, and the trailing window. Production streaming no longer schedules it for `normal` saves (`legacyWriteReason !== 'normal'` after T4).
+- Fan-out seed batching (`98da30050`) still prevents N-lane dispatch from multiplying the first composed save.
+- Live durability is `IncrementalChatPersistence` / `IncrementalChatJournal`: user/run/approval/terminal appends are `immediate`; pure assistant/tool stream is `deferred`.
+- `MAX_PENDING_DEFERRED_FSYNCS = 64` is now exported and covered: the 65th deferred append falls back to a synchronous fsync. Restart replay still sees D1 bytes that were written but not yet fsynced in-process.
+
+Still open (do not close T3a as ADR-complete):
+
+- No UsageJournal-style crash-injection that kills between write and kernel fsync and measures ≤ D1-budget loss on a new process.
+- `durableAckClassMismatchCount` is still schema-only; nothing increments it.
+- Compatibility `chats/<id>.json` still lags mid-run user messages; recovery depends on V2 replay.
+
+### T3b — hot/archive split landed; archive rewrite and skip-not-queue remain
+
+Landed: `session-checkpoints.json` is the available hot set; `session-checkpoints-archive.jsonl` holds non-available records; legacy mixed-status files migrate; purge covers both; crash-window tests exist.
+
+Still open:
+
+- `persistOrThrow` still rewrites the **full** archive on every persist rather than appending only newly terminal records.
+- No `fsync` on checkpoint files.
+- Orchestrator `participant-updated` **skips** persist while the round runs; there is no latest-wins pending queue and therefore no pending bound/drain.
+- Schema remains v1.
+
+### T3c — JSONL + summary files, not frozen per-chat `ChatListItemV2` shards
+
+Landed: `ChatListIndexStore` append-only JSONL + `chat-list-summaries/{chatId}.json`; lean ensemble projection; tombstone+compact deletion; read-only legacy JSON load without mutating bytes.
+
+Now also proven:
+
+- Writable legacy migrate creates JSONL + summaries, unlinks `chat-list-index.json`, and a new store instance reads the same title/`lastRun`.
+- Torn JSONL lines are skipped; last-line-wins survives restart.
+
+Still open (do not close T3c as the frozen §5.5 shard DTO):
+
+- `ChatListItem` still extends `ChatRecord`; `ensembleLite` DTO is not landed.
+- Index remains one global JSONL (compaction rewrites it), not one shard file per chat.
+- `shouldWriteChatListIndexItem` (15 s volatile throttle) has no direct unit test.
+- No T1/T2-backed write-byte claim.
+
+Host saturation (this same follow-up) is **not** the persistence 64-pending fallback. It is a Host-wide `composer.send` admission cap (`HOST_NODE_MAX_CONCURRENT_RUNS` / `HOST_NODE_MAX_QUEUED_STARTS`) that refuses with `host_saturated` / `host_shutting_down` / `thread_busy` and never changes provider offers or permission posture.

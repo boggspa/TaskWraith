@@ -73,6 +73,7 @@ import {
 import type { HostNodeProvider } from './HostNodeProvider'
 import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
+import { createHostNodeRunAdmission, type HostNodeRunAdmission } from './HostNodeRunAdmission'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
 const HOST_RESUME_FALLBACK_MAX_CHARS = 16_000
@@ -134,6 +135,10 @@ export interface HostNodeDomainPortsOptions {
   readonly onProjectionDirty?: () => void
   /** Required for standalone Full Access; lower postures remain compatible without it. */
   readonly permissionConsentAuthority?: HostPermissionConsentAuthorityPort
+  /** Host-wide concurrent provider-run cap. Tests inject a small bound. */
+  readonly maxConcurrentRuns?: number
+  /** Bounded waiter limit for starts that cannot admit yet. Overflow rejects. */
+  readonly maxQueuedStarts?: number
 }
 
 type AuthOperation = {
@@ -154,8 +159,8 @@ function isCanonicalId(value: unknown): value is string {
   )
 }
 
-function failed(errorCode: string): HostCommandExecutionResult {
-  return { status: 'failed', errorCode }
+function failed(errorCode: string, errorMessage?: string): HostCommandExecutionResult {
+  return { status: 'failed', errorCode, ...(errorMessage ? { errorMessage } : {}) }
 }
 
 function localContext(context: HostAuthorityCallContext, command: HostCommand): boolean {
@@ -377,6 +382,7 @@ export class HostNodeDomainPorts {
   private readonly profileRecordExecutor: HostProfileRecordCommandExecutor
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
+  private readonly runAdmission: HostNodeRunAdmission
   private readonly now: () => number
   private shutdownPromise: Promise<{
     readonly stopped: true
@@ -386,6 +392,12 @@ export class HostNodeDomainPorts {
 
   constructor(private readonly options: HostNodeDomainPortsOptions) {
     this.now = options.now ?? (() => Date.now())
+    this.runAdmission = createHostNodeRunAdmission({
+      ...(options.maxConcurrentRuns !== undefined
+        ? { maxConcurrentRuns: options.maxConcurrentRuns }
+        : {}),
+      ...(options.maxQueuedStarts !== undefined ? { maxQueuedStarts: options.maxQueuedStarts } : {})
+    })
     this.profileRecordExecutor = new HostProfileRecordCommandExecutor({
       ...(options.profilePath ? { profilePath: options.profilePath } : {}),
       store: options.store
@@ -658,6 +670,14 @@ export class HostNodeDomainPorts {
     }
   }
 
+  /** Occupancy of the Host-wide run gate: admitted starts plus bounded waiters. */
+  runAdmissionOccupancy(): { readonly inflight: number; readonly queued: number } {
+    return {
+      inflight: this.runAdmission.inflightCount(),
+      queued: this.runAdmission.queuedCount()
+    }
+  }
+
   /** Cancels and awaits active provider children before profile-lease release. */
   shutdown(): Promise<{
     readonly stopped: true
@@ -671,6 +691,7 @@ export class HostNodeDomainPorts {
         cancelledRuns: 0
       }))
     }
+    this.runAdmission.beginShutdown()
     this.shutdownPromise = this.awaitShutdown()
     return this.shutdownPromise
   }
@@ -846,6 +867,13 @@ export class HostNodeDomainPorts {
 
     if (command.name === 'run.cancel') {
       const expectedWorkId = decoded.value.arguments.expectedWorkId
+      const cancelledQueued = this.runAdmission.cancelQueued({
+        threadId: command.target.threadId,
+        ...(typeof expectedWorkId === 'string' ? { commandId: expectedWorkId } : {})
+      })
+      if (cancelledQueued > 0) {
+        return { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
+      }
       const outcome = this.runPort.cancelThread(
         command.target.threadId,
         typeof expectedWorkId === 'string' ? expectedWorkId : undefined
@@ -915,15 +943,31 @@ export class HostNodeDomainPorts {
     )
     const profileThread = this.options.store.getThread(command.target.threadId)
 
-    const completion = provider.run({
-      runId: command.commandId,
-      threadId: command.target.threadId,
-      prompt,
-      ...(thread.providerId === 'kimi' && profileThread
-        ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
-        : {}),
-      target
+    const admission = await this.runAdmission.acquire({
+      commandId: command.commandId,
+      threadId: command.target.threadId
     })
+    if (admission.kind === 'rejected') {
+      return failed(admission.errorCode, admission.errorMessage)
+    }
+    const lease = admission.lease
+
+    let completion: ReturnType<typeof provider.run>
+    try {
+      completion = provider.run({
+        runId: command.commandId,
+        threadId: command.target.threadId,
+        prompt,
+        ...(thread.providerId === 'kimi' && profileThread
+          ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
+          : {}),
+        target
+      })
+    } catch {
+      lease.release()
+      this.terminalizeRejectedStart(command.commandId, command.target.threadId)
+      return failed('run_not_started')
+    }
     const tracked = completion
       .catch(() => {
         this.terminalizeRejectedStart(command.commandId, command.target.threadId)
@@ -935,7 +979,10 @@ export class HostNodeDomainPorts {
         )
       })
     this.runCompletions.set(command.commandId, tracked)
-    void tracked.finally(() => this.runCompletions.delete(command.commandId))
+    void tracked.finally(() => {
+      this.runCompletions.delete(command.commandId)
+      lease.release()
+    })
     await Promise.resolve()
     if (
       !this.hasPersistedStart(command.commandId, command.target.threadId, command.arguments.text)
@@ -1332,6 +1379,7 @@ export class HostNodeDomainPorts {
     readonly cancelledRuns: number
   }> {
     this.fullAccessGrants.clear()
+    this.runAdmission.beginShutdown()
     const cancelledRuns = this.runPort.cancelAll()
     const completions = [...this.runCompletions.values()]
     await Promise.all([this.registry.shutdown(), this.interactions.shutdown()])

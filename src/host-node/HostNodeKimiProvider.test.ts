@@ -8,6 +8,7 @@ import type {
   HostProviderRunThread
 } from '../host-runtime/HostProviderRunPort'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import type { KimiManagedModelRow } from '../host-shared/kimi/KimiManagedModelCatalog'
 import type { HostNodeProviderCreateInput } from './HostNodeProvider'
 import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 
@@ -59,6 +60,9 @@ function open(
     }
     readonly configuredThread?: HostProviderRunThread
     readonly interactions?: HostNodeInteractionResolver
+    readonly discoverManagedModels?: (
+      fallbackRows: readonly KimiManagedModelRow[]
+    ) => Promise<KimiManagedModelRow[] | null>
   } = {}
 ) {
   const appends: unknown[] = []
@@ -92,6 +96,7 @@ function open(
     },
     ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
+    discoverManagedModels: input.discoverManagedModels ?? (async () => null),
     spawn
   })
   const instance = factory.create({
@@ -339,9 +344,9 @@ describe('HostNodeKimiProvider', () => {
       target: { id: 'client' }
     })
 
-    await vi.waitFor(() => events.some((event) => event.type === 'run.started'))
+    await vi.waitFor(() => expect(events.some((event) => event.type === 'run.started')).toBe(true))
     child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
-    await vi.waitFor(() => events.some((event) => event.type === 'run.status'))
+    await vi.waitFor(() => expect(events.some((event) => event.type === 'run.status')).toBe(true))
     child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-edit' } }) + '\n')
     child.stdout.write(
       JSON.stringify({
@@ -401,7 +406,9 @@ describe('HostNodeKimiProvider', () => {
       }) + '\n'
     )
 
-    await vi.waitFor(() => events.filter((event) => event.type === 'run.tool').length === 4)
+    await vi.waitFor(() =>
+      expect(events.filter((event) => event.type === 'run.tool')).toHaveLength(4)
+    )
     const toolEvents = events.filter((event) => event.type === 'run.tool')
     expect(toolEvents).toEqual([
       expect.objectContaining({
@@ -570,6 +577,73 @@ describe('HostNodeKimiProvider', () => {
     await expect(
       instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
     ).rejects.toThrow(/configuration is not selectable/)
+  })
+
+  it('keeps the static Kimi catalog when managed discovery is unavailable', async () => {
+    const { instance } = open({ discoverManagedModels: async () => null })
+    const offers = await instance.getOffers?.()
+    expect(offers?.models.map((model) => model.modelId)).toEqual([
+      'kimi-k2.7-code',
+      'kimi-k3',
+      'kimi-k3-256k'
+    ])
+  })
+
+  it('omits unverified K3 routes instead of remapping them onto K2.7', async () => {
+    const { instance } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' }),
+      discoverManagedModels: async (fallback) =>
+        fallback.filter((row) => row.id === 'kimi-k2.7-code')
+    })
+    const offers = await instance.getOffers?.()
+    expect(offers?.models.map((model) => model.modelId)).toEqual(['kimi-k2.7-code'])
+    await expect(
+      instance.run({ runId: 'run-stale-k3', threadId: 'thread-1', prompt: 'hello', target: {} })
+    ).rejects.toThrow(/configuration is not selectable/)
+  })
+
+  it('rejects a K3 thread when the ACP session only advertises K2.7', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-k3-no-fallback',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-stale',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'kimi-code/kimi-for-coding',
+              options: [{ value: 'kimi-code/kimi-for-coding' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    expect(sent.join('')).not.toContain('"method":"session/set_config_option"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringMatching(/does not offer selected model "kimi-code\/k3"/)]
+      })
+    ])
   })
   it('registers an ACP permission and resumes its exact request once after approval', async () => {
     let settle!: (value: {

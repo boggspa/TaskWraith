@@ -364,6 +364,55 @@ describe('ChatListIndexStore cache + projection', () => {
     expect(fs.existsSync(missingDir)).toBe(false)
   })
 
+  it('migrates a writable legacy index to JSONL and summaries, then survives restart', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    const jsonlPath = path.join(dir, 'chat-list-index.jsonl')
+    const item = makeItem('chat-legacy', {
+      title: 'Legacy chat',
+      lastRun: {
+        runId: 'run-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        endedAt: '2026-01-01T00:01:00.000Z'
+      },
+      runsSummary: [
+        {
+          runId: 'run-1',
+          diffFileCount: 0
+        }
+      ]
+    })
+    fs.writeFileSync(legacyPath, JSON.stringify({ 'chat-legacy': item }), 'utf-8')
+
+    const migrated = new ChatListIndexStore(dir)
+    expect(migrated.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(migrated.readEntry('chat-legacy')?.lastRun?.runId).toBe('run-1')
+    expect(fs.existsSync(jsonlPath)).toBe(true)
+    expect(fs.existsSync(legacyPath)).toBe(false)
+
+    const restarted = new ChatListIndexStore(dir)
+    expect(restarted.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(restarted.readEntry('chat-legacy')?.lastRun?.runId).toBe('run-1')
+    expect(fs.existsSync(legacyPath)).toBe(false)
+  })
+
+  it('skips a torn JSONL line and keeps the last good last-line-wins entry across restart', () => {
+    const jsonlPath = path.join(dir, 'chat-list-index.jsonl')
+    const good = makeItem('chat-keep', { title: 'Keep me' })
+    fs.writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({ chatId: 'chat-keep', entry: good })}\n{"torn":\n${JSON.stringify({
+        chatId: 'chat-keep',
+        entry: makeItem('chat-keep', { title: 'Latest good' })
+      })}\n`,
+      'utf-8'
+    )
+
+    const first = new ChatListIndexStore(dir)
+    expect(first.readEntry('chat-keep')?.title).toBe('Latest good')
+    const restarted = new ChatListIndexStore(dir)
+    expect(restarted.readAll()['chat-keep']?.title).toBe('Latest good')
+  })
+
   it('reads an unmigrated legacy index in memory without migrating or changing durable bytes', () => {
     const legacyPath = path.join(dir, 'chat-list-index.json')
     const legacy = { 'chat-legacy': makeItem('chat-legacy', { title: 'Legacy chat' }) }

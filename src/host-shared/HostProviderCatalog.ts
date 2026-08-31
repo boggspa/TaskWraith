@@ -24,6 +24,7 @@ import {
   KIMI_K3_MODEL_ID,
   KIMI_K3_MODEL_LABEL
 } from '../shared/kimiModels'
+import type { KimiManagedModelRow } from './kimi/KimiManagedModelCatalog'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderModelOffer,
@@ -509,4 +510,118 @@ export function hostProviderCatalogIds(): readonly string[] {
 /** True when the catalog has a static entry for this provider. */
 export function hasHostProviderCatalogEntry(providerId: string): boolean {
   return providerId in CATALOG
+}
+
+const KIMI_REASONING_LABELS: Readonly<Record<string, string>> = {
+  on: 'On',
+  low: 'Low',
+  high: 'High',
+  max: 'Max'
+}
+
+/** Static Host Kimi rows used as discovery fallback and projector input. */
+export function hostKimiManagedFallbackRows(): KimiManagedModelRow[] {
+  return (CATALOG.kimi?.models ?? []).map((model) => ({
+    id: model.modelId,
+    label: model.label,
+    isDefault: model.default === true,
+    supportedReasoningEfforts: model.reasoning.map((option) => ({
+      reasoningEffort: option.reasoningId
+    })),
+    defaultReasoningEffort: model.modelId === KIMI_K27_MODEL_ID ? 'on' : 'high'
+  }))
+}
+
+function kimiReasoningOffers(
+  fallback: HostProviderModelOffer,
+  row: KimiManagedModelRow
+): readonly HostProviderModelOffer['reasoning'][number][] {
+  const known = new Map(fallback.reasoning.map((option) => [option.reasoningId, option]))
+  const enabled = (row.supportedReasoningEfforts ?? [])
+    .filter((effort) => !effort.disabled && known.has(effort.reasoningEffort))
+    .map((effort) => effort.reasoningEffort)
+  if (enabled.length === 0) return fallback.reasoning.map((option) => ({ ...option }))
+  return enabled.map((reasoningId) => {
+    const existing = known.get(reasoningId)!
+    return {
+      reasoningId: existing.reasoningId,
+      label: existing.label || KIMI_REASONING_LABELS[reasoningId] || reasoningId,
+      available: existing.available
+    }
+  })
+}
+
+function withSingleDefault(
+  models: readonly HostProviderModelOffer[]
+): readonly HostProviderModelOffer[] {
+  if (models.length === 0) return models
+  let seenDefault = false
+  const normalized = models.map((model) => {
+    if (model.default !== true) {
+      const { default: _ignored, ...rest } = model
+      void _ignored
+      return rest
+    }
+    if (seenDefault) {
+      const { default: _ignored, ...rest } = model
+      void _ignored
+      return rest
+    }
+    seenDefault = true
+    return { ...model, default: true as const }
+  })
+  if (seenDefault) return normalized
+  const [first, ...rest] = normalized
+  return [{ ...first, default: true }, ...rest]
+}
+
+/**
+ * Kimi-only live catalog gate. Discovery unavailable (`null`) keeps the static
+ * Host fallback. Verified managed rows replace the picker; omitted, disabled,
+ * or mismatched aliases are not selectable and never remap onto another model.
+ */
+export function hostProviderKimiOffers(
+  available: boolean,
+  discovered: readonly KimiManagedModelRow[] | null,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection | null {
+  const base = hostProviderOffers('kimi', available, capabilities)
+  if (!base) return null
+  if (discovered == null) return base
+
+  const byId = new Map(discovered.map((row) => [row.id, row]))
+  const models = base.models.flatMap((model) => {
+    const row = byId.get(model.modelId)
+    if (!row || row.disabled) return []
+    return [
+      {
+        modelId: model.modelId,
+        label: row.label || model.label,
+        available: model.available && available,
+        ...(row.isDefault === true ? { default: true as const } : {}),
+        reasoning: kimiReasoningOffers(model, row).map((option) => ({
+          ...option,
+          available: option.available && available
+        })),
+        ...(row.description ? { detail: row.description } : {})
+      }
+    ]
+  })
+  if (models.length === 0) return base
+
+  const gatedModels = withSingleDefault(models)
+  const entry = CATALOG.kimi
+  if (!entry) return base
+  return {
+    providerId: 'kimi',
+    offerRevision: hashEntry({
+      displayProvider: entry.displayProvider,
+      shortCode: entry.shortCode,
+      models: gatedModels,
+      postures: base.postures,
+      authFlows: entry.authFlows
+    }),
+    models: gatedModels,
+    postures: base.postures.map((posture) => ({ ...posture }))
+  }
 }

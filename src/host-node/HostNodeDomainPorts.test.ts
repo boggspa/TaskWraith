@@ -1829,4 +1829,197 @@ describe('HostNodeDomainPorts', () => {
     })
     await expect(run2).resolves.toMatchObject({ id: 'ap-2', decision: 'accept' })
   })
+
+  it('rejects over-capacity composer.send without starting a provider or appending a prompt', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 0,
+      shutdownTimeoutMs: 1_000
+    })
+    const offersBefore = domain.registry.getOffers('muse')
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-cap-1', { threadId: firstThread.appChatId }, { text: 'first' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-cap-2',
+          { threadId: secondThread.appChatId },
+          { text: 'overflow prompt' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'host_saturated',
+      errorMessage: expect.stringMatching(/concurrent run capacity \(1\)/)
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+    expect(store.getThread(secondThread.appChatId)?.messages ?? []).toEqual([])
+    expect(domain.registry.getOffers('muse')).toEqual(offersBefore)
+    releaseRun()
+    await domain.shutdown()
+  })
+
+  it('queues one extra start, recovers the slot, and cancels a waiter without silent loss', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const thirdThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread, thirdThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-hold', { threadId: firstThread.appChatId }, { text: 'hold' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-queued',
+        { threadId: secondThread.appChatId },
+        { text: 'queued prompt' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() => expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 }))
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-overflow',
+          { threadId: thirdThread.appChatId },
+          { text: 'overflow' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+    expect(store.getThread(thirdThread.appChatId)?.messages ?? []).toEqual([])
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'run.cancel',
+          'cmd-cancel-queued',
+          { threadId: secondThread.appChatId },
+          { expectedWorkId: 'run-queued' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'run_start_cancelled'
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+
+    releaseRun()
+    await vi.waitFor(() =>
+      expect(store.getThread(firstThread.appChatId)?.runs).toEqual([
+        expect.objectContaining({ runId: 'run-hold', status: 'completed' })
+      ])
+    )
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-recovered',
+          { threadId: thirdThread.appChatId },
+          { text: 'recovered' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await domain.shutdown()
+  })
+
+  it('rejects queued composer.send on shutdown instead of dropping the waiter', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-live', { threadId: firstThread.appChatId }, { text: 'live' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-shutdown-queue',
+        { threadId: secondThread.appChatId },
+        { text: 'should not start' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() => expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 }))
+    const stopping = domain.shutdown()
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'host_shutting_down'
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+    releaseRun()
+    await expect(stopping).resolves.toMatchObject({ stopped: true })
+  })
 })
