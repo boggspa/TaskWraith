@@ -40533,17 +40533,15 @@ async function executeGeminiMcpTool(
           }
         }
       )
-      // Append the result message to the transcript so the user
-      // sees the brief was recorded (or rejected) without diving
-      // into raw logs.
-      if (briefResult.message) {
-        const transcriptEvent =
-          briefResult.ok && recordedBrief
-            ? buildScoutBriefSharedTranscriptEvent(
-                recordedBrief,
-                ensembleOrchestratorRef?.getParticipantMetaForRun(runId) || undefined
-              )
-            : { content: briefResult.message, metadata: undefined }
+      // Append the recorded brief to the transcript so the user sees it
+      // without diving into raw logs. Rejected briefs stay out of the
+      // transcript; the tool result already returns the error to the
+      // caller and McpResultRepairHints renders the dedicated repair card.
+      if (briefResult.ok && recordedBrief) {
+        const transcriptEvent = buildScoutBriefSharedTranscriptEvent(
+          recordedBrief,
+          ensembleOrchestratorRef?.getParticipantMetaForRun(runId) || undefined
+        )
         ensembleOrchestratorRef?.appendStatusForRun(
           runId,
           transcriptEvent.content,
