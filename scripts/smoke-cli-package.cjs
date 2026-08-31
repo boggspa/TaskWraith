@@ -100,7 +100,7 @@ function main() {
       run(taskwraith, ['--demo', '--snapshot', '--ascii', '--no-color'], { env }),
       'taskwraith demo snapshot'
     )
-    if (!demo.includes('TASKWRAITH')) throw new Error('packaged TUI demo did not render')
+    if (!demo.includes('Ask TaskWraith')) throw new Error('packaged TUI demo did not render')
 
     const live = requireSuccess(
       run(taskwraith, ['--snapshot', '--ascii', '--no-color'], { env, timeout: 180_000 }),
