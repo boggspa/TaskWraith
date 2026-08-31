@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Reproducible source inputs for the fixed homebrew emulator proof; no packaged browser assets are included here.",
+  "source": {
+    "host": {
+      "path": "twemu_host.c",
+      "license": "Apache-2.0",
+      "sha256": "bd4e2f2e420d91a2e95a619acfe962ed2199842068a15fca7f48682c4e1345b7"
+    },
+    "fixture": {
+      "root": "fixture",
+      "license": "MIT",
+      "licensePath": "fixture/LICENSE",
+      "licenseSha256": "e7eb982b2ff9dc303bfcb68ee2046667d6c745001f9785ce02d7ba5b253ddeee",
+      "files": {
+        "Makefile": "5728a940d4ba09f2ee7b9bb7cffe128fd09395066e779b6c3121dd8cf36b02c0",
+        "src/hardware.inc": "fceec9a80e137b652b8814094dbf1e0b3530e184f15983bef38d51f5dc09467f",
+        "src/main.asm": "6f1ad60dee29f0fb49aaf04d3ac3f26aab037e44f46654c47cae2e301238f56e"
+      },
+      "rom": {
+        "path": "taskwraith-fixture.gb",
+        "byteLength": 32768,
+        "sha256": "2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7",
+        "hardwareBootLogo": "omitted; SameBoy open-boot-compatible emulator fixture"
+      },
+      "abi": {
+        "magic": "TWGB",
+        "magicAddress": "0xC100",
+        "schemaVersion": 1,
+        "statusAddress": "0xC105",
+        "requiredStatus": "0x03",
+        "inputReady": {
+          "magic": "TWGB",
+          "schemaVersion": 1,
+          "status": "0x03",
+          "lastInput": 0,
+          "frameCounter": {
+            "minimumExclusive": 0
+          }
+        },
+        "state": {
+          "x": "0xC106:u8",
+          "y": "0xC107:u8",
+          "lastInput": "0xC108:u8 active-high",
+          "frameCounter": "0xC109:u32le"
+        }
+      }
+    }
+  },
+  "pins": {
+    "shippedCore": {
+      "repository": "https://github.com/libretro/SameBoy.git",
+      "ref": "buildbot",
+      "commit": "aa158a889a48b538a0302873704a34577c8eb67d",
+      "version": "0.15.4",
+      "license": "MIT",
+      "licenseSha256": "00b4b03270ea21b70b4b51fbc93c6eb43876e46ceb742e74918e459ea2481f21",
+      "object": {
+        "path": "libretro/sameboy_libretro_emscripten.bc",
+        "byteLength": 944291,
+        "sha256": "d22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611",
+        "makeArguments": ["-f", "Makefile", "platform=emscripten", "SHARED=-shared"]
+      }
+    },
+    "emscripten": {
+      "version": "3.1.46",
+      "emsdkCommit": "93360d3670018769b424e4e8f1d3d9b26d32c977",
+      "emscriptenSourceCommit": "19607820c447a13fd8d0b7680c56148427d6e1b8",
+      "license": "MIT OR NCSA"
+    },
+    "rgbds": {
+      "version": "1.0.3",
+      "platform": "darwin-universal",
+      "toolOnly": true,
+      "upstreamAsset": "https://github.com/gbdev/rgbds/releases/download/v1.0.3/rgbds-macos.zip",
+      "upstreamAssetSha256": "dc1804b187895c4e1b730ba9d4b476052979607e613113b72dc7a494f88c898e",
+      "executables": {
+        "rgbasm": "0ed0aa707ccb3eb7414a373e6096edd2150dcd1cb0e4fd31368895b2a1f77d37",
+        "rgbfix": "7eea220062e2f7200d7ffcce75870d1b09517b0cf10d478c9470bb3ad55ef423",
+        "rgblink": "99df96c530482d350e383b30a90a2b2d5b18890780561df9931430daf17d726e"
+      },
+      "license": "MIT"
+    }
+  },
+  "expectedBrowserArtifacts": {
+    "mjs": {
+      "path": "twgb.mjs",
+      "byteLength": 64092,
+      "sha256": "01550656c449f123de6f6519c0820433c3d48c1a9496e20d0a4d2dc6ffe26d6c"
+    },
+    "wasm": {
+      "path": "twgb.wasm",
+      "byteLength": 214835,
+      "sha256": "b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf"
+    },
+    "linkFlags": [
+      "-O3",
+      "-sMODULARIZE=1",
+      "-sEXPORT_ES6=1",
+      "-sEXPORT_NAME=createTwemu",
+      "-sENVIRONMENT=web",
+      "-sDYNAMIC_EXECUTION=0",
+      "-sEXIT_RUNTIME=0",
+      "-sALLOW_MEMORY_GROWTH=0",
+      "-sINITIAL_MEMORY=67108864",
+      "-sFILESYSTEM=1"
+    ],
+    "exports": [
+      "_main",
+      "_twemu_initialize",
+      "_twemu_step",
+      "_twemu_shutdown",
+      "_twemu_framebuffer_ptr",
+      "_twemu_framebuffer_width",
+      "_twemu_framebuffer_height",
+      "_twemu_frames_presented",
+      "_twemu_system_ram_ptr",
+      "_twemu_system_ram_size"
+    ]
+  },
+  "validationOnly": {
+    "sameboy": {
+      "repository": "https://github.com/LIJI32/SameBoy.git",
+      "commit": "208ba4afabffab9edde416f2dbb8ae459e34adb8",
+      "version": "1.0.3",
+      "purpose": "Native fixture validation only; never substitute this for the shipped libretro core pin."
+    }
+  }
+}
