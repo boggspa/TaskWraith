@@ -1,4 +1,5 @@
-import type { ProviderId } from '../../../main/store/types'
+import type { AgenticServiceId, ProviderId } from '../../../main/store/types'
+import type { ExactCommandRuleOfferView } from '../../../shared/commandRules'
 
 type AgentApprovalAction =
   | 'accept'
@@ -19,6 +20,7 @@ type AgentApprovalAction =
 interface AgentApprovalRequest {
   id: string
   provider: ProviderId
+  service?: AgenticServiceId
   appRunId?: string
   appChatId?: string
   method: string
@@ -34,5 +36,27 @@ const isNativeSubAgentPreferenceApproval = (request: AgentApprovalRequest | null
     request?.actions?.includes('useTaskWraithSubthread')
   )
 
+const exactCommandRuleOfferForApproval = (
+  request: AgentApprovalRequest | null | undefined
+): ExactCommandRuleOfferView | null => {
+  const offer = request?.preview?.exactCommandRuleOffer
+  if (
+    !offer ||
+    typeof offer !== 'object' ||
+    offer.kind !== 'brokered_shell_exact_argv' ||
+    offer.riskClass !== 'host_exact_unsandboxed' ||
+    offer.scope !== 'one_workspace_exact_argv' ||
+    typeof offer.offerId !== 'string' ||
+    !offer.offerId.trim() ||
+    typeof offer.fingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/i.test(offer.fingerprint) ||
+    typeof offer.cwdRelativePath !== 'string' ||
+    typeof offer.executableName !== 'string'
+  ) {
+    return null
+  }
+  return offer as ExactCommandRuleOfferView
+}
+
 export type { AgentApprovalAction, AgentApprovalRequest }
-export { isNativeSubAgentPreferenceApproval }
+export { exactCommandRuleOfferForApproval, isNativeSubAgentPreferenceApproval }

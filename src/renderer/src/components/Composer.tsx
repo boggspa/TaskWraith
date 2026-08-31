@@ -128,7 +128,10 @@ import {
 import { composedSeatRole, seatFromApprovalAttribution } from '../lib/transcriptSeat'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
-import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
+import {
+  exactCommandRuleOfferForApproval,
+  isNativeSubAgentPreferenceApproval
+} from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
@@ -1465,6 +1468,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     'acceptForWorkspace',
     approvalScopePresentationOptions
   )
+  const exactCommandRuleOffer = exactCommandRuleOfferForApproval(pendingAgentApproval)
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
     const approvalId = trustedSessionApprovalId
@@ -6023,18 +6027,40 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       Use TaskWraith Sub-thread
                     </PillButton>
                   )}
-                  {((pendingAgentApproval.actions || []).includes('acceptForWorkspace') ||
-                    (pendingAgentApproval.actions || ['acceptForSession']).includes(
-                      'acceptForSession'
-                    )) && (
+                  {(Boolean(exactCommandRuleOffer) ||
+                    (pendingAgentApproval.actions || []).includes('acceptForWorkspace') ||
+                    (!exactCommandRuleOffer &&
+                      (pendingAgentApproval.actions || ['acceptForSession']).includes(
+                        'acceptForSession'
+                      ))) && (
                     <div
                       className="composer-permission-scope-actions"
                       role="group"
-                      aria-label="Longer approval scopes"
+                      aria-label="Approval scope and allowlist options"
                     >
-                      {(pendingAgentApproval.actions || ['acceptForSession']).includes(
-                        'acceptForSession'
-                      ) && (
+                      {exactCommandRuleOffer && (
+                        <PillButton
+                          className="composer-permission-scope-action"
+                          variant="secondary"
+                          size="compact"
+                          type="button"
+                          title={`Add only this literal ${exactCommandRuleOffer.executableName} invocation to a revocable workspace allowlist. Future matches run outside a workspace sandbox and without workspace locks.`}
+                          onClick={() =>
+                            void handleAgentApprovalAction(
+                              pendingAgentApproval.id,
+                              'accept',
+                              undefined,
+                              exactCommandRuleOffer.offerId
+                            )
+                          }
+                        >
+                          Add exact command to Allowlist
+                        </PillButton>
+                      )}
+                      {!exactCommandRuleOffer &&
+                        (pendingAgentApproval.actions || ['acceptForSession']).includes(
+                          'acceptForSession'
+                        ) && (
                         <PillButton
                           className="composer-permission-scope-action"
                           variant="secondary"
@@ -6050,7 +6076,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         >
                           {approvalSessionScopePresentation.label}
                         </PillButton>
-                      )}
+                        )}
                       {(pendingAgentApproval.actions || []).includes(
                         'acceptForWorkspace'
                       ) && (

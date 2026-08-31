@@ -118,4 +118,52 @@ describe('CompactChatComposer', () => {
     expect(html).not.toContain('data-composer-style')
     expect(html).not.toContain('composer-inline-pickers')
   })
+
+  it('replaces the run-scoped shell action with an exact command allowlist affordance', () => {
+    const html = renderToStaticMarkup(
+      <CompactChatComposer
+        prompt=""
+        currentComposerChatId="chat-1"
+        currentChat={{ appChatId: 'chat-1' } as ChatRecord}
+        currentWorkspace={workspace}
+        isCurrentGlobalChat={false}
+        primaryGitSnapshot={snapshot}
+        workspaceDiffStats={{ filesChanged: 0, additions: 0, deletions: 0 }}
+        composerAreaRef={createRef<HTMLDivElement>()}
+        pendingAgentApproval={{
+          id: 'approval-1',
+          provider: 'codex',
+          service: 'shellCommands',
+          method: 'codex-mcp/run_shell_command',
+          title: 'Approve Codex shell command',
+          body: 'npm test',
+          actions: ['accept', 'acceptForSession', 'acceptForWorkspace', 'decline'],
+          preview: {
+            exactCommandRuleOffer: {
+              offerId: 'offer-1',
+              kind: 'brokered_shell_exact_argv',
+              fingerprint: 'a'.repeat(64),
+              cwdRelativePath: '.',
+              executableName: 'npm',
+              riskClass: 'host_exact_unsandboxed',
+              scope: 'one_workspace_exact_argv'
+            }
+          }
+        }}
+        setChatPromptDraft={vi.fn()}
+        handlePickImages={vi.fn()}
+        handleRun={vi.fn()}
+        handleCancel={vi.fn()}
+        handleAgentApprovalAction={vi.fn()}
+        isCurrentChatRunning={false}
+        isCurrentChatBusyForSteer={false}
+        isSteerBusyForCurrentChat={false}
+      />
+    )
+
+    expect(html).toContain('Allow once')
+    expect(html).toContain('Add exact command to Allowlist')
+    expect(html).toContain('Allow all shell commands in this workspace')
+    expect(html).not.toContain('Allow all shell commands for this run')
+  })
 })

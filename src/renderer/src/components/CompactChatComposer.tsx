@@ -2,8 +2,13 @@ import { useLayoutEffect, useRef, type KeyboardEvent, type RefObject } from 'rea
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { ChatRecord, WorkspaceRecord } from '../../../main/store/types'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import type { ComposerWorktreeSelection } from '../lib/composerWorktreeSelection'
-import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import {
+  exactCommandRuleOfferForApproval,
+  type AgentApprovalAction,
+  type AgentApprovalRequest
+} from '../lib/agentApprovalTypes'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import { useComposerDraft } from '../hooks/useComposerDraft'
@@ -72,9 +77,19 @@ function CompactApprovalCard({
   onAction
 }: {
   request: AgentApprovalRequest
-  onAction: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  onAction: (
+    requestId: string,
+    action: AgentApprovalAction,
+    intentNote?: string,
+    commandRuleOfferId?: string
+  ) => void | Promise<void>
 }): React.JSX.Element {
   const actions = request.actions || ['accept', 'decline', 'cancel']
+  const exactCommandRuleOffer = exactCommandRuleOfferForApproval(request)
+  const displayActions: Array<AgentApprovalAction | 'exactCommandRule'> = actions.flatMap(
+    (action) =>
+      action === 'acceptForSession' && exactCommandRuleOffer ? ['exactCommandRule'] : [action]
+  )
   const externalPath = request.preview?.externalPathDetection?.path
   return (
     <section
@@ -96,8 +111,25 @@ function CompactApprovalCard({
       )}
       {renderAgentApprovalPreview(request.preview)}
       <div className="compact-chat-approval-actions">
-        {actions.map((action) => {
-          const presentation = approvalActionPresentation(action)
+        {displayActions.map((action) => {
+          if (action === 'exactCommandRule') {
+            if (!exactCommandRuleOffer) return null
+            return (
+              <button
+                key={action}
+                type="button"
+                title={`Add only this literal ${exactCommandRuleOffer.executableName} invocation to a revocable workspace allowlist. Future matches run outside a workspace sandbox and without workspace locks.`}
+                onClick={() =>
+                  void onAction(request.id, 'accept', undefined, exactCommandRuleOffer.offerId)
+                }
+              >
+                Add exact command to Allowlist
+              </button>
+            )
+          }
+          const presentation = approvalActionPresentation(action, {
+            serviceLabel: request.service ? AGENTIC_SERVICE_LABELS[request.service] : undefined
+          })
           return (
             <button
               key={action}
@@ -144,7 +176,9 @@ export interface CompactChatComposerProps {
   handleSteer?: () => void | Promise<void>
   handleAgentApprovalAction: (
     requestId: string,
-    action: AgentApprovalAction
+    action: AgentApprovalAction,
+    intentNote?: string,
+    commandRuleOfferId?: string
   ) => void | Promise<void>
   isCurrentChatRunning: boolean
   isCurrentChatBusyForSteer: boolean

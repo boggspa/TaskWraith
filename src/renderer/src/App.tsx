@@ -20245,7 +20245,8 @@ function App(): React.JSX.Element {
   const handleAgentApprovalAction = async (
     requestId: string,
     action: AgentApprovalAction,
-    intentNoteOverride?: string
+    intentNoteOverride?: string,
+    commandRuleOfferIdOverride?: string
   ): Promise<boolean> => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
@@ -20263,15 +20264,28 @@ function App(): React.JSX.Element {
           decisionSource?: 'user' | 'system'
           reason?: string
           message?: string
+          commandRule?: { id: string; executablePath: string; fingerprint: string }
         } = false
     try {
-      responseAccepted = await window.api.respondAgentApproval(requestId, action, noteForDecision)
+      responseAccepted = await window.api.respondAgentApproval(
+        requestId,
+        action,
+        noteForDecision,
+        commandRuleOfferIdOverride
+      )
       if (!shouldDismissAgentApproval(responseAccepted)) {
+        const rejectionMessage =
+          responseAccepted &&
+          typeof responseAccepted === 'object' &&
+          typeof responseAccepted.message === 'string'
+            ? responseAccepted.message
+            : null
         setRawLogs((prev) => [
           ...prev,
           {
             type: 'stderr',
             content:
+              rejectionMessage ||
               'Approval response was not accepted. The request remains open for exact review or a different decision.'
           }
         ])
@@ -20283,6 +20297,12 @@ function App(): React.JSX.Element {
         responseAccepted.reason === 'stale-grant-binding'
           ? responseAccepted
           : null
+      const addedCommandRule =
+        responseAccepted &&
+        typeof responseAccepted === 'object' &&
+        responseAccepted.commandRule
+          ? responseAccepted.commandRule
+          : null
       setRawLogs((prev) => [
         ...prev,
         {
@@ -20290,11 +20310,13 @@ function App(): React.JSX.Element {
           content: remapped
             ? remapped.message ||
               'Grant cancelled: the chat workspace changed while the prompt was open. Re-approve from the current workspace if still needed.'
-            : `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${
-                typeof responseAccepted === 'object' && responseAccepted.resolvedAction
-                  ? responseAccepted.resolvedAction
-                  : action
-              }`
+            : addedCommandRule
+              ? `Saved exact command Allowlist rule (${addedCommandRule.fingerprint.slice(0, 12)}) and approved this invocation.`
+              : `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${
+                  typeof responseAccepted === 'object' && responseAccepted.resolvedAction
+                    ? responseAccepted.resolvedAction
+                    : action
+                }`
         }
       ])
       if (action === 'acceptForWorkspace') {

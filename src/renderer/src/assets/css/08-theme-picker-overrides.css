@@ -1206,6 +1206,19 @@
 .approval-grant-revoke {
   flex: 0 0 auto;
 }
+
+.command-rule-admin {
+  margin-top: 14px;
+}
+.command-rule-command {
+  color: var(--text-primary);
+  font: 600 12px/1.45 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.command-rule-risk {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
 .approval-ledger-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

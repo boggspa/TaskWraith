@@ -7,6 +7,7 @@ import type {
 } from '../../../main/store/types'
 import { getWorkspacePolicyServiceLabel } from '../lib/workspacePolicyServices'
 import { PillButton } from './PillButton'
+import type { CommandRuleListItem } from '../../../shared/commandRules'
 
 /**
  * ApprovalLedgerPanel — Phase E2 admin UI for the durable approval ledger.
@@ -92,6 +93,64 @@ export interface ApprovalLedgerPanelProps {
   currentWorkspacePath?: string | null
 }
 
+export function CommandRuleAdminSection({
+  rules,
+  revokingId,
+  onRevoke
+}: {
+  rules: CommandRuleListItem[]
+  revokingId?: string | null
+  onRevoke?: (rule: CommandRuleListItem) => void | Promise<void>
+}): React.JSX.Element {
+  return (
+    <section className="approval-grant-admin command-rule-admin" aria-label="Exact command allowlist">
+      <div className="approval-grant-admin-header">
+        <div>
+          <div className="approval-grant-admin-title">Exact command allowlist</div>
+          <div className="settings-hint approval-grant-admin-hint">
+            Revocable brokered rules for one executable hash, literal argv, workspace, and root
+            cwd. Matches run unsandboxed and without workspace locks.
+          </div>
+        </div>
+        <span className="approval-grant-admin-count">{rules.length}</span>
+      </div>
+      {rules.length === 0 ? (
+        <div className="settings-hint approval-grant-empty">No exact command rules.</div>
+      ) : (
+        <ul className="approval-grant-list command-rule-list">
+          {rules.map((rule) => {
+            const isRevoking = revokingId === rule.id
+            const command = [workspaceBasename(rule.executablePath), ...rule.argv].join(' ')
+            return (
+              <li key={rule.id} className="approval-grant-row command-rule-row">
+                <div className="approval-grant-row-main">
+                  <code className="command-rule-command" title={rule.executablePath}>
+                    {command}
+                  </code>
+                  <span className="approval-grant-row-meta" title={rule.workspacePath}>
+                    {workspaceBasename(rule.workspacePath)} · cwd {rule.cwdRelativePath} · Added{' '}
+                    {formatTimestamp(rule.createdAt)} · {rule.fingerprint.slice(0, 12)}
+                  </span>
+                  <span className="command-rule-risk">Brokered exact argv · host unsandboxed</span>
+                </div>
+                <PillButton
+                  variant="danger"
+                  size="compact"
+                  className="approval-grant-revoke"
+                  onClick={() => void onRevoke?.(rule)}
+                  disabled={!onRevoke || isRevoking}
+                >
+                  {isRevoking ? 'Revoking…' : 'Revoke'}
+                </PillButton>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 export function ApprovalLedgerPanel({
   workspaceGrants = [],
   onRevokeWorkspaceGrant,
@@ -102,6 +161,9 @@ export function ApprovalLedgerPanel({
   const [error, setError] = useState<string | null>(null)
   const [revokeError, setRevokeError] = useState<string | null>(null)
   const [revokingGrantId, setRevokingGrantId] = useState<string | null>(null)
+  const [commandRules, setCommandRules] = useState<CommandRuleListItem[]>([])
+  const [commandRuleError, setCommandRuleError] = useState<string | null>(null)
+  const [revokingCommandRuleId, setRevokingCommandRuleId] = useState<string | null>(null)
   // Slice (1.0.3) — bulk-revoke confirmation state for the
   // "Forget all sub-thread delegations for this workspace" button.
   // `pending` holds the grants the modal is about to revoke;
@@ -153,6 +215,17 @@ export function ApprovalLedgerPanel({
     }
   }, [providerFilter, statusFilter])
 
+  const refreshCommandRules = useCallback(async (): Promise<void> => {
+    if (typeof window.api.listCommandRules !== 'function') return
+    try {
+      const result = await window.api.listCommandRules()
+      setCommandRules(Array.isArray(result) ? result : [])
+      setCommandRuleError(null)
+    } catch (err) {
+      setCommandRuleError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
   // Initial load + refetch when filters change. Defer to microtask so
   // the synchronous state burst doesn't trigger React's "cascading
   // renders" lint guard.
@@ -160,15 +233,20 @@ export function ApprovalLedgerPanel({
     void Promise.resolve().then(() => refresh())
   }, [refresh])
 
+  useEffect(() => {
+    void Promise.resolve().then(() => refreshCommandRules())
+  }, [refreshCommandRules])
+
   // Refresh on window focus so a decision made between visits shows up
   // without a manual reload.
   useEffect(() => {
     const onFocus = (): void => {
       void refresh()
+      void refreshCommandRules()
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [refresh])
+  }, [refresh, refreshCommandRules])
 
   // Client-side filters: date range + search. Date.now() is read at
   // memo computation time — the cutoff is a snapshot the filter pass
@@ -260,6 +338,23 @@ export function ApprovalLedgerPanel({
     [onRevokeWorkspaceGrant]
   )
 
+  const handleRevokeCommandRule = useCallback(
+    async (rule: CommandRuleListItem): Promise<void> => {
+      try {
+        setCommandRuleError(null)
+        setRevokingCommandRuleId(rule.id)
+        const result = await window.api.removeCommandRule(rule.id)
+        if (!result?.ok) throw new Error(result?.error || 'Command rule could not be revoked.')
+        setCommandRules((current) => current.filter((entry) => entry.id !== rule.id))
+      } catch (err) {
+        setCommandRuleError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setRevokingCommandRuleId(null)
+      }
+    },
+    []
+  )
+
   // Slice (1.0.3) — set of sub-thread delegation grants scoped to the
   // workspace the user is currently viewing. Only populated when the
   // host passes `currentWorkspacePath`; otherwise stays empty (and the
@@ -305,6 +400,9 @@ export function ApprovalLedgerPanel({
 
       {error && <div className="settings-error approval-ledger-error">{error}</div>}
       {revokeError && <div className="settings-error approval-ledger-error">{revokeError}</div>}
+      {commandRuleError && (
+        <div className="settings-error approval-ledger-error">{commandRuleError}</div>
+      )}
 
       <section className="approval-grant-admin" aria-label="Workspace approval grants">
         <div className="approval-grant-admin-header">
@@ -372,6 +470,12 @@ export function ApprovalLedgerPanel({
           </ul>
         )}
       </section>
+
+      <CommandRuleAdminSection
+        rules={commandRules}
+        revokingId={revokingCommandRuleId}
+        onRevoke={handleRevokeCommandRule}
+      />
 
       <div className="approval-ledger-controls">
         <div className="approval-ledger-control-group">
