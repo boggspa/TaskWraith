@@ -1,7 +1,7 @@
 # TaskWraith CLI
 
-TaskWraith's terminal client runs the same pure-Node Host and local profile from a regular shell.
-Install it globally to make both the long and short commands available:
+TaskWraith's terminal client runs the same pure-Node Host and local profile from a regular shell. A
+published package or release tarball installs both the long and short commands:
 
 ```sh
 npm install --global taskwraith

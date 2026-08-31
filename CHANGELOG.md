@@ -56,6 +56,12 @@ context needed to answer.
 
 ### Durable work and Host startup
 
+- **The terminal client is packageable as a real command.** A thin npm distribution now maps both
+  `taskwraith` and `tw` to the TUI, carries the pure-Node production Host, and uses the installing
+  machine's ordinary Node 22+ runtime without weakening the desktop package's pinned-runtime
+  boundary. Its smoke test performs a disposable global install, renders demo and live Host
+  snapshots, and authenticates a clean Host shutdown. This is source-ahead packaging; no npm
+  publication is claimed here.
 - **Execution Graphs now have an accountable owner.** Durable graph work binds
   to its owning thread, pauses instead of dispatching when ownership is absent,
   and delivers settled results to that thread exactly once. Work exposes the

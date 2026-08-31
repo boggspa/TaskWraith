@@ -352,6 +352,25 @@ model) and does not require a cloud account for local runs. Start with a
 scratch repo and a read-only posture — see [Trust, Safety, and First
 Runs](#trust-safety-and-first-runs) and [TRUST_AND_SAFETY.md](docs/TRUST_AND_SAFETY.md).
 
+### Terminal package (source-ahead)
+
+The source-ahead tree can also assemble the TUI and standalone Host as a thin npm package. It uses
+an ordinary Node.js 22+ runtime and exposes both `taskwraith` and the shorter `tw`; the Electron
+desktop package keeps using its own pinned bundled Node runtime.
+
+```sh
+npm run cli:pack
+npm install --global ./artifacts/npm-cli/taskwraith-*.tgz
+taskwraith
+# or: tw
+```
+
+`npm run smoke:cli-package` builds the tarball, installs it into a disposable global prefix, proves
+both commands, starts the packaged Host for a live snapshot, and shuts it down cleanly. This is
+source-ahead packaging capability, not a claim that the npm package has been published; after an
+npm release, the install command becomes `npm install --global taskwraith` (or a one-off
+`npx taskwraith`).
+
 ## Development Setup
 
 For contributors building from this repository:
@@ -383,6 +402,8 @@ npm run test:swift:bridge   # macOS only — see note below
 npm run validate:release    # release-readiness wrapper; see note below
 npm run build
 npm run tui                 # terminal client; launches a windowless Host if needed
+npm run cli:pack            # build the thin taskwraith/tw npm tarball
+npm run smoke:cli-package   # install and exercise that tarball in isolation
 ```
 
 `npm run test:swift:bridge` runs the native macOS bridge daemon's Swift test
