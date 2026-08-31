@@ -11,7 +11,11 @@ it('dispatches a parsed production server through an injected factory', async ()
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
     factory as never,
-    { readFullAccessBootstrapSecret: () => null, resolvePayloadVersion }
+    {
+      createTerminalWindowLauncher: () => undefined,
+      readFullAccessBootstrapSecret: () => null,
+      resolvePayloadVersion
+    }
   )
   expect(factory).toHaveBeenCalledWith({
     profilePath: '/tmp/host-cli-profile',
@@ -51,11 +55,13 @@ it('passes a terminal launcher only when every standard stream is an interactive
   })
 })
 
-it('does not advertise a terminal handoff for background or detached stdio', async () => {
+it('uses a separate terminal-window handoff for background or detached stdio', async () => {
   const start = vi.fn(async () => {})
   const waitForShutdown = vi.fn(async () => {})
   const factory = vi.fn(() => ({ start, waitForShutdown }))
+  const terminalWindowLauncher = { launch: vi.fn(), launchForProvider: vi.fn() }
   const createTerminalLauncher = vi.fn(() => ({ launch: vi.fn() }))
+  const createTerminalWindowLauncher = vi.fn(() => terminalWindowLauncher)
 
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
@@ -67,12 +73,39 @@ it('does not advertise a terminal handoff for background or detached stdio', asy
         stderr: { isTTY: true }
       },
       createTerminalLauncher,
+      createTerminalWindowLauncher,
       readFullAccessBootstrapSecret: () => null,
       resolvePayloadVersion
     }
   )
 
   expect(createTerminalLauncher).not.toHaveBeenCalled()
+  expect(createTerminalWindowLauncher).toHaveBeenCalledOnce()
+  expect(factory).toHaveBeenCalledWith({
+    profilePath: '/tmp/host-cli-profile',
+    payloadVersion: PAYLOAD_VERSION,
+    terminalLauncher: terminalWindowLauncher
+  })
+})
+
+it('keeps auth flows unavailable when a headless Host has no terminal-window handoff', async () => {
+  const start = vi.fn(async () => {})
+  const waitForShutdown = vi.fn(async () => {})
+  const factory = vi.fn(() => ({ start, waitForShutdown }))
+  const createTerminalWindowLauncher = vi.fn(() => undefined)
+
+  await runHostProductionCli(
+    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    factory as never,
+    {
+      stdio: { stdin: {}, stdout: {}, stderr: {} },
+      createTerminalWindowLauncher,
+      readFullAccessBootstrapSecret: () => null,
+      resolvePayloadVersion
+    }
+  )
+
+  expect(createTerminalWindowLauncher).toHaveBeenCalledOnce()
   expect(factory).toHaveBeenCalledWith({
     profilePath: '/tmp/host-cli-profile',
     payloadVersion: PAYLOAD_VERSION
@@ -90,7 +123,11 @@ it('forwards an inherited-fd Full Access secret once and zeroes the source buffe
   await runHostProductionCli(
     ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
     factory as never,
-    { readFullAccessBootstrapSecret: () => source, resolvePayloadVersion }
+    {
+      createTerminalWindowLauncher: () => undefined,
+      readFullAccessBootstrapSecret: () => source,
+      resolvePayloadVersion
+    }
   )
 
   expect(observed).toEqual(Buffer.alloc(32, 6))

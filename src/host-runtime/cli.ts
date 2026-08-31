@@ -4,6 +4,7 @@ import { parseHostDiagnosticCli, HostDiagnosticCliError } from './HostDiagnostic
 import { HostDiagnosticServer } from './HostDiagnosticServer'
 import { createHostNodeProductionFactory } from '../host-node/HostNodeProductionFactory'
 import { createHostNodeTerminalLauncher } from '../host-node/HostNodeTerminalLauncher'
+import { createHostNodeTerminalWindowLauncher } from '../host-node/HostNodeTerminalWindowLauncher'
 import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
 import { HostShutdownClient } from '../host-client/HostShutdownClient'
@@ -24,6 +25,7 @@ export interface HostProductionCliStdio {
 export interface HostProductionCliRuntime {
   readonly stdio?: HostProductionCliStdio
   readonly createTerminalLauncher?: () => HostNodeMuseTerminalLauncher
+  readonly createTerminalWindowLauncher?: () => HostNodeMuseTerminalLauncher | undefined
   readonly readFullAccessBootstrapSecret?: () => Buffer | null | Promise<Buffer | null>
   readonly resolvePayloadVersion?: () => string
   readonly env?: NodeJS.ProcessEnv
@@ -45,7 +47,7 @@ export async function runHostProductionCli(
 ): Promise<void> {
   const command = parseHostProductionCli(argv)
   if (command.command !== 'serve') throw new HostProductionCliError('Expected serve command.')
-  const terminalLauncher = interactiveTerminalLauncher(runtime)
+  const terminalLauncher = providerTerminalLauncher(runtime)
   const environment = runtime.env ?? process.env
   const injectedBootstrapReader = runtime.readFullAccessBootstrapSecret
   const bootstrapAdvertised =
@@ -74,7 +76,7 @@ export async function runHostProductionCli(
   await host.waitForShutdown()
 }
 
-function interactiveTerminalLauncher(
+function providerTerminalLauncher(
   runtime: HostProductionCliRuntime
 ): HostNodeMuseTerminalLauncher | undefined {
   const stdio = runtime.stdio ?? {
@@ -82,10 +84,13 @@ function interactiveTerminalLauncher(
     stdout: process.stdout,
     stderr: process.stderr
   }
-  if (stdio.stdin?.isTTY !== true || stdio.stdout?.isTTY !== true || stdio.stderr?.isTTY !== true) {
-    return undefined
+  if (stdio.stdin?.isTTY === true && stdio.stdout?.isTTY === true && stdio.stderr?.isTTY === true) {
+    return (runtime.createTerminalLauncher ?? createHostNodeTerminalLauncher)()
   }
-  return (runtime.createTerminalLauncher ?? createHostNodeTerminalLauncher)()
+  return (
+    runtime.createTerminalWindowLauncher ??
+    (() => createHostNodeTerminalWindowLauncher({ env: runtime.env ?? process.env }))
+  )()
 }
 
 export async function runHostShutdownCli(

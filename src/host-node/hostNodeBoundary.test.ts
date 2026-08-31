@@ -27,6 +27,7 @@ const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeInteractionRegistry.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeProviderResources.ts'),
   resolve(HOST_NODE_ROOT, 'HostNodeTerminalLauncher.ts'),
+  resolve(HOST_NODE_ROOT, 'HostNodeTerminalWindowLauncher.ts'),
   resolve(HOST_SHARED_ROOT, 'HostProviderCatalog.ts')
 ]
 
