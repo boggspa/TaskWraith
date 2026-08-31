@@ -1849,7 +1849,16 @@ describe('ExecutionGraphCoordinator structured graph scheduling', () => {
       permissionCeilingRef: h.ceiling
     })
 
-    const firstRunId = providerRunId(started)
+    const initialScoutAttempts = Object.values(started.attempts).filter((attempt) =>
+      attempt.stepId.startsWith('scout-')
+    )
+    expect(initialScoutAttempts).toHaveLength(2)
+    expect(initialScoutAttempts.map((attempt) => attempt.state)).toEqual(['queued', 'queued'])
+    expect(h.jobs.size).toBe(2)
+
+    const firstRunId = initialScoutAttempts[0]?.providerRunRef
+    const secondRunId = initialScoutAttempts[1]?.providerRunRef
+    if (!firstRunId || !secondRunId) throw new Error('Both scouts must materialize together.')
     markQueueStarting(h, firstRunId)
     h.coordinator.onRunSessionChange(
       terminalEvent(firstRunId, 'completed'),
@@ -1857,10 +1866,7 @@ describe('ExecutionGraphCoordinator structured graph scheduling', () => {
     )
 
     const afterFirst = h.coordinator.getExecution(started.executionId)!
-    const secondRunId = Object.values(afterFirst.attempts).find(
-      (attempt) => attempt.providerRunRef && attempt.providerRunRef !== firstRunId
-    )?.providerRunRef
-    if (!secondRunId) throw new Error('Second scout did not materialize.')
+    expect(afterFirst.attempts[initialScoutAttempts[1]!.id]?.state).toBe('queued')
     markQueueStarting(h, secondRunId)
     h.coordinator.onRunSessionChange(
       terminalEvent(secondRunId, 'completed'),

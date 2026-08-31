@@ -136,6 +136,7 @@ export interface ExecutionGraphCoordinatorRepository {
   readExecutionEvents: ExecutionGraphRepository['readExecutionEvents']
   getExecution: ExecutionGraphRepository['getExecution']
   listExecutions: ExecutionGraphRepository['listExecutions']
+  getRevision: ExecutionGraphRepository['getRevision']
   getRunTemplate: ExecutionGraphRepository['getRunTemplate']
 }
 
@@ -195,6 +196,14 @@ function stackOwner(input: AppendExecutionStackStepInput): ExecutionOwnerRef {
 }
 
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
+const CONCURRENCY_SLOT_ACTIVATION_STATES = new Set([
+  'claimed',
+  'queued',
+  'running',
+  'waiting_input',
+  'waiting_approval',
+  'waiting_retry'
+])
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
@@ -1427,8 +1436,17 @@ export class ExecutionGraphCoordinator {
             return
           }
           if (step.kind === 'solo_agent') {
+            const occupiedSlots = Object.values(projection.activations).filter((activation) =>
+              CONCURRENCY_SLOT_ACTIVATION_STATES.has(activation.state)
+            ).length
+            if (occupiedSlots >= this.concurrencyLimit(projection)) return
             this.claimSoloStep(projection, ready, step)
-            return
+            // A graph may expose several independent roots at once. Keep
+            // draining until its compiled concurrency ceiling is full; the
+            // provider queue owns the actual launches from here. Returning
+            // after the first claim silently serialized UltraTask scouts even
+            // though their revision explicitly admitted parallel execution.
+            continue
           }
           if (step.kind === 'human_gate') {
             this.append(projection, [
@@ -1700,6 +1718,19 @@ export class ExecutionGraphCoordinator {
       return null
     }
     return request.authorityDigest
+  }
+
+  private concurrencyLimit(projection: ExecutionRunProjection): number {
+    const ref = projection.baseRevision
+    const revision = ref ? this.repository.getRevision(ref.graphId, ref.revision) : undefined
+    if (!revision || revision.digest !== ref?.digest) {
+      // Append-only user Stacks predate persisted compiled revisions and are
+      // deliberately serial. Workflow graphs (including UltraTask) must have
+      // their immutable revision available before concurrency can be trusted.
+      if (projection.tenant?.kind === 'stack') return 1
+      throw new Error('Execution graph concurrency authority is unavailable.')
+    }
+    return revision.limits.maxConcurrentSteps
   }
 
   private appendAttemptQueued(projection: ExecutionRunProjection, attempt: StepAttempt): void {
