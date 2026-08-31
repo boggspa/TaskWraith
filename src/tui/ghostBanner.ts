@@ -36,7 +36,7 @@
  */
 
 /** Visible width of every banner row, in terminal columns. */
-export const GHOST_BANNER_COLUMNS = 12
+export const GHOST_BANNER_COLUMNS = 14
 
 /** Number of rows in the full banner. */
 export const GHOST_BANNER_ROWS = 6
@@ -65,12 +65,12 @@ export const GHOST_BANNER_MIN_ROWS = GHOST_BANNER_ROWS + GHOST_BANNER_CHROME_ROW
  * dependency.
  */
 const GHOST_BANNER_UNICODE: readonly string[] = [
-  '   ┌────┐   ',
-  ' ┌─┘    └─┐ ',
-  ' │  ┌┐ ┌┐ │ ',
-  ' │  └┘ └┘ │ ',
-  ' └─┬──┬──┬┘ ',
-  '   ╵  ╵  ╵  '
+  '   ╭─────╮    ',
+  ' ╭─╯     ╰─╮  ',
+  ' │  ┌┐ ┌┐  │  ',
+  ' │  └┘ └┘  │  ',
+  ' ╰─┬──┬──┬─╯  ',
+  '   ╵  ╵  ╵    '
 ]
 
 /**
@@ -79,12 +79,12 @@ const GHOST_BANNER_UNICODE: readonly string[] = [
  * --ascii` must produce this variant rather than a mojibaked one.
  */
 const GHOST_BANNER_ASCII: readonly string[] = [
-  '   +----+   ',
-  ' +-+    +-+ ',
-  ' |  [] [] | ',
-  ' |  [] [] | ',
-  ' +-+--+--++ ',
-  '   |  |  |  '
+  '   +-----+    ',
+  ' +-+     +-+  ',
+  ' |  [] []  |  ',
+  ' |  [] []  |  ',
+  ' +-+--+--+-+  ',
+  '   |  |  |    '
 ]
 
 export type GhostBannerVariant = 'unicode' | 'ascii'
