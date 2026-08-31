@@ -127,7 +127,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.threadMessage).toBe('ask')
     expect(resolved.agenticServices.externalPublish).toBe('ask')
     expect(resolved.agenticServices.mcpTools).toBe('ask')
-    // canvasEval remains non-grantable, so this ASK can never become automatic.
+    // The permission map keeps canvasEval gate-managed; its exact-surface window
+    // is consulted later by the approval gate.
     expect(resolved.agenticServices.canvasEval).toBe('ask')
     // The one deliberate auto-deny: there is no attended capture flow to approve.
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
@@ -470,8 +471,8 @@ describe('resolveEffectiveRunPermissions', () => {
         updatedAt: '2026-05-24T00:00:00.000Z'
       },
       {
-        // canvasEval is non-grantable — this grant must be inert in EVERY
-        // preset: it cannot lift plan's deny, and stays ask under default.
+        // A broad canvasEval workspace grant is inert: it cannot lift Plan's
+        // deny or cover every Canvas under the default posture.
         id: 'grant-eval',
         provider: 'claude' as const,
         workspacePath: '/repo',
@@ -506,7 +507,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.mediaEditing).toBe('allow')
     expect(def.agenticServices.meshCanvas).toBe('allow')
     expect(def.agenticServices.sketchCanvas).toBe('allow')
-    // canvasEval does NOT promote under any preset — it is non-grantable.
+    // Broad grants do not promote canvasEval; the exact-surface window is a
+    // later approval-gate decision.
     expect(def.agenticServices.canvasEval).toBe('ask')
     // Accept Edits is now the explicit run-level authorization for ordinary
     // click/fill control. The stale workspace grant remains inert (Canvas
@@ -721,15 +723,15 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
   })
 
-  it('asks canvasEval under read-only (Ask) and never auto-allows it under full access', () => {
+  it('keeps canvasEval gate-managed under Ask and Full Access', () => {
     const readOnly = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'read_only'
     })
-    // Arbitrary eval (RCE) prompts per-invocation under Ask; non-grantable,
-    // so the ask can never become automatic.
+    // The first use of a live surface asks; a live 12h surface window may then
+    // auto-resolve subsequent evals downstream.
     expect(readOnly.agenticServices.canvasEval).toBe('ask')
 
     const fullAccess = resolveEffectiveRunPermissions({
@@ -738,13 +740,13 @@ describe('resolveEffectiveRunPermissions', () => {
       settings: settings(),
       presetId: 'full_access'
     })
-    // Full access lifts every OTHER service to allow, but canvasEval must stay at
-    // the 'ask' default — eval is signed-elevated and never auto-allowed.
+    // Full Access does not become a broad all-Canvas grant. The dedicated
+    // surface window remains the auto-resolution path.
     expect(fullAccess.agenticServices.canvasInteraction).toBe('allow')
     expect(fullAccess.agenticServices.canvasEval).toBe('ask')
   })
 
-  it('treats canvasEval as non-grantable — a workspace grant cannot promote it', () => {
+  it('does not let a broad workspace grant cover every canvasEval surface', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',

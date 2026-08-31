@@ -54,13 +54,15 @@ export function isMutatingTaskWraithMcpTool(toolName: string, toolArgs?: unknown
 }
 
 /**
- * Tools whose approval prompt must reach a human on EVERY call, regardless of
- * standing grants, trusted-session state or session-YOLO.
+ * Tools held out of generic standing-grant, trusted-session, and session-YOLO
+ * auto-approval. Capability-specific scoped approval can still resolve later.
  *
  * Most are a channel between the agent and a third party that no amount of prior
  * trust in the workspace covers:
  *  - `image_generate` ships agent-chosen text off-box to a third-party API.
- *  - `canvas_eval` executes agent-authored JavaScript.
+ *  - `canvas_eval` requires the first exact-live-surface desktop accept; its
+ *    dedicated 12h same-surface window is checked later and deliberately may
+ *    auto-resolve across navigation and later turns.
  *  - Outlook reads pull a stranger's words into the model's context; Outlook
  *    writes put agent-chosen text and recipients into a real mailbox. Both
  *    halves of that channel are prompt-injection surface, so both prompt.

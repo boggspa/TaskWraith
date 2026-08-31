@@ -56,4 +56,17 @@ describe('Codex host-hook P1 integration', () => {
       /outcomeFromResult:\s*\(outcome\)\s*=>\s*\(outcome\s*===\s*'deferred'\s*\?\s*null\s*:\s*outcome\)/
     )
   })
+
+  it('uses the shared exact-surface window disclosure for Codex canvas_eval', () => {
+    const settle = between(
+      'async function settleCodexNativeApprovalRequest(',
+      'function maybeRequestCodexHostRerun('
+    )
+    expect(settle).toMatch(
+      /gateService\s*===\s*'canvasEval'[\s\S]*?appendCanvasEvalApprovalWindowDisclosure\(formatted\.body\)/
+    )
+    expect(settle).toMatch(
+      /body:\s*codexApprovalBody,[\s\S]*?preview:\s*formatted\.preview/
+    )
+  })
 })

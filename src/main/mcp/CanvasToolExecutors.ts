@@ -1052,7 +1052,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const script = asString(args.script)
           if (!script.trim()) return fail(toolName, '`script` (JavaScript string) is required.')
           // Bound the script size before it ever reaches the page (defence-in-depth
-          // alongside the per-session eval budget and the signed-elevated approval).
+          // alongside the per-session eval budget and per-execution receipt).
           if (script.length > CANVAS_EVAL_SCRIPT_CAP) {
             return fail(
               toolName,
@@ -1060,7 +1060,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             )
           }
           if (!ctx.canvasEvalApproval) {
-            return fail(toolName, 'canvas_eval requires a bound per-call approval receipt.')
+            return fail(toolName, 'canvas_eval requires a bound per-execution approval receipt.')
           }
           const result = await controller.evaluate(needsId(), { script }, ctx)
           return jsonResult({

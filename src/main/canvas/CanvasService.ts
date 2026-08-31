@@ -233,9 +233,11 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
 // session. Raised 200 -> 8000 (lead-dev authorised) for long, high-throughput
 // interactive canvas sessions.
 const MAX_INTERACTIONS_PER_SESSION = 8000
-// Eval is RCE and human-approved per call, but cap it anyway so a compromised
-// approve-loop can't run unbounded scripts. Separate, tighter budget.
-const MAX_EVALS_PER_SESSION = 50
+// Eval keeps a separate spend counter so a runaway loop remains finite, but the
+// ceiling matches ordinary Canvas interactions. The exact-surface 12h approval
+// window is intended for real browser work; the old 50-call ceiling contradicted
+// that user-approved session shape long before the window expired.
+const MAX_EVALS_PER_SESSION = 8000
 
 function canonicalAuthority(value: unknown): string | undefined {
   return typeof value === 'string' && Boolean(value) && value.trim() === value ? value : undefined

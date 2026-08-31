@@ -27,7 +27,8 @@ export interface BossmanAutoApprovalContext {
   decision: string
   /** Policy label recorded into the ledger row for review. */
   policy: string
-  /** Services that are never auto-allowed by any grant (e.g. canvasEval/RCE). */
+  /** Services held out of ambient Bossman/grant auto-allow. Canvas eval's
+   * dedicated exact-surface window is evaluated later by its own gate. */
   neverAutoAllow: boolean
   /** The requesting run's read-only posture. Read-only is never widened. */
   readOnly: boolean
@@ -85,7 +86,7 @@ export interface BossmanAutoApprovalContext {
  *
  * Hard guarantees (each enforced below, in order):
  *  - never overrides a hard deny (only `decision === 'ask'` is eligible);
- *  - never auto-allows a never-auto-allow service (canvasEval/RCE);
+ *  - never uses Bossman authority to open a held service such as canvasEval;
  *  - never widens a read-only run;
  *  - never approves a forced prompt or an external-path escape;
  *  - only the `shellCommands`/`fileChanges` action classes are in scope
@@ -103,7 +104,8 @@ export function evaluateBossmanAutoApproval(
   // Only the human-prompt band is eligible. A hard deny (or an explicit
   // allow) is resolved by the branches that run before this gate.
   if (ctx.decision !== 'ask') return null
-  // canvasEval and any other signed-elevated service is off-limits.
+  // Bossman cannot open canvasEval; its dedicated surface-window gate may
+  // resolve later from the user's own first desktop accept.
   if (ctx.neverAutoAllow) return null
   // A forced prompt or an external-path escape always reaches the human.
   if (ctx.forcePrompt || ctx.hasExternalPathDetection) return null

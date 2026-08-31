@@ -165,7 +165,7 @@ Page-side `applyUpdate` sets `doc.elements = next` unconditionally for `mode:'re
 
 ## 3. The authority model — two templates, two jobs
 
-The instinct to model AppDrive on `canvasEval` is half right. `canvasEval` prompts on **every** call, which works because eval is rare; AppDrive performs hundreds of actions per session, so a per-call human prompt is unusable. The codebase already contains the right primitive for the other half.
+The instinct to model AppDrive on `canvasEval` is right at two different layers. Canvas eval now uses a 12-hour exact-live-surface window for ordinary work, while every execution still receives a script-bound, single-use audit receipt. AppDrive likewise needs surface authority plus a narrower receipt where one specific action is consequential.
 
 | concern | template | why |
 |---|---|---|
@@ -241,9 +241,9 @@ Net UX: one prompt still covers a whole drive session — it is just bound to on
 
 **Why not `forcePrompt` instead?** There is a cheaper, already-tested mechanism: `mcpToolAlwaysPrompts` ([McpRouteGuards.ts](../../src/main/mcp/McpRouteGuards.ts)) sets `forcePrompt`, which is checked *ahead of* every auto-approval path — Boss auto-approval returns null on it ([BossmanAutoApproval.ts](../../src/main/BossmanAutoApproval.ts)) and the trusted-session write path defers to it. It is one line, touches no shared type, and is the strongest available statement of "no standing grant, trusted session or session-YOLO may ever silence this". The appearance feature chose exactly this for `theme_tokens_set` over adding a service id.
 
-**It is the wrong tool here, and the reason is the shape of the work.** A drive session performs hundreds of actions; a modal per click is unusable, and an unusable gate is worse than a correctly-scoped one because people route around it. That is the same reasoning that ruled out cloning `canvasEval`'s per-call receipt for actuation (§3). The user *should* be able to say "yes, drive this surface" once — the defect was never that `canvasInteraction` is grantable, it is that the grant names no surface. So scope the grant; don't abolish it.
+**It is the wrong tool here, and the reason is the shape of the work.** A drive session performs hundreds of actions; a modal per click is unusable, and an unusable gate is worse than a correctly-scoped one because people route around it. Canvas eval reached the same conclusion with its 12-hour exact-surface window. The user *should* be able to say "yes, drive this surface" once — the defect was never that `canvasInteraction` is grantable, it is that the grant names no surface. So scope the grant; don't abolish it.
 
-The two mechanisms are not exclusive, and `canvas_eval` uses both: always-prompts *and* non-grantable. `forcePrompt` remains the right answer for the consequential-action subset in §7, where the per-call cost is the point.
+The two mechanisms are not exclusive. `canvas_eval` blocks ambient broad grants from opening a surface, then honors its dedicated 12-hour exact-surface window; each execution still carries a content-bound receipt. `forcePrompt` remains the right answer for the consequential-action subset in §7, where the per-action decision is the point.
 
 ### 3.3 Instance epoch (new primitive)
 

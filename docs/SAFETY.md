@@ -84,15 +84,17 @@ false`, and a narrow preload bridge.
   projections and participant ids are advisory UI state; main re-resolves the
   prompt against the current roster, preserves exact picker identity, and
   rejects ambiguous aliases instead of selecting by roster order.
-- Signed-elevated `canvas_eval` approvals require an exact transient desktop
-  review. Human-approved execution and Canvas-audit receipts retain a
-  content-minimised binding (approval id, unkeyed SHA-256 digest, lengths, and
-  outcome), not the script or returned value/error. Auto-denial and
-  compatibility/tool-event rows are content-redacted but may omit the full
-  receipt. The digest is reproducible correlation/integrity metadata, not
-  encryption or confidentiality. Provider-authored transcript prose can echo
-  and persist the script/result; that prose, provider-native history, and
-  explicitly enabled debug capture remain outside the guarantee.
+- The first permitted `canvas_eval` on a live Canvas surface requires exact
+  transient desktop review. Accepting opens a 12-hour window for that canvasId;
+  later scripts on the same live surface auto-approve across navigation and
+  later turns, while other canvases and app restarts require a new decision.
+  Every execution still receives a content-minimised receipt (approval id,
+  unkeyed SHA-256 digest, lengths, and outcome), not the script or returned
+  value/error. Auto-denial and compatibility/tool-event rows are content-redacted
+  but may omit the full receipt. The digest is reproducible correlation/integrity
+  metadata, not encryption or confidentiality. Provider-authored transcript
+  prose can echo and persist the script/result; that prose, provider-native
+  history, and explicitly enabled debug capture remain outside the guarantee.
 - A TaskWraith-managed provider launch must not silently inherit external MCP
   namespaces that bypass the broker's policy and ledger. Prefer fresh
   TaskWraith-owned home/config roots and advertise only the sanctioned surface.

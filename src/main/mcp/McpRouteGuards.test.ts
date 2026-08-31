@@ -112,10 +112,9 @@ describe('MCP route guards', () => {
 })
 
 describe('mcpToolAlwaysPrompts', () => {
-  it('forces a human on every third-party channel, standing grants included', () => {
+  it('holds third-party channels out of standing-grant auto-approval', () => {
     for (const toolName of [
       'image_generate',
-      'canvas_eval',
       // Reads are the INGRESS half of the same channel: a mailbox read puts a
       // stranger's words into the model's context.
       'outlook_list_messages',
@@ -127,6 +126,12 @@ describe('mcpToolAlwaysPrompts', () => {
     ]) {
       expect(mcpToolAlwaysPrompts(toolName)).toBe(true)
     }
+  })
+
+  it('holds the first canvas_eval on a surface for its dedicated window gate', () => {
+    // The approval orchestrator checks the exact-live-surface 12h window after
+    // this generic hold. A live window may auto-resolve there.
+    expect(mcpToolAlwaysPrompts('canvas_eval')).toBe(true)
   })
 
   it('forces a human on every appearance WRITE, so no grant can silence a restyle', () => {

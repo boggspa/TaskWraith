@@ -12,6 +12,7 @@ import type {
 import type { RunManager } from './RunManager'
 import { resolveAgenticPermission, type AgenticPermissionDecision } from './AgenticPolicy'
 import { AppStore } from './store'
+import { CANVAS_EVAL_APPROVAL_WINDOW_MS } from './canvas/CanvasEvalApprovalWindow'
 
 export interface PermissionServiceOptions {
   runManager: RunManager<any>
@@ -40,17 +41,6 @@ export interface ApprovalDecisionInput {
    */
   surfaceId?: string
 }
-
-/**
- * canvas_eval is RCE and re-prompts per call by default. The lead-dev-authorised
- * exception is a dedicated, per-canvas approval window: after the first human
- * accept on a given canvasId, further canvas_eval on THAT canvas is auto-approved
- * for this long before the human is asked again. It is deliberately NOT wired into
- * the generic session/workspace grant machinery (isNonGrantableService keeps
- * canvas_eval out of that), so the window is the only path that can suppress an
- * eval prompt, it binds to one exact surface, and it always expires.
- */
-const CANVAS_EVAL_APPROVAL_WINDOW_MS = 12 * 60 * 60 * 1000
 
 function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
   return (
@@ -250,11 +240,11 @@ export class PermissionService {
     surfaceId?: string
   ): AgenticPermissionResolution {
     const policy = this.getServicePolicy(service, settings)
-    // canvasEval (arbitrary eval = RCE) is SIGNED-ELEVATED: non-grantable, so no
-    // session/workspace grant can ever promote it to an automatic allow — every
-    // eval re-prompts. This is the central half of that guarantee (both the
-    // Gemini/Claude gate and the Codex native gate route through here); the YOLO
-    // bypasses are blocked separately, and read-only denies it via the preset.
+    // canvasEval does not accept broad session/workspace grants. Its normal
+    // low-friction path is the separate exact-canvas 12h window: the first
+    // desktop accept opens that window, which then follows the same live Canvas
+    // surface across navigation and later turns. This resolver intentionally
+    // returns ask when no dedicated surface window is consulted by the gate.
     // mediaRecording (future mic/camera capture) is non-grantable for the same
     // reason. externalPublish is grantable, but the run-posture gates clamp it
     // back to per-action approval under read_only / plan.
@@ -310,9 +300,9 @@ export class PermissionService {
         input.surfaceId
       )
     }
-    // canvas_eval is non-grantable to the generic machinery above; its ONLY
-    // suppression path is the dedicated per-canvas window, opened here on the
-    // first human accept for the exact surface the user reviewed.
+    // Broad grants above do not apply to canvas_eval. A human accept instead
+    // opens the dedicated exact-surface window; the gate may then auto-resolve
+    // later scripts on that live canvas across navigation and later turns.
     if (input.service === 'canvasEval' && this.isApprovedAction(input.action)) {
       this.recordCanvasEvalWindowGrant(input.surfaceId, Date.now())
     }

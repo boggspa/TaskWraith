@@ -119,14 +119,17 @@ moving out of `Unreleased`, plus published artifacts.
   directly under `$HOME` can leave `$HOME` writable, and network egress is not
   proven blocked. See `CHANGELOG.md`, `src/main/cursor/CursorCliArgs.ts`, and
   `SECURITY_ENGINEERING_LEDGER.md` (TW-SEC-2026-003).
-- **Source-ahead `canvas_eval` audit minimisation** — the exact script is
-  transient desktop-approval data. For a human-approved execution, the durable
-  approval and Canvas-audit receipts retain a joined approval id, unkeyed
-  SHA-256 digest, lengths, and outcome, not script/result content; the digest is
-  reproducible correlation/integrity metadata, not encryption or a
-  confidentiality boundary. Auto-denial and compatibility/tool-event rows are
-  content-redacted but do not necessarily carry that full receipt. Compact and
-  paired-device surfaces cannot accept without the exact desktop review.
+- **Source-ahead `canvas_eval` surface window + audit minimisation** — the first
+  permitted eval on a live Canvas requires exact transient desktop review and
+  opens a 12-hour in-memory window for that canvasId. The same surface remains
+  covered across navigation and later turns; other canvases and app restarts do
+  not. Every execution, including a window auto-approval, retains a joined
+  approval id, unkeyed SHA-256 digest, lengths, and outcome rather than
+  script/result content; the digest is reproducible correlation/integrity
+  metadata, not encryption or a confidentiality boundary. Auto-denial and
+  compatibility/tool-event rows are content-redacted but do not necessarily
+  carry that full receipt. Compact and paired-device surfaces cannot accept the
+  opening approval without exact desktop review.
   Provider assistant prose can echo the script/result into TaskWraith's
   persisted transcript; provider-native history, provider-generated prose, and
   opt-in debug captures are outside this guarantee, and pre-fix history is not

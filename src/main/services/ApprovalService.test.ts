@@ -1196,7 +1196,7 @@ describe('ApprovalService — resolve dispatch', () => {
     expect(svc.has('canvas-strict-1')).toBe(false)
   })
 
-  it('opens the 12h per-canvas eval window on a desktop accept of a Codex canvas_eval', async () => {
+  it('opens the 12h exact-live-surface window on a desktop accept of a Codex canvas_eval', async () => {
     const resolveStrict = vi.fn()
     const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
     const svc = new ApprovalService(deps)

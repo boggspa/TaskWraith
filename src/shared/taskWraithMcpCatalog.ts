@@ -308,8 +308,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_select',
   'canvas_wait_for',
   'canvas_annotate',
-  // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
-  // gated via the canvasEval service (never auto-allowed), egress-cut while running.
+  // P2 arbitrary eval — runs agent-supplied JS in the page. The first desktop
+  // accept opens a 12h exact-live-surface window across navigation/later turns;
+  // every execution remains receipt-bound, audited, and egress-cut while running.
   'canvas_eval',
   // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
   // sandboxed web canvas, auto-opening one in the chat dock when none is open.

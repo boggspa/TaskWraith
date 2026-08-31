@@ -64,12 +64,14 @@ describe('resources/Tools.md', () => {
     expect(section).not.toContain('"action":"text"')
   })
 
-  it('does not describe non-grantable canvas_eval as grantable', () => {
+  it('describes the exact-live-surface canvas_eval window without a per-call promise', () => {
     const section = buildOllamaToolDocSection('canvas_eval')
     expect(section).toContain(
-      '- Access: signed-elevated — denied under Plan; approval-gated under Ask and prompts every permitted call with exact desktop review'
+      '- Access: surface-window gated — denied under Plan; first permitted eval on each live Canvas surface requires exact desktop review, then same-surface evals auto-approve for 12 hours across navigation and later turns'
     )
-    expect(section).toContain('under Plan and every other posture where it is permitted')
+    expect(section).toContain('Other Canvas surfaces are not covered')
+    expect(section).not.toContain('PROMPTS EVERY CALL')
+    expect(section).not.toContain('prompts every permitted call')
     expect(section).not.toContain('unless granted')
   })
 

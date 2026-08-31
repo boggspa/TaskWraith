@@ -1528,7 +1528,7 @@ describe('executeCanvasTool', () => {
     expect(r.structuredContent?.value).toBe('evaluated:1 + 1')
   })
 
-  it('canvas_eval fails closed without a per-call approval receipt', async () => {
+  it('canvas_eval fails closed without a per-execution approval receipt', async () => {
     const controller = fakeController()
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     const r = await executeCanvasTool(
@@ -1538,7 +1538,7 @@ describe('executeCanvasTool', () => {
       'claude'
     )
     expect(r.isError).toBe(true)
-    expect(r.text).toContain('bound per-call approval receipt')
+    expect(r.text).toContain('bound per-execution approval receipt')
   })
 
   it('classifies a host-side canvas_eval failure without returning raw error text', async () => {

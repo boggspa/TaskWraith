@@ -40,6 +40,13 @@ outside the workspace, MCP elicitations):
    Automation → Approvals & Grants) including `decisionSource` (`'user'` vs
    `'system'` for timer auto-deny) and timestamp metadata.
 
+`canvas_eval` has a deliberate surface-scoped exception to repeated prompting.
+The first permitted eval on a live Canvas surface requires exact desktop review;
+accepting opens a 12-hour in-memory window for that canvasId. The window follows
+the same live surface across navigation and later agent turns, but never covers
+another Canvas and disappears when TaskWraith restarts. Every execution still
+mints its own script-bound single-use receipt and audit row.
+
 Agents should expect timeouts as a normal outcome. If a tool call
 pauses for approval and you receive a denial / cancellation a moment
 later, the user may simply have been away when the timer fired — surface

@@ -84,7 +84,7 @@ export function ApprovalModeElevationSheetSurface({
       caution={
         isFull
           ? isHostFullAccess
-            ? 'Other chats and ensemble participants are unchanged. External publishing, Canvas eval, media recording, per-call-only prompts, and globally blocked actions still prompt or deny.'
+            ? 'Other chats and ensemble participants are unchanged. External publishing, media recording, and globally blocked actions keep their own approval rules.'
             : 'Only enable this on a disposable VM or a device you can fully recover. You can revoke it at any time from the permission picker.'
           : undefined
       }

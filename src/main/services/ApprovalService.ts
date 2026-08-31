@@ -160,8 +160,8 @@ export interface PendingCodexApproval {
   /**
    * Target surface for a canvas tool (the canvasId). Codex does not pass a
    * surfaceId through applyApprovalDecision the way the Gemini/Claude path does,
-   * so it is carried here to open the per-canvas canvas_eval approval window on
-   * a human accept (canvas_eval 12h window — Codex native-gate parity).
+   * so it is carried here to open the exact-live-surface canvas_eval window on
+   * a human accept (12h across navigation/later turns — Codex gate parity).
    */
   surfaceId?: string
   /**
@@ -1314,9 +1314,10 @@ export class ApprovalService {
     this.deps.runManager.clearApproval(requestId)
 
     // 12h per-canvas eval window: a human accept of a Codex canvas_eval opens the
-    // window for that exact canvas. Codex does not thread surfaceId through
-    // applyApprovalDecision (as the Gemini/Claude path does), so record it here
-    // from the pending record's stored surface. Only real accepts open it.
+    // window for that exact live Canvas across navigation and later turns. Codex
+    // does not thread surfaceId through applyApprovalDecision (as the
+    // Gemini/Claude path does), so record it here from the pending record's stored
+    // surface. Only real accepts open it.
     if (
       pending.service === 'canvasEval' &&
       pending.surfaceId &&

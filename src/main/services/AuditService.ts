@@ -46,8 +46,8 @@ export type AutomaticApprovalDecisionSource =
   | 'inspection_shell'
   | 'external_read'
   | 'explicit_user_request'
-  // canvas_eval auto-approved by its dedicated 12h per-canvas approval window
-  // (the first human accept on that canvasId; see PermissionService).
+  // canvas_eval auto-approved by its dedicated 12h exact-live-surface window
+  // (the first human accept on that canvasId; navigation/turn changes retain it).
   | 'canvas_eval_window'
 export type AutomaticApprovalGrantedScope = 'request' | 'session' | 'workspace'
 

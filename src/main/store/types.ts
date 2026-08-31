@@ -549,11 +549,11 @@ export type AgenticServiceId =
   // allow; Ask and Plan stay per-invocation ASK (grant-held). Separate from
   // meshCanvas / canvasInteraction so those grants never open the simulator.
   | 'simulatorCanvas'
-  // Canvas arbitrary `eval` (RCE in the previewed page). Its OWN service so it is
-  // STRICTER than canvasInteraction: signed-elevated — never auto-allowed by any
-  // preset, grant, or session-YOLO (every eval is individually human-approved),
-  // denied outright under read-only, and non-grantable. See PermissionService
-  // (non-grantable), EffectiveRunPermissions (read_only deny), and the YOLO guards.
+  // Canvas arbitrary eval in the previewed page. Its OWN service prevents broad
+  // presets, grants, session-YOLO, or Bossman authority from covering unrelated
+  // surfaces. The first desktop accept instead opens a 12h window for that exact
+  // live Canvas across navigation/later turns; each execution remains receipt-
+  // bound and audited. See PermissionService and the approval gates.
   | 'canvasEval'
   // Cross-thread retrospection reads (tw_recall_find/read/read_events). A
   // DEDICATED grant bucket — grantable like canvasInteraction, NOT signed-
@@ -577,8 +577,8 @@ export type AgenticServiceId =
   // MEDIA_EDITING_TOOLS + taskWraithToolAgenticService.
   | 'mediaEditing'
   // Media recording (future mic / camera capture). DEFAULT-DENY everywhere and
-  // NON-GRANTABLE — like canvasEval, capture always re-prompts (no preset/grant/
-  // YOLO auto-allow) and is denied outright under read-only. SCAFFOLD ONLY: no
+  // NON-GRANTABLE: no preset/grant/YOLO auto-allow, and denied outright under
+  // read-only. SCAFFOLD ONLY: no
   // capture tools classify to it yet; it reserves the grant bucket + posture so
   // the future mic/camera tools land default-closed.
   | 'mediaRecording'

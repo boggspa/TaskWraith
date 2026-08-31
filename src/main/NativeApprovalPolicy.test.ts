@@ -423,8 +423,8 @@ describe('taskWraithToolAgenticService — Run-Button launch bucket', () => {
   })
 })
 
-describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval / RCE)', () => {
-  it('clamps an automatic allow down to a prompt', () => {
+describe('resolveNativeApprovalPreflightDecision — canvas_eval ambient-auto-allow hold', () => {
+  it('clamps a broad automatic allow to ask before the surface-window check', () => {
     // A workspace/session grant would normally auto-allow (decision: 'allow').
     expect(
       resolveNativeApprovalPreflightDecision({
@@ -434,7 +434,7 @@ describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval
     ).toMatchObject({ kind: 'ask' })
   })
 
-  it('clamps session-YOLO down to a prompt for a non-read-only run', () => {
+  it('clamps session-YOLO to ask before the surface-window check', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('ask'),
@@ -445,7 +445,7 @@ describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval
     ).toMatchObject({ kind: 'ask' })
   })
 
-  it('still lets an explicit deny win over neverAutoAllow', () => {
+  it('still lets an explicit deny win before the surface-window check', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('deny'),

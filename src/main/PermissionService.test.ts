@@ -426,7 +426,7 @@ describe('PermissionService', () => {
     ).toBe('ask')
   })
 
-  it('treats canvasEval (RCE) as non-grantable — no session/workspace grant auto-allows it', () => {
+  it('keeps broad session/workspace grants from covering unrelated canvasEval surfaces', () => {
     const runManager = new RunManager()
     runManager.create({ runId: 'run-eval', provider: 'gemini', workspacePath: '/repo' })
     const service = new PermissionService({ runManager, sessionGrants: new Set() })
@@ -448,7 +448,8 @@ describe('PermissionService', () => {
     expect(withSession.sessionGrantAllowed).toBe(false)
     expect(withSession.decision).toBe('ask')
 
-    // A workspace grant is equally inert — eval always re-prompts.
+    // A workspace grant is equally inert. The dedicated surface-window path is
+    // intentionally separate and is exercised below.
     const withWorkspace = service.resolvePermission('gemini', 'canvasEval', '/repo', undefined, {
       ...settings,
       agenticWorkspaceGrants: [
@@ -1019,6 +1020,17 @@ describe('canvas_eval 12h approval window', () => {
     expect(service.hasLiveCanvasEvalWindowGrant('', t0)).toBe(false)
   })
 
+  it('continues on the same live Canvas surface across navigation and later turns', () => {
+    const service = makeService()
+    const t0 = 2_500_000
+    service.recordCanvasEvalWindowGrant('canvas-live', t0)
+
+    // The window key is the live canvas id, deliberately not its current URL,
+    // provider, or run. Navigation and a later agent turn therefore retain it.
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-live', t0 + HOUR)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-other', t0 + HOUR)).toBe(false)
+  })
+
   it('a re-prompt after expiry starts a fresh 12h window', () => {
     const service = makeService()
     const t0 = 3_000_000
@@ -1047,8 +1059,9 @@ describe('canvas_eval 12h approval window', () => {
       })
     ).toBe(true)
     expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', Date.now())).toBe(true)
-    // The generic session/workspace machinery is untouched: canvas_eval stays
-    // non-grantable there, so resolvePermission still asks every time.
+    // The generic session/workspace machinery remains separate: its broad grant
+    // key is not populated. The approval gate consults the live surface window
+    // before showing another prompt.
     expect(service.hasSessionGrant('claude', '/repo', 'canvasEval', 'run-eval', 'canvas-a')).toBe(
       false
     )

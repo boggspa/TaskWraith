@@ -53,7 +53,7 @@ describe('evaluateBossmanAutoApproval', () => {
   })
 
   // --- the documented hard guards ---------------------------------------
-  it('never auto-allows a never-auto-allow service (canvasEval/RCE)', () => {
+  it('does not let Bossman authority open a canvasEval surface window', () => {
     expect(
       evaluateBossmanAutoApproval(makeContext({ service: 'canvasEval', neverAutoAllow: true }))
     ).toBeNull()

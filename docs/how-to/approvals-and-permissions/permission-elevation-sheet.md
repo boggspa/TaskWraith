@@ -16,7 +16,7 @@ Appears automatically over the current chat when you raise the **permissions chi
 
 ## How to use it
 1. Open the **permissions chip** in the composer and pick a higher preset.
-2. Read the warning. For **Full WS Access** it explains the agent can create, edit, run, and delete workspace files **without approving each action**, and that the preset stays workspace-scoped. For **Full Access** it also covers host-level shell authority and what stays protected (external publishing, Canvas eval, media recording, and globally blocked actions still prompt or deny).
+2. Read the warning. For **Full WS Access** it explains the agent can create, edit, run, and delete workspace files **without approving each action**, and that the preset stays workspace-scoped. For **Full Access** it also covers host-level shell authority and notes that external publishing, media recording, and globally blocked actions keep their own approval rules.
 3. For Full WS Access and Full Access, tick the risk acknowledgement checkbox — the confirm button stays disabled until you do. The Accept Edits notice needs no checkbox.
 4. Click the confirm button (**Continue**, **Enable Full WS Access**, or **Start Full Access**) to apply the change, or **Cancel** (or press Esc) to stay at the current, safer preset. Nothing changes until you confirm — the chip keeps its old value while the sheet is open.
 5. You can lower the preset again at any time from the same chip — no warning is shown when lowering.

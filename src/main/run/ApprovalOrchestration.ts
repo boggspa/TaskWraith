@@ -30,6 +30,7 @@ import {
   canvasEvalApprovalPayloadForDurableStorage,
   type CanvasEvalApprovalReceipt
 } from '../canvas/CanvasEvalAudit'
+import { appendCanvasEvalApprovalWindowDisclosure } from '../canvas/CanvasEvalApprovalWindow'
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
 import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
@@ -69,8 +70,9 @@ export interface ApprovalPromptReceipt {
  *   3. the plan-artifact fast-path sits AFTER resolve and BEFORE the plain deny.
  *   4. `registerGeminiTool` (the terminal approval registration read live via
  *      `deps.getApprovalService()`) opens the prompt's REGISTER sequence.
- *   5. `neverAutoAllow` (canvasEval / mediaRecording / approval-only posture
- *      plan-instrument-grant-hold) forces a prompt on every auto-allow path.
+ *   5. `neverAutoAllow` keeps ambient grants/YOLO/Bossman from opening
+ *      canvasEval or another approval-only service. Canvas eval's dedicated
+ *      exact-surface window is checked later as an explicit scoped exception.
  * `ApprovalOrchestration.test.ts` is the security net — it fences these branches
  * because `ApprovalServiceM3Gate` only guards `ApprovalService.resolve()`, never
  * this 306-line orchestration.
@@ -596,9 +598,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // 'ask' services a read-only posture leaves open (mcpTools / subThreadDelegation)
     // — silently widening "read-only" into "trust everything". Skip the bypass for
     // read-only sessions so the posture is never weakened by a global toggle.
-    // canvasEval (arbitrary eval = RCE) is signed-elevated: NEVER auto-allowed, not
-    // even by session-YOLO or a grant. Every eval is individually human-approved
-    // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
+    // canvasEval cannot be opened by ambient session-YOLO or a broad grant. Its
+    // dedicated exact-surface window is checked later: after the first desktop
+    // accept, that live Canvas may auto-resolve evals for 12h across navigation
+    // and later turns. The explicit deny above still wins.
     // mediaRecording (future capture) shares the same non-grantable invariant: it is
     // never promoted above its default-deny by session-YOLO/grant/preset.
     // externalPublish is grantable, but read_only / plan keep it approval-only:
@@ -806,8 +809,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     } else {
       request.onApprovalPromptCreated?.({ approvalId })
     }
-    // Lead-dev-authorised 12h per-canvas eval window: once the human has accepted
-    // canvas_eval on THIS exact canvas, suppress the re-prompt for 12h. The
+    // User-approved 12h per-canvas eval window: once the human has accepted
+    // canvas_eval on THIS exact live Canvas, suppress the re-prompt for 12h,
+    // including after navigation and in later turns. The
     // script-bound receipt was still minted just above (execution stays audited
     // and single-use); only the human prompt is skipped, and the window is
     // anchored to the first accept so it hard-expires 12h later.
@@ -849,12 +853,11 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const rawBody = externalPathDetection
       ? deps.externalPathApprovalBody(externalPathDetection)
       : request.body
-    // Informed consent: the human must know this accept is not per-call — it opens
-    // a 12h window in which canvas_eval runs on this canvas without asking again.
+    // One shared disclosure keeps every provider gate honest about the exact
+    // capability being opened: this live Canvas surface, across navigation and
+    // later turns, for 12 hours. Other canvas ids remain outside the window.
     const baseBody =
-      service === 'canvasEval'
-        ? `${rawBody ?? ''}\n\nApproving runs this script now and allows canvas_eval on THIS canvas without asking again for 12 hours.`
-        : rawBody
+      service === 'canvasEval' ? appendCanvasEvalApprovalWindowDisclosure(rawBody) : rawBody
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
     const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
     // Built from the preview's STRUCTURED fields, not from `body`: the remote

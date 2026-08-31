@@ -47,6 +47,12 @@ context needed to answer.
   `web_login_open` use the selected site's partition and expiring access lease;
   read-only sites cannot be turned into actuation by a tool call. Cross-origin
   subframes are fenced to the site's explicitly allowed origins.
+- **Canvas eval consent follows the live surface.** The first permitted eval on
+  a Canvas shows its exact script on desktop and clearly offers a 12-hour window
+  for that canvas. Accepting lets later scripts on the same live surface proceed
+  across navigation and later turns without repeated prompts; other canvases and
+  app restarts require a new decision. The per-surface eval ceiling now matches the
+  8,000-step Canvas interaction ceiling for long browser-work sessions.
 
 ### Durable work and Host startup
 

@@ -1424,6 +1424,7 @@ import {
   createCanvasEvalJsonLineSanitizer,
   sanitizeCanvasEvalProviderText
 } from './canvas/CanvasEvalAudit'
+import { appendCanvasEvalApprovalWindowDisclosure } from './canvas/CanvasEvalApprovalWindow'
 import {
   createNativeCanvasCompatSanitizer,
   nativeCanvasCompatToolIds
@@ -14406,8 +14407,9 @@ function resolveNativeApprovalPreflight(args: {
     }),
     sessionYoloEnabled: isSessionYoloEffective(),
     readOnly: Boolean(effectivePermissions?.readOnly),
-    // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
-    // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
+    // Keep ambient session-YOLO/broad grants from opening canvasEval. The Codex
+    // gate later checks its exact-live-surface 12h window and may auto-resolve
+    // there across navigation and later turns.
     // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
     // externalPublish is grantable, but read_only / plan keep it approval-only.
     // plan-preset instruments (canvasInteraction/sketchCanvas/mediaEditing) are
@@ -31347,9 +31349,13 @@ async function settleCodexNativeApprovalRequest(
     const codexApprovalTitle = codexEnsembleApproval
       ? `${codexEnsembleApproval.label}: ${formatted.title}`
       : formatted.title
+    const codexApprovalBaseBody =
+      gateService === 'canvasEval'
+        ? appendCanvasEvalApprovalWindowDisclosure(formatted.body)
+        : formatted.body
     const codexApprovalBody = codexEnsembleApproval
-      ? `${codexEnsembleApproval.bodyPrefix}\n\n${formatted.body}`
-      : formatted.body
+      ? `${codexEnsembleApproval.bodyPrefix}\n\n${codexApprovalBaseBody}`
+      : codexApprovalBaseBody
     const codexApprovalPreview: any = {
       ...previewForDecision,
       ...(gateService === 'canvasEval'
@@ -31492,9 +31498,11 @@ async function settleCodexNativeApprovalRequest(
 
     // 12h per-canvas eval window (parity with ApprovalOrchestration for the
     // native Codex gate): once the human has accepted canvas_eval on THIS exact
-    // canvas, auto-approve for 12h without re-prompting. The script-bound receipt
-    // was still minted above, so execution stays audited + single-use; only the
-    // human prompt is skipped, and the window hard-expires 12h after the accept.
+    // live Canvas, auto-approve for 12h across navigation and later turns. The
+    // first Codex prompt carries the shared disclosure above. The script-bound
+    // receipt was still minted above, so execution stays audited + single-use;
+    // only the human prompt is skipped, and the window hard-expires 12h after
+    // the accept.
     const codexCanvasEvalWindowSurface =
       gateService === 'canvasEval' && typeof params?.canvasId === 'string'
         ? params.canvasId.trim() || undefined

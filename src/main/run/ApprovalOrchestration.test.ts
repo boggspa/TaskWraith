@@ -7,6 +7,7 @@ import {
 } from './ApprovalOrchestration'
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
+import { CANVAS_EVAL_APPROVAL_WINDOW_DISCLOSURE } from '../canvas/CanvasEvalApprovalWindow'
 
 /**
  * M3-3b SECURITY wrapper net for the relocated approval orchestrator (the trust
@@ -27,7 +28,7 @@ import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
  *      BEFORE the plain deny                    → case (c)
  *   #4 registerGeminiTool opens the REGISTER
  *      sequence, read live via getApprovalService → case (g)
- *   #5 neverAutoAllow forces a prompt           → case (h)
+ *   #5 ambient auto-allow cannot open a surface → case (h)
  * plus yolo (d), standing-grant (e), bossman (f).
  */
 
@@ -75,7 +76,7 @@ function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
           decision: 'ask'
         }
       }),
-      // No live per-canvas eval window by default → canvas_eval prompts as before.
+      // No live per-canvas eval window by default → the first eval prompts.
       hasLiveCanvasEvalWindowGrant: vi.fn(() => false)
     } as never,
     auditService: {
@@ -623,10 +624,9 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('safeSendToSender:agent-approval-request')
   })
 
-  // (h) NEVER-AUTO-ALLOW — invariant #5: canvasEval (RCE) is non-grantable. Even
-  // with session-YOLO effective AND an 'allow' decision, it must NOT auto-allow —
-  // it falls through to a human prompt.
-  it('(h) neverAutoAllow (canvasEval) forces a prompt despite YOLO + allow', async () => {
+  // (h) AMBIENT AUTO-ALLOW HOLD — generic YOLO/grants cannot open an unrelated
+  // surface. The later exact-canvas window is the deliberate scoped exception.
+  it('(h) canvasEval requires the first exact-surface approval despite YOLO + allow', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
@@ -1108,6 +1108,8 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       .calls[0]?.[2] as any
 
     expect(livePayload.preview.params.script).toBe(script)
+    expect(livePayload.body).toContain(CANVAS_EVAL_APPROVAL_WINDOW_DISCLOSURE)
+    expect(livePayload.body).toContain('including after navigation and in later turns')
     expect(JSON.stringify(durableRunPayload)).not.toContain('APPROVAL-SECRET')
     expect(JSON.stringify(durableLedgerPayload)).not.toContain('APPROVAL-SECRET')
     expect(durableRunPayload.preview.canvasEvalReceipt).toEqual(
@@ -1126,10 +1128,11 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void pending
   })
 
-  it('(i0) auto-approves canvas_eval WITHOUT a prompt while a live 12h per-canvas window covers the surface', async () => {
+  it('(i0) auto-approves across navigation/later turns while the exact live-surface window remains active', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
-    // The human already accepted canvas_eval on this exact canvas: the window is live.
+    // The human already accepted canvas_eval on this exact live canvas. A URL or
+    // run change is intentionally irrelevant; a different canvas id is not.
     vi.mocked((deps.permissionService as never as { hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn> }).hasLiveCanvasEvalWindowGrant).mockReturnValue(true)
     const script = 'document.title + "SECOND-EVAL"'
     const onApprovalPromptCreated = vi.fn(({ approvalId }: { approvalId: string }) =>

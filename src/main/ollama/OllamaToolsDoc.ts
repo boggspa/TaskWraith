@@ -109,11 +109,11 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   const annotations = (
     def.annotations && typeof def.annotations === 'object' ? def.annotations : {}
   ) as Record<string, unknown>
-  // `canvas_eval` is deliberately stricter than the generic mutating-tool
-  // label: policy clamps it to one exact desktop-reviewed prompt per call, so
-  // no grant or Full Access can make it automatic.
+  // `canvas_eval` uses a dedicated exact-live-surface window rather than a
+  // broad workspace/session grant. The first desktop accept opens 12 hours of
+  // same-canvas execution across navigation and later turns.
   if (def.name === 'canvas_eval') {
-    return 'signed-elevated — denied under Plan; approval-gated under Ask and prompts every permitted call with exact desktop review'
+    return 'surface-window gated — denied under Plan; first permitted eval on each live Canvas surface requires exact desktop review, then same-surface evals auto-approve for 12 hours across navigation and later turns'
   }
   if (def.name === 'request_tool_permission') {
     return 'permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'

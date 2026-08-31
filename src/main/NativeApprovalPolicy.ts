@@ -135,10 +135,10 @@ export function resolveNativeApprovalPreflightDecision(args: {
   sessionYoloEnabled?: boolean
   readOnly?: boolean
   /**
-   * Hard "never automatically allow" flag for signed-elevated services
-   * (canvas_eval / RCE). When set, the decision is clamped to `ask` regardless of
-   * policy, grant, or session-YOLO — only an explicit `deny` short-circuits above
-   * it. The caller (resolveNativeApprovalPreflight) sets this for `canvasEval`.
+   * Ambient-auto-allow hold for services with their own scoped approval path.
+   * For canvas_eval this clamps policy/grant/session-YOLO to `ask`; the native
+   * gate may then resolve through the exact-live-surface 12h window. An explicit
+   * deny still short-circuits before either path.
    */
   neverAutoAllow?: boolean
   /**
