@@ -1,4 +1,5 @@
 import type { ToolActivity } from '../../../main/store/types'
+import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
 import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
@@ -41,6 +42,14 @@ function isCollapsedStackPresentationActivity(activity: ToolActivity): boolean {
     !isHiddenInfrastructureToolName(activity.toolName || '') &&
     !isMcpTransportWrapperActivity(activity)
   )
+}
+
+/** Lifecycle-routing actions have the same transcript standing as seat and
+ * handoff-turn changes. Their full attributed row is conversation structure,
+ * not tool noise, so no settled-stack or super-group fold may hide it behind
+ * a generic "Used N tools" summary. */
+function isTranscriptPriorityActivity(activity: ToolActivity): boolean {
+  return resolveCanonicalToolName(activity.toolName || '') === 'ensemble_yield'
 }
 
 export type CollapsedStackFamily = 'thinking' | 'read' | 'write' | 'search' | 'shell' | 'task'
@@ -277,5 +286,6 @@ export function shouldAutoCollapseActivityStack(input: {
   // control. Hidden work also cannot keep visible settled work expanded.
   const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
   if (visibleActivities.length === 0) return false
+  if (visibleActivities.some(isTranscriptPriorityActivity)) return false
   return !activityStackHasLiveWork(visibleActivities)
 }

@@ -268,6 +268,32 @@ describe('shouldAutoCollapseActivityStack', () => {
       })
     ).toBe(true)
   })
+
+  it.each(['ensemble_yield', 'mcp_TaskWraith_ensemble_yield', 'mcp__TaskWraith__ensemble_yield'])(
+    'keeps the %s lifecycle handoff at full transcript priority',
+    (toolName) => {
+      expect(
+        shouldAutoCollapseActivityStack({
+          activities: [activity({ toolName, category: 'task' })],
+          isLiveRow: false,
+          isLastRow: false
+        })
+      ).toBe(false)
+    }
+  )
+
+  it('keeps a mixed settled stack open when it contains a lifecycle handoff', () => {
+    expect(
+      shouldAutoCollapseActivityStack({
+        activities: [
+          activity({ category: 'read', filePath: '/a/x.ts' }),
+          activity({ toolName: 'mcp_TaskWraith_ensemble_yield', category: 'task' })
+        ],
+        isLiveRow: false,
+        isLastRow: false
+      })
+    ).toBe(false)
+  })
 })
 
 describe('summarizeCollapsedSuperGroup', () => {

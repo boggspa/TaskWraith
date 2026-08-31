@@ -4152,6 +4152,117 @@ describe('inter-seat transcript rows', () => {
 })
 
 describe('participant yield transcript rows', () => {
+  it('keeps an ensemble_yield tool handoff out of settled activity one-liners', () => {
+    const validator = ensembleParticipant({
+      id: 'codex-validator',
+      provider: 'codex',
+      role: 'Validator',
+      model: 'gpt-5.6-sol'
+    })
+    const paperwork = ensembleParticipant({
+      id: 'claude-paperwork',
+      provider: 'claude',
+      role: 'Paperwork',
+      model: 'claude-sonnet-4-7',
+      order: 1
+    })
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'yield-tool-row',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: {
+          ensembleParticipantId: validator.id,
+          ensembleProvider: validator.provider,
+          ensembleRole: validator.role,
+          ensembleModel: validator.model
+        },
+        toolActivities: [
+          {
+            id: 'yield-tool-activity',
+            toolName: 'mcp_TaskWraith_ensemble_yield',
+            displayName: 'Validator yielding to Paperwork',
+            category: 'task',
+            status: 'success',
+            parameters: { target: paperwork.id },
+            durationMs: 445,
+            metadata: {
+              ensembleParticipantId: validator.id,
+              ensembleProvider: validator.provider
+            }
+          }
+        ]
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      }
+    ]
+    const currentChat = activeEnsembleChat(validator)
+    currentChat.messages = messages
+    currentChat.ensemble!.participants = [validator, paperwork]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, currentChat, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="yield-tool-row"')
+    const next = html.indexOf('data-message-id="final"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(yieldBlock).toContain('Codex / Validator')
+    expect(yieldBlock).toContain('yielding to')
+    expect(yieldBlock).toContain('@Paperwork')
+    expect(yieldBlock).not.toContain('Used 1 tool')
+    expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('keeps a targetless standalone Yielding lifecycle row open', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'targetless-yield-tool-row',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'targetless-yield-tool-activity',
+            toolName: 'mcp__TaskWraith__ensemble_yield',
+            displayName: 'Yielding',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            durationMs: 11
+          }
+        ]
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="targetless-yield-tool-row"')
+    const next = html.indexOf('data-message-id="final"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(yieldBlock).toContain('>Yielding</span>')
+    expect(yieldBlock).toContain('11ms')
+    expect(yieldBlock).not.toContain('Used 1 tool')
+    expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
+  })
+
   it('keeps a yield handoff at assistant hierarchy and out of system-notice folds', () => {
     const participant = ensembleParticipant({
       id: 'kimi-orchestrator',
