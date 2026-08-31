@@ -342,6 +342,30 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(lines.at(-2) ?? '')).toMatch(/^─+$/)
   })
 
+  it('advertises permission cycling only for a connected active thread', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.thread!.thread.status = 'idle'
+    state.hostProjection!.rounds = []
+
+    const render = (candidate: TaskWraithTuiState) =>
+      stripAnsi(
+        renderTaskWraithTui(candidate, {
+          width: 110,
+          height: 24,
+          ansi: new Ansi('none'),
+          now,
+          animationEnabled: false
+        })
+      )
+
+    expect(render(state)).toContain('Shift+Tab permissions')
+    expect(render(homeState('connected'))).not.toContain('Shift+Tab permissions')
+    state.connection = 'demo'
+    expect(render(state)).not.toContain('Shift+Tab permissions')
+  })
+
   it('paints both composer rules and the permission label with the resolved tier colour', () => {
     const dark = resolveTuiTheme('wraith-night')
     const light = resolveTuiTheme('wraith-day')

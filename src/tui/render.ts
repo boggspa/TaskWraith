@@ -2294,6 +2294,9 @@ function renderComposer(
   const openQuestion = selectedOpenQuestion(state)
   const setupRequired = Boolean(state.coldStart && state.coldStart.kind !== 'ready')
   const queuedDrafts = queuedDraftsForThread(state, state.selectedThreadId)
+  const canCyclePermission = Boolean(
+    state.connection === 'connected' && state.selectedThreadId && state.thread
+  )
   const live = Boolean(
     state.selectedThreadId &&
     state.hostProjection &&
@@ -2331,7 +2334,9 @@ function renderComposer(
             )
           : density.composerHints === 'full'
             ? ansi.dim(
-                `${glyphs.newline} send${sep}Shift+Tab permissions${sep}^O context${sep}^K threads`
+                `${glyphs.newline} send${
+                  canCyclePermission ? `${sep}Shift+Tab permissions` : ''
+                }${sep}^O context${sep}^K threads`
               )
             : density.composerHints === 'short'
               ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
