@@ -950,6 +950,12 @@ describe('IpcValidation', () => {
     )
   })
 
+  it('rejects renderer-written command rules', () => {
+    expect(() => validateIpcArgs('update-settings', [{ commandRules: [] }])).toThrow(
+      /command rules/
+    )
+  })
+
   it('validates welcome heatmap setting patches', () => {
     expect(() =>
       validateIpcArgs('update-settings', [

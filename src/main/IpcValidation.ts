@@ -1144,6 +1144,8 @@ function validateSettingsPatch(channel: string, value: unknown): void {
     throw new Error(`${channel} auditOrchestration must be an object.`)
   if (value.agenticWorkspaceGrants !== undefined)
     throw new Error(`${channel} cannot update workspace grants directly.`)
+  if (value.commandRules !== undefined)
+    throw new Error(`${channel} cannot update command rules directly.`)
 }
 
 /** Bug-report payload guard. Keeps the IPC honest: only the four

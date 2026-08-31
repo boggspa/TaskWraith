@@ -58,6 +58,7 @@ import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarness
 import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
 import { normalizeApiUsageBillingSettings } from '../../shared/apiUsageBilling'
+import { sanitizeCommandRules } from '../command-rules/CommandRuleSchema'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   APPROVAL_TIMEOUT_MAX_MS,
@@ -220,6 +221,10 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // dropped. Renderer `update-settings` still rejects the key (IpcValidation);
   // only the dedicated grant IPCs + main-side PermissionService write it.
   'agenticWorkspaceGrants',
+  // Exact command rules are likewise main-owned. The renderer's generic
+  // settings IPC rejects this field; CommandRuleService persists it through
+  // SettingsService after an approval-bound main-side revalidation.
+  'commandRules',
   // The main renderer records the one-per-workspace Accept Edits notice here.
   // Omitting this key makes the acknowledgement renderer-local: it appears to
   // work, then vanishes on the next settings reload/resumed chat.
@@ -1898,6 +1903,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const grants = sanitizeAgenticWorkspaceGrants(sanitized.agenticWorkspaceGrants)
       if (grants) sanitized.agenticWorkspaceGrants = grants
       else delete sanitized.agenticWorkspaceGrants
+    }
+    if ('commandRules' in sanitized) {
+      const rules = sanitizeCommandRules(sanitized.commandRules, {
+        resolvePath: (value) => nodePath.resolve(value)
+      })
+      if (rules) sanitized.commandRules = rules
+      else delete sanitized.commandRules
     }
     if ('approvalModeElevationAcknowledgements' in sanitized) {
       if (!isRecord(sanitized.approvalModeElevationAcknowledgements)) {

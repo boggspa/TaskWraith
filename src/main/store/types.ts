@@ -670,6 +670,37 @@ export type ExternalPathGrantAccess = 'read' | 'write'
 export type ExternalPathGrantDuration = 'thisRun' | 'thisThread' | 'workspace'
 export type NativeSubAgentRequestPolicy = 'ask' | 'provider' | 'taskwraith'
 export type KeyCommandModifier = 'primary' | 'shift' | 'alt'
+
+/**
+ * A user-authored exact brokered-shell rule. This is intentionally separate
+ * from AgenticWorkspaceGrant: that grant authorizes an entire service, while a
+ * command rule binds one normalized direct argv invocation in one workspace.
+ *
+ * `host_exact_unsandboxed` is a disclosure class, not a read-only assertion.
+ * The rule may launch repository-controlled code; TaskWraith only guarantees
+ * that the future brokered invocation matches this exact compiled identity.
+ */
+export interface CommandRule {
+  schemaVersion: 1
+  kind: 'brokered_shell_exact_argv'
+  id: string
+  workspaceId: string
+  primaryWorkspacePath: string
+  primaryWorkspaceRealPath: string
+  cwdRelativePath: string
+  executableRealPath: string
+  executableSha256: string
+  argv: string[]
+  parserVersion: 'static-shell-argv-v1'
+  fingerprint: string
+  signatureVersion: 'hmac-sha256-v1'
+  signature: string
+  riskClass: 'host_exact_unsandboxed'
+  createdAt: string
+  updatedAt: string
+  createdFromApprovalId?: string
+}
+
 export interface KeyCommandBinding {
   key: string
   modifiers: KeyCommandModifier[]
@@ -2855,6 +2886,12 @@ export interface AppSettings {
   mainPaneOpacityOverride?: boolean
   agenticServices: AgenticServicesSettings
   agenticWorkspaceGrants: AgenticWorkspaceGrant[]
+  /**
+   * Main-owned exact brokered-shell rules. The renderer cannot write this
+   * field through the generic settings IPC; creation and revocation use their
+   * own approval-bound endpoints.
+   */
+  commandRules?: CommandRule[]
   /** User preference for provider-native sub-agent tools (`Task`,
    * `invoke_agent`, etc.) versus TaskWraith durable sub-threads. When
    * unset, the runtime asks on the first observable native request. */

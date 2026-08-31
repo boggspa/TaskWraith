@@ -19,6 +19,10 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  MAX_COMMAND_RULES,
+  MAX_COMMAND_RULES_PER_WORKSPACE
+} from '../command-rules/CommandRuleSchema'
 import { DEFAULT_THEME_ACCENT_COLOR } from '../../shared/themeAccentColor'
 
 describe('normalizeAuditRunIdentity', () => {
@@ -1885,5 +1889,84 @@ describe('AntiGravity Gemini API-key admission (independent of the AGY opt-in la
   it('keeps gemini retired even when a Gemini API key is configured', () => {
     setAntigravityGeminiApiKeyConfiguredProbe(() => true)
     expect(() => assertLiveProviderId('gemini')).toThrow()
+  })
+})
+
+describe('Command rule settings sanitation', () => {
+  const createdAt = '2026-08-31T13:20:00.000Z'
+  const baseRule = {
+    schemaVersion: 1 as const,
+    kind: 'brokered_shell_exact_argv' as const,
+    id: 'rule-1',
+    workspaceId: 'workspace-1',
+    primaryWorkspacePath: '/tmp/taskwraith-command-rule/../workspace',
+    primaryWorkspaceRealPath: '/tmp/taskwraith-command-rule/workspace',
+    cwdRelativePath: 'packages/app',
+    executableRealPath: '/usr/local/bin/npm',
+    executableSha256: 'a'.repeat(64),
+    argv: ['test', '--', '--runInBand'],
+    parserVersion: 'static-shell-argv-v1' as const,
+    fingerprint: 'b'.repeat(64),
+    signatureVersion: 'hmac-sha256-v1' as const,
+    signature: 'c'.repeat(64),
+    riskClass: 'host_exact_unsandboxed' as const,
+    createdAt,
+    updatedAt: createdAt,
+    createdFromApprovalId: 'approval-1'
+  }
+
+  it('keeps only bounded canonical rules and collapses duplicate fingerprints', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const newer = {
+      ...baseRule,
+      id: 'rule-newer',
+      updatedAt: '2026-08-31T13:21:00.000Z'
+    }
+    const invalid = { ...baseRule, id: 'rule-invalid', argv: Array(65).fill('arg') }
+    const malformedSignature = { ...baseRule, id: 'rule-malformed-signature', signature: 'nope' }
+    const duplicateId = { ...baseRule, fingerprint: 'd'.repeat(64) }
+    const pathOnly = { ...baseRule, id: 'rule-path-only', fingerprint: 'e'.repeat(64) }
+    delete (pathOnly as { workspaceId?: string }).workspaceId
+
+    const sanitized = sanitizeSettingsPatch({
+      commandRules: [baseRule, invalid, malformedSignature, duplicateId, pathOnly, newer]
+    })
+    expect(sanitized.commandRules).toEqual([
+      {
+        ...newer,
+        primaryWorkspacePath: resolve('/tmp/taskwraith-command-rule/../workspace'),
+        primaryWorkspaceRealPath: resolve('/tmp/taskwraith-command-rule/workspace'),
+        executableRealPath: resolve('/usr/local/bin/npm')
+      }
+    ])
+  })
+
+  it('caps persisted command rules and drops malformed settings input instead of clearing rules', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const rules = Array.from({ length: MAX_COMMAND_RULES + 1 }, (_, index) => ({
+      ...baseRule,
+      id: `rule-${index}`,
+      primaryWorkspacePath: `/tmp/workspace-${index}`,
+      primaryWorkspaceRealPath: `/tmp/workspace-${index}`,
+      fingerprint: index.toString(16).padStart(64, '0')
+    }))
+
+    expect(sanitizeSettingsPatch({ commandRules: rules }).commandRules).toHaveLength(
+      MAX_COMMAND_RULES
+    )
+    const oneWorkspaceRules = Array.from(
+      { length: MAX_COMMAND_RULES_PER_WORKSPACE + 1 },
+      (_, index) => ({
+        ...baseRule,
+        id: `same-workspace-rule-${index}`,
+        fingerprint: (index + 1000).toString(16).padStart(64, '0')
+      })
+    )
+    expect(sanitizeSettingsPatch({ commandRules: oneWorkspaceRules }).commandRules).toHaveLength(
+      MAX_COMMAND_RULES_PER_WORKSPACE
+    )
+    expect(sanitizeSettingsPatch({ commandRules: 'not-an-array' })).not.toHaveProperty(
+      'commandRules'
+    )
   })
 })

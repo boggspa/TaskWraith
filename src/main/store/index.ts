@@ -404,6 +404,7 @@ import {
 } from '../ScheduledAttachmentDurability'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { consolidateAgenticWorkspaceGrants } from '../settings/MainSanitizers'
+import { sanitizeCommandRules } from '../command-rules/CommandRuleSchema'
 import {
   DEFAULT_STALL_BACKSTOP_MS,
   findStalledScheduledTasks,
@@ -2657,6 +2658,7 @@ const defaultSettings: AppSettings = {
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],
+  commandRules: [],
   nativeSubAgentRequests: 'ask',
   // Default on — the user-visible win is that delegated sub-threads
   // resume their parent agent automatically when they finish. Users
@@ -5354,6 +5356,14 @@ export class AppStore {
       agenticWorkspaceGrants: Array.isArray(stored.agenticWorkspaceGrants)
         ? consolidateAgenticWorkspaceGrants(stored.agenticWorkspaceGrants)
         : [],
+      // Rules are a separate, exact shell authority. Never infer them from a
+      // broad legacy shell/workspace grant; malformed persisted rows drop at
+      // this read boundary and CommandRuleService revalidates them again before
+      // use.
+      commandRules:
+        sanitizeCommandRules(stored.commandRules, {
+          resolvePath: (value) => path.resolve(value)
+        }) ?? [],
       nativeSubAgentRequests:
         stored.nativeSubAgentRequests === 'provider' ||
         stored.nativeSubAgentRequests === 'taskwraith'
