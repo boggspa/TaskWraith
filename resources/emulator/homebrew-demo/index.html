@@ -8,7 +8,19 @@
   </head>
   <body>
     <main aria-label="TaskWraith homebrew emulator">
-      <canvas id="screen" width="160" height="144" aria-label="Game Boy framebuffer"></canvas>
+      <canvas
+        id="screen"
+        width="160"
+        height="144"
+        tabindex="0"
+        aria-label="Game Boy framebuffer"
+        aria-describedby="controls-hint"
+      ></canvas>
+      <button id="play-pause" type="button" aria-pressed="false" disabled>Play</button>
+      <p id="controls-hint">
+        Arrow keys move; Z = B, X = A, Enter = Start, and Shift = Select. Pause before agent
+        control.
+      </p>
       <output id="status" aria-live="polite">Booting fixed fixture…</output>
     </main>
     <script type="module" src="./bootstrap.mjs"></script>

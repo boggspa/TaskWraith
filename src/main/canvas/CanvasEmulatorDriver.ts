@@ -72,6 +72,7 @@ export interface CanvasEmulatorRuntimeState {
 export interface CanvasEmulatorAtomicObservation extends EmulatorObservationToken {
   readonly schemaVersion: 1
   readonly capturedAt: string
+  readonly humanActive: boolean
   readonly frame: Readonly<CanvasFrame>
   readonly state: Readonly<CanvasEmulatorRuntimeState>
 }
@@ -99,7 +100,11 @@ export interface CanvasEmulatorObservationRuntimeBridge extends CanvasEmulatorRu
 export class CanvasEmulatorInputEpochStaleError extends Error {
   readonly code = 'stale_input_epoch' as const
 
-  constructor(readonly observation?: CanvasEmulatorAtomicObservation) {
+  constructor(
+    readonly observation: CanvasEmulatorAtomicObservation | undefined = undefined,
+    /** 1 only when a trusted user transition interrupted an already-dispatched agent frame. */
+    readonly framesAdvanced: 0 | 1 = 0
+  ) {
     super('Emulator human input changed since the expected observation epoch.')
     this.name = 'CanvasEmulatorInputEpochStaleError'
   }
@@ -112,6 +117,19 @@ export class CanvasEmulatorObservationStaleError extends Error {
   constructor(readonly observation?: CanvasEmulatorAtomicObservation) {
     super('Emulator frame changed since the expected observation.')
     this.name = 'CanvasEmulatorObservationStaleError'
+  }
+}
+
+/** Typed refusal while an explicit human Play session owns frame advancement. */
+export class CanvasEmulatorUserActiveError extends Error {
+  readonly code = 'user_active' as const
+
+  constructor(
+    readonly observation: CanvasEmulatorAtomicObservation,
+    readonly framesAdvanced: 0 | 1
+  ) {
+    super('Emulator human play is active; agent frame control is paused.')
+    this.name = 'CanvasEmulatorUserActiveError'
   }
 }
 
@@ -301,7 +319,8 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     } catch (error) {
       if (
         (error instanceof CanvasEmulatorInputEpochStaleError ||
-          error instanceof CanvasEmulatorObservationStaleError) &&
+          error instanceof CanvasEmulatorObservationStaleError ||
+          error instanceof CanvasEmulatorUserActiveError) &&
         error.observation
       ) {
         this.lastObservation = error.observation

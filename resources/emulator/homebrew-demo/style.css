@@ -33,8 +33,46 @@ main {
   image-rendering: crisp-edges;
 }
 
+#screen:focus-visible {
+  outline: 3px solid #8ec7f2;
+  outline-offset: 4px;
+}
+
+#play-pause {
+  min-width: 96px;
+  padding: 8px 14px;
+  border: 1px solid #6a849a;
+  border-radius: 6px;
+  background: #1d2b38;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+#play-pause:hover:not(:disabled) {
+  background: #263b4d;
+}
+
+#play-pause:focus-visible {
+  outline: 3px solid #8ec7f2;
+  outline-offset: 3px;
+}
+
+#play-pause:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 #status {
   color: #a7c7df;
+  font-size: 12px;
+  text-align: center;
+}
+
+#controls-hint {
+  max-width: 640px;
+  margin: 0;
+  color: #c7d5e1;
   font-size: 12px;
   text-align: center;
 }

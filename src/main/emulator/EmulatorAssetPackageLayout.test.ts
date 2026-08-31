@@ -25,20 +25,20 @@ const BUNDLE_ROOT = path.join(REPOSITORY_ROOT, 'resources', 'emulator', 'homebre
 const EXPECTED_ASSETS = [
   {
     path: 'index.html',
-    sha256: '6cf7eedb15d00cb478496c15874aa95baefe8e7b313d5e12d1df387f2cf7ecea',
-    byteLength: 568,
+    sha256: '2207f5060f565ca3018afeb4985e74b6c33b159cf1b51be3c7c6722f4f9034d7',
+    byteLength: 907,
     mimeType: 'text/html'
   },
   {
     path: 'style.css',
-    sha256: '0d61b800937f2e46c14b8f7a836edc6932a1e22f2e01bf1f3dac2b9fb9bdb1e8',
-    byteLength: 633,
+    sha256: '7a34ea952e6ff8eed9f10648583b0d560ac07b9f397a5fd3e3e3ebbbcf511f52',
+    byteLength: 1221,
     mimeType: 'text/css'
   },
   {
     path: 'bootstrap.mjs',
-    sha256: '8b593040c0799df9db22478148087f86bcc6ee8438f8079027329123e8b89efe',
-    byteLength: 12508,
+    sha256: 'f43d4a37da7bf8717bf5ae37017c2f304a2acaf12726878a42ab542b5a1bb5cb',
+    byteLength: 18576,
     mimeType: 'application/javascript'
   },
   {
@@ -145,8 +145,8 @@ describe('homebrew emulator package layout', () => {
     })
     expect(provenance.bundle.runtimeManifest).toEqual({
       path: 'manifest.json',
-      sha256: 'aa5374afeed377cce7012719128d371243c021642b825bc83a1324f811bfde55',
-      byteLength: 1039
+      sha256: '535a00bb271552b0577f7379ded8bfe40746773d0323ee5953e6a8bd57aec61e',
+      byteLength: 1040
     })
     expect(provenance.bundle.artifacts).toEqual([
       {
@@ -230,6 +230,10 @@ describe('homebrew emulator package layout', () => {
     const bootstrap = readBundleFile('bootstrap.mjs')
     expect(index).toContain('<link rel="stylesheet" href="./style.css" />')
     expect(index).toContain('<script type="module" src="./bootstrap.mjs"></script>')
+    expect(index).toContain('id="play-pause"')
+    expect(index).toContain('aria-pressed="false"')
+    expect(index).toContain('id="controls-hint"')
+    expect(index).toContain('tabindex="0"')
     expect(index).not.toContain('Content-Security-Policy')
     expect(index).not.toMatch(/<style\b|<script(?![^>]*\bsrc=)/i)
     expect(EMULATOR_DOCUMENT_CSP).toContain("script-src 'self' 'wasm-unsafe-eval'")
@@ -248,6 +252,14 @@ describe('homebrew emulator package layout', () => {
     expect(bootstrap).toContain("screen.toDataURL('image/png')")
     expect(bootstrap).toContain('pngDataUrl')
     expect(bootstrap).toContain('trustedHumanInputEpoch')
+    expect(bootstrap).toContain('readyForHumanPlay')
+    expect(bootstrap).toContain('requestAnimationFrame')
+    expect(bootstrap).toContain('humanFrameQueued')
+    expect(bootstrap).toContain("return 'user_active'")
+    expect(bootstrap).toContain('framesAdvanced: 0')
+    expect(bootstrap).toContain('framesAdvanced: 1')
+    expect(bootstrap).toContain('assertRuntimeHealthy()')
+    expect(bootstrap).toContain('event.isTrusted !== true')
     expect(bootstrap).toContain('event.isTrusted !== true')
     expect(bootstrap).toContain("kind: 'refusal'")
     expect(bootstrap).toContain("return 'stale_observation'")
@@ -263,6 +275,10 @@ describe('homebrew emulator package layout', () => {
     expect(bootstrap).toContain('writable: false')
     expect(bootstrap).toContain('let moduleInstance = null')
     expect(bootstrap).not.toMatch(/globalThis\.(?:moduleInstance|HEAPU8)/)
+    expect(readBundleFile('style.css')).toContain('#screen:focus-visible')
+    expect(bootstrap).toMatch(
+      /async shutdown\(\) \{\s+await readyPromise\.catch\(\(\) => undefined\)\s+\/\/ Cancel the human loop[\s\S]+?readyForHumanPlay = false\s+stopHumanPlay\(\)\s+return enqueueOperation\(shutdownInternal\)/
+    )
   })
 
   it('ignores only the generated module while authored browser files remain Prettier-clean', async () => {

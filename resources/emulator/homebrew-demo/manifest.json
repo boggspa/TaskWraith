@@ -5,20 +5,20 @@
   "assets": [
     {
       "path": "index.html",
-      "sha256": "6cf7eedb15d00cb478496c15874aa95baefe8e7b313d5e12d1df387f2cf7ecea",
-      "byteLength": 568,
+      "sha256": "2207f5060f565ca3018afeb4985e74b6c33b159cf1b51be3c7c6722f4f9034d7",
+      "byteLength": 907,
       "mimeType": "text/html"
     },
     {
       "path": "style.css",
-      "sha256": "0d61b800937f2e46c14b8f7a836edc6932a1e22f2e01bf1f3dac2b9fb9bdb1e8",
-      "byteLength": 633,
+      "sha256": "7a34ea952e6ff8eed9f10648583b0d560ac07b9f397a5fd3e3e3ebbbcf511f52",
+      "byteLength": 1221,
       "mimeType": "text/css"
     },
     {
       "path": "bootstrap.mjs",
-      "sha256": "8b593040c0799df9db22478148087f86bcc6ee8438f8079027329123e8b89efe",
-      "byteLength": 12508,
+      "sha256": "f43d4a37da7bf8717bf5ae37017c2f304a2acaf12726878a42ab542b5a1bb5cb",
+      "byteLength": 18576,
       "mimeType": "application/javascript"
     },
     {

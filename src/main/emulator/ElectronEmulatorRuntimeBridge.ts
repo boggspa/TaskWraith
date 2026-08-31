@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   CanvasEmulatorInputEpochStaleError,
   CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError,
   type CanvasEmulatorAtomicObservation,
   type CanvasEmulatorObservationRuntimeBridge,
   type CanvasEmulatorRuntimeState
@@ -231,6 +232,7 @@ export function validateEmulatorStableReady(value: unknown): EmulatorStableReady
 interface ValidatedPageObservation {
   readonly frameId: number
   readonly inputEpoch: number
+  readonly humanActive: boolean
   readonly png: Buffer
   readonly state: CanvasEmulatorRuntimeState
 }
@@ -239,7 +241,8 @@ type ValidatedPageAtomicResult =
   | { readonly kind: 'observation'; readonly observation: ValidatedPageObservation }
   | {
       readonly kind: 'refusal'
-      readonly code: 'stale_observation' | 'stale_input_epoch'
+      readonly code: 'stale_observation' | 'stale_input_epoch' | 'user_active'
+      readonly framesAdvanced: 0 | 1
       readonly observation: ValidatedPageObservation
     }
 
@@ -285,6 +288,7 @@ function decodeObservationPng(value: unknown): Buffer {
 function validatePageObservationFields(input: Record<string, unknown>): ValidatedPageObservation {
   const frameId = positiveSafeInteger(input.frameId)
   const inputEpoch = safeInteger(input.inputEpoch)
+  const humanActive = input.humanActive
   const frameCounter = positiveSafeInteger(input.frameCounter)
   const x = safeInteger(input.x)
   const y = safeInteger(input.y)
@@ -297,6 +301,7 @@ function validatePageObservationFields(input: Record<string, unknown>): Validate
     input.height !== 144 ||
     frameId === null ||
     inputEpoch === null ||
+    typeof humanActive !== 'boolean' ||
     frameCounter === null ||
     x === null ||
     x > 159 ||
@@ -313,6 +318,7 @@ function validatePageObservationFields(input: Record<string, unknown>): Validate
   return {
     frameId,
     inputEpoch,
+    humanActive,
     png,
     state: Object.freeze({
       magic: Object.freeze([...TWGB_MAGIC]) as unknown as readonly [number, number, number, number],
@@ -344,8 +350,27 @@ function validatePageObservation(value: unknown): ValidatedPageAtomicResult {
   }
   const observation = validatePageObservationFields(input)
   if (input.outcome === 'refusal') {
-    if (input.refusalCode === 'stale_observation' || input.refusalCode === 'stale_input_epoch') {
-      return { kind: 'refusal', code: input.refusalCode, observation }
+    const framesAdvanced = input.refusalFramesAdvanced
+    if (
+      input.refusalCode === 'user_active' &&
+      observation.humanActive === true &&
+      (framesAdvanced === 0 || framesAdvanced === 1)
+    ) {
+      return { kind: 'refusal', code: input.refusalCode, framesAdvanced, observation }
+    }
+    if (
+      input.refusalCode === 'stale_observation' &&
+      observation.humanActive === false &&
+      framesAdvanced === 0
+    ) {
+      return { kind: 'refusal', code: input.refusalCode, framesAdvanced, observation }
+    }
+    if (
+      input.refusalCode === 'stale_input_epoch' &&
+      (framesAdvanced === 0 || framesAdvanced === 1) &&
+      observation.humanActive === false
+    ) {
+      return { kind: 'refusal', code: input.refusalCode, framesAdvanced, observation }
     }
     throw new Error('Emulator page returned an invalid atomic refusal.')
   }
@@ -402,6 +427,7 @@ function facadeObservationProbe(invocation: string): string {
       observationFrozen: Object.isFrozen(observation),
       outcome: refusal ? 'refusal' : 'observation',
       refusalCode: refusal && refusal.code,
+      refusalFramesAdvanced: refusal && refusal.framesAdvanced,
       moduleGlobal: typeof globalThis.Module,
       heapGlobal: typeof globalThis.HEAPU8,
       requireGlobal: typeof globalThis.require,
@@ -417,6 +443,7 @@ function facadeObservationProbe(invocation: string): string {
       y: observation && observation.y,
       input: observation && observation.input,
       inputEpoch: observation && observation.inputEpoch,
+      humanActive: observation && observation.humanActive,
       frameCounter: observation && observation.frameCounter
     };
   });
@@ -584,7 +611,10 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       if (pageResult.kind === 'refusal') {
         const observation = this.materializeAtomicObservation(live, pageResult.observation)
         if (pageResult.code === 'stale_input_epoch') {
-          throw new CanvasEmulatorInputEpochStaleError(observation)
+          throw new CanvasEmulatorInputEpochStaleError(observation, pageResult.framesAdvanced)
+        }
+        if (pageResult.code === 'user_active') {
+          throw new CanvasEmulatorUserActiveError(observation, pageResult.framesAdvanced)
         }
         throw new CanvasEmulatorObservationStaleError(observation)
       }
@@ -592,7 +622,8 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     } catch (error) {
       if (
         error instanceof CanvasEmulatorInputEpochStaleError ||
-        error instanceof CanvasEmulatorObservationStaleError
+        error instanceof CanvasEmulatorObservationStaleError ||
+        error instanceof CanvasEmulatorUserActiveError
       ) {
         throw error
       }
@@ -636,6 +667,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       emulationGeneration: live.emulationGeneration,
       frameId: page.frameId,
       inputEpoch: page.inputEpoch,
+      humanActive: page.humanActive,
       capturedAt,
       frame,
       state: page.state

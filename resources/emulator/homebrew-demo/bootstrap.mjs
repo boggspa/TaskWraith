@@ -8,6 +8,7 @@ const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42]
 const TWGB_SCHEMA = 1
 const READY_STATUS = 0x03
 const BOOT_FRAME_LIMIT = 600
+const HUMAN_FRAME_INTERVAL_MS = 1000 / 60
 const PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
 const MAX_PNG_DATA_URL_CHARS = 512 * 1024
 const BUTTON_BITS = Object.freeze({
@@ -37,8 +38,13 @@ const OPPOSITE_DIRECTIONS = Object.freeze([
 ])
 
 const screen = document.getElementById('screen')
+const playPause = document.getElementById('play-pause')
 const status = document.getElementById('status')
-if (!(screen instanceof HTMLCanvasElement) || !(status instanceof HTMLOutputElement)) {
+if (
+  !(screen instanceof HTMLCanvasElement) ||
+  !(playPause instanceof HTMLButtonElement) ||
+  !(status instanceof HTMLOutputElement)
+) {
   throw new Error('twemu DOM is incomplete')
 }
 const context = screen.getContext('2d', { alpha: false, willReadFrequently: true })
@@ -53,37 +59,115 @@ let closed = false
 let listenersAttached = false
 let operationTail = Promise.resolve()
 let trustedHumanInputEpoch = 0
+let humanPlayActive = false
+let humanAnimationFrame = null
+let humanLoopGeneration = 0
+let humanFrameQueued = false
+let lastHumanFrameAt = Number.NEGATIVE_INFINITY
+let readyForHumanPlay = false
+let humanRuntimeFailure = null
+
+function updatePlayPauseControl() {
+  playPause.disabled = closed || !readyForHumanPlay
+  playPause.textContent = humanPlayActive ? 'Pause' : 'Play'
+  playPause.setAttribute('aria-pressed', humanPlayActive ? 'true' : 'false')
+  playPause.setAttribute('aria-label', humanPlayActive ? 'Pause human play' : 'Start human play')
+}
+
+function bumpTrustedHumanInputEpoch() {
+  trustedHumanInputEpoch += 1
+}
+
+function clearTrustedHeldButtons() {
+  if (pressedButtons.size === 0) return false
+  pressedButtons.clear()
+  return true
+}
+
+function cancelHumanLoop() {
+  if (humanAnimationFrame !== null) {
+    cancelAnimationFrame(humanAnimationFrame)
+    humanAnimationFrame = null
+  }
+  humanLoopGeneration += 1
+  lastHumanFrameAt = Number.NEGATIVE_INFINITY
+}
+
+function stopHumanPlay(announcement = null) {
+  const wasActive = humanPlayActive
+  humanPlayActive = false
+  cancelHumanLoop()
+  const clearedButtons = clearTrustedHeldButtons()
+  if (wasActive || clearedButtons) bumpTrustedHumanInputEpoch()
+  updatePlayPauseControl()
+  if (announcement) status.value = announcement
+}
+
+function recordHumanRuntimeFailure(error) {
+  humanRuntimeFailure = error instanceof Error ? error : new Error(String(error))
+  readyForHumanPlay = false
+  stopHumanPlay()
+  status.value = `Human play stopped: ${humanRuntimeFailure.message}`
+}
+
+function assertRuntimeHealthy() {
+  if (humanRuntimeFailure) throw humanRuntimeFailure
+}
 
 function recordTrustedButtonTransition(event, button, pressed) {
-  // This slice records trusted human transitions for agent-arbitration only.
-  // It deliberately does not start a free-running emulation loop: actual human
-  // keyboard play is a remaining final-release gate, not a claim made here.
   if (event.isTrusted !== true) return
   const changed = pressed ? !pressedButtons.has(button) : pressedButtons.has(button)
   if (!changed) return
   if (pressed) pressedButtons.add(button)
   else pressedButtons.delete(button)
-  trustedHumanInputEpoch += 1
+  bumpTrustedHumanInputEpoch()
 }
 
 function onKeyDown(event) {
   const button = KEY_BUTTONS[event.code]
-  if (!button) return
+  if (!button || !humanPlayActive) return
   recordTrustedButtonTransition(event, button, true)
   event.preventDefault()
 }
 
 function onKeyUp(event) {
   const button = KEY_BUTTONS[event.code]
-  if (!button) return
+  if (!button || !humanPlayActive) return
   recordTrustedButtonTransition(event, button, false)
   event.preventDefault()
+}
+
+function onWindowBlur(event) {
+  if (event.isTrusted !== true || !humanPlayActive) return
+  stopHumanPlay('Human play paused because focus left the emulator.')
+}
+
+function onVisibilityChange(event) {
+  if (event.isTrusted !== true || !humanPlayActive || document.visibilityState === 'visible') return
+  stopHumanPlay('Human play paused because the emulator is hidden.')
+}
+
+function onPlayPause(event) {
+  if (event.isTrusted !== true || closed || !readyForHumanPlay || humanRuntimeFailure) return
+  if (humanPlayActive) {
+    stopHumanPlay('Human play paused.')
+    return
+  }
+  humanPlayActive = true
+  bumpTrustedHumanInputEpoch()
+  updatePlayPauseControl()
+  screen.focus()
+  status.value = 'Human play active.'
+  scheduleHumanFrame(humanLoopGeneration)
 }
 
 function attachListeners() {
   if (listenersAttached) return
   window.addEventListener('keydown', onKeyDown, { passive: false })
   window.addEventListener('keyup', onKeyUp, { passive: false })
+  window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  playPause.addEventListener('click', onPlayPause)
   listenersAttached = true
 }
 
@@ -91,7 +175,11 @@ function detachListeners() {
   if (!listenersAttached) return
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
-  pressedButtons.clear()
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  playPause.removeEventListener('click', onPlayPause)
+  stopHumanPlay()
+  playPause.disabled = true
   listenersAttached = false
 }
 
@@ -102,11 +190,11 @@ function enqueueOperation(operation) {
 }
 
 function namedButtonMask(buttons) {
-  const values = buttons === undefined ? [...pressedButtons] : buttons
+  const trustedHeldButtons = buttons === undefined
+  const values = trustedHeldButtons ? [...pressedButtons] : buttons
   if (!Array.isArray(values) || values.length > Object.keys(BUTTON_BITS).length) {
     throw new Error('twemu accepts at most eight named buttons')
   }
-  let mask = 0
   const namedButtons = new Set()
   for (const value of values) {
     if (typeof value !== 'string') throw new Error('twemu button names must be strings')
@@ -115,15 +203,17 @@ function namedButtonMask(buttons) {
     if (bit === undefined) throw new Error(`Unsupported twemu button: ${value}`)
     if (namedButtons.has(name)) throw new Error(`Duplicate twemu button: ${value}`)
     namedButtons.add(name)
-    mask |= bit
   }
-  if (
-    OPPOSITE_DIRECTIONS.some(
-      ([first, second]) => namedButtons.has(first) && namedButtons.has(second)
-    )
-  ) {
-    throw new Error('twemu does not accept opposite direction pairs')
+  for (const [first, second] of OPPOSITE_DIRECTIONS) {
+    if (!namedButtons.has(first) || !namedButtons.has(second)) continue
+    if (!trustedHeldButtons) throw new Error('twemu does not accept opposite direction pairs')
+    // A human can physically hold both keys. Neutralize that axis instead of
+    // throwing from the rAF loop and taking human play down with it.
+    namedButtons.delete(first)
+    namedButtons.delete(second)
   }
+  let mask = 0
+  for (const name of namedButtons) mask |= BUTTON_BITS[name]
   return mask
 }
 
@@ -209,7 +299,7 @@ function pngDataUrlFromCanvas() {
   return value
 }
 
-function paintCurrentFrame() {
+function paintCurrentFrame(includePng = false) {
   if (closed || !moduleInstance) throw new Error('twemu is shut down')
   const width = moduleInstance._twemu_framebuffer_width()
   const height = moduleInstance._twemu_framebuffer_height()
@@ -238,17 +328,26 @@ function paintCurrentFrame() {
   if (!Number.isSafeInteger(frameId) || frameId <= 0) {
     throw new Error('TWGB fixture did not provide a positive frame identity')
   }
-  const pngDataUrl = pngDataUrlFromCanvas()
-  const inputEpoch = trustedHumanInputEpoch
-  return { image, abi, frameId, pngDataUrl, inputEpoch }
+  return {
+    image,
+    abi,
+    frameId,
+    ...(includePng ? { pngDataUrl: pngDataUrlFromCanvas() } : {})
+  }
 }
 
 async function drawAndObserve() {
-  // The framebuffer swizzle, canvas paint, PNG encoding, ABI, frame id, and
-  // human input epoch are captured before the asynchronous hash yields. The
-  // enclosing operation queue keeps agent observe/step calls serialized.
-  const snapshot = paintCurrentFrame()
+  assertRuntimeHealthy()
+  // The framebuffer swizzle, canvas paint, PNG encoding, ABI, and frame id are
+  // captured before the asynchronous hash yields. The enclosing operation queue
+  // keeps core mutation serialized while the hash yields. Trusted key/mode
+  // transitions do not mutate the core, so read that non-core arbitration state
+  // at transaction close without retrying/hash-looping.
+  const snapshot = paintCurrentFrame(true)
   const frameHash = await rgbaHash(snapshot.image.data)
+  assertRuntimeHealthy()
+  const inputEpoch = trustedHumanInputEpoch
+  const humanActive = humanPlayActive
   status.value = `frame ${snapshot.frameId} · x ${snapshot.abi.x} · y ${snapshot.abi.y}`
   return Object.freeze({
     frameId: snapshot.frameId,
@@ -256,7 +355,8 @@ async function drawAndObserve() {
     width: WIDTH,
     height: HEIGHT,
     pngDataUrl: snapshot.pngDataUrl,
-    inputEpoch: snapshot.inputEpoch,
+    inputEpoch,
+    humanActive,
     magic: Object.freeze([...snapshot.abi.magic]),
     schema: snapshot.abi.schema,
     status: snapshot.abi.status,
@@ -267,6 +367,69 @@ async function drawAndObserve() {
   })
 }
 
+function paintHumanFrame() {
+  return paintCurrentFrame(false)
+}
+
+function queueHumanFrame(loopGeneration) {
+  if (humanFrameQueued) return
+  humanFrameQueued = true
+  void enqueueOperation(async () => {
+    try {
+      if (!humanPlayActive || closed || !moduleInstance || loopGeneration !== humanLoopGeneration) {
+        return
+      }
+      const now = performance.now()
+      if (now - lastHumanFrameAt < HUMAN_FRAME_INTERVAL_MS) return
+      assertRuntimeHealthy()
+      // One queued core mutation, shared with agent observe/step. Human frames
+      // deliberately omit PNG/data-URL/hash work; only the visible canvas is
+      // painted on this <=60Hz path.
+      const mask = namedButtonMask(undefined)
+      if (moduleInstance._twemu_step(mask, 1) !== 1) {
+        throw new Error('twemu refused one human frame')
+      }
+      lastHumanFrameAt = now
+      paintHumanFrame()
+    } catch (error) {
+      recordHumanRuntimeFailure(error)
+    } finally {
+      humanFrameQueued = false
+      if (
+        humanPlayActive &&
+        !closed &&
+        !humanRuntimeFailure &&
+        loopGeneration === humanLoopGeneration
+      ) {
+        scheduleHumanFrame(loopGeneration)
+      }
+    }
+  })
+}
+
+function scheduleHumanFrame(loopGeneration) {
+  if (
+    !humanPlayActive ||
+    closed ||
+    !moduleInstance ||
+    humanAnimationFrame !== null ||
+    loopGeneration !== humanLoopGeneration
+  ) {
+    return
+  }
+  humanAnimationFrame = requestAnimationFrame((_timestamp) => {
+    humanAnimationFrame = null
+    if (!humanPlayActive || closed || !moduleInstance || loopGeneration !== humanLoopGeneration) {
+      return
+    }
+    if (humanFrameQueued || performance.now() - lastHumanFrameAt < HUMAN_FRAME_INTERVAL_MS) {
+      scheduleHumanFrame(loopGeneration)
+      return
+    }
+    queueHumanFrame(loopGeneration)
+  })
+}
+
 function staleStepCode(expectedFrameId, expectedInputEpoch) {
   if (!Number.isSafeInteger(expectedFrameId) || expectedFrameId <= 0) {
     throw new Error('twemu expectedFrameId must be a positive integer')
@@ -274,6 +437,7 @@ function staleStepCode(expectedFrameId, expectedInputEpoch) {
   if (!Number.isSafeInteger(expectedInputEpoch) || expectedInputEpoch < 0) {
     throw new Error('twemu expectedInputEpoch must be a non-negative integer')
   }
+  if (humanPlayActive) return 'user_active'
   if (expectedInputEpoch !== trustedHumanInputEpoch) {
     return 'stale_input_epoch'
   }
@@ -285,6 +449,7 @@ function staleStepCode(expectedFrameId, expectedInputEpoch) {
 
 async function stepOneFrame(buttons, expectedFrameId, expectedInputEpoch) {
   if (closed || !moduleInstance) throw new Error('twemu is shut down')
+  assertRuntimeHealthy()
   // Both freshness checks run INSIDE the serialized operation queue, before
   // `_twemu_step`, so two callers planned from the same observation cannot
   // both advance the emulator.
@@ -293,6 +458,7 @@ async function stepOneFrame(buttons, expectedFrameId, expectedInputEpoch) {
     return Object.freeze({
       kind: 'refusal',
       code: refusalCode,
+      framesAdvanced: 0,
       observation: await drawAndObserve()
     })
   }
@@ -305,6 +471,22 @@ async function stepOneFrame(buttons, expectedFrameId, expectedInputEpoch) {
   const observation = await drawAndObserve()
   if (observation.frameId !== beforeFrame + 1) {
     throw new Error(`Frame identity mismatch (${beforeFrame} -> ${observation.frameId})`)
+  }
+  if (observation.humanActive) {
+    return Object.freeze({
+      kind: 'refusal',
+      code: 'user_active',
+      framesAdvanced: 1,
+      observation
+    })
+  }
+  if (observation.inputEpoch !== expectedInputEpoch) {
+    return Object.freeze({
+      kind: 'refusal',
+      code: 'stale_input_epoch',
+      framesAdvanced: 1,
+      observation
+    })
   }
   return Object.freeze({ kind: 'observation', observation })
 }
@@ -325,7 +507,12 @@ async function initialize() {
   for (let attempt = 0; attempt < BOOT_FRAME_LIMIT; attempt += 1) {
     if (moduleInstance._twemu_step(0, 1) !== 1) throw new Error('twemu boot step failed')
     await yieldToEventLoop()
-    if (isStableReady(readAbiOrNull())) return drawAndObserve()
+    if (isStableReady(readAbiOrNull())) {
+      const initialObservation = await drawAndObserve()
+      readyForHumanPlay = true
+      updatePlayPauseControl()
+      return initialObservation
+    }
   }
   throw new Error(`TWGB fixture did not become ready within ${BOOT_FRAME_LIMIT} one-frame yields`)
 }
@@ -339,6 +526,7 @@ async function shutdownInternal() {
     })
   }
   closed = true
+  readyForHumanPlay = false
   detachListeners()
   const activeModule = moduleInstance
   moduleInstance = null
@@ -361,14 +549,20 @@ const facade = Object.freeze({
   },
   async observe() {
     await readyPromise
+    assertRuntimeHealthy()
     return enqueueOperation(drawAndObserve)
   },
   async step(buttons = undefined, expectedFrameId = undefined, expectedInputEpoch = undefined) {
     await readyPromise
+    assertRuntimeHealthy()
     return enqueueOperation(() => stepOneFrame(buttons, expectedFrameId, expectedInputEpoch))
   },
   async shutdown() {
     await readyPromise.catch(() => undefined)
+    // Cancel the human loop before this teardown is appended to operationTail:
+    // a frame already queued ahead of it will recheck active/generation and skip.
+    readyForHumanPlay = false
+    stopHumanPlay()
     return enqueueOperation(shutdownInternal)
   }
 })
@@ -381,5 +575,7 @@ Object.defineProperty(globalThis, '__twemu', {
 })
 
 readyPromise.catch((error) => {
+  readyForHumanPlay = false
+  updatePlayPauseControl()
   status.value = `Failed: ${error instanceof Error ? error.message : String(error)}`
 })

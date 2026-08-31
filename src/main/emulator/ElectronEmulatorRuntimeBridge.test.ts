@@ -6,7 +6,8 @@ import { Script } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CanvasEmulatorInputEpochStaleError,
-  CanvasEmulatorObservationStaleError
+  CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError
 } from '../canvas/CanvasEmulatorDriver'
 import type { CanvasHostSurface } from '../canvas/CanvasHostSurface'
 import { createEmulatorAssetRegistry, emulatorEntryUrl } from './EmulatorAssetManifest'
@@ -64,16 +65,22 @@ function atomicProjection(overrides: Record<string, unknown> = {}): Record<strin
     y: 72,
     input: 0,
     inputEpoch: 4,
+    humanActive: false,
     frameCounter: 2,
     ...overrides
   }
 }
 
 function atomicRefusal(
-  code: 'stale_observation' | 'stale_input_epoch',
+  code: 'stale_observation' | 'stale_input_epoch' | 'user_active',
   overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  return atomicProjection({ outcome: 'refusal', refusalCode: code, ...overrides })
+  return atomicProjection({
+    outcome: 'refusal',
+    refusalCode: code,
+    refusalFramesAdvanced: 0,
+    ...overrides
+  })
 }
 
 function hash(bytes: Uint8Array): string {
@@ -454,7 +461,44 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     })
     await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorInputEpochStaleError)
     await expect(rejected).rejects.toMatchObject({
+      framesAdvanced: 0,
       observation: expect.objectContaining({ frameId: 89, inputEpoch: 4 })
+    })
+    expect(fakeSurface.surface.isDestroyed()).toBe(false)
+  })
+
+  it('preserves a post-dispatch human interruption as one honestly advanced frame', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_input_epoch', {
+        frameId: 90,
+        frameCounter: 3,
+        inputEpoch: 5,
+        refusalFramesAdvanced: 1
+      })
+    )
+
+    await expect(
+      bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4
+      })
+    ).rejects.toMatchObject({
+      code: 'stale_input_epoch',
+      framesAdvanced: 1,
+      observation: expect.objectContaining({ frameId: 90, inputEpoch: 5 })
     })
     expect(fakeSurface.surface.isDestroyed()).toBe(false)
   })
@@ -489,6 +533,115 @@ describe('ElectronEmulatorRuntimeBridge', () => {
 
     fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicProjection())
     await expect(bridge.observe(input)).resolves.toMatchObject({ frameId: 89 })
+  })
+
+  it('maps a structured human-play refusal to a typed current observation without retiring', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('user_active', { humanActive: true, refusalFramesAdvanced: 1, frameId: 90 })
+    )
+
+    const rejected = bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4
+    })
+    await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorUserActiveError)
+    await expect(rejected).rejects.toMatchObject({
+      framesAdvanced: 1,
+      observation: expect.objectContaining({ frameId: 90, humanActive: true })
+    })
+    expect(fakeSurface.surface.isDestroyed()).toBe(false)
+  })
+
+  it('fatal-retires a stale observation envelope that dishonestly claims a dispatched frame', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_observation', { refusalFramesAdvanced: 1 })
+    )
+
+    await expect(
+      bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4
+      })
+    ).rejects.toThrow(/invalid atomic refusal/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+  })
+
+  it('fatal-retires a stale-input envelope with an unsupported dispatch count', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicRefusal('stale_input_epoch', { refusalFramesAdvanced: 2 })
+    )
+
+    await expect(
+      bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4
+      })
+    ).rejects.toThrow(/invalid atomic refusal/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+  })
+
+  it('fatal-retires a user-active envelope without a human-active current observation', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicRefusal('user_active'))
+
+    await expect(
+      bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4
+      })
+    ).rejects.toThrow(/invalid atomic refusal/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
   })
 
   it('allows exactly one of two same-observation steps and returns a typed stale frame with a current observation', async () => {

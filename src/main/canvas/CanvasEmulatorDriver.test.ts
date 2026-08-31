@@ -4,6 +4,7 @@ import {
   CanvasEmulatorDriver,
   CanvasEmulatorInputEpochStaleError,
   CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError,
   type CanvasEmulatorAtomicObservation,
   type CanvasEmulatorObservationRuntimeBridge,
   type CanvasEmulatorRuntimeBridge
@@ -62,6 +63,7 @@ function atomicObservation(
     emulationGeneration: 1,
     frameId: 9,
     inputEpoch: 4,
+    humanActive: false,
     capturedAt,
     frame: {
       mimeType: 'image/png',
@@ -198,7 +200,7 @@ describe('CanvasEmulatorDriver', () => {
       frameId: 10,
       inputEpoch: 5
     })
-    bridge.step.mockRejectedValueOnce(new CanvasEmulatorInputEpochStaleError(refreshed))
+    bridge.step.mockRejectedValueOnce(new CanvasEmulatorInputEpochStaleError(refreshed, 1))
     const driver = new CanvasEmulatorDriver('canvas-stale-input', {
       createSurface: () => host.surface,
       runtime: bridge
@@ -206,9 +208,41 @@ describe('CanvasEmulatorDriver', () => {
     await driver.open({ driver: 'emulator' })
     await driver.observeEmulator()
 
-    await expect(driver.stepEmulator(['right'])).rejects.toBeInstanceOf(
-      CanvasEmulatorInputEpochStaleError
-    )
+    await expect(driver.stepEmulator(['right'])).rejects.toMatchObject({
+      code: 'stale_input_epoch',
+      framesAdvanced: 1
+    })
+    await driver.stepEmulator(['right'])
+    expect(bridge.step).toHaveBeenLastCalledWith({
+      gameId: 'homebrew-demo',
+      surface: host.surface,
+      buttons: ['right'],
+      expectedFrameId: 10,
+      expectedInputEpoch: 5
+    })
+  })
+
+  it('caches the current observation returned with a typed active-human refusal', async () => {
+    const host = fakeSurface()
+    const bridge = observationRuntime()
+    const activeObservation = atomicObservation({
+      observationId: 'obs:canvas:human-active',
+      frameId: 10,
+      inputEpoch: 5,
+      humanActive: true
+    })
+    bridge.step.mockRejectedValueOnce(new CanvasEmulatorUserActiveError(activeObservation, 0))
+    const driver = new CanvasEmulatorDriver('canvas-human-active', {
+      createSurface: () => host.surface,
+      runtime: bridge
+    })
+    await driver.open({ driver: 'emulator' })
+    await driver.observeEmulator()
+
+    await expect(driver.stepEmulator(['right'])).rejects.toMatchObject({
+      code: 'user_active',
+      framesAdvanced: 0
+    })
     await driver.stepEmulator(['right'])
     expect(bridge.step).toHaveBeenLastCalledWith({
       gameId: 'homebrew-demo',
