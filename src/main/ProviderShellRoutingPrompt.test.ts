@@ -21,6 +21,7 @@ describe('buildProviderShellRoutingPrompt', () => {
     expect(prompt).toContain('TaskWraith__run_shell_command')
     expect(prompt).toContain('already allowed shell commands')
     expect(prompt).toContain('Opaque process side effects')
+    expect(prompt).toContain('permissionOpportunity')
     expect(prompt).toContain('permissionRetry')
     expect(prompt).toContain('capability gateway')
     expect(prompt).toContain('outside the workspace sandbox')
@@ -70,6 +71,7 @@ describe('buildProviderShellRoutingPrompt', () => {
     })
 
     expect(prompt).toContain('`run_shell_command`')
+    expect(prompt).toContain('permissionOpportunity')
     expect(prompt).toContain('`request_tool_permission`')
     expect(prompt).not.toContain('TaskWraith__run_shell_command')
   })

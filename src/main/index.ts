@@ -1593,6 +1593,7 @@ import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
+  isPermissionOpportunityDirectTaskWraithMcpProfile,
   isSoloTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
@@ -2164,6 +2165,7 @@ import {
   type GatewayTargetDispatchMarker
 } from './mcp/McpGatewayTargetDispatch'
 import {
+  PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME,
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   buildToolPermissionRetryInstruction,
   approvedShellAuthorityAuthorizesUnscopedShell,
@@ -2172,8 +2174,18 @@ import {
   oneOffToolPermissionRetryGuardError,
   orchestrateToolPermissionRetry,
   prepareToolPermissionRetryTarget,
+  redactPermissionOpportunityIdsForDurableStorage,
   type OneOffToolPermissionRetryMarker
 } from './mcp/ToolPermissionRetry'
+import {
+  PermissionOpportunityRegistry,
+  type PermissionOpportunityBoundaryCode
+} from './mcp/PermissionOpportunityRegistry'
+import {
+  buildPermissionOpportunityBinding,
+  createPermissionOpportunityResolver,
+  issueHostPermissionOpportunity
+} from './mcp/PermissionOpportunityRuntime'
 import {
   mcpToolAlwaysPrompts,
   validateMcpCallerToolAllowlist,
@@ -3409,6 +3421,7 @@ if (
 }
 const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
 const externalPathGrantExecutionRegistry = new ExternalPathGrantExecutionRegistry()
+const permissionOpportunityRegistry = new PermissionOpportunityRegistry()
 const geminiMcpBrokerToken = randomBytes(32).toString('hex')
 const instanceEpoch = createInstanceResourceEpoch()
 
@@ -3505,6 +3518,7 @@ interface TaskWraithMcpBridgeArgOptions {
   orchestrationDirect?: boolean
   auditSubset?: boolean
   soloSubset?: boolean
+  permissionOpportunityDirect?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -3523,7 +3537,8 @@ function taskwraithMcpBridgeArgs(
     options.sketchDirect === true,
     options.orchestrationDirect === true,
     options.auditSubset === true,
-    options.soloSubset === true
+    options.soloSubset === true,
+    options.permissionOpportunityDirect === true
   )
 }
 
@@ -9127,6 +9142,7 @@ runManager.onChange((event) => {
   liveSteeringCoordinator.handleRunSessionChange(event)
   if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
     toolBoundarySteerCoordinator.forget(event.session.runId)
+    permissionOpportunityRegistry.clearForRun(event.session.runId)
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
     workspaceLockTerminalReconcilerRef.terminal(event.session.runId)
@@ -22370,6 +22386,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           coreSubset: cursorBrokerPolicy.coreSubset,
           gatewaySubset: cursorBrokerPolicy.gatewaySubset,
           soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
           ),
@@ -23543,7 +23562,10 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
         orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       grokMcpServers = [
         {
@@ -24486,7 +24508,10 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
         orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       mistralMcpServers = [
         {
@@ -26225,7 +26250,9 @@ function resolveCodexClientStartupConfiguration(
             meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
             meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(mcpProfileId),
             sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId),
-            orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(mcpProfileId)
+            orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(mcpProfileId),
+            permissionOpportunityDirect:
+              isPermissionOpportunityDirectTaskWraithMcpProfile(mcpProfileId)
           }),
           parentProvider: 'codex',
           userMcpServers
@@ -27006,6 +27033,10 @@ function sendAgentCompatLine(
   // The sanitizer also correlates result-only frames by opaque tool-call id.
   payload = nativeCanvasCompatSanitizer.sanitize(payload, canvasEvalScope)
   payload = canvasEvalCompatSanitizer.sanitize(payload, canvasEvalApproval, canvasEvalScope)
+  // Provider-native MCP echoes bypass the canonical dispatcher transcript
+  // projection. Strip bearer opportunity ids here as the final common seam
+  // before durable run events, transcript materialization, or renderer IPC.
+  payload = redactPermissionOpportunityIdsForDurableStorage(payload)
   const routed = enrichAgentPayload(provider, payload, initialRoute)
   if (!providerRunPersistenceAuthorized(provider, routed)) return
   // UTF-16 integrity for the per-delta wire lane (F14): a delta ending in a
@@ -34159,6 +34190,9 @@ async function runGeminiProvider(
         coreSubset: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         gatewaySubset: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
@@ -34979,6 +35013,9 @@ async function runAntigravityAgyProvider(
           // hidden tools stay reachable via capability_search/capability_invoke.
           gatewaySubset: true,
           soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
           ),
@@ -37359,6 +37396,105 @@ function toolPermissionRetryAvailable(
   )
 }
 
+function permissionOpportunityRedemptionAvailable(
+  context: GeminiToolContext,
+  callerContext?: McpCallerContext
+): boolean {
+  if (!isPermissionOpportunityDirectTaskWraithMcpProfile(context.taskWraithMcpProfileId)) {
+    return false
+  }
+  if (
+    callerContext?.fixedToolAllowlist &&
+    !callerContext.fixedToolAllowlist.includes(PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME)
+  ) {
+    return false
+  }
+  return taskWraithGatewayDirectToolNamesForProfile(context.taskWraithMcpProfileId).includes(
+    PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
+  )
+}
+
+function permissionOpportunityBindingFor(
+  context: GeminiToolContext,
+  parentProvider: ProviderId,
+  callerContext?: McpCallerContext
+) {
+  if (!context.appRunId || !context.appChatId || !context.taskWraithMcpProfileId) return null
+  const chat = AppStore.getChat(context.appChatId)
+  if (!chat) return null
+  const workspaceRun = context.scope === 'workspace'
+  const primaryWorkspacePath = workspaceRun ? chat.workspacePath : null
+  const effectiveWorkspacePath = workspaceRun ? context.workspacePath : null
+  const workspaceId = workspaceRun ? chat.workspaceId : null
+  if (workspaceRun && (!workspaceId || !primaryWorkspacePath || !effectiveWorkspacePath)) return null
+  const postureFingerprint =
+    context.effectivePermissionsSignature ||
+    (context.effectivePermissions
+      ? createHash('sha256').update(JSON.stringify(context.effectivePermissions)).digest('hex')
+      : null)
+  return buildPermissionOpportunityBinding({
+    provider: parentProvider,
+    runId: context.appRunId,
+    chatId: context.appChatId,
+    profileId: context.taskWraithMcpProfileId,
+    workspaceId,
+    primaryWorkspacePath,
+    effectiveWorkspacePath,
+    providerSessionId: context.providerSessionId,
+    participantId: context.ensembleRun?.participantId,
+    laneId: context.ensembleRun?.laneId,
+    postureFingerprint,
+    fixedToolAllowlist: callerContext?.fixedToolAllowlist
+  })
+}
+
+function permissionRepairForDeniedInvocation(input: {
+  context: GeminiToolContext
+  parentProvider: ProviderId
+  callerContext?: McpCallerContext
+  toolName: TaskWraithMcpToolName
+  arguments: Record<string, unknown>
+  failure: string
+  boundaryCode: PermissionOpportunityBoundaryCode
+  userDeclined: boolean
+}) {
+  const definitions = filterTaskWraithMcpToolDefinitionsForProfile(
+    input.context.taskWraithMcpProfileId,
+    mcpToolDefinitions()
+  )
+  if (permissionOpportunityRedemptionAvailable(input.context, input.callerContext)) {
+    const issued = issueHostPermissionOpportunity({
+      registry: permissionOpportunityRegistry,
+      binding: permissionOpportunityBindingFor(
+        input.context,
+        input.parentProvider,
+        input.callerContext
+      ),
+      boundaryCode: input.boundaryCode,
+      toolName: input.toolName,
+      arguments: input.arguments,
+      failure: input.failure,
+      userDeclined: input.userDeclined,
+      definitions,
+      isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
+    })
+    if (issued.ok) return { permissionOpportunity: issued.instruction }
+  }
+  const legacyRetry = buildToolPermissionRetryInstruction({
+    available: toolPermissionRetryAvailable(
+      input.context,
+      input.parentProvider,
+      input.callerContext
+    ),
+    toolName: input.toolName,
+    arguments: input.arguments,
+    failure: input.failure,
+    definitions,
+    isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
+  })
+  return legacyRetry ? { permissionRetry: legacyRetry } : {}
+}
+
 /**
  * Hidden targets available to this run. Read-only and plan seats retain their
  * existing hard ceilings, and network-disabled tools never appear in discovery
@@ -37962,6 +38098,20 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
+  if (
+    toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME &&
+    !permissionOpportunityRedemptionAvailable(context, callerContext)
+  ) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error:
+          'Permission-opportunity redemption is unavailable to this immutable TaskWraith MCP profile.'
+      }),
+      isError: true
+    }
+  }
 
   const baseCwd = resolve(context.cwd || context.workspacePath || globalRunCwd())
   const workspacePath = context.workspacePath ? resolve(context.workspacePath) : undefined
@@ -38316,7 +38466,7 @@ async function executeGeminiMcpTool(
             ? {
                 ...payload,
                 via_permission_retry: true,
-                permission_request_tool_name: TOOL_PERMISSION_RETRY_TOOL_NAME
+                permission_request_tool_name: permissionRetry.permissionRequestToolName
               }
             : payload
         sendAgentCompatLine(
@@ -38333,10 +38483,12 @@ async function executeGeminiMcpTool(
     type: 'tool_use',
     tool_id: toolId,
     tool_name: toolName,
-    parameters: redactCanvasFillValueForDurableStorage(
-      isCanvasMcpToolName(toolName) || isMeshMcpToolName(toolName)
-        ? canvasMcpArgumentsForDurableProjection(args)
-        : { ...args, cwd }
+    parameters: redactPermissionOpportunityIdsForDurableStorage(
+      redactCanvasFillValueForDurableStorage(
+        isCanvasMcpToolName(toolName) || isMeshMcpToolName(toolName)
+          ? canvasMcpArgumentsForDurableProjection(args)
+          : { ...args, cwd }
+      )
     ),
     provider: parentProvider,
     server: GEMINI_MCP_SERVER_NAME
@@ -38382,27 +38534,38 @@ async function executeGeminiMcpTool(
                 ? ' The approval timed out or was cancelled by the system.'
                 : ''
             }`
-    const permissionRetryInstruction = buildToolPermissionRetryInstruction({
-      available: toolPermissionRetryAvailable(context, parentProvider, callerContext),
-      toolName,
-      arguments: args,
-      failure: deniedError,
-      definitions: filterTaskWraithMcpToolDefinitionsForProfile(
-        context.taskWraithMcpProfileId,
-        mcpToolDefinitions()
-      ),
-      isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
-    })
+    const permissionRepair =
+      explicitlyDeclinedByUser ||
+      networkBlockedTool ||
+      staleExternalPathGrantBinding ||
+      Boolean(externalPathDetection) ||
+      mcpToolAlwaysPrompts(toolName, context.scope)
+        ? {}
+        : permissionRepairForDeniedInvocation({
+            context,
+            parentProvider,
+            callerContext,
+            toolName,
+            arguments: args,
+            failure: deniedError,
+            boundaryCode:
+              genericApprovalResolution?.decisionSource === 'system'
+                ? 'approval_timeout'
+                : 'policy_denied',
+            userDeclined: explicitlyDeclinedByUser
+          })
     const deniedPayload = {
       ok: false,
       tool: toolName,
       service: approvalPreview.service,
       error: deniedError,
-      ...(permissionRetryInstruction ? { permissionRetry: permissionRetryInstruction } : {})
+      ...permissionRepair
     }
     const deniedResult = mcpStructuredJsonResult(deniedPayload)
     const durableDeniedResult = mcpStructuredJsonResult(
-      redactCanvasFillValueForDurableStorage(deniedPayload)
+      redactPermissionOpportunityIdsForDurableStorage(
+        redactCanvasFillValueForDurableStorage(deniedPayload)
+      )
     )
     emitMcpToolTranscriptEvent({
       type: 'tool_result',
@@ -38496,37 +38659,56 @@ async function executeGeminiMcpTool(
   }
   if (!workspaceMutationAdmission.ok) {
     workspaceMutationOperationDone?.finish()
-    const permissionRetryInstruction = exactOneOffPermissionRetry
-      ? null
-      : buildToolPermissionRetryInstruction({
-          available: toolPermissionRetryAvailable(context, parentProvider, callerContext),
+    const retryNetworkBlockedTool = networkAccessBlockedToolName(
+      toolName,
+      context.effectivePermissions,
+      args
+    )
+    const retryGuardError = oneOffToolPermissionRetryGuardError({
+      toolName,
+      networkError: retryNetworkBlockedTool
+        ? networkAccessBlockedMessage(retryNetworkBlockedTool)
+        : null,
+      externalPathDetected: Boolean(externalPathDetection),
+      alwaysPrompts: mcpToolAlwaysPrompts(toolName, context.scope)
+    })
+    const nonRetriableLaneBoundary =
+      Boolean(workspaceMutationAdmission.laneId) && !isUnscopedProcessAuthorityTool(toolName)
+    const permissionRepair =
+      exactOneOffPermissionRetry || retryGuardError || nonRetriableLaneBoundary
+      ? {}
+      : permissionRepairForDeniedInvocation({
+          context,
+          parentProvider,
+          callerContext,
           toolName,
           arguments: args,
           failure: workspaceMutationAdmission.reason,
-          definitions: filterTaskWraithMcpToolDefinitionsForProfile(
-            context.taskWraithMcpProfileId,
-            mcpToolDefinitions()
-          ),
-          isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
+          boundaryCode: isUnscopedProcessAuthorityTool(toolName)
+            ? 'unscoped_process'
+            : 'workspace_lock_denied',
+          userDeclined: false
         })
-    const admissionDeniedText = permissionRetryInstruction
-      ? mcpJson({
-          ok: false,
-          tool: toolName,
-          ...(workspaceMutationAdmission.code ? { code: workspaceMutationAdmission.code } : {}),
-          error: workspaceMutationAdmission.reason,
-          ...(workspaceMutationAdmission.laneId
-            ? { laneId: workspaceMutationAdmission.laneId }
-            : {}),
-          permissionRetry: permissionRetryInstruction
-        })
+    const admissionDeniedPayload = {
+      ok: false,
+      tool: toolName,
+      ...(workspaceMutationAdmission.code ? { code: workspaceMutationAdmission.code } : {}),
+      error: workspaceMutationAdmission.reason,
+      ...(workspaceMutationAdmission.laneId ? { laneId: workspaceMutationAdmission.laneId } : {}),
+      ...permissionRepair
+    }
+    const admissionDeniedText = Object.keys(permissionRepair).length
+      ? mcpJson(admissionDeniedPayload)
+      : workspaceMutationAdmission.text
+    const durableAdmissionDeniedText = Object.keys(permissionRepair).length
+      ? mcpJson(redactPermissionOpportunityIdsForDurableStorage(admissionDeniedPayload))
       : workspaceMutationAdmission.text
     emitMcpToolTranscriptEvent({
       type: 'tool_result',
       tool_id: toolId,
       tool_name: toolName,
       status: 'error',
-      output: admissionDeniedText,
+      output: durableAdmissionDeniedText,
       provider: parentProvider,
       server: GEMINI_MCP_SERVER_NAME
     })
@@ -38938,8 +39120,23 @@ async function executeGeminiMcpTool(
         (isRecord(result.structuredContent) && result.structuredContent.ok === false)
     }
 
-    if (toolName === TOOL_PERMISSION_RETRY_TOOL_NAME) {
+    if (
+      toolName === TOOL_PERMISSION_RETRY_TOOL_NAME ||
+      toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
+    ) {
       markDispatchHandled('user-question')
+      const permissionOpportunityResolver =
+        toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
+          ? createPermissionOpportunityResolver({
+              registry: permissionOpportunityRegistry,
+              getLiveBinding: () => {
+                const liveContext = getAgentToolContext(parentProvider, effectiveRoute)
+                return liveContext
+                  ? permissionOpportunityBindingFor(liveContext, parentProvider, callerContext)
+                  : null
+              }
+            })
+          : undefined
       const retryExecution = await orchestrateToolPermissionRetry({
         value: args,
         definitions: filterTaskWraithMcpToolDefinitionsForProfile(
@@ -38948,6 +39145,8 @@ async function executeGeminiMcpTool(
         ),
         isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate),
         providerLabel: providerDisplayName(parentProvider),
+        surfaceToolName: toolName,
+        resolvePermissionOpportunity: permissionOpportunityResolver,
         prepareTarget: (retryRequest) => {
           const targetCallerToolAllowlistGuard = validateMcpCallerToolAllowlist(
             retryRequest.toolName,

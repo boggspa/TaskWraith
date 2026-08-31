@@ -19,6 +19,8 @@ import { isPermissionOpportunityBoundaryCode } from './PermissionOpportunityRegi
 
 export const TOOL_PERMISSION_RETRY_TOOL_NAME =
   'request_tool_permission' as const satisfies TaskWraithMcpToolName
+export const PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME =
+  'redeem_permission_opportunity' as const satisfies TaskWraithMcpToolName
 
 const MAX_FAILURE_LENGTH = 4000
 const MAX_RATIONALE_LENGTH = 600
@@ -60,6 +62,7 @@ const NON_RETRIABLE_ENSEMBLE_LANE_PATTERNS = [
 
 const NON_RETRIABLE_TARGETS = new Set<TaskWraithMcpToolName>([
   TOOL_PERMISSION_RETRY_TOOL_NAME,
+  PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME,
   'ask_user_question',
   'delegate_to_subthread',
   'thread_message',
@@ -171,6 +174,25 @@ export interface ToolPermissionRetryInstruction {
   arguments: {
     name: typeof TOOL_PERMISSION_RETRY_TOOL_NAME
     arguments: ToolPermissionRetryRequest
+  }
+}
+
+/**
+ * Fresh-profile repair hint. Main retains the canonical failed invocation; the
+ * model receives only a short-lived opaque handle and cannot rewrite the
+ * target, arguments, or failure evidence during redemption.
+ */
+export interface PermissionOpportunityRedemptionInstruction {
+  tool: typeof PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
+  arguments: ToolPermissionOpportunityRequest
+}
+
+export function buildPermissionOpportunityRedemptionInstruction(
+  permissionOpportunityId: string
+): PermissionOpportunityRedemptionInstruction {
+  return {
+    tool: PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME,
+    arguments: { permissionOpportunityId }
   }
 }
 
@@ -530,14 +552,21 @@ function argumentsFingerprint(args: Record<string, unknown>): string {
 export interface OneOffToolPermissionRetryMarker {
   targetToolName: TaskWraithMcpToolName
   targetArgumentsSha256: string
+  permissionRequestToolName:
+    | typeof TOOL_PERMISSION_RETRY_TOOL_NAME
+    | typeof PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
 }
 
 export function createOneOffToolPermissionRetryMarker(
-  request: ToolPermissionRetryRequest
+  request: ToolPermissionRetryRequest,
+  permissionRequestToolName:
+    | typeof TOOL_PERMISSION_RETRY_TOOL_NAME
+    | typeof PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME = TOOL_PERMISSION_RETRY_TOOL_NAME
 ): OneOffToolPermissionRetryMarker {
   return {
     targetToolName: request.toolName,
-    targetArgumentsSha256: argumentsFingerprint(request.arguments)
+    targetArgumentsSha256: argumentsFingerprint(request.arguments),
+    permissionRequestToolName
   }
 }
 
@@ -866,6 +895,10 @@ export async function orchestrateToolPermissionRetry<
   definitions: readonly TaskWraithMcpToolDefinition[]
   isAutoAllowed: (toolName: TaskWraithMcpToolName) => boolean
   providerLabel: string
+  /** Result receipts name the direct v18 redemption verb when it owns the call. */
+  surfaceToolName?:
+    | typeof TOOL_PERMISSION_RETRY_TOOL_NAME
+    | typeof PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME
   /**
    * Main-owned atomic resolver for a host-issued opportunity. The resolver must
    * bind its id to the live provider/run/chat/profile/workspace before returning
@@ -882,6 +915,7 @@ export async function orchestrateToolPermissionRetry<
     marker: OneOffToolPermissionRetryMarker
   ) => Promise<TResult>
 }): Promise<ToolPermissionRetryOrchestrationResult<TResult>> {
+  const surfaceToolName = input.surfaceToolName ?? TOOL_PERMISSION_RETRY_TOOL_NAME
   let validatedRequest: ToolPermissionRetryRequest
   let opportunityReservation: ToolPermissionOpportunityReservation | undefined
   if (isToolPermissionOpportunityRequest(input.value)) {
@@ -890,7 +924,7 @@ export async function orchestrateToolPermissionRetry<
         isError: true,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           code: 'opportunity_unavailable',
           error: 'This run cannot redeem a host-issued permission opportunity.'
         })
@@ -904,7 +938,7 @@ export async function orchestrateToolPermissionRetry<
         isError: true,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           code: resolvedOpportunity.code,
           error: resolvedOpportunity.error
         })
@@ -926,7 +960,7 @@ export async function orchestrateToolPermissionRetry<
         isError: true,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           code: validation.code,
           error: validation.message,
           ...(validation.issues ? { issues: validation.issues } : {})
@@ -940,7 +974,7 @@ export async function orchestrateToolPermissionRetry<
         isError: true,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           code: 'invalid_opportunity_request',
           error: 'A permission opportunity request must contain only permissionOpportunityId.'
         })
@@ -956,7 +990,7 @@ export async function orchestrateToolPermissionRetry<
         isError: true,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           code: validation.code,
           error: validation.message,
           ...(validation.issues ? { issues: validation.issues } : {})
@@ -999,7 +1033,7 @@ export async function orchestrateToolPermissionRetry<
       targetToolName: request.toolName,
       text: mcpJson({
         ok: false,
-        tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+        tool: surfaceToolName,
         targetTool: request.toolName,
         error: prepared.error
       })
@@ -1046,7 +1080,7 @@ export async function orchestrateToolPermissionRetry<
         targetToolName: request.toolName,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           targetTool: request.toolName,
           error: userDeclined
             ? `The user ${opportunityDecision?.action === 'cancel' ? 'cancelled' : 'declined'} this one-shot permission retry. Do not ask again.`
@@ -1065,7 +1099,7 @@ export async function orchestrateToolPermissionRetry<
         targetToolName: request.toolName,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           targetTool: request.toolName,
           code: 'opportunity_consume_failed',
           error: 'The approved permission opportunity could not be consumed.'
@@ -1078,7 +1112,7 @@ export async function orchestrateToolPermissionRetry<
         targetToolName: request.toolName,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           targetTool: request.toolName,
           code: consumed.code,
           error: consumed.error
@@ -1099,7 +1133,7 @@ export async function orchestrateToolPermissionRetry<
         targetToolName: request.toolName,
         text: mcpJson({
           ok: false,
-          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          tool: surfaceToolName,
           targetTool: request.toolName,
           code: 'opportunity_target_mismatch',
           error:
@@ -1114,7 +1148,7 @@ export async function orchestrateToolPermissionRetry<
     })
     const result = await input.executeTarget(
       consumedRequest,
-      createOneOffToolPermissionRetryMarker(consumedRequest)
+      createOneOffToolPermissionRetryMarker(consumedRequest, surfaceToolName)
     )
     return {
       text: result.text,
@@ -1131,7 +1165,7 @@ export async function orchestrateToolPermissionRetry<
         decision = nextDecision
       }),
     executeTarget: () =>
-      input.executeTarget(request, createOneOffToolPermissionRetryMarker(request))
+      input.executeTarget(request, createOneOffToolPermissionRetryMarker(request, surfaceToolName))
   })
   if (outcome.kind === 'not_approved') {
     const userDeclined =
@@ -1142,7 +1176,7 @@ export async function orchestrateToolPermissionRetry<
       targetToolName: request.toolName,
       text: mcpJson({
         ok: false,
-        tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+        tool: surfaceToolName,
         targetTool: request.toolName,
         error: userDeclined
           ? `The user ${decision?.action === 'cancel' ? 'cancelled' : 'declined'} this one-shot permission retry. Do not ask again.`

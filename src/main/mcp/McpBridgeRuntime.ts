@@ -191,7 +191,6 @@ export function applyMcpBridgeProfileArgvToEnv(
   for (const envKey of Object.values(MCP_BRIDGE_PROFILE_ENV_KEYS)) {
     env[envKey] = '0'
   }
-  env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT = '0'
   if (argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
@@ -2252,6 +2251,9 @@ function profileEnvironmentForBridgeRoute(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: profile.meshTopologyDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
+      ? '1'
+      : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
   }
 }

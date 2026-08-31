@@ -127,6 +127,26 @@ describe('runGrokAcpTurn', () => {
     expect(prompt).not.toContain('do not retry the same call')
   })
 
+  it('recognises a fresh opaque permission opportunity without reconstructing its target', () => {
+    const prompt = grokToolRecoveryPrompt(
+      {
+        reason: 'failed-tool-terminal',
+        terminalStatus: 'cancelled',
+        deniedPermissionRequest: null,
+        assistantTextSeen: false,
+        toolFailureSeen: true,
+        lastFailedToolName: 'TaskWraith__run_shell_command',
+        lastFailedToolOutput:
+          '{"ok":false,"permissionOpportunity":{"tool":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"[opaque]"}}}'
+      },
+      true
+    )
+
+    expect(prompt).toContain('redeem_permission_opportunity')
+    expect(prompt).toContain('Never reconstruct or alter')
+    expect(prompt).not.toContain('do not retry the same call')
+  })
+
   afterEach(() => vi.useRealTimers())
 
   it('drives initialize → session/new → session/prompt and streams the answer', async () => {

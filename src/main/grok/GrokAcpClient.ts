@@ -122,8 +122,10 @@ export const GROK_FAILED_TOOL_CONTINUITY_PROMPT =
 
 export const GROK_PERMISSION_BOUNDARY_CONTINUITY_PROMPT =
   'TaskWraith returned a typed permission boundary, not a user refusal. If the tool result ' +
-  'advertises a permissionRetry instruction, execute that exact advertised tool and arguments ' +
-  'once; it resolves request_tool_permission so the user can inspect the exact command and cwd. If the user then ' +
+  'advertises a permissionOpportunity or legacy permissionRetry instruction, execute that exact ' +
+  'advertised tool and arguments once, whether it names redeem_permission_opportunity or ' +
+  'request_tool_permission. Never reconstruct or alter its retained target. This lets ' +
+  'the user inspect the exact command and cwd. If the user then ' +
   'declines, do not retry or substitute another side effect; continue from available evidence ' +
   'and finish the participant turn.'
 
@@ -139,7 +141,7 @@ export function grokToolRecoveryPrompt(
   if (nativeShellRequest) return grokDeniedToolRecoveryPrompt(taskWraithShellToolAvailable)
   if (
     context.reason === 'failed-tool-terminal' &&
-    /"permissionRetry"\s*:|request_tool_permission|one auditable host execution|caller-declared paths cannot prove/i.test(
+    /"permission(?:Opportunity|Retry)"\s*:|redeem_permission_opportunity|request_tool_permission|one auditable host execution|caller-declared paths cannot prove/i.test(
       context.lastFailedToolOutput || ''
     )
   ) {

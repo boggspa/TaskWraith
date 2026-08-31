@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 import {
   GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
-  GATEWAY_V17_MCP_DIRECT_TOOLS
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_V17_MCP_DIRECT_TOOLS,
+  GATEWAY_V18_MCP_DIRECT_TOOLS
 } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
@@ -60,6 +62,24 @@ describe('Ollama tool surface governance', () => {
   it('keeps the no-profile Ollama fallback frozen to gateway-v17', () => {
     expect(ollamaDirectToolNamesForProfile()).toBe(OLLAMA_ADVERTISED_TOOL_NAMES)
     expect(ollamaDirectToolNamesForProfile()).toBe(GATEWAY_V17_MCP_DIRECT_TOOLS)
+  })
+
+  it('exposes opaque redemption only for v18-derived Ollama receipts', () => {
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v18')).toBe(
+      GATEWAY_V18_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v18-mesh')).toBe(
+      GATEWAY_V18_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-solo-v2')).toBe(
+      GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v18')).toContain(
+      'redeem_permission_opportunity'
+    )
+    expect(ollamaDirectToolNamesForProfile('taskwraith-gateway-v17')).not.toContain(
+      'redeem_permission_opportunity'
+    )
   })
 
   it('keeps delegation tools out of the ordinary Ollama advertise/callable surface', () => {

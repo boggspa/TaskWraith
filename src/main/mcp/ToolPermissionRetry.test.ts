@@ -580,6 +580,7 @@ describe('one-off permission retry execution', () => {
       definitions,
       isAutoAllowed,
       providerLabel: 'Codex',
+      surfaceToolName: 'redeem_permission_opportunity',
       resolvePermissionOpportunity: (permissionOpportunityId) => {
         const reservation = registry.reserve({ permissionOpportunityId, binding })
         if (!reservation.ok) return reservation
@@ -623,7 +624,13 @@ describe('one-off permission retry execution', () => {
       true
     )
     expect(JSON.stringify(requestApproval.mock.calls[0]?.[0])).not.toContain(opportunityId)
-    expect(executeTarget).toHaveBeenCalledOnce()
+    expect(executeTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: 'write_file' }),
+      expect.objectContaining({
+        targetToolName: 'write_file',
+        permissionRequestToolName: 'redeem_permission_opportunity'
+      })
+    )
   })
 
   it('revalidates the live binding after approval and before consuming the opportunity', async () => {

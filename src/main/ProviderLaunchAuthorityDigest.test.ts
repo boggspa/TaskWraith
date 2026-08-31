@@ -335,7 +335,10 @@ describe('ProviderLaunchAuthorityDigest', () => {
       'taskwraith-gateway-v16-mesh',
       'taskwraith-gateway-v17',
       'taskwraith-gateway-v17-mesh',
-      'taskwraith-gateway-solo-v1'
+      'taskwraith-gateway-v18',
+      'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-solo-v1',
+      'taskwraith-gateway-solo-v2'
     ] as const
     const digests = new Set<string>()
     for (const profileId of profileIds) {
@@ -353,7 +356,10 @@ describe('ProviderLaunchAuthorityDigest', () => {
     for (const taskWraithMcpProfileId of [
       'taskwraith-gateway-v17',
       'taskwraith-gateway-v17-mesh',
-      'taskwraith-gateway-solo-v1'
+      'taskwraith-gateway-v18',
+      'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-solo-v1',
+      'taskwraith-gateway-solo-v2'
     ] as const) {
       const current = {
         ...codex,

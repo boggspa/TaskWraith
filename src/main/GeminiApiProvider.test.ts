@@ -814,6 +814,20 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     ).toEqual(['read_file'])
   })
 
+  it('declares opaque redemption only to a fresh v18 native API receipt', () => {
+    const tools = [
+      makeMcpTool('read_file'),
+      makeMcpTool('request_tool_permission'),
+      makeMcpTool('redeem_permission_opportunity')
+    ]
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v17').map((tool) => tool.name)
+    ).toEqual(['read_file'])
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v18').map((tool) => tool.name)
+    ).toEqual(['read_file', 'redeem_permission_opportunity'])
+  })
+
   it('gives a receipted gateway API seat the virtual gateway without declaring retry directly', () => {
     const tools = [
       makeMcpTool('read_file'),

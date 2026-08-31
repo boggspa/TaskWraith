@@ -42,6 +42,19 @@ describe('provider dispatch integration', () => {
     expect(fallbackAt).toBeGreaterThan(formatAt)
   })
 
+  it('redacts permission-opportunity bearer ids before every native compat persistence lane', () => {
+    const compat = sourceBetween('function sendAgentCompatLine(', 'function sendAgentCompatError(')
+    const redactAt = compat.indexOf('redactPermissionOpportunityIdsForDurableStorage(payload)')
+    const runItemsAt = compat.indexOf('runItemEventsForCompatPayload(')
+    const durableAt = compat.indexOf('appendDurableRunEventForRoute(')
+    const rendererAt = compat.indexOf('const line = `${JSON.stringify(routedForWire)}\\n`')
+
+    expect(redactAt).toBeGreaterThanOrEqual(0)
+    expect(redactAt).toBeLessThan(runItemsAt)
+    expect(redactAt).toBeLessThan(durableAt)
+    expect(redactAt).toBeLessThan(rendererAt)
+  })
+
   it('drains display-only side channels before flushing terminal assistant text', () => {
     const runner = sourceBetween(
       'async function runCliProviderProcess(',

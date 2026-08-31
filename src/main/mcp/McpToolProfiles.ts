@@ -1252,15 +1252,17 @@ export const GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES
 ] as const satisfies readonly string[])
 
-// Opportunity redemption is birth-direct in v18, so its discovery universe is
-// the exact v17 universe. Older snapshots never gain the new name.
-export const GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
-  ...GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES
-] as const satisfies readonly string[])
+// Opportunity redemption is birth-direct in v18. The model-authored legacy
+// reconstruction route remains frozen into v9-v17 receipts, but fresh
+// profiles remove it from discovery so an opaque issue failure cannot be
+// bypassed by resubmitting reconstructed target arguments or failure prose.
+export const GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES = Object.freeze(
+  GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES.filter((name) => name !== 'request_tool_permission')
+)
 
-export const GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
-  ...GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
-] as const satisfies readonly string[])
+export const GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze(
+  GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES.filter((name) => name !== 'request_tool_permission')
+)
 
 /**
  * Demotion changes transport visibility, not eligibility. Deduplication is

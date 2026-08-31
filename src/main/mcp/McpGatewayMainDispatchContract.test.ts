@@ -124,6 +124,48 @@ describe('main capability gateway dispatch contract', () => {
     expect(scopeResolution).toBeLessThan(shellExecution)
     expect(shellExecution).toBeLessThan(hostCommand)
   })
+
+  it('wires fresh opaque opportunity issuance and redemption through main-owned authority', () => {
+    expect(indexSource).toContain('const permissionOpportunityRegistry = new PermissionOpportunityRegistry()')
+    expect(indexSource).toContain('permissionOpportunityRegistry.clearForRun(event.session.runId)')
+    expect(indexSource).toContain('issueHostPermissionOpportunity({')
+    expect(canonicalDispatchSource).toContain(
+      'toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME'
+    )
+    expect(canonicalDispatchSource).toContain('createPermissionOpportunityResolver({')
+    expect(canonicalDispatchSource).toContain(
+      'const liveContext = getAgentToolContext(parentProvider, effectiveRoute)'
+    )
+    expect(canonicalDispatchSource).toContain('surfaceToolName: toolName')
+  })
+
+  it('never writes an opaque opportunity id into durable tool transcripts', () => {
+    const genericDeniedStart = canonicalDispatchSource.indexOf('if (!allowed)')
+    const genericDeniedEnd = canonicalDispatchSource.indexOf(
+      'if (appDriveSurfaceDescriptor)',
+      genericDeniedStart
+    )
+    const genericDenied = canonicalDispatchSource.slice(genericDeniedStart, genericDeniedEnd)
+    expect(genericDenied).toContain('permissionRepairForDeniedInvocation({')
+    expect(genericDenied).toContain('redactPermissionOpportunityIdsForDurableStorage(')
+
+    const lockDeniedStart = canonicalDispatchSource.indexOf('if (!workspaceMutationAdmission.ok)')
+    const lockDeniedEnd = canonicalDispatchSource.indexOf(
+      'if (!canvasMcpExecutionAuthorityStillLive(',
+      lockDeniedStart
+    )
+    const lockDenied = canonicalDispatchSource.slice(lockDeniedStart, lockDeniedEnd)
+    expect(lockDenied).toContain('permissionRepairForDeniedInvocation({')
+    expect(lockDenied).toContain('durableAdmissionDeniedText')
+    expect(lockDenied).toContain('redactPermissionOpportunityIdsForDurableStorage(')
+
+    const transcriptUseStart = canonicalDispatchSource.indexOf(
+      'emitMcpToolTranscriptEvent({\n    type: \'tool_use\''
+    )
+    expect(transcriptUseStart).toBeGreaterThan(-1)
+    const transcriptUse = canonicalDispatchSource.slice(transcriptUseStart)
+    expect(transcriptUse).toContain('redactPermissionOpportunityIdsForDurableStorage(')
+  })
 })
 
 // The suites below resolve their own copy of the dispatch source so they can be

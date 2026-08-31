@@ -8,6 +8,7 @@ import {
   isCanvasEvalToolName
 } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
+import { redactPermissionOpportunityIdsForDurableStorage } from '../mcp/ToolPermissionRetry'
 
 export interface OllamaLoopMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -56,20 +57,16 @@ export function normalizeOllamaSessionMemory(
   const containsSensitiveCanvas = trajectory.some(
     (entry) => isCanvasEvalTrajectoryEntry(entry) || isCanvasFillTrajectoryEntry(entry)
   )
-  const sanitizedTrajectory = containsSensitiveCanvas
-    ? trajectory.map(sanitizeOllamaTrajectoryEntryForPersist)
-    : trajectory
+  const sanitizedTrajectory = trajectory.map(sanitizeOllamaTrajectoryEntryForPersist)
   return {
     ...memory,
     trajectory: sanitizedTrajectory,
-    ...(containsSensitiveCanvas
-      ? {
-          workingMemory: buildOllamaWorkingMemoryBlock(
-            sanitizedTrajectory,
-            resolveOllamaWorkingMemoryLimits(memory.modelId).workingMemoryMaxChars
-          )
-        }
-      : {})
+    workingMemory: containsSensitiveCanvas
+      ? buildOllamaWorkingMemoryBlock(
+          sanitizedTrajectory,
+          resolveOllamaWorkingMemoryLimits(memory.modelId).workingMemoryMaxChars
+        )
+      : redactPermissionOpportunityIdsForDurableStorage(memory.workingMemory)
   }
 }
 
@@ -368,35 +365,36 @@ function isCanvasFillTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean 
 export function sanitizeOllamaTrajectoryEntryForPersist(
   entry: OllamaToolTrajectoryEntry
 ): OllamaToolTrajectoryEntry {
-  if (isCanvasEvalTrajectoryEntry(entry)) {
-    const viaGateway = canonicalTaskWraithToolName(entry.toolName) === 'capability_invoke'
-    const canvasEvalReceipt = normalizeCanvasEvalReceipt(entry.canvasEvalReceipt)
+  const redactedEntry = redactPermissionOpportunityIdsForDurableStorage(entry)
+  if (isCanvasEvalTrajectoryEntry(redactedEntry)) {
+    const viaGateway = canonicalTaskWraithToolName(redactedEntry.toolName) === 'capability_invoke'
+    const canvasEvalReceipt = normalizeCanvasEvalReceipt(redactedEntry.canvasEvalReceipt)
     return {
-      toolName: entry.toolName,
+      toolName: redactedEntry.toolName,
       effectiveToolName: 'canvas_eval',
-      argsSummary: canvasEvalArgsSummary(entry.toolName, viaGateway),
-      ok: entry.ok,
+      argsSummary: canvasEvalArgsSummary(redactedEntry.toolName, viaGateway),
+      ok: redactedEntry.ok,
       resultSummary: CANVAS_EVAL_RESULT_REDACTED,
       ...(canvasEvalReceipt ? { canvasEvalReceipt } : {})
     }
   }
-  if (!isCanvasFillTrajectoryEntry(entry)) return entry
+  if (!isCanvasFillTrajectoryEntry(redactedEntry)) return redactedEntry
   const route: CanvasFillMemoryInvocation['route'] =
-    canonicalTaskWraithToolName(entry.toolName) === 'canvas_fill'
+    canonicalTaskWraithToolName(redactedEntry.toolName) === 'canvas_fill'
       ? 'direct'
-      : /\bname=request_tool_permission\b/.test(entry.argsSummary)
+      : /\bname=request_tool_permission\b/.test(redactedEntry.argsSummary)
         ? 'gateway_permission_retry'
-        : canonicalTaskWraithToolName(entry.toolName) === 'request_tool_permission'
+        : canonicalTaskWraithToolName(redactedEntry.toolName) === 'request_tool_permission'
           ? 'permission_retry'
           : 'gateway'
   return {
-    toolName: entry.toolName,
+    toolName: redactedEntry.toolName,
     effectiveToolName: 'canvas_fill',
-    argsSummary: canvasFillArgsSummary(entry.toolName, {
+    argsSummary: canvasFillArgsSummary(redactedEntry.toolName, {
       effectiveToolName: 'canvas_fill',
       route
     }),
-    ok: entry.ok,
+    ok: redactedEntry.ok,
     resultSummary: CANVAS_FILL_RESULT_REDACTED
   }
 }
@@ -412,8 +410,10 @@ export function appendOllamaTrajectoryEntry(
   }
 ): OllamaSessionMemory {
   const limits = resolveOllamaWorkingMemoryLimits(memory.modelId)
-  const canvasEvalInvocation = resolveCanvasEvalMemoryInvocation(entry.toolName, entry.args)
-  const canvasFillInvocation = resolveCanvasFillMemoryInvocation(entry.toolName, entry.args)
+  const safeArgs = redactPermissionOpportunityIdsForDurableStorage(entry.args)
+  const safeResultSummary = redactPermissionOpportunityIdsForDurableStorage(entry.resultSummary)
+  const canvasEvalInvocation = resolveCanvasEvalMemoryInvocation(entry.toolName, safeArgs)
+  const canvasFillInvocation = resolveCanvasFillMemoryInvocation(entry.toolName, safeArgs)
   const canvasEvalReceipt = canvasEvalInvocation
     ? canvasEvalReceiptForMemory(canvasEvalInvocation, entry.canvasEvalApproval)
     : undefined
@@ -438,10 +438,10 @@ export function appendOllamaTrajectoryEntry(
           }
         : {
             toolName: entry.toolName,
-            argsSummary: summarizeOllamaToolArgs(entry.toolName, entry.args),
+            argsSummary: summarizeOllamaToolArgs(entry.toolName, safeArgs),
             ok: entry.ok,
             resultSummary: summarizeToolResultForMemory(
-              entry.resultSummary,
+              safeResultSummary,
               limits.toolResultMaxChars
             )
           }
@@ -546,7 +546,7 @@ export function pruneOllamaSessionMemoryForPersist(memory: OllamaSessionMemory):
     updatedAt: memory.updatedAt,
     workingMemory: (containsSensitiveCanvas
       ? buildOllamaWorkingMemoryBlock(trajectory, limits.workingMemoryMaxChars)
-      : memory.workingMemory
+      : redactPermissionOpportunityIdsForDurableStorage(memory.workingMemory)
     ).slice(0, limits.workingMemoryMaxChars),
     toolTurnCount: memory.toolTurnCount,
     trajectory

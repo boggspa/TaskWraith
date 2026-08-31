@@ -187,6 +187,36 @@ describe('OllamaRunMemory', () => {
     expect(pruned.workingMemory).toHaveLength(6000)
   })
 
+  it('never retains opaque permission-opportunity ids in live or legacy trajectory memory', () => {
+    const permissionOpportunityId = `twp_${'p'.repeat(43)}`
+    const memory = appendOllamaTrajectoryEntry(
+      createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      {
+        toolName: 'redeem_permission_opportunity',
+        args: { permissionOpportunityId },
+        ok: false,
+        resultSummary: `redemption failed for ${permissionOpportunityId}`
+      }
+    )
+    expect(JSON.stringify(memory)).not.toContain(permissionOpportunityId)
+
+    const persisted = pruneOllamaSessionMemoryForPersist({
+      ...createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      workingMemory: `prior native echo ${permissionOpportunityId}`,
+      toolTurnCount: 1,
+      trajectory: [
+        {
+          toolName: 'redeem_permission_opportunity',
+          argsSummary: `permissionOpportunityId=${permissionOpportunityId}`,
+          ok: false,
+          resultSummary: `embedded output ${permissionOpportunityId}`
+        }
+      ]
+    })
+    expect(JSON.stringify(persisted)).not.toContain(permissionOpportunityId)
+    expect(JSON.stringify(persisted)).toContain('[redacted permission opportunity]')
+  })
+
   it('retains only an approval-bound receipt for direct canvas_eval trajectory', () => {
     const script = 'globalThis.__OLLAMA_CANVAS_SCRIPT_SECRET__ = "swordfish"'
     const result = 'OLLAMA_CANVAS_RESULT_SECRET: swordfish'

@@ -30,7 +30,10 @@ import { PROJECT_REFERENCE_MCP_TOOL_NAMES } from './ProjectReferenceToolExecutor
 import { RECALL_MCP_TOOL_NAMES } from './RecallToolExecutors'
 import { THEME_TOKEN_MCP_TOOL_NAMES } from './ThemeTokenToolExecutors'
 import { THREAD_MESSAGE_MCP_TOOL_NAMES } from './ThreadMessageToolExecutors'
-import { TOOL_PERMISSION_RETRY_TOOL_NAME } from './ToolPermissionRetry'
+import {
+  PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME,
+  TOOL_PERMISSION_RETRY_TOOL_NAME
+} from './ToolPermissionRetry'
 import { VT_MCP_TOOL_NAMES } from './VtToolExecutors'
 import { WORKSPACE_BOARD_MCP_TOOL_NAMES } from './WorkspaceBoardToolExecutors'
 import { WORKSPACE_MCP_TOOL_NAMES } from './WorkspaceToolExecutors'
@@ -49,8 +52,8 @@ const branch = (
 
 const DISPATCHER_BRANCH_CONTRACTS = [
   branch(
-    'toolName === TOOL_PERMISSION_RETRY_TOOL_NAME',
-    [TOOL_PERMISSION_RETRY_TOOL_NAME],
+    'toolName === TOOL_PERMISSION_RETRY_TOOL_NAME || toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME',
+    [TOOL_PERMISSION_RETRY_TOOL_NAME, PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME],
     'user-question'
   ),
   branch("toolName === 'run_shell_command'", ['run_shell_command'], 'workspace-tools'),
@@ -163,11 +166,6 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch("toolName === 'delegate_wave'", ['delegate_wave'], 'subthread-control')
 ] as const satisfies readonly DispatcherBranchContract[]
 
-// The fresh-v18 redemption contract is intentionally catalogued before the
-// later main-process issuance/redemption branch lands. Keep this exception
-// explicit: it must never be mistaken for a generic dispatcher fallback.
-const INERT_UNWIRED_CATALOG_TOOLS = ['redeem_permission_opportunity'] as const
-
 const indexPath = resolve(__dirname, '..', 'index.ts')
 const indexSource = readFileSync(indexPath, 'utf8')
 const sourceFile = ts.createSourceFile(indexPath, indexSource, ts.ScriptTarget.Latest, true)
@@ -244,9 +242,7 @@ describe('canonical MCP dispatcher exhaustiveness', () => {
     }
 
     const concreteOwnedNames = Object.keys(TASKWRAITH_OWNED_MCP_ACTIONS).filter(
-      (toolName) =>
-        !CAPABILITY_GATEWAY_TOOL_NAMES.includes(toolName as never) &&
-        !(INERT_UNWIRED_CATALOG_TOOLS as readonly string[]).includes(toolName)
+      (toolName) => !CAPABILITY_GATEWAY_TOOL_NAMES.includes(toolName as never)
     )
     for (const advertisedName of concreteOwnedNames) {
       const resolution = resolveToolDispatchContractStrict(advertisedName)
@@ -259,31 +255,13 @@ describe('canonical MCP dispatcher exhaustiveness', () => {
     }
 
     const canonicalConcreteNames = new Set(
-      [...TASKWRAITH_MCP_TOOLS, ...AUDIT_MCP_TOOL_NAMES]
-        .filter(
-          (toolName) => !(INERT_UNWIRED_CATALOG_TOOLS as readonly string[]).includes(toolName)
-        )
-        .map((toolName) => {
-          const resolution = resolveToolDispatchContractStrict(toolName)
-          if (!resolution.ok) throw new Error(resolution.reason)
-          return resolution.toolName
-        })
+      [...TASKWRAITH_MCP_TOOLS, ...AUDIT_MCP_TOOL_NAMES].map((toolName) => {
+        const resolution = resolveToolDispatchContractStrict(toolName)
+        if (!resolution.ok) throw new Error(resolution.reason)
+        return resolution.toolName
+      })
     )
     expect([...mapped.keys()].sort()).toEqual([...canonicalConcreteNames].sort())
-  })
-
-  it('keeps the fresh redemption contract explicitly inert until main wires issuance', () => {
-    expect(resolveToolDispatchContractStrict('redeem_permission_opportunity')).toMatchObject({
-      ok: true,
-      toolClass: 'ui_elicitation',
-      dispatchOwner: 'user-question',
-      mutation: 'none',
-      lock: 'none'
-    })
-    expect(
-      (INERT_UNWIRED_CATALOG_TOOLS as readonly string[]).includes('redeem_permission_opportunity')
-    ).toBe(true)
-    expect(dispatcherSource).not.toContain("toolName === 'redeem_permission_opportunity'")
   })
 
   it('binds each source branch marker to the taxonomy owner declared for its real tools', () => {

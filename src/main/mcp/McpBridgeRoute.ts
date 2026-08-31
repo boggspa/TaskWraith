@@ -50,6 +50,7 @@ export const MCP_BRIDGE_PROFILE_ENV_KEYS = {
   meshTopologyDirect: 'TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT',
   sketchDirect: 'TASKWRAITH_MCP_SKETCH_DIRECT',
   orchestrationDirect: 'TASKWRAITH_MCP_ORCHESTRATION_DIRECT',
+  permissionOpportunityDirect: 'TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT',
   auditSubset: 'TASKWRAITH_MCP_AUDIT'
 } as const
 
@@ -83,6 +84,7 @@ export interface McpBridgeProfileEnvironment {
   meshTopologyDirect: boolean
   sketchDirect: boolean
   orchestrationDirect: boolean
+  permissionOpportunityDirect: boolean
   auditSubset: boolean
 }
 
@@ -346,6 +348,7 @@ function emptyProfileEnvironment(): McpBridgeProfileEnvironment {
     meshTopologyDirect: false,
     sketchDirect: false,
     orchestrationDirect: false,
+    permissionOpportunityDirect: false,
     auditSubset: false
   }
 }
@@ -514,6 +517,9 @@ export function buildMcpBridgeRouteEnv(
       [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: profile.meshTopologyDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
+        ? '1'
+        : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
     }
   }

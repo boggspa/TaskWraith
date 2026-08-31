@@ -57,7 +57,8 @@ function buildLiveEnvironment(input: {
       soloSubset: true,
       meshTopologyDirect: true,
       sketchDirect: true,
-      orchestrationDirect: true
+      orchestrationDirect: true,
+      permissionOpportunityDirect: true
     }
   })
 }
@@ -111,9 +112,11 @@ describe('MCP bridge route-from-env authority', () => {
     expect(parsedA.value.profile.meshTopologyDirect).toBe(true)
     expect(parsedA.value.profile.sketchDirect).toBe(true)
     expect(parsedA.value.profile.orchestrationDirect).toBe(true)
+    expect(parsedA.value.profile.permissionOpportunityDirect).toBe(true)
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },
@@ -249,6 +252,10 @@ describe('MCP bridge route-from-env authority', () => {
     delete missingTopologyProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]
     const missingOrchestrationProfile = { ...built.env }
     delete missingOrchestrationProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]
+    const missingPermissionOpportunityProfile = { ...built.env }
+    delete missingPermissionOpportunityProfile[
+      MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect
+    ]
     const malformedProfile = {
       ...built.env,
       [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: 'yes'
@@ -271,6 +278,10 @@ describe('MCP bridge route-from-env authority', () => {
       reason: 'invalid-profile-environment'
     })
     expect(parseMcpBridgeRouteFromEnv(missingOrchestrationProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
+    expect(parseMcpBridgeRouteFromEnv(missingPermissionOpportunityProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })
