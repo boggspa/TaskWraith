@@ -16,6 +16,7 @@ import {
 const POPOUT_SURFACES = new Set<CanvasPopoutSurface>([
   'browser',
   'sketch',
+  'emulator',
   'mesh',
   'simulator',
   'media'
@@ -28,7 +29,7 @@ export function parseCanvasPopoutRequest(params: URLSearchParams): CanvasPopoutO
   const canvasId = params.get('canvas') || ''
   const canvasKind = params.get('canvasKind')
   let session: CanvasPopoutSessionSeed | undefined
-  if (canvasId && (canvasKind === 'web' || canvasKind === 'sketch')) {
+  if (canvasId && (canvasKind === 'web' || canvasKind === 'sketch' || canvasKind === 'emulator')) {
     session = {
       canvasId,
       kind: canvasKind,
@@ -36,6 +37,9 @@ export function parseCanvasPopoutRequest(params: URLSearchParams): CanvasPopoutO
       ...(params.get('title') ? { title: params.get('title')! } : {})
     }
   }
+  // The emulator has no standalone pop-out launcher. It may enter this window
+  // only by moving one exact, already-live embedded session from the dock.
+  if (rawSurface === 'emulator' && session?.kind !== 'emulator') return null
   return { chatId, surface: rawSurface, ...(session ? { session } : {}) }
 }
 

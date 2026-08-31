@@ -60,6 +60,7 @@ export type ThreadHomeSurface =
   | 'browser'
   | 'mesh'
   | 'sketch'
+  | 'emulator'
   | 'media'
   | 'simulator'
   | 'terminal'
@@ -76,6 +77,7 @@ export const THREAD_HOME_SURFACES: readonly ThreadHomeSurfaceOption[] = [
   { id: 'browser', label: 'Browser', description: 'Open a blank TaskWraith browser' },
   { id: 'mesh', label: 'Mesh', description: 'Inspect and author 3D scenes' },
   { id: 'sketch', label: 'Sketch', description: 'Shapes, arrows, freehand, and text' },
+  { id: 'emulator', label: 'Emulator', description: 'Play the built-in homebrew demo' },
   { id: 'media', label: 'Media', description: 'Browse this thread’s uploads and paths' },
   { id: 'simulator', label: 'Simulator', description: 'Preview and control an iOS app' }
 ]
@@ -184,6 +186,14 @@ function ThreadHomeSurfaceGlyph({ surface }: { surface: ThreadHomeSurface }): Re
       <svg viewBox="0 0 20 20" fill="none" aria-hidden>
         <circle cx="10" cy="10" r="7.25" />
         <path d="M2.9 10h14.2M10 2.75c2 2.1 3.05 4.52 3.05 7.25S12 15.15 10 17.25C8 15.15 6.95 12.73 6.95 10S8 4.85 10 2.75Z" />
+      </svg>
+    )
+  }
+  if (surface === 'emulator') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden>
+        <path d="M5.2 6.4h9.6A2.2 2.2 0 0 1 17 8.6v2.8a2.2 2.2 0 0 1-2.2 2.2H5.2A2.2 2.2 0 0 1 3 11.4V8.6a2.2 2.2 0 0 1 2.2-2.2Z" />
+        <path d="M6.2 10h3.1m-1.55-1.55v3.1M12.35 9.05h.01M14.5 10.95h.01" />
       </svg>
     )
   }
@@ -868,7 +878,7 @@ function ThreadHomeWorkspaceInner(
   const [issue, setIssue] = useState<string | null>(null)
   const [canvas, setCanvas] = useState<{
     canvasId: string
-    kind: 'browser' | 'sketch'
+    kind: 'browser' | 'sketch' | 'emulator'
     url: string
     title: string
   } | null>(null)
@@ -1008,7 +1018,7 @@ function ThreadHomeWorkspaceInner(
     }
     if (!authorityChatId) return
     setIssue(null)
-    if (next !== 'browser' && next !== 'sketch') {
+    if (next !== 'browser' && next !== 'sketch' && next !== 'emulator') {
       canvasOpenGenerationRef.current += 1
       setSurface(next)
       return
@@ -1020,7 +1030,9 @@ function ThreadHomeWorkspaceInner(
     const request = Promise.resolve(
       next === 'sketch'
         ? api?.openSketchEmbedded?.({ chatId: authorityChatId })
-        : api?.openEmbedded?.({ chatId: authorityChatId })
+        : next === 'emulator'
+          ? api?.openEmulatorEmbedded?.({ chatId: authorityChatId })
+          : api?.openEmbedded?.({ chatId: authorityChatId })
     ).then<ThreadHomeCanvasOpenResult>((result) =>
       result?.ok
         ? {
@@ -1205,10 +1217,17 @@ function ThreadHomeWorkspaceInner(
           />
         )}
         {surface === 'simulator' && <SimulatorCanvasPanel chatId={surfaceAuthorityChatId} />}
-        {(surface === 'browser' || surface === 'sketch') && canvas && (
+        {(surface === 'browser' || surface === 'sketch' || surface === 'emulator') && canvas && (
           <CanvasPane
             canvasId={canvas.canvasId}
-            title={canvas.title || (surface === 'browser' ? 'Browser' : 'Sketch')}
+            title={
+              canvas.title ||
+              (surface === 'browser'
+                ? 'Browser'
+                : surface === 'sketch'
+                  ? 'Sketch'
+                  : 'Homebrew emulator')
+            }
             url={canvas.url}
             overlayGuard
             chrome={

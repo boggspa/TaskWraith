@@ -314,7 +314,11 @@ function GlobeGlyph({ size = 14 }: { size?: number }) {
   )
 }
 
-function SurfaceGlyph({ kind }: { kind: 'browser' | 'sketch' | 'mesh' | 'simulator' }) {
+function SurfaceGlyph({
+  kind
+}: {
+  kind: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator'
+}) {
   if (kind === 'browser') return <GlobeGlyph />
   if (kind === 'sketch') {
     return (
@@ -326,6 +330,24 @@ function SurfaceGlyph({ kind }: { kind: 'browser' | 'sketch' | 'mesh' | 'simulat
           strokeLinejoin="round"
         />
         <path d="m11.6 4.6 3.8 3.8M4.6 11.8l3.6 3.6" stroke="currentColor" strokeWidth="1.2" />
+      </svg>
+    )
+  }
+  if (kind === 'emulator') {
+    return (
+      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path
+          d="M5.2 6.4h9.6A2.2 2.2 0 0 1 17 8.6v2.8a2.2 2.2 0 0 1-2.2 2.2H5.2A2.2 2.2 0 0 1 3 11.4V8.6a2.2 2.2 0 0 1 2.2-2.2Z"
+          stroke="currentColor"
+          strokeWidth="1.35"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M6.2 10h3.1m-1.55-1.55v3.1M12.35 9.05h.01M14.5 10.95h.01"
+          stroke="currentColor"
+          strokeWidth="1.35"
+          strokeLinecap="round"
+        />
       </svg>
     )
   }
@@ -436,7 +458,7 @@ export function CanvasDockPanel({
   )
   const [chatSummaries, setChatSummaries] = useState<readonly CanvasDockSummary[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'web' | 'sketch' | null>(null)
+  const [busy, setBusy] = useState<'web' | 'sketch' | 'emulator' | null>(null)
   const [showLauncher, setShowLauncher] = useState(false)
   const [showMesh, setShowMesh] = useState(initialSurface === 'mesh')
   const [showSimulator, setShowSimulator] = useState(initialSurface === 'simulator')
@@ -450,10 +472,12 @@ export function CanvasDockPanel({
   // Async completions race chat switches; compare-and-drop stale ones.
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
+  const launcherExplicitRef = useRef(false)
   const showSimulatorRef = useRef(showSimulator)
   showSimulatorRef.current = showSimulator
 
   const openMeshSurface = useCallback((): void => {
+    launcherExplicitRef.current = false
     setShowSimulator(false)
     setShowMesh(true)
     setShowLauncher(false)
@@ -466,6 +490,7 @@ export function CanvasDockPanel({
   }, [])
 
   const openSimulatorSurface = useCallback((): void => {
+    launcherExplicitRef.current = false
     setShowMesh(false)
     setShowSimulator(true)
     setShowLauncher(false)
@@ -473,6 +498,7 @@ export function CanvasDockPanel({
   }, [])
 
   useEffect(() => {
+    launcherExplicitRef.current = false
     setOpenMenu(null)
     setConfirmingProfileClear(false)
     setProfileBusy(false)
@@ -486,6 +512,7 @@ export function CanvasDockPanel({
         kind: initialSession.kind
       })
       setShowLauncher(false)
+      launcherExplicitRef.current = false
     }
     setShowMesh(initialSurface === 'mesh')
     setShowSimulator(initialSurface === 'simulator')
@@ -570,6 +597,7 @@ export function CanvasDockPanel({
         if (adopted) ownedById.set(adopted.canvasId, adopted)
       }
 
+      let addedDockSession = false
       for (const summary of ownedById.values()) {
         if (summary.presentation !== 'dock') continue
         const stored = canvasDockSessionStore.snapshot(sessionStoreKey)
@@ -578,9 +606,11 @@ export function CanvasDockPanel({
           canvasId: summary.canvasId,
           kind: dockSessionKindFromDriver(summary.driver)
         })
+        addedDockSession = true
       }
 
       canvasDockSessionStore.reconcile(sessionStoreKey, new Set(ownedById.keys()))
+      if (addedDockSession && !launcherExplicitRef.current) setShowLauncher(false)
       setOwnedSummaries(ownedById)
       setChatSummaries(decodedChatWide)
     } catch {
@@ -724,7 +754,7 @@ export function CanvasDockPanel({
   }, [chatId, openSimulatorSurface])
 
   const runOpen = async (
-    mode: 'web' | 'sketch',
+    mode: 'web' | 'sketch' | 'emulator',
     open: () => Promise<
       | { ok: true; canvasId: string; url: string; title: string }
       | { ok: false; error: string }
@@ -739,6 +769,7 @@ export function CanvasDockPanel({
       if (chatIdRef.current !== chatId) return
       if (result?.ok) {
         canvasDockSessionStore.add(sessionStoreKey, { canvasId: result.canvasId, kind: mode })
+        launcherExplicitRef.current = false
         setShowLauncher(false)
         void refresh()
       } else {
@@ -768,6 +799,17 @@ export function CanvasDockPanel({
     void runOpen('sketch', () => api.openSketchEmbedded({ chatId }))
   }
 
+  const openEmulator = (): void => {
+    const api = window.api?.canvas
+    if (!api?.openEmulatorEmbedded) {
+      setError(
+        'Emulator Canvas needs the updated preload bridge. Restart TaskWraith and try again.'
+      )
+      return
+    }
+    void runOpen('emulator', () => api.openEmulatorEmbedded({ chatId, presentation: 'dock' }))
+  }
+
   const clearBrowserProfile = async (): Promise<void> => {
     const api = window.api?.canvas as
       | (typeof window.api.canvas & CanvasPresentationBridge)
@@ -792,6 +834,7 @@ export function CanvasDockPanel({
       setShowMesh(false)
       setShowSimulator(false)
       setShowLauncher(true)
+      launcherExplicitRef.current = false
       await refresh()
       if (chatIdRef.current === chatId) {
         setProfileNotice({
@@ -839,7 +882,7 @@ export function CanvasDockPanel({
       | undefined
     if (!api) return
     // Chart tabs are dock-native; there is no floating-window host for them.
-    if (session.kind === 'chart' || session.kind === 'emulator') return
+    if (session.kind === 'chart') return
     setError(null)
     if (!api.openPopout) {
       setError('Canvas pop-out needs the updated preload bridge. Restart TaskWraith and try again.')
@@ -849,7 +892,12 @@ export function CanvasDockPanel({
     try {
       const result = await api.openPopout({
         chatId,
-        surface: session.kind === 'sketch' ? 'sketch' : 'browser',
+        surface:
+          session.kind === 'sketch'
+            ? 'sketch'
+            : session.kind === 'emulator'
+              ? 'emulator'
+              : 'browser',
         session: {
           canvasId: session.canvasId,
           kind: session.kind,
@@ -923,7 +971,9 @@ export function CanvasDockPanel({
       ? 'mesh'
       : active?.kind === 'sketch'
         ? 'sketch'
-        : 'browser'
+        : active?.kind === 'emulator'
+          ? 'emulator'
+          : 'browser'
 
   const showPopoutInDock = async (): Promise<void> => {
     const api = window.api?.canvas as
@@ -943,6 +993,7 @@ export function CanvasDockPanel({
   }
 
   const showBrowserSurface = (newTab: boolean): void => {
+    launcherExplicitRef.current = newTab
     setShowMesh(false)
     setShowSimulator(false)
     setShowLauncher(newTab || sessions.length === 0)
@@ -989,7 +1040,7 @@ export function CanvasDockPanel({
           </span>
         )}
         <div className="canvas-dock-toolbar-actions">
-          {host === 'popout' && active?.kind !== 'emulator' ? (
+          {host === 'popout' ? (
             <button
               type="button"
               className="canvas-dock-placement"
@@ -1000,9 +1051,7 @@ export function CanvasDockPanel({
               <DockGlyph />
               <span>Dock</span>
             </button>
-          ) : showSimulator ||
-            showMesh ||
-            (active && active.kind !== 'chart' && active.kind !== 'emulator') ? (
+          ) : showSimulator || showMesh || (active && active.kind !== 'chart') ? (
             <button
               type="button"
               className="canvas-dock-placement"
@@ -1131,6 +1180,23 @@ export function CanvasDockPanel({
               <small>Shapes, arrows, freehand, and text</small>
             </span>
           </button>
+          {host === 'dock' && (
+            <button
+              type="button"
+              className="canvas-dock-menu-item"
+              role="menuitem"
+              onClick={openEmulator}
+              disabled={busy !== null}
+            >
+              <span className="canvas-dock-menu-icon">
+                <SurfaceGlyph kind="emulator" />
+              </span>
+              <span className="canvas-dock-menu-copy">
+                <strong>Homebrew Emulator</strong>
+                <small>Play the built-in demo in Canvas</small>
+              </span>
+            </button>
+          )}
           <div className="canvas-dock-menu-divider" />
           <button
             type="button"

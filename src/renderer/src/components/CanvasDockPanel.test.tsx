@@ -315,7 +315,28 @@ describe('CanvasDockPanel (static render)', () => {
     expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
   })
 
-  it('transfers live Browser/Sketch views instead of closing and reopening them', () => {
+  it('offers the fixed Homebrew Emulator only from the inspector dock launcher', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    const open = source.slice(
+      source.indexOf('const openEmulator'),
+      source.indexOf('const clearBrowserProfile')
+    )
+    const menu = source.slice(
+      source.indexOf("{openMenu === 'surfaces' &&"),
+      source.indexOf("{openMenu === 'profile' &&")
+    )
+
+    expect(open).toContain("runOpen('emulator'")
+    expect(open).toContain("api.openEmulatorEmbedded({ chatId, presentation: 'dock' })")
+    expect(menu).toContain("host === 'dock'")
+    expect(menu).toContain('Homebrew Emulator')
+    expect(menu).toContain('Play the built-in demo in Canvas')
+  })
+
+  it('transfers live Browser, Sketch, and Emulator views instead of closing and reopening them', () => {
     const source = readFileSync(
       join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
       'utf8'
@@ -325,6 +346,8 @@ describe('CanvasDockPanel (static render)', () => {
       source.indexOf('const closeAgentCanvas')
     )
     expect(transfer).toContain('api.openPopout')
+    expect(transfer).toContain("session.kind === 'emulator'")
+    expect(transfer).toContain("? 'emulator'")
     expect(transfer).toContain('canvasDockSessionStore.remove')
     expect(transfer).not.toContain('api.close(session.canvasId)')
     expect(transfer).not.toContain('api.openWindow')
@@ -348,7 +371,7 @@ describe('CanvasDockPanel (static render)', () => {
     expect(adoptBlock).toContain('continue')
   })
 
-  it('hosts an emulator as a regular CanvasPane without Browser chrome or Pop Out routing', () => {
+  it('hosts a returned emulator as a regular CanvasPane without Browser chrome', () => {
     canvasDockSessionStore.add('chat-emulator', { canvasId: 'c-emulator', kind: 'emulator' })
     try {
       const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-emulator" />)
@@ -356,13 +379,14 @@ describe('CanvasDockPanel (static render)', () => {
       expect(html).toContain('canvas-pane-host')
       expect(html).toContain('aria-label="Close canvas pane"')
       expect(html).not.toContain('canvas-browser-chrome')
-      expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
+      expect(html).toContain('aria-label="Move Canvas to a floating window"')
+      expect(html).not.toContain('Open a blank tab, then use its address bar.')
     } finally {
       canvasDockSessionStore.remove('chat-emulator', 'c-emulator')
     }
   })
 
-  it('keeps emulator adoption on the generic canvasId path and excludes it from pop-out transfer', () => {
+  it('keeps emulator adoption on the generic canvasId path and transfers it through the existing pop-out route', () => {
     const source = readFileSync(
       join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
       'utf8'
@@ -377,7 +401,43 @@ describe('CanvasDockPanel (static render)', () => {
     )
     expect(adoption).toContain('candidate.canvasId')
     expect(adoption).not.toContain("candidate.driver === 'emulator'")
-    expect(popOut).toContain("session.kind === 'chart' || session.kind === 'emulator'")
+    expect(popOut).toContain("if (session.kind === 'chart') return")
+    expect(popOut).toContain("session.kind === 'emulator'")
+    expect(popOut).not.toContain("session.kind === 'chart' || session.kind === 'emulator'")
+  })
+
+  it('renders an emulator pop-out with the inverse Dock action and the same canvas id seed', () => {
+    const session = { canvasId: 'c-emulator-popout', kind: 'emulator' as const }
+    try {
+      const html = renderToStaticMarkup(
+        <CanvasDockPanel
+          chatId="chat-emulator-popout"
+          host="popout"
+          initialSurface="emulator"
+          initialSession={session}
+        />
+      )
+      expect(canvasDockSessionStore.snapshot('chat-emulator-popout:popout')).toMatchObject({
+        activeCanvasId: session.canvasId,
+        sessions: [session]
+      })
+      expect(html).toContain('Homebrew emulator')
+      expect(html).toContain('aria-label="Show Canvas in dock"')
+      expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
+    } finally {
+      canvasDockSessionStore.remove('chat-emulator-popout:popout', session.canvasId)
+    }
+  })
+
+  it('drops an automatic empty launcher when a returned dock presentation is adopted', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('let addedDockSession = false')
+    expect(source).toContain(
+      'if (addedDockSession && !launcherExplicitRef.current) setShowLauncher(false)'
+    )
   })
 })
 

@@ -21,6 +21,20 @@ describe('parseCanvasPopoutRequest', () => {
     })
   })
 
+  it('decodes a transferred live Emulator session without replacing its canvas id', () => {
+    expect(
+      parseCanvasPopoutRequest(
+        new URLSearchParams(
+          'chat=chat-a&surface=emulator&canvas=canvas-emulator-a&canvasKind=emulator'
+        )
+      )
+    ).toEqual({
+      chatId: 'chat-a',
+      surface: 'emulator',
+      session: { canvasId: 'canvas-emulator-a', kind: 'emulator' }
+    })
+  })
+
   it('accepts renderer-native surfaces without a CanvasService session', () => {
     expect(parseCanvasPopoutRequest(new URLSearchParams('chat=chat-a&surface=mesh'))).toEqual({
       chatId: 'chat-a',
@@ -39,5 +53,11 @@ describe('parseCanvasPopoutRequest', () => {
   it('fails closed on missing authority or unknown surfaces', () => {
     expect(parseCanvasPopoutRequest(new URLSearchParams('surface=browser'))).toBeNull()
     expect(parseCanvasPopoutRequest(new URLSearchParams('chat=chat-a&surface=terminal'))).toBeNull()
+    expect(parseCanvasPopoutRequest(new URLSearchParams('chat=chat-a&surface=emulator'))).toBeNull()
+    expect(
+      parseCanvasPopoutRequest(
+        new URLSearchParams('chat=chat-a&surface=emulator&canvas=canvas-a&canvasKind=web')
+      )
+    ).toBeNull()
   })
 })

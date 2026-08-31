@@ -93,7 +93,7 @@ describe('buildThreadHomeThreadOptions', () => {
 })
 
 describe('ThreadHome', () => {
-  it('renders active-thread rows and all six requested surface presets', () => {
+  it('renders active-thread rows and all seven requested surface presets', () => {
     const html = renderToStaticMarkup(
       <ThreadHome
         variant="pane"
@@ -162,6 +162,7 @@ describe('ThreadHome', () => {
       'browser',
       'mesh',
       'sketch',
+      'emulator',
       'media',
       'simulator'
     ])
@@ -330,6 +331,28 @@ describe('ThreadHome', () => {
     expect(source).not.toContain('activateRightDock')
     expect(source).not.toContain('setRightDock')
     expect(source).not.toContain("presentation: 'dock'")
+  })
+
+  it('opens Emulator as a full embedded Thread Home pane without browser chrome', () => {
+    const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
+    const openSurface = source.slice(
+      source.indexOf('const openSurface'),
+      source.indexOf('const openTerminalWorkspace')
+    )
+    const paneStart = source.indexOf("{surface === 'simulator'")
+    const pane = source.slice(paneStart, source.indexOf('\n      {issue &&', paneStart))
+
+    expect(THREAD_HOME_SURFACES).toContainEqual({
+      id: 'emulator',
+      label: 'Emulator',
+      description: 'Play the built-in homebrew demo'
+    })
+    expect(openSurface).toContain("next !== 'emulator'")
+    expect(openSurface).toContain('api?.openEmulatorEmbedded?.({ chatId: authorityChatId })')
+    expect(openSurface).not.toContain("presentation: 'dock'")
+    expect(pane).toContain("surface === 'emulator'")
+    expect(pane).toContain("surface === 'browser' ? (")
+    expect(pane).not.toContain("surface === 'emulator' ? (")
   })
 
   it('shares one close path between full-pane surface chrome and the glass pill', () => {
