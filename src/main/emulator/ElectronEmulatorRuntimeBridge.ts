@@ -13,12 +13,20 @@ import {
   CanvasEmulatorObservationStaleError,
   CanvasEmulatorUserActiveError,
   type CanvasEmulatorAtomicObservation,
-  type CanvasEmulatorObservationRuntimeBridge,
-  type CanvasEmulatorRuntimeState
+  type CanvasEmulatorObservationRuntimeBridge
 } from '../canvas/CanvasEmulatorDriver'
 import type { CanvasHostSurface } from '../canvas/CanvasHostSurface'
 import type { CanvasEmulatorGameId } from '../canvas/canvasTypes'
-import { isEmulatorButton, type EmulatorButton } from '../../shared/emulatorCanvas'
+import {
+  canonicalEmulatorStateAdapterSchemaJson,
+  decodeEmulatorMappedState,
+  isEmulatorButton,
+  validateEmulatorStateAdapterManifest,
+  type EmulatorButton,
+  type EmulatorMappedState,
+  type EmulatorObservationState,
+  type EmulatorStateAdapterManifestV2
+} from '../../shared/emulatorCanvas'
 import {
   emulatorEntryUrl,
   resolveEmulatorAsset,
@@ -35,6 +43,9 @@ const OPERATION_TIMEOUT_MS = 2_000
 const READY_POLL_MS = 25
 const EXPECTED_FACADE_KEYS = ['observe', 'ready', 'shutdown', 'step']
 const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42] as const
+const TWGB_ABI_WINDOW_BYTES = 13
+const TWGB_SCHEMA = 1
+const TWGB_READY_STATUS = 0x03
 const EXTERNAL_REQUEST_FILTER = { urls: ['*://*/*'] }
 const PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
 const MAX_OBSERVATION_PNG_BYTES = 512 * 1024
@@ -103,6 +114,8 @@ export interface EmulatorStableReadyState {
 
 export interface ElectronEmulatorRuntimeBridgeDeps {
   registry: EmulatorAssetRegistry
+  /** Factory-supplied, package-validated adapter; never a filesystem descriptor. */
+  stateAdapter?: EmulatorStateAdapterManifestV2 | null
   readyTimeoutMs?: number
   operationTimeoutMs?: number
   now?: () => number
@@ -122,6 +135,7 @@ interface LiveRuntime {
   readonly gameId: CanvasEmulatorGameId
   readonly entryUrl: string
   readonly emulationGeneration: number
+  readonly stateAdapter: EmulatorStateAdapterManifestV2 | null
   registration: EmulatorAssetProtocolRegistration | null
   cancelled: boolean
   loadFailure: Error | null
@@ -234,7 +248,8 @@ interface ValidatedPageObservation {
   readonly inputEpoch: number
   readonly humanActive: boolean
   readonly png: Buffer
-  readonly state: CanvasEmulatorRuntimeState
+  /** A copied fixed C100..C10C window; never propagated beyond materialization. */
+  readonly abiWindow: Uint8Array
 }
 
 type ValidatedPageAtomicResult =
@@ -285,7 +300,42 @@ function decodeObservationPng(value: unknown): Buffer {
   return png
 }
 
+function readWindowU32le(window: Uint8Array, offset: number): number {
+  return (
+    (window[offset] |
+      (window[offset + 1] << 8) |
+      (window[offset + 2] << 16) |
+      (window[offset + 3] << 24)) >>>
+    0
+  )
+}
+
+function validateTwgbAbiWindow(value: unknown): Uint8Array {
+  if (
+    !Array.isArray(value) ||
+    value.length !== TWGB_ABI_WINDOW_BYTES ||
+    value.some((byte) => !Number.isSafeInteger(byte) || byte < 0 || byte > 0xff)
+  ) {
+    throw new Error('Emulator observation ABI window must be exactly 13 frozen bytes.')
+  }
+  const window = Uint8Array.from(value)
+  if (
+    window[0] !== TWGB_MAGIC[0] ||
+    window[1] !== TWGB_MAGIC[1] ||
+    window[2] !== TWGB_MAGIC[2] ||
+    window[3] !== TWGB_MAGIC[3] ||
+    window[4] !== TWGB_SCHEMA ||
+    window[5] !== TWGB_READY_STATUS
+  ) {
+    throw new Error('Emulator observation ABI window does not contain ready TWGB identity.')
+  }
+  return window
+}
+
 function validatePageObservationFields(input: Record<string, unknown>): ValidatedPageObservation {
+  const magic = input.magic
+  const schema = input.schema
+  const status = input.status
   const frameId = positiveSafeInteger(input.frameId)
   const inputEpoch = safeInteger(input.inputEpoch)
   const humanActive = input.humanActive
@@ -294,9 +344,9 @@ function validatePageObservationFields(input: Record<string, unknown>): Validate
   const y = safeInteger(input.y)
   const inputMask = safeInteger(input.input)
   if (
-    !isExactMagic(input.magic) ||
-    input.schema !== 1 ||
-    input.status !== 3 ||
+    !isExactMagic(magic) ||
+    schema !== TWGB_SCHEMA ||
+    status !== TWGB_READY_STATUS ||
     input.width !== 160 ||
     input.height !== 144 ||
     frameId === null ||
@@ -314,22 +364,28 @@ function validatePageObservationFields(input: Record<string, unknown>): Validate
   ) {
     throw new Error('Emulator page did not provide a bounded atomic observation.')
   }
+  const abiWindow = validateTwgbAbiWindow(input.abiWindow)
+  if (
+    abiWindow[0] !== magic[0] ||
+    abiWindow[1] !== magic[1] ||
+    abiWindow[2] !== magic[2] ||
+    abiWindow[3] !== magic[3] ||
+    abiWindow[4] !== schema ||
+    abiWindow[5] !== status ||
+    abiWindow[6] !== x ||
+    abiWindow[7] !== y ||
+    abiWindow[8] !== inputMask ||
+    readWindowU32le(abiWindow, 9) !== frameCounter
+  ) {
+    throw new Error('Emulator observation ABI window does not exactly match direct TWGB fields.')
+  }
   const png = decodeObservationPng(input.pngDataUrl)
   return {
     frameId,
     inputEpoch,
     humanActive,
     png,
-    state: Object.freeze({
-      magic: Object.freeze([...TWGB_MAGIC]) as unknown as readonly [number, number, number, number],
-      schema: 1,
-      status: 3,
-      x,
-      y,
-      input: inputMask,
-      frameCounter,
-      rgbaHash: input.frameHash
-    })
+    abiWindow
   }
 }
 
@@ -341,6 +397,7 @@ function validatePageObservation(value: unknown): ValidatedPageAtomicResult {
     input.facadeFrozen !== true ||
     input.resultFrozen !== true ||
     input.observationFrozen !== true ||
+    input.abiWindowFrozen !== true ||
     input.moduleGlobal !== 'undefined' ||
     input.heapGlobal !== 'undefined' ||
     input.requireGlobal !== 'undefined' ||
@@ -378,6 +435,70 @@ function validatePageObservation(value: unknown): ValidatedPageAtomicResult {
     throw new Error('Emulator page returned an invalid atomic outcome.')
   }
   return { kind: 'observation', observation }
+}
+
+function isDeepFrozenStateAdapter(adapter: EmulatorStateAdapterManifestV2): boolean {
+  return (
+    Object.isFrozen(adapter) &&
+    Object.isFrozen(adapter.stateWindow) &&
+    Object.isFrozen(adapter.fields) &&
+    adapter.fields.every(
+      (field) =>
+        Object.isFrozen(field) &&
+        Object.isFrozen(field.read) &&
+        (field.enumValues === undefined || Object.isFrozen(field.enumValues))
+    )
+  )
+}
+
+function validateRuntimeStateAdapter(
+  adapter: EmulatorStateAdapterManifestV2 | null
+): EmulatorStateAdapterManifestV2 | null {
+  if (adapter === null) return null
+  const validated = validateEmulatorStateAdapterManifest(adapter)
+  if (
+    !validated.ok ||
+    validated.value.schemaVersion !== 2 ||
+    !isDeepFrozenStateAdapter(adapter) ||
+    adapter.schemaVersion !== 2 ||
+    adapter.memoryBytes !== TWGB_ABI_WINDOW_BYTES ||
+    adapter.stateWindow.source !== 'system_ram' ||
+    adapter.stateWindow.startAddress !== 0xc100 ||
+    adapter.stateWindow.byteLength !== TWGB_ABI_WINDOW_BYTES
+  ) {
+    throw new Error('Emulator runtime requires a deep-frozen exact v2 TWGB state adapter.')
+  }
+  const canonical = canonicalEmulatorStateAdapterSchemaJson(adapter)
+  const schemaSha256 = createHash('sha256').update(canonical, 'utf8').digest('hex')
+  if (schemaSha256 !== adapter.schemaSha256) {
+    throw new Error(
+      'Emulator runtime state adapter schemaSha256 does not match its canonical schema.'
+    )
+  }
+  return adapter
+}
+
+function freezeMappedState(state: EmulatorMappedState): EmulatorMappedState {
+  return Object.freeze({
+    ...state,
+    fields: Object.freeze(state.fields.map((field) => Object.freeze({ ...field })))
+  })
+}
+
+function mappedStateFor(
+  adapter: EmulatorStateAdapterManifestV2 | null,
+  abiWindow: Uint8Array
+): EmulatorObservationState {
+  if (adapter === null) {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'no_verified_adapter' as const })
+  }
+  const decoded = decodeEmulatorMappedState(adapter, abiWindow)
+  if (!decoded.ok) {
+    throw new Error(
+      `Emulator state adapter failed to decode the fixed ABI window: ${decoded.reason}`
+    )
+  }
+  return freezeMappedState(decoded.value)
 }
 
 const READY_PROBE = `(() => {
@@ -425,6 +546,7 @@ function facadeObservationProbe(invocation: string): string {
       facadeKeys: Object.keys(api).sort(),
       resultFrozen: Object.isFrozen(result),
       observationFrozen: Object.isFrozen(observation),
+      abiWindowFrozen: Object.isFrozen(observation && observation.abiWindow),
       outcome: refusal ? 'refusal' : 'observation',
       refusalCode: refusal && refusal.code,
       refusalFramesAdvanced: refusal && refusal.framesAdvanced,
@@ -444,7 +566,8 @@ function facadeObservationProbe(invocation: string): string {
       input: observation && observation.input,
       inputEpoch: observation && observation.inputEpoch,
       humanActive: observation && observation.humanActive,
-      frameCounter: observation && observation.frameCounter
+      frameCounter: observation && observation.frameCounter,
+      abiWindow: observation && observation.abiWindow
     };
   });
 })()`
@@ -480,6 +603,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
   private readonly capturedAt: () => string
   private readonly createObservationId: () => string
   private readonly sleep: (milliseconds: number) => Promise<void>
+  private readonly stateAdapter: EmulatorStateAdapterManifestV2 | null
   private nextEmulationGeneration = 0
 
   constructor(private readonly deps: ElectronEmulatorRuntimeBridgeDeps) {
@@ -492,6 +616,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     this.capturedAt = deps.capturedAt ?? (() => new Date(this.now()).toISOString())
     this.createObservationId = deps.createObservationId ?? randomUUID
     this.sleep = deps.delay ?? delay
+    this.stateAdapter = validateRuntimeStateAdapter(deps.stateAdapter ?? null)
   }
 
   async boot(input: {
@@ -513,7 +638,8 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       session,
       input.gameId,
       entryUrl,
-      ++this.nextEmulationGeneration
+      ++this.nextEmulationGeneration,
+      this.stateAdapter
     )
     this.live = live
 
@@ -556,6 +682,8 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     buttons: readonly EmulatorButton[]
     expectedFrameId: number
     expectedInputEpoch: number
+    /** Main-derived from the driver cache; never supplied by the page or MCP caller. */
+    expectedFixtureCounter?: number
   }): Promise<CanvasEmulatorAtomicObservation> {
     if (
       !Array.isArray(input.buttons) ||
@@ -570,15 +698,34 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     if (
       !Number.isSafeInteger(input.expectedFrameId) ||
       input.expectedFrameId <= 0 ||
+      input.expectedFrameId >= Number.MAX_SAFE_INTEGER ||
       !Number.isSafeInteger(input.expectedInputEpoch) ||
       input.expectedInputEpoch < 0
     ) {
       throw new Error('Emulator step requires trusted frame and input epochs.')
     }
+    if (
+      input.expectedFixtureCounter !== undefined &&
+      (!Number.isSafeInteger(input.expectedFixtureCounter) ||
+        input.expectedFixtureCounter <= 0 ||
+        input.expectedFixtureCounter >= 0xffff_ffff)
+    ) {
+      throw new Error('Emulator step requires a positive main-owned fixture frame counter.')
+    }
+    if (this.stateAdapter !== null && input.expectedFixtureCounter === undefined) {
+      throw new Error('Mapped emulator steps require a cached main-owned fixture frame counter.')
+    }
     return this.runAtomicObservation(
       input,
       stepProbe(input.buttons, input.expectedFrameId, input.expectedInputEpoch),
-      'Emulator one-frame step'
+      'Emulator one-frame step',
+      {
+        expectedFrameId: input.expectedFrameId,
+        expectedInputEpoch: input.expectedInputEpoch,
+        ...(input.expectedFixtureCounter === undefined
+          ? {}
+          : { expectedFixtureCounter: input.expectedFixtureCounter })
+      }
     )
   }
 
@@ -597,7 +744,12 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
   private async runAtomicObservation(
     input: { gameId: CanvasEmulatorGameId; surface: CanvasHostSurface },
     probe: string,
-    label: string
+    label: string,
+    stepExpectation?: {
+      readonly expectedFrameId: number
+      readonly expectedInputEpoch: number
+      readonly expectedFixtureCounter?: number
+    }
   ): Promise<CanvasEmulatorAtomicObservation> {
     const live = this.requireLive(input)
     try {
@@ -608,6 +760,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       )
       this.assertCurrent(live)
       const pageResult = validatePageObservation(raw)
+      this.validateStepResult(live, pageResult, stepExpectation)
       if (pageResult.kind === 'refusal') {
         const observation = this.materializeAtomicObservation(live, pageResult.observation)
         if (pageResult.code === 'stale_input_epoch') {
@@ -633,10 +786,68 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     }
   }
 
+  private validateStepResult(
+    live: LiveRuntime,
+    result: ValidatedPageAtomicResult,
+    expectation:
+      | {
+          readonly expectedFrameId: number
+          readonly expectedInputEpoch: number
+          readonly expectedFixtureCounter?: number
+        }
+      | undefined
+  ): void {
+    if (!expectation) return
+    if (result.kind === 'refusal') {
+      if (
+        result.code === 'stale_observation' &&
+        result.observation.frameId === expectation.expectedFrameId
+      ) {
+        throw new Error('Emulator stale-observation refusal did not report a changed frame.')
+      }
+      if (
+        result.code === 'stale_input_epoch' &&
+        result.observation.inputEpoch === expectation.expectedInputEpoch
+      ) {
+        throw new Error('Emulator stale-input refusal did not report a changed human input epoch.')
+      }
+      if (
+        result.code === 'user_active' &&
+        result.framesAdvanced === 1 &&
+        result.observation.inputEpoch === expectation.expectedInputEpoch
+      ) {
+        throw new Error(
+          'Emulator post-dispatch user-active refusal did not report a changed epoch.'
+        )
+      }
+    }
+    const advancedOne = result.kind === 'observation' || result.framesAdvanced === 1
+    if (!advancedOne) return
+    const observation = result.observation
+    if (observation.frameId !== expectation.expectedFrameId + 1) {
+      throw new Error('Emulator step result did not advance exactly one expected frame.')
+    }
+    if (result.kind === 'observation') {
+      if (observation.humanActive || observation.inputEpoch !== expectation.expectedInputEpoch) {
+        throw new Error('Emulator step reported success after a human input transition.')
+      }
+    }
+    if (live.stateAdapter === null) return
+    const expectedCounter = expectation.expectedFixtureCounter
+    if (
+      expectedCounter === undefined ||
+      expectedCounter >= 0xffff_ffff ||
+      readWindowU32le(observation.abiWindow, 9) !== expectedCounter + 1
+    ) {
+      throw new Error('Emulator step result did not advance exactly one expected fixture counter.')
+    }
+  }
+
   private materializeAtomicObservation(
     live: LiveRuntime,
     page: ValidatedPageObservation
   ): CanvasEmulatorAtomicObservation {
+    const mappedState = mappedStateFor(live.stateAdapter, page.abiWindow)
     const observationId = this.createObservationId()
     if (
       typeof observationId !== 'string' ||
@@ -670,7 +881,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       humanActive: page.humanActive,
       capturedAt,
       frame,
-      state: page.state
+      mappedState
     })
   }
 
@@ -680,7 +891,8 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
     session: ElectronEmulatorSession,
     gameId: CanvasEmulatorGameId,
     entryUrl: string,
-    emulationGeneration: number
+    emulationGeneration: number,
+    stateAdapter: EmulatorStateAdapterManifestV2 | null
   ): LiveRuntime {
     const onNavigate: LiveRuntime['onNavigate'] = (...args) => {
       const [event, target] = args
@@ -728,6 +940,7 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
       gameId,
       entryUrl,
       emulationGeneration,
+      stateAdapter,
       registration: null,
       cancelled: false,
       loadFailure: null,

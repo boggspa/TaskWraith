@@ -41,8 +41,8 @@ const EXPECTED_ASSETS = [
   },
   {
     path: 'bootstrap.mjs',
-    sha256: 'f43d4a37da7bf8717bf5ae37017c2f304a2acaf12726878a42ab542b5a1bb5cb',
-    byteLength: 18576,
+    sha256: 'c143b864f573662d659362485ee4293a34d96bf359da1cb2b7844f01fe10d844',
+    byteLength: 18885,
     mimeType: 'application/javascript'
   },
   {
@@ -180,7 +180,7 @@ describe('homebrew emulator package layout', () => {
     })
     expect(provenance.bundle.runtimeManifest).toEqual({
       path: 'manifest.json',
-      sha256: '535a00bb271552b0577f7379ded8bfe40746773d0323ee5953e6a8bd57aec61e',
+      sha256: 'bcdaa8c6b9ec413c9ddfc411b3750bbdea038c8eff3f798e7c27c24bec9d47f1',
       byteLength: 1040
     })
     expect(provenance.bundle.statePackage).toEqual({
@@ -283,6 +283,7 @@ describe('homebrew emulator package layout', () => {
     expect(index).not.toMatch(/<style\b|<script(?![^>]*\bsrc=)/i)
     expect(EMULATOR_DOCUMENT_CSP).toContain("script-src 'self' 'wasm-unsafe-eval'")
     expect(bootstrap).toContain('const TWGB_SCHEMA = 1')
+    expect(bootstrap).toContain('const TWGB_ABI_WINDOW_BYTES = 0x0d')
     expect(bootstrap).toContain('abi.status === READY_STATUS')
     expect(bootstrap).toContain('abi.input === 0')
     expect(bootstrap).toContain('abi.frameCounter > 0')
@@ -314,6 +315,8 @@ describe('homebrew emulator package layout', () => {
     expect(bootstrap).toContain('Number.isSafeInteger(ramPointer)')
     expect(bootstrap).toContain('Number.isSafeInteger(ramSize)')
     expect(bootstrap).toContain('Number.isSafeInteger(pointer)')
+    expect(bootstrap).toContain('Array.from(heap.subarray(offset, offset + TWGB_ABI_WINDOW_BYTES))')
+    expect(bootstrap).toContain('abiWindow: snapshot.abi.abiWindow')
     expect(bootstrap).toContain('Object.freeze({')
     expect(bootstrap).toContain("Object.defineProperty(globalThis, '__twemu'")
     expect(bootstrap).toContain('configurable: false')

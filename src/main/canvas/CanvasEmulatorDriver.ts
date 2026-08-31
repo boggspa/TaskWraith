@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import {
   isEmulatorButton,
   type EmulatorButton,
+  type EmulatorObservationState,
   type EmulatorObservationToken
 } from '../../shared/emulatorCanvas'
 import { emulatorEntryUrl } from '../emulator/EmulatorAssetManifest'
@@ -52,29 +53,14 @@ export interface CanvasEmulatorRuntimeBridge {
   shutdown?(input: { gameId: CanvasEmulatorGameId; surface: CanvasHostSurface }): Promise<void>
 }
 
-/**
- * Bounded state copied from the page-owned TWGB ABI. This intentionally has no
- * Module, HEAP, RAM pointer, or arbitrary memory range.
- */
-export interface CanvasEmulatorRuntimeState {
-  readonly magic: readonly [number, number, number, number]
-  readonly schema: 1
-  readonly status: 3
-  readonly x: number
-  readonly y: number
-  readonly input: number
-  readonly frameCounter: number
-  /** SHA-256 of the page's swizzled RGBA frame, distinct from PNG `frame.hash`. */
-  readonly rgbaHash: string
-}
-
-/** Main-owned projection of one exact page canvas/ABI transaction. */
+/** Main-owned projection of one exact page frame plus descriptor-decoded state. */
 export interface CanvasEmulatorAtomicObservation extends EmulatorObservationToken {
   readonly schemaVersion: 1
   readonly capturedAt: string
   readonly humanActive: boolean
   readonly frame: Readonly<CanvasFrame>
-  readonly state: Readonly<CanvasEmulatorRuntimeState>
+  /** Bounded package-decoded state only; no ABI bytes, RAM, or raw facade fields. */
+  readonly mappedState: Readonly<EmulatorObservationState>
 }
 
 /**
@@ -93,6 +79,8 @@ export interface CanvasEmulatorObservationRuntimeBridge extends CanvasEmulatorRu
     buttons: readonly EmulatorButton[]
     expectedFrameId: number
     expectedInputEpoch: number
+    /** Main-derived only: the cached mapped fixture counter, never tool input. */
+    expectedFixtureCounter?: number
   }): Promise<CanvasEmulatorAtomicObservation>
 }
 
@@ -113,6 +101,7 @@ export class CanvasEmulatorInputEpochStaleError extends Error {
 /** Typed refusal for a page frame that no longer matches the cached observation. */
 export class CanvasEmulatorObservationStaleError extends Error {
   readonly code = 'stale_observation' as const
+  readonly framesAdvanced = 0 as const
 
   constructor(readonly observation?: CanvasEmulatorAtomicObservation) {
     super('Emulator frame changed since the expected observation.')
@@ -148,6 +137,22 @@ function unsupported(verb: string): never {
   throw new Error(
     `canvas_${verb} is not available for the emulator driver (use the dedicated emulator surface contract).`
   )
+}
+
+function expectedFixtureCounter(observation: CanvasEmulatorAtomicObservation): number | undefined {
+  if (observation.mappedState.kind !== 'mapped') return undefined
+  const field = observation.mappedState.fields.find(
+    (candidate) => candidate.key === 'frame-counter'
+  )
+  if (
+    !field ||
+    field.kind !== 'integer' ||
+    !Number.isSafeInteger(field.value) ||
+    field.value <= 0
+  ) {
+    throw new Error('Mapped emulator state did not provide a positive fixture frame-counter.')
+  }
+  return field.value
 }
 
 export class CanvasEmulatorDriver implements CanvasDriver {
@@ -306,13 +311,15 @@ export class CanvasEmulatorDriver implements CanvasDriver {
     if (expectedObservationId !== undefined && expectedObservationId !== expected.observationId) {
       throw new CanvasEmulatorObservationStaleError()
     }
+    const expectedCounter = expectedFixtureCounter(expected)
     try {
       const observation = await this.observationRuntime().step({
         gameId: this.gameId,
         surface: this.requireSurface(),
         buttons: [...buttons],
         expectedFrameId: expected.frameId,
-        expectedInputEpoch: expected.inputEpoch
+        expectedInputEpoch: expected.inputEpoch,
+        ...(expectedCounter === undefined ? {} : { expectedFixtureCounter: expectedCounter })
       })
       this.lastObservation = observation
       return observation

@@ -5,9 +5,15 @@ import * as path from 'node:path'
 import { Script } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  canonicalEmulatorStateAdapterSchemaJson,
+  validateEmulatorStateAdapterManifest,
+  type EmulatorStateAdapterManifestV2
+} from '../../shared/emulatorCanvas'
+import {
   CanvasEmulatorInputEpochStaleError,
   CanvasEmulatorObservationStaleError,
-  CanvasEmulatorUserActiveError
+  CanvasEmulatorUserActiveError,
+  type CanvasEmulatorAtomicObservation
 } from '../canvas/CanvasEmulatorDriver'
 import type { CanvasHostSurface } from '../canvas/CanvasHostSurface'
 import { createEmulatorAssetRegistry, emulatorEntryUrl } from './EmulatorAssetManifest'
@@ -42,12 +48,36 @@ const ATOMIC_PNG = Buffer.from([
   0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x90
 ])
 
+function twgbWindow(input: {
+  x: number
+  y: number
+  input: number
+  frameCounter: number
+}): number[] {
+  return [
+    0x54,
+    0x57,
+    0x47,
+    0x42,
+    1,
+    3,
+    input.x,
+    input.y,
+    input.input,
+    input.frameCounter & 0xff,
+    (input.frameCounter >>> 8) & 0xff,
+    (input.frameCounter >>> 16) & 0xff,
+    (input.frameCounter >>> 24) & 0xff
+  ]
+}
+
 function atomicProjection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+  const direct = {
     facadeFrozen: true,
     facadeKeys: ['observe', 'ready', 'shutdown', 'step'],
     resultFrozen: true,
     observationFrozen: true,
+    abiWindowFrozen: true,
     outcome: 'observation',
     refusalCode: null,
     moduleGlobal: 'undefined',
@@ -66,8 +96,19 @@ function atomicProjection(overrides: Record<string, unknown> = {}): Record<strin
     input: 0,
     inputEpoch: 4,
     humanActive: false,
-    frameCounter: 2,
-    ...overrides
+    frameCounter: 2
+  }
+  const projection = { ...direct, ...overrides }
+  return {
+    ...projection,
+    abiWindow:
+      overrides.abiWindow ??
+      twgbWindow({
+        x: projection.x as number,
+        y: projection.y as number,
+        input: projection.input as number,
+        frameCounter: projection.frameCounter as number
+      })
   }
 }
 
@@ -83,8 +124,80 @@ function atomicRefusal(
   })
 }
 
-function hash(bytes: Uint8Array): string {
+function hash(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function freezeStateAdapter(
+  adapter: EmulatorStateAdapterManifestV2
+): EmulatorStateAdapterManifestV2 {
+  return Object.freeze({
+    ...adapter,
+    stateWindow: Object.freeze({ ...adapter.stateWindow }),
+    fields: Object.freeze(
+      adapter.fields.map((field) =>
+        Object.freeze({
+          ...field,
+          read: Object.freeze({ ...field.read }),
+          ...(field.enumValues ? { enumValues: Object.freeze({ ...field.enumValues }) } : {})
+        })
+      )
+    )
+  })
+}
+
+function stateAdapter(
+  fields: readonly Record<string, unknown>[] = [
+    { key: 'x', kind: 'integer', read: { address: 6, encoding: 'u8' }, unit: 'px' },
+    { key: 'y', kind: 'integer', read: { address: 7, encoding: 'u8' }, unit: 'px' },
+    { key: 'input', kind: 'integer', read: { address: 8, encoding: 'u8' }, unit: 'mask' },
+    {
+      key: 'frame-counter',
+      kind: 'integer',
+      read: { address: 9, encoding: 'u32le' },
+      unit: 'frames'
+    }
+  ]
+): EmulatorStateAdapterManifestV2 {
+  const raw = {
+    schemaVersion: 2,
+    adapterId: 'twgb-state-window',
+    adapterRevision: 'v1',
+    schemaSha256: '0'.repeat(64),
+    coreId: 'sameboy-libretro',
+    romSha256: 'a'.repeat(64),
+    memoryBytes: 13,
+    stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 13 },
+    fields
+  }
+  const validated = validateEmulatorStateAdapterManifest(raw)
+  if (!validated.ok || validated.value.schemaVersion !== 2) {
+    throw new Error(validated.ok ? 'Expected v2 adapter.' : validated.reason)
+  }
+  return freezeStateAdapter({
+    ...validated.value,
+    schemaSha256: hash(canonicalEmulatorStateAdapterSchemaJson(validated.value))
+  })
+}
+
+function decodeFailingStateAdapter(): EmulatorStateAdapterManifestV2 {
+  return stateAdapter([
+    {
+      key: 'frame-counter',
+      kind: 'integer',
+      read: { address: 9, encoding: 'u32le', scale: 1_000_000 },
+      unit: 'frames'
+    }
+  ])
+}
+
+function rehashedFrozenAdapter(
+  candidate: Omit<EmulatorStateAdapterManifestV2, 'schemaSha256'>
+): EmulatorStateAdapterManifestV2 {
+  return freezeStateAdapter({
+    ...candidate,
+    schemaSha256: hash(canonicalEmulatorStateAdapterSchemaJson(candidate))
+  })
 }
 
 function deferred<T>() {
@@ -387,11 +500,13 @@ describe('ElectronEmulatorRuntimeBridge', () => {
         hash: hash(ATOMIC_PNG),
         capturedAt: '2026-08-31T19:00:00.000Z'
       },
-      state: { x: 81, y: 72, input: 0, rgbaHash: 'b'.repeat(64) }
+      mappedState: { kind: 'unavailable', reason: 'no_verified_adapter' }
     })
     expect(Object.isFrozen(observed)).toBe(true)
     expect(Object.isFrozen(observed.frame)).toBe(true)
-    expect(Object.isFrozen(observed.state)).toBe(true)
+    expect(Object.isFrozen(observed.mappedState)).toBe(true)
+    expect(observed).not.toHaveProperty('abiWindow')
+    expect(observed).not.toHaveProperty('state')
 
     fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
       atomicProjection({ frameId: 90, input: 16, inputEpoch: 4, frameCounter: 3, x: 82 })
@@ -401,16 +516,271 @@ describe('ElectronEmulatorRuntimeBridge', () => {
       surface: fakeSurface.surface,
       buttons: ['right'],
       expectedFrameId: 89,
-      expectedInputEpoch: 4
+      expectedInputEpoch: 4,
+      expectedFixtureCounter: 2
     })
     expect(stepped.frameId).toBe(90)
-    expect(stepped.state).toMatchObject({ input: 16, x: 82 })
+    expect(stepped.mappedState).toEqual({ kind: 'unavailable', reason: 'no_verified_adapter' })
     const stepCode = fakeContents.contents.executeJavaScript.mock.calls
       .map(([code]) => code)
       .find((code) => code.includes('api.step(["right"], 89, 4)'))
     expect(stepCode).toBeTypeOf('string')
     if (typeof stepCode !== 'string') throw new Error('Expected fixed internal step probe.')
     expect(() => new Script(stepCode)).not.toThrow()
+  })
+
+  it('decodes the exact fixed ABI window into deeply frozen mapped state without retaining raw ABI data', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({
+      registry,
+      stateAdapter: stateAdapter(),
+      createObservationId: vi.fn(() => 'obs:mapped')
+    })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicProjection())
+    const observed = await bridge.observe(input)
+    expect(observed.mappedState).toEqual({
+      kind: 'mapped',
+      adapterId: 'twgb-state-window',
+      adapterRevision: 'v1',
+      schemaSha256: stateAdapter().schemaSha256,
+      truncated: false,
+      fields: [
+        { key: 'x', kind: 'integer', value: 81, unit: 'px' },
+        { key: 'y', kind: 'integer', value: 72, unit: 'px' },
+        { key: 'input', kind: 'integer', value: 0, unit: 'mask' },
+        { key: 'frame-counter', kind: 'integer', value: 2, unit: 'frames' }
+      ]
+    })
+    expect(Object.isFrozen(observed.mappedState)).toBe(true)
+    if (observed.mappedState.kind !== 'mapped') throw new Error('Expected mapped state.')
+    expect(Object.isFrozen(observed.mappedState.fields)).toBe(true)
+    expect(observed.mappedState.fields.every(Object.isFrozen)).toBe(true)
+    for (const forbidden of [
+      'abiWindow',
+      'magic',
+      'schema',
+      'status',
+      'x',
+      'y',
+      'input',
+      'frameCounter',
+      'rgbaHash',
+      'HEAPU8',
+      'systemRam'
+    ]) {
+      expect(observed).not.toHaveProperty(forbidden)
+    }
+
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicProjection({ frameId: 90, input: 16, frameCounter: 3, x: 82 })
+    )
+    const stepped = await bridge.step({
+      gameId: 'homebrew-demo',
+      surface: fakeSurface.surface,
+      buttons: ['right'],
+      expectedFrameId: 89,
+      expectedInputEpoch: 4,
+      expectedFixtureCounter: 2
+    })
+    expect(stepped.mappedState).toMatchObject({
+      kind: 'mapped',
+      fields: [
+        { key: 'x', value: 82 },
+        { key: 'y', value: 72 },
+        { key: 'input', value: 16 },
+        { key: 'frame-counter', value: 3 }
+      ]
+    })
+  })
+
+  it('rejects mutable, semantically invalid, wrong-window, and bad-hash adapters before page boot', () => {
+    const valid = stateAdapter()
+    const mutable = { ...valid }
+    const wrongWindow = rehashedFrozenAdapter({
+      ...valid,
+      stateWindow: { ...valid.stateWindow, startAddress: 0xc101 }
+    })
+    const wrongField = rehashedFrozenAdapter({
+      ...valid,
+      fields: [
+        {
+          key: 'past-end',
+          kind: 'integer',
+          read: { address: 13, encoding: 'u8' },
+          unit: 'bytes'
+        }
+      ]
+    } as Omit<EmulatorStateAdapterManifestV2, 'schemaSha256'>)
+    const badHash = freezeStateAdapter({ ...valid, schemaSha256: 'f'.repeat(64) })
+    for (const adapter of [mutable, wrongWindow, wrongField, badHash]) {
+      expect(() => new ElectronEmulatorRuntimeBridge({ registry, stateAdapter: adapter })).toThrow(
+        /adapter|schemaSha256/i
+      )
+    }
+  })
+
+  it('binds successful and one-frame-refusal results to the expected frame and fixture-counter deltas', async () => {
+    const positiveCases: Array<{
+      result: Record<string, unknown>
+      code?: 'stale_observation' | 'stale_input_epoch' | 'user_active'
+      framesAdvanced?: 0 | 1
+    }> = [
+      { result: atomicProjection({ frameId: 90, frameCounter: 3, x: 82, input: 16 }) },
+      {
+        code: 'stale_observation',
+        framesAdvanced: 0,
+        result: atomicRefusal('stale_observation', { frameId: 96, frameCounter: 9 })
+      },
+      {
+        code: 'stale_input_epoch',
+        framesAdvanced: 1,
+        result: atomicRefusal('stale_input_epoch', {
+          refusalFramesAdvanced: 1,
+          frameId: 90,
+          frameCounter: 3,
+          inputEpoch: 5
+        })
+      },
+      {
+        code: 'user_active',
+        framesAdvanced: 1,
+        result: atomicRefusal('user_active', {
+          refusalFramesAdvanced: 1,
+          frameId: 90,
+          frameCounter: 3,
+          humanActive: true,
+          inputEpoch: 5
+        })
+      }
+    ]
+    for (const { result, code, framesAdvanced } of positiveCases) {
+      const fakeSession = makeFakeSession()
+      const fakeContents = makeFakeContents(fakeSession.session)
+      const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+      const bridge = new ElectronEmulatorRuntimeBridge({ registry, stateAdapter: stateAdapter() })
+      const input = {
+        gameId: 'homebrew-demo' as const,
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      }
+      await bridge.boot(input)
+      fakeContents.contents.executeJavaScript.mockResolvedValueOnce(result)
+      const stepped = bridge.step({
+        gameId: 'homebrew-demo',
+        surface: fakeSurface.surface,
+        buttons: ['right'],
+        expectedFrameId: 89,
+        expectedInputEpoch: 4,
+        expectedFixtureCounter: 2
+      })
+      if (code) {
+        await expect(stepped).rejects.toMatchObject({ code, framesAdvanced })
+      } else {
+        await expect(stepped).resolves.toMatchObject({ frameId: 90 })
+      }
+      expect(fakeSurface.surface.isDestroyed()).toBe(false)
+    }
+
+    const negativeCases: Array<[string, Record<string, unknown>]> = [
+      ['same success frame', atomicProjection({ frameId: 89, frameCounter: 3 })],
+      ['skipped success frame', atomicProjection({ frameId: 91, frameCounter: 3 })],
+      ['unchanged success counter', atomicProjection({ frameId: 90, frameCounter: 2 })],
+      [
+        'human-active success',
+        atomicProjection({ frameId: 90, frameCounter: 3, humanActive: true })
+      ],
+      ['human-epoch success', atomicProjection({ frameId: 90, frameCounter: 3, inputEpoch: 5 })],
+      [
+        'unchanged zero-frame stale-input epoch',
+        atomicRefusal('stale_input_epoch', { inputEpoch: 4 })
+      ],
+      [
+        'same one-frame refusal',
+        atomicRefusal('stale_input_epoch', {
+          refusalFramesAdvanced: 1,
+          frameId: 89,
+          frameCounter: 3,
+          inputEpoch: 5
+        })
+      ],
+      [
+        'skipped one-frame refusal',
+        atomicRefusal('stale_input_epoch', {
+          refusalFramesAdvanced: 1,
+          frameId: 91,
+          frameCounter: 3,
+          inputEpoch: 5
+        })
+      ],
+      [
+        'unchanged one-frame counter',
+        atomicRefusal('stale_input_epoch', {
+          refusalFramesAdvanced: 1,
+          frameId: 90,
+          frameCounter: 2,
+          inputEpoch: 5
+        })
+      ],
+      [
+        'unchanged one-frame stale-input epoch',
+        atomicRefusal('stale_input_epoch', {
+          refusalFramesAdvanced: 1,
+          frameId: 90,
+          frameCounter: 3,
+          inputEpoch: 4
+        })
+      ],
+      [
+        'unchanged one-frame user-active epoch',
+        atomicRefusal('user_active', {
+          refusalFramesAdvanced: 1,
+          frameId: 90,
+          frameCounter: 3,
+          humanActive: true,
+          inputEpoch: 4
+        })
+      ],
+      [
+        'unchanged stale-observation frame',
+        atomicRefusal('stale_observation', { frameId: 89, frameCounter: 3 })
+      ]
+    ]
+    for (const [label, result] of negativeCases) {
+      const fakeSession = makeFakeSession()
+      const fakeContents = makeFakeContents(fakeSession.session)
+      const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+      const bridge = new ElectronEmulatorRuntimeBridge({ registry, stateAdapter: stateAdapter() })
+      const input = {
+        gameId: 'homebrew-demo' as const,
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      }
+      await bridge.boot(input)
+      fakeContents.contents.executeJavaScript.mockResolvedValueOnce(result)
+      await expect(
+        bridge.step({
+          gameId: 'homebrew-demo',
+          surface: fakeSurface.surface,
+          buttons: ['right'],
+          expectedFrameId: 89,
+          expectedInputEpoch: 4,
+          expectedFixtureCounter: 2
+        }),
+        label
+      ).rejects.toThrow(
+        /step result|human input transition|changed.*epoch|stale-(?:input|observation)/i
+      )
+      await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed(), label).toBe(true))
+    }
   })
 
   it('rejects non-PNG, oversized, or untrusted page observation projections before minting a frame', async () => {
@@ -437,6 +807,61 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     await expect(bridge.observe(input)).rejects.toThrow(/binding is absent/i)
   })
 
+  it('fatal-retires every malformed fixed ABI window/direct-field boundary before materializing', async () => {
+    const canonical = twgbWindow({ x: 81, y: 72, input: 0, frameCounter: 2 })
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['unfrozen window', { abiWindowFrozen: false }],
+      ['short window', { abiWindow: canonical.slice(0, 12) }],
+      ['non-byte window', { abiWindow: [...canonical.slice(0, 12), 256] }],
+      ['window magic mismatch', { abiWindow: [0, ...canonical.slice(1)] }],
+      ['direct magic mismatch', { magic: [0, 0x57, 0x47, 0x42] }],
+      ['direct schema mismatch', { schema: 2 }],
+      ['direct status mismatch', { status: 2 }],
+      ['direct x mismatch', { x: 82, abiWindow: canonical }],
+      ['direct y mismatch', { y: 71, abiWindow: canonical }],
+      ['direct input mismatch', { input: 16, abiWindow: canonical }],
+      ['direct counter mismatch', { frameCounter: 3, abiWindow: canonical }]
+    ]
+    for (const [label, overrides] of cases) {
+      const fakeSession = makeFakeSession()
+      const fakeContents = makeFakeContents(fakeSession.session)
+      const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+      const bridge = new ElectronEmulatorRuntimeBridge({ registry })
+      const input = {
+        gameId: 'homebrew-demo' as const,
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      }
+      await bridge.boot(input)
+      fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicProjection(overrides))
+
+      await expect(bridge.observe(input), label).rejects.toThrow()
+      await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed(), label).toBe(true))
+    }
+  })
+
+  it('fatal-retires a bounded window when the supplied adapter cannot decode it', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    const bridge = new ElectronEmulatorRuntimeBridge({
+      registry,
+      stateAdapter: decodeFailingStateAdapter()
+    })
+    const input = {
+      gameId: 'homebrew-demo' as const,
+      url: emulatorEntryUrl('homebrew-demo'),
+      surface: fakeSurface.surface
+    }
+    await bridge.boot(input)
+    fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
+      atomicProjection({ frameCounter: 0xffff_ffff })
+    )
+
+    await expect(bridge.observe(input)).rejects.toThrow(/failed to decode/i)
+    await vi.waitFor(() => expect(fakeSurface.surface.isDestroyed()).toBe(true))
+  })
+
   it('translates the fixed page stale-input sentinel into a typed main-side refusal', async () => {
     const fakeSession = makeFakeSession()
     const fakeContents = makeFakeContents(fakeSession.session)
@@ -449,7 +874,7 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     }
     await bridge.boot(input)
     fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
-      atomicRefusal('stale_input_epoch')
+      atomicRefusal('stale_input_epoch', { inputEpoch: 5 })
     )
 
     const rejected = bridge.step({
@@ -462,7 +887,7 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorInputEpochStaleError)
     await expect(rejected).rejects.toMatchObject({
       framesAdvanced: 0,
-      observation: expect.objectContaining({ frameId: 89, inputEpoch: 4 })
+      observation: expect.objectContaining({ frameId: 89, inputEpoch: 5 })
     })
     expect(fakeSurface.surface.isDestroyed()).toBe(false)
   })
@@ -515,7 +940,7 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     }
     await bridge.boot(input)
     fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
-      atomicRefusal('stale_observation')
+      atomicRefusal('stale_observation', { frameId: 90, frameCounter: 3 })
     )
 
     const rejected = bridge.step({
@@ -527,7 +952,7 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     })
     await expect(rejected).rejects.toBeInstanceOf(CanvasEmulatorObservationStaleError)
     await expect(rejected).rejects.toMatchObject({
-      observation: expect.objectContaining({ frameId: 89, inputEpoch: 4 })
+      observation: expect.objectContaining({ frameId: 90, inputEpoch: 4 })
     })
     expect(fakeSurface.surface.isDestroyed()).toBe(false)
 
@@ -547,7 +972,12 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     }
     await bridge.boot(input)
     fakeContents.contents.executeJavaScript.mockResolvedValueOnce(
-      atomicRefusal('user_active', { humanActive: true, refusalFramesAdvanced: 1, frameId: 90 })
+      atomicRefusal('user_active', {
+        humanActive: true,
+        refusalFramesAdvanced: 1,
+        frameId: 90,
+        inputEpoch: 5
+      })
     )
 
     const rejected = bridge.step({
@@ -563,6 +993,50 @@ describe('ElectronEmulatorRuntimeBridge', () => {
       observation: expect.objectContaining({ frameId: 90, humanActive: true })
     })
     expect(fakeSurface.surface.isDestroyed()).toBe(false)
+  })
+
+  it('retains deeply frozen mapped state on every nonfatal refusal for driver cache refresh', async () => {
+    const cases: Array<{
+      code: 'stale_observation' | 'stale_input_epoch' | 'user_active'
+      overrides?: Record<string, unknown>
+    }> = [
+      { code: 'stale_observation', overrides: { frameId: 90, frameCounter: 3 } },
+      { code: 'stale_input_epoch', overrides: { inputEpoch: 5 } },
+      { code: 'user_active', overrides: { humanActive: true } }
+    ]
+    for (const { code, overrides } of cases) {
+      const fakeSession = makeFakeSession()
+      const fakeContents = makeFakeContents(fakeSession.session)
+      const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+      const bridge = new ElectronEmulatorRuntimeBridge({ registry, stateAdapter: stateAdapter() })
+      const input = {
+        gameId: 'homebrew-demo' as const,
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      }
+      await bridge.boot(input)
+      fakeContents.contents.executeJavaScript.mockResolvedValueOnce(atomicRefusal(code, overrides))
+
+      const error = await bridge
+        .step({
+          gameId: 'homebrew-demo',
+          surface: fakeSurface.surface,
+          buttons: ['right'],
+          expectedFrameId: 89,
+          expectedInputEpoch: 4,
+          expectedFixtureCounter: 2
+        })
+        .catch((reason: unknown) => reason)
+      expect(error).toMatchObject({ code, observation: expect.any(Object) })
+      const observation = (error as { observation: CanvasEmulatorAtomicObservation }).observation
+      expect(observation.mappedState).toMatchObject({ kind: 'mapped' })
+      if (observation.mappedState.kind !== 'mapped') throw new Error('Expected mapped state.')
+      expect(Object.isFrozen(observation.mappedState)).toBe(true)
+      expect(Object.isFrozen(observation.mappedState.fields)).toBe(true)
+      expect(observation).not.toHaveProperty('abiWindow')
+      expect(observation).not.toHaveProperty('state')
+      expect(fakeSurface.surface.isDestroyed()).toBe(false)
+    }
   })
 
   it('fatal-retires a stale observation envelope that dishonestly claims a dispatched frame', async () => {

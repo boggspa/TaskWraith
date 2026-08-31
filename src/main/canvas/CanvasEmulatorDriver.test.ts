@@ -74,15 +74,18 @@ function atomicObservation(
       hash: createHash('sha256').update(PNG).digest('hex'),
       capturedAt
     },
-    state: {
-      magic: [0x54, 0x57, 0x47, 0x42],
-      schema: 1,
-      status: 3,
-      x: 12,
-      y: 8,
-      input: 0,
-      frameCounter: 9,
-      rgbaHash: 'a'.repeat(64)
+    mappedState: {
+      kind: 'mapped',
+      adapterId: 'twgb-state-window',
+      adapterRevision: 'v1',
+      schemaSha256: 'a'.repeat(64),
+      fields: [
+        { key: 'x', kind: 'integer', value: 12, unit: 'px' },
+        { key: 'y', kind: 'integer', value: 8, unit: 'px' },
+        { key: 'input', kind: 'integer', value: 0, unit: 'mask' },
+        { key: 'frame-counter', kind: 'integer', value: 9, unit: 'frames' }
+      ],
+      truncated: false
     },
     ...overrides
   }
@@ -178,13 +181,17 @@ describe('CanvasEmulatorDriver', () => {
     const stepped = await driver.stepEmulator(['right'])
 
     expect(observed.observationId).toBe('obs:canvas:1')
+    expect(observed.mappedState).toMatchObject({ kind: 'mapped' })
+    expect(observed).not.toHaveProperty('state')
+    expect(observed).not.toHaveProperty('abiWindow')
     expect(bridge.observe).toHaveBeenCalledWith({ gameId: 'homebrew-demo', surface: host.surface })
     expect(bridge.step).toHaveBeenCalledWith({
       gameId: 'homebrew-demo',
       surface: host.surface,
       buttons: ['right'],
       expectedFrameId: 9,
-      expectedInputEpoch: 4
+      expectedInputEpoch: 4,
+      expectedFixtureCounter: 9
     })
     expect(stepped.frameId).toBe(10)
     await expect(driver.stepEmulator(['right'], 'other-observation')).rejects.toBeInstanceOf(
@@ -218,7 +225,8 @@ describe('CanvasEmulatorDriver', () => {
       surface: host.surface,
       buttons: ['right'],
       expectedFrameId: 10,
-      expectedInputEpoch: 5
+      expectedInputEpoch: 5,
+      expectedFixtureCounter: 9
     })
   })
 
@@ -249,7 +257,8 @@ describe('CanvasEmulatorDriver', () => {
       surface: host.surface,
       buttons: ['right'],
       expectedFrameId: 10,
-      expectedInputEpoch: 5
+      expectedInputEpoch: 5,
+      expectedFixtureCounter: 9
     })
   })
 

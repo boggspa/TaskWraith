@@ -16,7 +16,11 @@ import {
   loadEmulatorPackageManifest,
   validateTwgbHomebrewDemoPackage
 } from './EmulatorPackageManifest'
-import type { EmulatorPackageManifest } from '../../shared/emulatorCanvas'
+import type {
+  EmulatorPackageManifest,
+  EmulatorPackageManifestV2,
+  EmulatorStateAdapterManifestV2
+} from '../../shared/emulatorCanvas'
 import {
   ElectronEmulatorRuntimeBridge,
   type ElectronEmulatorRuntimeBridgeDeps
@@ -46,6 +50,14 @@ export interface CreateEmulatorCanvasDriverInput {
   readonly onSurfaceClosed?: () => void
 }
 
+interface ReviewedRuntimePackage {
+  readonly registry: EmulatorAssetRegistry
+  /** Deep-frozen descriptor stays cached with its verified browser asset registry. */
+  readonly packageManifest: EmulatorPackageManifestV2
+  /** Factory admission proves this is the exact non-null v2 adapter for the fixed game. */
+  readonly stateAdapter: EmulatorStateAdapterManifestV2
+}
+
 /**
  * Build the one product-owned emulator driver factory.
  *
@@ -56,10 +68,10 @@ export interface CreateEmulatorCanvasDriverInput {
 export function createEmulatorCanvasDriverFactory(
   deps: EmulatorCanvasDriverFactoryDeps
 ): (input: CreateEmulatorCanvasDriverInput) => CanvasEmulatorDriver {
-  let registry: EmulatorAssetRegistry | null = null
+  let reviewedPackage: ReviewedRuntimePackage | null = null
 
-  const registryForOpen = (): EmulatorAssetRegistry => {
-    if (registry) return registry
+  const packageForOpen = (): ReviewedRuntimePackage => {
+    if (reviewedPackage) return reviewedPackage
     const root = path.join(
       emulatorAssetRoot({
         appPath: deps.appPath,
@@ -73,9 +85,17 @@ export function createEmulatorCanvasDriverFactory(
       throw new Error('Packaged emulator bundle does not match the built-in game id.')
     }
     const descriptor = (deps.loadPackage ?? loadEmulatorPackageManifest)(root)
-    validateTwgbHomebrewDemoPackage(descriptor, bundle)
-    registry = createEmulatorAssetRegistry([bundle])
-    return registry
+    const packageManifest = validateTwgbHomebrewDemoPackage(descriptor, bundle)
+    const stateAdapter = packageManifest.stateAdapter
+    if (stateAdapter === null) {
+      throw new Error('Packaged TWGB emulator descriptor must include its reviewed state adapter.')
+    }
+    reviewedPackage = Object.freeze({
+      registry: createEmulatorAssetRegistry([bundle]),
+      packageManifest,
+      stateAdapter
+    })
+    return reviewedPackage
   }
 
   return (input): CanvasEmulatorDriver => {
@@ -92,8 +112,12 @@ export function createEmulatorCanvasDriverFactory(
       retired = true
       input.onSurfaceClosed?.()
     }
+    const reviewed = packageForOpen()
     const runtimeDeps: ElectronEmulatorRuntimeBridgeDeps = {
-      registry: registryForOpen(),
+      registry: reviewed.registry,
+      // The bridge receives only the validated bounded adapter, never a
+      // filesystem root or broader package descriptor.
+      stateAdapter: reviewed.stateAdapter,
       onFatal: ({ reason }) => {
         deps.logger?.warn?.(`Emulator surface retired after a runtime failure: ${reason.message}`)
         retire()

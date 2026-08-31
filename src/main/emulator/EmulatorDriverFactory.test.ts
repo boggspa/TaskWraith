@@ -136,6 +136,43 @@ describe('createEmulatorCanvasDriverFactory', () => {
     expect(instantiateSurface).not.toHaveBeenCalled()
   })
 
+  it('caches the validated descriptor with its registry and passes only its frozen adapter to each runtime', () => {
+    const loadBundle = vi.fn((rootPath: string) => bundle(rootPath))
+    const descriptor = packageManifest()
+    const loadPackage = vi.fn((_rootPath: string) => descriptor)
+    const runtimeDeps: ElectronEmulatorRuntimeBridgeDeps[] = []
+    const runtime: CanvasEmulatorRuntimeBridge = {
+      boot: vi.fn(async () => {}),
+      shutdown: vi.fn(async () => {})
+    }
+    const createDriver = createEmulatorCanvasDriverFactory({
+      appPath: '/repo',
+      resourcesPath: '/resources',
+      isPackaged: false,
+      createSurface: () => () => fakeSurface(),
+      loadBundle,
+      loadPackage,
+      createRuntime: (deps) => {
+        runtimeDeps.push(deps)
+        return runtime
+      }
+    })
+
+    createDriver({ sessionId: 'adapter-a', embedded: true })
+    createDriver({ sessionId: 'adapter-b', embedded: true })
+
+    expect(loadBundle).toHaveBeenCalledOnce()
+    expect(loadPackage).toHaveBeenCalledOnce()
+    expect(runtimeDeps).toHaveLength(2)
+    expect(runtimeDeps[0]?.stateAdapter).toBe(runtimeDeps[1]?.stateAdapter)
+    expect(runtimeDeps[0]?.stateAdapter).toMatchObject({
+      schemaVersion: 2,
+      stateWindow: { source: 'system_ram', startAddress: 0xc100, byteLength: 13 }
+    })
+    expect(Object.isFrozen(runtimeDeps[0]?.stateAdapter)).toBe(true)
+    expect(runtimeDeps[0]).not.toHaveProperty('packageManifest')
+  })
+
   it('uses the explicit packaged extraResources root', () => {
     const loadBundle = vi.fn((rootPath: string) => bundle(rootPath))
     const loadPackage = vi.fn((_rootPath: string) => packageManifest())
@@ -257,13 +294,20 @@ describe('createEmulatorCanvasDriverFactory', () => {
       .fn<() => EmulatorPackageManifest>()
       .mockImplementationOnce(() => ({ ...packageManifest(), runtimeWasmSha256: HASH }))
       .mockImplementation(() => packageManifest())
+    const createRuntime = vi.fn(
+      (): CanvasEmulatorRuntimeBridge => ({
+        boot: vi.fn(async () => {}),
+        shutdown: vi.fn(async () => {})
+      })
+    )
     const createDriver = createEmulatorCanvasDriverFactory({
       appPath: '/repo',
       resourcesPath: '/resources',
       isPackaged: false,
       createSurface: () => () => fakeSurface(),
       loadBundle: (rootPath) => bundle(rootPath),
-      loadPackage
+      loadPackage,
+      createRuntime
     })
 
     expect(() => createDriver({ sessionId: 'bad-package', embedded: true })).toThrow(
@@ -271,5 +315,6 @@ describe('createEmulatorCanvasDriverFactory', () => {
     )
     expect(createDriver({ sessionId: 'repaired-package', embedded: true }).kind).toBe('emulator')
     expect(loadPackage).toHaveBeenCalledTimes(2)
+    expect(createRuntime).toHaveBeenCalledTimes(1)
   })
 })

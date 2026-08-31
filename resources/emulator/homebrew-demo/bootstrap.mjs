@@ -3,7 +3,8 @@ import createTwemu from './twgb.mjs'
 const WIDTH = 160
 const HEIGHT = 144
 const TWGB_OFFSET = 0x100
-const TWGB_MIN_BYTES = TWGB_OFFSET + 0x0d
+const TWGB_ABI_WINDOW_BYTES = 0x0d
+const TWGB_MIN_BYTES = TWGB_OFFSET + TWGB_ABI_WINDOW_BYTES
 const TWGB_MAGIC = [0x54, 0x57, 0x47, 0x42]
 const TWGB_SCHEMA = 1
 const READY_STATUS = 0x03
@@ -248,14 +249,18 @@ function readAbiOrNull() {
     return null
   }
   const offset = ramPointer + TWGB_OFFSET
+  // Copy this fixed, reviewed C100..C10C window while the shared operation
+  // queue holds core mutation. Never return a live Emscripten heap view.
+  const abiWindow = Object.freeze(Array.from(heap.subarray(offset, offset + TWGB_ABI_WINDOW_BYTES)))
   return {
-    magic: Array.from(heap.subarray(offset, offset + 4)),
-    schema: heap[offset + 4],
-    status: heap[offset + 5],
-    x: heap[offset + 6],
-    y: heap[offset + 7],
-    input: heap[offset + 8],
-    frameCounter: readU32le(heap, offset + 9)
+    abiWindow,
+    magic: abiWindow.slice(0, 4),
+    schema: abiWindow[4],
+    status: abiWindow[5],
+    x: abiWindow[6],
+    y: abiWindow[7],
+    input: abiWindow[8],
+    frameCounter: readU32le(abiWindow, 9)
   }
 }
 
@@ -357,6 +362,7 @@ async function drawAndObserve() {
     pngDataUrl: snapshot.pngDataUrl,
     inputEpoch,
     humanActive,
+    abiWindow: snapshot.abi.abiWindow,
     magic: Object.freeze([...snapshot.abi.magic]),
     schema: snapshot.abi.schema,
     status: snapshot.abi.status,
