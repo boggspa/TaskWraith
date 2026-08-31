@@ -29,7 +29,12 @@ async function fixture() {
   await writeFile(join(external, 'secret.txt'), 'secret')
   await symlink(external, join(workspace, 'escaped'))
   await symlink(external, join(workspace, 'src', 'escaped'))
-  return { workspace, external }
+  await symlink(external, join(workspace, '-C'))
+  await symlink(external, join(workspace, '@escaped'))
+  await symlink(external, join(workspace, 'safe=dir'))
+  const inwardLink = join(external, 'workspace-link')
+  await symlink(workspace, inwardLink)
+  return { workspace, external, inwardLink }
 }
 
 describe('WorkspaceInspectionShell', () => {
@@ -43,6 +48,9 @@ describe('WorkspaceInspectionShell', () => {
       "jq '.scripts' package.json",
       'git status --short',
       'git diff --stat',
+      'git diff -- README.md',
+      `git -C ${workspace} status --short`,
+      'git -C . diff --stat',
       'wc -l src/main.ts'
     ]) {
       expect(
@@ -53,10 +61,12 @@ describe('WorkspaceInspectionShell', () => {
   })
 
   it('rejects external, parent, environment, system-process, and redirect inspection', async () => {
-    const { workspace, external } = await fixture()
+    const { workspace, external, inwardLink } = await fixture()
     for (const command of [
       'cat /etc/passwd',
       `grep -R secret ${external}`,
+      `cat ${inwardLink}/README.md`,
+      `git -C ${inwardLink} status --short`,
       'find / -maxdepth 2 -type f',
       'cat ../external/secret.txt',
       'printenv',
@@ -73,10 +83,21 @@ describe('WorkspaceInspectionShell', () => {
       'jq --run-tests README.md',
       'cat README.md > /dev/null',
       'git -C /tmp status',
+      'git -C escaped status',
+      'git -C . -C src status',
+      'git -C -C status --short',
+      `git -C ${workspace} reset --hard`,
       'rg --glob=/etc/passwd secret .',
       'grep --exclude-from=../external/secret.txt needle .',
       'grep --config:../external/secret.txt needle .',
       'cat @../external/secret.txt',
+      'cat @escaped/secret.txt',
+      'cat safe=dir/secret.txt',
+      'cat -- -C/secret.txt',
+      'grep -f -C needle src',
+      'grep --exclude-from -C needle src',
+      "jq --rawfile name -C '.'",
+      'git -C @escaped status --short',
       'cat escaped*',
       "cat escaped*''",
       "cat ''escaped*",
@@ -181,6 +202,12 @@ describe('WorkspaceInspectionShell', () => {
       cwd: workspace
     })
     expect(rgPlan?.unsetEnvironment).toContain('RIPGREP_CONFIG_PATH')
+
+    const gitCPlan = workspaceInspectionExecutionPlan(`git -C ${workspace} status --short`, {
+      workspacePath: workspace,
+      cwd: workspace
+    })
+    expect(gitCPlan?.argv).toEqual(['-C', workspace, 'status', '--short'])
   })
 
   it('prevents repository-configured fsmonitor execution in a prompt-free Git plan', async () => {

@@ -38489,6 +38489,7 @@ async function executeGeminiMcpTool(
   let commandRuleMatch: CommandRuleMatch | null = null
   let commandRuleApprovalId: string | null = null
   let workspaceInspectionFastPath = false
+  let workspaceInspectionWorkspaceRealPath: string | null = null
   const commandRuleInput =
     toolName === 'run_shell_command' && !exactOneOffPermissionRetry
       ? brokeredCommandRuleInputFor({
@@ -38534,6 +38535,13 @@ async function executeGeminiMcpTool(
           },
           onWorkspaceInspectionMatch: () => {
             workspaceInspectionFastPath = true
+            try {
+              workspaceInspectionWorkspaceRealPath = workspacePath
+                ? fsSync.realpathSync(resolve(workspacePath))
+                : null
+            } catch {
+              workspaceInspectionWorkspaceRealPath = null
+            }
           },
           ...(commandRuleInput
             ? {
@@ -39503,7 +39511,11 @@ async function executeGeminiMcpTool(
                 cwd: liveCwd
               })
             : null
-        if (!workspaceInspectionPlan) {
+        if (
+          !workspaceInspectionPlan ||
+          !workspaceInspectionWorkspaceRealPath ||
+          workspaceInspectionPlan.workspaceRealPath !== workspaceInspectionWorkspaceRealPath
+        ) {
           throw new Error(
             'The prompt-free workspace inspection boundary changed before execution.'
           )

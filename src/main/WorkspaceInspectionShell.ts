@@ -57,6 +57,7 @@ export interface WorkspaceInspectionShellContext {
 
 export interface WorkspaceInspectionExecutionPlan {
   reason: PromptFreeReadOnlyShellReason
+  workspaceRealPath: string
   executableRealPath: string
   argv: string[]
   cwd: string
@@ -144,6 +145,7 @@ interface ShellWord {
   value: string
   hasUnquotedGlob: boolean
   unquotedEqualsExpansion: boolean
+  hadShellQuote: boolean
 }
 
 function shellWords(segment: string): ShellWord[] | null {
@@ -152,15 +154,19 @@ function shellWords(segment: string): ShellWord[] | null {
   let started = false
   let hasUnquotedGlob = false
   let unquotedEqualsExpansion = false
+  let hadShellQuote = false
   let quote: 'single' | 'double' | null = null
   let escaped = false
 
   const push = (): void => {
-    if (started) words.push({ value: word, hasUnquotedGlob, unquotedEqualsExpansion })
+    if (started) {
+      words.push({ value: word, hasUnquotedGlob, unquotedEqualsExpansion, hadShellQuote })
+    }
     word = ''
     started = false
     hasUnquotedGlob = false
     unquotedEqualsExpansion = false
+    hadShellQuote = false
   }
 
   for (const character of segment) {
@@ -190,11 +196,13 @@ function shellWords(segment: string): ShellWord[] | null {
     if (character === "'") {
       quote = 'single'
       started = true
+      hadShellQuote = true
       continue
     }
     if (character === '"') {
       quote = 'double'
       started = true
+      hadShellQuote = true
       continue
     }
     if (/\s/.test(character)) {
@@ -215,6 +223,52 @@ function shellWords(segment: string): ShellWord[] | null {
 
 function executableHead(value: string): string {
   return value.replace(STANDARD_EXECUTABLE_PREFIX, '')
+}
+
+/**
+ * The global syntax-only Git proof rejects every `-C` because it cannot bind
+ * the requested repository. This workspace-aware layer can: remove one
+ * literal `-C <path>` only for subcommand classification, then validate the
+ * original path token against the live workspace below and execute the
+ * original argv directly.
+ */
+function gitCommandWithoutWorkspaceC(command: string): string | null {
+  const segments = commandSegments(command)
+  const words = segments?.length === 1 ? shellWords(segments[0]) : null
+  if (
+    !words ||
+    words.some((word) => word.hadShellQuote) ||
+    executableHead(words[0].value) !== 'git'
+  ) {
+    return null
+  }
+  const normalized: string[] = [words[0].value]
+  let removedC = false
+  let index = 1
+  for (; index < words.length; index += 1) {
+    const token = words[index]
+    if (token.value === '-C') {
+      if (removedC || token.hasUnquotedGlob || token.unquotedEqualsExpansion) return null
+      const target = words[index + 1]
+      if (
+        !target ||
+        target.value.startsWith('-') ||
+        target.hasUnquotedGlob ||
+        target.unquotedEqualsExpansion
+      ) {
+        return null
+      }
+      removedC = true
+      index += 1
+      continue
+    }
+    normalized.push(token.value)
+    if (!token.value.startsWith('-')) {
+      normalized.push(...words.slice(index + 1).map((word) => word.value))
+      break
+    }
+  }
+  return removedC ? normalized.join(' ') : null
 }
 
 function hasSymlinkFollowingFlags(head: string, args: readonly string[]): boolean {
@@ -259,6 +313,9 @@ function jqLoadsCodeOrExternalFilter(args: readonly string[]): boolean {
       token.startsWith('--from') ||
       token.startsWith('--lib') ||
       token.startsWith('--run-t') ||
+      token.startsWith('--rawfile') ||
+      token.startsWith('--slurpfile') ||
+      token.startsWith('--argfile') ||
       /(^|[^A-Za-z0-9_])(?:include|import|module|modulemeta)(?=$|[^A-Za-z0-9_])/.test(token)
   )
 }
@@ -276,6 +333,29 @@ function isLongLivedFollowMode(head: string, args: readonly string[]): boolean {
 function usesIndirectPathList(head: string, args: readonly string[]): boolean {
   if (head === 'find') return args.some((token) => token.startsWith('-files0'))
   if (head === 'wc') return args.some((token) => token.startsWith('--f'))
+  return false
+}
+
+function usesFileLoadingOption(head: string, args: readonly string[]): boolean {
+  if (head === 'grep' || head === 'egrep' || head === 'fgrep' || head === 'rg') {
+    return args.some(
+      (token) =>
+        /^-[^-]*f/.test(token) ||
+        token.startsWith('--file') ||
+        token.startsWith('--ignore-f') ||
+        token.startsWith('--exclude-f')
+    )
+  }
+  if (head === 'find') {
+    return args.some((token) =>
+      ['-newer', '-anewer', '-cnewer', '-samefile'].some((option) => token.startsWith(option))
+    )
+  }
+  if (head === 'realpath') {
+    return args.some(
+      (token) => token.startsWith('--relative-t') || token.startsWith('--relative-b')
+    )
+  }
   return false
 }
 
@@ -368,7 +448,7 @@ function inspectionUnsetEnvironment(head: string): readonly string[] {
 }
 
 function possiblePathValue(token: string): string {
-  if (token.startsWith('@')) return token.slice(1)
+  if (!token.startsWith('-')) return token
   const equals = token.indexOf('=')
   const marker = equals >= 0 ? equals : token.startsWith('-') ? token.indexOf(':') : -1
   return marker >= 0 && marker < token.length - 1 ? token.slice(marker + 1) : token
@@ -405,25 +485,30 @@ function existingGlobPrefix(value: string): string {
 function tokenStaysInsideWorkspace(
   word: ShellWord,
   workspaceRealPath: string,
-  cwd: string
+  workspaceLexicalPath: string,
+  cwd: string,
+  forcePath = false
 ): boolean {
   const token = word.value
-  if (word.hasUnquotedGlob || word.unquotedEqualsExpansion) return false
+  if (word.hasUnquotedGlob || word.unquotedEqualsExpansion || token.startsWith('@')) return false
   const value = possiblePathValue(token)
-  if (!value || value.startsWith('-')) return true
+  const optionCarriesValue = value !== token
+  if (!value || (!forcePath && !optionCarriesValue && value.startsWith('-'))) return true
   if (value.startsWith('~') || value.startsWith('file://')) return false
   if (value.split(/[\\/]/).includes('..')) return false
   const pathValue = existingGlobPrefix(value)
   const lexical = path.isAbsolute(pathValue)
     ? path.resolve(pathValue)
     : path.resolve(cwd, pathValue)
-  if (!isInside(workspaceRealPath, lexical)) return false
+  if (!isInside(workspaceRealPath, lexical) && !isInside(workspaceLexicalPath, lexical)) {
+    return false
+  }
   try {
     return isInside(workspaceRealPath, fs.realpathSync(lexical))
   } catch {
     // Non-existent relative patterns/operands remain lexically inside the
     // workspace. Existing parents were checked above for glob prefixes.
-    return true
+    return isInside(workspaceRealPath, lexical)
   }
 }
 
@@ -436,14 +521,22 @@ export function workspaceInspectionShellReason(
   rawCommand: unknown,
   context: WorkspaceInspectionShellContext
 ): PromptFreeReadOnlyShellReason | null {
-  const reason = promptFreeReadOnlyShellReason(rawCommand)
   const command = shellCommandFromRawCommand(rawCommand)
-  if (!reason || command === null || !context.workspacePath) return null
+  if (command === null || !context.workspacePath) return null
+  const reason =
+    promptFreeReadOnlyShellReason(command) ||
+    (() => {
+      const normalizedGitCommand = gitCommandWithoutWorkspaceC(command)
+      return normalizedGitCommand ? promptFreeReadOnlyShellReason(normalizedGitCommand) : null
+    })()
+  if (!reason) return null
 
   let workspaceRealPath: string
+  let workspaceLexicalPath: string
   let cwd: string
   try {
-    workspaceRealPath = fs.realpathSync(path.resolve(context.workspacePath))
+    workspaceLexicalPath = path.resolve(context.workspacePath)
+    workspaceRealPath = fs.realpathSync(workspaceLexicalPath)
     cwd = fs.realpathSync(path.resolve(context.cwd || context.workspacePath))
   } catch {
     return null
@@ -471,12 +564,28 @@ export function workspaceInspectionShellReason(
       exposesProcessEnvironment(head, args) ||
       (head === 'jq' && jqLoadsCodeOrExternalFilter(args)) ||
       isLongLivedFollowMode(head, args) ||
-      usesIndirectPathList(head, args)
+      usesIndirectPathList(head, args) ||
+      usesFileLoadingOption(head, args)
     ) {
       return null
     }
+    let afterOptionTerminator = false
     for (const word of words.slice(1)) {
-      if (!tokenStaysInsideWorkspace(word, workspaceRealPath, cwd)) return null
+      if (word.value === '--' && !afterOptionTerminator) {
+        afterOptionTerminator = true
+        continue
+      }
+      if (
+        !tokenStaysInsideWorkspace(
+          word,
+          workspaceRealPath,
+          workspaceLexicalPath,
+          cwd,
+          afterOptionTerminator
+        )
+      ) {
+        return null
+      }
       const attachedPath = attachedPathOptionValue(head, word.value)
       if (
         attachedPath &&
@@ -484,9 +593,11 @@ export function workspaceInspectionShellReason(
           {
             value: attachedPath,
             hasUnquotedGlob: word.hasUnquotedGlob,
-            unquotedEqualsExpansion: false
+            unquotedEqualsExpansion: false,
+            hadShellQuote: false
           },
           workspaceRealPath,
+          workspaceLexicalPath,
           cwd
         )
       ) {
@@ -521,6 +632,7 @@ export function workspaceInspectionExecutionPlan(
   const unsetEnvironment = inspectionUnsetEnvironment(head)
   return {
     reason,
+    workspaceRealPath,
     executableRealPath,
     argv:
       head === 'git'
