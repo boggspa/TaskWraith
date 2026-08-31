@@ -35,9 +35,7 @@ describe('approval surface chrome', () => {
 
   it('keeps longer approval scopes visible and responsive', () => {
     const composerSource = readSource('src/renderer/src/components/Composer.tsx')
-    const presentationSource = readSource(
-      'src/renderer/src/lib/approvalActionPresentation.ts'
-    )
+    const presentationSource = readSource('src/renderer/src/lib/approvalActionPresentation.ts')
     const composerCss = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
 
     expect(composerSource).toContain('className="composer-permission-scope-actions"')
