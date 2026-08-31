@@ -10,13 +10,18 @@ const ROUTINE_SUCCESS_NOTICES = [
   /^Routed next: .+\.$/,
   /^@-mention: .+ is (?:Boss|active Captain) and takes routing priority over advisory participant mentions\.$/,
   /^@-mention: .+ promoted to speak next\.$/,
-  /^User Fan-Out complete · \d+ lane\(s\) returned\.$/
+  /^User Fan-Out complete · \d+ lane\(s\) returned\.$/,
+  /^Automatic read stage complete · returning to serial writer step\.$/,
+  /^(?:Locked writer|Scout|Worker|Review|Background|Ensemble|Parallel|Full) fan-out: .+ requested \d+ (?:reader )?lane\(s\)(?: under their own permission postures)?\.(?: .*)?$/,
+  /^Locked writer fan-out .+; continuing (?:with serial writers|serially)\.$/,
+  /^(?:Boss|Captain) selection arrived after this pass's seats dispatched — queued to apply once when the next Continuous pass forms\.$/,
+  /^Yield target "[^"]+" was not routed: .+\.$/
 ]
 
 /**
- * Historical, routine Ensemble receipts whose effect is already visible in
- * the participant order or fan-out viewport. New producers avoid writing
- * these rows; this predicate keeps older persisted transcripts equally quiet.
+ * Routine Ensemble receipts whose effect is already visible in the participant
+ * order or fan-out viewport. They may remain persisted for agent context; this
+ * predicate keeps them out of transcript presentation, including older rows.
  */
 export function isRedundantEnsembleTranscriptNotice(
   message: EnsembleTranscriptNoticeLike
