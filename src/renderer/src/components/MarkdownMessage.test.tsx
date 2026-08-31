@@ -410,7 +410,8 @@ describe('MarkdownMessage', () => {
     )
 
     expect((html.match(/participant-mention--group/g) || []).length).toBe(5)
-    expect(html).toContain('--user-bubble-base')
+    expect(html).toContain('color:var(--accent)')
+    expect(html).not.toContain('--user-bubble-base')
     expect(html).toContain('@Reviewers')
     expect(html).toContain('<h2>')
     expect(html).not.toContain('--provider-')

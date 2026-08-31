@@ -135,14 +135,14 @@ describe('composerEnsembleGroupMentionCandidates', () => {
     expect(groups.every((candidate) => candidate.kind === 'group')).toBe(true)
   })
 
-  it('uses the neutral accent and keeps the visible token as insertion text', () => {
+  it('uses the OS-following accent and keeps the visible token as insertion text', () => {
     const [all] = composerEnsembleGroupMentionCandidates([seat('any', 1, undefined)])
 
     expect(all).toMatchObject({
       id: 'group:all',
       kind: 'group',
       name: '@All',
-      color: 'var(--user-bubble-base, var(--accent))'
+      color: 'var(--accent)'
     })
     expect(all).not.toHaveProperty('participantId')
     expect(all).not.toHaveProperty('provider')

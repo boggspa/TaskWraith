@@ -138,7 +138,7 @@ export function composerEnsembleGroupMentionCandidates(
         kind: 'group',
         name: definition.token,
         detail: `${definition.description} · ${count} ${count === 1 ? 'seat' : 'seats'}`,
-        color: 'var(--user-bubble-base, var(--accent))'
+        color: 'var(--accent)'
       }
     ]
   })

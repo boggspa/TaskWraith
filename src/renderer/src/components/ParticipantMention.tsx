@@ -81,7 +81,7 @@ export function ParticipantMention({
     return (
       <span
         className="participant-mention participant-mention--group"
-        style={{ color: 'var(--user-bubble-base, var(--accent))' }}
+        style={{ color: 'var(--accent)' }}
         title={groupMention.description}
       >
         {sourceText || groupMention.token}
