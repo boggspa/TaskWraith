@@ -67,8 +67,21 @@ describe('Thread Home integration', () => {
       dismissStart
     )
     const dismiss = layoutSource.slice(dismissStart, dismissEnd)
-    expect(dismiss).toContain('multiview.setPaneChat(primaryPaneIndex, null)')
+    expect(dismiss).toContain(
+      'multiview.dismissPane(primaryPaneIndex, currentChatAppChatId)'
+    )
     expect(dismiss).not.toContain('multiview.closePane')
+
+    const paneDismissStart = appSource.indexOf('const handleCloseMultiviewPane = useCallback')
+    const paneDismissEnd = appSource.indexOf(
+      'const handleOpenInMultiview = useCallback',
+      paneDismissStart
+    )
+    const paneDismiss = appSource.slice(paneDismissStart, paneDismissEnd)
+    expect(paneDismiss).toContain(
+      'multiview.dismissPane(paneIndex, currentChatIdRef.current)'
+    )
+    expect(paneDismiss).not.toContain('multiview.closePane')
 
     const pillStart = layoutSource.indexOf('<MainPaneActionPill\n')
     const pillEnd = layoutSource.indexOf('/>', pillStart)

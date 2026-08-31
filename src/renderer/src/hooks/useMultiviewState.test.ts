@@ -7,6 +7,7 @@ import type {
 import {
   applyAssignToFocusedPane,
   applyClosePane,
+  applyDismissPane,
   applyFocusEmptyPane,
   applyOpenInNewPane,
   applyOpenMediaInNewPane,
@@ -680,6 +681,66 @@ describe('applyClosePane', () => {
       'g',
       'h'
     ])
+  })
+})
+
+describe('applyDismissPane', () => {
+  it('reveals Thread Home in the primary pane without changing the layout or siblings', () => {
+    const before = state({
+      layout: 'horizontal-2',
+      panes: panesOf(['primary', 'secondary']),
+      focusedPaneIndex: 0
+    })
+    const next = applyDismissPane(before, 0, 'primary')
+
+    expect(next.layout).toBe('horizontal-2')
+    expect(chatIds(next)).toEqual([null, 'secondary'])
+    expect(ids(next)).toEqual(['t0', 't1'])
+    expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('clears the top primary while a lower Thread Home pane owns focus', () => {
+    const next = applyDismissPane(
+      state({
+        layout: 'horizontal-2',
+        panes: panesOf(['primary', null]),
+        focusedPaneIndex: 1
+      }),
+      0,
+      'primary'
+    )
+
+    expect(next.layout).toBe('horizontal-2')
+    expect(chatIds(next)).toEqual([null, null])
+    expect(next.focusedPaneIndex).toBe(1)
+  })
+
+  it('keeps structural close behavior for a non-primary populated pane', () => {
+    const next = applyDismissPane(
+      state({
+        layout: 'horizontal-2',
+        panes: panesOf(['primary', 'secondary']),
+        focusedPaneIndex: 1
+      }),
+      1,
+      'primary'
+    )
+
+    expect(next.layout).toBe('single')
+    expect(chatIds(next)).toEqual(['primary'])
+  })
+
+  it('is idempotent after the primary pane has already been cleared', () => {
+    const before = state({
+      layout: 'horizontal-2',
+      panes: panesOf(['primary', 'secondary']),
+      focusedPaneIndex: 0
+    })
+    const cleared = applyDismissPane(before, 0, 'primary')
+
+    expect(applyDismissPane(cleared, 0, 'primary')).toBe(cleared)
+    expect(cleared.layout).toBe('horizontal-2')
+    expect(chatIds(cleared)).toEqual([null, 'secondary'])
   })
 })
 

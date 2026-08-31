@@ -1283,7 +1283,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const primaryPaneIndex = resolvePrimaryPaneIndex(multiview.panes, currentChatAppChatId)
   const dismissPrimaryMultiviewPane =
     isMultiviewSplit && primaryPaneIndex !== null
-      ? () => multiview.setPaneChat(primaryPaneIndex, null)
+      ? () => multiview.dismissPane(primaryPaneIndex, currentChatAppChatId)
       : undefined
   const requestMainPaneWorkspaceStats = useCallback(
     () => mainPaneActionPillRef.current?.openWorkspaceStats(),

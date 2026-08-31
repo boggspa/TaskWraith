@@ -28762,8 +28762,8 @@ function App(): React.JSX.Element {
     [multiview.panes, multiview.setFocusedPane]
   )
   const handleCloseMultiviewPane = useCallback(
-    (paneIndex: number) => multiview.closePane(paneIndex),
-    [multiview.closePane]
+    (paneIndex: number) => multiview.dismissPane(paneIndex, currentChatIdRef.current),
+    [multiview.dismissPane]
   )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {

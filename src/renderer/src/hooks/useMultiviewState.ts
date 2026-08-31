@@ -535,6 +535,28 @@ export function applyClosePane(state: MultiviewCoreState, index: number): Multiv
 }
 
 /**
+ * Dismiss a populated pane from its glass-pill X.
+ *
+ * The primary host pane is non-destructive: clearing its chat reveals Thread
+ * Home without changing the layout or disturbing siblings. Other populated
+ * panes keep the ordinary structural close behavior. An already-empty target
+ * is deliberately idempotent so a rapid/replayed primary dismiss cannot turn
+ * into a second close after the first transition cleared its chat; the explicit
+ * X rendered by an empty Thread Home pane still calls `closePane` directly.
+ */
+export function applyDismissPane(
+  state: MultiviewCoreState,
+  index: number,
+  primaryChatId: string | null
+): MultiviewCoreState {
+  const pane = state.panes[index]
+  if (!pane || isPaneEmpty(pane)) return state
+  return primaryChatId && pane.chatId === primaryChatId
+    ? applySetPaneChat(state, index, null)
+    : applyClosePane(state, index)
+}
+
+/**
  * Assign a chat to the explicitly focused pane. If the chat is already visible,
  * focus its existing pane instead of duplicating it. Returns the chosen pane
  * index. In single layout this always targets pane 0.
@@ -895,6 +917,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** Select an empty pane without allowing singleton state to overwrite pane ownership. */
   focusEmptyPane: (index: number, outgoingVisibleChatId?: string | null) => void
   closePane: (index: number) => void
+  /** Primary chat -> Thread Home; another populated pane -> structural close. */
+  dismissPane: (index: number, primaryChatId: string | null) => void
   /** Place a chat in the focused pane, or focus its existing pane. */
   assignToFocusedPane: (chatId: string) => void
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
@@ -983,6 +1007,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     (index: number) => commitState((s) => applyClosePane(s, index)),
     [commitState]
   )
+  const dismissPane = useCallback(
+    (index: number, primaryChatId: string | null) =>
+      commitState((s) => applyDismissPane(s, index, primaryChatId)),
+    [commitState]
+  )
   const assignToFocusedPane = useCallback((chatId: string) => {
     commitState((s) => applyAssignToFocusedPane(s, chatId).state)
   }, [commitState])
@@ -1057,6 +1086,7 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setFocusedPane,
     focusEmptyPane,
     closePane,
+    dismissPane,
     assignToFocusedPane,
     openInNewPane,
     openMediaInNewPane,
