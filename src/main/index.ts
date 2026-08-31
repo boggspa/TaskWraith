@@ -1664,7 +1664,7 @@ import {
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
 import { shellCommandTierHold } from './ShellCommandTierPolicy'
-import { isPromptFreeReadOnlyShellCommand } from './PromptFreeReadOnlyShell'
+import { workspaceInspectionExecutionPlan } from './WorkspaceInspectionShell'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -4265,6 +4265,8 @@ interface HostCommandRunOptions {
   releaseApproval?: ReleaseCommandCheckOptions
   /** Internal-only additions constructed by a governed host executor. */
   environment?: Readonly<Record<string, string>>
+  /** Main-owned hardening: remove inherited helper/config variables before spawn. */
+  unsetEnvironment?: readonly string[]
 }
 
 type HostCommandRunArgument = number | HostCommandRunOptions
@@ -14455,8 +14457,10 @@ function resolveNativeApprovalPreflight(args: {
       tierShellHold,
     // Canonically proven Git / inspection-only shell commands run prompt-free
     // under every posture; mutation and unknown syntax fail closed.
-    readOnlyShellFastPath:
-      args.service === 'shellCommands' && isPromptFreeReadOnlyShellCommand(args.shellCommand),
+    // Native provider shells retain aliases/PATH/config we cannot bind to the
+    // inspected executable. Prompt-free inspection is therefore broker-only,
+    // where TaskWraith can direct-spawn the verified plan below.
+    readOnlyShellFastPath: false,
     // Slice E: outside-workspace READS auto-approve at the write tiers;
     // writes keep the external-path ask.
     externalPathReadAutoAllowed:
@@ -15146,6 +15150,8 @@ function runHostCommand(
     const timeoutMs = typeof options === 'number' ? options : (options.timeoutMs ?? 600_000)
     const releaseApproval = typeof options === 'number' ? undefined : options.releaseApproval
     const commandEnvironment = typeof options === 'number' ? undefined : options.environment
+    const unsetCommandEnvironment =
+      typeof options === 'number' ? undefined : options.unsetEnvironment
     const projectionScope = hostCommandProjectionContext.getStore()
     const operationSource = projectionScope?.source ?? 'internal-host-command'
     const historyOperation = hostCommandOperations.register(
@@ -15225,6 +15231,13 @@ function runHostCommand(
     const detachSpawns =
       brokeredMutation || AppStore.getSettings().localServersDetachSpawns === true
 
+    const environmentForCommand = (binary: string): NodeJS.ProcessEnv => {
+      const env = createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, binary)
+      for (const key of unsetCommandEnvironment || []) delete env[key]
+      Object.assign(env, commandEnvironment || {})
+      return env
+    }
+
     try {
       if (Array.isArray(command) && command.length > 0) {
         const [binary, ...args] = command.map(codexString)
@@ -15233,10 +15246,7 @@ function runHostCommand(
           shell: false,
           detached: detachSpawns,
           windowsHide: true,
-          env: createCliEnv(
-            { FORCE_COLOR: '0', NO_COLOR: '1', ...(commandEnvironment || {}) },
-            binary
-          )
+          env: environmentForCommand(binary)
         })
       } else {
         const shellCommand =
@@ -15250,10 +15260,7 @@ function runHostCommand(
           shell: false,
           detached: detachSpawns,
           windowsHide: true,
-          env: createCliEnv(
-            { FORCE_COLOR: '0', NO_COLOR: '1', ...(commandEnvironment || {}) },
-            shellCommand
-          )
+          env: environmentForCommand(shellCommand)
         })
       }
     } catch (error) {
@@ -38414,6 +38421,7 @@ async function executeGeminiMcpTool(
     | undefined
   let commandRuleMatch: CommandRuleMatch | null = null
   let commandRuleApprovalId: string | null = null
+  let workspaceInspectionFastPath = false
   const commandRuleInput =
     toolName === 'run_shell_command' && !exactOneOffPermissionRetry
       ? brokeredCommandRuleInputFor({
@@ -38456,6 +38464,9 @@ async function executeGeminiMcpTool(
             if (commandRuleApprovalId) {
               commandRuleApprovalFlowRef?.clear(commandRuleApprovalId)
             }
+          },
+          onWorkspaceInspectionMatch: () => {
+            workspaceInspectionFastPath = true
           },
           ...(commandRuleInput
             ? {
@@ -39398,6 +39409,39 @@ async function executeGeminiMcpTool(
       markDispatchHandled('workspace-tools')
       const command = String(args.command || '').trim()
       if (!command) throw new Error('command is required.')
+      let workspaceInspectionPlan: ReturnType<typeof workspaceInspectionExecutionPlan> = null
+      if (workspaceInspectionFastPath) {
+        const liveContext = getAgentToolContext(parentProvider, effectiveRoute)
+        const liveWorkspacePath =
+          liveContext?.scope === 'workspace' && liveContext.workspacePath
+            ? resolve(liveContext.workspacePath)
+            : null
+        let liveCwd: string | null = null
+        if (liveContext && liveWorkspacePath) {
+          try {
+            liveCwd = resolveScopedDirectory(
+              liveContext.scope,
+              resolve(liveContext.cwd || liveWorkspacePath),
+              liveWorkspacePath,
+              String(args.cwd || args.working_directory || args.workdir || '')
+            )
+          } catch {
+            liveCwd = null
+          }
+        }
+        workspaceInspectionPlan =
+          liveWorkspacePath && liveCwd
+            ? workspaceInspectionExecutionPlan(command, {
+                workspacePath: liveWorkspacePath,
+                cwd: liveCwd
+              })
+            : null
+        if (!workspaceInspectionPlan) {
+          throw new Error(
+            'The prompt-free workspace inspection boundary changed before execution.'
+          )
+        }
+      }
       hostCommandProjection = createHostCommandProjectionScope({
         source: 'brokered-mcp',
         appRunId: workspaceExecutionContext.appRunId,
@@ -39416,6 +39460,17 @@ async function executeGeminiMcpTool(
       })
       let executionCommand: unknown = command
       let executionCwd = cwd
+      let executionEnvironment: Readonly<Record<string, string>> | undefined
+      let unsetExecutionEnvironment: readonly string[] | undefined
+      if (workspaceInspectionPlan) {
+        executionCommand = [
+          workspaceInspectionPlan.executableRealPath,
+          ...workspaceInspectionPlan.argv
+        ]
+        executionCwd = workspaceInspectionPlan.cwd
+        executionEnvironment = workspaceInspectionPlan.environment
+        unsetExecutionEnvironment = workspaceInspectionPlan.unsetEnvironment
+      }
       if (commandRuleMatch) {
         const liveMatch = commandRuleInput
           ? commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
@@ -39431,10 +39486,16 @@ async function executeGeminiMcpTool(
         }
         executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]
         executionCwd = liveMatch.cwd
+        executionEnvironment = undefined
+        unsetExecutionEnvironment = undefined
       }
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
         runHostCommand(executionCommand, executionCwd, {
-          ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {})
+          ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
+          ...(executionEnvironment ? { environment: executionEnvironment } : {}),
+          ...(unsetExecutionEnvironment
+            ? { unsetEnvironment: unsetExecutionEnvironment }
+            : {})
         })
       )
       text = formatHostCommandResult(result)

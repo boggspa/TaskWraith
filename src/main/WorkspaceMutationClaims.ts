@@ -9,8 +9,7 @@ import {
   type ProviderNativeActionContext,
   type ResolvedProviderAction
 } from '../shared/providerActionTaxonomy'
-import { isPromptFreeReadOnlyShellCommand } from './PromptFreeReadOnlyShell'
-import { isReadOnlyShellCommand } from './grok/GrokReadOnlyShell'
+import { isWorkspaceInspectionShellCommand } from './WorkspaceInspectionShell'
 import type { ProviderId } from './store/types'
 import type { WorkspaceLockClaimRequest, WorkspaceLockHunk } from './workLocks/WorkspaceLockTypes'
 
@@ -765,10 +764,17 @@ export async function deriveWorkspaceMutationClaims(
         'script',
         'input'
       ])
+      const requestedCwd = firstArgument(args, ['cwd', 'working_directory', 'workdir'])
+      const inspectionCwd =
+        typeof requestedCwd === 'string' && requestedCwd.trim()
+          ? resolve(context.worktreePath, requestedCwd)
+          : context.worktreePath
       if (
         command !== undefined &&
-        (isPromptFreeReadOnlyShellCommand(command) ||
-          (typeof command === 'string' && isReadOnlyShellCommand(command)))
+        isWorkspaceInspectionShellCommand(command, {
+          workspacePath: context.worktreePath,
+          cwd: inspectionCwd
+        })
       ) {
         return []
       }

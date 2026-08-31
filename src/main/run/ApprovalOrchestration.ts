@@ -20,7 +20,7 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
-import { promptFreeReadOnlyShellReason } from '../PromptFreeReadOnlyShell'
+import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -409,6 +409,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         receipt: ApprovalPromptReceipt
       ) => ExactCommandRuleOfferView | null
       discardCommandRuleOffer?: (approvalId: string) => void
+      onWorkspaceInspectionMatch?: () => void
     }
   ): Promise<boolean> => {
     const session = deps.runManager.get(request.runId)
@@ -542,12 +543,19 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // path below.
     if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
+      const previewCwd = isRecord(request.preview) ? request.preview.cwd : undefined
       const shellFastPathReason =
-        promptFreeReadOnlyShellReason(readOnlyShellCommand) ||
+        workspaceInspectionShellReason(readOnlyShellCommand, {
+          workspacePath,
+          cwd: typeof previewCwd === 'string' ? previewCwd : workspacePath
+        }) ||
         (provider === 'antigravity' && isAntigravityUserAuthorizedShellCommand(readOnlyShellCommand)
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
+        if (shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell') {
+          request.onWorkspaceInspectionMatch?.()
+        }
         deps.auditService.recordAutomaticApprovalDecision(
           provider,
           auditRoute,

@@ -43,10 +43,22 @@ vi.mock('../EffectiveRunPermissions', () => ({
   isPlanInstrumentGrantHold: vi.fn(() => false),
   isPostureApprovalOnlyService: vi.fn(() => false)
 }))
+vi.mock('../WorkspaceInspectionShell', async () => {
+  const actual = await vi.importActual<typeof import('../PromptFreeReadOnlyShell')>(
+    '../PromptFreeReadOnlyShell'
+  )
+  return {
+    workspaceInspectionShellReason: vi.fn((command: unknown, context: { workspacePath?: string }) =>
+      context.workspacePath ? actual.promptFreeReadOnlyShellReason(command) : null
+    )
+  }
+})
 
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
+import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
+import { promptFreeReadOnlyShellReason } from '../PromptFreeReadOnlyShell'
 
 type Resolution = {
   policy: string
@@ -172,6 +184,15 @@ beforeEach(() => {
   vi.mocked(approvalActionsForPolicy).mockReturnValue(['accept', 'decline', 'cancel'] as never)
   vi.mocked(isPlanInstrumentGrantHold).mockReturnValue(false)
   vi.mocked(isPostureApprovalOnlyService).mockReturnValue(false)
+  vi.mocked(workspaceInspectionShellReason).mockImplementation((command, context) =>
+    context.workspacePath
+      ? (command === 'printenv' ||
+        /[<>]/.test(String(command)) ||
+        /(?:^|\s)\/(?:etc|Users|opt)(?:\/|\s|$)/.test(String(command))
+          ? null
+          : promptFreeReadOnlyShellReason(command))
+      : null
+  )
 })
 
 describe('createApprovalOrchestration — security guard sequence (faked deps)', () => {
@@ -876,12 +897,9 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     }
   })
 
-  it('(d3) auto-allows safe find, null redirects, and read-only sequences for scouts', async () => {
+  it('(d3) auto-allows workspace-relative find for scouts', async () => {
     for (const command of [
-      "find . -maxdepth 1 -type f \\( -name '.WORK-IN-PROGRESS-*' -o -name 'SHIP-HOLD*' \\) -print",
-      'find .local-only -maxdepth 4 -type f -print 2>/dev/null',
-      "ls -l /opt/homebrew/bin 2>/dev/null\nfind /opt/homebrew/Cellar -maxdepth 2 -iname 'rust*' -print 2>/dev/null",
-      'ls -la && git status --short'
+      "find . -maxdepth 1 -type f \\( -name '.WORK-IN-PROGRESS-*' -o -name 'SHIP-HOLD*' \\) -print"
     ]) {
       const order: string[] = []
       const deps = makeDeps(order)
@@ -898,6 +916,31 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       ).resolves.toBe(true)
       expect(order).toContain('audit:autoAllow:inspection_shell')
       expect(order).not.toContain('registerGeminiTool')
+    }
+  })
+
+  it('(d3) prompts for external inspection, environment dumps, and redirects', async () => {
+    for (const command of [
+      'cat /etc/passwd',
+      'printenv',
+      'find . -type f 2>/dev/null',
+      'ls -la && git status --short'
+    ]) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+      vi.mocked(workspaceInspectionShellReason).mockReturnValueOnce(null)
+
+      void createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        'shellCommands',
+        '/repo',
+        request({ preview: { command, cwd: '/repo', params: { command } } })
+      )
+      await Promise.resolve()
+      expect(order).not.toContain('audit:autoAllow:inspection_shell')
+      expect(order).toContain('registerGeminiTool')
     }
   })
 

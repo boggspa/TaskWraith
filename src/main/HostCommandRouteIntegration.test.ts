@@ -33,6 +33,7 @@ describe('host command route/history integration', () => {
     expect(runner.slice(timeout)).toContain("signalChild('SIGTERM')")
     expect(runner.slice(timeout)).toContain("signalChild('SIGKILL')")
     expect(runner.slice(timeout)).not.toContain('resolveCommand(')
+    expect(runner).toContain('for (const key of unsetCommandEnvironment || []) delete env[key]')
   })
 
   it('retains Codex reruns and every brokered workspace command through result projection', () => {
@@ -54,6 +55,14 @@ describe('host command route/history integration', () => {
     expect(mcp).toContain('executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]')
     expect(mcp).toContain('runHostCommand(executionCommand, executionCwd')
     expect(mcp).not.toContain('runHostCommand(command, cwd')
+    expect(mcp).toContain('if (workspaceInspectionFastPath)')
+    expect(mcp).toContain('workspaceInspectionExecutionPlan(command, {')
+    expect(mcp).toContain('workspaceInspectionPlan.executableRealPath')
+    expect(mcp).toContain('executionEnvironment = workspaceInspectionPlan.environment')
+    expect(mcp).toContain('unsetExecutionEnvironment = workspaceInspectionPlan.unsetEnvironment')
+    expect(mcp.indexOf('if (workspaceInspectionFastPath)')).toBeLessThan(
+      mcp.indexOf('runHostCommand(executionCommand, executionCwd')
+    )
     expect(mcp).toContain('workspaceToolExecutors.executeWorkspaceMcpTool')
     expect(mcp).toContain('completeHostCommandTerminalProjection(hostCommandProjection)')
   })
