@@ -20,6 +20,7 @@ import {
   assertKimiSpawnAuthority,
   buildKimiContainedProcessEnv,
   buildKimiProductionAcpSnapshot,
+  KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS,
   buildKimiProductionInitializeParams,
   buildKimiProductionSessionPlan,
   createJoinedKimiCleanup,
@@ -591,7 +592,9 @@ describe('Kimi production ACP containment', () => {
       prompt: 'work'
     })
     expect(snapshot.cwd).toBe('/private/empty')
-    expect(snapshot.mcpServers).toEqual([gateway])
+    expect(snapshot.mcpServers).toEqual([
+      { ...gateway, toolTimeoutMs: KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS }
+    ])
     expect(snapshot.deniedNativeTools).toEqual(
       expect.arrayContaining([
         'Read',

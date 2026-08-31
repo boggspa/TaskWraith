@@ -401,6 +401,12 @@ export interface KimiProductionGatewayHandle {
   close: () => Promise<unknown>
 }
 
+/** Kimi Code's default MCP request timeout is about 60 seconds. UltraTask's
+ * bounded join may legitimately wait up to 10 minutes, so the one main-owned
+ * gateway receives a slightly larger per-server budget than TaskWraith's
+ * 600-second tool clamp. */
+export const KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS = 630_000
+
 export interface KimiProductionLaunchResult<T> {
   snapshot: KimiProductionAcpSnapshot
   handle: T
@@ -521,7 +527,12 @@ export function buildKimiProductionAcpSnapshot(input: {
   return {
     cwd: input.privateCwd,
     initializeParams: buildKimiProductionInitializeParams(input.appVersion),
-    mcpServers: [gateway],
+    mcpServers: [
+      {
+        ...gateway,
+        toolTimeoutMs: KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS
+      }
+    ],
     deniedNativeTools: KIMI_ACP_DENY_TOOLS,
     session: buildKimiProductionSessionPlan(input)
   }
