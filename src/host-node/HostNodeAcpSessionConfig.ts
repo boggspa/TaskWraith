@@ -54,10 +54,10 @@ export function readHostAcpAdvertisedConfigOptions(
     const item = record(entry)
     const id = nonEmptyString(item?.id)
     if (!id) continue
-    const values = Array.isArray(item.options)
+    const values = Array.isArray(item?.options)
       ? item.options.map((option) => nonEmptyString(record(option)?.value)).filter(Boolean)
       : []
-    const currentValue = nonEmptyString(item.currentValue)
+    const currentValue = nonEmptyString(item?.currentValue)
     out.push({
       id,
       values,
