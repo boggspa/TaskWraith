@@ -35,11 +35,17 @@ describe('approval surface chrome', () => {
 
   it('keeps longer approval scopes visible and responsive', () => {
     const composerSource = readSource('src/renderer/src/components/Composer.tsx')
+    const presentationSource = readSource(
+      'src/renderer/src/lib/approvalActionPresentation.ts'
+    )
     const composerCss = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
 
     expect(composerSource).toContain('className="composer-permission-scope-actions"')
-    expect(composerSource).toContain('Allow for session')
-    expect(composerSource).toContain('Allow in workspace')
+    expect(composerSource).toContain('approvalSessionScopePresentation.label')
+    expect(composerSource).toContain('approvalWorkspaceScopePresentation.label')
+    expect(presentationSource).toContain('Allow all ${service} for this run')
+    expect(presentationSource).toContain('Allow all ${service} in this workspace')
+    expect(presentationSource).not.toContain('rest of this app session')
     expect(composerCss).toContain('.composer-permission-actions {')
     expect(composerCss).toContain('flex-wrap: wrap')
     expect(composerCss).toContain('@media (max-width: 620px)')

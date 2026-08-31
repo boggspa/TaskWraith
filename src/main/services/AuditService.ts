@@ -231,7 +231,7 @@ function expirationForDecision(
   if (grantedScope === 'session') {
     return {
       mode: 'session_end',
-      description: 'Session approval expires when the active provider runtime session ends.'
+      description: 'This run-scoped approval expires when the current TaskWraith run reaches a terminal state.'
     }
   }
   return {

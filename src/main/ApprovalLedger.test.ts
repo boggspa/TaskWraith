@@ -116,6 +116,8 @@ describe('ApprovalLedger', () => {
     expect(runApproval.expiration.mode).toBe('run_end')
     expect(sessionApproval.grantedScope).toBe('session')
     expect(sessionApproval.expiration.mode).toBe('session_end')
+    expect(sessionApproval.expiration.description).toContain('current TaskWraith run')
+    expect(sessionApproval.expiration.description).toContain('terminal state')
     expect(workspaceApproval.grantedScope).toBe('workspace')
     expect(workspaceApproval.expiration.mode).toBe('workspace_revocation')
   })

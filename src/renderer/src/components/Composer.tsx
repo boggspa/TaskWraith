@@ -120,6 +120,7 @@ import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPro
 import { resolveComposerModelReasoningDefault } from '../lib/composerProviderReasoningSelection'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
+import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import {
   agentApprovalDisplayTitle,
   agentApprovalEnsembleAttribution
@@ -1451,6 +1452,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         getProviderLabel(pendingAgentApproval.provider)
       )
     : ''
+  const approvalScopePresentationOptions = {
+    serviceLabel: pendingAgentApproval?.service
+      ? AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]
+      : undefined
+  }
+  const approvalSessionScopePresentation = approvalActionPresentation(
+    'acceptForSession',
+    approvalScopePresentationOptions
+  )
+  const approvalWorkspaceScopePresentation = approvalActionPresentation(
+    'acceptForWorkspace',
+    approvalScopePresentationOptions
+  )
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
     const approvalId = trustedSessionApprovalId
@@ -6026,11 +6040,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           variant="secondary"
                           size="compact"
                           type="button"
-                          title={
-                            pendingAgentApproval.service
-                              ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for the rest of this app session. Restarting the app clears the grant.`
-                              : 'Allow matching requests for the rest of this app session. Restarting the app clears the grant.'
-                          }
+                          title={approvalSessionScopePresentation.title}
                           onClick={() =>
                             void handleAgentApprovalAction(
                               pendingAgentApproval.id,
@@ -6038,9 +6048,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )
                           }
                         >
-                          {pendingAgentApproval.service
-                            ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for session`
-                            : 'Allow for session'}
+                          {approvalSessionScopePresentation.label}
                         </PillButton>
                       )}
                       {(pendingAgentApproval.actions || []).includes(
@@ -6051,11 +6059,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           variant="secondary"
                           size="compact"
                           type="button"
-                          title={
-                            pendingAgentApproval.service
-                              ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for this workspace. The grant persists until revoked in Approvals & Grants.`
-                              : 'Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants.'
-                          }
+                          title={approvalWorkspaceScopePresentation.title}
                           onClick={() =>
                             void handleAgentApprovalAction(
                               pendingAgentApproval.id,
@@ -6063,9 +6067,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )
                           }
                         >
-                          {pendingAgentApproval.service
-                            ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} in workspace`
-                            : 'Allow in workspace'}
+                          {approvalWorkspaceScopePresentation.label}
                         </PillButton>
                       )}
                     </div>

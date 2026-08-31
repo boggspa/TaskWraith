@@ -5,6 +5,7 @@ import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayNam
 import type { ComposerWorktreeSelection } from '../lib/composerWorktreeSelection'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
+import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import { useComposerDraft } from '../hooks/useComposerDraft'
 import './CompactChatComposer.css'
 
@@ -66,19 +67,6 @@ export function compactComposerSubmitMode(input: {
     : 'run'
 }
 
-const APPROVAL_ACTION_LABELS: Record<AgentApprovalAction, string> = {
-  accept: 'Allow once',
-  acceptForSession: 'Allow for session',
-  acceptForWorkspace: 'Allow in workspace',
-  decline: 'Deny',
-  cancel: 'Cancel run',
-  useProviderNative: 'Use Provider Native',
-  useTaskWraithSubthread: 'Use TaskWraith Sub-thread',
-  grantExternalPathRead: 'Grant read access',
-  grantExternalPathEdit: 'Grant edit access',
-  declineExternalPath: 'Deny once'
-}
-
 function CompactApprovalCard({
   request,
   onAction
@@ -108,24 +96,28 @@ function CompactApprovalCard({
       )}
       {renderAgentApprovalPreview(request.preview)}
       <div className="compact-chat-approval-actions">
-        {actions.map((action) => (
-          <button
-            key={action}
-            type="button"
-            className={
-              action === 'decline' || action === 'cancel' || action === 'declineExternalPath'
-                ? 'is-danger'
-                : action === 'accept' ||
-                    action === 'grantExternalPathRead' ||
-                    action === 'grantExternalPathEdit'
-                  ? 'is-primary'
-                  : undefined
-            }
-            onClick={() => void onAction(request.id, action)}
-          >
-            {APPROVAL_ACTION_LABELS[action]}
-          </button>
-        ))}
+        {actions.map((action) => {
+          const presentation = approvalActionPresentation(action)
+          return (
+            <button
+              key={action}
+              type="button"
+              className={
+                action === 'decline' || action === 'cancel' || action === 'declineExternalPath'
+                  ? 'is-danger'
+                  : action === 'accept' ||
+                      action === 'grantExternalPathRead' ||
+                      action === 'grantExternalPathEdit'
+                    ? 'is-primary'
+                    : undefined
+              }
+              title={presentation.title}
+              onClick={() => void onAction(request.id, action)}
+            >
+              {presentation.label}
+            </button>
+          )
+        })}
       </div>
     </section>
   )

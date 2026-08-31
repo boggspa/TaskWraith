@@ -2898,7 +2898,7 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('sidebar-footer-approval-row is-clickable')
   })
 
-  it('renders inline approval actions when a response handler is provided', () => {
+  it('keeps broader approval scopes in the task where their exact review is visible', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
         pendingApprovals={[
@@ -2916,7 +2916,9 @@ describe('ApprovalsFooterPopover', () => {
       />
     )
     expect(html).toContain('Approve')
-    expect(html).toContain('Always Allow')
+    expect(html).not.toContain('Always Allow')
+    expect(html).toContain('Open the task to review broader approval options.')
+    expect(html).toContain('This grant ends when the run ends.')
     expect(html).toContain('Deny')
     expect(html).toContain('Actions for Approve shell command')
   })

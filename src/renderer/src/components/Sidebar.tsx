@@ -98,6 +98,7 @@ import {
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import type { AgentQuestionState } from './AgentQuestionCard'
 import { chatHasPendingAgentQuestion } from '../lib/agentQuestionQueue'
 import type { LocalServerEntry } from '../../../main/localServers/types'
@@ -2854,16 +2855,18 @@ export function ApprovalsFooterPopover({
               approval.preview?.toolName
             ) || approval.preview?.requiresExactDesktopReview === true
             const canApprove = actions.includes('accept') && !requiresDetailedReview
-            const alwaysAllowAction: AgentApprovalAction | null = actions.includes('acceptForWorkspace')
-              ? requiresDetailedReview
-                ? null
-                : 'acceptForWorkspace'
-              : actions.includes('acceptForSession') && !requiresDetailedReview
+            const broaderScopeAction: AgentApprovalAction | null = actions.includes(
+              'acceptForWorkspace'
+            )
+              ? 'acceptForWorkspace'
+              : actions.includes('acceptForSession')
                 ? 'acceptForSession'
                 : null
+            const broaderScopePresentation = broaderScopeAction
+              ? approvalActionPresentation(broaderScopeAction)
+              : null
             const canDeny = actions.includes('decline')
-            const hasInlineActions =
-              Boolean(onRespondApproval) && (canApprove || Boolean(alwaysAllowAction) || canDeny)
+            const hasInlineActions = Boolean(onRespondApproval) && (canApprove || canDeny)
             const rowLabel = chatId && onJumpToChat
               ? `${approval.title}, ${providerLabel}, open thread`
               : `${approval.title}, ${providerLabel}`
@@ -2896,6 +2899,14 @@ export function ApprovalsFooterPopover({
                     Review the exact script in the task before approving.
                   </div>
                 )}
+                {broaderScopePresentation && chatId && onJumpToChat && (
+                  <div
+                    className="sidebar-footer-approval-meta"
+                    title={broaderScopePresentation.title}
+                  >
+                    Open the task to review broader approval options.
+                  </div>
+                )}
                 {hasInlineActions && (
                   <div
                     className="sidebar-footer-approval-actions"
@@ -2909,20 +2920,6 @@ export function ApprovalsFooterPopover({
                         onClick={() => void onRespondApproval?.(approval.id, 'accept')}
                       >
                         Approve
-                      </button>
-                    )}
-                    {alwaysAllowAction && (
-                      <button
-                        type="button"
-                        className="sidebar-footer-approval-action is-always"
-                        title={
-                          alwaysAllowAction === 'acceptForWorkspace'
-                            ? 'Allow this kind of request for this workspace until revoked in Approvals & Grants.'
-                            : 'Allow matching requests for the rest of this app session.'
-                        }
-                        onClick={() => void onRespondApproval?.(approval.id, alwaysAllowAction)}
-                      >
-                        Always Allow
                       </button>
                     )}
                     {canDeny && (
