@@ -489,8 +489,12 @@ function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'project
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
-const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'hierarchy-disclosures-v2'
+const PREVIOUS_COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const EXPANDED_WORKSPACE_IDS_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspaces'
 type SidebarSectionId =
+  | 'active-runs'
+  | 'local-servers'
   | 'workflows'
   | 'workspace-boards'
   | 'pinned'
@@ -501,6 +505,8 @@ type SidebarSectionId =
   | 'chats'
   | 'shared'
 const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
+  'active-runs',
+  'local-servers',
   'workflows',
   'workspace-boards',
   'pinned',
@@ -511,7 +517,10 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'chats',
   'shared'
 ] as const
-const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>(['recents'])
+const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>([
+  'active-runs',
+  'recents'
+])
 
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
   return new Set(
@@ -538,6 +547,47 @@ function defaultExpandedWorkspaceIds(
 ): Set<string> {
   const workspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
   return workspaceId ? new Set([workspaceId]) : new Set()
+}
+
+interface InitialExpandedWorkspaceState {
+  ids: Set<string>
+  hasPersistedPreference: boolean
+}
+
+function loadInitialExpandedWorkspaceState(
+  workspaces: WorkspaceRecord[],
+  currentWorkspace: WorkspaceRecord | null
+): InitialExpandedWorkspaceState {
+  try {
+    const raw = localStorage.getItem(EXPANDED_WORKSPACE_IDS_STORAGE_KEY)
+    if (raw === null) {
+      return {
+        ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+        hasPersistedPreference: false
+      }
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return {
+        ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+        hasPersistedPreference: false
+      }
+    }
+    const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
+    return {
+      ids: new Set(
+        parsed.filter(
+          (value): value is string => typeof value === 'string' && workspaceIds.has(value)
+        )
+      ),
+      hasPersistedPreference: true
+    }
+  } catch {
+    return {
+      ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+      hasPersistedPreference: false
+    }
+  }
 }
 
 /** Per-list preview cap. Each thread list (a workspace's chats, Ensembles,
@@ -3298,10 +3348,15 @@ export function Sidebar({
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
   const pairedDevicesRef = useRef(pairedDevices)
   const startupExpandedWorkspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() =>
-    defaultExpandedWorkspaceIds(workspaces, currentWorkspace)
+  const [initialExpandedWorkspaceState] = useState<InitialExpandedWorkspaceState>(() =>
+    loadInitialExpandedWorkspaceState(workspaces, currentWorkspace)
   )
-  const expandedWorkspaceStartupSeededRef = useRef(expandedWorkspaceIds.size > 0)
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
+    initialExpandedWorkspaceState.ids
+  )
+  const expandedWorkspaceStartupSeededRef = useRef(
+    initialExpandedWorkspaceState.hasPersistedPreference || expandedWorkspaceIds.size > 0
+  )
   const [expandedSubThreadParentIds, setExpandedSubThreadParentIds] = useState<Set<string>>(
     () =>
       new Set(
@@ -3334,7 +3389,19 @@ export function Sidebar({
         )
         const version = localStorage.getItem(COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY)
         if (version !== COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION) {
+          if (version === PREVIOUS_COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION) {
+            // Preserve every v1 choice, including an intentionally empty set
+            // (all sections expanded). Only Local Servers needs its old local
+            // default translated into the new shared state.
+            const migrated = new Set(saved)
+            migrated.add('local-servers')
+            return migrated
+          }
           const migrated = saved.size === 0 ? defaultCollapsedSidebarSections() : new Set(saved)
+          // Older, unversioned state predates the current defaults. Preserve
+          // the established Local Servers default and keep the explicitly
+          // expanded-by-default sections reachable.
+          migrated.add('local-servers')
           for (const sectionId of SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT) {
             migrated.delete(sectionId)
           }
@@ -4285,6 +4352,17 @@ export function Sidebar({
       return new Set([startupExpandedWorkspaceId])
     })
   }, [startupExpandedWorkspaceId])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        EXPANDED_WORKSPACE_IDS_STORAGE_KEY,
+        JSON.stringify([...expandedWorkspaceIds])
+      )
+    } catch {
+      // Ignore persistence errors in constrained environments.
+    }
+  }, [expandedWorkspaceIds])
 
   useEffect(() => {
     const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
@@ -5386,12 +5464,18 @@ export function Sidebar({
               onOpenChatPopout={onOpenChatPopout}
               onInspectRun={onInspectRun}
               onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
+              collapsed={isSectionCollapsed('active-runs')}
+              onToggleCollapsed={() => toggleSidebarSection('active-runs')}
             />
           )}
 
           {wrapHierarchySection(
             'local-servers',
-            <LocalServersSection onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard} />,
+            <LocalServersSection
+              onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard}
+              collapsed={isSectionCollapsed('local-servers')}
+              onToggleCollapsed={() => toggleSidebarSection('local-servers')}
+            />,
             activeSidebarTab === 'threads' && localServers.length > 0
           )}
 

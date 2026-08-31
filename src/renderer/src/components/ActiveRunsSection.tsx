@@ -73,6 +73,8 @@ interface ActiveRunsSectionProps {
   onSelectChat: (chat: ChatRecord) => void
   onOpenChatPopout?: SidebarChatPopoutHandler
   onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   /** Reserved: a runId-targeted inspector deep-link. Not wired — clicking a
    * row now opens the chat THREAD (transcript), not the Run Inspector. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
@@ -86,10 +88,13 @@ export function ActiveRunsSection({
   workChatIds = [],
   onSelectChat,
   onOpenChatPopout,
-  onAddRunQueueJobToWorkspaceBoard
+  onAddRunQueueJobToWorkspaceBoard,
+  collapsed: controlledCollapsed,
+  onToggleCollapsed
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
-  const [collapsed, setCollapsed] = useState(false)
+  const [localCollapsed, setLocalCollapsed] = useState(false)
+  const collapsed = controlledCollapsed ?? localCollapsed
   const nowTick = useSharedNowTick()
   const hasObservedTick = useRef(false)
   const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
@@ -153,7 +158,13 @@ export function ActiveRunsSection({
         <button
           type="button"
           className="sidebar-section-header-toggle"
-          onClick={() => setCollapsed((current) => !current)}
+          onClick={() => {
+            if (onToggleCollapsed) {
+              onToggleCollapsed()
+            } else {
+              setLocalCollapsed((current) => !current)
+            }
+          }}
           aria-expanded={!collapsed}
           title={collapsed ? 'Expand Active Runs' : 'Collapse Active Runs'}
         >

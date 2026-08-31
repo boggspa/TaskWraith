@@ -34,7 +34,8 @@ import {
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
-const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'hierarchy-disclosures-v2'
+const EXPANDED_WORKSPACE_IDS_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspaces'
 const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 
 // Mirrors SIDEBAR_SECTION_IDS in Sidebar.tsx. The sidebar defaults every section
@@ -43,6 +44,8 @@ const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 // Persisting a non-empty collapsed list also bypasses the new-user default
 // migration, pinning exactly these sections open.
 const SIDEBAR_SECTION_IDS = [
+  'active-runs',
+  'local-servers',
   'workflows',
   'workspace-boards',
   'pinned',
@@ -717,6 +720,29 @@ describe('Sidebar startup hygiene', () => {
     expect(recentsBlock).toContain('Recently active thread')
   })
 
+  it('restores the Active Runs disclosure from the shared section state', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar([])
+
+    expect(html).toContain('title="Expand Active Runs"')
+    expect(html).not.toContain('sidebar-active-runs-empty')
+  })
+
+  it('preserves a legacy all-expanded preference during the disclosure-state migration', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: '[]',
+      [COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY]: 'recents-open-v1'
+    })
+
+    const html = renderSidebar([])
+
+    expect(html).toContain('title="Collapse Active Runs"')
+    expect(html).toContain('title="Collapse Workspaces"')
+  })
+
   it('starts with only the active workspace tree expanded', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
@@ -759,6 +785,46 @@ describe('Sidebar startup hygiene', () => {
 
     expect(html).toContain('Active workspace chat')
     expect(html).not.toContain('Older workspace chat')
+  })
+
+  it('restores an explicitly collapsed workspace tree across sidebar remounts', () => {
+    const activeWorkspace = makeWorkspace({
+      id: 'ws-2',
+      path: '/repo-two',
+      displayName: 'Repo Two',
+      lastOpenedAt: 20
+    })
+    const activeChat = makeChat({
+      appChatId: 'active-workspace-chat',
+      title: 'Active workspace chat',
+      workspaceId: 'ws-2',
+      workspacePath: '/repo-two',
+      updatedAt: 5
+    })
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces'),
+      [EXPANDED_WORKSPACE_IDS_STORAGE_KEY]: '[]'
+    })
+
+    const collapsedHtml = renderSidebar([activeChat], {
+      workspaces: [activeWorkspace],
+      currentWorkspace: activeWorkspace
+    })
+
+    expect(collapsedHtml).toContain('aria-label="Expand chats"')
+    expect(collapsedHtml).not.toContain('Active workspace chat')
+
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces'),
+      [EXPANDED_WORKSPACE_IDS_STORAGE_KEY]: JSON.stringify(['ws-2'])
+    })
+    const expandedHtml = renderSidebar([activeChat], {
+      workspaces: [activeWorkspace],
+      currentWorkspace: activeWorkspace
+    })
+
+    expect(expandedHtml).toContain('aria-label="Collapse chats"')
+    expect(expandedHtml).toContain('Active workspace chat')
   })
 })
 
