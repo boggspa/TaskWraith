@@ -208,32 +208,51 @@ export class AppDriveLeaseRuntime {
     reason: 'surface-closed' | 'human-takeover'
   }): void {
     if (input.record.id !== input.canvasId || input.record.driver !== 'emulator') return
-    if (
-      !input.record.chatId ||
-      !input.record.runId ||
-      input.ctx.chatId !== input.record.chatId ||
-      input.ctx.runId !== input.record.runId ||
-      !input.ctx.provider
-    ) {
-      return
-    }
+    const chatId = input.record.chatId
+    const runId = input.record.runId
+    if (!chatId || !runId) return
+    const surfaceHostId = input.ctx.surfaceHostId
+    const exactAgentContext =
+      input.ctx.chatId === chatId && input.ctx.runId === runId && Boolean(input.ctx.provider)
+    // Renderer-owned close uses a main-stamped WebContents id and chat scope,
+    // but intentionally carries no agent run/provider. Only a close may derive
+    // authority from the exact live lease; renderer takeover remains agent-only.
+    const trustedRendererClose =
+      input.reason === 'surface-closed' &&
+      input.ctx.chatId === chatId &&
+      input.ctx.runId === undefined &&
+      input.ctx.provider === undefined &&
+      typeof surfaceHostId === 'number' &&
+      Number.isSafeInteger(surfaceHostId) &&
+      surfaceHostId > 0
+    if (!exactAgentContext && !trustedRendererClose) return
+
     const lease = this.deps.leases.peek(input.canvasId)
     if (lease) {
       if (
         lease.surfaceKind !== 'emulator' ||
-        lease.chatId !== input.record.chatId ||
-        lease.runId !== input.record.runId ||
-        lease.provider !== input.ctx.provider
+        lease.chatId !== chatId ||
+        lease.runId !== runId ||
+        (exactAgentContext && lease.provider !== input.ctx.provider)
       ) {
         return
       }
       this.deps.leases.revokeSurface(input.canvasId, input.reason)
+      this.deps.removeSessionGrant(
+        lease.provider as ProviderId,
+        input.record.workspacePath,
+        'canvasInteraction',
+        runId,
+        input.canvasId
+      )
+      return
     }
+    if (!exactAgentContext) return
     this.deps.removeSessionGrant(
       input.ctx.provider as ProviderId,
       input.record.workspacePath,
       'canvasInteraction',
-      input.record.runId,
+      runId,
       input.canvasId
     )
   }

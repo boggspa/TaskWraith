@@ -17,6 +17,13 @@ describe('AppDrive lease main integration', () => {
   it('binds approval, execution, invalidation, and run-terminal seams', () => {
     expect(mainSource).toContain('appDriveLeaseRuntime.prepareApproval(')
     expect(mainSource).toContain('appDriveLeaseRuntime.authorize({')
+    expect(mainSource).toContain('resolveEmulatorSurface: (canvasId, context) =>')
+    expect(mainSource).toContain('canvasService.resolveEmulatorSurface(canvasId, context)')
+    expect(mainSource).toContain("input.record.driver === 'emulator'")
+    expect(mainSource).toContain(
+      'appDriveLeaseRuntime.invalidateEmulatorSurface({ ...input, reason })'
+    )
+    expect(mainSource).toContain("input.record.driver === 'web'")
     expect(mainSource).toContain('appDriveLeaseRuntime.invalidateWebSurface(input)')
     expect(mainSource).toContain('appDriveLeaseRuntime.revokeRun(event.session.runId)')
   })

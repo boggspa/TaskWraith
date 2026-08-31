@@ -4753,7 +4753,9 @@ const appDriveLeaseRuntime = new AppDriveLeaseRuntime({
     } catch {
       return undefined
     }
-  }
+  },
+  resolveEmulatorSurface: (canvasId, context) =>
+    canvasService.resolveEmulatorSurface(canvasId, context)
 })
 const simulatorControlSetup = new SimulatorControlSetupService({
   getUserDataPath: () => app.getPath('userData')
@@ -4827,7 +4829,16 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
   appDriveLeases: appDriveSurfaceLeases,
-  onSurfaceAuthorityInvalidated: (input) => appDriveLeaseRuntime.invalidateWebSurface(input),
+  onSurfaceAuthorityInvalidated: (input) => {
+    if (input.record.driver === 'emulator') {
+      const reason = input.reason
+      if (reason === 'surface-closed' || reason === 'human-takeover') {
+        appDriveLeaseRuntime.invalidateEmulatorSurface({ ...input, reason })
+      }
+      return
+    }
+    if (input.record.driver === 'web') appDriveLeaseRuntime.invalidateWebSurface(input)
+  },
   clearBrowserProfileData: () => canvasBrowserProfile.clearBrowsingData(),
   // One human decision before an irreversible or financial web control, even at
   // tiers that authorize canvas_click for the run. See CanvasConsequentialTarget

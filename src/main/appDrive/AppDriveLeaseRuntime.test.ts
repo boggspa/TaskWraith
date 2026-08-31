@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { CanvasCallContext } from '../canvas/canvasTypes'
+import type { CanvasCallContext, CanvasSessionRecord } from '../canvas/canvasTypes'
 import { AppDriveLeaseRegistry } from './AppDriveLease'
 import { AppDriveLeaseRuntime, type AppDriveLeaseRuntimeDeps } from './AppDriveLeaseRuntime'
 
@@ -60,6 +60,24 @@ function authorizeEmulator(
     oneOffPermissionRetry: false,
     ...overrides
   } as Parameters<AppDriveLeaseRuntime['authorize']>[0])
+}
+
+function emulatorRecord(overrides: Partial<CanvasSessionRecord> = {}): CanvasSessionRecord {
+  return {
+    schemaVersion: 1,
+    id: 'canvas-emulator-a',
+    driver: 'emulator',
+    url: 'emulator://homebrew-demo',
+    title: 'Homebrew',
+    viewport: { width: 160, height: 144 },
+    status: 'active',
+    chatId: 'chat-a',
+    runId: 'run-a',
+    workspacePath: '/repo',
+    createdAt: '2026-08-31T00:00:00.000Z',
+    updatedAt: '2026-08-31T00:00:00.000Z',
+    ...overrides
+  }
 }
 
 describe('AppDriveLeaseRuntime', () => {
@@ -302,6 +320,117 @@ describe('AppDriveLeaseRuntime', () => {
       'run-a',
       'canvas-emulator-a'
     )
+  })
+
+  it('derives the exact lease provider for a trusted renderer surface close', () => {
+    const { leases, runtime, removeSessionGrant } = harness({
+      resolveEmulatorSurface: () => 'emulator'
+    })
+    expect(authorizeEmulator(runtime)).toEqual({ ok: true })
+
+    runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord(),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'surface-closed'
+    })
+
+    expect(leases.peek('canvas-emulator-a')).toMatchObject({
+      status: 'revoked',
+      revocationReason: 'surface-closed'
+    })
+    expect(removeSessionGrant).toHaveBeenCalledWith(
+      'codex',
+      '/repo',
+      'canvasInteraction',
+      'run-a',
+      'canvas-emulator-a'
+    )
+  })
+
+  it('preserves authority for untrusted renderer lifecycle contexts and wrong-kind leases', () => {
+    const rendererContexts: CanvasCallContext[] = [
+      { chatId: 'chat-other', workspacePath: '/repo', surfaceHostId: 42 },
+      { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 0 },
+      { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42, runId: 'run-a' },
+      { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42, provider: 'codex' }
+    ]
+    for (const ctx of rendererContexts) {
+      const { leases, runtime, removeSessionGrant } = harness({
+        resolveEmulatorSurface: () => 'emulator'
+      })
+      expect(authorizeEmulator(runtime)).toEqual({ ok: true })
+      runtime.invalidateEmulatorSurface({
+        canvasId: 'canvas-emulator-a',
+        record: emulatorRecord(),
+        ctx,
+        reason: 'surface-closed'
+      })
+      expect(leases.peek('canvas-emulator-a')).toMatchObject({ status: 'active' })
+      expect(removeSessionGrant).not.toHaveBeenCalled()
+    }
+
+    const rendererTakeover = harness({ resolveEmulatorSurface: () => 'emulator' })
+    expect(authorizeEmulator(rendererTakeover.runtime)).toEqual({ ok: true })
+    rendererTakeover.runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord(),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'human-takeover'
+    })
+    expect(rendererTakeover.leases.peek('canvas-emulator-a')).toMatchObject({ status: 'active' })
+    expect(rendererTakeover.removeSessionGrant).not.toHaveBeenCalled()
+
+    const wrongRun = harness({ resolveEmulatorSurface: () => 'emulator' })
+    expect(authorizeEmulator(wrongRun.runtime)).toEqual({ ok: true })
+    wrongRun.runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord({ runId: 'run-other' }),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'surface-closed'
+    })
+    expect(wrongRun.leases.peek('canvas-emulator-a')).toMatchObject({ status: 'active' })
+    expect(wrongRun.removeSessionGrant).not.toHaveBeenCalled()
+
+    const { leases, runtime, removeSessionGrant } = harness({
+      resolveEmulatorSurface: () => 'other'
+    })
+    leases.authorizeUserLease({
+      surfaceId: 'canvas-emulator-a',
+      surfaceKind: 'web',
+      chatId: 'chat-a',
+      runId: 'run-a',
+      provider: 'codex',
+      approvedBy: 'user',
+      allowedVerbs: ['click'],
+      target: { canvasId: 'canvas-emulator-a', origin: 'https://example.test' },
+      expiresAt: 10_000
+    })
+    runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord(),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'surface-closed'
+    })
+    runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord(),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'human-takeover'
+    })
+    expect(leases.peek('canvas-emulator-a')).toMatchObject({ surfaceKind: 'web', status: 'active' })
+    expect(removeSessionGrant).not.toHaveBeenCalled()
+  })
+
+  it('never guesses a provider for a renderer close after its emulator lease is absent', () => {
+    const { runtime, removeSessionGrant } = harness()
+    runtime.invalidateEmulatorSurface({
+      canvasId: 'canvas-emulator-a',
+      record: emulatorRecord(),
+      ctx: { chatId: 'chat-a', workspacePath: '/repo', surfaceHostId: 42 },
+      reason: 'surface-closed'
+    })
+    expect(removeSessionGrant).not.toHaveBeenCalled()
   })
 
   it('tears down an exact emulator surface when lifecycle context omits or changes participant', () => {
