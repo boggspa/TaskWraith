@@ -41,12 +41,13 @@ describe('isCanvasDockPresentationEvent', () => {
 })
 
 describe('selectUnownedDockPresentations', () => {
-  it('selects active web/sketch/chart dock surfaces that this renderer has not adopted', () => {
+  it('selects active web/sketch/chart/emulator dock surfaces that this renderer has not adopted', () => {
     const summaries = [
       { canvasId: 'owned', driver: 'web', status: 'active', presentation: 'dock' },
       { canvasId: 'web', driver: 'web', status: 'active', presentation: 'dock' },
       { canvasId: 'sketch', driver: 'sketch', status: 'active', presentation: 'dock' },
       { canvasId: 'chart', driver: 'chart', status: 'active', presentation: 'dock' },
+      { canvasId: 'emulator', driver: 'emulator', status: 'active', presentation: 'dock' },
       { canvasId: 'window', driver: 'web', status: 'active' },
       { canvasId: 'render', driver: 'html', status: 'active', presentation: 'dock' },
       { canvasId: 'closed', driver: 'web', status: 'closed', presentation: 'dock' }
@@ -56,6 +57,6 @@ describe('selectUnownedDockPresentations', () => {
       selectUnownedDockPresentations(summaries, new Set(['owned'])).map(
         (summary) => summary.canvasId
       )
-    ).toEqual(['web', 'sketch', 'chart'])
+    ).toEqual(['web', 'sketch', 'chart', 'emulator'])
   })
 })

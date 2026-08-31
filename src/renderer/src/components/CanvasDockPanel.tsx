@@ -41,7 +41,7 @@ import type {
   CanvasPopoutSurface
 } from '../../../main/canvas/CanvasPopoutWindowManager'
 
-export type CanvasDockSessionKind = 'web' | 'sketch' | 'chart'
+export type CanvasDockSessionKind = 'web' | 'sketch' | 'chart' | 'emulator'
 
 export interface CanvasDockSessionRef {
   canvasId: string
@@ -52,6 +52,7 @@ export interface CanvasDockSessionRef {
 export function dockSessionKindFromDriver(driver: string | undefined): CanvasDockSessionKind {
   if (driver === 'sketch') return 'sketch'
   if (driver === 'chart') return 'chart'
+  if (driver === 'emulator') return 'emulator'
   return 'web'
 }
 
@@ -69,7 +70,7 @@ function isSessionRef(value: unknown): value is CanvasDockSessionRef {
   return (
     typeof ref.canvasId === 'string' &&
     ref.canvasId.length > 0 &&
-    (ref.kind === 'web' || ref.kind === 'sketch' || ref.kind === 'chart')
+    (ref.kind === 'web' || ref.kind === 'sketch' || ref.kind === 'chart' || ref.kind === 'emulator')
   )
 }
 
@@ -233,9 +234,10 @@ export function canvasSummaryLabel(summary: {
   driver?: string
 }): string {
   if (summary.title) return summary.title
-  // A sketch/chart record url is an internal sketch:// or chart:// id — never a useful label.
+  // A sketch/chart/emulator record URL is internal state, never a useful label.
   if (summary.driver === 'sketch') return 'Sketch canvas'
   if (summary.driver === 'chart') return 'Chart'
+  if (summary.driver === 'emulator') return 'Homebrew emulator'
   if (summary.driver === 'web' && (!summary.url || summary.url === 'about:blank')) return 'Browser'
   if (summary.url) {
     try {
@@ -251,6 +253,7 @@ export function canvasSummaryLabel(summary: {
   }
   if (summary.driver === 'sketch') return 'Sketch canvas'
   if (summary.driver === 'chart') return 'Chart'
+  if (summary.driver === 'emulator') return 'Homebrew emulator'
   return 'Canvas'
 }
 
@@ -836,7 +839,7 @@ export function CanvasDockPanel({
       | undefined
     if (!api) return
     // Chart tabs are dock-native; there is no floating-window host for them.
-    if (session.kind === 'chart') return
+    if (session.kind === 'chart' || session.kind === 'emulator') return
     setError(null)
     if (!api.openPopout) {
       setError('Canvas pop-out needs the updated preload bridge. Restart TaskWraith and try again.')
@@ -986,7 +989,7 @@ export function CanvasDockPanel({
           </span>
         )}
         <div className="canvas-dock-toolbar-actions">
-          {host === 'popout' ? (
+          {host === 'popout' && active?.kind !== 'emulator' ? (
             <button
               type="button"
               className="canvas-dock-placement"
@@ -997,7 +1000,9 @@ export function CanvasDockPanel({
               <DockGlyph />
               <span>Dock</span>
             </button>
-          ) : showSimulator || showMesh || (active && active.kind !== 'chart') ? (
+          ) : showSimulator ||
+            showMesh ||
+            (active && active.kind !== 'chart' && active.kind !== 'emulator') ? (
             <button
               type="button"
               className="canvas-dock-placement"
@@ -1189,7 +1194,7 @@ export function CanvasDockPanel({
             <div className="canvas-dock-profile-confirm">
               <p>
                 Close browser tabs across all tasks and clear cookies, sign-ins, site data, and
-                cache? Sketch, 3D, and Simulator canvases stay open.
+                cache? Sketch, 3D, Simulator, and Emulator canvases stay open.
               </p>
               <div className="canvas-dock-profile-actions">
                 <button

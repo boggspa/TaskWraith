@@ -25,6 +25,7 @@ import type {
   CanvasControlActionKind,
   CanvasDriver,
   CanvasDriverKind,
+  CanvasEmulatorGameId,
   CanvasElementDetail,
   CanvasElementTree,
   CanvasEvalResult,
@@ -54,6 +55,7 @@ import {
 } from './CanvasConsequentialTarget'
 import {
   isValidBundleId,
+  isCanvasEmulatorGameId,
   redactUrlQuery,
   resolveViewport,
   validateCanvasChart,
@@ -91,6 +93,8 @@ export interface CanvasServiceDeps {
       deviceTarget?: { udid: string; bundleId: string }
       /** Provider identity bound into the device lease. */
       provider?: string
+      /** Fixed internal packaged game; never a user-supplied file, ROM, or URL. */
+      gameId?: CanvasEmulatorGameId
       /** Opaque main-owned native-window lease; never sourced from canvas_open. */
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
@@ -226,7 +230,8 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'sketch',
   'device',
   'window',
-  'chart'
+  'chart',
+  'emulator'
 ])
 // Defence-in-depth ceiling: a hijacked agent (or a session-granted approval)
 // still cannot drive an UNBOUNDED click/fill loop against a live app. Per live
@@ -625,6 +630,7 @@ export class CanvasService implements CanvasController {
     let deviceOwnerParticipantId: string | undefined
     let deviceTarget: { udid: string; bundleId: string } | undefined
     let windowTarget: CanvasWindowOpenTarget | undefined
+    let emulatorGameId: CanvasEmulatorGameId | undefined
     if (driverKind === 'window') {
       const chatId = canonicalAuthority(ctx.chatId)
       const runId = canonicalAuthority(ctx.runId)
@@ -704,6 +710,21 @@ export class CanvasService implements CanvasController {
       input.chartDocument = verdict.document
       recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
       eventHost = undefined
+    } else if (driverKind === 'emulator') {
+      if (input.embed !== true || input.presentation !== 'dock') {
+        throw new Error(
+          'The emulator driver is available only as an embedded Canvas dock presentation.'
+        )
+      }
+      if (input.url !== undefined) {
+        throw new Error('The emulator driver never accepts a URL.')
+      }
+      if (!isCanvasEmulatorGameId(input.gameId)) {
+        throw new Error('The emulator driver requires a canonical packaged game id.')
+      }
+      emulatorGameId = input.gameId
+      recordUrl = `emulator://${emulatorGameId}`
+      eventHost = undefined
     } else {
       const rawUrl = (input.url || '').trim()
       if (!rawUrl) {
@@ -750,13 +771,16 @@ export class CanvasService implements CanvasController {
       throw error
     }
 
-    // Only drivers with a live, hostable surface can embed — web and sketch;
-    // html/image/device/window/chart have no WebContentsView. Chart is the
+    // Only drivers with a live, hostable surface can embed — web, sketch, and
+    // the fixed packaged emulator. html/image/device/window/chart have no
+    // WebContentsView. Chart remains the
     // exception that may still claim presentation:"dock" (native TelemetryPane)
     // so it focuses the Canvas dock without landing in off-screen agent canvases.
     // Renderer opens set embed directly; agents set presentation only through the
     // governed dock-presentation tool contract (canvas_render_chart for charts).
-    const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
+    const embedded =
+      (driverKind === 'web' || driverKind === 'sketch' || driverKind === 'emulator') &&
+      input.embed === true
     const dockPresentation = input.presentation === 'dock' && (embedded || driverKind === 'chart')
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
@@ -771,6 +795,7 @@ export class CanvasService implements CanvasController {
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
         ...(deviceTarget ? { deviceTarget, provider: ctx.provider } : {}),
         ...(windowTarget ? { windowTarget } : {}),
+        ...(emulatorGameId ? { gameId: emulatorGameId } : {}),
         initialSketchDocument: sketchScope
           ? (this.deps.store.getSketchDocument(sketchScope) ?? undefined)
           : undefined,
@@ -884,7 +909,10 @@ export class CanvasService implements CanvasController {
         status: 'active',
         // Never trust a native bridge response to supply a durable URL. Its
         // only record identity is the service-minted lease digest above.
-        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
+        url:
+          driverKind === 'window' || driverKind === 'emulator'
+            ? recordUrl
+            : redactUrlQuery(handle.url),
         title: handle.title,
         viewport: handle.viewport,
         updatedAt: this.deps.now()
@@ -905,13 +933,16 @@ export class CanvasService implements CanvasController {
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
-        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
+        url:
+          driverKind === 'window' || driverKind === 'emulator'
+            ? recordUrl
+            : redactUrlQuery(handle.url),
         ...(dockPresentation ? { presentation: 'dock' } : {})
       })
       return {
         canvasId,
         ...handle,
-        url: driverKind === 'window' ? recordUrl : handle.url
+        url: driverKind === 'window' || driverKind === 'emulator' ? recordUrl : handle.url
       }
     } catch (err) {
       this.sessions.delete(canvasId)

@@ -65,7 +65,12 @@ class FakeDriver implements CanvasDriver {
     this.lastOpenInput = input
     if (input.initialSketchDocument) this.sketchDoc = input.initialSketchDocument
     return {
-      url: input.driver === 'sketch' ? 'sketch://fake' : input.url || 'about:blank',
+      url:
+        input.driver === 'sketch'
+          ? 'sketch://fake'
+          : input.driver === 'emulator'
+            ? 'twemu://app/homebrew-demo/index.html'
+            : input.url || 'about:blank',
       title: 'Fake',
       viewport: input.viewport || { width: 1280, height: 800 }
     }
@@ -250,6 +255,63 @@ describe('CanvasService', () => {
     expect(events.map((e) => e.kind)).toContain('session.opened')
   })
 
+  it('admits only a fixed embedded emulator dock, persists its synthetic URL, and preserves chat ownership', async () => {
+    const input: CanvasOpenInput = {
+      driver: 'emulator',
+      gameId: 'homebrew-demo',
+      embed: true,
+      presentation: 'dock'
+    }
+    const opened = await service.open(input, { chatId: 'chat-a', surfaceHostId: 42 })
+
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42,
+      gameId: 'homebrew-demo'
+    })
+    expect(fake.lastOpenInput).toMatchObject(input)
+    expect(opened.url).toBe('emulator://homebrew-demo')
+    expect(service.status(opened.canvasId, { chatId: 'chat-a' })).toMatchObject({
+      canvasId: opened.canvasId,
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo',
+      presentation: 'dock'
+    })
+    expect(service.status(opened.canvasId, { chatId: 'chat-b' })).toBeNull()
+    expect(service.list({ chatId: 'chat-b' })).toEqual([])
+    expect(JSON.stringify(store.listEvents(opened.canvasId))).not.toContain('twemu://')
+
+    await service.close(opened.canvasId, { chatId: 'chat-b' })
+    expect(fake.closeCalls).toBe(0)
+    await service.close(opened.canvasId, { chatId: 'chat-a' })
+    await service.close(opened.canvasId, { chatId: 'chat-a' })
+    expect(fake.closeCalls).toBe(1)
+  })
+
+  it('refuses emulator URL, floating, and unpinned-game opens before creating a driver', async () => {
+    await expect(
+      service.open({ driver: 'emulator', gameId: 'homebrew-demo' }, { chatId: 'chat-a' })
+    ).rejects.toThrow(/embedded Canvas dock/i)
+    await expect(
+      service.open(
+        {
+          driver: 'emulator',
+          gameId: 'homebrew-demo',
+          embed: true,
+          presentation: 'dock',
+          url: 'https://example.test'
+        },
+        { chatId: 'chat-a' }
+      )
+    ).rejects.toThrow(/never accepts a URL/i)
+    await expect(
+      service.open({ driver: 'emulator', embed: true, presentation: 'dock' }, { chatId: 'chat-a' })
+    ).rejects.toThrow(/canonical packaged game id/i)
+    expect(fake.openCalls).toBe(0)
+    expect(lastDriverOpts).toBeUndefined()
+  })
+
   it('opens an empty browser as about:blank and keeps its dock presentation', async () => {
     const opened = await service.open(
       { driver: 'web', embed: true, presentation: 'dock' },
@@ -410,7 +472,7 @@ describe('CanvasService', () => {
     expect(store.getSession(opened.canvasId)?.chatId).toBe('chat-a')
   })
 
-  it('embeds only the surface-hosting drivers (web + sketch), never surface-less ones', async () => {
+  it('embeds only the surface-hosting drivers (web + sketch + emulator), never surface-less ones', async () => {
     const rendererWeb = await service.open(
       { url: 'http://localhost:3000', embed: true },
       { chatId: 'chat-a' }
@@ -434,6 +496,17 @@ describe('CanvasService', () => {
     ).toMatchObject({ detail: { presentation: 'dock' } })
 
     await service.open({ driver: 'sketch', embed: true }, { chatId: 'chat-a' })
+    expect(lastDriverOpts?.embedded).toBe(true)
+
+    await service.open(
+      {
+        driver: 'emulator',
+        gameId: 'homebrew-demo',
+        embed: true,
+        presentation: 'dock'
+      },
+      { chatId: 'chat-a' }
+    )
     expect(lastDriverOpts?.embedded).toBe(true)
 
     // html renders offscreen (no live surface) — the embed flag must not leak in.
@@ -617,6 +690,10 @@ describe('CanvasService', () => {
     const firstWeb = await service.open({ driver: 'web', url: 'https://example.com' }, {})
     const sketch = await service.open({ driver: 'sketch' }, {})
     const secondWeb = await service.open({ driver: 'web', url: 'https://example.org' }, {})
+    const emulator = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      {}
+    )
 
     await expect(service.clearBrowserProfile()).resolves.toEqual({
       closedCanvasIds: [firstWeb.canvasId, secondWeb.canvasId],
@@ -627,10 +704,19 @@ describe('CanvasService', () => {
       true
     )
     expect(drivers.find(({ kind }) => kind === 'sketch')?.driver.closed).toBe(false)
-    expect(service.list({}).map((entry) => entry.canvasId)).toEqual([sketch.canvasId])
+    expect(drivers.find(({ kind }) => kind === 'emulator')?.driver.closed).toBe(false)
+    expect(service.list({}).map((entry) => entry.canvasId)).toEqual([
+      sketch.canvasId,
+      emulator.canvasId
+    ])
     expect(store.getSession(firstWeb.canvasId)?.status).toBe('closed')
     expect(store.getSession(secondWeb.canvasId)?.status).toBe('closed')
     expect(store.getSession(sketch.canvasId)?.status).toBe('active')
+    expect(store.getSession(emulator.canvasId)).toMatchObject({
+      status: 'active',
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo'
+    })
   })
 
   it('shares concurrent Browser-profile resets and fences only new web opens', async () => {

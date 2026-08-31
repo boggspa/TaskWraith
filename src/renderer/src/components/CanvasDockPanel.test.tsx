@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   CanvasDockPanel,
   canvasDockSessionStore,
+  dockSessionKindFromDriver,
   canvasSummaryLabel,
   reconcileDockSessions,
   selectAgentCanvases,
@@ -103,6 +104,7 @@ describe('canvasSummaryLabel', () => {
     expect(canvasSummaryLabel({ url: 'html://abc123' })).toBe('html://abc123')
     expect(canvasSummaryLabel({ driver: 'sketch' })).toBe('Sketch canvas')
     expect(canvasSummaryLabel({ driver: 'chart' })).toBe('Chart')
+    expect(canvasSummaryLabel({ driver: 'emulator' })).toBe('Homebrew emulator')
     expect(canvasSummaryLabel({ driver: 'web', url: 'about:blank' })).toBe('Browser')
     expect(canvasSummaryLabel({})).toBe('Canvas')
   })
@@ -119,6 +121,24 @@ describe('canvasSummaryLabel', () => {
     expect(
       canvasSummaryLabel({ driver: 'chart', title: 'Latency p95', url: 'chart://deadbeef' })
     ).toBe('Latency p95')
+  })
+
+  it('never labels an emulator with its internal emulator:// session URL', () => {
+    expect(canvasSummaryLabel({ driver: 'emulator', url: 'emulator://homebrew-demo' })).toBe(
+      'Homebrew emulator'
+    )
+    expect(
+      canvasSummaryLabel({
+        driver: 'emulator',
+        title: 'Homebrew Demo',
+        url: 'emulator://homebrew-demo'
+      })
+    ).toBe('Homebrew Demo')
+  })
+
+  it('maps only the explicit emulator driver to the emulator dock kind', () => {
+    expect(dockSessionKindFromDriver('emulator')).toBe('emulator')
+    expect(dockSessionKindFromDriver('unknown')).toBe('web')
   })
 })
 
@@ -265,7 +285,7 @@ describe('CanvasDockPanel (static render)', () => {
     expect(source).toContain('Cookies and sign-ins stay inside TaskWraith')
     expect(source).toContain('cannot type passwords or verification codes')
     expect(source).toContain('Close browser tabs across all tasks')
-    expect(source).toContain('Sketch, 3D, and Simulator canvases stay open')
+    expect(source).toContain('Sketch, 3D, Simulator, and Emulator canvases stay open')
   })
 
   it('hosts chart sessions as TelemetryCanvasPanel tabs without pop-out or CanvasPane', () => {
@@ -315,7 +335,7 @@ describe('CanvasDockPanel (static render)', () => {
       join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
       'utf8'
     )
-    expect(source).toContain("'web' | 'sketch' | 'chart'")
+    expect(source).toContain("'web' | 'sketch' | 'chart' | 'emulator'")
     expect(source).toContain("driver === 'chart'")
     expect(source).toContain('TelemetryCanvasPanel')
     expect(source).toContain('dockSessionKindFromDriver')
@@ -326,6 +346,38 @@ describe('CanvasDockPanel (static render)', () => {
     )
     expect(adoptBlock).toMatch(/driver === ['"]chart['"]/)
     expect(adoptBlock).toContain('continue')
+  })
+
+  it('hosts an emulator as a regular CanvasPane without Browser chrome or Pop Out routing', () => {
+    canvasDockSessionStore.add('chat-emulator', { canvasId: 'c-emulator', kind: 'emulator' })
+    try {
+      const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-emulator" />)
+      expect(html).toContain('Homebrew emulator')
+      expect(html).toContain('canvas-pane-host')
+      expect(html).toContain('aria-label="Close canvas pane"')
+      expect(html).not.toContain('canvas-browser-chrome')
+      expect(html).not.toContain('aria-label="Move Canvas to a floating window"')
+    } finally {
+      canvasDockSessionStore.remove('chat-emulator', 'c-emulator')
+    }
+  })
+
+  it('keeps emulator adoption on the generic canvasId path and excludes it from pop-out transfer', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    const adoption = source.slice(
+      source.indexOf('const adoptablePresentations'),
+      source.indexOf('canvasDockSessionStore.reconcile')
+    )
+    const popOut = source.slice(
+      source.indexOf('const popOutSession'),
+      source.indexOf('const popOutSpecialSurface')
+    )
+    expect(adoption).toContain('candidate.canvasId')
+    expect(adoption).not.toContain("candidate.driver === 'emulator'")
+    expect(popOut).toContain("session.kind === 'chart' || session.kind === 'emulator'")
   })
 })
 

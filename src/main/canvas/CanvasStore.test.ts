@@ -79,9 +79,16 @@ describe('CanvasStore', () => {
     store.upsertSession(session('html', { driver: 'html' }))
     store.upsertSession(session('image', { driver: 'image' }))
     store.upsertSession(session('sketch', { driver: 'sketch' }))
+    store.upsertSession(
+      session('emulator', { driver: 'emulator', url: 'emulator://homebrew-demo' })
+    )
     expect(store.getSession('html')?.driver).toBe('html')
     expect(store.getSession('image')?.driver).toBe('image')
     expect(store.getSession('sketch')?.driver).toBe('sketch')
+    expect(store.getSession('emulator')).toMatchObject({
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo'
+    })
   })
 
   it('rejects records without an id', () => {

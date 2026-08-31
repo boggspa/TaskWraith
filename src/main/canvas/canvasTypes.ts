@@ -117,7 +117,8 @@ export interface CanvasOpenInput {
   viewport?: CanvasViewport
   /**
    * INTERNAL ONLY. The fixed packaged emulator game to start. CanvasService
-   * does not admit the emulator driver in this foundation slice.
+   * accepts it only through the main-owned embedded-dock path; public admission
+   * lands separately.
    */
   gameId?: CanvasEmulatorGameId
   /**
@@ -137,18 +138,18 @@ export interface CanvasOpenInput {
   /** Bundle id to launch + screenshot. REQUIRED for the device driver. */
   bundleId?: string
   /**
-   * Renderer-pane embed (web driver only): host the preview as a WebContentsView
-   * inside the app window instead of a standalone BrowserWindow. Set by the
-   * renderer's canvas-pane IPC, or by the agent executor only after the caller
-   * explicitly requests the governed `presentation: "dock"` tool contract.
+   * Renderer-pane embed for a live web, sketch, or internal emulator driver:
+   * host the preview as a WebContentsView inside the app window instead of a
+   * standalone BrowserWindow. Renderer IPC opens web/sketch surfaces; the
+   * packaged emulator remains main-owned until its later public-admission slice.
    */
   embed?: boolean
   /**
    * INTERNAL ONLY. Distinguishes an explicit agent request to focus the Canvas
    * dock from an ordinary renderer-owned embed (for example, a multiview pane).
-   * For web/sketch this requires `embed: true`. For `chart`, presentation:"dock"
-   * is allowed WITHOUT a WebContentsView embed (native TelemetryPane). Renderer
-   * IPC never forwards this field.
+   * For web/sketch/internal-emulator this requires `embed: true`. For `chart`,
+   * presentation:"dock" is allowed WITHOUT a WebContentsView embed (native
+   * TelemetryPane). Renderer IPC never forwards this field.
    */
   presentation?: 'dock'
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
