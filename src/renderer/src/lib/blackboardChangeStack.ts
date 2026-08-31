@@ -99,7 +99,7 @@ export function projectBlackboardUpdateStacks(
       gapMs <= BLACKBOARD_UPDATE_STACK_WINDOW_MS &&
       active.messages.length < BLACKBOARD_UPDATE_STACK_MAX_ITEMS
 
-    if (!canJoin) {
+    if (!canJoin || !active) {
       flush()
       active = {
         roundId,

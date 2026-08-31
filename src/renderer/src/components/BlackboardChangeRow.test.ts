@@ -69,7 +69,9 @@ describe('BlackboardChangeRow', () => {
     expect(html).toContain('Blackboard updated')
     expect(html).toContain('scout5-competitor-research')
     expect(html).toContain('blackboard-glyph')
-    expect(html).toContain('--accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).toContain(
+      '--blackboard-change-accent:var(--provider-alibaba-color, var(--accent))'
+    )
     expect(html).toContain('aria-label="Blackboard updated by Alibaba: note /')
     expect(html).not.toContain('scout-5')
     expect(html).not.toContain('Competitive scout')
@@ -136,6 +138,83 @@ describe('BlackboardChangeRow', () => {
     expect(html).toContain(`activity-line-stat activity-line-stat-${tone}`)
     expect(html).toContain(`<span class="sr-only">${delta} Entries</span>`)
     expect(html).toContain('blackboard-change-stat-unit" aria-hidden="true">Entries</span>')
+  })
+
+  it('summarizes a collapsed update stack with the newest row and accumulated entry count', () => {
+    const first = messageWithChange('updated')
+    first.id = 'first'
+    if (first.metadata?.blackboardChange?.action === 'updated') {
+      first.metadata.blackboardChange.key = 'older-fact'
+      first.metadata.blackboardChange.category = 'fact'
+    }
+    const latest = messageWithChange('updated')
+    latest.id = 'latest'
+    if (latest.metadata?.blackboardChange?.action === 'updated') {
+      latest.metadata.blackboardChange.key = 'latest-risk'
+      latest.metadata.blackboardChange.category = 'risk'
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: latest,
+        stackMessages: [first, latest],
+        expanded: false
+      })
+    )
+
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('Show all 2 Blackboard updates')
+    expect(html).toContain('latest-risk')
+    expect(html).toContain('<span class="sr-only">+2 Entries</span>')
+    expect(html).not.toContain('older-fact')
+  })
+
+  it('renders every stacked update oldest first with its own semantic category and provider hue', () => {
+    const first = messageWithChange('updated')
+    first.id = 'first'
+    if (first.metadata?.blackboardChange?.action === 'updated') {
+      first.metadata.blackboardChange.key = 'older-fact'
+      first.metadata.blackboardChange.category = 'fact'
+      first.metadata.blackboardChange.displayHueClass = 'claude'
+      first.metadata.blackboardChange.displayProviderLabel = 'Claude'
+    }
+    const legacy: ChatMessage = {
+      id: 'legacy',
+      role: 'system',
+      content: 'Blackboard updated: note / legacy-key.',
+      timestamp: '2026-08-27T12:41:00.000Z',
+      metadata: { kind: 'ensembleRoundStatus', ensembleRoundId: 'round-1' }
+    }
+    const latest = messageWithChange('updated')
+    latest.id = 'latest'
+    if (latest.metadata?.blackboardChange?.action === 'updated') {
+      latest.metadata.blackboardChange.key = 'latest-risk'
+      latest.metadata.blackboardChange.category = 'risk'
+      latest.metadata.blackboardChange.displayHueClass = 'grok'
+      latest.metadata.blackboardChange.displayProviderLabel = 'Grok'
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: latest,
+        stackMessages: [first, legacy, latest],
+        expanded: true
+      })
+    )
+
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('individual Blackboard updates, oldest first')
+    expect(html.indexOf('older-fact')).toBeLessThan(html.lastIndexOf('latest-risk'))
+    expect(html).toContain('blackboard-cat-fact')
+    expect(html).toContain('legacy-key')
+    expect(html).toContain('blackboard-cat-risk')
+    expect(html).toContain('--blackboard-change-accent:var(--provider-claude-color, var(--accent))')
+    expect(html).toContain('--blackboard-change-accent:var(--provider-grok-color, var(--accent))')
+    const legacyKeyIndex = html.indexOf('legacy-key')
+    const legacyItemStart = html.lastIndexOf('<li', legacyKeyIndex)
+    const legacyItemEnd = html.indexOf('>', legacyItemStart)
+    expect(html.slice(legacyItemStart, legacyItemEnd)).not.toContain('style=')
+    expect(cssSource).toContain('--blackboard-change-accent: var(--accent)')
   })
 
   it('promotes exact legacy update, poll, and cleanup sentences without trusted attribution', () => {
@@ -263,5 +342,14 @@ describe('TranscriptPanel Blackboard event wiring', () => {
     expect(dispatch).toBeGreaterThanOrEqual(0)
     expect(collapse).toBeGreaterThan(dispatch)
     expect(panelSource.slice(dispatch, collapse)).toContain('<BlackboardChangeRow')
+  })
+
+  it('keeps stack members projected at zero height and gives the newest row the disclosure', () => {
+    expect(panelSource).toContain('projectBlackboardUpdateStacks(displayMessages)')
+    expect(panelSource).toContain('blackboardStackHiddenRowKeys')
+    expect(panelSource).toContain("blackboardUpdateStackHidden ? ' is-row-hidden' : ''")
+    expect(panelSource).toContain('stackMessages={')
+    expect(panelSource).toContain('blackboardUpdateStackInfo?.stack.messages')
+    expect(panelSource).toContain('ensureBlackboardStackExpandedForMessage')
   })
 })

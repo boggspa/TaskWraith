@@ -43,6 +43,8 @@ export interface TranscriptRowRenderSignature {
   /** "<leadId>:<size>:<open|closed>:<lead|member>" when this row belongs to a
    * super-group of condensed one-liners; '' otherwise. */
   superGroupKey: string
+  /** Stable-first-member key + size/disclosure/lead state for a Blackboard stack. */
+  blackboardStackKey: string
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
   /** Settled ask_user_question card: outcome + answer + whether this row is the
@@ -360,6 +362,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.liveViewportExpandedKey !== next.liveViewportExpandedKey) return false
   if (prev.collapsedStackKey !== next.collapsedStackKey) return false
   if (prev.superGroupKey !== next.superGroupKey) return false
+  if (prev.blackboardStackKey !== next.blackboardStackKey) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
   if (prev.agentQuestionTombstoneKey !== next.agentQuestionTombstoneKey) return false

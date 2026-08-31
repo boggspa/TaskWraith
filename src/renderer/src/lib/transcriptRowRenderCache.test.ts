@@ -50,6 +50,7 @@ const signature = (
   liveViewportExpandedKey: '',
   collapsedStackKey: '',
   superGroupKey: '',
+  blackboardStackKey: '',
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   agentQuestionTombstoneKey: '',
@@ -339,6 +340,21 @@ describe('transcriptRowRenderCache', () => {
       transcriptRowRenderSignatureEqual(
         signature({ liveViewportExpandedKey: '000' }),
         signature({ liveViewportExpandedKey: '010' })
+      )
+    ).toBe(false)
+  })
+
+  it('invalidates when a Blackboard stack grows or changes disclosure state', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ blackboardStackKey: 'first#1:2:closed:lead' }),
+        signature({ blackboardStackKey: 'first#1:3:closed:lead' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ blackboardStackKey: 'first#1:3:closed:lead' }),
+        signature({ blackboardStackKey: 'first#1:3:open:lead' })
       )
     ).toBe(false)
   })

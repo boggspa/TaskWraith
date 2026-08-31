@@ -9,8 +9,14 @@
 }
 
 .blackboard-change-icon {
-  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 30%, transparent));
+  color: color-mix(
+    in srgb,
+    var(--blackboard-change-accent, var(--accent)) 88%,
+    var(--text-primary)
+  );
+  filter: drop-shadow(
+    0 0 5px color-mix(in srgb, var(--blackboard-change-accent, var(--accent)) 30%, transparent)
+  );
 }
 
 .blackboard-change-icon .blackboard-glyph {
@@ -76,8 +82,39 @@
   margin-left: 2px;
 }
 
-.blackboard-change-message.is-scout-brief .blackboard-change-row {
+.blackboard-change-message.is-scout-brief > .blackboard-change-row,
+.blackboard-change-message.is-update-stack > .blackboard-change-row {
   cursor: pointer;
+}
+
+.blackboard-change-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 3px 0 2px 8px;
+  padding: 2px 0 2px 19px;
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  list-style: none;
+  /* The lead owns a provider hue, but unattributed legacy leaves must not
+   * inherit it. Structured leaves override this neutral app accent inline. */
+  --blackboard-change-accent: var(--accent);
+}
+
+.blackboard-change-stack-item {
+  min-width: 0;
+  opacity: 0.76;
+}
+
+.blackboard-change-stack-item .blackboard-change-row {
+  gap: 9px;
+  padding-block: 2px;
+  cursor: default;
+  animation: none !important;
+}
+
+.blackboard-change-stack-item .blackboard-change-key {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .blackboard-scout-brief-role {

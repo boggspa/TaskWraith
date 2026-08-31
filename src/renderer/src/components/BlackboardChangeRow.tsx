@@ -86,13 +86,15 @@ function ScoutBriefDetail({ payload }: { payload: BlackboardChangePayload }): JS
 }
 
 function BlackboardEntryDelta({
-  payload
+  payload,
+  addedCount
 }: {
   payload: BlackboardChangePresentation
+  addedCount?: number
 }): JSX.Element | null {
   if (payload.action === 'scoutBriefShared') return null
   const isRemoval = payload.action === 'cleaned'
-  const value = isRemoval ? payload.removedCount : 1
+  const value = isRemoval ? payload.removedCount : (addedCount ?? 1)
   const sign = isRemoval ? '-' : '+'
 
   return (
@@ -113,11 +115,13 @@ function BlackboardEntryDelta({
 function ChangeContents({
   payload,
   label,
-  time
+  time,
+  addedCount
 }: {
   payload: BlackboardChangePresentation
   label: string
   time: string
+  addedCount?: number
 }): JSX.Element {
   return (
     <>
@@ -147,9 +151,42 @@ function ChangeContents({
       ) : payload.action === 'cleaned' ? null : (
         <ScoutBriefDetail payload={payload} />
       )}
-      <BlackboardEntryDelta payload={payload} />
+      <BlackboardEntryDelta payload={payload} addedCount={addedCount} />
       {time && <span className="seat-change-time blackboard-change-time">{time}</span>}
     </>
+  )
+}
+
+function changeAccentStyle(payload: BlackboardChangePresentation): CSSProperties | undefined {
+  if (!('displayProviderLabel' in payload)) return undefined
+  const accent = providerAccentVar(payload.displayHueClass || payload.provider)
+  return { '--blackboard-change-accent': accent } as CSSProperties
+}
+
+function BlackboardUpdateStackItem({ message }: { message: ChatMessage }): JSX.Element | null {
+  const payload = resolveBlackboardChangePresentation(message)
+  if (!payload || payload.action !== 'updated') return null
+  const label = actionLabel(payload)
+  const detail = actionDetail(payload)
+  const structured = 'displayProviderLabel' in payload
+  return (
+    <li
+      className="blackboard-change-stack-item"
+      style={changeAccentStyle(payload)}
+      aria-label={
+        structured
+          ? `${label} by ${payload.displayProviderLabel}: ${detail}`
+          : `${label}: ${detail}`
+      }
+    >
+      <div className="seat-change-row blackboard-change-row">
+        <ChangeContents
+          payload={payload}
+          label={label}
+          time={formatChangeTime(message.timestamp)}
+        />
+      </div>
+    </li>
   )
 }
 
@@ -158,9 +195,19 @@ function ChangeContents({
  * handoff change. Provider identity is carried by the familiar tool glyph's
  * accent, not an assistant header or seat-name label.
  */
-export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.Element | null {
+export function BlackboardChangeRow({
+  message,
+  stackMessages,
+  expanded: controlledExpanded,
+  onExpandedChange
+}: {
+  message: ChatMessage
+  stackMessages?: readonly ChatMessage[]
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+}): JSX.Element | null {
   const payload = resolveBlackboardChangePresentation(message)
-  const [expanded, setExpanded] = useState(false)
+  const [localExpanded, setLocalExpanded] = useState(false)
   const [fresh] = useState(() => {
     if (!payload) return false
     const age = Date.now() - Date.parse(payload.changedAt)
@@ -173,36 +220,59 @@ export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.
   const detail = actionDetail(payload)
   const time = formatChangeTime(message.timestamp)
   const structured = 'displayProviderLabel' in payload
-  const accent = structured
-    ? providerAccentVar(payload.displayHueClass || payload.provider)
-    : undefined
-  const style = accent ? ({ '--accent': accent } as CSSProperties) : undefined
+  const style = changeAccentStyle(payload)
   const isScoutBrief = payload.action === 'scoutBriefShared'
+  const isUpdateStack =
+    payload.action === 'updated' && Boolean(stackMessages && stackMessages.length > 1)
+  const expanded = controlledExpanded ?? localExpanded
+  const toggleExpanded = (): void => {
+    const next = !expanded
+    if (onExpandedChange) onExpandedChange(next)
+    else setLocalExpanded(next)
+  }
+  const expandable = isScoutBrief || isUpdateStack
 
   return (
     <div
       className={`message-group seat-change-message blackboard-change-message${
         fresh ? ' is-fresh' : ''
-      }${isScoutBrief ? ' is-scout-brief' : ''}${expanded ? ' is-expanded' : ''}`}
+      }${isScoutBrief ? ' is-scout-brief' : ''}${
+        isUpdateStack ? ' is-update-stack' : ''
+      }${expanded ? ' is-expanded' : ''}`}
       style={style}
       role="group"
       aria-label={
-        isScoutBrief
-          ? `${label}: ${detail}`
-          : structured
-            ? `${label} by ${payload.displayProviderLabel}: ${detail}`
-            : `${label}: ${detail}`
+        isUpdateStack
+          ? `${stackMessages!.length} Blackboard updates. Latest: ${detail}`
+          : isScoutBrief
+            ? `${label}: ${detail}`
+            : structured
+              ? `${label} by ${payload.displayProviderLabel}: ${detail}`
+              : `${label}: ${detail}`
       }
     >
-      {isScoutBrief ? (
+      {expandable ? (
         <button
           type="button"
           className="seat-change-row blackboard-change-row"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={toggleExpanded}
           aria-expanded={expanded}
-          title={expanded ? 'Hide Scout brief sharing details' : 'Show Scout brief sharing details'}
+          title={
+            isUpdateStack
+              ? expanded
+                ? 'Hide individual Blackboard updates'
+                : `Show all ${stackMessages!.length} Blackboard updates`
+              : expanded
+                ? 'Hide Scout brief sharing details'
+                : 'Show Scout brief sharing details'
+          }
         >
-          <ChangeContents payload={payload} label={label} time={time} />
+          <ChangeContents
+            payload={payload}
+            label={label}
+            time={time}
+            addedCount={isUpdateStack ? stackMessages!.length : undefined}
+          />
         </button>
       ) : (
         <div className="seat-change-row blackboard-change-row">
@@ -218,6 +288,16 @@ export function BlackboardChangeRow({ message }: { message: ChatMessage }): JSX.
           <span className="blackboard-change-separator">·</span>
           <span className="blackboard-change-detail">later briefs update this entry</span>
         </div>
+      )}
+      {isUpdateStack && expanded && (
+        <ol
+          className="blackboard-change-stack"
+          aria-label={`${stackMessages!.length} individual Blackboard updates, oldest first`}
+        >
+          {stackMessages!.map((stackMessage, index) => (
+            <BlackboardUpdateStackItem key={`${stackMessage.id}:${index}`} message={stackMessage} />
+          ))}
+        </ol>
       )}
     </div>
   )

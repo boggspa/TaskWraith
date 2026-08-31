@@ -142,6 +142,10 @@ import {
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
 import {
+  projectBlackboardUpdateStacks,
+  type BlackboardUpdateStack
+} from '../lib/blackboardChangeStack'
+import {
   resolveLiveMeasurementMessageIds,
   resolveLiveRevealMessageId,
   resolveTranscriptChatIsRunning
@@ -1090,6 +1094,13 @@ interface CollapsedSuperGroupInfo {
   firstSystemPreview: string
   /** First stack member — supplies the speaker header; null = all-system. */
   headerMessage: ChatMessage | null
+}
+
+interface BlackboardUpdateStackRowInfo {
+  stack: BlackboardUpdateStack
+  stateKey: string
+  leadRowKey: string
+  memberRowKeys: string[]
 }
 
 /**
@@ -3504,6 +3515,24 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Blackboard update stacks keep every durable source row projected, but
+    // one newest-position disclosure owns their presentation. Key by the
+    // first occurrence-safe member row so a new tail update cannot close a
+    // stack the user is already reading.
+    const [expandedBlackboardUpdateStacks, setExpandedBlackboardUpdateStacks] = useState<
+      Set<string>
+    >(new Set())
+    const setBlackboardUpdateStackExpanded = useCallback(
+      (stackKey: string, expanded: boolean) => {
+        setExpandedBlackboardUpdateStacks((prev) => {
+          const next = new Set(prev)
+          if (expanded) next.add(stackKey)
+          else next.delete(stackKey)
+          return next
+        })
+      },
+      []
+    )
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -3730,6 +3759,10 @@ export const TranscriptPanel = memo(
       if (historyPageBoundaries.newer) next.push(historyPageBoundaries.newer)
       return next
     }, [historyPageBoundaries, isWelcomeChat, roundDisplayMessages, storeReady])
+    const blackboardUpdateStackProjection = useMemo(
+      () => projectBlackboardUpdateStacks(displayMessages),
+      [displayMessages]
+    )
     // Map every (pre-collapse) message id → its round id, so navigation
     // (jump-to-message, pinned, side-chat seed) can auto-expand the round
     // a target lives in before scrolling — otherwise a jump into a
@@ -3918,6 +3951,26 @@ export const TranscriptPanel = memo(
       for (const row of projectedRows) rowKeys.set(row.index, row.rowKey)
       return rowKeys
     }, [projectedRows])
+    const blackboardUpdateStackByRowKey = useMemo(() => {
+      const map = new Map<string, BlackboardUpdateStackRowInfo>()
+      for (const stack of blackboardUpdateStackProjection.stacks) {
+        const memberRowKeys = stack.memberIndexes
+          .map((index) => rowKeyByDisplayMessageIndex.get(index))
+          .filter((rowKey): rowKey is string => Boolean(rowKey))
+        const leadRowKey = rowKeyByDisplayMessageIndex.get(stack.leadIndex)
+        if (!leadRowKey || memberRowKeys.length !== stack.memberIndexes.length) continue
+        const info: BlackboardUpdateStackRowInfo = {
+          stack,
+          // The first projected row is occurrence-safe (`id#index`) and does
+          // not move when another update joins at the live tail.
+          stateKey: memberRowKeys[0],
+          leadRowKey,
+          memberRowKeys
+        }
+        for (const memberRowKey of memberRowKeys) map.set(memberRowKey, info)
+      }
+      return map
+    }, [blackboardUpdateStackProjection.stacks, rowKeyByDisplayMessageIndex])
     // Shared by the row-level live check (via `activeLiveRowKeys`) and the
     // super-group membership pass, so the two can never disagree about which
     // rows are still live.
@@ -4101,7 +4154,8 @@ export const TranscriptPanel = memo(
       if (
         expandedLiveViewportStacks.size === 0 &&
         expandedCollapsedStacks.size === 0 &&
-        expandedSuperGroups.size === 0
+        expandedSuperGroups.size === 0 &&
+        expandedBlackboardUpdateStacks.size === 0
       ) {
         return expandedRowIds
       }
@@ -4127,11 +4181,19 @@ export const TranscriptPanel = memo(
         if (!group) continue
         for (const memberRowKey of group.memberRowKeys) ids.add(memberRowKey)
       }
+      const seenBlackboardLeads = new Set<string>()
+      for (const info of blackboardUpdateStackByRowKey.values()) {
+        if (seenBlackboardLeads.has(info.leadRowKey)) continue
+        seenBlackboardLeads.add(info.leadRowKey)
+        if (expandedBlackboardUpdateStacks.has(info.stateKey)) ids.add(info.leadRowKey)
+      }
       return ids
     }, [
       expandedLiveViewportStacks,
       expandedCollapsedStacks,
       expandedSuperGroups,
+      expandedBlackboardUpdateStacks,
+      blackboardUpdateStackByRowKey,
       superGroupByRowKey,
       expandedRowIds,
       projectedRowLookup
@@ -4318,6 +4380,20 @@ export const TranscriptPanel = memo(
       return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
     }, [superGroupByRowKey, expandedSuperGroups, foldingSuperGroups])
 
+    const blackboardStackHiddenRowKeys = useMemo(() => {
+      if (blackboardUpdateStackByRowKey.size === 0) return EMPTY_HIDDEN_ROW_KEYS
+      const keys = new Set<string>()
+      const seenLeads = new Set<string>()
+      for (const info of blackboardUpdateStackByRowKey.values()) {
+        if (seenLeads.has(info.leadRowKey)) continue
+        seenLeads.add(info.leadRowKey)
+        for (const memberRowKey of info.memberRowKeys) {
+          if (memberRowKey !== info.leadRowKey) keys.add(memberRowKey)
+        }
+      }
+      return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+    }, [blackboardUpdateStackByRowKey])
+
     /**
      * Every row that renders to zero height, for the virtualizer's height table.
      *
@@ -4328,8 +4404,14 @@ export const TranscriptPanel = memo(
      * it here is REQUIRED or it sits on a phantom type estimate forever.
      */
     const hiddenRowKeys = useMemo(() => {
-      if (suppressedReplyMessageIds.size === 0) return superHiddenRowKeys
+      if (
+        suppressedReplyMessageIds.size === 0 &&
+        blackboardStackHiddenRowKeys.size === 0
+      ) {
+        return superHiddenRowKeys
+      }
       const keys = new Set(superHiddenRowKeys)
+      for (const rowKey of blackboardStackHiddenRowKeys) keys.add(rowKey)
       for (const messageId of suppressedReplyMessageIds) {
         const row =
           projectedRowLookup.byMessageId.get(messageId) ||
@@ -4337,13 +4419,18 @@ export const TranscriptPanel = memo(
         if (row) keys.add(row.rowKey)
       }
       return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
-    }, [superHiddenRowKeys, suppressedReplyMessageIds, projectedRowLookup])
+    }, [
+      blackboardStackHiddenRowKeys,
+      superHiddenRowKeys,
+      suppressedReplyMessageIds,
+      projectedRowLookup
+    ])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
       attempt: number
     } | null>(null)
-    const findProjectedRowForMessage = useCallback(
+    const findRawProjectedRowForMessage = useCallback(
       (messageId: string, rowKey?: string) => {
         if (rowKey) {
           const byRowKey = projectedRowLookup.byRowKey.get(rowKey)
@@ -4355,6 +4442,32 @@ export const TranscriptPanel = memo(
         )
       },
       [projectedRowLookup]
+    )
+    const findProjectedRowForMessage = useCallback(
+      (messageId: string, rowKey?: string) => {
+        const row = findRawProjectedRowForMessage(messageId, rowKey)
+        if (!row) return null
+        const stack = blackboardUpdateStackByRowKey.get(row.rowKey)
+        if (!stack || stack.leadRowKey === row.rowKey) return row
+        return projectedRowLookup.byRowKey.get(stack.leadRowKey) || row
+      },
+      [blackboardUpdateStackByRowKey, findRawProjectedRowForMessage, projectedRowLookup.byRowKey]
+    )
+    const ensureBlackboardStackExpandedForMessage = useCallback(
+      (messageId: string, rowKey?: string): boolean => {
+        const row = findRawProjectedRowForMessage(messageId, rowKey)
+        if (!row) return false
+        const stack = blackboardUpdateStackByRowKey.get(row.rowKey)
+        if (!stack || expandedBlackboardUpdateStacks.has(stack.stateKey)) return false
+        setBlackboardUpdateStackExpanded(stack.stateKey, true)
+        return true
+      },
+      [
+        blackboardUpdateStackByRowKey,
+        expandedBlackboardUpdateStacks,
+        findRawProjectedRowForMessage,
+        setBlackboardUpdateStackExpanded
+      ]
     )
     /**
      * A jump target can be a hidden non-lead member of a collapsed super-group.
@@ -4479,6 +4592,7 @@ export const TranscriptPanel = memo(
       setActivityExpansionByRow(new Map())
       setExpandedCollapsedStacks(new Set())
       setExpandedSuperGroups(new Set())
+      setExpandedBlackboardUpdateStacks(new Set())
       setExpandedSubThreadResults(new Set())
       setActiveParticipantFilterKeys(new Set())
       rowElementCacheRef.current.clear()
@@ -4647,6 +4761,10 @@ export const TranscriptPanel = memo(
         // first; the pending-focus retry loop below then finds the row
         // once it re-renders into the window.
         ensureRoundExpandedForMessage(messageId)
+        if (ensureBlackboardStackExpandedForMessage(messageId, effectiveRowKey)) {
+          setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+          return
+        }
         // Super-folds preserve hidden member wrappers for scroll geometry, but
         // the wrapper has no visible content. Open the owning fold before
         // focusing so the jump lands on the actual requested row.
@@ -4661,6 +4779,7 @@ export const TranscriptPanel = memo(
       },
       [
         chatId,
+        ensureBlackboardStackExpandedForMessage,
         ensureRoundExpandedForMessage,
         ensureSuperGroupExpandedForMessage,
         estimateScrollToMessage,
@@ -4776,6 +4895,14 @@ export const TranscriptPanel = memo(
       if (!pendingFocusTarget) return
       ensureRoundExpandedForMessage(pendingFocusTarget.messageId)
       if (
+        ensureBlackboardStackExpandedForMessage(
+          pendingFocusTarget.messageId,
+          pendingFocusTarget.rowKey
+        )
+      ) {
+        return
+      }
+      if (
         ensureSuperGroupExpandedForMessage(
           pendingFocusTarget.messageId,
           pendingFocusTarget.rowKey
@@ -4814,6 +4941,7 @@ export const TranscriptPanel = memo(
       })
       return () => window.cancelAnimationFrame(frame)
     }, [
+      ensureBlackboardStackExpandedForMessage,
       ensureRoundExpandedForMessage,
       ensureSuperGroupExpandedForMessage,
       estimateScrollToMessage,
@@ -4929,6 +5057,25 @@ export const TranscriptPanel = memo(
               msg.metadata?.autoApprovalsChange
             )
             const isBlackboardChange = Boolean(resolveBlackboardChangePresentation(msg))
+            const blackboardUpdateStackInfo = blackboardUpdateStackByRowKey.get(rowKey) || null
+            const isBlackboardUpdateStackLead = Boolean(
+              blackboardUpdateStackInfo?.leadRowKey === rowKey
+            )
+            const blackboardUpdateStackHidden = Boolean(
+              blackboardUpdateStackInfo && !isBlackboardUpdateStackLead
+            )
+            const blackboardUpdateStackExpanded = Boolean(
+              blackboardUpdateStackInfo &&
+                expandedBlackboardUpdateStacks.has(blackboardUpdateStackInfo.stateKey)
+            )
+            const blackboardStackKey = blackboardUpdateStackInfo
+              ? [
+                  blackboardUpdateStackInfo.stateKey,
+                  blackboardUpdateStackInfo.stack.messages.length,
+                  blackboardUpdateStackExpanded ? 'open' : 'closed',
+                  isBlackboardUpdateStackLead ? 'lead' : 'member'
+                ].join(':')
+              : ''
             const isFanoutDispatch = isEnsembleFanoutDispatchPayload(
               msg.metadata?.ensembleFanoutDispatch
             )
@@ -5373,6 +5520,7 @@ export const TranscriptPanel = memo(
               liveViewportExpandedKey,
               collapsedStackKey,
               superGroupKey,
+              blackboardStackKey,
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
               agentQuestionTombstoneKey: agentQuestionTombstoneKey(
@@ -5417,6 +5565,7 @@ export const TranscriptPanel = memo(
                 setLiveViewportExpandedForStack,
                 setCollapsedStackExpanded,
                 setSuperGroupExpanded,
+                setBlackboardUpdateStackExpanded,
                 toggleUserMessageExpanded,
                 setRoundExpanded
               ]
@@ -5439,6 +5588,8 @@ export const TranscriptPanel = memo(
                   // member count. CSS zeroes it per rendering mode.
                   superGroupHidden ? ' is-super-hidden' : ''
                 }${questionReplyHidden ? ' is-row-hidden' : ''}${
+                  blackboardUpdateStackHidden ? ' is-row-hidden' : ''
+                }${
                   // Fold-out phase: member stays mounted while CSS transitions
                   // its height to 0; the hidden state commits ~300ms later on
                   // an already-invisible row.
@@ -5463,7 +5614,9 @@ export const TranscriptPanel = memo(
                 onFocus={() => onMessageSelectionCandidate?.(msg)}
                 ref={virtualizeEnabled ? virtualBlockRef : undefined}
               >
-                {superGroupHidden || questionReplyHidden ? null : (
+                {superGroupHidden ||
+                questionReplyHidden ||
+                blackboardUpdateStackHidden ? null : (
                   <>
                     {isSuperLead && superGroup && superSummary ? (
                       <CollapsedTranscriptRow
@@ -5883,7 +6036,29 @@ export const TranscriptPanel = memo(
                 ) : isAutoApprovalsChange ? (
                   <AutoApprovalsChangeRow key={msg.id} message={msg} />
                 ) : isBlackboardChange ? (
-                  <BlackboardChangeRow key={msg.id} message={msg} />
+                  <BlackboardChangeRow
+                    key={msg.id}
+                    message={msg}
+                    stackMessages={
+                      isBlackboardUpdateStackLead
+                        ? blackboardUpdateStackInfo?.stack.messages
+                        : undefined
+                    }
+                    expanded={
+                      isBlackboardUpdateStackLead
+                        ? blackboardUpdateStackExpanded
+                        : undefined
+                    }
+                    onExpandedChange={
+                      isBlackboardUpdateStackLead && blackboardUpdateStackInfo
+                        ? (expanded) =>
+                            setBlackboardUpdateStackExpanded(
+                              blackboardUpdateStackInfo.stateKey,
+                              expanded
+                            )
+                        : undefined
+                    }
+                  />
                 ) : isFanoutDispatch ? (
                   <EnsembleFanoutDispatchRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
@@ -6705,7 +6880,9 @@ export const TranscriptPanel = memo(
                 )}
                   </>
                 )}
-                {superGroupHidden || questionReplyHidden ? null : (
+                {superGroupHidden ||
+                questionReplyHidden ||
+                blackboardUpdateStackHidden ? null : (
                 <TranscriptMessageFooter
                   message={msg}
                   label={footerLabel}
