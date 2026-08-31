@@ -45,6 +45,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
     permissionService: {
       applyApprovalDecision: ReturnType<typeof vi.fn>
       isApprovedAction: ReturnType<typeof vi.fn>
+      recordCanvasEvalWindowGrant: ReturnType<typeof vi.fn>
     }
     appendDurableRunEventForRoute: ReturnType<typeof vi.fn>
     resolveApprovalLedger: ReturnType<typeof vi.fn>
