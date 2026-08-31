@@ -228,9 +228,11 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'window',
   'chart'
 ])
-// Defence-in-depth cap so a hijacked agent (or a session-granted approval)
-// cannot machine-gun clicks/fills against a live app. Per live session.
-const MAX_INTERACTIONS_PER_SESSION = 200
+// Defence-in-depth ceiling: a hijacked agent (or a session-granted approval)
+// still cannot drive an UNBOUNDED click/fill loop against a live app. Per live
+// session. Raised 200 -> 8000 (lead-dev authorised) for long, high-throughput
+// interactive canvas sessions.
+const MAX_INTERACTIONS_PER_SESSION = 8000
 // Eval is RCE and human-approved per call, but cap it anyway so a compromised
 // approve-loop can't run unbounded scripts. Separate, tighter budget.
 const MAX_EVALS_PER_SESSION = 50
