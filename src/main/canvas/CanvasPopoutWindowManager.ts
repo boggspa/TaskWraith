@@ -6,11 +6,11 @@
  * one-window-per-chat reuse, sender authority, focus, and close-vs-dock intent.
  */
 
-export type CanvasPopoutSurface = 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+export type CanvasPopoutSurface = 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
 
 export interface CanvasPopoutSessionSeed {
   canvasId: string
-  kind: 'web' | 'sketch'
+  kind: 'web' | 'sketch' | 'emulator'
   url?: string
   title?: string
 }
@@ -18,6 +18,11 @@ export interface CanvasPopoutSessionSeed {
 export interface CanvasPopoutOpenInput {
   chatId: string
   surface: CanvasPopoutSurface
+  /**
+   * The generic window registry is not an authority boundary. CanvasPopoutIpc
+   * requires a matching live emulator session before it may call `open` with
+   * surface `emulator`; dock-return parsing intentionally has no session.
+   */
   session?: CanvasPopoutSessionSeed
 }
 

@@ -491,6 +491,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // Embedded/dock transfer channels are secondary-safe above because their
   // handlers bind both the chat and exact renderer-owned WebContentsView.
   'canvas:open-window',
+  // Fixed emulator startup is a primary human presentation action; pop-outs
+  // may transfer an existing surface but cannot create a new emulator session.
+  'canvas:open-emulator-embedded',
   'canvas:open-sketch-window',
   'canvas:clear-browser-profile',
   // Simulator control can install a local companion, so only the primary

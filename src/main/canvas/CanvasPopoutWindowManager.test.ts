@@ -111,6 +111,22 @@ describe('CanvasPopoutWindowManager', () => {
     ])
   })
 
+  it('delivers a fixed emulator session to the existing chat pop-out without recreating a window', async () => {
+    const { manager, windows, loaded } = harness()
+    await manager.open({ chatId: 'chat-a', surface: 'mesh' })
+    const seed = { canvasId: 'canvas-emulator-a', kind: 'emulator' as const }
+
+    const result = await manager.open({ chatId: 'chat-a', surface: 'emulator', session: seed })
+
+    expect(result).toEqual({ senderId: 11, created: false })
+    expect(windows).toHaveLength(1)
+    expect(loaded).toEqual([{ chatId: 'chat-a', surface: 'mesh' }])
+    expect(windows[0].sent).toContainEqual([
+      'canvas-popout-open-surface',
+      { chatId: 'chat-a', surface: 'emulator', session: seed }
+    ])
+  })
+
   it('distinguishes ordinary close from a return-to-dock close', async () => {
     const { manager, windows, closed } = harness()
     const first = await manager.open({ chatId: 'chat-a', surface: 'simulator' })

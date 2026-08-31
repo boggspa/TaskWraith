@@ -9,7 +9,14 @@ import {
   CanvasPopoutWindowManager
 } from './CanvasPopoutWindowManager'
 
-const SURFACES = new Set<CanvasPopoutSurface>(['browser', 'sketch', 'mesh', 'simulator', 'media'])
+const SURFACES = new Set<CanvasPopoutSurface>([
+  'browser',
+  'sketch',
+  'emulator',
+  'mesh',
+  'simulator',
+  'media'
+])
 
 export interface CanvasPopoutIpcDeps {
   windows: Pick<CanvasPopoutWindowManager, 'open' | 'ownerForSender' | 'closeForDock'>
@@ -36,7 +43,10 @@ function parseSession(value: unknown): CanvasPopoutSessionSeed | undefined {
     throw new Error('Canvas pop-out session is invalid.')
   }
   const record = value as Record<string, unknown>
-  const kind = record.kind === 'web' || record.kind === 'sketch' ? record.kind : null
+  const kind =
+    record.kind === 'web' || record.kind === 'sketch' || record.kind === 'emulator'
+      ? record.kind
+      : null
   if (!kind) throw new Error('Canvas pop-out session kind is invalid.')
   return {
     canvasId: requiredString(record.canvasId, 'canvas id'),
@@ -46,7 +56,10 @@ function parseSession(value: unknown): CanvasPopoutSessionSeed | undefined {
   }
 }
 
-function parseOpen(value: unknown): CanvasPopoutOpenInput {
+function parseOpen(
+  value: unknown,
+  options: { requireEmulatorSession?: boolean } = {}
+): CanvasPopoutOpenInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Canvas pop-out request is invalid.')
   }
@@ -57,8 +70,19 @@ function parseOpen(value: unknown): CanvasPopoutOpenInput {
     : null
   if (!surface) throw new Error('Canvas pop-out surface is invalid.')
   const session = parseSession(record.session)
-  if (session && surface !== (session.kind === 'web' ? 'browser' : 'sketch')) {
+  const expectedSurface =
+    session?.kind === 'web'
+      ? 'browser'
+      : session?.kind === 'sketch'
+        ? 'sketch'
+        : session?.kind === 'emulator'
+          ? 'emulator'
+          : undefined
+  if (session && surface !== expectedSurface) {
     throw new Error('Canvas pop-out surface does not match its live session.')
+  }
+  if (options.requireEmulatorSession && surface === 'emulator' && !session) {
+    throw new Error('Emulator pop-out requires its matching live session.')
   }
   return { chatId, surface, ...(session ? { session } : {}) }
 }
@@ -66,7 +90,7 @@ function parseOpen(value: unknown): CanvasPopoutOpenInput {
 export function registerCanvasPopoutIpc(ipcMain: IpcMain, deps: CanvasPopoutIpcDeps): void {
   ipcMain.handle('canvas:open-popout', async (event, raw: unknown) => {
     try {
-      const input = parseOpen(raw)
+      const input = parseOpen(raw, { requireEmulatorSession: true })
       const context = deps.resolveContext(event, input.chatId)
       const sourceSenderId = event.sender.id
       const result = await deps.windows.open(input, (destinationSenderId) => {
@@ -76,7 +100,8 @@ export function registerCanvasPopoutIpc(ipcMain: IpcMain, deps: CanvasPopoutIpcD
           fromSenderId: sourceSenderId,
           toSenderId: destinationSenderId,
           context,
-          toSurfaceHostId: destinationSenderId
+          toSurfaceHostId: destinationSenderId,
+          expectedDriver: input.session.kind
         })
       })
       return { ok: true, ...result }
@@ -102,6 +127,7 @@ export function registerCanvasPopoutIpc(ipcMain: IpcMain, deps: CanvasPopoutIpcD
             canvasIds,
             fromSenderId: event.sender.id,
             toSenderId: mainSenderId,
+            toSurfaceHostId: mainSenderId,
             context,
             presentation: 'dock'
           })

@@ -422,13 +422,42 @@ describe('CanvasService', () => {
     expect(fake.closeCalls).toBe(1)
   })
 
+  it('opens a fixed human renderer emulator in Thread Home or the inspector dock without run authority', async () => {
+    const human = { chatId: 'chat-a', surfaceHostId: 42 }
+    const threadHome = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true },
+      human
+    )
+    expect(service.status(threadHome.canvasId, human)).toMatchObject({ driver: 'emulator' })
+    expect(service.status(threadHome.canvasId, human)).not.toHaveProperty('presentation')
+    expect(
+      service.resolveEmulatorSurface(threadHome.canvasId, { chatId: 'chat-a', runId: 'run-a' })
+    ).toBe('missing')
+    expect(store.getSession(threadHome.canvasId)?.runId).toBeUndefined()
+
+    const dock = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      human
+    )
+    expect(service.status(dock.canvasId, human)).toMatchObject({
+      driver: 'emulator',
+      presentation: 'dock'
+    })
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42,
+      gameId: 'homebrew-demo'
+    })
+  })
+
   it('refuses emulator URL, floating, and unpinned-game opens before creating a driver', async () => {
     await expect(
       service.open(
         { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
         { chatId: 'chat-a' }
       )
-    ).rejects.toThrow(/canonical chat and run/i)
+    ).rejects.toThrow(/authority/i)
     await expect(
       service.open(
         { driver: 'emulator', gameId: 'homebrew-demo' },

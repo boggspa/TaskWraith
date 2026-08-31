@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { CanvasCallContext } from './canvasTypes'
 import { registerCanvasEmbedIpc } from './CanvasEmbedIpc'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
@@ -21,6 +22,7 @@ function fakeIpc() {
 function fakeDeps() {
   const calls: Array<[string, unknown[]]> = []
   let openCanvasId = 'c1'
+  let statusDriver: 'web' | 'sketch' | 'emulator' = 'web'
   const controller = {
     open: async (input: unknown, ctx: unknown) => {
       calls.push(['open', [input, ctx]])
@@ -54,7 +56,7 @@ function fakeDeps() {
       calls.push(['status', [ctx]])
       return {
         canvasId: 'c1',
-        driver: 'web',
+        driver: statusDriver,
         url: 'http://localhost:3000/',
         title: 'T',
         status: 'active',
@@ -92,10 +94,12 @@ function fakeDeps() {
     reparent: (id: string, hostId?: number) => calls.push(['reparent', [id, hostId]]),
     detach: (id: string) => calls.push(['detach', [id]])
   } as unknown as Parameters<typeof registerCanvasEmbedIpc>[1]['embed']
-  const resolveContext = vi.fn((_event: unknown, chatId: string) => ({
-    chatId,
-    workspacePath: '/workspace/a'
-  }))
+  const resolveContext = vi.fn(
+    (_event: unknown, chatId: string): CanvasCallContext => ({
+      chatId,
+      workspacePath: '/workspace/a'
+    })
+  )
   const clearBrowserProfile = vi.fn(async () => ({
     closedCanvasIds: ['c1'],
     closedSurfaceCount: 1
@@ -108,6 +112,9 @@ function fakeDeps() {
     calls,
     setOpenCanvasId: (canvasId: string) => {
       openCanvasId = canvasId
+    },
+    setStatusDriver: (driver: 'web' | 'sketch' | 'emulator') => {
+      statusDriver = driver
     }
   }
 }
@@ -119,6 +126,7 @@ describe('registerCanvasEmbedIpc', () => {
     for (const channel of [
       'canvas:open-window',
       'canvas:open-embedded',
+      'canvas:open-emulator-embedded',
       'canvas:open-sketch-window',
       'canvas:open-sketch-embedded',
       'canvas:adopt-embedded',
@@ -298,6 +306,88 @@ describe('registerCanvasEmbedIpc', () => {
         presentation: 'dock'
       },
       { chatId: 'chat-a', workspacePath: '/workspace/a' }
+    ])
+  })
+
+  it('opens only the fixed renderer-owned emulator in Thread Home or the inspector dock', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    deps.resolveContext.mockImplementation((_event, chatId) => ({
+      chatId,
+      workspacePath: '/workspace/a',
+      surfaceHostId: 1
+    }))
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    const home = await ipc.invoke('canvas:open-emulator-embedded', { chatId: 'chat-a' })
+    expect(home).toMatchObject({ ok: true, canvasId: 'c1' })
+    expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true },
+      { chatId: 'chat-a', workspacePath: '/workspace/a', surfaceHostId: 1 }
+    ])
+
+    deps.calls.splice(0)
+    deps.setOpenCanvasId('c2')
+    const dock = await ipc.invoke('canvas:open-emulator-embedded', {
+      chatId: 'chat-a',
+      presentation: 'dock'
+    })
+    expect(dock).toMatchObject({ ok: true, canvasId: 'c2' })
+    expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      { chatId: 'chat-a', workspacePath: '/workspace/a', surfaceHostId: 1 }
+    ])
+  })
+
+  it('rejects emulator URL/game/driver fields and non-renderer authority before opening', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    deps.resolveContext.mockImplementation((_event, chatId) => ({
+      chatId,
+      workspacePath: '/workspace/a',
+      surfaceHostId: 1
+    }))
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    for (const args of [
+      { chatId: 'chat-a', url: 'https://example.test' },
+      { chatId: 'chat-a', gameId: 'other-rom' },
+      { chatId: 'chat-a', driver: 'web' },
+      { chatId: 'chat-a', presentation: 'window' }
+    ]) {
+      await expect(ipc.invoke('canvas:open-emulator-embedded', args)).resolves.toMatchObject({
+        ok: false
+      })
+    }
+    expect(deps.calls.filter((call) => call[0] === 'open')).toHaveLength(0)
+
+    deps.resolveContext.mockReturnValue({
+      chatId: 'chat-a',
+      workspacePath: '/workspace/a',
+      surfaceHostId: 1,
+      runId: 'run-a'
+    })
+    await expect(
+      ipc.invoke('canvas:open-emulator-embedded', { chatId: 'chat-a' })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/renderer-only/) })
+  })
+
+  it('keeps a human-opened emulator bound to its renderer for close', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    deps.resolveContext.mockImplementation((_event, chatId) => ({
+      chatId,
+      workspacePath: '/workspace/a',
+      surfaceHostId: 1
+    }))
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-emulator-embedded', { chatId: 'chat-a' })
+
+    await expect(ipc.invokeAs(2, 'canvas:close', 'c1')).rejects.toThrow(/does not own/i)
+    await expect(ipc.invoke('canvas:close', 'c1')).resolves.toBeUndefined()
+    expect(deps.calls.find((call) => call[0] === 'close')?.[1]).toEqual([
+      'c1',
+      { chatId: 'chat-a', workspacePath: '/workspace/a', surfaceHostId: 1 }
     ])
   })
 
@@ -538,6 +628,47 @@ describe('registerCanvasEmbedIpc', () => {
     expect(() => ipc.invoke('canvas:set-visible', 'c1', true)).toThrow(/does not own/)
     expect(await ipc.invokeAs(2, 'canvas:list')).toEqual([
       expect.objectContaining({ canvasId: 'c1' })
+    ])
+  })
+
+  it('rejects a renderer-supplied pop-out kind before moving an owned live view', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    const authority = registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', {
+      url: 'http://localhost:3000',
+      chatId: 'chat-a'
+    })
+
+    expect(() =>
+      authority.transferRenderer({
+        canvasIds: ['c1'],
+        fromSenderId: 1,
+        toSenderId: 2,
+        context: { chatId: 'chat-a', workspacePath: '/workspace/a' },
+        toSurfaceHostId: 2,
+        expectedDriver: 'emulator'
+      })
+    ).toThrow(/does not match the live surface kind/)
+    expect(deps.calls.some((call) => call[0] === 'reparent')).toBe(false)
+    expect(authority.ownedCanvasIds(1)).toEqual(['c1'])
+    expect(authority.ownedCanvasIds(2)).toEqual([])
+
+    expect(
+      authority.transferRenderer({
+        canvasIds: ['c1'],
+        fromSenderId: 1,
+        toSenderId: 2,
+        context: { chatId: 'chat-a', workspacePath: '/workspace/a' },
+        toSurfaceHostId: 2,
+        expectedDriver: 'web'
+      })
+    ).toEqual([expect.objectContaining({ canvasId: 'c1', driver: 'web' })])
+    expect(deps.calls).toContainEqual(['reparent', ['c1', 2]])
+    await expect(authority.closeRenderer(2)).resolves.toEqual(['c1'])
+    expect(deps.calls).toContainEqual([
+      'close',
+      ['c1', { chatId: 'chat-a', workspacePath: '/workspace/a', surfaceHostId: 2 }]
     ])
   })
 

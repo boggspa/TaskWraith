@@ -52,6 +52,7 @@ describe('RendererIpcPolicy', () => {
     'attach-window:pick',
     'attach-window:control-session',
     'canvas:open-window',
+    'canvas:open-emulator-embedded',
     'canvas:clear-browser-profile',
     'simulator-control:setup',
     'projects:list-reference-proposals',
@@ -277,9 +278,15 @@ describe('RendererIpcPolicy', () => {
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(false)
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:clear-browser-profile')).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:open-emulator-embedded')).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has('canvas:open-emulator-embedded')).toBe(false)
     expect(preload).toContain("ipcRenderer.invoke('canvas:adopt-embedded', args)")
+    expect(preload).toContain("ipcRenderer.invoke('canvas:open-emulator-embedded', args)")
     expect(preload).toContain("ipcRenderer.invoke('canvas:clear-browser-profile')")
     expect(preloadTypes).toContain('adoptEmbedded: (args: { chatId: string; canvasId: string })')
+    expect(preloadTypes).toContain(
+      "openEmulatorEmbedded: (args: { chatId: string; presentation?: 'dock' })"
+    )
     expect(preloadTypes).toContain('clearBrowserProfile: () => Promise<')
   })
 

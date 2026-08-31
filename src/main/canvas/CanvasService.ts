@@ -662,6 +662,8 @@ export class CanvasService
     // and therefore remain exact chat+run bound below.
     if (
       record.driver === 'emulator' &&
+      ctx.runId === undefined &&
+      ctx.provider === undefined &&
       typeof surfaceHostId === 'number' &&
       Number.isSafeInteger(surfaceHostId) &&
       surfaceHostId > 0
@@ -849,13 +851,31 @@ export class CanvasService
       recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
       eventHost = undefined
     } else if (driverKind === 'emulator') {
-      if (!canonicalAuthority(ctx.chatId) || !canonicalAuthority(ctx.runId)) {
-        throw new Error('The emulator driver requires canonical chat and run authority.')
-      }
-      if (input.embed !== true || input.presentation !== 'dock') {
+      const chatId = canonicalAuthority(ctx.chatId)
+      const runId = canonicalAuthority(ctx.runId)
+      const trustedRenderer =
+        Boolean(chatId) &&
+        ctx.runId === undefined &&
+        ctx.provider === undefined &&
+        typeof ctx.surfaceHostId === 'number' &&
+        Number.isSafeInteger(ctx.surfaceHostId) &&
+        ctx.surfaceHostId > 0
+      const agentRun = Boolean(chatId && runId)
+      if (!agentRun && !trustedRenderer) {
         throw new Error(
-          'The emulator driver is available only as an embedded Canvas dock presentation.'
+          'The emulator driver requires canonical agent or trusted renderer authority.'
         )
+      }
+      if (input.embed !== true) {
+        throw new Error(
+          'The emulator driver is available only as an embedded Canvas dock or Thread Home presentation.'
+        )
+      }
+      if (agentRun && input.presentation !== 'dock') {
+        throw new Error('Agent emulator surfaces require the Canvas dock presentation.')
+      }
+      if (trustedRenderer && input.presentation !== undefined && input.presentation !== 'dock') {
+        throw new Error('Human emulator presentation must be Thread Home or dock.')
       }
       if (input.url !== undefined) {
         throw new Error('The emulator driver never accepts a URL.')

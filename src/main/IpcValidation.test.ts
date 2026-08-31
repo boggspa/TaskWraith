@@ -320,6 +320,9 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('canvas:open-sketch-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-emulator-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
+    ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
     expect(() =>
       validateIpcArgs('canvas:open-popout', [
@@ -362,6 +365,16 @@ describe('IpcValidation', () => {
         { url: 'https://x.test', chatId: 'chat-1', presentation: 'window' }
       ])
     ).toThrow(/presentation must be dock/)
+    for (const payload of [
+      { chatId: 'chat-1', url: 'https://x.test' },
+      { chatId: 'chat-1', gameId: 'other-rom' },
+      { chatId: 'chat-1', driver: 'web' },
+      { chatId: 'chat-1', presentation: 'window' }
+    ]) {
+      expect(() => validateIpcArgs('canvas:open-emulator-embedded', [payload])).toThrow(
+        /unknown field|presentation must be dock/
+      )
+    }
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: '1', y: 2, width: 800, height: 600 }])
     ).toThrow(/bounds.x must be a finite number/)

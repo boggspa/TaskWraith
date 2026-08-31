@@ -1409,6 +1409,19 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
+    openEmulatorEmbedded: (args: {
+      chatId: string
+      presentation?: 'dock'
+    }): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-emulator-embedded', args),
     adoptEmbedded: (args: { chatId: string; canvasId: string }): Promise<unknown> =>
       ipcRenderer.invoke('canvas:adopt-embedded', args),
     openSketchWindow: (args: {
@@ -1438,10 +1451,10 @@ const api = {
     > => ipcRenderer.invoke('canvas:open-sketch-embedded', args),
     openPopout: (args: {
       chatId: string
-      surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+      surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
       session?: {
         canvasId: string
-        kind: 'web' | 'sketch'
+        kind: 'web' | 'sketch' | 'emulator'
         url?: string
         title?: string
       }
@@ -1449,7 +1462,7 @@ const api = {
       ipcRenderer.invoke('canvas:open-popout', args),
     dockPopout: (args: {
       chatId: string
-      surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+      surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
     }): Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }> =>
       ipcRenderer.invoke('canvas:dock-popout', args),
     // Chat-scoped list/close for the right-dock Canvas panel: covers agent-opened
@@ -1510,10 +1523,10 @@ const api = {
     onPopoutOpenSurface: (
       handler: (payload: {
         chatId: string
-        surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+        surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
         session?: {
           canvasId: string
-          kind: 'web' | 'sketch'
+          kind: 'web' | 'sketch' | 'emulator'
           url?: string
           title?: string
         }
@@ -1526,7 +1539,7 @@ const api = {
     onPopoutDockRequest: (
       handler: (payload: {
         chatId: string
-        surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+        surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
         canvases: unknown[]
       }) => void
     ) => {

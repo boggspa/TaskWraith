@@ -1544,6 +1544,16 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        openEmulatorEmbedded: (args: { chatId: string; presentation?: 'dock' }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
         adoptEmbedded: (args: { chatId: string; canvasId: string }) => Promise<
           | {
               ok: true
@@ -1582,10 +1592,10 @@ declare global {
         >
         openPopout: (args: {
           chatId: string
-          surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+          surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
           session?: {
             canvasId: string
-            kind: 'web' | 'sketch'
+            kind: 'web' | 'sketch' | 'emulator'
             url?: string
             title?: string
           }
@@ -1594,7 +1604,7 @@ declare global {
         >
         dockPopout: (args: {
           chatId: string
-          surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+          surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
         }) => Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }>
         listForChat: (chatId: string) => Promise<unknown[]>
         /**
@@ -1633,10 +1643,10 @@ declare global {
         onPopoutOpenSurface: (
           handler: (payload: {
             chatId: string
-            surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+            surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
             session?: {
               canvasId: string
-              kind: 'web' | 'sketch'
+              kind: 'web' | 'sketch' | 'emulator'
               url?: string
               title?: string
             }
@@ -1645,7 +1655,7 @@ declare global {
         onPopoutDockRequest: (
           handler: (payload: {
             chatId: string
-            surface: 'browser' | 'sketch' | 'mesh' | 'simulator' | 'media'
+            surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
             canvases: unknown[]
           }) => void
         ) => () => void

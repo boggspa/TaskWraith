@@ -40,6 +40,8 @@ export interface CanvasEmbedIpcAuthority {
     context: CanvasCallContext
     toSurfaceHostId?: number
     presentation?: 'dock'
+    /** Optional main-bound driver assertion before a live view is reparented. */
+    expectedDriver?: 'web' | 'sketch' | 'emulator'
   }) => CanvasSessionSummary[]
   /** Close every embedded Canvas still owned by a renderer window. */
   closeRenderer: (senderId: number) => Promise<string[]>
@@ -55,6 +57,7 @@ type OpenArgs =
     }
   | undefined
 type OpenSketchArgs = { chatId?: string; presentation?: 'dock' } | undefined
+type OpenEmulatorArgs = { chatId?: string; presentation?: 'dock' } | undefined
 type AdoptEmbeddedArgs = { chatId?: string; canvasId?: string } | undefined
 type OpenCanvasResult =
   | {
@@ -183,8 +186,72 @@ export function registerCanvasEmbedIpc(
     }
   }
 
+  const openEmulatorCanvas = async (
+    event: IpcMainInvokeEvent,
+    args: OpenEmulatorArgs
+  ): Promise<OpenCanvasResult> => {
+    let context: CanvasCallContext | undefined
+    let openedCanvasId: string | undefined
+    try {
+      if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        throw new Error('Emulator open requires an exact chat-scoped object.')
+      }
+      const keys = Object.keys(args)
+      if (keys.some((key) => key !== 'chatId' && key !== 'presentation')) {
+        throw new Error('Emulator open accepts only chatId and optional dock presentation.')
+      }
+      if (args.presentation !== undefined && args.presentation !== 'dock') {
+        throw new Error('Emulator presentation must be dock when provided.')
+      }
+      context = deps.resolveContext(event, requiredChatId(args.chatId))
+      if (
+        context.runId !== undefined ||
+        context.provider !== undefined ||
+        typeof context.surfaceHostId !== 'number' ||
+        !Number.isSafeInteger(context.surfaceHostId) ||
+        context.surfaceHostId <= 0
+      ) {
+        throw new Error('Emulator open requires trusted renderer-only authority.')
+      }
+      const opened = await deps.controller.open(
+        {
+          driver: 'emulator',
+          gameId: 'homebrew-demo',
+          embed: true,
+          ...(args.presentation === 'dock' ? { presentation: 'dock' as const } : {})
+        },
+        context
+      )
+      openedCanvasId = opened.canvasId
+      const current = deps.resolveContext(event, context.chatId || '')
+      if (!sameAuthority(current, context)) throw new Error('Canvas chat authority changed.')
+      owned.set(opened.canvasId, { context, senderId: senderId(event) })
+      return {
+        ok: true,
+        canvasId: opened.canvasId,
+        url: opened.url,
+        title: opened.title,
+        viewport: opened.viewport
+      }
+    } catch (err) {
+      if (openedCanvasId && context) {
+        try {
+          await deps.controller.close(openedCanvasId, context)
+        } catch {
+          // Scoped clear may already have retired the session.
+        } finally {
+          deps.embed.detach(openedCanvasId)
+        }
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   ipcMain.handle('canvas:open-window', (event, args: OpenArgs) => openCanvas(event, args, false))
   ipcMain.handle('canvas:open-embedded', (event, args: OpenArgs) => openCanvas(event, args, true))
+  ipcMain.handle('canvas:open-emulator-embedded', (event, args: OpenEmulatorArgs) =>
+    openEmulatorCanvas(event, args)
+  )
   ipcMain.handle('canvas:open-sketch-window', (event, args: OpenSketchArgs) =>
     openSketchCanvas(event, args, false)
   )
@@ -408,6 +475,9 @@ export function registerCanvasEmbedIpc(
         const summary = deps.controller.status(canvasId, entry.context)
         if (!summary || summary.status === 'closed') {
           throw new Error('Canvas is no longer active.')
+        }
+        if (input.expectedDriver !== undefined && summary.driver !== input.expectedDriver) {
+          throw new Error('Canvas pop-out session does not match the live surface kind.')
         }
         return { canvasId, entry, summary, previousHostId: entry.context.surfaceHostId }
       })
