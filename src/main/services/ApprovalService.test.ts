@@ -90,7 +90,8 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
       ),
       isApprovedAction: vi.fn(
         (action: string) => action === 'accept' || action === 'acceptForSession'
-      )
+      ),
+      recordCanvasEvalWindowGrant: vi.fn()
     },
     appendDurableRunEventForRoute: vi.fn(),
     resolveApprovalLedger: vi.fn(),
@@ -1192,6 +1193,45 @@ describe('ApprovalService — resolve dispatch', () => {
       resume.mock.invocationCallOrder[0]
     )
     expect(svc.has('canvas-strict-1')).toBe(false)
+  })
+
+  it('opens the 12h per-canvas eval window on a desktop accept of a Codex canvas_eval', async () => {
+    const resolveStrict = vi.fn()
+    const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('codex-eval-window', {
+      rpcId: 7,
+      method: 'item/permissions/requestApproval',
+      params: { toolName: 'canvas_eval', script: 'x', canvasId: 'canvas-Z' },
+      service: 'canvasEval',
+      surfaceId: 'canvas-Z',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    expect(await svc.resolve('codex-eval-window', 'accept')).toBe(true)
+    // The human accept opens the per-canvas window for exactly that surface —
+    // Codex reaches parity with the Gemini/Claude gate.
+    expect(spies.permissionService.recordCanvasEvalWindowGrant).toHaveBeenCalledWith(
+      'canvas-Z',
+      expect.any(Number)
+    )
+  })
+
+  it('does NOT open the window when a Codex canvas_eval is declined', async () => {
+    const resolveStrict = vi.fn()
+    const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('codex-eval-decline', {
+      rpcId: 8,
+      method: 'item/permissions/requestApproval',
+      params: { toolName: 'canvas_eval', canvasId: 'canvas-Z' },
+      service: 'canvasEval',
+      surfaceId: 'canvas-Z',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    await svc.resolve('codex-eval-decline', 'decline')
+    expect(spies.permissionService.recordCanvasEvalWindowGrant).not.toHaveBeenCalled()
   })
 
   it.each([

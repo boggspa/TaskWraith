@@ -31490,6 +31490,55 @@ async function settleCodexNativeApprovalRequest(
       return 'ok'
     }
 
+    // 12h per-canvas eval window (parity with ApprovalOrchestration for the
+    // native Codex gate): once the human has accepted canvas_eval on THIS exact
+    // canvas, auto-approve for 12h without re-prompting. The script-bound receipt
+    // was still minted above, so execution stays audited + single-use; only the
+    // human prompt is skipped, and the window hard-expires 12h after the accept.
+    const codexCanvasEvalWindowSurface =
+      gateService === 'canvasEval' && typeof params?.canvasId === 'string'
+        ? params.canvasId.trim() || undefined
+        : undefined
+    if (
+      gateService === 'canvasEval' &&
+      codexCanvasEvalApproval &&
+      codexCanvasEvalWindowSurface &&
+      permissionService.hasLiveCanvasEvalWindowGrant(codexCanvasEvalWindowSurface, Date.now())
+    ) {
+      auditService.recordAutomaticApprovalDecision(
+        'codex',
+        { appRunId: state.appRunId, appChatId: state.appChatId },
+        gateService,
+        workspacePathForCodexApproval,
+        {
+          method,
+          title: codexApprovalTitle,
+          body: codexApprovalBody,
+          preview: codexApprovalPreview
+        },
+        'autoAllow',
+        'canvas_eval_window',
+        'session',
+        {
+          policy,
+          ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+        }
+      )
+      if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+        respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      } else if (method === 'item/permissions/requestApproval') {
+        respondingClient.respond(message.id, {
+          permissions: params?.permissions || {},
+          scope: 'turn'
+        })
+      } else if (method === 'tool/requestUserInput') {
+        respondingClient.respond(message.id, { answers: {} })
+      } else {
+        respondingClient.respond(message.id, { decision: 'accept' })
+      }
+      return 'ok'
+    }
+
     formatted.preview = codexApprovalPreview
 
     const registered = approvalService?.registerCodex(approvalId, {
@@ -31501,6 +31550,7 @@ async function settleCodexNativeApprovalRequest(
       runId: state.appRunId,
       allowedActions: actions,
       externalPathDetection,
+      ...(codexCanvasEvalWindowSurface ? { surfaceId: codexCanvasEvalWindowSurface } : {}),
       // Deferred PostToolUse: skip Post at registration; resolve fires ok/deny.
       ...(isCodexProviderNativeHostHook && hostHookToolName
         ? { hostHookToolName }

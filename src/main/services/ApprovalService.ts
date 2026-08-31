@@ -158,6 +158,13 @@ export interface PendingCodexApproval {
   runId?: string
   allowedActions?: AgentApprovalAction[]
   /**
+   * Target surface for a canvas tool (the canvasId). Codex does not pass a
+   * surfaceId through applyApprovalDecision the way the Gemini/Claude path does,
+   * so it is carried here to open the per-canvas canvas_eval approval window on
+   * a human accept (canvas_eval 12h window — Codex native-gate parity).
+   */
+  surfaceId?: string
+  /**
    * Provider-native Codex tool name for deferred PostToolUse. Set only when
    * PreToolUse already ran at registration and Post was skipped because the
    * ask path returned `deferred`; `resolve` fires Post with ok/deny.
@@ -1305,6 +1312,18 @@ export class ApprovalService {
     })
     this.pendingCodex.delete(requestId)
     this.deps.runManager.clearApproval(requestId)
+
+    // 12h per-canvas eval window: a human accept of a Codex canvas_eval opens the
+    // window for that exact canvas. Codex does not thread surfaceId through
+    // applyApprovalDecision (as the Gemini/Claude path does), so record it here
+    // from the pending record's stored surface. Only real accepts open it.
+    if (
+      pending.service === 'canvasEval' &&
+      pending.surfaceId &&
+      this.deps.permissionService.isApprovedAction(action)
+    ) {
+      this.deps.permissionService.recordCanvasEvalWindowGrant(pending.surfaceId, Date.now())
+    }
 
     const deferredHostHookTool =
       typeof pending.hostHookToolName === 'string' ? pending.hostHookToolName.trim() : ''
