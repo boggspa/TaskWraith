@@ -45,6 +45,10 @@ import {
 } from './lib/chatUpdateRenderUrgency'
 import { writeComposerDrafts } from './lib/composerDraftStore'
 import {
+  beginComposerDraftSubmission,
+  isAcceptedEnsembleSteerResult
+} from './lib/composerDraftSubmission'
+import {
   composerDraftState,
   useComposerDraftChatIds
 } from './hooks/useComposerDraft'
@@ -17855,8 +17859,22 @@ function App(): React.JSX.Element {
         targetChat.ensemble?.concurrentModeEnabled
       )
       ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
+      // Main acknowledges only after the accepted steer is durably persisted.
+      // The transcript can therefore show the routed message while this await
+      // is still pending. Consume the exact draft now, with edit-aware rollback
+      // if the IPC ultimately rejects, so that durability latency never makes
+      // a successful steer look unsent or lets a late reply erase new typing.
+      const draftSubmission = request.existingPrompt
+        ? null
+        : beginComposerDraftSubmission({
+            chatId: targetChatId,
+            submittedDraft: request.displayPrompt || request.prompt,
+            getDraft: composerDraftState.getDraft,
+            setDraft: setChatPromptDraft,
+            subscribeToDraft: composerDraftState.subscribeToChat
+          })
       try {
-        await window.api.runEnsembleRound({
+        const result = await window.api.runEnsembleRound({
           chatId: targetChatId,
           prompt: request.prompt,
           // Keep the explicit steer intent on the wire. Main absorbs a plain
@@ -17878,16 +17896,21 @@ function App(): React.JSX.Element {
             ...persistedAttachmentMetadata(attachment)
           }))
         })
-        clearComposerAttachmentsForSubmittedRequest(request)
-        if (!request.existingPrompt) {
-          setChatPromptDraft(targetChatId, '')
+        if (!isAcceptedEnsembleSteerResult(result)) {
+          draftSubmission?.restoreIfUntouched()
+          return
         }
+        draftSubmission?.commit()
+        clearComposerAttachmentsForSubmittedRequest(request)
         // `isThinking` is the visible main transcript's badge; a pane steer of
         // a non-visible chat must not flip it (same gate as the queued steer).
         if (targetChatId === (currentChatIdRef.current || currentChat?.appChatId)) {
           setIsThinking(true)
         }
         void refreshSingleChat(targetChatId)
+      } catch (error) {
+        draftSubmission?.restoreIfUntouched()
+        throw error
       } finally {
         ensembleSteerInFlightChatIdsRef.current.delete(targetChatId)
       }
