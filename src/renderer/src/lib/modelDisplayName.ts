@@ -172,6 +172,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
 
   // ── Muse (Meta Muse Code CLI) ─────────────────────────────
   'muse-spark-1.2': 'Muse Spark 1.2',
+  'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
 
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',

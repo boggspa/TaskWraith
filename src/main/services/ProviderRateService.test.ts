@@ -190,7 +190,7 @@ describe('BAKED_IN_RATES', () => {
 
   it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
-    expect(RATE_TABLE_VERSION).toBe('2026-08-30')
+    expect(RATE_TABLE_VERSION).toBe('2026-08-31')
     expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
@@ -222,6 +222,22 @@ describe('BAKED_IN_RATES', () => {
       sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
       lastVerified: RATE_TABLE_VERSION
     })
+  })
+
+  it('records Muse Contributor Spark discounted rates without changing the standard fallback', () => {
+    expect(BAKED_IN_RATES.muse.models[0]?.modelId).toBe('muse-spark-1.2')
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.2-contributor')
+    ).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.2,
+      cachedInputUsdPerMillion: 0.002,
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.2-contributor')
+        ?.notes
+    ).toMatch(/content.*product improvement/i)
   })
 
   it('does not change the existing Grok 4.5 pricing row', () => {
@@ -289,9 +305,7 @@ describe('BAKED_IN_RATES', () => {
       outputUsdPerMillion: 4
     })
     expect(
-      BAKED_IN_RATES.kimi.models.find(
-        (model) => model.modelId === 'kimi-k2.7-code-highspeed'
-      )
+      BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.7-code-highspeed')
     ).toMatchObject({
       inputUsdPerMillion: 1.9,
       cachedInputUsdPerMillion: 0.38,

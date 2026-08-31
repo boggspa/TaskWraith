@@ -113,8 +113,9 @@ public enum ContextWindows {
         "ministral-14b-2512": 262_144,
         "ministral-8b-2512": 262_144,
         "ministral-3b-2512": 262_144,
-        // Muse Code CLI default model (opaque exec seat).
+        // Muse Code CLI models (opaque exec seat).
         "muse-spark-1.2": 200_000,
+        "muse-spark-1.2-contributor": 200_000,
         "groq/openai/gpt-oss-120b": 131_072,
         "groq/qwen/qwen3-32b": 131_072,
         "cerebras/zai-glm-4.7": 131_072,

@@ -82,6 +82,19 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(pi.accent).toBe(TASKWRAITH_PROVIDER_ACCENTS.pi)
   })
 
+  it('humanises the Muse contributor route without changing its runtime identity', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.2-contributor')
+    ).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Contributor Spark 1.2'
+    })
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.2-contributor')).toBe(
+      'Muse Contributor Spark 1.2'
+    )
+  })
+
   it('uses compact desktop-style labels instead of raw wire ids', () => {
     expect(taskWraithModelLabel('claude', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')

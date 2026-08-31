@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-08-30'
+export const RATE_TABLE_VERSION = '2026-08-31'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -1766,6 +1766,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'PROJECTED API-equivalent from the Muse Code CLI catalog for muse-spark-1.2 ($1.25/$4.25/$0.15 per Mtok input/output/cached). Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-spark-1.2-contributor',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.002,
+        sourceUrl: 'https://www.meta.com/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'PROJECTED API-equivalent from the Muse Code CLI catalog for muse-spark-1.2-contributor ($0.10/$0.20/$0.002 per Mtok input/output/cached). Discounted tokens carry the provider notice that content, including inter-session messages, may be used for product improvement. Not Meta-billed invoice line items — subscription / plan spend may differ.'
       },
       {
         modelId: 'muse-default',

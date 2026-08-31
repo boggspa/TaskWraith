@@ -183,6 +183,9 @@ describe('humaniseModelId', () => {
   describe('Muse', () => {
     it('maps Spark wire ids to a human-readable name', () => {
       expect(humaniseModelId('muse', 'muse-spark-1.2')).toBe('Muse Spark 1.2')
+      expect(humaniseModelId('muse', 'muse-spark-1.2-contributor')).toBe(
+        'Muse Contributor Spark 1.2'
+      )
       expect(canonicalModelIdForProvider('muse', 'cli-default')).toBe('muse-spark-1.2')
     })
   })

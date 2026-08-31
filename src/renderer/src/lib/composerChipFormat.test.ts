@@ -73,6 +73,11 @@ describe('shortModelName', () => {
     expect(shortModelName('grok', '', 'grok-4.5')).toBe('Grok 4.5 Fast')
   })
 
+  it('keeps Muse Contributor Spark distinct from the standard Spark route', () => {
+    expect(shortModelName('muse', '', 'muse-spark-1.2')).toBe('Spark 1.2')
+    expect(shortModelName('muse', '', 'muse-spark-1.2-contributor')).toBe('Contributor Spark 1.2')
+  })
+
   it('renders local Ollama tags as model names', () => {
     expect(shortModelName('ollama', '', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(shortModelName('ollama', '', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
