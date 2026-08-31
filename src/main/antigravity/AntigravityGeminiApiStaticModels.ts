@@ -1,5 +1,6 @@
 import { ANTIGRAVITY_GEMINI_API_MODEL_PREFIX } from './AntigravityGeminiApiModelDiscovery'
 import { antigravityGeminiApiModelLabel } from './AntigravityGeminiApiModelNaming'
+import { ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS as STATIC_MODEL_IDS } from '../../shared/antigravityStaticModelIds'
 
 /**
  * Offer rows for the separately billed Gemini API lane when the user has a key
@@ -36,13 +37,6 @@ import { antigravityGeminiApiModelLabel } from './AntigravityGeminiApiModelNamin
  * is worse than a short list, because the failure lands at dispatch time on a
  * user who had no other option to pick.
  */
-const STATIC_MODEL_IDS: readonly string[] = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.1-pro-preview',
-  'gemini-3.1-flash-lite'
-]
-
 /** Shared with live discovery so a fallback row is indistinguishable in the UI. */
 export function formatAntigravityGeminiApiLabel(modelId: string): string {
   return antigravityGeminiApiModelLabel(modelId)
@@ -55,4 +49,4 @@ export function antigravityGeminiApiStaticModels(): Array<{ id: string; label: s
   }))
 }
 
-export const ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS = STATIC_MODEL_IDS
+export { STATIC_MODEL_IDS as ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS }

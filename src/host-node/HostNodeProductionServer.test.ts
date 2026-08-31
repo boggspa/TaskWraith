@@ -76,7 +76,12 @@ function harness(overrides: Record<string, unknown> = {}) {
     supportsWorkspaceGit: false,
     supportsEnsembleSeatControl: false,
     gitRead: vi.fn(),
-    registry: { supportsApprovals: false, supportsQuestions: false },
+    registry: {
+      supportsApprovals: false,
+      supportsQuestions: false,
+      providerIds: [],
+      refreshOffers: vi.fn(async () => undefined)
+    },
     interactions: new HostNodeInteractionRegistry(),
     shutdown: vi.fn(async () => {
       order.push('domain.shutdown')
@@ -188,6 +193,26 @@ describe('HostNodeProductionServer', () => {
       'lease.release'
     ])
     await expect(h.server.stop()).resolves.toBeUndefined()
+  })
+
+  it('prewarms dynamic provider catalogs before composing the first projection', async () => {
+    const h = harness()
+    const refreshOffers = vi.fn(async (providerId: string) => {
+      h.order.push(`offers:${providerId}`)
+    })
+    const registry = h.domain.registry as unknown as {
+      providerIds: readonly string[]
+      refreshOffers: (providerId: string) => Promise<unknown>
+    }
+    registry.providerIds = ['ollama', 'antigravity']
+    registry.refreshOffers = refreshOffers
+
+    await h.server.start()
+
+    expect(refreshOffers).toHaveBeenCalledWith('ollama')
+    expect(refreshOffers).toHaveBeenCalledWith('antigravity')
+    expect(h.order.indexOf('offers:antigravity')).toBeLessThan(h.order.indexOf('composition'))
+    await h.server.stop()
   })
 
   it('injects the canonical lease path into the domain over caller-supplied options', async () => {

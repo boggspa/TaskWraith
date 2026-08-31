@@ -55,4 +55,13 @@ describe('hostNodeOllamaOffersFromCatalog', () => {
     ])
     expect(offers.offerRevision).toMatch(/^[a-f0-9]{64}$/)
   })
+
+  it('respects the Host model-row bound for a large Cloud catalog', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: Array.from({ length: 129 }, (_, index) => model(`cloud-${index}:cloud`, 'cloud'))
+    })
+
+    expect(offers.models).toHaveLength(128)
+    expect(offers.models.at(-1)?.modelId).toBe('cloud-127:cloud')
+  })
 })

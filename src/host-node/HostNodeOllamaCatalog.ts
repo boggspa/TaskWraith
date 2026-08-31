@@ -3,10 +3,11 @@ import { createHash } from 'node:crypto'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import type { OllamaModelInfo } from '../host-shared/ollama/OllamaDaemonClient'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
-import type {
-  HostProviderModelOffer,
-  HostProviderOffersProjection,
-  HostProviderReasoningOffer
+import {
+  HOST_SETUP_MAX_MODELS,
+  type HostProviderModelOffer,
+  type HostProviderOffersProjection,
+  type HostProviderReasoningOffer
 } from '../shared/hostSetupProtocol'
 
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -58,7 +59,13 @@ export function hostNodeOllamaOffersFromCatalog(catalog: {
 }): HostProviderOffersProjection {
   const base = hostProviderOffers('ollama', true)
   if (!base) throw new Error('Standalone Ollama catalog is unavailable')
-  const models = catalog.models.filter((model) => !model.disabled).map(modelOffer)
+  // The Host setup protocol bounds one provider response at 128 rows. Keep
+  // the daemon's deterministic order and never emit a response the client
+  // decoder must reject when a future Cloud account exposes more models.
+  const models = catalog.models
+    .filter((model) => !model.disabled)
+    .slice(0, HOST_SETUP_MAX_MODELS)
+    .map(modelOffer)
   return {
     providerId: 'ollama',
     offerRevision: revisionOf(models, base.postures),

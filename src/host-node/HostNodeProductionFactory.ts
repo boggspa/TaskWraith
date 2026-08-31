@@ -36,6 +36,7 @@ import { createHostNodeCursorProviderFactory } from './HostNodeCursorProvider'
 import { createHostNodeAntigravityProviderFactory } from './HostNodeAntigravityProvider'
 import { captureHostStandaloneAgyModels } from './HostNodeAgyPtyCapture'
 import { HostNodeProductionServer } from './HostNodeProductionServer'
+import { readHostStandaloneAntigravityInventory } from '../host-shared/antigravity/HostStandaloneAntigravityCatalog'
 
 export interface HostNodeProductionFactoryOptions {
   readonly profilePath: string
@@ -200,6 +201,11 @@ export function createHostNodeProductionServer(
         const launcher = providerTerminalLauncher(options.terminalLauncher)
         const environment = options.env ?? process.env
         const ollamaCloudApiKey = String(environment.OLLAMA_API_KEY || '').trim() || null
+        const antigravityResources = createHostNodeProviderResourcePort('antigravity', {
+          environment
+        })
+        const antigravityBinary = await antigravityResources.resolveBinary()
+        const antigravityBinaryAvailable = antigravityBinary.binaryPath !== null
         return {
           domainOptions: {
             ...(gitReadService ? { gitReadService } : {}),
@@ -237,7 +243,11 @@ export function createHostNodeProductionServer(
               createHostNodeAntigravityProviderFactory({
                 profilePath,
                 offers: hostStandaloneAntigravityOffers([]),
-                resources: createHostNodeProviderResourcePort('antigravity', { environment }),
+                resources: antigravityResources,
+                getInventoryModels: () =>
+                  readHostStandaloneAntigravityInventory(profilePath, {
+                    agyBinaryAvailable: antigravityBinaryAvailable
+                  }),
                 captureModels: captureHostStandaloneAgyModels,
                 environment,
                 ...(launcher ? { terminalLauncher: launcher } : {})

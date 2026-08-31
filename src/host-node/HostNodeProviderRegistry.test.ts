@@ -248,6 +248,58 @@ describe('HostNodeProviderRegistry', () => {
     ])
   })
 
+  it('publishes every available model row instead of collapsing a provider to its default', () => {
+    const provider = fakeProvider('ollama', {
+      offers: {
+        ...fakeProvider('ollama').offers,
+        models: [
+          { modelId: 'local-one', label: 'Local One', available: true, reasoning: [] },
+          {
+            modelId: 'cloud-one',
+            label: 'Cloud One',
+            available: true,
+            default: true,
+            reasoning: []
+          },
+          { modelId: 'unavailable', label: 'Unavailable', available: false, reasoning: [] }
+        ]
+      }
+    })
+    const registry = new HostNodeProviderRegistry({ providers: [provider], runPort, interactions })
+
+    expect(registry.providerInventory().map((row) => row.modelId)).toEqual([
+      'cloud-one',
+      'local-one'
+    ])
+  })
+
+  it('uses non-secret inventory metadata to admit a conditional provider without runtime offers', () => {
+    const registry = new HostNodeProviderRegistry({
+      providers: [
+        fakeProvider('antigravity', {
+          conditionalAdmission: 'antigravity-live-guarded',
+          offers: {
+            providerId: 'antigravity',
+            offerRevision: 'runtime-empty',
+            models: [],
+            postures: []
+          },
+          getInventoryModels: () => [{ modelId: 'gemini-api:gemini-3.6-flash', label: '3.6 Flash' }]
+        })
+      ],
+      runPort,
+      interactions
+    })
+
+    expect(registry.providerInventory()).toEqual([
+      expect.objectContaining({
+        providerId: 'antigravity',
+        modelId: 'gemini-api:gemini-3.6-flash',
+        modelLabel: '3.6 Flash'
+      })
+    ])
+  })
+
   it('aggregates interaction support flags', () => {
     const withCaps = new HostNodeProviderRegistry({
       providers: [

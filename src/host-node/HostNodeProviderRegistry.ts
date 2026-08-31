@@ -23,7 +23,11 @@ import type {
 } from '../shared/hostSetupProtocol'
 import type { HostProviderRunPort } from '../host-runtime/HostProviderRunPort'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
-import type { HostNodeProvider, HostNodeProviderInstance } from './HostNodeProvider'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderInventoryModel
+} from './HostNodeProvider'
 
 export interface IHostNodeProviderRegistry {
   readonly providerIds: readonly string[]
@@ -43,6 +47,61 @@ export interface HostNodeProviderRegistryOptions {
   readonly providers: readonly HostNodeProvider[]
   readonly runPort: HostProviderRunPort
   readonly interactions: HostNodeInteractionResolver
+}
+
+function isUsableInventoryModel(value: unknown): value is HostNodeProviderInventoryModel {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const model = value as { modelId?: unknown; label?: unknown }
+  if (typeof model.modelId !== 'string' || typeof model.label !== 'string') return false
+  if (
+    model.modelId.length === 0 ||
+    model.modelId.length > 512 ||
+    model.label.length === 0 ||
+    model.label.length > 200 ||
+    model.modelId.trim() !== model.modelId ||
+    model.label.trim() !== model.label
+  ) {
+    return false
+  }
+  // eslint-disable-next-line no-control-regex -- inventory metadata never carries control bytes.
+  return !/[\u0000-\u001f\u007f]/.test(model.modelId + model.label)
+}
+
+/**
+ * Merge a provider's snapshot-only metadata with its currently runnable
+ * offers. Live offers replace a same-id fallback row, while fallback rows
+ * remain visible when a dynamic probe is temporarily unavailable.
+ */
+function providerInventoryModels(
+  factory: HostNodeProvider,
+  offers: HostProviderOffersProjection
+): HostNodeProviderInventoryModel[] {
+  const byId = new Map<string, HostNodeProviderInventoryModel>()
+  const add = (candidate: unknown): void => {
+    if (!isUsableInventoryModel(candidate)) return
+    byId.set(candidate.modelId.toLowerCase(), {
+      modelId: candidate.modelId,
+      label: candidate.label
+    })
+  }
+
+  try {
+    for (const model of factory.getInventoryModels?.() ?? []) add(model)
+  } catch {
+    // A cache read is advisory. The dynamic runtime offers still get a chance
+    // to publish their current rows below.
+  }
+  for (const model of offers.models) {
+    if (!model.available) continue
+    add({ modelId: model.modelId, label: model.label })
+  }
+
+  const preferredModel = offers.models.find((model) => model.default && model.available)
+  if (!preferredModel) return [...byId.values()]
+  const preferredKey = preferredModel.modelId.toLowerCase()
+  const preferred = byId.get(preferredKey)
+  if (!preferred) return [...byId.values()]
+  return [preferred, ...[...byId.values()].filter((model) => model !== preferred)]
 }
 
 /** True when the composed set exactly equals the canonical live-selectable set. */
@@ -117,18 +176,27 @@ export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
     for (const providerId of this.providerIds) {
       const factory = this.factories.get(providerId)!
       const offers = this.offers.get(providerId)!
-      const defaultModel = offers.models.find((model) => model.default && model.available)
-      const availableModel = defaultModel ?? offers.models.find((model) => model.available)
-      if (factory.conditionalAdmission && !availableModel) continue
-      inventory.push({
-        providerId,
-        displayProvider: factory.displayProvider,
-        shortCode: factory.shortCode,
-        available: true,
-        ...(availableModel
-          ? { modelId: availableModel.modelId, modelLabel: availableModel.label }
-          : {})
-      })
+      const models = providerInventoryModels(factory, offers)
+      if (factory.conditionalAdmission && models.length === 0) continue
+      if (models.length === 0) {
+        inventory.push({
+          providerId,
+          displayProvider: factory.displayProvider,
+          shortCode: factory.shortCode,
+          available: true
+        })
+        continue
+      }
+      for (const model of models) {
+        inventory.push({
+          providerId,
+          displayProvider: factory.displayProvider,
+          shortCode: factory.shortCode,
+          available: true,
+          modelId: model.modelId,
+          modelLabel: model.label
+        })
+      }
     }
     return inventory
   }

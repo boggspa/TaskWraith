@@ -53,6 +53,12 @@ export interface HostNodeProviderCreateInput {
   readonly interactions: HostNodeInteractionResolver
 }
 
+/** Non-secret model metadata published in the Host snapshot inventory. */
+export interface HostNodeProviderInventoryModel {
+  readonly modelId: string
+  readonly label: string
+}
+
 /**
  * Static factory for one provider adapter. It carries the catalog and
  * capability flags; the Host constructs instances after the profile run port
@@ -65,6 +71,13 @@ export interface HostNodeProvider {
   readonly displayProvider: string
   readonly shortCode: string
   readonly offers: HostProviderOffersProjection
+  /**
+   * Optional snapshot-only catalog reader. This is for nonsecret model rows
+   * whose runtime offers are owned by another process, such as the main
+   * process's encrypted Gemini API lane. It is never used to authorize or
+   * execute a Host run.
+   */
+  readonly getInventoryModels?: () => readonly HostNodeProviderInventoryModel[]
   readonly supportsApprovals: boolean
   readonly supportsQuestions: boolean
   create(input: HostNodeProviderCreateInput): HostNodeProviderInstance

@@ -483,7 +483,10 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
 export type HostNodeAntigravityProviderFactoryOptions = Omit<
   HostNodeAntigravityProviderOptions,
   'runPort'
->
+> & {
+  /** Snapshot-only metadata; it is not used by the AGY run validator. */
+  readonly getInventoryModels?: HostNodeProvider['getInventoryModels']
+}
 
 export function createHostNodeAntigravityProviderFactory(
   options: HostNodeAntigravityProviderFactoryOptions
@@ -497,10 +500,12 @@ export function createHostNodeAntigravityProviderFactory(
     displayProvider: 'AntiGravity',
     shortCode: 'AGY',
     offers: options.offers,
+    ...(options.getInventoryModels ? { getInventoryModels: options.getInventoryModels } : {}),
     supportsApprovals: false,
     supportsQuestions: false,
     create({ runPort }) {
-      return new HostNodeAntigravityProvider({ ...options, runPort })
+      const { getInventoryModels: _getInventoryModels, ...providerOptions } = options
+      return new HostNodeAntigravityProvider({ ...providerOptions, runPort })
     }
   }
 }

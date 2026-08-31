@@ -23,6 +23,7 @@ import {
 } from './AntigravityModelDiscovery'
 import { antigravityAgyStaticModels, offerableAgyModels } from './AntigravityAgyStaticModels'
 import { resolveAgyCliBinary } from './AntigravityCli'
+import { writeAntigravityCatalogCache } from '../../shared/antigravityCatalogCache.node'
 
 export interface AntigravityCombinedCatalogModel {
   readonly id: string
@@ -62,6 +63,16 @@ export interface AntigravityCombinedModelCatalogDependencies {
 
 const DEFAULT_LANE_TIMEOUT_MS = 900
 const MAX_CATALOG_MODELS = 128
+
+/** Publish only model ids/labels so the external Host can mirror this catalog. */
+function persistCombinedCatalog(
+  models: readonly AntigravityCombinedCatalogModel[],
+  deps: AntigravityCombinedModelCatalogDependencies
+): void {
+  const userDataPath = deps.agyDependencies?.cache?.userDataPath
+  if (!userDataPath) return
+  void writeAntigravityCatalogCache(userDataPath, models).catch(() => {})
+}
 
 /**
  * Discovery outcomes that mean "a key is configured, we asked, and could not
@@ -146,12 +157,18 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     | undefined,
   deps: AntigravityCombinedModelCatalogDependencies
 ): Promise<AntigravityCombinedCatalogModel[]> {
-  if (!settings) return []
+  if (!settings) {
+    persistCombinedCatalog([], deps)
+    return []
+  }
 
   const agyAdmitted = isAntigravityOptInEnabled(settings)
   const secretStore = deps.getSecretStore()
   const apiAdmitted = Boolean(secretStore)
-  if (!agyAdmitted && !apiAdmitted) return []
+  if (!agyAdmitted && !apiAdmitted) {
+    persistCombinedCatalog([], deps)
+    return []
+  }
 
   const timeoutMs =
     Number.isFinite(deps.timeoutMs) && (deps.timeoutMs ?? 0) > 0
@@ -226,7 +243,7 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     if (!isSafeModelRow(model) || seen.has(model.id)) continue
     seen.add(model.id)
     rows.push({ id: model.id, label: model.label })
-    if (rows.length >= MAX_CATALOG_MODELS) return rows
+    if (rows.length >= MAX_CATALOG_MODELS) break
   }
   const apiRows =
     liveApiRows ??
@@ -237,6 +254,7 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     rows.push(row)
     if (rows.length >= MAX_CATALOG_MODELS) break
   }
+  persistCombinedCatalog(rows, deps)
   return rows
 }
 

@@ -247,6 +247,27 @@ export class HostNodeProductionServer {
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
         onProjectionDirty: () => projectionDirtyRef.current?.()
       })
+      // The first projection is also the baseline for every later Host delta.
+      // Resolve account-dependent provider catalogs before that baseline so a
+      // cold Host cannot publish the initial empty Ollama/AGY offer set and
+      // then leave clients with a permanently incomplete roster.
+      const registry = this.domain.registry as typeof this.domain.registry & {
+        readonly providerIds?: readonly string[]
+        readonly refreshOffers?: (providerId: string) => Promise<unknown>
+      }
+      if (Array.isArray(registry.providerIds) && typeof registry.refreshOffers === 'function') {
+        await Promise.all(
+          registry.providerIds.map(async (providerId) => {
+            try {
+              await registry.refreshOffers!(providerId)
+            } catch {
+              // Provider adapters close their own failures; one slow/broken
+              // catalog must not prevent the other providers from publishing.
+            }
+          })
+        )
+      }
+      if (this.stopRequested) return
       const capabilities = this.capabilities()
       this.composition = (this.options.createComposition ?? createHostStandaloneComposition)({
         runtimePath: (this.options.runtimePath ?? defaultRuntimePath)(this.lease.path),
