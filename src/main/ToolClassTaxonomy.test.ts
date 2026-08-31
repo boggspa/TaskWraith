@@ -101,6 +101,7 @@ describe('classifyTool', () => {
     expect(classifyTool('github_ci_status')).toBe('web_read')
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
     expect(classifyTool('request_tool_permission')).toBe('ui_elicitation')
+    expect(classifyTool('redeem_permission_opportunity')).toBe('ui_elicitation')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
     expect(classifyTool('launch_list_targets')).toBe('orchestration')
@@ -292,6 +293,7 @@ describe('groupToolsByClass', () => {
       'web_search',
       'ask_user_question',
       'request_tool_permission',
+      'redeem_permission_opportunity',
       'ensemble_yield',
       'write_file'
     ])
@@ -302,7 +304,11 @@ describe('groupToolsByClass', () => {
       'inspect_chat_attachment'
     ])
     expect(grouped.web_read).toEqual(['web_search'])
-    expect(grouped.ui_elicitation).toEqual(['ask_user_question', 'request_tool_permission'])
+    expect(grouped.ui_elicitation).toEqual([
+      'ask_user_question',
+      'request_tool_permission',
+      'redeem_permission_opportunity'
+    ])
     expect(grouped.orchestration).toEqual(['ensemble_yield'])
     expect(grouped.workspace_write).toEqual(['write_file'])
   })
@@ -421,7 +427,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'video_decode_frame',
       'ensemble_yield',
       'ask_user_question',
-      'request_tool_permission'
+      'request_tool_permission',
+      'redeem_permission_opportunity'
     ]) {
       expect(classifyTool(tool)).not.toBe('workspace_write')
     }
@@ -484,6 +491,7 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('request_tool_permission', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('redeem_permission_opportunity', ro)).toBe(false)
     // Sub-thread delegation is orchestration + dedicated service so Ask/Plan can
     // modal-approve it rather than hard-deny before the gate.
     expect(isReadOnlyBlockedTool('delegate_to_subthread', ro)).toBe(false)

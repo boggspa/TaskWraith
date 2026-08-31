@@ -5,9 +5,10 @@ import {
   SIMULATOR_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS
 } from '../TaskWraithMcpTools'
+import type { TaskWraithMcpProfileId } from '../store/types'
 import { createTaskWraithMcpToolDefinitions } from '../McpToolCatalog'
 import { AUDIT_MCP_TOOL_NAMES } from './AuditToolExecutors'
-import { gatewayToolDefinitions } from './McpToolGateway'
+import { gatewayToolDefinitions, validateGatewayToolArguments } from './McpToolGateway'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
   CORE_MCP_ADVERTISE_TOOLS,
@@ -104,10 +105,20 @@ import {
   GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V18_ADDED_TOOL_NAMES,
+  GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V18_MCP_DIRECT_TOOLS,
+  GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
   GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
   GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
   GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
   GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
@@ -181,10 +192,20 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
       GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
       GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V18_ADDED_TOOL_NAMES,
+      GATEWAY_V18_MCP_DIRECT_TOOLS,
+      GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
       GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
       GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
-      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -866,7 +887,13 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V17_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES,
-      ...GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -990,6 +1017,81 @@ describe('catalogue reachability', () => {
     ])
     expect(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES)
     expect(GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES)
+  })
+
+  it('adds direct opaque opportunity redemption only to fresh v18 and solo-v2 births', () => {
+    expect(GATEWAY_V18_ADDED_TOOL_NAMES).toEqual(['redeem_permission_opportunity'])
+    expect(GATEWAY_V17_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V17_MESH_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V18_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V17_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_V18_MESH_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V18_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_V18_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+  })
+
+  it('keeps every frozen pre-v18 profile free of direct or hidden opportunity redemption', () => {
+    for (const profileId of [
+      'taskwraith-full-v1',
+      'taskwraith-full-v2',
+      'taskwraith-core-v1',
+      'taskwraith-core-v2',
+      ...Array.from({ length: 17 }, (_, index) => `taskwraith-gateway-v${index + 1}`),
+      ...Array.from({ length: 11 }, (_, index) => `taskwraith-gateway-v${index + 7}-mesh`),
+      'taskwraith-gateway-solo-v1'
+    ] as unknown as TaskWraithMcpProfileId[]) {
+      const direct = taskWraithGatewayDirectToolNamesForProfile(profileId)
+      const hidden = taskWraithGatewayHiddenToolNamesForProfile(profileId)
+      const advertised = taskWraithMcpAdvertisedToolNamesForProfile(profileId)
+      expect(direct, profileId).not.toContain('redeem_permission_opportunity')
+      expect(hidden, profileId).not.toContain('redeem_permission_opportunity')
+      expect(advertised, profileId).not.toContain('redeem_permission_opportunity')
+    }
+  })
+
+  it('gives the fresh direct redemption tool one strict opaque-id schema', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'redeem_permission_opportunity'
+    )
+    expect(definition).toBeDefined()
+    if (!definition) throw new Error('Expected redeem_permission_opportunity definition.')
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, {
+        permissionOpportunityId: `twp_${'a'.repeat(43)}`
+      })
+    ).toMatchObject({ ok: true })
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, {
+        permissionOpportunityId: `twp_${'a'.repeat(43)}`,
+        toolName: 'write_file'
+      })
+    ).toMatchObject({ ok: false })
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, { permissionOpportunityId: 'twp_short' })
+    ).toMatchObject({ ok: false })
   })
 
   it('pins the lean solo direct birth catalogue to the retained v17 order', () => {

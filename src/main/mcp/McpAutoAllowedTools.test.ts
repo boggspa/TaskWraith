@@ -118,11 +118,16 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     }
   })
 
-  it('lets every posture reach one-shot permission elicitation without auto-running its target', () => {
+  it('lets every posture reach legacy and host-issued permission elicitation without auto-running a target', () => {
     expect(autoAllowedTools.has('request_tool_permission')).toBe(true)
     expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('request_tool_permission')
     expect(
       (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('request_tool_permission')
+    ).toBe(false)
+    expect(autoAllowedTools.has('redeem_permission_opportunity')).toBe(true)
+    expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('redeem_permission_opportunity')
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('redeem_permission_opportunity')
     ).toBe(false)
   })
 })
@@ -132,6 +137,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     for (const tool of [
       'ask_user_question',
       'request_tool_permission',
+      'redeem_permission_opportunity',
       'ensemble_yield',
       'read_file',
       'find_files',
@@ -292,6 +298,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     for (const tool of [
       'ask_user_question',
       'request_tool_permission',
+      'redeem_permission_opportunity',
       'ensemble_yield',
       'ensemble_send',
       'read_file',

@@ -235,6 +235,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // The tool itself is auto-allowed so a restricted seat can reach the existing
   // approval modal; it performs no target action unless the human accepts.
   'request_tool_permission',
+  // Fresh-profile-only host-issued retry redemption. Unlike the legacy request,
+  // this accepts only an opaque main-minted opportunity id; its target never
+  // travels back through model-authored arguments or failure prose.
+  'redeem_permission_opportunity',
   // Persistent thread goal lifecycle. The user owns objective set/clear via
   // /goal and composer controls; agents may read and update lifecycle only.
   'goal_read',

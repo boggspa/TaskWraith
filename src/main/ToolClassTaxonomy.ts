@@ -77,6 +77,7 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'provider_usage_status',
   'ask_user_question',
   'request_tool_permission',
+  'redeem_permission_opportunity',
   'goal_read',
   'goal_update',
   'update_goal',

@@ -101,6 +101,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // never mints a standing grant. Auto-allowing the outer elicitation is what
   // lets read-only/plan seats ask the human to override their posture once.
   'request_tool_permission',
+  // The fresh opaque redemption path only asks Electron main to redeem a
+  // server-issued opportunity. It cannot supply a target or execute one until
+  // the subsequent main-authority review accepts it.
+  'redeem_permission_opportunity',
   // Persistent goal lifecycle is host UI coordination only. Tool schemas
   // prevent agents from replacing or clearing the user-owned objective.
   'goal_read',

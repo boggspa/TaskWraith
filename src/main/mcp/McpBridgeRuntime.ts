@@ -38,6 +38,7 @@ import {
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
   GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
   GATEWAY_V8_ADDED_TOOL_NAMES,
   GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
@@ -160,6 +161,9 @@ export const GEMINI_MCP_SKETCH_DIRECT_ARG = '--sketch-direct'
 // it and keep scout_brief / ensemble_await / ensemble_lane_result / delegate_wave
 // behind capability discovery. Also gates v13 transport compaction.
 export const GEMINI_MCP_ORCHESTRATION_DIRECT_ARG = '--orchestration-direct'
+// Gateway-v18 direct redemption selector. Absent means every older immutable
+// profile retains its exact direct catalogue, including solo-v1.
+export const GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG = '--permission-opportunity-direct'
 // Audit scope flag. Direct bridge children carry this in argv; static helpers
 // carry the complete profile receipt in their route environment. Unlike
 // safe-subset this does NOT restrict tools/call — audit tools route through the
@@ -187,6 +191,7 @@ export function applyMcpBridgeProfileArgvToEnv(
   for (const envKey of Object.values(MCP_BRIDGE_PROFILE_ENV_KEYS)) {
     env[envKey] = '0'
   }
+  env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT = '0'
   if (argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
@@ -202,6 +207,9 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_SKETCH_DIRECT_ARG)) env.TASKWRAITH_MCP_SKETCH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)) {
     env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT = '1'
+  }
+  if (argv.includes(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT = '1'
   }
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
@@ -976,7 +984,8 @@ function isGatewayMcpAdvertisedForSeat(
   meshDirect = false,
   meshTopologyDirect = false,
   sketchDirect = false,
-  orchestrationDirect = false
+  orchestrationDirect = false,
+  permissionOpportunityDirect = false
 ): boolean {
   return (
     (isGatewayMcpAdvertisedTool(name) &&
@@ -985,7 +994,8 @@ function isGatewayMcpAdvertisedForSeat(
     (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
     (meshTopologyDirect && (MESH_TOPOLOGY_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
     (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
-    (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name))
+    (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
+    (permissionOpportunityDirect && name === 'redeem_permission_opportunity')
   )
 }
 
@@ -1222,6 +1232,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
+  GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1804,6 +1815,12 @@ export function handleMcpJsonRpcMessage(
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
+    const permissionOpportunityDirect =
+      (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
+        process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const soloDirectTools = permissionOpportunityDirect
+      ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+      : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -1813,8 +1830,11 @@ export function handleMcpJsonRpcMessage(
     const allTools = deps.getMcpToolDefinitions().filter(
       (tool) =>
         // Permission retry is a gateway-v9 hidden capability. It must never
-        // widen a pre-existing full/core/direct tools/list snapshot.
+        // widen a pre-existing full/core/direct tools/list snapshot. The fresh
+        // opaque redemption sibling is direct only when its v18 selector is
+        // carried in the immutable bridge argv.
         tool.name !== 'request_tool_permission' &&
+        (tool.name !== 'redeem_permission_opportunity' || permissionOpportunityDirect) &&
         (portableEnsembleControl
           ? tool.name !== 'ensemble_bossman_control'
           : tool.name !== 'ensemble_control')
@@ -1827,14 +1847,15 @@ export function handleMcpJsonRpcMessage(
               (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
               (!gatewaySubsetOnly ||
                 (soloSubsetOnly
-                  ? (GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS as readonly string[]).includes(tool.name)
+                  ? (soloDirectTools as readonly string[]).includes(tool.name)
                   : isGatewayMcpAdvertisedForSeat(
                       tool.name,
                       portableEnsembleControl,
                       meshDirect,
                       meshTopologyDirect,
                       sketchDirect,
-                      orchestrationDirect
+                      orchestrationDirect,
+                      permissionOpportunityDirect
                     )))
           )
         : allTools
@@ -1935,6 +1956,12 @@ export function handleMcpJsonRpcMessage(
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
+    const permissionOpportunityDirect =
+      (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
+        process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const soloDirectTools = permissionOpportunityDirect
+      ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+      : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
     if (portableEnsembleControlRequested && !portableEnsembleControl) {
       writeMcpError(
         id,
@@ -1947,6 +1974,7 @@ export function handleMcpJsonRpcMessage(
     }
     const advertisedToolName = portableEnsembleControlRequested ? 'ensemble_control' : String(name)
     const gatewayToolRequested = isCapabilityGatewayToolName(name)
+    const permissionOpportunityRequested = name === 'redeem_permission_opportunity'
     const gatewayInvocationTarget =
       name === 'capability_invoke' ? resolveBridgeGatewayInvocationTarget(args) : null
     if (gatewayInvocationTarget && !gatewayInvocationTarget.ok) {
@@ -1965,6 +1993,16 @@ export function handleMcpJsonRpcMessage(
         id,
         -32601,
         `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is available only in the TaskWraith gateway MCP profile.`,
+        transport,
+        stdout
+      )
+      return
+    }
+    if (permissionOpportunityRequested && !permissionOpportunityDirect) {
+      writeMcpError(
+        id,
+        -32601,
+        'Tool redeem_permission_opportunity is available only in a fresh TaskWraith MCP profile.',
         transport,
         stdout
       )
@@ -2033,14 +2071,15 @@ export function handleMcpJsonRpcMessage(
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
       !(soloSubsetOnly
-        ? (GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS as readonly string[]).includes(advertisedToolName)
+        ? (soloDirectTools as readonly string[]).includes(advertisedToolName)
         : isGatewayMcpAdvertisedForSeat(
             advertisedToolName,
             portableEnsembleControl,
             meshDirect,
             meshTopologyDirect,
             sketchDirect,
-            orchestrationDirect
+            orchestrationDirect,
+            permissionOpportunityDirect
           )) &&
       !auditToolRequested
     ) {
@@ -2634,7 +2673,8 @@ export class McpBridgeRuntime {
     sketchDirect = false,
     orchestrationDirect = false,
     auditSubset = false,
-    soloSubset = false
+    soloSubset = false,
+    permissionOpportunityDirect = false
   ): string[] {
     const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
     const logEpochPath = bridgeSubprocessLogEpochPathForSocket(normalizedSocketPath)
@@ -2693,6 +2733,9 @@ export class McpBridgeRuntime {
       // Appended after every legacy positional profile control. This remains
       // independently receipted so old callers keep their exact interpretation.
       ...(soloSubset ? [GEMINI_MCP_SOLO_SUBSET_ARG] : []),
+      // v18-only selector appended after all legacy controls. Its default false
+      // leaves every existing argv byte-for-byte unchanged.
+      ...(permissionOpportunityDirect ? [GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG] : []),
       ...bootstrapArgs
     ]
   }

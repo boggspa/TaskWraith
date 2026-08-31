@@ -3444,6 +3444,31 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'redeem_permission_opportunity',
+      description:
+        'Redeem one opaque permission opportunity issued by TaskWraith after a host-observed eligible boundary. Pass only the exact opportunity id returned by TaskWraith; do not add target tool names, arguments, failure text, or rationale. The host retains and revalidates the canonical target before any approval or execution. The id is single-use, run-bound, and expires quickly.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          permissionOpportunityId: {
+            type: 'string',
+            minLength: 47,
+            maxLength: 47,
+            pattern: '^twp_[A-Za-z0-9_-]{43}$',
+            description: 'Exact opaque TaskWraith-issued permission opportunity id.'
+          }
+        },
+        required: ['permissionOpportunityId'],
+        additionalProperties: false
+      }
+    },
+    {
       name: 'goal_read',
       description:
         'Read the active TaskWraith thread goal. A goal is the persistent objective and stopping condition for this chat; it is separate from todo_write checklists.',

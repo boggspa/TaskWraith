@@ -4,7 +4,8 @@ import {
   isEnsembleControlToolName,
   isPortableEnsembleControlToolName,
   normalizeEnsembleMcpToolArguments,
-  normalizePortableEnsembleControlArguments
+  normalizePortableEnsembleControlArguments,
+  TASKWRAITH_MCP_TOOLS
 } from './taskWraithMcpCatalog'
 
 const CONTROL_TOOL_NAMES = ['ensemble_control', 'ensemble_bossman_control'] as const
@@ -155,5 +156,15 @@ describe('one Ensemble argument convention', () => {
         params: { planSummary: 'Legacy alias, new behaviour.' }
       })
     ).toEqual({ action: 'set_round_plan', planSummary: 'Legacy alias, new behaviour.' })
+  })
+})
+
+describe('fresh permission-opportunity redemption identity', () => {
+  it('keeps the new redemption tool canonical and distinct from legacy permission retry', () => {
+    expect(TASKWRAITH_MCP_TOOLS).toContain('redeem_permission_opportunity')
+    expect(canonicalTaskWraithToolName('redeem_permission_opportunity')).toBe(
+      'redeem_permission_opportunity'
+    )
+    expect(canonicalTaskWraithToolName('request_tool_permission')).toBe('request_tool_permission')
   })
 })

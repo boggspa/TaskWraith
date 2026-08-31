@@ -26,6 +26,7 @@ import {
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
+  GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_SOLO_SUBSET_ARG,
   McpBridgeRuntime,
@@ -37,7 +38,11 @@ import {
   writeMcpFrame,
   writeMcpPayload
 } from './McpBridgeRuntime'
-import { GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, GATEWAY_V13_ADDED_TOOL_NAMES } from './McpToolProfiles'
+import {
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_V13_ADDED_TOOL_NAMES
+} from './McpToolProfiles'
 
 const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
 
@@ -1610,6 +1615,96 @@ describe('MCP bridge stream writes', () => {
     ])
   })
 
+  it('exposes direct opportunity redemption only with the v18 selector on tools/list and tools/call', async () => {
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [
+            { name: 'read_file' },
+            { name: 'redeem_permission_opportunity' }
+          ],
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        { jsonrpc: '2.0', id: 164, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
+    }
+
+    const legacy = list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacy).not.toContain('redeem_permission_opportunity')
+    const legacyFull = list({})
+    expect(legacyFull).not.toContain('redeem_permission_opportunity')
+    const v18 = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(v18).toContain('redeem_permission_opportunity')
+    const soloV2 = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_SOLO_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(soloV2).toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS).toContain('redeem_permission_opportunity')
+
+    const call = async (env: Record<string, string>) => {
+      const chunks: string[] = []
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'redeemed' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 165,
+          method: 'tools/call',
+          params: {
+            name: 'redeem_permission_opportunity',
+            arguments: { permissionOpportunityId: `twp_${'a'.repeat(43)}` }
+          }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return {
+        brokerRequest,
+        response: JSON.parse(chunks.join('').trim()) as Record<string, unknown>
+      }
+    }
+
+    const legacyCall = await call({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacyCall.brokerRequest).not.toHaveBeenCalled()
+    expect(legacyCall.response).toMatchObject({ error: { code: -32601 } })
+    const legacyFullCall = await call({})
+    expect(legacyFullCall.brokerRequest).not.toHaveBeenCalled()
+    expect(legacyFullCall.response).toMatchObject({ error: { code: -32601 } })
+    const v18Call = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(v18Call.brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'redeem_permission_opportunity' })
+    )
+  })
+
   it('rejects demoted solo direct calls but preserves them behind capability_invoke', async () => {
     const invoke = async (name: string, args: Record<string, unknown>, gatewaySubset = true) => {
       const chunks: string[] = []
@@ -2598,6 +2693,36 @@ describe('MCP bridge stream writes', () => {
     expect(env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT).toBe('1')
   })
 
+  it('carries direct opportunity redemption only in the final v18 selector slot', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      SOCKET_PATH,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    )
+
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT).toBe('1')
+  })
+
   it('translates the gateway argv receipt into the child catalogue guard', () => {
     const explicitFullProfile = {
       TASKWRAITH_MCP_SAFE_SUBSET: '0',
@@ -2610,6 +2735,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '0',
       TASKWRAITH_MCP_SKETCH_DIRECT: '0',
       TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '0',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '0',
       TASKWRAITH_MCP_AUDIT: '0'
     }
     const gatewayEnv: Record<string, string | undefined> = {}

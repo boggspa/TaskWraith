@@ -994,6 +994,12 @@ export type TaskWraithMcpProfileId =
   // catalogue without mutating a receipted v16 session.
   | 'taskwraith-gateway-v17'
   | 'taskwraith-gateway-v17-mesh'
+  // v18 directly advertises the host-issued permission-opportunity redemption
+  // verb. Existing receipts retain v1-v17 exact memberships.
+  | 'taskwraith-gateway-v18'
+  | 'taskwraith-gateway-v18-mesh'
+  // Solo-v2 is the lean v18-derived birth catalogue; solo-v1 remains frozen.
+  | 'taskwraith-gateway-solo-v2'
   // Solo-v1 retains the v17 capability universe while moving specialist
   // coordination and Canvas tools behind capability discovery.
   | 'taskwraith-gateway-solo-v1'

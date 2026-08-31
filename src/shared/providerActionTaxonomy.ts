@@ -1696,6 +1696,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  redeem_permission_opportunity: tool(
+    'ui_elicitation',
+    'mcpTools',
+    'user.elicit',
+    'user-question',
+    'none',
+    'none'
+  ),
   goal_read: tool('orchestration', 'mcpTools', 'control.read', 'goal-control', 'none', 'none'),
   goal_update: tool(
     'orchestration',

@@ -298,6 +298,24 @@ describe('provider action taxonomy', () => {
     }
   })
 
+  it('classifies fresh opportunity redemption as non-mutating user elicitation', () => {
+    expect(TASKWRAITH_TOOL_ACTIONS.redeem_permission_opportunity).toEqual({
+      toolClass: 'ui_elicitation',
+      service: 'mcpTools',
+      operation: 'user.elicit',
+      dispatchOwner: 'user-question',
+      mutation: 'none',
+      lock: 'none',
+      networkEgress: 'none'
+    })
+    expect(resolveToolDispatchContractStrict('redeem_permission_opportunity')).toMatchObject({
+      ok: true,
+      toolClass: 'ui_elicitation',
+      mutation: 'none',
+      lock: 'none'
+    })
+  })
+
   it('covers the real advertised gateway and role-scoped audit unions exactly', () => {
     expect(TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
     expect(TAXONOMY_AUDIT_MCP_TOOL_NAMES).toEqual(AUDIT_MCP_TOOL_NAMES)
