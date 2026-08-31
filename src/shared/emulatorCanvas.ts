@@ -747,6 +747,9 @@ export function validateEmulatorObservation(raw: unknown): EmulatorValidation<Em
     return fail('Emulator observation capturedAt must be canonical ISO-8601.')
   const frame = validateEmulatorFrameMetadata(raw.frame)
   if (!frame.ok) return frame
+  if (raw.capturedAt !== frame.value.capturedAt) {
+    return fail('Emulator observation capturedAt must exactly match its frame capturedAt.')
+  }
   const state = validateEmulatorObservationState(raw.state)
   if (!state.ok) return state
   return {

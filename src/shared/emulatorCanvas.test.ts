@@ -254,6 +254,15 @@ describe('emulator observations', () => {
       validateEmulatorObservation({
         schemaVersion: 1,
         token: token(),
+        capturedAt: '2026-08-31T16:00:00.001Z',
+        frame,
+        state
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/exactly match/i) })
+    expect(
+      validateEmulatorObservation({
+        schemaVersion: 1,
+        token: token(),
         capturedAt: TIMESTAMP,
         frame,
         state: { kind: 'unavailable', reason: 'no_verified_adapter' }
