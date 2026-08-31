@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { terminalSidebarStore } from './TerminalSidebarStore'
+import { terminalLaunchBus, terminalSidebarStore } from './TerminalSidebarStore'
 
 const mockStorage = new Map<string, string>()
 global.window = {
@@ -67,5 +67,19 @@ describe('terminalSidebarStore', () => {
     
     expect(first).toEqual([])
     expect(first).toBe(second)
+  })
+
+  it('distinguishes a picker request from an immediate default launch', () => {
+    const events: unknown[] = []
+    const unsubscribe = terminalLaunchBus.subscribe((event) => events.push(event))
+
+    terminalLaunchBus.request('/work/current')
+    terminalLaunchBus.emit('/work/recent')
+
+    expect(events).toEqual([
+      { type: 'request', preferredWorkspacePath: '/work/current' },
+      { type: 'launch', workspacePath: '/work/recent', cliId: 'default' }
+    ])
+    unsubscribe()
   })
 })

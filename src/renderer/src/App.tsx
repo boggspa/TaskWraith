@@ -29539,6 +29539,7 @@ function App(): React.JSX.Element {
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
+      setThreadHomeOpen(false)
       // The single-pane host has no reason to duplicate its chat into hook
       // state until the user actually splits. Adopt it exactly once on entry;
       // after that pane records are authoritative and later layout changes
@@ -32195,6 +32196,7 @@ function App(): React.JSX.Element {
         <TerminalWorkbench
           workspaceSidebarWidth={workspaceSidebarWidth}
           currentWorkspacePath={currentWorkspacePath}
+          workspaces={workspaces}
         />
       )}
 

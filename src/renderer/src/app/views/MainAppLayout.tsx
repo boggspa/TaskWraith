@@ -1281,9 +1281,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const mainPaneActionPillRef = useRef<MainPaneActionPillHandle>(null)
   const mainThreadHomeWorkspaceRef = useRef<ThreadHomeWorkspaceHandle>(null)
   const primaryPaneIndex = resolvePrimaryPaneIndex(multiview.panes, currentChatAppChatId)
-  const closePrimaryMultiviewPane =
+  const dismissPrimaryMultiviewPane =
     isMultiviewSplit && primaryPaneIndex !== null
-      ? () => multiview.closePane(primaryPaneIndex)
+      ? () => multiview.setPaneChat(primaryPaneIndex, null)
       : undefined
   const requestMainPaneWorkspaceStats = useCallback(
     () => mainPaneActionPillRef.current?.openWorkspaceStats(),
@@ -1881,6 +1881,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     paneChatIds={multiview.paneChatIds}
                     authorityChat={currentChat}
                     mediaRefs={currentChatMediaRefs}
+                    multiviewLayout={multiview.layout}
+                    onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
                     onNewChat={() => {
                       activateEmptyPane()
                       startNewThreadFromHome()
@@ -2134,14 +2136,18 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onCloseThread={
                   currentChat
                     ? isMultiviewSplit
-                      ? closePrimaryMultiviewPane
+                      ? dismissPrimaryMultiviewPane
                       : threadHomeOpen
                         ? () => mainThreadHomeWorkspaceRef.current?.closeCurrentPane()
                         : openThreadHome
                     : undefined
                 }
                 closeThreadLabel={
-                  isMultiviewSplit || threadHomeOpen ? 'Close pane' : 'Close thread view'
+                  isMultiviewSplit
+                    ? 'Dismiss pane to Thread Home'
+                    : threadHomeOpen
+                      ? 'Close pane'
+                      : 'Close thread view'
                 }
               />
             </>
@@ -2250,6 +2256,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               authorityChat={currentChat}
               mediaRefs={currentChatMediaRefs}
               overviewSections={threadHomeOverviewSections}
+              multiviewLayout={multiview.layout}
+              onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
               onNewChat={startNewThreadFromHome}
               onSelectThread={selectThreadFromHome}
               onPreviewImage={setPreviewChatMediaRef}

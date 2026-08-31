@@ -4971,7 +4971,7 @@ export function Sidebar({
                   const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
                   if (wsPath) {
                     void import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
-                      terminalLaunchBus.emit(wsPath)
+                      terminalLaunchBus.request(wsPath)
                     })
                   }
                   return

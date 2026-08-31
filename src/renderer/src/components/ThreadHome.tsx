@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type { ChatRecord, ProviderId, WorkspaceRecord } from '../../../main/store/types'
 import type { HostLifecycleSnapshot } from '../../../shared/hostLifecycle'
+import type { MultiviewLayout } from '../../../shared/multiviewLayouts'
 import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
 import { ChatMediaDockPanel, type ChatMediaRef } from './ChatMediaPanel'
@@ -18,6 +19,7 @@ import {
   AppleTerminalIcon,
   ChatMediaIcon,
   GitCommitSymbolIcon,
+  MultiviewSymbolIcon,
   PlusSymbolIcon,
   SidebarRunningGhost,
   XSymbolIcon
@@ -28,6 +30,8 @@ import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
 import { TerminalPane } from './TerminalWorkbench'
+import { MultiviewLayoutGlyph, buildMultiviewLayoutGridItems } from './MultiviewLayoutPicker'
+import { TerminalSessionPicker } from './TerminalSessionPicker'
 import { useHostProjection } from '../hooks/useHostProjection'
 import { isSubThreadChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -48,6 +52,8 @@ import {
   describeHostProviders
 } from './HostStatusRow'
 import { HostLifecycleIpcClient } from '../lib/host/hostLifecycleIpcClient'
+
+export { TerminalSessionPicker as ThreadHomeTerminalWorkspacePicker } from './TerminalSessionPicker'
 
 export type ThreadHomeSurface =
   | 'charts'
@@ -207,138 +213,49 @@ function ThreadHomeMissionControlGlyph(): ReactNode {
   )
 }
 
-export interface ThreadHomeTerminalWorkspacePickerProps {
-  workspaces: readonly WorkspaceRecord[]
-  busyWorkspacePath?: string | null
-  onSelect: (workspace: WorkspaceRecord, cliId: string) => void
-}
-
-const NATIVE_CLIS = [
-  { id: 'default', label: 'Default', desc: 'Normal Terminal in Workspace' },
-  { id: 'codex', label: 'Codex CLI' },
-  { id: 'claude', label: 'Claude Code CLI' },
-  { id: 'kimi', label: 'Kimi Code CLI' },
-  { id: 'cursor', label: 'Cursor-Agent CLI' },
-  { id: 'grok', label: 'Grok Build CLI' },
-  { id: 'ollama', label: 'Ollama CLI' },
-  { id: 'mistral', label: 'Mistral Vibe CLI' },
-  { id: 'agy', label: 'AntiGravity (AGY) CLI' },
-  { id: 'pi', label: 'Pi (Pi CLI)' },
-  { id: 'muse', label: 'Muse Code CLI (Meta)' },
-  { id: 'github', label: 'GitHub CLI' }
-]
-
-export function ThreadHomeTerminalWorkspacePicker({
-  workspaces,
-  busyWorkspacePath,
-  onSelect
-}: ThreadHomeTerminalWorkspacePickerProps) {
-  const [showMore, setShowMore] = useState(false)
-  const [selectedCli, setSelectedCli] = useState('default')
-
-  const visibleWorkspaces = showMore ? workspaces : workspaces.slice(0, 12)
-
-  return (
-    <section className="thread-home-terminal-picker" aria-label="Choose a terminal workspace">
-      <div className="thread-home-terminal-picker-column">
-        <div className="thread-home-terminal-picker-heading">
-          <AppleTerminalIcon />
-          <span>
-            <strong>Choose a workspace</strong>
-            <small>The terminal starts with that workspace as its current directory.</small>
-          </span>
-        </div>
-        {workspaces.length === 0 ? (
-          <div className="thread-home-surface-empty">
-            Add a workspace in the sidebar before opening a terminal.
-          </div>
-        ) : (
-          <div className={`thread-home-terminal-workspace-list ${showMore ? 'is-scrollable' : ''}`}>
-            {visibleWorkspaces.map((workspace) => {
-              const busy = busyWorkspacePath === workspace.path
-              return (
-                <button
-                  type="button"
-                  key={workspace.id}
-                  className="thread-home-thread-row"
-                  disabled={Boolean(busyWorkspacePath)}
-                  onClick={() => onSelect(workspace, selectedCli)}
-                  aria-label={`Open terminal in ${workspace.displayName}, ${workspace.path}`}
-                >
-                  <span className="thread-home-thread-provider" aria-hidden>
-                    <AppleTerminalIcon />
-                  </span>
-                  <span className="thread-home-thread-copy">
-                    <strong>{workspace.displayName}</strong>
-                    <span className="thread-home-thread-subline">
-                      <small>{workspace.path}</small>
-                    </span>
-                  </span>
-                  <span className="thread-home-thread-provider-label">
-                    {busy ? 'Opening…' : 'Open'}
-                  </span>
-                </button>
-              )
-            })}
-            {!showMore && workspaces.length > 12 && (
-              <button
-                type="button"
-                className="thread-home-thread-row"
-                onClick={() => setShowMore(true)}
-              >
-                <span className="thread-home-thread-provider" aria-hidden>
-                  <PlusSymbolIcon />
-                </span>
-                <span className="thread-home-thread-copy">
-                  <strong>Show more workspaces</strong>
-                </span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="thread-home-terminal-picker-column">
-        <div className="thread-home-terminal-picker-heading">
-          <span className="thread-home-thread-provider" style={{ width: 30, height: 30 }} />
-          <span>
-            <strong>Native CLI Quickload</strong>
-            <small>Select a CLI to load in the workspace-isolated terminal.</small>
-          </span>
-        </div>
-        <div className="thread-home-terminal-workspace-list is-scrollable">
-          {NATIVE_CLIS.map((cli) => (
-            <button
-              type="button"
-              key={cli.id}
-              className={`thread-home-thread-row ${selectedCli === cli.id ? 'is-selected' : ''}`}
-              onClick={() => setSelectedCli(cli.id)}
-            >
-              <span className="thread-home-thread-provider" aria-hidden>
-                <AppleTerminalIcon />
-              </span>
-              <span className="thread-home-thread-copy">
-                <strong>{cli.label}</strong>
-                {cli.desc && (
-                  <span className="thread-home-thread-subline">
-                    <small>{cli.desc}</small>
-                  </span>
-                )}
-              </span>
-              {selectedCli === cli.id && (
-                <span className="thread-home-thread-provider-label">Active</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
 function createThreadHomeTerminalSessionId(): string {
   const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
   return `thread-home-${suffix}`
+}
+
+export function ThreadHomeMultiviewLayoutSelector({
+  layout,
+  onSelectLayout
+}: {
+  layout: MultiviewLayout
+  onSelectLayout: (layout: MultiviewLayout) => void
+}) {
+  const items = buildMultiviewLayoutGridItems(layout, onSelectLayout)
+  return (
+    <section className="thread-home-multiview-picker" aria-label="Choose a MultiView layout">
+      <div className="thread-home-multiview-picker-heading">
+        <strong>MultiView layout</strong>
+        <small>Choose how to arrange the central pane.</small>
+      </div>
+      <div className="thread-home-multiview-grid" role="list">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="listitem"
+            className={`thread-home-thread-row thread-home-multiview-layout-row${
+              item.active ? ' is-selected' : ''
+            }`}
+            aria-pressed={item.active}
+            onClick={item.onSelect}
+          >
+            <span className="thread-home-thread-provider" aria-hidden>
+              <MultiviewLayoutGlyph layout={item.id} />
+            </span>
+            <span className="thread-home-thread-copy">
+              <strong>{item.label}</strong>
+              <small>{item.description}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 export interface ThreadHomeProps {
@@ -358,6 +275,9 @@ export interface ThreadHomeProps {
   onOpenMissionControl: () => void
   onOpenTerminal: () => void
   onOpenExistingTerminal?: (term: { sessionId: string; workspacePath: string }) => void
+  multiviewLayout?: MultiviewLayout
+  onSelectMultiviewLayout?: (layout: MultiviewLayout) => void
+  onKillTerminal?: (term: { sessionId: string; workspacePath: string }) => void
   onClosePane?: () => void
   onActivate?: () => void
 }
@@ -380,32 +300,48 @@ export function ThreadHome({
   onOpenMissionControl,
   onOpenTerminal,
   onOpenExistingTerminal,
+  multiviewLayout = 'single',
+  onSelectMultiviewLayout,
+  onKillTerminal,
   onClosePane,
   onActivate
 }: ThreadHomeProps) {
+  const [multiviewPickerOpen, setMultiviewPickerOpen] = useState(false)
   const surfaceDisabled = !authorityChatId || Boolean(busySurface)
   const showOverviewSections = variant === 'main' && Boolean(overviewSections?.heatmaps)
   const renderTerminalRow = (term: { sessionId: string; workspacePath: string }) => {
     const dirName = term.workspacePath.split(/[/\\]/).pop() || 'Terminal'
     return (
-      <button
-        key={term.sessionId}
-        type="button"
-        className="thread-home-thread-row"
-        onClick={() => onOpenExistingTerminal?.(term)}
-        aria-label={`Open terminal session in ${dirName}`}
-      >
-        <span className="thread-home-thread-provider" aria-hidden>
-          <AppleTerminalIcon />
-        </span>
-        <span className="thread-home-thread-copy">
-          <strong>{dirName}</strong>
-          <span className="thread-home-thread-subline">
-            <small>{term.workspacePath}</small>
+      <div key={term.sessionId} className="thread-home-terminal-session-row">
+        <button
+          type="button"
+          className="thread-home-thread-row"
+          onClick={() => onOpenExistingTerminal?.(term)}
+          aria-label={`Open terminal session in ${dirName}`}
+        >
+          <span className="thread-home-thread-provider" aria-hidden>
+            <AppleTerminalIcon />
           </span>
-        </span>
-        <span className="thread-home-thread-provider-label">Terminal</span>
-      </button>
+          <span className="thread-home-thread-copy">
+            <strong>{dirName}</strong>
+            <span className="thread-home-thread-subline">
+              <small>{term.workspacePath}</small>
+            </span>
+          </span>
+          <span className="thread-home-thread-provider-label">Terminal</span>
+        </button>
+        {onKillTerminal && (
+          <button
+            type="button"
+            className="thread-home-terminal-kill"
+            onClick={() => onKillTerminal(term)}
+            title={`Kill terminal in ${dirName}`}
+            aria-label={`Kill terminal session in ${dirName}`}
+          >
+            ×
+          </button>
+        )}
+      </div>
     )
   }
 
@@ -465,62 +401,90 @@ export function ThreadHome({
       >
         <section className="thread-home-section" aria-label="Active threads">
           <div className="thread-home-thread-list">
-            <button
-              type="button"
-              className="thread-home-thread-row thread-home-primary-action-row thread-home-new-chat-row"
-              onClick={onNewChat}
-              aria-label="New Chat"
-            >
-              <span className="thread-home-thread-provider" aria-hidden>
-                <PlusSymbolIcon />
-              </span>
-              <span className="thread-home-thread-copy">
-                <strong>New Chat</strong>
-                <small>Start a new thread</small>
-              </span>
-              <span className="thread-home-thread-provider-label">New</span>
-            </button>
-            <button
-              type="button"
-              className="thread-home-thread-row thread-home-primary-action-row thread-home-terminal-card"
-              onClick={onOpenTerminal}
-              aria-label="Open New Terminal. Choose a workspace."
-            >
-              <span className="thread-home-thread-provider" aria-hidden>
-                <AppleTerminalIcon />
-              </span>
-              <span className="thread-home-thread-copy">
-                <strong>New Terminal</strong>
-                <small>Choose a workspace</small>
-              </span>
-              <span className="thread-home-thread-provider-label">Open</span>
-            </button>
-            <button
-              type="button"
-              className="thread-home-mission-control-card"
-              onClick={onOpenMissionControl}
-              aria-label={`Open Mission Control. ${missionControl.summary}. ${missionControl.phase}`}
-            >
-              <span className="thread-home-mission-control-icon">
-                <ThreadHomeMissionControlGlyph />
-              </span>
-              <span className="thread-home-mission-control-copy">
-                <strong>Mission Control</strong>
-                <span>{missionControl.summary}</span>
-              </span>
-              <span className="thread-home-mission-control-status">
-                <i
-                  className={`host-mission-control-dot is-${
-                    missionControl.phase === 'Live' ? 'live' : 'stale'
-                  }`}
-                  aria-hidden
-                />
-                {missionControl.phase}
-              </span>
-              <span className="thread-home-mission-control-chevron" aria-hidden>
-                ›
-              </span>
-            </button>
+            <div className="thread-home-primary-actions">
+              <button
+                type="button"
+                className="thread-home-thread-row thread-home-primary-action-row thread-home-new-chat-row"
+                onClick={onNewChat}
+                aria-label="New Chat"
+              >
+                <span className="thread-home-thread-provider" aria-hidden>
+                  <PlusSymbolIcon />
+                </span>
+                <span className="thread-home-thread-copy">
+                  <strong>New Chat</strong>
+                  <small>Start a new thread</small>
+                </span>
+                <span className="thread-home-thread-provider-label">New</span>
+              </button>
+              <button
+                type="button"
+                className="thread-home-thread-row thread-home-primary-action-row thread-home-terminal-card"
+                onClick={onOpenTerminal}
+                aria-label="Open New Terminal. Choose a workspace."
+              >
+                <span className="thread-home-thread-provider" aria-hidden>
+                  <AppleTerminalIcon />
+                </span>
+                <span className="thread-home-thread-copy">
+                  <strong>New Terminal</strong>
+                  <small>Choose a workspace</small>
+                </span>
+                <span className="thread-home-thread-provider-label">Open</span>
+              </button>
+              <button
+                type="button"
+                className="thread-home-thread-row thread-home-primary-action-row thread-home-multiview-card"
+                onClick={() => setMultiviewPickerOpen((current) => !current)}
+                disabled={!onSelectMultiviewLayout}
+                aria-label="Choose a MultiView layout"
+                aria-expanded={multiviewPickerOpen}
+              >
+                <span className="thread-home-thread-provider" aria-hidden>
+                  <MultiviewSymbolIcon />
+                </span>
+                <span className="thread-home-thread-copy">
+                  <strong>MultiView</strong>
+                  <small>Choose a pane layout</small>
+                </span>
+                <span className="thread-home-thread-provider-label">Arrange</span>
+              </button>
+              <button
+                type="button"
+                className="thread-home-mission-control-card"
+                onClick={onOpenMissionControl}
+                aria-label={`Open Mission Control. ${missionControl.summary}. ${missionControl.phase}`}
+              >
+                <span className="thread-home-mission-control-icon">
+                  <ThreadHomeMissionControlGlyph />
+                </span>
+                <span className="thread-home-mission-control-copy">
+                  <strong>Mission Control</strong>
+                  <span>{missionControl.summary}</span>
+                </span>
+                <span className="thread-home-mission-control-status">
+                  <i
+                    className={`host-mission-control-dot is-${
+                      missionControl.phase === 'Live' ? 'live' : 'stale'
+                    }`}
+                    aria-hidden
+                  />
+                  {missionControl.phase}
+                </span>
+                <span className="thread-home-mission-control-chevron" aria-hidden>
+                  ›
+                </span>
+              </button>
+            </div>
+            {multiviewPickerOpen && onSelectMultiviewLayout && (
+              <ThreadHomeMultiviewLayoutSelector
+                layout={multiviewLayout}
+                onSelectLayout={(layout) => {
+                  setMultiviewPickerOpen(false)
+                  onSelectMultiviewLayout(layout)
+                }}
+              />
+            )}
             <div className="thread-home-list-heading" role="heading" aria-level={3}>
               Active
             </div>
@@ -720,6 +684,8 @@ export interface ThreadHomeWorkspaceProps {
   authorityChat: ChatRecord | null
   mediaRefs: ChatMediaRef[]
   overviewSections?: ThreadHomeOverviewSections
+  multiviewLayout: MultiviewLayout
+  onSelectMultiviewLayout?: (layout: MultiviewLayout) => void
   onNewChat: () => void
   onSelectThread: (chatId: string) => void
   onClosePane?: () => void
@@ -758,7 +724,7 @@ export async function settleThreadHomeTerminalOpen(input: {
       try {
         await input.onDiscarded(input.sessionId)
       } catch {
-        // Best-effort cleanup: the terminal may already have exited.
+        // Best-effort detached-session bookkeeping; the PTY remains main-owned.
       }
       return
     }
@@ -812,6 +778,8 @@ function ThreadHomeWorkspaceInner(
     authorityChat,
     mediaRefs,
     overviewSections,
+    multiviewLayout,
+    onSelectMultiviewLayout,
     onNewChat,
     onSelectThread,
     onClosePane,
@@ -927,16 +895,15 @@ function ThreadHomeWorkspaceInner(
       canvasOpenGenerationRef.current += 1
       terminalOpenGenerationRef.current += 1
       const canvasId = canvasIdRef.current
-      const terminalSessionId = terminalSessionRef.current?.sessionId
       if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
-      if (terminalSessionId) {
-        void window.api.terminal.kill(terminalSessionId).catch(() => undefined)
-      }
     }
   }, [])
   useEffect(
     () =>
       window.api.terminal.onExit((sessionId, exitCode) => {
+        setActiveTerminals((current) =>
+          current.filter((terminal) => terminal.sessionId !== sessionId)
+        )
         if (terminalSessionRef.current?.sessionId !== sessionId) return
         terminalSessionRef.current = null
         setTerminalSession(null)
@@ -951,7 +918,7 @@ function ThreadHomeWorkspaceInner(
       try {
         const terminals = await window.api.terminal.list()
         if (mounted) setActiveTerminals(terminals)
-      } catch (err) {
+      } catch {
         // Ignore IPC errors if closed
       }
     }
@@ -984,7 +951,6 @@ function ThreadHomeWorkspaceInner(
     canvasOpenGenerationRef.current += 1
     terminalOpenGenerationRef.current += 1
     const canvasId = canvasIdRef.current
-    const terminalSessionId = terminalSessionRef.current?.sessionId
     canvasIdRef.current = null
     terminalSessionRef.current = null
     setCanvas(null)
@@ -994,10 +960,13 @@ function ThreadHomeWorkspaceInner(
     setBusyTerminalWorkspacePath(null)
     setIssue(null)
     if (canvasId) void window.api.canvas?.close?.(canvasId).catch(() => undefined)
-    if (terminalSessionId) {
-      void window.api.terminal.kill(terminalSessionId).catch(() => undefined)
-    }
   }, [])
+
+  const killCurrentTerminal = useCallback((): void => {
+    const sessionId = terminalSessionRef.current?.sessionId
+    closeSurface()
+    if (sessionId) void window.api.terminal.kill(sessionId).catch(() => undefined)
+  }, [closeSurface])
 
   const closeCurrentSurface = useCallback((): void => {
     if (surface === 'mesh' && meshCanvasPanelRef.current) {
@@ -1106,7 +1075,7 @@ function ThreadHomeWorkspaceInner(
         terminalSidebarStore.recordRecipe(workspace.path)
       },
       onRejected: setIssue,
-      onDiscarded: (discardedSessionId) => window.api.terminal.kill(discardedSessionId)
+      onDiscarded: () => terminalSidebarStore.recordRecipe(workspace.path)
     })
     if (isCurrent()) setBusyTerminalWorkspacePath(null)
   }
@@ -1115,6 +1084,13 @@ function ThreadHomeWorkspaceInner(
     terminalSessionRef.current = term
     setTerminalSession(term)
     setSurface('terminal')
+  }
+
+  const killTerminal = (term: { sessionId: string; workspacePath: string }): void => {
+    setActiveTerminals((current) =>
+      current.filter((candidate) => candidate.sessionId !== term.sessionId)
+    )
+    void window.api.terminal.kill(term.sessionId).catch(() => undefined)
   }
 
   if (
@@ -1135,12 +1111,15 @@ function ThreadHomeWorkspaceInner(
         busySurface={busySurface}
         issue={issue}
         overviewSections={overviewSections}
+        multiviewLayout={multiviewLayout}
+        onSelectMultiviewLayout={onSelectMultiviewLayout}
         onNewChat={onNewChat}
         onSelectThread={onSelectThread}
         onSelectSurface={(next) => void openSurface(next)}
         onOpenMissionControl={() => void openSurface('mission-control')}
         onOpenTerminal={() => void openSurface('terminal')}
         onOpenExistingTerminal={openExistingTerminal}
+        onKillTerminal={killTerminal}
         onClosePane={onClosePane}
         onActivate={onActivate}
       />
@@ -1199,10 +1178,10 @@ function ThreadHomeWorkspaceInner(
             <TerminalPane
               sessionId={terminalSession.sessionId}
               workspacePath={terminalSession.workspacePath}
-              onClose={closeSurface}
+              onClose={killCurrentTerminal}
             />
           ) : (
-            <ThreadHomeTerminalWorkspacePicker
+            <TerminalSessionPicker
               workspaces={workspaces}
               busyWorkspacePath={busyTerminalWorkspacePath}
               onSelect={(workspace, cliId) => void openTerminalWorkspace(workspace, cliId)}

@@ -24,12 +24,24 @@ describe('Thread Home integration', () => {
   })
 
   it('replaces the single transcript/composer with Thread Home and keeps pane homes independent', () => {
+    const layoutSelectStart = appSource.indexOf('const handleSelectMultiviewLayout = useCallback')
+    const layoutSelectEnd = appSource.indexOf(
+      'const workspaceSidebarToggleButton',
+      layoutSelectStart
+    )
+    expect(appSource.slice(layoutSelectStart, layoutSelectEnd)).toContain(
+      'setThreadHomeOpen(false)'
+    )
     expect(layoutSource).toContain('threadHomeOpen && !isMultiviewSplit ? (')
     expect(layoutSource).toContain('<ThreadHomeWorkspace')
     expect(layoutSource).toContain('variant="main"')
     expect(layoutSource).toContain('variant="pane"')
     expect(layoutSource).toContain('runningChatIds={runningChatIdsArray}')
     expect(layoutSource).toContain('mediaRefs={currentChatMediaRefs}')
+    expect(layoutSource).toContain('multiviewLayout={multiview.layout}')
+    expect(layoutSource).toContain(
+      'onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}'
+    )
     expect(layoutSource).toContain('onNewChat={startNewThreadFromHome}')
     expect(layoutSource).toContain('handleNewDefaultGlobalChat?.()')
   })
@@ -48,18 +60,25 @@ describe('Thread Home integration', () => {
     expect(layoutSource).toContain('overviewSections={threadHomeOverviewSections}')
   })
 
-  it('routes close through the glass pill and retires the old floating pane close button', () => {
+  it('routes the primary glass-pill dismiss to Thread Home without collapsing MultiView', () => {
+    const dismissStart = layoutSource.indexOf('const dismissPrimaryMultiviewPane =')
+    const dismissEnd = layoutSource.indexOf(
+      'const requestMainPaneWorkspaceStats',
+      dismissStart
+    )
+    const dismiss = layoutSource.slice(dismissStart, dismissEnd)
+    expect(dismiss).toContain('multiview.setPaneChat(primaryPaneIndex, null)')
+    expect(dismiss).not.toContain('multiview.closePane')
+
     const pillStart = layoutSource.indexOf('<MainPaneActionPill\n')
     const pillEnd = layoutSource.indexOf('/>', pillStart)
     const pill = layoutSource.slice(pillStart, pillEnd)
     expect(pill).toContain('onCloseThread={')
-    expect(pill).toContain('? () => multiview.closePane(multiview.focusedPaneIndex)')
+    expect(pill).toContain('? dismissPrimaryMultiviewPane')
     expect(pill).toContain('mainThreadHomeWorkspaceRef.current?.closeCurrentPane()')
     expect(pill).toContain(': openThreadHome')
     expect(pill).not.toContain('closeThreadDisabled=')
-    expect(pill).toContain(
-      "isMultiviewSplit || threadHomeOpen ? 'Close pane' : 'Close thread view'"
-    )
+    expect(pill).toContain("? 'Dismiss pane to Thread Home'")
 
     const mainHomeStart = layoutSource.indexOf('<ThreadHomeWorkspace', pillEnd)
     const mainHomeEnd = layoutSource.indexOf('/>', mainHomeStart)

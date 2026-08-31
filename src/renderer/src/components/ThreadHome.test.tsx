@@ -6,6 +6,7 @@ import {
   THREAD_HOME_RECENT_LIMIT,
   THREAD_HOME_SURFACES,
   ThreadHome,
+  ThreadHomeMultiviewLayoutSelector,
   ThreadHomeTerminalWorkspacePicker,
   buildThreadHomeRecentThreadOptions,
   buildThreadHomeThreadOptions,
@@ -130,6 +131,8 @@ describe('ThreadHome', () => {
         onSelectSurface={vi.fn()}
         onOpenMissionControl={vi.fn()}
         onOpenTerminal={vi.fn()}
+        multiviewLayout="vertical-2"
+        onSelectMultiviewLayout={vi.fn()}
         onClosePane={vi.fn()}
         onActivate={vi.fn()}
       />
@@ -137,7 +140,8 @@ describe('ThreadHome', () => {
 
     expect(html).toContain('aria-label="Thread Home"')
     expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Open New Terminal'))
-    expect(html.indexOf('Open New Terminal')).toBeLessThan(html.indexOf('Mission Control'))
+    expect(html.indexOf('Open New Terminal')).toBeLessThan(html.indexOf('Choose a MultiView layout'))
+    expect(html.indexOf('Choose a MultiView layout')).toBeLessThan(html.indexOf('Mission Control'))
     expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('>Active</div>'))
     expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Alpha'))
     expect(html.indexOf('>Active</div>')).toBeLessThan(html.indexOf('Alpha'))
@@ -172,6 +176,42 @@ describe('ThreadHome', () => {
     expect(html).toContain('thread-home-mission-control-card')
     expect(html).toContain('aria-label="Open New Terminal. Choose a workspace."')
     expect(html).toContain('<strong>New Terminal</strong>')
+    expect(html).toContain('aria-label="Choose a MultiView layout"')
+    expect(html).toContain('<strong>MultiView</strong>')
+  })
+
+  it('renders every MultiView arrangement in the Thread Home picker', () => {
+    const html = renderToStaticMarkup(
+      <ThreadHomeMultiviewLayoutSelector layout="quad" onSelectLayout={vi.fn()} />
+    )
+
+    expect(html).toContain('aria-label="Choose a MultiView layout"')
+    expect((html.match(/role="listitem"/g) || []).length).toBe(12)
+    expect(html).toContain('<strong>Quad</strong>')
+    expect(html).toContain('aria-pressed="true"')
+  })
+
+  it('keeps persistent terminals reopenable and explicitly killable from Thread Home', () => {
+    const html = renderToStaticMarkup(
+      <ThreadHome
+        variant="main"
+        threads={[]}
+        recentThreads={[]}
+        activeTerminals={[{ sessionId: 'terminal-1', workspacePath: '/work/alpha' }]}
+        missionControl={missionControl}
+        onNewChat={vi.fn()}
+        onSelectThread={vi.fn()}
+        onSelectSurface={vi.fn()}
+        onOpenMissionControl={vi.fn()}
+        onOpenTerminal={vi.fn()}
+        onOpenExistingTerminal={vi.fn()}
+        onKillTerminal={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('>Active Terminals</div>')
+    expect(html).toContain('aria-label="Open terminal session in alpha"')
+    expect(html).toContain('aria-label="Kill terminal session in alpha"')
   })
 
   it('asks which added workspace should become the terminal cwd', () => {
@@ -226,7 +266,7 @@ describe('ThreadHome', () => {
     expect(html).not.toContain('No active threads right now.')
     expect(html).toContain('No recent threads yet.')
     expect(html).toContain('>Canvas</div>')
-    expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length)
+    expect((html.match(/disabled=""/g) || []).length).toBe(THREAD_HOME_SURFACES.length + 1)
   })
 
   it('adds only the heatmap to the full home without crowding pane homes', () => {
@@ -380,7 +420,7 @@ describe('ThreadHome', () => {
     expect(onRejected).not.toHaveBeenCalled()
   })
 
-  it('kills a terminal session that finishes opening after Thread Home moved on', async () => {
+  it('keeps a terminal session available when opening finishes after Thread Home moved on', async () => {
     let resolveRequest: () => void = () => undefined
     const request = new Promise<void>((resolve) => {
       resolveRequest = resolve
@@ -405,5 +445,18 @@ describe('ThreadHome', () => {
     expect(onDiscarded).toHaveBeenCalledWith('late-terminal')
     expect(onAccepted).not.toHaveBeenCalled()
     expect(onRejected).not.toHaveBeenCalled()
+  })
+
+  it('detaches on navigation and reserves termination for explicit kill actions', () => {
+    const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
+    const mountStart = source.indexOf('mountedRef.current = true')
+    const mountEnd = source.indexOf('useEffect(\n    () =>\n      window.api.terminal.onExit', mountStart)
+    const closeStart = source.indexOf('const closeSurface = useCallback')
+    const closeEnd = source.indexOf('const killCurrentTerminal = useCallback', closeStart)
+    const killEnd = source.indexOf('const closeCurrentSurface = useCallback', closeEnd)
+
+    expect(source.slice(mountStart, mountEnd)).not.toContain('window.api.terminal.kill')
+    expect(source.slice(closeStart, closeEnd)).not.toContain('window.api.terminal.kill')
+    expect(source.slice(closeEnd, killEnd)).toContain('window.api.terminal.kill(sessionId)')
   })
 })

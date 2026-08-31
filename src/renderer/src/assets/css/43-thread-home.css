@@ -119,6 +119,21 @@
   grid-column: 1 / -1;
 }
 
+.thread-home-primary-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.thread-home-primary-actions > button {
+  width: 100%;
+}
+
+.thread-home--pane .thread-home-primary-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .thread-home-list-heading {
   grid-column: 1 / -1;
   margin-top: 8px;
@@ -150,6 +165,11 @@
   -webkit-backdrop-filter: none;
   cursor: pointer;
   transition: transform 120ms ease;
+}
+
+.thread-home-thread-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
 }
 
 .thread-home-surface-card,
@@ -331,6 +351,73 @@
   height: 18px;
 }
 
+.thread-home-terminal-session-row {
+  position: relative;
+  min-width: 0;
+}
+
+.thread-home-terminal-session-row > .thread-home-thread-row {
+  width: 100%;
+  padding-right: 38px;
+}
+
+.thread-home-terminal-kill {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.thread-home-terminal-kill:hover,
+.thread-home-terminal-kill:focus-visible {
+  background: color-mix(in srgb, var(--status-failed, #e5484d) 13%, transparent);
+  color: var(--status-failed, #e5484d);
+}
+
+.thread-home-multiview-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 8px 0 14px;
+}
+
+.thread-home-multiview-picker-heading {
+  display: grid;
+  gap: 3px;
+  padding: 0 12px;
+}
+
+.thread-home-multiview-picker-heading strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.thread-home-multiview-picker-heading small {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.thread-home-multiview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  gap: 4px;
+}
+
+.thread-home-multiview-layout-row {
+  grid-template-columns: 24px minmax(0, 1fr);
+}
+
 .thread-home-surface-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -483,6 +570,12 @@
   display: grid;
   min-width: 0;
   gap: 3px;
+}
+
+.thread-home-terminal-picker-heading > .terminal-session-picker-heading-spacer {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
 }
 
 .thread-home-terminal-picker-heading strong {
@@ -1143,6 +1236,10 @@
 }
 
 @container (max-width: 560px) {
+  .thread-home-primary-actions {
+    grid-template-columns: 1fr;
+  }
+
   .thread-home-surface-grid {
     grid-template-columns: 1fr;
   }

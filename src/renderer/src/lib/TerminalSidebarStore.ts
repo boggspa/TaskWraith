@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { TerminalCliId } from '../../../shared/terminalCli'
 
 export interface TerminalRecipe {
   id: string
@@ -43,7 +44,9 @@ export const terminalSidebarStore = {
       cachedRecipes = recipes
       window.localStorage.setItem(STORAGE_KEY, raw)
       terminalSidebarStore.emit()
-    } catch {}
+    } catch {
+      // localStorage can be unavailable in hardened renderer contexts.
+    }
   },
   recordRecipe(workspacePath: string, command?: string) {
     const current = terminalSidebarStore.getRecipes()
@@ -97,13 +100,17 @@ export function useTerminalRecipes() {
 
 // Event bus for Masthead -> MainAppLayout/Workbench to open terminal pane
 type TerminalLaunchEvent =
-  | { type: 'launch'; workspacePath: string }
+  | { type: 'launch'; workspacePath: string; cliId: TerminalCliId }
+  | { type: 'request'; preferredWorkspacePath?: string }
   | { type: 'attach'; workspacePath: string; sessionId: string }
 const launchListeners = new Set<(event: TerminalLaunchEvent) => void>()
 
 export const terminalLaunchBus = {
-  emit(workspacePath: string) {
-    launchListeners.forEach((l) => l({ type: 'launch', workspacePath }))
+  emit(workspacePath: string, cliId: TerminalCliId = 'default') {
+    launchListeners.forEach((l) => l({ type: 'launch', workspacePath, cliId }))
+  },
+  request(preferredWorkspacePath?: string) {
+    launchListeners.forEach((l) => l({ type: 'request', preferredWorkspacePath }))
   },
   emitAttach(workspacePath: string, sessionId: string) {
     launchListeners.forEach((l) => l({ type: 'attach', workspacePath, sessionId }))

@@ -2,8 +2,11 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import type { WorkspaceRecord } from '../../../main/store/types'
+import type { TerminalCliId } from '../../../shared/terminalCli'
 import { terminalLaunchBus, terminalSidebarStore } from '../lib/TerminalSidebarStore'
 import emptyGhostSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
+import { TerminalSessionPicker } from './TerminalSessionPicker'
 
 const TUI_TERMINAL_THEME = {
   background: '#05080d',
@@ -34,22 +37,41 @@ function workspaceBasename(path: string): string {
   return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? path
 }
 
-interface ActiveSession {
+export interface ActiveTerminalSession {
   sessionId: string
   workspacePath: string
 }
 
-export function TerminalWorkbench({ 
+export const MAX_VISIBLE_TERMINAL_SESSIONS = 4
+
+/** Keep the workbench bounded without terminating a background PTY. */
+export function keepVisibleTerminalSessions(
+  current: readonly ActiveTerminalSession[],
+  incoming: ActiveTerminalSession
+): ActiveTerminalSession[] {
+  return [
+    ...current.filter((session) => session.sessionId !== incoming.sessionId),
+    incoming
+  ].slice(-MAX_VISIBLE_TERMINAL_SESSIONS)
+}
+
+export function TerminalWorkbench({
   workspaceSidebarWidth,
-  currentWorkspacePath
-}: { 
+  currentWorkspacePath,
+  workspaces
+}: {
   workspaceSidebarWidth: number
   currentWorkspacePath?: string
+  workspaces: readonly WorkspaceRecord[]
 }) {
-  const [sessions, setSessions] = useState<ActiveSession[]>([])
-  const sessionsRef = useRef<ActiveSession[]>([])
+  const [sessions, setSessions] = useState<ActiveTerminalSession[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [preferredWorkspacePath, setPreferredWorkspacePath] = useState(currentWorkspacePath)
+  const [busyWorkspacePath, setBusyWorkspacePath] = useState<string | null>(null)
+  const [launchError, setLaunchError] = useState<string | null>(null)
+  const sessionsRef = useRef<ActiveTerminalSession[]>([])
 
-  const updateSessions = useCallback((next: ActiveSession[]) => {
+  const updateSessions = useCallback((next: ActiveTerminalSession[]) => {
     sessionsRef.current = next
     setSessions(next)
   }, [])
@@ -65,47 +87,52 @@ export function TerminalWorkbench({
     })
   }, [])
 
+  const launchSession = useCallback(
+    async (workspacePath: string, cliId: TerminalCliId): Promise<void> => {
+      const sessionId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+      setBusyWorkspacePath(workspacePath)
+      setLaunchError(null)
+      try {
+        await window.api.terminal.create(workspacePath, sessionId, cliId)
+        terminalSidebarStore.recordRecipe(
+          workspacePath,
+          cliId === 'default' ? undefined : cliId
+        )
+        updateSessions(
+          keepVisibleTerminalSessions(sessionsRef.current, { sessionId, workspacePath })
+        )
+        setPickerOpen(false)
+      } catch (error) {
+        setLaunchError(error instanceof Error ? error.message : 'Could not open Terminal.')
+      } finally {
+        setBusyWorkspacePath((current) => (current === workspacePath ? null : current))
+      }
+    },
+    [updateSessions]
+  )
+
   useEffect(() => {
-    // Sync initial state
-    window.api.terminal.list().then(list => {
-      updateSessions(list.slice(0, 4))
-    }).catch(() => {})
+    window.api.terminal
+      .list()
+      .then((list) => {
+        updateSessions(list.slice(-MAX_VISIBLE_TERMINAL_SESSIONS))
+      })
+      .catch(() => {})
 
     const unsubscribeLaunch = terminalLaunchBus.subscribe((event) => {
       if (event.type === 'launch') {
-        terminalSidebarStore.recordRecipe(event.workspacePath)
-        const newSessionId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-        window.api.terminal.create(event.workspacePath, newSessionId).then(() => {
-          const oldestSession = sessionsRef.current.length >= 4 ? sessionsRef.current[0] : undefined
-          const next = oldestSession
-            ? [...sessionsRef.current.slice(1), { sessionId: newSessionId, workspacePath: event.workspacePath }]
-            : [...sessionsRef.current, { sessionId: newSessionId, workspacePath: event.workspacePath }]
-
-          updateSessions(next)
-
-          if (oldestSession) {
-            void window.api.terminal.kill(oldestSession.sessionId).catch((error) => {
-              console.error('[TerminalWorkbench] terminal.kill failed while evicting pane', {
-                sessionId: oldestSession.sessionId,
-                error
-              })
-            })
-          }
-        }).catch((err) => {
-          console.error('[TerminalWorkbench] terminal.create failed', { workspacePath: event.workspacePath, sessionId: newSessionId, error: err })
-        })
+        void launchSession(event.workspacePath, event.cliId)
+      } else if (event.type === 'request') {
+        setPreferredWorkspacePath(event.preferredWorkspacePath)
+        setLaunchError(null)
+        setPickerOpen(true)
       } else if (event.type === 'attach') {
-        setSessions(prev => {
-          if (prev.find(s => s.sessionId === event.sessionId)) return prev
-
-          const oldestSession = prev.length >= 4 ? prev[0] : undefined
-          const next = oldestSession
-            ? [...prev.slice(1), { sessionId: event.sessionId, workspacePath: event.workspacePath }]
-            : [...prev, { sessionId: event.sessionId, workspacePath: event.workspacePath }]
-
-          sessionsRef.current = next
-          return next
-        })
+        updateSessions(
+          keepVisibleTerminalSessions(sessionsRef.current, {
+            sessionId: event.sessionId,
+            workspacePath: event.workspacePath
+          })
+        )
       }
     })
 
@@ -117,7 +144,7 @@ export function TerminalWorkbench({
       unsubscribeLaunch()
       unsubscribeExit()
     }
-  }, [updateSessions, removeSession])
+  }, [launchSession, removeSession, updateSessions])
 
   const handleClose = (sessionId: string) => {
     removeSession(sessionId)
@@ -127,33 +154,67 @@ export function TerminalWorkbench({
   }
 
   return (
-    <div 
+    <div
       className="terminal-workbench-root"
       style={{ left: workspaceSidebarWidth }}
     >
-      {sessions.length === 0 ? (
+      {pickerOpen ? (
+        <section className="terminal-workbench-picker" aria-label="New Terminal Session">
+          <header className="thread-home-surface-toolbar">
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              aria-label="Back to terminal sessions"
+            >
+              ‹
+            </button>
+            <strong>New Terminal Session</strong>
+            <span>Select a workspace and CLI</span>
+          </header>
+          <div className="terminal-workbench-picker-body">
+            <TerminalSessionPicker
+              workspaces={workspaces}
+              preferredWorkspacePath={preferredWorkspacePath}
+              busyWorkspacePath={busyWorkspacePath}
+              onSelect={(workspace, cliId) => void launchSession(workspace.path, cliId)}
+            />
+          </div>
+          {launchError && (
+            <div className="terminal-workbench-picker-error" role="alert">
+              {launchError}
+            </div>
+          )}
+        </section>
+      ) : sessions.length === 0 ? (
         <div className="terminal-workbench-empty">
-          <div className="terminal-workbench-empty-icon" dangerouslySetInnerHTML={{ __html: emptyGhostSvg }} />
+          <div
+            className="terminal-workbench-empty-icon"
+            dangerouslySetInnerHTML={{ __html: emptyGhostSvg }}
+          />
           <p>workspace-isolated environment</p>
-          <button 
+          <button
             className="terminal-workbench-new-btn"
-            disabled={!currentWorkspacePath}
-            onClick={() => { if (currentWorkspacePath) terminalLaunchBus.emit(currentWorkspacePath) }}
+            disabled={workspaces.length === 0}
+            onClick={() => {
+              setPreferredWorkspacePath(currentWorkspacePath)
+              setLaunchError(null)
+              setPickerOpen(true)
+            }}
           >
             New Terminal Session&hellip;
           </button>
-          {!currentWorkspacePath && (
-            <p className="terminal-workbench-empty-hint">Open a workspace first</p>
+          {workspaces.length === 0 && (
+            <p className="terminal-workbench-empty-hint">Add a workspace first</p>
           )}
         </div>
       ) : (
         <div className="terminal-workbench-grid" data-count={sessions.length}>
-          {sessions.map(s => (
-            <TerminalPane 
-              key={s.sessionId} 
-              sessionId={s.sessionId} 
-              workspacePath={s.workspacePath} 
-              onClose={() => handleClose(s.sessionId)}
+          {sessions.map((session) => (
+            <TerminalPane
+              key={session.sessionId}
+              sessionId={session.sessionId}
+              workspacePath={session.workspacePath}
+              onClose={() => handleClose(session.sessionId)}
             />
           ))}
         </div>
