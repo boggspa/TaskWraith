@@ -30,6 +30,7 @@ import {
   publishInProcessProfileAuthority
 } from './host/HostInProcessProfileAuthorityState'
 import type { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
+import { TWEMU_PRIVILEGE } from './emulator/EmulatorAssetProtocol'
 import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 
@@ -43,7 +44,7 @@ function configureElectronBeforeReady(): void {
   if (rendererHeapCeilingMb >= rendererHeapCeilingMinMb) {
     app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererHeapCeilingMb}`)
   }
-  protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE])
+  protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE, TWEMU_PRIVILEGE])
 }
 
 configureElectronBeforeReady()

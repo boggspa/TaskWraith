@@ -69,6 +69,8 @@ export type CanvasDriverKind =
   | 'device'
   /** Structured telemetry chart — screenshot-capable; docks without WebContentsView. */
   | 'chart'
+  /** Internal packaged WebAssembly emulator surface. CanvasService admission lands separately. */
+  | 'emulator'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -80,6 +82,22 @@ export interface CanvasViewport {
 export interface CanvasDeviceTarget {
   /** Simulator UDID (uppercase UUID) or 'booted'. Omit → the booted simulator. */
   udid?: string
+}
+
+/**
+ * The only packaged game identifier reserved by the emulator foundation.
+ *
+ * This is deliberately a closed internal union: a Canvas caller cannot turn an
+ * emulator open into an arbitrary ROM/file/URL loader. The first runnable
+ * package slice supplies the reviewed assets for this identifier.
+ */
+export const CANVAS_EMULATOR_GAME_IDS = ['homebrew-demo'] as const
+export type CanvasEmulatorGameId = (typeof CANVAS_EMULATOR_GAME_IDS)[number]
+
+export function isCanvasEmulatorGameId(value: unknown): value is CanvasEmulatorGameId {
+  return (
+    typeof value === 'string' && (CANVAS_EMULATOR_GAME_IDS as readonly string[]).includes(value)
+  )
 }
 
 /**
@@ -97,6 +115,11 @@ export interface CanvasOpenInput {
   driver?: CanvasDriverKind
   url?: string
   viewport?: CanvasViewport
+  /**
+   * INTERNAL ONLY. The fixed packaged emulator game to start. CanvasService
+   * does not admit the emulator driver in this foundation slice.
+   */
+  gameId?: CanvasEmulatorGameId
   /**
    * Bind this canvas to one saved site login (web driver only).
    *

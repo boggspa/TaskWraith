@@ -6,7 +6,7 @@ import { floatingChromeHtml, normalizeFloatingAddress } from './CanvasHostSurfac
 
 describe('floating Canvas chrome', () => {
   it('gives every window the shared tab strip and inverse dock action', () => {
-    for (const kind of ['web', 'sketch'] as const) {
+    for (const kind of ['web', 'sketch', 'emulator'] as const) {
       const html = floatingChromeHtml(kind)
       expect(html).toContain('class="tabs"')
       expect(html).toContain('id="tab-title"')
@@ -24,6 +24,11 @@ describe('floating Canvas chrome', () => {
     const sketch = floatingChromeHtml('sketch')
     expect(sketch).toContain('Sketch Canvas')
     expect(sketch).not.toContain('aria-label="Address"')
+
+    const emulator = floatingChromeHtml('emulator')
+    expect(emulator).toContain('Emulator Canvas')
+    expect(emulator).not.toContain('Sketch Canvas')
+    expect(emulator).not.toContain('aria-label="Address"')
   })
 
   it('normalizes public and local addresses while refusing non-web schemes', () => {

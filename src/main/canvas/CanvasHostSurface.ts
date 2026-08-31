@@ -9,7 +9,7 @@
  */
 import { BrowserWindow, WebContentsView, type WebContents } from 'electron'
 
-export type CanvasSurfaceKind = 'web' | 'sketch'
+export type CanvasSurfaceKind = 'web' | 'sketch' | 'emulator'
 
 export interface CanvasSurfaceNavigationInput {
   url?: string
@@ -97,6 +97,7 @@ export function normalizeFloatingAddress(raw: string): string | null {
 }
 
 export function floatingChromeHtml(kind: CanvasSurfaceKind): string {
+  const surfaceTitle = kind === 'sketch' ? 'Sketch Canvas' : 'Emulator Canvas'
   const browserControls =
     kind === 'web'
       ? `<button id="back" name="action" value="back" aria-label="Back" title="Back" disabled>‹</button>
@@ -108,8 +109,8 @@ export function floatingChromeHtml(kind: CanvasSurfaceKind): string {
              aria-label="Address" placeholder="Enter a web address" />
            <span id="progress" aria-hidden="true"></span>
          </div>`
-      : `<div class="surface-title">Sketch Canvas</div>`
-  const initialTitle = kind === 'web' ? 'New tab' : 'Sketch Canvas'
+      : `<div class="surface-title">${surfaceTitle}</div>`
+  const initialTitle = kind === 'web' ? 'New tab' : surfaceTitle
   return `<!doctype html>
 <html>
 <head>
@@ -175,7 +176,12 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
     height: opts.height + FLOATING_CHROME_HEIGHT,
     minWidth: 420,
     minHeight: 260,
-    title: kind === 'web' ? 'TaskWraith Browser' : 'TaskWraith Sketch Canvas',
+    title:
+      kind === 'web'
+        ? 'TaskWraith Browser'
+        : kind === 'sketch'
+          ? 'TaskWraith Sketch Canvas'
+          : 'TaskWraith Emulator Canvas',
     backgroundColor: '#111111',
     show: true,
     webPreferences: {
@@ -328,7 +334,9 @@ export function createBrowserWindowSurface(opts: CanvasSurfaceOptions): CanvasHo
 
   return {
     webContents: page.webContents,
-    getTitle: () => page.webContents.getTitle() || (kind === 'web' ? 'Browser' : 'Sketch Canvas'),
+    getTitle: () =>
+      page.webContents.getTitle() ||
+      (kind === 'web' ? 'Browser' : kind === 'sketch' ? 'Sketch Canvas' : 'Emulator Canvas'),
     setContentSize: (width, height) => {
       if (!win.isDestroyed()) win.setContentSize(width, height + FLOATING_CHROME_HEIGHT)
       layout()

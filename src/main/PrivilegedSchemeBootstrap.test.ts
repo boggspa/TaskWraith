@@ -12,7 +12,7 @@ describe('pre-ready Electron bootstrap configuration', () => {
     expect(configure).toBeGreaterThanOrEqual(0)
     expect(configure).toBeLessThan(start)
     expect(bootstrap).toContain(
-      'protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE])'
+      'protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE, TWEMU_PRIVILEGE])'
     )
     expect(main).not.toContain('protocol.registerSchemesAsPrivileged')
   })
