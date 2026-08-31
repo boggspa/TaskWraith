@@ -8,10 +8,12 @@ context needed to answer.
 
 ## 1.9.7 - Unreleased
 
-> **Source-ahead refresh — 2026-08-29.** The audit snapshot immediately before
-> this paperwork commit was `e46e1d6e4`, 847 commits after the shipped v1.9.6
-> boundary. The highlights below describe that source-ahead work only; they are
-> not a release or artifact claim.
+> **Source-ahead refresh — 2026-09-01.** This refresh audits the source-ahead
+> state through `d2a21424b`, 1041 commits after the shipped v1.9.6 boundary. The
+> highlights below describe that source-ahead work only; they are not a release
+> or artifact claim. The emulator subsystem and any work still under active
+> in-repo claims are deliberately excluded from these highlights until they ship
+> as settled features.
 
 ### Provider setup and run control
 
@@ -53,6 +55,27 @@ context needed to answer.
   across navigation and later turns without repeated prompts; other canvases and
   app restarts require a new decision. The per-surface eval ceiling now matches the
   8,000-step Canvas interaction ceiling for long browser-work sessions.
+
+### Approvals, shell, and Blackboard
+
+- **Approvals can name exact commands.** A new allowlist UI approves an exact
+  command rather than a broad pattern, backed by signed exact-command rules
+  enforced at the Host. Permission opportunities surfaced by providers can be
+  redeemed, and run-scoped grants are labelled truthfully about their scope.
+- **Shell inspection stays workspace-bound.** Prompt-free workspace inspection
+  is confined to the workspace, including git reads via `-C`, so agent tooling
+  cannot point shell helpers at arbitrary paths.
+- **Detached provider sign-in windows.** The TUI opens a provider's auth flow
+  in a detached window, so long sign-ins no longer block the terminal session.
+- **Kimi MCP waits survive long tool calls.** MCP timeouts use the supported
+  override, and long TaskWraith MCP waits are preserved instead of being cut
+  short.
+- **Blackboard updates arrive as notifications.** Stack Blackboard updates are
+  modelled losslessly, styled by category, and surfaced as notifications so
+  participants see shared-state changes as they land.
+- **UltraTask graphs report honest progress.** Durable graphs run beside their
+  parent thread, dispatch ready roots concurrently, and expose progress without
+  leaking transcripts.
 
 ### Durable work and Host startup
 
