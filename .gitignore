@@ -73,6 +73,7 @@ ios/TaskWraithApp/build/
 .WORK-IN-PROGRESS-*.md
 SHIP-HOLD-*.md
 SESSION-IN-PROGRESS-*.md
+.agents/
 .claude/
 .cursor/
 /.fixpass*
