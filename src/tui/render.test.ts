@@ -76,6 +76,13 @@ function loadedHomeState(connection: TuiConnectionState = 'connected'): TaskWrai
               available: true,
               requiresExplicitConsent: false,
               ceiling: 'workspace_write'
+            },
+            {
+              postureId: 'workspace_write',
+              label: 'Full WS Access',
+              available: true,
+              requiresExplicitConsent: true,
+              ceiling: 'workspace_write'
             }
           ]
         }
@@ -342,7 +349,7 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(lines.at(-2) ?? '')).toMatch(/^─+$/)
   })
 
-  it('advertises permission cycling only for a connected active thread', () => {
+  it('advertises permission cycling for a connected thread or ready Home model', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)
     state.connection = 'connected'
@@ -361,6 +368,10 @@ describe('TaskWraith TUI renderer', () => {
       )
 
     expect(render(state)).toContain('Shift+Tab permissions')
+    const home = loadedHomeState()
+    expect(render(home)).toContain('Shift+Tab permissions')
+    home.homePermission = { providerId: 'codex', postureId: 'workspace_write' }
+    expect(render(home)).toContain('Full WS Access')
     expect(render(homeState('connected'))).not.toContain('Shift+Tab permissions')
     state.connection = 'demo'
     expect(render(state)).not.toContain('Shift+Tab permissions')

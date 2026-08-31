@@ -29,7 +29,7 @@ import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './st
 import { queuedDraftsForThread } from './promptQueue'
 import { providerLoginGuidance } from './providerLoginFlow'
 import { permissionToneHex } from './permissionTone'
-import { tuiModelChoices } from './modelPicker'
+import { resolveTuiHomePosture, tuiModelChoices } from './modelPicker'
 import {
   TUI_AUTO_THEME_NAME,
   TUI_DEFAULT_THEME_NAME,
@@ -2259,6 +2259,15 @@ function selectedPermissionPostureId(state: TaskWraithTuiState): string {
   if (cold?.kind === 'configure') {
     return cold.offers.postures[state.coldStartPostureIndex ?? 0]?.postureId ?? 'default'
   }
+  if (state.homeTune) {
+    return (
+      resolveTuiHomePosture(
+        state.homeTune.providers,
+        state.homeTune.modelIndex,
+        state.homePermission
+      )?.postureId ?? 'default'
+    )
+  }
   return 'default'
 }
 
@@ -2294,8 +2303,14 @@ function renderComposer(
   const openQuestion = selectedOpenQuestion(state)
   const setupRequired = Boolean(state.coldStart && state.coldStart.kind !== 'ready')
   const queuedDrafts = queuedDraftsForThread(state, state.selectedThreadId)
+  const homeChoice = state.homeTune
+    ? tuiModelChoices(state.homeTune.providers)[state.homeTune.modelIndex]
+    : undefined
   const canCyclePermission = Boolean(
-    state.connection === 'connected' && state.selectedThreadId && state.thread
+    state.connection === 'connected' &&
+    ((state.selectedThreadId && state.thread) ||
+      (!state.selectedThreadId &&
+        homeChoice?.provider.offers.postures.some((posture) => posture.available)))
   )
   const live = Boolean(
     state.selectedThreadId &&

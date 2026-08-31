@@ -119,6 +119,7 @@ import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from
 import {
   findTuiModelChoiceIndex,
   nextAvailableTuiPosture,
+  resolveTuiHomePosture,
   tuiModelChoices,
   type TuiModelChoice
 } from './modelPicker'
@@ -2516,6 +2517,9 @@ export class TaskWraithTui {
     if (key.name === 'up' || key.name === 'down') {
       const next = cycleIndex(home.modelIndex, choices.length, key.name === 'up' ? -1 : 1)
       const nextChoice = choices[next]
+      if (nextChoice?.provider.status.providerId !== selected?.provider.status.providerId) {
+        this.state.homePermission = undefined
+      }
       this.state.homeTune = {
         ...home,
         providerIndex: nextChoice?.providerIndex ?? 0,
@@ -2651,8 +2655,7 @@ export class TaskWraithTui {
     const threadId = this.state.selectedThreadId
     const thread = this.state.thread?.thread
     if (!threadId || !thread) {
-      this.setNotice('Open a thread with Ctrl+K before changing permissions.', 'warning', 3_000)
-      this.render()
+      await this.cycleHomePermission()
       return
     }
     if (!this.client) {
@@ -2698,6 +2701,75 @@ export class TaskWraithTui {
       this.setNotice(error instanceof Error ? error.message : String(error), 'warning', 4_000)
       this.render()
     }
+  }
+
+  private async cycleHomePermission(): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot configure the next Host thread.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('provider-catalog')) {
+      this.setNotice(
+        'Connected Host does not advertise provider permission setup.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
+    if (!this.state.homeTune || this.state.homeTune.loading) {
+      await this.loadHomeTuneProviders(false)
+    }
+    const home = this.state.homeTune
+    if (!home || home.loading || home.error) {
+      this.setNotice(
+        home?.error || 'Provider permission offers are still loading.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    const choice = tuiModelChoices(home.providers)[home.modelIndex]
+    if (!choice) {
+      this.setNotice('Choose a ready provider model before changing permissions.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const current = resolveTuiHomePosture(
+      home.providers,
+      home.modelIndex,
+      this.state.homePermission
+    )
+    const posture = nextAvailableTuiPosture(choice.provider.offers.postures, current?.postureId)
+    if (!posture) {
+      this.setNotice('No permission tier is available for the Home model.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    this.state.homePermission = {
+      providerId: choice.provider.status.providerId,
+      postureId: posture.postureId
+    }
+    this.setNotice(
+      posture.postureId === current?.postureId
+        ? `${posture.label} is the only available permission tier.`
+        : `Next thread · ${posture.label}`,
+      posture.requiresExplicitConsent ? 'warning' : 'good',
+      3_000
+    )
+    this.render()
   }
 
   private applyTuneSelection(offer: TaskWraithControlModelOffer | undefined): void {
@@ -2935,12 +3007,29 @@ export class TaskWraithTui {
       offers,
       savedForProvider ? this.profileSettings.modelId : undefined
     )
-    const posture = resolveStartupPosture(offers)
+    const homePermission =
+      this.state.homePermission?.providerId === status.providerId
+        ? this.state.homePermission
+        : undefined
+    const posture = homePermission
+      ? offers.postures.find(
+          (candidate) => candidate.postureId === homePermission.postureId && candidate.available
+        )
+      : resolveStartupPosture(offers)
     const reasoning = resolveStartupReasoning(
       model,
       savedForProvider ? this.profileSettings.reasoningId : undefined
     )
     if (!model || !posture) {
+      if (homePermission) {
+        this.setNotice(
+          'The selected Home permission is no longer available · choose another tier.',
+          'warning',
+          4_000
+        )
+        this.render()
+        return undefined
+      }
       await this.startNewSoloThread(status.providerId)
       return undefined
     }
@@ -2973,7 +3062,10 @@ export class TaskWraithTui {
       modelId: model.modelId,
       postureId: posture.postureId,
       offerRevision: offers.offerRevision,
-      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {})
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {}),
+      ...(homePermission && posture.requiresExplicitConsent
+        ? { postureConsent: true as const }
+        : {})
     }
     let configured = false
     const configureCommand = this.authorizeConfigureCommand(
@@ -3561,6 +3653,9 @@ export class TaskWraithTui {
         choice.model.modelId === model.modelId
     )
     const reasoning = model.reasoning.filter((candidate) => candidate.available)
+    const previousProvider =
+      choices[this.state.homeTune?.modelIndex ?? 0]?.provider.status.providerId
+    if (previousProvider !== provider.status.providerId) this.state.homePermission = undefined
     this.state.homeTune = {
       ...this.state.homeTune!,
       providerIndex: Math.max(0, providerIndex),

@@ -2393,8 +2393,8 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
 
     feed(input, '\u001b[Z')
     await waitFor(
-      () => output.lastFrame.includes('Open a thread with Ctrl+K before changing permissions.'),
-      'permission shortcut guidance on Home'
+      () => output.lastFrame.includes('does not advertise provider permission setup'),
+      'legacy Host permission guidance on Home'
     )
     expect(host.commands.filter((command) => command.name === 'thread.configure')).toHaveLength(0)
   })
@@ -2759,7 +2759,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     ).toEqual({ flowId: 'claude:login' })
   })
 
-  it('lazily creates a remembered default thread and sends the first ordinary prompt', async () => {
+  it('applies Home permission to a lazy-created thread before sending its first prompt', async () => {
     const workspaces = [
       {
         id: 'ws-remembered',
@@ -2826,6 +2826,13 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
             available: true,
             requiresExplicitConsent: false,
             ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'workspace_write'
           }
         ]
       }),
@@ -2864,6 +2871,17 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     cleanup.push(() => tui.stop())
     await tui.start()
     await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
+    await waitFor(
+      () =>
+        Boolean(
+          (tui as unknown as { state: { homeTune?: { providers: unknown[] } } }).state.homeTune
+            ?.providers.length
+        ),
+      'Home permission offers'
+    )
+
+    feed(input, '\u001b[Z')
+    await waitFor(() => output.lastFrame.includes('Full WS Access'), 'Home permission selected')
 
     feed(input, 'send this without choosing a chat\r')
     await waitFor(
@@ -2884,8 +2902,9 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     expect(host.commands[1].arguments).toEqual({
       providerId: 'claude',
       modelId: 'remembered-model',
-      postureId: 'default',
-      offerRevision: 'claude-offers-1'
+      postureId: 'workspace_write',
+      offerRevision: 'claude-offers-1',
+      postureConsent: true
     })
     expect(host.commands[2].arguments).toMatchObject({
       text: 'send this without choosing a chat'
@@ -3377,7 +3396,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
   })
 
-  it('adds a launch-bound proof only when the user confirms Full Access', async () => {
+  it('adds a launch-bound proof when Home Shift+Tab selects Full Access', async () => {
     const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-full-access-'))
     const proofSecret = Buffer.alloc(32, 9)
     const verifier = new HostPermissionConsentAuthority(proofSecret)
@@ -3471,23 +3490,20 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     })
     await tui.start()
     await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
-    feed(input, '/new codex\r')
-    await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
-    feed(input, '\r')
     await waitFor(
-      () => host.commands.some((command) => command.name === 'thread.create'),
-      'thread created'
+      () =>
+        Boolean(
+          (tui as unknown as { state: { homeTune?: { providers: unknown[] } } }).state.homeTune
+            ?.providers.length
+        ),
+      'Home Full Access offers'
     )
-    feed(input, '\r')
-    await waitFor(() => output.lastFrame.includes('Accept Edits'), 'posture choices')
-    feed(input, '\u001b[C')
-    await waitFor(() => output.lastFrame.includes('Full Access (YOLO)'), 'Full Access selected')
-    feed(input, ' ')
+    feed(input, '\u001b[Z')
     await waitFor(
-      () => output.lastFrame.includes('Full Access (YOLO) · acknowledged'),
-      'Full Access acknowledged'
+      () => output.lastFrame.includes('Full Access (YOLO)'),
+      'Home Full Access selected'
     )
-    feed(input, '\r')
+    feed(input, 'run with full access\r')
     await waitFor(
       () => host.commands.some((command) => command.name === 'thread.configure'),
       'Full Access configure submitted'
