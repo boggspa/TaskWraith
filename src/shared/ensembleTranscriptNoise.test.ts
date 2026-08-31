@@ -11,7 +11,13 @@ describe('redundant Ensemble transcript notices', () => {
     '@-mention: Codex / Boss is Boss and takes routing priority over advisory participant mentions.',
     '@-mention: Worker, Reviewer promoted to speak next.',
     'User Fan-Out complete · 2 lane(s) returned.',
+    'Review fan-out complete · 2 lane(s) returned to the caller.',
+    'Background fan-out complete · 2 lane(s) returned.',
     'Automatic read stage complete · returning to serial writer step.',
+    'User Fan-Out · 6 participant(s) dispatched concurrently (read-only seat lanes).',
+    'Automatic read stage · 6 participant(s) dispatched concurrently (host-clamped reader lanes).',
+    'Locked writer fan-out · 2 participant(s) dispatched concurrently (0 read / 2 write-intent).',
+    'Full fan-out · 2 participant(s) dispatched concurrently (read-clamped lanes).',
     'Locked writer fan-out: Orchestrator requested 2 lane(s). Boss dispatch: two disjoint write slices for transcript-hide task after scout recon converged',
     'Full fan-out: Advisor requested 2 reader lane(s) under their own permission postures.',
     'Locked writer fan-out requested but TASKWRAITH_CONCURRENT_WRITE_LANES=0; continuing with serial writers.',
@@ -24,6 +30,18 @@ describe('redundant Ensemble transcript notices', () => {
     'Yield target "Missing" was not routed: invalid_target. Try a unique alias: Kimi, Pi.'
   ])('hides the routine success receipt %s', (content) => {
     expect(isRedundantEnsembleTranscriptNotice(notice(content))).toBe(true)
+  })
+
+  it('pins the single-line notice length boundary', () => {
+    const dispatch =
+      'User Fan-Out · 2 participant(s) dispatched concurrently (read-only seat lanes).'
+    const atBoundary = `${dispatch} ${'x'.repeat(512 - dispatch.length - 1)}`
+    const overBoundary = `${dispatch} ${'x'.repeat(512 - dispatch.length)}`
+
+    expect(atBoundary).toHaveLength(512)
+    expect(isRedundantEnsembleTranscriptNotice(notice(atBoundary))).toBe(true)
+    expect(overBoundary).toHaveLength(513)
+    expect(isRedundantEnsembleTranscriptNotice(notice(overBoundary))).toBe(false)
   })
 
   it('preserves exceptional and untrusted look-alike rows', () => {
@@ -43,9 +61,7 @@ describe('redundant Ensemble transcript notices', () => {
       )
     ).toBe(false)
     expect(
-      isRedundantEnsembleTranscriptNotice(
-        notice('scout_brief: `confidence` must be one of...')
-      )
+      isRedundantEnsembleTranscriptNotice(notice('scout_brief: `confidence` must be one of...'))
     ).toBe(false)
     expect(
       isRedundantEnsembleTranscriptNotice(
@@ -55,6 +71,13 @@ describe('redundant Ensemble transcript notices', () => {
     expect(
       isRedundantEnsembleTranscriptNotice(
         notice('Security fan-out: Orchestrator requested 2 lane(s).')
+      )
+    ).toBe(false)
+    expect(
+      isRedundantEnsembleTranscriptNotice(
+        notice(
+          'Security fan-out · 2 participant(s) dispatched concurrently (read-only seat lanes).'
+        )
       )
     ).toBe(false)
     expect(
