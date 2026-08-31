@@ -35150,6 +35150,18 @@ async function runAntigravityAgyProvider(
       }
       releaseHookBridgeRun = bridge.registerRun(token, async (toolCall) => {
         const kind = classifyAgyHookTool(toolCall.name)
+        if (kind === 'taskwraith-mcp') {
+          // Routing decision only. The registered TaskWraith broker still
+          // enforces immutable profile membership and every canonical guard.
+          return { decision: 'allow' }
+        }
+        if (kind === 'invalid-taskwraith-mcp') {
+          return {
+            decision: 'deny',
+            reason:
+              'This tool claims TaskWraith\'s reserved MCP namespace but is not a declared catalog action. It was denied rather than treated as a native tool.'
+          }
+        }
         if (kind === 'shell') {
           if (!toolCall.command) return { decision: 'none' }
           const approvalService = antigravityShellApprovalService(toolCall.command)

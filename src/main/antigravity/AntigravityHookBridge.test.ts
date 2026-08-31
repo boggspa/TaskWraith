@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   buildAgyHookBridgeNamedHook,
   classifyAgyHookTool,
@@ -8,6 +9,7 @@ import {
 } from './AntigravityHookBridge'
 
 const servers: AgyHookBridgeServer[] = []
+const mainSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
@@ -113,10 +115,46 @@ describe('classifyAgyHookTool', () => {
     expect(classifyAgyHookTool('list_resources')).toBe('other')
   })
 
+  it('routes direct agy 1.1.22 TaskWraith MCP names into the broker gate', () => {
+    for (const name of [
+      'mcp_TaskWraith_read_file',
+      'mcp_TaskWraith_find_files',
+      'mcp_TaskWraith_list_directory',
+      'mcp_TaskWraith_ensemble_yield',
+      'mcp_TaskWraith_redeem_permission_opportunity',
+      // Mutations remain broker calls; they must never hit native shell/write
+      // heuristics in this hook.
+      'mcp_TaskWraith_write_file',
+      'mcp_TaskWraith_run_shell_command'
+    ]) {
+      expect(classifyAgyHookTool(name), name).toBe('taskwraith-mcp')
+    }
+    for (const name of [
+      'mcp_TaskWraith_not_a_real_tool',
+      'mcp_TaskWraith_read_file_lookalike'
+    ]) {
+      expect(classifyAgyHookTool(name), name).toBe('invalid-taskwraith-mcp')
+    }
+  })
+
   it('leaves the observed read tools to the agy-native flow', () => {
     for (const name of ['view_file', 'list_dir', 'grep_search', 'codebase_search', 'Read']) {
       expect(classifyAgyHookTool(name), name).toBe('other')
     }
+  })
+
+  it('makes production explicitly allow valid direct broker names and deny reserved lookalikes', () => {
+    const handlerStart = mainSource.indexOf(
+      'releaseHookBridgeRun = bridge.registerRun(token, async (toolCall) => {'
+    )
+    const shellStart = mainSource.indexOf("if (kind === 'shell')", handlerStart)
+    const route = mainSource.slice(handlerStart, shellStart)
+    expect(handlerStart).toBeGreaterThan(-1)
+    expect(shellStart).toBeGreaterThan(handlerStart)
+    expect(route).toContain("if (kind === 'taskwraith-mcp')")
+    expect(route).toContain("return { decision: 'allow' }")
+    expect(route).toContain("if (kind === 'invalid-taskwraith-mcp')")
+    expect(route).toContain("decision: 'deny'")
   })
 })
 
@@ -197,6 +235,43 @@ describe('startAgyHookBridgeServer', () => {
       { server: 'sqlite-helper', tool: 'query' },
       { server: null, tool: null }
     ])
+  })
+
+  it('serializes explicit decisions for direct TaskWraith MCP calls, never an empty object', async () => {
+    const server = await startServer()
+    const token = createAgyHookBridgeToken()
+    server.registerRun(token, async (toolCall) => {
+      const kind = classifyAgyHookTool(toolCall.name)
+      if (kind === 'taskwraith-mcp') return { decision: 'allow' }
+      if (kind === 'invalid-taskwraith-mcp') {
+        return { decision: 'deny', reason: 'invalid reserved TaskWraith tool name' }
+      }
+      return { decision: 'none' }
+    })
+
+    for (const name of [
+      'mcp_TaskWraith_read_file',
+      'mcp_TaskWraith_find_files',
+      'mcp_TaskWraith_list_directory',
+      'mcp_TaskWraith_ensemble_yield',
+      'mcp_TaskWraith_redeem_permission_opportunity',
+      'mcp_TaskWraith_write_file',
+      'mcp_TaskWraith_run_shell_command'
+    ]) {
+      await expect(post(server.port, { toolCall: { name, args: {} } }, token)).resolves.toEqual({
+        decision: 'allow'
+      })
+    }
+    await expect(
+      post(
+        server.port,
+        { toolCall: { name: 'mcp_TaskWraith_not_a_real_tool', args: {} } },
+        token
+      )
+    ).resolves.toEqual({
+      decision: 'deny',
+      reason: 'invalid reserved TaskWraith tool name'
+    })
   })
 
   it('extracts mutation arguments (TargetContent, ReplacementContent, CodeContent) for diff derivation', async () => {
