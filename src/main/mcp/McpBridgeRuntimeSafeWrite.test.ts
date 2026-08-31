@@ -1585,7 +1585,7 @@ describe('MCP bridge stream writes', () => {
       'capability_invoke'
     ])
     expect(response.result.tools.find((tool) => tool.name === 'ensemble_await')?.description).toBe(
-      'JOIN wait on fan-out lanes; timeout≤600s. Then lane_result.'
+      'JOIN wait: lanes/subthreads/waves/executions; graph progress+result; default45s,max600s.'
     )
     expect(response.result.tools.find((tool) => tool.name === 'image_view')?.description).toBe(
       'View up to 8 existing workspace/chat raster images. Read-only.'

@@ -95,6 +95,18 @@ export interface ExclusiveChatDispatchReservation {
 }
 
 /**
+ * A context-isolated execution-graph attempt. Graph attempts deliberately
+ * coexist with the owning thread's ordinary provider turn and with sibling
+ * graph attempts; otherwise a parent holding `ensemble_await` prevents its own
+ * UltraTask from starting. They still exclude scheduled and truly-exclusive
+ * launches so ownership cannot cross those authority boundaries.
+ */
+export interface ConcurrentGraphChatDispatchReservation {
+  readonly chatId: string
+  readonly nonce: symbol
+}
+
+/**
  * Derive the exact tuple accepted by AppStore's claim/heartbeat/settle APIs.
  * A task is either wholly standalone or wholly workflow-linked; partial linkage
  * is rejected rather than silently being treated as standalone authority.
@@ -195,6 +207,10 @@ export class ScheduledOccurrenceOwnerRegistry {
     string,
     ExclusiveChatDispatchReservation
   >()
+  private readonly graphDispatchByChatId = new Map<
+    string,
+    Set<ConcurrentGraphChatDispatchReservation>
+  >()
   private readonly byChildRunId = new Map<string, ScheduledChildBinding>()
   private readonly childRunIdsByOwnerRunId = new Map<string, Set<string>>()
   // A released child id must not become an ordinary renderer run later in the
@@ -210,6 +226,7 @@ export class ScheduledOccurrenceOwnerRegistry {
     if (
       this.byChatId.has(owner.chatId) ||
       this.ordinaryDispatchByChatId.has(owner.chatId) ||
+      this.graphDispatchByChatId.has(owner.chatId) ||
       this.exclusiveDispatchByChatId.has(owner.chatId)
     ) {
       fail('duplicate-chat', `Chat ${owner.chatId} already has a live dispatch owner.`)
@@ -274,6 +291,38 @@ export class ScheduledOccurrenceOwnerRegistry {
   }
 
   /**
+   * Reserve one context-isolated execution-graph lane. Unlike the exclusive
+   * pre-session fence, this reservation may overlap the parent turn and sibling
+   * graph lanes on the same root chat. That overlap is the durable workflow's
+   * async contract; each lane retains an exact run/attempt identity elsewhere.
+   */
+  reserveConcurrentGraphChatDispatch(chatId: string): ConcurrentGraphChatDispatchReservation {
+    if (!isExactNonEmptyString(chatId)) {
+      fail('invalid-input', 'An exact chat id is required for graph dispatch reservation.')
+    }
+    if (this.byChatId.has(chatId) || this.exclusiveDispatchByChatId.has(chatId)) {
+      fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)
+    }
+    const reservation = Object.freeze({ chatId, nonce: Symbol(chatId) })
+    const reservations = this.graphDispatchByChatId.get(chatId) ?? new Set()
+    reservations.add(reservation)
+    this.graphDispatchByChatId.set(chatId, reservations)
+    return reservation
+  }
+
+  releaseConcurrentGraphChatDispatch(reservation: ConcurrentGraphChatDispatchReservation): boolean {
+    const reservations = this.graphDispatchByChatId.get(reservation.chatId)
+    if (!reservations?.has(reservation)) return false
+    reservations.delete(reservation)
+    if (reservations.size === 0) this.graphDispatchByChatId.delete(reservation.chatId)
+    return true
+  }
+
+  hasConcurrentGraphChatDispatchReservation(chatId: string): boolean {
+    return isExactNonEmptyString(chatId) && this.graphDispatchByChatId.has(chatId)
+  }
+
+  /**
    * Reserve the chat exclusively across graph composition and provider
    * preflight. The reservation is intentionally process-local and short-lived:
    * the caller releases it as soon as the exact RunManager session exists.
@@ -285,6 +334,7 @@ export class ScheduledOccurrenceOwnerRegistry {
     if (
       this.byChatId.has(chatId) ||
       this.ordinaryDispatchByChatId.has(chatId) ||
+      this.graphDispatchByChatId.has(chatId) ||
       this.exclusiveDispatchByChatId.has(chatId)
     ) {
       fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)

@@ -3,6 +3,7 @@ import {
   createExecutionResultMailboxEventId,
   emptyExecutionResultMailbox,
   enqueueExecutionResultMailboxEvent,
+  latestExecutionResultEvent,
   latestExecutionResultOutcome,
   MAX_EXECUTION_RESULT_MAILBOX_PAYLOAD_CHARS,
   MAX_RETAINED_EXECUTION_RESULT_MAILBOX_EVENTS,
@@ -110,6 +111,37 @@ describe('ExecutionResultMailbox', () => {
 
     expect(latestExecutionResultOutcome(second.mailbox, 'ultratask-1')).toBe('failed')
     expect(latestExecutionResultOutcome(second.mailbox, 'ultratask-missing')).toBeUndefined()
+  })
+
+  it('returns the complete latest event by durable sequence, not array position', () => {
+    const first = enqueueExecutionResultMailboxEvent(undefined, base, {
+      now: '2026-08-29T00:00:00.000Z'
+    })
+    const second = enqueueExecutionResultMailboxEvent(
+      first.mailbox,
+      {
+        ...base,
+        outputAttemptId: 'attempt-output-2',
+        outcome: 'failed',
+        payload: { content: 'The reviewed synthesis was rejected.' }
+      },
+      {
+        now: '2026-08-29T00:01:00.000Z'
+      }
+    )
+    const reordered = {
+      ...second.mailbox,
+      events: [...second.mailbox.events].reverse()
+    }
+
+    expect(latestExecutionResultEvent(reordered, 'ultratask-1')).toMatchObject({
+      sequence: 2,
+      outputAttemptId: 'attempt-output-2',
+      outcome: 'failed',
+      trust: 'untrusted-graph-output',
+      payload: { content: 'The reviewed synthesis was rejected.' }
+    })
+    expect(latestExecutionResultEvent(reordered, 'ultratask-missing')).toBeUndefined()
   })
 
   it('drops malformed persisted records instead of surfacing them', () => {

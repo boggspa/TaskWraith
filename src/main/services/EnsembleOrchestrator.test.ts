@@ -27082,9 +27082,9 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
 })
 
 describe('ensemble_await timeout clamp (owner request 2026-08-05)', () => {
-  it('defaults to 3 minutes and allows up to 10 per call', () => {
-    expect(clampAwaitTimeoutSeconds(undefined)).toBe(180)
-    expect(clampAwaitTimeoutSeconds(Number.NaN)).toBe(180)
+  it('defaults to 45 seconds and allows up to 10 minutes per explicit call', () => {
+    expect(clampAwaitTimeoutSeconds(undefined)).toBe(45)
+    expect(clampAwaitTimeoutSeconds(Number.NaN)).toBe(45)
     expect(clampAwaitTimeoutSeconds(600)).toBe(600)
     expect(clampAwaitTimeoutSeconds(6000)).toBe(600)
     expect(clampAwaitTimeoutSeconds(1)).toBe(5)

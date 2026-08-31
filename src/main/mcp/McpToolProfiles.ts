@@ -904,7 +904,8 @@ const GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
  */
 const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   scout_brief: 'Fan-out lane brief (findings+confidence). Lane-only.',
-  ensemble_await: 'JOIN wait on fan-out lanes; timeout≤600s. Then lane_result.',
+  ensemble_await:
+    'JOIN wait: lanes/subthreads/waves/executions; graph progress+result; default45s,max600s.',
   ensemble_lane_result: 'READ one fan-out lane output (status+text). Partial ok.',
   delegate_wave:
     'Wave (ephemeral|durable): workers[{provider?,prompt,role?,label?}]; allowMultiProvider; join→waveId. Gated.',

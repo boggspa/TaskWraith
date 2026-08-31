@@ -169,4 +169,20 @@ describe('ultra_task MCP schema', () => {
     expect(schema?.properties?.model?.description).toMatch(/cli-default.*refused/i)
     expect(schema?.properties?.model?.description).toMatch(/returns available concrete model ids/i)
   })
+
+  it('documents durable execution progress and result-bearing awaits', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_await'
+    )
+    const schema = definition?.inputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined
+
+    expect(definition?.description).toMatch(/executionIds.*ultra_task/i)
+    expect(definition?.description).toMatch(/queued.*provider-running/i)
+    expect(definition?.description).toMatch(/untrusted graph output/i)
+    expect(definition?.description).toMatch(/implicit check-in is 45 seconds/i)
+    expect(schema?.properties?.executionIds?.description).toMatch(/provider-running/i)
+    expect(schema?.properties?.timeoutSeconds?.description).toMatch(/default 45 seconds/i)
+  })
 })

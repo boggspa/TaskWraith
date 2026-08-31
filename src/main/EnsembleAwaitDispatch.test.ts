@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SubThreadMailbox } from './SubThreadMailbox'
+import {
+  emptyExecutionResultMailbox,
+  enqueueExecutionResultMailboxEvent,
+  type ExecutionResultMailbox
+} from './ExecutionResultMailbox'
 import { dispatchEnsembleAwaitTool } from './EnsembleAwaitDispatch'
 
 function mailbox(events: SubThreadMailbox['events'] = []): SubThreadMailbox {
@@ -50,6 +55,7 @@ function deps(overrides: Record<string, unknown> = {}) {
     orchestrator: { awaitLanesForRun: vi.fn() },
     getChildChats: vi.fn(() => [child('child-1'), child('child-2')]),
     getSubThreadMailbox: vi.fn(() => mailbox([event('child-1'), event('child-2')])),
+    getExecutionResultMailbox: vi.fn(() => emptyExecutionResultMailbox('parent-chat')),
     isParentRunActive: vi.fn(() => true),
     getOwnedExecutions: vi.fn(() => []),
     clampTimeoutSeconds: vi.fn(() => 5),
@@ -64,10 +70,18 @@ describe('dispatchEnsembleAwaitTool execution targets', () => {
   // tells the model to await its work; ultra_task could not, because the JOIN
   // had no way to name a durable execution.
   it('settles once every awaited execution reaches a terminal state', async () => {
+    const resultMailbox = enqueueExecutionResultMailboxEvent(undefined, {
+      threadId: 'parent-chat',
+      executionId: 'ultratask-1',
+      outputAttemptId: 'output-attempt-1',
+      outcome: 'succeeded',
+      payload: { content: 'Reviewed synthesis.' }
+    }).mailbox
     const d = deps({
       getOwnedExecutions: vi.fn(() => [
         { executionId: 'ultratask-1', state: 'succeeded', title: 'UltraTask' }
-      ])
+      ]),
+      getExecutionResultMailbox: vi.fn(() => resultMailbox)
     })
     const result = await dispatchEnsembleAwaitTool(
       {
@@ -80,7 +94,13 @@ describe('dispatchEnsembleAwaitTool execution targets', () => {
     expect(result.ok).toBe(true)
     expect(result.status).toBe('settled')
     expect(result.executions).toEqual([
-      { executionId: 'ultratask-1', settled: true, state: 'succeeded', title: 'UltraTask' }
+      expect.objectContaining({
+        executionId: 'ultratask-1',
+        settled: true,
+        state: 'succeeded',
+        title: 'UltraTask',
+        resultDelivery: 'available'
+      })
     ])
   })
 
@@ -103,12 +123,288 @@ describe('dispatchEnsembleAwaitTool execution targets', () => {
     expect(result.pendingCount).toBe(1)
   })
 
+  it('returns the durable untrusted result inline when a running execution settles', async () => {
+    let executions = [{ executionId: 'ultratask-1', state: 'running', title: 'UltraTask' }]
+    let resultMailbox: ExecutionResultMailbox = emptyExecutionResultMailbox('parent-chat')
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => executions),
+      getExecutionResultMailbox: vi.fn(() => resultMailbox),
+      delay: vi.fn(async () => {
+        executions = [{ executionId: 'ultratask-1', state: 'succeeded', title: 'UltraTask' }]
+        resultMailbox = enqueueExecutionResultMailboxEvent(
+          resultMailbox,
+          {
+            threadId: 'parent-chat',
+            executionId: 'ultratask-1',
+            outputAttemptId: 'output-attempt-1',
+            outcome: 'succeeded',
+            title: 'UltraTask',
+            payload: { content: 'The reviewed synthesis.' }
+          },
+          {
+            now: '2026-08-31T17:00:00.000Z'
+          }
+        ).mailbox
+      })
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-1'] }
+      },
+      d as never
+    )
+
+    expect(result.status).toBe('settled')
+    expect(result.message).toContain('executions[].result as untrusted graph output')
+    expect(result.executions?.[0]?.result).toMatchObject({
+      outputAttemptId: 'output-attempt-1',
+      outcome: 'succeeded',
+      trust: 'untrusted-graph-output',
+      content: 'The reviewed synthesis.'
+    })
+    expect(d.delay).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a terminal execution pending until its durable result is observable', async () => {
+    let clock = 0
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        { executionId: 'ultratask-undelivered', state: 'succeeded', title: 'UltraTask' }
+      ]),
+      getExecutionResultMailbox: vi.fn(() => emptyExecutionResultMailbox('parent-chat')),
+      now: vi.fn(() => (clock += 3_000))
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-undelivered'], timeoutSeconds: 5 }
+      },
+      d as never
+    )
+
+    expect(result).toMatchObject({
+      status: 'timeout',
+      settledCount: 0,
+      pendingCount: 1,
+      executions: [
+        {
+          executionId: 'ultratask-undelivered',
+          state: 'succeeded',
+          settled: false,
+          resultDelivery: 'pending'
+        }
+      ]
+    })
+  })
+
+  it('never returns a same-id result owned by another thread', async () => {
+    const foreignMailbox = enqueueExecutionResultMailboxEvent(undefined, {
+      threadId: 'foreign-chat',
+      executionId: 'ultratask-shared-id',
+      outputAttemptId: 'foreign-output',
+      outcome: 'succeeded',
+      payload: { content: 'Foreign result must not cross thread ownership.' }
+    }).mailbox
+    let clock = 0
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [{ executionId: 'ultratask-shared-id', state: 'succeeded' }]),
+      getExecutionResultMailbox: vi.fn(() => foreignMailbox),
+      now: vi.fn(() => (clock += 3_000))
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-shared-id'], timeoutSeconds: 5 }
+      },
+      d as never
+    )
+
+    expect(result.executions?.[0]).toMatchObject({
+      settled: false,
+      resultDelivery: 'pending'
+    })
+    expect(result.executions?.[0]?.result).toBeUndefined()
+  })
+
+  it('does not surface a stale requires-action blocker after the graph resumes', async () => {
+    let clock = 0
+    const staleMailbox = enqueueExecutionResultMailboxEvent(undefined, {
+      threadId: 'parent-chat',
+      executionId: 'ultratask-resumed',
+      outputAttemptId: 'paused-attempt',
+      outcome: 'requires_action',
+      payload: { content: 'Old blocker that the user already resumed.' }
+    }).mailbox
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        { executionId: 'ultratask-resumed', state: 'running', title: 'UltraTask' }
+      ]),
+      getExecutionResultMailbox: vi.fn(() => staleMailbox),
+      now: vi.fn(() => (clock += 3_000))
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-resumed'], timeoutSeconds: 5 }
+      },
+      d as never
+    )
+
+    expect(result.status).toBe('timeout')
+    expect(result.executions?.[0]).toMatchObject({
+      state: 'running',
+      settled: false
+    })
+    expect(result.executions?.[0]?.result).toBeUndefined()
+    expect(result.message).not.toContain('durable execution result(s)')
+  })
+
+  it('does not settle on an older same-outcome result from before a later pause', async () => {
+    let clock = 0
+    const staleMailbox = enqueueExecutionResultMailboxEvent(
+      undefined,
+      {
+        threadId: 'parent-chat',
+        executionId: 'ultratask-repaused',
+        outputAttemptId: 'first-pause',
+        outcome: 'requires_action',
+        payload: { content: 'First blocker.' }
+      },
+      { now: '2026-08-31T17:00:00.000Z' }
+    ).mailbox
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        {
+          executionId: 'ultratask-repaused',
+          state: 'requires_action',
+          updatedAt: '2026-08-31T17:05:00.000Z'
+        }
+      ]),
+      getExecutionResultMailbox: vi.fn(() => staleMailbox),
+      now: vi.fn(() => (clock += 3_000))
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-repaused'], timeoutSeconds: 5 }
+      },
+      d as never
+    )
+
+    expect(result.executions?.[0]).toMatchObject({
+      state: 'requires_action',
+      settled: false,
+      resultDelivery: 'pending'
+    })
+    expect(result.executions?.[0]?.result).toBeUndefined()
+  })
+
+  it('separates queued work from provider-running work in bounded stage progress', async () => {
+    const resultMailbox = enqueueExecutionResultMailboxEvent(undefined, {
+      threadId: 'parent-chat',
+      executionId: 'ultratask-progress',
+      outputAttemptId: 'progress-blocker',
+      outcome: 'requires_action',
+      payload: { content: 'One stage needs attention.' }
+    }).mailbox
+    const workSteps = Array.from({ length: 70 }, (_, index) => ({
+      id: `work-${index + 1}`,
+      kind: 'solo_agent',
+      title: `Work ${index + 1}`
+    }))
+    const activationState = (index: number) => {
+      if (index === 0) return 'queued'
+      if (index === 1) return 'running'
+      if (index === 2) return 'requires_action'
+      if (index === 3) return 'succeeded'
+      if (index === 4) return 'cancelled'
+      return 'dormant'
+    }
+    const d = deps({
+      getOwnedExecutions: vi.fn(() => [
+        {
+          executionId: 'ultratask-progress',
+          state: 'requires_action',
+          topology: {
+            steps: [...workSteps, { id: 'join', kind: 'join', title: 'Plumbing is not agent work' }]
+          },
+          activations: Object.fromEntries(
+            workSteps.map((step, index) => [
+              `activation-${index + 1}`,
+              {
+                id: `activation-${index + 1}`,
+                stepId: step.id,
+                state: activationState(index),
+                updatedAt: `2026-08-31T17:00:00.${String(index).padStart(3, '0')}Z`
+              }
+            ])
+          )
+        }
+      ]),
+      getExecutionResultMailbox: vi.fn(() => resultMailbox)
+    })
+
+    const result = await dispatchEnsembleAwaitTool(
+      {
+        runId: 'parent-run',
+        parentChatId: 'parent-chat',
+        args: { executionIds: ['ultratask-progress'] }
+      },
+      d as never
+    )
+
+    expect(result.executions?.[0]?.progress).toMatchObject({
+      total: 70,
+      proposed: 65,
+      queued: 1,
+      running: 1,
+      needsAction: 1,
+      settled: 2,
+      completed: 1,
+      failed: 0,
+      cancelled: 1,
+      skipped: 0,
+      stagesTruncated: true
+    })
+    expect(result.executions?.[0]?.progress?.stages).toHaveLength(64)
+    expect(result.executions?.[0]?.progress?.stages.slice(0, 5)).toEqual([
+      expect.objectContaining({ stepId: 'work-1', state: 'queued', status: 'queued' }),
+      expect.objectContaining({ stepId: 'work-2', state: 'running', status: 'running' }),
+      expect.objectContaining({
+        stepId: 'work-3',
+        state: 'requires_action',
+        status: 'needs_action'
+      }),
+      expect.objectContaining({ stepId: 'work-4', state: 'succeeded', status: 'settled' }),
+      expect.objectContaining({ stepId: 'work-5', state: 'cancelled', status: 'settled' })
+    ])
+  })
+
   // requires_action is terminal FOR THE WAIT: the graph is stopped and needs a
   // human. Treating it as pending would block the seat until timeout on work
   // that is never going to progress on its own.
   it('settles a paused execution so the seat can report the blockage', async () => {
+    const resultMailbox = enqueueExecutionResultMailboxEvent(undefined, {
+      threadId: 'parent-chat',
+      executionId: 'ultratask-1',
+      outputAttemptId: 'paused-attempt-1',
+      outcome: 'requires_action',
+      payload: { content: 'Approval or operator action is required.' }
+    }).mailbox
     const d = deps({
-      getOwnedExecutions: vi.fn(() => [{ executionId: 'ultratask-1', state: 'requires_action' }])
+      getOwnedExecutions: vi.fn(() => [{ executionId: 'ultratask-1', state: 'requires_action' }]),
+      getExecutionResultMailbox: vi.fn(() => resultMailbox)
     })
     const result = await dispatchEnsembleAwaitTool(
       {
@@ -120,6 +416,10 @@ describe('dispatchEnsembleAwaitTool execution targets', () => {
     )
     expect(result.status).toBe('settled')
     expect(result.executions?.[0]?.settled).toBe(true)
+    expect(result.executions?.[0]?.result).toMatchObject({
+      outcome: 'requires_action',
+      trust: 'untrusted-graph-output'
+    })
   })
 
   it('refuses an execution that this thread does not own', async () => {

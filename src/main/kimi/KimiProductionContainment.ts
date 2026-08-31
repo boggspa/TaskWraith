@@ -117,10 +117,12 @@ const KIMI_PROCESS_ENV_ALLOWLIST = [
   'TASKWRAITH_CHAT_ID'
 ] as const
 
-/** TaskWraith's longest bounded MCP call is a 600-second ensemble await. Kimi
- * Code reads this supported process-level override; the ACP mcpServers schema
- * intentionally drops unknown per-server timeout fields. */
-export const KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS = 630_000
+/** TaskWraith has brokered approvals/questions longer than a 600-second
+ * UltraTask join. Kimi Code reads this supported process-level override; the
+ * ACP mcpServers schema intentionally drops unknown per-server timeout fields.
+ * Keep the client above the host's longest broker backstop so it never becomes
+ * the effective cap. */
+export const KIMI_TASKWRAITH_MCP_TOOL_TIMEOUT_MS = 3_630_000
 
 /**
  * Build a Kimi-specific allowlisted spawn environment. In particular, do not

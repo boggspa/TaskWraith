@@ -60,8 +60,8 @@ describe('execution graph main integration', () => {
     )
 
     expect(dispatcher).toContain('resolveExecutionGraphQueueAuthority(appRunId)')
-    expect(dispatcher).toContain('reserveExclusiveChatDispatch')
-    expect(dispatcher.indexOf('reserveExclusiveChatDispatch')).toBeLessThan(
+    expect(dispatcher).toContain('reserveConcurrentGraphChatDispatch')
+    expect(dispatcher.indexOf('reserveConcurrentGraphChatDispatch')).toBeLessThan(
       dispatcher.indexOf('runQueueService.leaseJob')
     )
     expect(dispatcher.indexOf('resolveExecutionGraphQueueAuthority(appRunId)')).toBeLessThan(
@@ -73,7 +73,44 @@ describe('execution graph main integration', () => {
     expect(dispatcher.indexOf('registerExecutionGraphRunTranscript')).toBeLessThan(adapterDispatch)
     expect(dispatcher).toMatch(/const result = await runCoordinator\.dispatch\(\s*entry\.payload,/)
     expect(dispatcher).toContain('recordPreSessionDispatchFailure')
-    expect(dispatcher).toContain('releaseExclusiveChatDispatch(exclusiveReservation)')
+    expect(dispatcher).toContain('releaseConcurrentGraphChatDispatch(graphReservation)')
+  })
+
+  it('keeps graph lanes independent from ordinary parent occupancy through adapter adoption', () => {
+    const graphLeaseBypass = source.indexOf(
+      'if (executionGraphBypassesOrdinaryChatOccupancy(job)) return true'
+    )
+    const ordinaryLeaseGuard = source.indexOf('const queueLeaseAlreadyHeld', graphLeaseBypass)
+    expect(graphLeaseBypass).toBeGreaterThanOrEqual(0)
+    expect(ordinaryLeaseGuard).toBeGreaterThan(graphLeaseBypass)
+
+    const prelaunch = between(
+      'const authorizeProviderAdapterLaunch =',
+      'const runCoordinator = new RunCoordinator'
+    )
+    expect(prelaunch).toContain('executionGraphPrelaunchJobIsStarting(job.status)')
+    expect(source).toContain('executionGraphLifecyclePairMatches({')
+  })
+
+  it('wires execution progress and durable results into the parent await', () => {
+    const awaitBranch = between(
+      "} else if (toolName === 'ensemble_await') {",
+      "} else if (toolName === 'ensemble_lane_result') {"
+    )
+    expect(awaitBranch).toContain('getExecutionResultMailbox')
+    expect(awaitBranch).toContain('projection.updatedAt')
+    expect(awaitBranch).toContain('topology: projection.topology')
+    expect(awaitBranch).toContain('activations: projection.activations')
+  })
+
+  it('excludes graph rows from owner-busy checks and cascades explicit parent stop', () => {
+    const delivery = between(
+      'const deliverSettledExecutionResult =',
+      'const executionGraphCoordinator = new ExecutionGraphCoordinator'
+    )
+    expect(delivery.match(/hasNonGraphThreadTurn/g)).toHaveLength(2)
+    expect(source).toContain('stopParentRunAndOwnedExecutions(')
+    expect(source).toContain('return cancelExplicitParentRun(normalizedProvider, runIdString)')
   })
 
   it('commits the exact transcript result before graph settlement and queue projection', () => {

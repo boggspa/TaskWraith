@@ -777,7 +777,7 @@ import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
 import {
   ScheduledOccurrenceOwnerRegistry,
   ScheduledOccurrenceOwnerRegistryError,
-  type ExclusiveChatDispatchReservation,
+  type ConcurrentGraphChatDispatchReservation,
   type ScheduledOccurrenceOwner
 } from './ScheduledOccurrenceOwnerRegistry'
 import { ScheduledOccurrenceTransaction } from './ScheduledOccurrenceTransaction'
@@ -2308,6 +2308,13 @@ import { classifyShellOpenTarget } from './ShellOpenPolicy'
 import { createSubThreadMailboxEventId } from './SubThreadMailbox'
 import { deliverExecutionResult } from './ExecutionResultDelivery'
 import { evaluateExecutionResultWake } from './ExecutionResultWake'
+import { hasNonGraphThreadTurn } from './executionGraph/ExecutionResultOwnerActivity'
+import { stopParentRunAndOwnedExecutions } from './executionGraph/ExecutionGraphParentStop'
+import {
+  executionGraphBypassesOrdinaryChatOccupancy,
+  executionGraphLifecyclePairMatches,
+  executionGraphPrelaunchJobIsStarting
+} from './executionGraph/ExecutionGraphDispatchPolicy'
 import {
   buildLinkedChildReturnContent,
   decideLinkedChildReturn,
@@ -26679,10 +26686,11 @@ function registerRunSession(
         existingIdentityMatches = false
       }
     }
-    const lifecycleMatches = existing
-      ? job?.status === 'active' &&
-        (existing.status === 'starting' || existing.status === 'running')
-      : job?.status === 'starting'
+    const lifecycleMatches = executionGraphLifecyclePairMatches({
+      hasExistingSession: Boolean(existing),
+      sessionStatus: existing?.status,
+      jobStatus: job?.status
+    })
     if (
       !routed.appRunId ||
       !admission ||
@@ -35925,6 +35933,32 @@ const providerAdapters = createProviderAdapterRegistry<
   { requireCompleteProviderSet: true }
 )
 
+async function cancelExplicitParentRun(provider: ProviderId, runId?: string): Promise<boolean> {
+  const session = runId ? runManager.get(runId) : getSingleActiveProviderSession(provider)
+  if (!session || !session.appChatId || session.provider !== provider) {
+    return providerAdapters.require(provider).cancel(runId)
+  }
+  const result = await stopParentRunAndOwnedExecutions(
+    { parentRunId: session.runId, parentThreadId: session.appChatId },
+    {
+      claimParentCancellation: (targetRunId) =>
+        Boolean(runManager.claimTerminalStatus(targetRunId, 'cancelled')),
+      cancelParentPrompts: (targetRunId) => {
+        approvalService?.cancelForRun(targetRunId, 'run-cancel-requested')
+        cancelPendingAgentQuestionsForRun(targetRunId, 'run-cancelled')
+      },
+      coordinator: executionGraphCoordinatorRef,
+      cancelParentTransport: () => providerAdapters.require(provider).cancel(session.runId)
+    }
+  )
+  if (result.graphCancellation?.failures.length) {
+    console.warn(
+      `[ExecutionGraph] explicit parent stop left ${result.graphCancellation.failures.length} graph cancellation(s) needing attention for runId=${session.runId}.`
+    )
+  }
+  return result.parentCancelled
+}
+
 async function readCliVersion(command: string): Promise<string> {
   const provider = availableProviderIds().includes(command as ProviderId)
     ? (command as ProviderId)
@@ -39972,6 +40006,8 @@ async function executeGeminiMcpTool(
           orchestrator: ensembleOrchestratorRef ?? undefined,
           getChildChats: (parentChatId) => AppStore.getChildChats(parentChatId),
           getSubThreadMailbox: (parentChatId) => AppStore.getSubThreadMailbox(parentChatId),
+          getExecutionResultMailbox: (parentChatId) =>
+            AppStore.getExecutionResultMailbox(parentChatId),
           isParentRunActive: (runId, parentChatId) => {
             const session = runManager.get(runId)
             return Boolean(
@@ -39990,7 +40026,10 @@ async function executeGeminiMcpTool(
               (projection) => ({
                 executionId: projection.executionId,
                 state: projection.state,
-                ...(projection.title ? { title: projection.title } : {})
+                ...(projection.title ? { title: projection.title } : {}),
+                ...(projection.updatedAt ? { updatedAt: projection.updatedAt } : {}),
+                topology: projection.topology,
+                activations: projection.activations
               })
             ),
           clampTimeoutSeconds: clampAwaitTimeoutSeconds
@@ -44652,6 +44691,11 @@ if (isGeminiMcpBridgeProcess) {
       }),
       canLeaseJob: (job) => {
         if (!job.chatId) return true
+        // Context-isolated graph jobs carry an exact durable attempt/job twin.
+        // Their graph reservation, not ordinary solo-chat occupancy, governs
+        // concurrency so an awaiting parent and sibling scouts cannot starve
+        // them. Every non-graph queue path stays serial.
+        if (executionGraphBypassesOrdinaryChatOccupancy(job)) return true
         const queueLeaseAlreadyHeld = AppStore.getRunQueueJobs({
           chatId: job.chatId,
           statuses: ['starting', 'active', 'cancelling']
@@ -44980,8 +45024,9 @@ if (isGeminiMcpBridgeProcess) {
               broadcastChatUpdated(updated)
             },
             isOwnerTurnActive: (threadId) =>
-              AppStore.getRunQueueJobs({ includeTerminal: false }).some(
-                (job) => job.chatId === threadId
+              hasNonGraphThreadTurn(
+                AppStore.getRunQueueJobs({ includeTerminal: false }),
+                threadId
               ),
             requestOwnerWake: (request) => {
               const thread = AppStore.getChat(request.threadId)
@@ -44992,8 +45037,9 @@ if (isGeminiMcpBridgeProcess) {
                   chatId: request.threadId,
                   provider: thread.provider,
                   archived: thread.archived === true,
-                  busy: AppStore.getRunQueueJobs({ includeTerminal: false }).some(
-                    (job) => job.chatId === request.threadId
+                  busy: hasNonGraphThreadTurn(
+                    AppStore.getRunQueueJobs({ includeTerminal: false }),
+                    request.threadId
                   ),
                   workspacePath: thread.workspacePath ?? null,
                   providerSessionId: thread.linkedProviderSessionId ?? null
@@ -46578,12 +46624,11 @@ if (isGeminiMcpBridgeProcess) {
               )
             }
             if (wasScheduledOccurrenceRunIdObserved(runId)) return false
-            cancelPendingAgentQuestionsForRun(runId, 'run-cancelled')
           }
           // Cancellation accepts structural provider ids so historical run
           // records can still be settled. This does not confer new-run
           // admission; live dispatch uses the canonical selectable set.
-          return cancelProviderRun(provider as ProviderId, runId)
+          return cancelExplicitParentRun(provider as ProviderId, runId)
         },
         workflowSetEnabledFn: (action, ctx) => remoteWorkflowActions.setEnabled(action, ctx),
         workflowRunNowFn: (action, ctx) => remoteWorkflowActions.runNow(action, ctx),
@@ -58744,7 +58789,7 @@ if (isGeminiMcpBridgeProcess) {
         targetProvider: payload.provider
       })
       if (
-        job.status !== 'starting' ||
+        !executionGraphPrelaunchJobIsStarting(job.status) ||
         admission.executionId !== binding.executionId ||
         admission.activationId !== binding.activationId ||
         admission.attemptId !== binding.attemptId ||
@@ -58843,7 +58888,7 @@ if (isGeminiMcpBridgeProcess) {
         targetProvider: payload.provider
       })
       if (
-        job.status !== 'active' ||
+        !executionGraphPrelaunchJobIsStarting(job.status) ||
         admission.executionId !== binding.executionId ||
         admission.activationId !== binding.activationId ||
         admission.attemptId !== binding.attemptId ||
@@ -59069,11 +59114,11 @@ if (isGeminiMcpBridgeProcess) {
         executionGraphComposedPayloads.delete(appRunId)
         executionGraphCoordinatorRef?.recordPreSessionDispatchFailure(appRunId, reason)
       }
-      let exclusiveReservation: ExclusiveChatDispatchReservation | undefined
+      let graphReservation: ConcurrentGraphChatDispatchReservation | undefined
       let providerDispatchReservation: ProviderDispatchReservation | undefined
       try {
         try {
-          exclusiveReservation = scheduledOccurrenceOwners.reserveExclusiveChatDispatch(
+          graphReservation = scheduledOccurrenceOwners.reserveConcurrentGraphChatDispatch(
             requireNonEmptyString(candidate.chatId, 'Graph chat id')
           )
         } catch (error) {
@@ -59206,8 +59251,8 @@ if (isGeminiMcpBridgeProcess) {
         if (providerDispatchReservation) {
           releaseProviderDispatchReservation(providerDispatchReservation)
         }
-        if (exclusiveReservation) {
-          scheduledOccurrenceOwners.releaseExclusiveChatDispatch(exclusiveReservation)
+        if (graphReservation) {
+          scheduledOccurrenceOwners.releaseConcurrentGraphChatDispatch(graphReservation)
         }
       }
     }
@@ -61004,9 +61049,8 @@ if (isGeminiMcpBridgeProcess) {
             )
           }
           if (wasScheduledOccurrenceRunIdObserved(runIdString)) return false
-          cancelPendingAgentQuestionsForRun(runIdString, 'run-cancelled')
         }
-        return providerAdapters.require(normalizedProvider).cancel(runIdString)
+        return cancelExplicitParentRun(normalizedProvider, runIdString)
       }
     )
 
@@ -61195,7 +61239,7 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle('cancel-gemini', async (event, runId?: string) => {
       assertMainRendererSender(event)
-      return providerAdapters.require('gemini').cancel(optionalString(runId))
+      return cancelExplicitParentRun('gemini', optionalString(runId))
     })
 
     ipcMain.handle('write-gemini-input', async (event, _data: string) => {

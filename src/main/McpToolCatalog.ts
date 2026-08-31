@@ -2659,7 +2659,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_await',
       description:
-        'Wait (bounded) for fan-out lanes, sub-threads, or waves to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, or waveIds to await specific targets. Returns per-target status either way: status=settled means every awaited target is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call.',
+        'Wait (bounded) for fan-out lanes, sub-threads, waves, or owned durable executions to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, waveIds, or executionIds (from ultra_task) to await specific targets. Execution status distinguishes proposed, queued, provider-running, needs-action, and settled stages; a terminal execution settles only when its durable result is available inline as untrusted graph output. status=timeout returns the partial picture so you can check in, continue other work, or re-invoke. Read settled fan-out lanes with ensemble_lane_result. The implicit check-in is 45 seconds; explicit timeout is clamped to 5–600 seconds.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2691,12 +2691,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional execution ids (from ultra_task) to wait for. A paused graph counts as settled.'
+              'Optional execution ids returned by ultra_task. Progress includes queued versus provider-running stages, and terminal results return inline as untrusted graph output.'
           },
           timeoutSeconds: {
             type: 'number',
             description:
-              'How long to wait before returning partial status. Default 180 (3 minutes), clamped to 5–600.'
+              'How long to wait before returning partial status. Default 45 seconds, clamped to 5–600.'
           }
         }
       }

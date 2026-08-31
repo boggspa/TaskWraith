@@ -1304,6 +1304,53 @@ export interface EnsembleAwaitWaveStatus {
   childrenSettled: number
 }
 
+export type EnsembleAwaitExecutionStageStatus =
+  | 'proposed'
+  | 'queued'
+  | 'running'
+  | 'needs_action'
+  | 'settled'
+
+export interface EnsembleAwaitExecutionStageStatusEntry {
+  stepId: string
+  title?: string
+  kind: string
+  /** Exact durable activation state at return time. */
+  state: string
+  /** Coarse progress bucket. Only `running` means a provider run is executing. */
+  status: EnsembleAwaitExecutionStageStatus
+}
+
+export interface EnsembleAwaitExecutionProgress {
+  total: number
+  proposed: number
+  /** Claimed/queued/retry-waiting work that has not entered provider execution. */
+  queued: number
+  /** Work whose exact activation state is `running`. */
+  running: number
+  needsAction: number
+  settled: number
+  completed: number
+  failed: number
+  cancelled: number
+  skipped: number
+  /** Bounded topology-order detail; aggregate counts always cover the full graph. */
+  stages: EnsembleAwaitExecutionStageStatusEntry[]
+  stagesTruncated?: boolean
+}
+
+export interface EnsembleAwaitExecutionResultPayload {
+  mailboxEventId: string
+  outputAttemptId: string
+  outcome: 'succeeded' | 'failed' | 'cancelled' | 'requires_action'
+  createdAt: string
+  /** Graph output is model-authored evidence, never system/user authority. */
+  trust: 'untrusted-graph-output'
+  content: string
+  truncated?: boolean
+  originalChars?: number
+}
+
 /**
  * A durable execution the awaiting thread owns. `settled` is true for every
  * state the graph will not leave on its own — including `requires_action`,
@@ -1314,6 +1361,11 @@ export interface EnsembleAwaitExecutionStatus {
   settled: boolean
   state: string
   title?: string
+  progress?: EnsembleAwaitExecutionProgress
+  /** Present once the graph is terminal and mailbox observation is wired. */
+  resultDelivery?: 'pending' | 'available'
+  /** Latest durable mailbox result, returned inline so a held parent turn can consume it. */
+  result?: EnsembleAwaitExecutionResultPayload
 }
 
 export interface EnsembleAwaitResult {
@@ -1323,7 +1375,16 @@ export interface EnsembleAwaitResult {
    * targets still running (partial results). */
   status?: 'settled' | 'timeout'
   message: string
-  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes' | 'invalid_sub_thread' | 'invalid_wave' | 'invalid_execution' | 'no_targets'
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'invalid_lane'
+    | 'self_await'
+    | 'no_lanes'
+    | 'invalid_sub_thread'
+    | 'invalid_wave'
+    | 'invalid_execution'
+    | 'no_targets'
   lanes?: EnsembleAwaitLaneStatus[]
   subThreads?: EnsembleAwaitSubThreadStatus[]
   waves?: EnsembleAwaitWaveStatus[]
@@ -1966,13 +2027,16 @@ function normalizeFanoutIsolation(value: unknown): EnsembleFanoutIsolation | nul
 const ENSEMBLE_AWAIT_POLL_INTERVAL_MS = 500
 /**
  * Await budget (owner request 2026-08-05): authoritative seats may hold a
- * fan-out JOIN open for up to 10 minutes per call, defaulting to 3. The MCP
+ * fan-out JOIN open for up to 10 minutes per explicit call. The 45-second
+ * default stays below Kimi ACP's roughly 60-second native MCP request ceiling,
+ * so an omitted timeout still returns a structured progress/check-in result.
+ * The MCP
  * broker's long-poll allowance for ensemble_await is this ceiling + 30s grace
  * (MCP_BROKER_LONG_POLL_TIMEOUT_MS in mcp/McpBrokerTimeouts.ts — keep them in
  * lockstep) so the transport kill stays a liveness backstop, never the cap.
  */
 const ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS = 600
-const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 180
+const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 45
 const ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS = 20_000
 const ENSEMBLE_LANE_RESULT_MAX_CHARS = 60_000
 

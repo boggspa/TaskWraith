@@ -884,7 +884,11 @@ export class ExecutionGraphCoordinator {
         continue
       }
       if (disposition !== 'rejected') disposition = 'accepted'
-      if (event.session.status === 'starting' || event.session.status === 'running') {
+      // `starting` is provisional lifecycle ownership, not provider execution.
+      // Keep the attempt queued so the adapter launch boundary can still
+      // validate and adopt it. Only a real running session consumes the graph
+      // step's active state.
+      if (event.session.status === 'running') {
         this.markAttemptRunning(projection, attempt)
       } else if (terminalSession(event.session.status)) {
         const terminal = resolveExecutionGraphTerminalBarrier({
@@ -1723,7 +1727,7 @@ export class ExecutionGraphCoordinator {
   private concurrencyLimit(projection: ExecutionRunProjection): number {
     const ref = projection.baseRevision
     const revision = ref ? this.repository.getRevision(ref.graphId, ref.revision) : undefined
-    if (!revision || revision.digest !== ref?.digest) {
+    if (!revision || revision.definitionDigest !== ref?.definitionDigest) {
       // Append-only user Stacks predate persisted compiled revisions and are
       // deliberately serial. Workflow graphs (including UltraTask) must have
       // their immutable revision available before concurrency can be trusted.

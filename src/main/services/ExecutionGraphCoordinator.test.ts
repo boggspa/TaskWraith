@@ -86,6 +86,13 @@ function runningEvent(runId: string): RunSessionChangeEvent {
   }
 }
 
+function startingEvent(runId: string): RunSessionChangeEvent {
+  return {
+    ...terminalEvent(runId, 'completed'),
+    session: { ...terminalEvent(runId, 'completed').session, status: 'starting' }
+  }
+}
+
 interface Harness {
   repository: ExecutionGraphRepository
   coordinator: ExecutionGraphCoordinator
@@ -724,6 +731,24 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       executionGraph: { ...job.executionGraph!, executionId: 'another-execution' }
     })
     expect(() => h.coordinator.assertQueueJobDispatchable(runId)).toThrow(/not dispatchable/i)
+  })
+
+  it('keeps a provisional starting session queued until the adapter is running', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    markQueueStarting(h, runId)
+
+    expect(h.coordinator.onRunSessionChange(startingEvent(runId))).toBe('accepted')
+    const provisional = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(provisional.attempts)[0]?.state).toBe('queued')
+    expect(Object.values(provisional.activations)[0]?.state).toBe('queued')
+    expect(() => h.coordinator.assertQueueJobDispatchable(runId)).not.toThrow()
+
+    expect(h.coordinator.onRunSessionChange(runningEvent(runId))).toBe('accepted')
+    const adopted = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(adopted.attempts)[0]?.state).toBe('running')
+    expect(Object.values(adopted.activations)[0]?.state).toBe('running')
   })
 
   it('rejects provider dispatch once the graph attempt is terminal', () => {

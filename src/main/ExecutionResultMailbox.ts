@@ -225,18 +225,32 @@ export function enqueueExecutionResultMailboxEvent(
   }
 }
 
-/** The most recently recorded outcome for one execution, if it has delivered. */
-export function latestExecutionResultOutcome(
+/**
+ * The most recently recorded result for one execution, if it has delivered.
+ *
+ * The retained event array is normally append-ordered, but persisted history is
+ * decoded defensively and callers must not depend on that incidental ordering.
+ * Sequence is the durable authority, matching the idempotent enqueue contract.
+ */
+export function latestExecutionResultEvent(
   mailbox: ExecutionResultMailbox | undefined,
   executionId: string
-): ExecutionResultOutcome | undefined {
+): ExecutionResultMailboxEvent | undefined {
   if (!mailbox) return undefined
   let latest: ExecutionResultMailboxEvent | undefined
   for (const event of mailbox.events) {
     if (event.executionId !== executionId) continue
     if (!latest || event.sequence > latest.sequence) latest = event
   }
-  return latest?.outcome
+  return latest
+}
+
+/** The most recently recorded outcome for one execution, if it has delivered. */
+export function latestExecutionResultOutcome(
+  mailbox: ExecutionResultMailbox | undefined,
+  executionId: string
+): ExecutionResultOutcome | undefined {
+  return latestExecutionResultEvent(mailbox, executionId)?.outcome
 }
 
 export interface ExecutionResultMailboxLedger {
