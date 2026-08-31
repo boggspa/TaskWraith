@@ -4766,6 +4766,7 @@ export type ApprovalLedgerDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'
   | 'canvas_eval_window'

@@ -118,6 +118,12 @@ export interface WorkspaceLockMcpAdmissionInput<
    */
   allowApprovedUnscopedShell?: boolean
   /**
+   * A user-authored, HMAC-verified exact direct-argv rule. It is intentionally
+   * separate from broad shell policy and one-shot approval. V1 admits its
+   * opaque host process without claims only outside path-scoped Ensemble lanes.
+   */
+  exactCommandRuleAuthority?: boolean
+  /**
    * Which authority produced `allowApprovedUnscopedShell`.
    *
    * `resolved-policy` is the run's standing tier/grant (broad-write presets
@@ -219,6 +225,20 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     if (!runId) {
       const reason = `Workspace mutation ${input.toolName} has no exact run identity.`
       return this.denied(input.toolName, reason)
+    }
+
+    if (
+      input.exactCommandRuleAuthority &&
+      input.toolName === 'run_shell_command' &&
+      !input.context.ensembleRun?.laneId
+    ) {
+      return {
+        ok: true,
+        claims: [],
+        canonicalClaims: [],
+        claimsHeld: false,
+        releaseAfterOperation: false
+      }
     }
 
     if (input.allowApprovedUnscopedShell && input.toolName === 'run_shell_command') {

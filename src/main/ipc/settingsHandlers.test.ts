@@ -201,7 +201,8 @@ describe('registerSettingsHandlers', () => {
         clientId: 'public-client-id',
         encryptedClientSecret: 'secret-tailscale',
         encryptionAvailable: true
-      }
+      },
+      commandRules: [{ id: 'rule-1', signature: 'secret-command-rule-signature' }]
     } as unknown as AppSettings
     const deps = createDeps({
       settingsService: {
@@ -239,6 +240,7 @@ describe('registerSettingsHandlers', () => {
     expect(result.apnsConfig).not.toHaveProperty('encryptedAuthKey')
     expect(result.imageGeneration).not.toHaveProperty('encryptedKeys')
     expect(result.tailscaleOAuth).not.toHaveProperty('encryptedClientSecret')
+    expect(result).not.toHaveProperty('commandRules')
     expect(JSON.stringify(result)).not.toContain('secret-')
   })
 

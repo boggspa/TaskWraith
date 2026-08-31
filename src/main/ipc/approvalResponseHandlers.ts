@@ -12,6 +12,9 @@ import {
   STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE,
   STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
 } from '../../shared/externalPathGrantBinding'
+import type { CommandRuleApprovalFlow } from '../command-rules/CommandRuleApprovalFlow'
+import { commandRuleListItem } from '../command-rules/CommandRuleApprovalFlow'
+import type { CommandRuleListItem } from '../../shared/commandRules'
 
 /**
  * approvalResponseHandlers — M3-3d approval-cluster extraction (per
@@ -48,14 +51,19 @@ export type RespondAgentApprovalResult = {
   ok: boolean
   resolvedAction: AgentApprovalAction
   decisionSource: 'user' | 'system'
-  reason?: typeof STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
+  reason?: typeof STALE_EXTERNAL_PATH_GRANT_BINDING_REASON | 'command-rule-offer-failed'
   message?: string
+  commandRule?: CommandRuleListItem
 }
 
 export interface ApprovalResponseHandlerDeps {
   approvalService: Pick<
     ApprovalService,
     'getPendingExternalPathDetection' | 'listRendererApprovalRequests' | 'resolve'
+  >
+  commandRuleApprovalFlow?: Pick<
+    CommandRuleApprovalFlow,
+    'accept' | 'commit' | 'rollback'
   >
   assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
   issueExternalPathGrant: (
@@ -84,9 +92,36 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
       event,
       requestId: string,
       action: AgentApprovalAction,
-      intentNote?: string
+      intentNote?: string,
+      commandRuleOfferId?: string
     ): Promise<RespondAgentApprovalResult> => {
       deps.assertSenderCanRespond(event, requestId)
+      let commandRuleAcceptance: Extract<
+        ReturnType<CommandRuleApprovalFlow['accept']>,
+        { ok: true }
+      > | null = null
+      if (commandRuleOfferId !== undefined) {
+        if (action !== 'accept' || !deps.commandRuleApprovalFlow) {
+          return {
+            ok: false,
+            resolvedAction: 'accept',
+            decisionSource: 'user',
+            reason: 'command-rule-offer-failed',
+            message: 'This approval cannot create an exact command allowlist rule.'
+          }
+        }
+        const accepted = deps.commandRuleApprovalFlow.accept(requestId, commandRuleOfferId)
+        if (!accepted.ok) {
+          return {
+            ok: false,
+            resolvedAction: 'accept',
+            decisionSource: 'user',
+            reason: 'command-rule-offer-failed',
+            message: accepted.error
+          }
+        }
+        commandRuleAcceptance = accepted
+      }
       // Order-4 — optional one-line "why" note captured in the
       // approval card. Trim + cap defensively (the renderer already
       // trims, but the IPC boundary is untrusted) and ride it on the
@@ -171,14 +206,30 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
         extraMetadata.reason = STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
         extraMetadata.message = STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE
       }
+      if (commandRuleAcceptance) {
+        extraMetadata.commandRuleId = commandRuleAcceptance.receipt.rule.id
+        extraMetadata.commandRuleFingerprint = commandRuleAcceptance.receipt.rule.fingerprint
+        extraMetadata.commandRuleCreated = commandRuleAcceptance.receipt.created
+        extraMetadata.commandRuleRiskClass = commandRuleAcceptance.receipt.rule.riskClass
+      }
       const resolveOptions =
         Object.keys(extraMetadata).length > 0 || decisionSource !== 'user'
           ? { decisionSource, extraMetadata }
           : undefined
 
-      const ok = Boolean(
-        await deps.approvalService.resolve(requestId, actionToResolve, resolveOptions)
-      )
+      let ok = false
+      try {
+        ok = Boolean(await deps.approvalService.resolve(requestId, actionToResolve, resolveOptions))
+      } catch (error) {
+        if (commandRuleAcceptance) {
+          deps.commandRuleApprovalFlow?.rollback(commandRuleAcceptance.receipt)
+        }
+        throw error
+      }
+      if (commandRuleAcceptance) {
+        if (ok) deps.commandRuleApprovalFlow?.commit(commandRuleAcceptance.receipt)
+        else deps.commandRuleApprovalFlow?.rollback(commandRuleAcceptance.receipt)
+      }
       return {
         ok,
         resolvedAction: actionToResolve,
@@ -188,6 +239,9 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
               reason: STALE_EXTERNAL_PATH_GRANT_BINDING_REASON,
               message: STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE
             }
+          : {}),
+        ...(ok && commandRuleAcceptance
+          ? { commandRule: commandRuleListItem(commandRuleAcceptance.receipt.rule) }
           : {})
       }
     }

@@ -51,7 +51,9 @@ describe('host command route/history integration', () => {
     expect(mcp).toContain("source: 'brokered-mcp'")
     // Call head only: the brokered shell also forwards a session release-lease
     // approval, so this call is no longer two-arity.
-    expect(mcp).toContain('runHostCommand(command, cwd')
+    expect(mcp).toContain('executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]')
+    expect(mcp).toContain('runHostCommand(executionCommand, executionCwd')
+    expect(mcp).not.toContain('runHostCommand(command, cwd')
     expect(mcp).toContain('workspaceToolExecutors.executeWorkspaceMcpTool')
     expect(mcp).toContain('completeHostCommandTerminalProjection(hostCommandProjection)')
   })

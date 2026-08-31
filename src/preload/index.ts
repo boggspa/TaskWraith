@@ -53,6 +53,7 @@ import type {
   RendererChatTranscriptMutationRequest,
   RendererChatTranscriptMutationResult
 } from '../shared/rendererChatTranscriptMutation'
+import type { CommandRuleListItem, CommandRuleMutationResult } from '../shared/commandRules'
 import type {
   ChatComposerSelectionPatchRequest,
   ChatComposerSelectionPatchResult
@@ -1180,8 +1181,19 @@ const api = {
       | 'declineExternalPath',
     // Order-4 — optional one-line "why" note. Persisted onto the
     // approval-ledger row's metadata; never required.
-    intentNote?: string
-  ) => ipcRenderer.invoke('respond-agent-approval', requestId, action, intentNote),
+    intentNote?: string,
+    commandRuleOfferId?: string
+  ) =>
+    ipcRenderer.invoke(
+      'respond-agent-approval',
+      requestId,
+      action,
+      intentNote,
+      commandRuleOfferId
+    ),
+  listCommandRules: (): Promise<CommandRuleListItem[]> => ipcRenderer.invoke('command-rules:list'),
+  removeCommandRule: (ruleId: string): Promise<CommandRuleMutationResult> =>
+    ipcRenderer.invoke('command-rules:remove', ruleId),
   writeGeminiInput: (data: string) => ipcRenderer.invoke('write-gemini-input', data),
   getDiff: (workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('get-diff', workspace),

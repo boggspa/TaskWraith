@@ -199,6 +199,95 @@ describe('registerApprovalResponseHandlers', () => {
     expect(deps.issueExternalPathGrant).not.toHaveBeenCalled()
   })
 
+  it('persists and revalidates an exact command rule before resolving the approval', async () => {
+    const order: string[] = []
+    const { deps } = createDeps(order)
+    const rule = {
+      id: 'rule-1',
+      workspaceId: 'workspace-1',
+      primaryWorkspacePath: '/repo',
+      primaryWorkspaceRealPath: '/repo',
+      cwdRelativePath: '.',
+      executableRealPath: '/usr/bin/grep',
+      argv: ['TODO', 'src'],
+      fingerprint: 'a'.repeat(64),
+      riskClass: 'host_exact_unsandboxed',
+      createdAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:00.000Z'
+    }
+    const receipt = {
+      approvalId: 'req-rule',
+      offerId: 'offer-1',
+      reservationId: 'reservation-1',
+      created: true,
+      rule
+    }
+    const commandRuleApprovalFlow = {
+      accept: vi.fn(() => {
+        order.push('persist-rule')
+        return { ok: true as const, receipt, match: {} as never }
+      }),
+      commit: vi.fn(() => {
+        order.push('commit-offer')
+        return true
+      }),
+      rollback: vi.fn()
+    }
+    deps.commandRuleApprovalFlow = commandRuleApprovalFlow as never
+    registerApprovalResponseHandlers(deps)
+
+    const result = await handlerFor('respond-agent-approval')(
+      {},
+      'req-rule',
+      'accept',
+      undefined,
+      'offer-1'
+    )
+
+    expect(order).toEqual(['persist-rule', 'resolve', 'commit-offer'])
+    expect(deps.approvalService.resolve).toHaveBeenCalledWith(
+      'req-rule',
+      'accept',
+      expect.objectContaining({
+        extraMetadata: expect.objectContaining({
+          commandRuleId: 'rule-1',
+          commandRuleFingerprint: 'a'.repeat(64),
+          commandRuleCreated: true
+        })
+      })
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      resolvedAction: 'accept',
+      commandRule: { id: 'rule-1', executablePath: '/usr/bin/grep' }
+    })
+    expect(commandRuleApprovalFlow.rollback).not.toHaveBeenCalled()
+  })
+
+  it('leaves the approval pending when command-rule persistence fails', async () => {
+    const { deps } = createDeps([])
+    deps.commandRuleApprovalFlow = {
+      accept: vi.fn(() => ({ ok: false as const, error: 'executable changed' })),
+      commit: vi.fn(),
+      rollback: vi.fn()
+    } as never
+    registerApprovalResponseHandlers(deps)
+
+    const result = await handlerFor('respond-agent-approval')(
+      {},
+      'req-rule',
+      'accept',
+      undefined,
+      'offer-1'
+    )
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'command-rule-offer-failed',
+      message: 'executable changed'
+    })
+    expect(deps.approvalService.resolve).not.toHaveBeenCalled()
+  })
+
   // (d1) THE deliverable: persist-before-resolve ordering. A grant action issues +
   // persists + broadcasts the grant, THEN resolves — resolve strictly LAST.
   it('(d1) persists the grant before resolving — resolve fires last, after saveChat + broadcast', async () => {

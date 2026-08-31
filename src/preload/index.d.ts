@@ -88,6 +88,7 @@ import {
   HydratedToolActivityDetail,
   ToolActivityDetailRef
 } from '../main/store/types'
+import type { CommandRuleListItem, CommandRuleMutationResult } from '../shared/commandRules'
 import type {
   RendererChatTranscriptMutationRequest,
   RendererChatTranscriptMutationResult
@@ -1304,7 +1305,8 @@ declare global {
       respondAgentApproval: (
         requestId: string,
         action: AgentApprovalAction,
-        intentNote?: string
+        intentNote?: string,
+        commandRuleOfferId?: string
       ) => Promise<
         | boolean
         | {
@@ -1313,8 +1315,11 @@ declare global {
             decisionSource: 'user' | 'system'
             reason?: string
             message?: string
+            commandRule?: CommandRuleListItem
           }
       >
+      listCommandRules: () => Promise<CommandRuleListItem[]>
+      removeCommandRule: (ruleId: string) => Promise<CommandRuleMutationResult>
       writeGeminiInput: (data: string) => Promise<boolean>
       getDiff: (
         workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }

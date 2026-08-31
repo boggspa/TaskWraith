@@ -2027,6 +2027,7 @@ import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
 import { registerApprovalResponseHandlers } from './ipc/approvalResponseHandlers'
+import { registerCommandRuleHandlers } from './ipc/commandRuleHandlers'
 import { registerGitHandlers } from './ipc/gitHandlers'
 import {
   createDefaultExternalPublishReceiptLedger,
@@ -2186,6 +2187,15 @@ import {
   createPermissionOpportunityResolver,
   issueHostPermissionOpportunity
 } from './mcp/PermissionOpportunityRuntime'
+import {
+  CommandRuleService,
+  createCommandRuleHmacSigningAuthority,
+  type CommandRuleMatch
+} from './command-rules/CommandRuleService'
+import {
+  CommandRuleApprovalFlow,
+  type BrokeredCommandRuleInput
+} from './command-rules/CommandRuleApprovalFlow'
 import {
   mcpToolAlwaysPrompts,
   validateMcpCallerToolAllowlist,
@@ -8685,6 +8695,8 @@ function normalizeCodexDefaultModelRows<
 
 const runManager = new RunManager<any>()
 let settingsServiceRef: SettingsService | null = null
+let commandRuleServiceRef: CommandRuleService | null = null
+let commandRuleApprovalFlowRef: CommandRuleApprovalFlow | null = null
 const permissionService = new PermissionService({
   runManager,
   sessionGrants: agenticSessionGrants,
@@ -9143,6 +9155,7 @@ runManager.onChange((event) => {
   if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
     toolBoundarySteerCoordinator.forget(event.session.runId)
     permissionOpportunityRegistry.clearForRun(event.session.runId)
+    commandRuleApprovalFlowRef?.clearForRun(event.session.runId)
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
     workspaceLockTerminalReconcilerRef.terminal(event.session.runId)
@@ -14727,6 +14740,7 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
   permissionService,
   auditService,
   getApprovalService: () => approvalService,
+  matchCommandRule: (input) => commandRuleApprovalFlowRef?.matchLive(input) ?? null,
   isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
   getSettings: () => AppStore.getSettings(),
   getChatById: (chatId) => (chatId ? AppStore.getChat(chatId) : undefined),
@@ -37495,6 +37509,49 @@ function permissionRepairForDeniedInvocation(input: {
   return legacyRetry ? { permissionRetry: legacyRetry } : {}
 }
 
+function brokeredCommandRuleInputFor(input: {
+  context: GeminiToolContext
+  parentProvider: ProviderId
+  command: unknown
+  requestedCwd?: unknown
+  resolvedCwd: string
+}): BrokeredCommandRuleInput | null {
+  const { context } = input
+  if (
+    context.scope !== 'workspace' ||
+    !context.appRunId ||
+    !context.appChatId ||
+    typeof input.command !== 'string' ||
+    !input.command.trim() ||
+    (input.requestedCwd !== undefined && typeof input.requestedCwd !== 'string')
+  ) {
+    return null
+  }
+  const chat = AppStore.getChat(context.appChatId)
+  const effectiveWorkspacePath = context.workspacePath
+  if (!chat?.workspaceId || !chat.workspacePath || !effectiveWorkspacePath) return null
+  return {
+    provider: input.parentProvider,
+    runId: context.appRunId,
+    chatId: context.appChatId,
+    toolName: 'run_shell_command',
+    command: input.command,
+    requestedCwd: input.requestedCwd,
+    resolvedCwd: resolve(input.resolvedCwd),
+    workspaceId: chat.workspaceId,
+    primaryWorkspacePath: resolve(chat.workspacePath),
+    effectiveWorkspacePath: resolve(effectiveWorkspacePath),
+    pathEnvironment: process.env.PATH,
+    networkAccessDenied:
+      context.effectivePermissions?.networkAccess === 'deny' ||
+      AppStore.getSettings().agenticServices.networkAccess === 'deny',
+    shellCommandsDenied:
+      effectiveAgenticSettings(AppStore.getSettings(), context.effectivePermissions).agenticServices
+        .shellCommands === 'deny',
+    ...(context.ensembleRun?.laneId ? { laneId: context.ensembleRun.laneId } : {})
+  }
+}
+
 /**
  * Hidden targets available to this run. Read-only and plan seats retain their
  * existing hard ceilings, and network-disabled tools never appear in discovery
@@ -38343,6 +38400,18 @@ async function executeGeminiMcpTool(
   let genericApprovalResolution:
     | { action: AgentApprovalAction; decisionSource: 'user' | 'system' }
     | undefined
+  let commandRuleMatch: CommandRuleMatch | null = null
+  let commandRuleApprovalId: string | null = null
+  const commandRuleInput =
+    toolName === 'run_shell_command' && !exactOneOffPermissionRetry
+      ? brokeredCommandRuleInputFor({
+          context,
+          parentProvider,
+          command: args.command,
+          requestedCwd: args.cwd,
+          resolvedCwd: cwd
+        })
+      : null
   const allowed = skipGenericApproval
     ? true
     : await requestAgenticServiceApproval(
@@ -38369,7 +38438,29 @@ async function executeGeminiMcpTool(
           forcePrompt: mcpToolAlwaysPrompts(toolName, context.scope),
           resolveAction: (action, decisionSource) => {
             genericApprovalResolution = { action, decisionSource }
+            if (commandRuleApprovalId && commandRuleInput && action === 'accept') {
+              commandRuleMatch = commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
+            }
+            if (commandRuleApprovalId) {
+              commandRuleApprovalFlowRef?.clear(commandRuleApprovalId)
+            }
           },
+          ...(commandRuleInput
+            ? {
+                commandRuleInput,
+                onCommandRuleMatch: (match: CommandRuleMatch) => {
+                  commandRuleMatch = match
+                },
+                createCommandRuleOffer: ({ approvalId }: { approvalId: string }) => {
+                  const offer = commandRuleApprovalFlowRef?.register(approvalId, commandRuleInput)
+                  if (offer) commandRuleApprovalId = approvalId
+                  return offer ?? null
+                },
+                discardCommandRuleOffer: (approvalId: string) => {
+                  commandRuleApprovalFlowRef?.clear(approvalId)
+                }
+              }
+            : {}),
           ...(toolName === 'canvas_eval'
             ? {
                 onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) => {
@@ -38392,7 +38483,8 @@ async function executeGeminiMcpTool(
     // An absent resolution after the central gate returns true means its own
     // audited policy/grant path auto-approved this invocation. Skipped generic
     // gates do not count; their authority belongs to the dedicated target gate.
-    automaticApproval: allowed && !skipGenericApproval && !genericApprovalResolution,
+    automaticApproval:
+      allowed && !skipGenericApproval && !genericApprovalResolution && !commandRuleMatch,
     decision: genericApprovalResolution
   })
   if (allowed && toolName === 'canvas_eval') {
@@ -38634,6 +38726,7 @@ async function executeGeminiMcpTool(
       allowApprovedUnscopedShell:
         (exactOneOffPermissionRetry && isUnscopedProcessAuthorityTool(toolName)) ||
         approvedUnscopedShell,
+      exactCommandRuleAuthority: Boolean(commandRuleMatch),
       // A standing tier and a user's decision on this exact invocation are both
       // valid authorities, but only the latter may start an opaque process from
       // inside a path-scoped writer lane. Keep them distinguishable.
@@ -39309,8 +39402,26 @@ async function executeGeminiMcpTool(
         source: 'approvedMcpShell',
         workspacePath: cwd
       })
+      let executionCommand: unknown = command
+      let executionCwd = cwd
+      if (commandRuleMatch) {
+        const liveMatch = commandRuleInput
+          ? commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
+          : null
+        if (
+          !liveMatch ||
+          liveMatch.rule.id !== commandRuleMatch.rule.id ||
+          liveMatch.fingerprint !== commandRuleMatch.fingerprint
+        ) {
+          throw new Error(
+            'The exact command allowlist rule changed or was revoked before execution.'
+          )
+        }
+        executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]
+        executionCwd = liveMatch.cwd
+      }
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
-        runHostCommand(command, cwd, {
+        runHostCommand(executionCommand, executionCwd, {
           ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {})
         })
       )
@@ -54364,6 +54475,43 @@ if (isGeminiMcpBridgeProcess) {
       ]
     })
     settingsServiceRef = settingsService
+    commandRuleServiceRef = new CommandRuleService({
+      getSettings: () => settingsService.getSettings(),
+      updateSettings: (partial) => settingsService.updateSettings(partial),
+      signingAuthority: createCommandRuleHmacSigningAuthority(externalGrantSigningSecret)
+    })
+    commandRuleApprovalFlowRef = new CommandRuleApprovalFlow({
+      service: commandRuleServiceRef,
+      resolveLiveInput: (issued) => {
+        const liveContext = getAgentToolContext(issued.provider, {
+          appRunId: issued.runId,
+          appChatId: issued.chatId
+        })
+        if (!liveContext || liveContext.scope !== 'workspace') return null
+        const liveWorkspacePath = liveContext.workspacePath
+          ? resolve(liveContext.workspacePath)
+          : null
+        if (!liveWorkspacePath) return null
+        let liveCwd: string
+        try {
+          liveCwd = resolveScopedDirectory(
+            liveContext.scope,
+            resolve(liveContext.cwd || liveWorkspacePath),
+            liveWorkspacePath,
+            typeof issued.requestedCwd === 'string' ? issued.requestedCwd : ''
+          )
+        } catch {
+          return null
+        }
+        return brokeredCommandRuleInputFor({
+          context: liveContext,
+          parentProvider: issued.provider,
+          command: issued.command,
+          requestedCwd: issued.requestedCwd,
+          resolvedCwd: liveCwd
+        })
+      }
+    })
     startAppIconManager({
       getVariant: () => AppStore.getSettings().appIconVariant,
       getThemeAppearance: () => AppStore.getSettings().themeAppearance,
@@ -60914,6 +61062,9 @@ if (isGeminiMcpBridgeProcess) {
 
     registerApprovalResponseHandlers({
       approvalService: approvalServiceInstance,
+      ...(commandRuleApprovalFlowRef
+        ? { commandRuleApprovalFlow: commandRuleApprovalFlowRef }
+        : {}),
       assertSenderCanRespond: (event, requestId) => {
         if (isMainRendererSender(event)) return
         const route = approvalServiceInstance.lookupRoute(requestId)
@@ -60929,6 +61080,12 @@ if (isGeminiMcpBridgeProcess) {
       saveChat: (chat) => AppStore.saveChat(chat),
       broadcastChatUpdated
     })
+    if (commandRuleServiceRef) {
+      registerCommandRuleHandlers({
+        service: commandRuleServiceRef,
+        assertMainRendererSender
+      })
+    }
 
     ipcMain.handle(
       'run-gemini',

@@ -522,6 +522,48 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(validateLaneWriteScope).not.toHaveBeenCalled()
   })
 
+  it('admits an HMAC-verified exact command rule through its distinct no-claim authority', async () => {
+    const getRuntime = vi.fn(() => null)
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(dependencies({ getRuntime }))
+
+    await expect(
+      coordinator.admit(
+        input({
+          toolName: 'run_shell_command',
+          args: { command: 'npm test' },
+          resourcePath: undefined,
+          exactCommandRuleAuthority: true
+        })
+      )
+    ).resolves.toEqual({
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
+    })
+    expect(getRuntime).not.toHaveBeenCalled()
+  })
+
+  it('does not let a standing exact command rule widen an Ensemble lane', async () => {
+    const acquire = vi.fn()
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({ getRuntime: () => ({ acquire }) })
+    )
+
+    const result = await coordinator.admit(
+      input({
+        context: ensembleContext(),
+        toolName: 'run_shell_command',
+        args: { command: 'npm test' },
+        resourcePath: undefined,
+        exactCommandRuleAuthority: true
+      })
+    )
+    expect(result).toMatchObject({ ok: false, code: 'invalid-call' })
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
   it('admits an audited async background process without acquiring a broad lock', async () => {
     // A managed background process is opaque in exactly the way a shell command
     // is, so a seat whose resolved policy already authorizes shell gets the same

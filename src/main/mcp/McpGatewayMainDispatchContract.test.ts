@@ -114,7 +114,9 @@ describe('main capability gateway dispatch contract', () => {
     // Anchored on the call head, not the full argument list: the brokered shell
     // also forwards a session release-lease approval, so the call is no longer
     // two-arity. The contract being guarded is the ordering, not the arity.
-    const hostCommand = canonicalDispatchSource.indexOf('runHostCommand(command, cwd')
+    const hostCommand = canonicalDispatchSource.indexOf(
+      'runHostCommand(executionCommand, executionCwd'
+    )
 
     expect(scopeResolution).toBeGreaterThan(-1)
     expect(hostCommand).toBeGreaterThan(-1)
@@ -123,6 +125,26 @@ describe('main capability gateway dispatch contract', () => {
     )
     expect(scopeResolution).toBeLessThan(shellExecution)
     expect(shellExecution).toBeLessThan(hostCommand)
+  })
+
+  it('revalidates an exact command rule after lock admission and executes direct argv', () => {
+    const lockAdmission = canonicalDispatchSource.indexOf(
+      'workspaceLockMcpAdmissionCoordinator.admit({'
+    )
+    const liveRematch = canonicalDispatchSource.indexOf(
+      'commandRuleApprovalFlowRef?.matchLive(commandRuleInput)',
+      lockAdmission
+    )
+    const directArgv = canonicalDispatchSource.indexOf(
+      'executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]'
+    )
+    const spawn = canonicalDispatchSource.indexOf(
+      'runHostCommand(executionCommand, executionCwd'
+    )
+    expect(lockAdmission).toBeGreaterThan(-1)
+    expect(liveRematch).toBeGreaterThan(lockAdmission)
+    expect(directArgv).toBeGreaterThan(liveRematch)
+    expect(spawn).toBeGreaterThan(directArgv)
   })
 
   it('wires fresh opaque opportunity issuance and redemption through main-owned authority', () => {
@@ -297,7 +319,7 @@ describe('provider-native argument adaptation contract', () => {
   it('discloses ignored shell fields without implementing or widening them', () => {
     const execution = shellHandler.slice(0, shellHandler.indexOf('formatHostCommandResult(result)'))
     // Vacuity guard: the execution seam really is inside this slice.
-    expect(execution).toContain('runHostCommand(command, cwd')
+    expect(execution).toContain('runHostCommand(executionCommand, executionCwd')
     // Disclosure is DISCLOSURE. None of these native fields may ever be wired
     // into execution, which would silently widen a grant or change semantics.
     for (const semanticKey of [

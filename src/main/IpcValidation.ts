@@ -746,7 +746,14 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'compose-run': ['object'],
   'cancel-agent-run': ['optionalProvider', 'optionalString'],
   'get-pending-agent-approvals': [],
-  'respond-agent-approval': ['nonEmptyString', 'approvalAction'],
+  'respond-agent-approval': [
+    'nonEmptyString',
+    'approvalAction',
+    'optionalString',
+    'optionalString'
+  ],
+  'command-rules:list': [],
+  'command-rules:remove': ['nonEmptyString'],
   'run-gemini': [
     'workspacePath',
     'string',

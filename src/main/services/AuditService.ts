@@ -44,6 +44,7 @@ export type AutomaticApprovalDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'
   // canvas_eval auto-approved by its dedicated 12h exact-live-surface window

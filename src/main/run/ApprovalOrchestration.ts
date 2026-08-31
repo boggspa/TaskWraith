@@ -36,9 +36,26 @@ import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/Tool
 import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
 import { isAntigravityUserAuthorizedShellCommand } from '../antigravity/AntigravityShellApprovalPolicy'
 import { isUltraTaskDelegationAutoAllowRequest } from '../UltraTaskDelegationConsent'
+import type { BrokeredCommandRuleInput } from '../command-rules/CommandRuleApprovalFlow'
+import type { CommandRuleMatch } from '../command-rules/CommandRuleService'
+import type { ExactCommandRuleOfferView } from '../../shared/commandRules'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
+}
+
+function redactExactCommandRuleOfferForDurableStorage<T>(payload: T): T {
+  if (!isRecord(payload) || !isRecord(payload.preview)) return payload
+  const offer = payload.preview.exactCommandRuleOffer
+  if (!isRecord(offer) || !Object.prototype.hasOwnProperty.call(offer, 'offerId')) return payload
+  const { offerId: _offerId, ...safeOffer } = offer
+  return {
+    ...payload,
+    preview: {
+      ...payload.preview,
+      exactCommandRuleOffer: { ...safeOffer, offerIdRedacted: true }
+    }
+  } as T
 }
 
 /**
@@ -87,6 +104,7 @@ export interface RequestAgenticServiceApprovalDeps {
   // whenReady. A by-value capture here freezes null → the terminal approval
   // registration silently no-ops (a security regression on the trust choke point).
   getApprovalService: () => ApprovalService | null
+  matchCommandRule?: (input: BrokeredCommandRuleInput) => CommandRuleMatch | null
   /** History-clear admission fence, scoped by run/workspace where possible. */
   isApprovalAdmissionBlocked?: (
     runId?: string,
@@ -384,6 +402,13 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
        * exact approval. The callback itself is never copied into durable data.
        */
       onApprovalPromptCreated?: (receipt: ApprovalPromptReceipt) => CanvasEvalApprovalReceipt | void
+      /** Main-only exact brokered-shell authority; never reconstructed from preview text. */
+      commandRuleInput?: BrokeredCommandRuleInput
+      onCommandRuleMatch?: (match: CommandRuleMatch) => void
+      createCommandRuleOffer?: (
+        receipt: ApprovalPromptReceipt
+      ) => ExactCommandRuleOfferView | null
+      discardCommandRuleOffer?: (approvalId: string) => void
     }
   ): Promise<boolean> => {
     const session = deps.runManager.get(request.runId)
@@ -651,6 +676,37 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         effectivePermissions,
         externalPathDetection: request.externalPathDetection
       })
+    if (
+      request.commandRuleInput &&
+      decision !== 'allow' &&
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      !request.externalPathDetection
+    ) {
+      const commandRuleMatch = deps.matchCommandRule?.(request.commandRuleInput) ?? null
+      if (commandRuleMatch) {
+        request.onCommandRuleMatch?.(commandRuleMatch)
+        deps.auditService.recordAutomaticApprovalDecision(
+          provider,
+          auditRoute,
+          service,
+          workspacePath,
+          request,
+          'autoAllow',
+          'command_rule',
+          'request',
+          {
+            policy,
+            commandRuleId: commandRuleMatch.rule.id,
+            commandRuleFingerprint: commandRuleMatch.fingerprint,
+            executableSha256: commandRuleMatch.rule.executableSha256,
+            commandRuleRiskClass: commandRuleMatch.rule.riskClass,
+            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+          }
+        )
+        return true
+      }
+    }
     if (trustedSessionExternalWrite) {
       deps.auditService.recordAutomaticApprovalDecision(
         provider,
@@ -859,15 +915,34 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const baseBody =
       service === 'canvasEval' ? appendCanvasEvalApprovalWindowDisclosure(rawBody) : rawBody
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
-    const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
+    let body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
     // Built from the preview's STRUCTURED fields, not from `body`: the remote
     // card gets 400 chars with newlines collapsed, and the desktop body leads
     // with a 600-char agent `intent` (the ensemble prefix alone eats 41%), so
     // reusing it truncated the recipients away entirely.
     const remoteSummary = buildRemoteApprovalSummary(request.preview)
+    // Desktop-only: create after the paired-device summary has been frozen so
+    // the opaque offer id never enters MobileApprovalCard or remoteBody.
+    if (
+      request.commandRuleInput &&
+      request.createCommandRuleOffer &&
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      !request.externalPathDetection
+    ) {
+      const offer = request.createCommandRuleOffer({ approvalId })
+      if (offer) {
+        request.preview = {
+          ...(isRecord(request.preview) ? request.preview : {}),
+          exactCommandRuleOffer: offer
+        }
+        body = `${body}\n\nAdding this exact command to the Allowlist creates a revocable rule for this executable hash, literal arguments, relative cwd, and workspace. Future matches run directly in the TaskWraith host process, outside a workspace sandbox and without workspace locks. Task runners may execute repository-controlled scripts whose contents change later. It does not allow other shell commands.`
+      }
+    }
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
+        request.discardCommandRuleOffer?.(approvalId)
         resolveApproval(false)
         return
       }
@@ -895,6 +970,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         resolve: resolveApproval
       })
       if (registered === false) {
+        request.discardCommandRuleOffer?.(approvalId)
         resolveApproval(false)
         return
       }
@@ -945,19 +1021,21 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         },
         actions
       }
-      const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
-        canvasEvalApprovalPayloadForDurableStorage(
-          service,
-          {
-            ...approvalPayload,
-            preview:
-              service === 'canvasEval'
-                ? approvalPayload.preview
-                : (redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
-                  approvalPayload.preview)
-          },
-          approvalId,
-          canvasEvalApproval || undefined
+      const durableApprovalPayload = redactExactCommandRuleOfferForDurableStorage(
+        redactCanvasFillValueForDurableStorage(
+          canvasEvalApprovalPayloadForDurableStorage(
+            service,
+            {
+              ...approvalPayload,
+              preview:
+                service === 'canvasEval'
+                  ? approvalPayload.preview
+                  : (redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
+                    approvalPayload.preview)
+            },
+            approvalId,
+            canvasEvalApproval || undefined
+          )
         )
       )
       const durableCanvasPreview = isRecord(durableApprovalPayload.preview)

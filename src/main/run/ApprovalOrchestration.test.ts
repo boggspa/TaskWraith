@@ -2071,4 +2071,103 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
     expect(order).not.toContain('audit:autoAllow:policy')
     expect(order).toContain('registerGeminiTool')
   })
+
+  it('auto-allows an ask-policy brokered shell only through an exact command-rule match', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const match = {
+      rule: {
+        id: 'rule-1',
+        executableSha256: 'a'.repeat(64),
+        riskClass: 'host_exact_unsandboxed'
+      },
+      fingerprint: 'b'.repeat(64),
+      executableRealPath: '/usr/bin/grep',
+      argv: ['TODO', 'src'],
+      cwd: '/repo'
+    }
+    deps.matchCommandRule = vi.fn(() => match as never)
+    const onCommandRuleMatch = vi.fn()
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        'shellCommands',
+        '/repo',
+        request({
+          preview: { command: 'npm test', params: { command: 'npm test' } },
+          commandRuleInput: { toolName: 'run_shell_command' },
+          onCommandRuleMatch
+        })
+      )
+    ).resolves.toBe(true)
+
+    expect(deps.matchCommandRule).toHaveBeenCalledOnce()
+    expect(onCommandRuleMatch).toHaveBeenCalledWith(match)
+    expect(order).toContain('audit:autoAllow:command_rule')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
+  it('adds a renderer-safe exact-rule offer only after the normal gate decides to prompt', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    deps.matchCommandRule = vi.fn(() => null)
+    const createCommandRuleOffer = vi.fn(() => ({
+      offerId: 'offer-1',
+      kind: 'brokered_shell_exact_argv',
+      fingerprint: 'a'.repeat(64),
+      cwdRelativePath: '.',
+      executableName: 'grep',
+      riskClass: 'host_exact_unsandboxed',
+      scope: 'one_workspace_exact_argv'
+    }))
+
+    void createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: { command: 'npm test', params: { command: 'npm test' } },
+        commandRuleInput: { toolName: 'run_shell_command' },
+        createCommandRuleOffer
+      })
+    )
+    await Promise.resolve()
+
+    expect(createCommandRuleOffer).toHaveBeenCalledWith({ approvalId: expect.any(String) })
+    expect(order).toContain('registerGeminiTool')
+    expect(vi.mocked(deps.safeSendToSender).mock.calls.at(-1)?.[2]).toMatchObject({
+      preview: { exactCommandRuleOffer: { offerId: 'offer-1' } }
+    })
+    const durablePayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls.at(-1)?.[5]
+    expect(JSON.stringify(durablePayload)).not.toContain('offer-1')
+    expect(durablePayload).not.toHaveProperty('preview.exactCommandRuleOffer.offerId')
+  })
+
+  it('does not match or offer a command rule across a hard ask-hold', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    deps.matchCommandRule = vi.fn(() => ({}) as never)
+    const createCommandRuleOffer = vi.fn()
+    vi.mocked(isPlanInstrumentGrantHold).mockReturnValue(true)
+
+    void createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: { command: 'npm test', params: { command: 'npm test' } },
+        commandRuleInput: { toolName: 'run_shell_command' },
+        createCommandRuleOffer
+      })
+    )
+    await Promise.resolve()
+
+    expect(deps.matchCommandRule).not.toHaveBeenCalled()
+    expect(createCommandRuleOffer).not.toHaveBeenCalled()
+    expect(order).toContain('registerGeminiTool')
+  })
 })

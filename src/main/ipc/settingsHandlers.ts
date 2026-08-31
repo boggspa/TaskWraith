@@ -59,6 +59,7 @@ export function rendererSafeSettings(settings: AppSettings): AppSettings {
     apnsConfig,
     imageGeneration,
     tailscaleOAuth,
+    commandRules: _commandRules,
     ...safeSettings
   } = settings
 

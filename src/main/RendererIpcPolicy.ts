@@ -567,6 +567,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'execution-runs:formalize',
 
   // Global settings, runtime profiles, encrypted secrets, and handoff records.
+  'command-rules:list',
+  'command-rules:remove',
   'update-settings',
   'prompt-cache:get-policy',
   'prompt-cache:get-capabilities',

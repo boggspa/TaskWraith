@@ -710,6 +710,17 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('respond-agent-approval', ['approval-1', 'useTaskWraithSubthread'])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('respond-agent-approval', [
+        'approval-1',
+        'accept',
+        undefined,
+        'offer-1'
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:list', [])).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:remove', ['rule-1'])).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:remove', [''])).toThrow(/non-empty/)
     expect(() => validateIpcArgs('respond-agent-approval', ['approval-1', 'maybe'])).toThrow(
       /approval action/
     )

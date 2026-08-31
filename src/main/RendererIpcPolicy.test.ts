@@ -62,6 +62,8 @@ describe('RendererIpcPolicy', () => {
     'execution-runs:cancel',
     'execution-runs:formalize',
     'work-locks:force-release-recovery',
+    'command-rules:list',
+    'command-rules:remove',
     'import-external-provider-thread',
     'app:quit'
   ])('keeps %s behind main-renderer authority', (channel) => {
