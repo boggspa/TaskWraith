@@ -49,6 +49,15 @@ function smokeProfile(home) {
   return path.join(home, '.config', 'taskwraith')
 }
 
+function canonicalSmokeProfile(home) {
+  const profile = smokeProfile(home)
+  try {
+    return fs.realpathSync(profile)
+  } catch {
+    return profile
+  }
+}
+
 function isolatedEnvironment(home) {
   const env = {
     ...process.env,
@@ -109,7 +118,7 @@ function main() {
     if (!/CONNECTED/i.test(live)) throw new Error('packaged TUI did not connect to its Node Host')
 
     requireSuccess(
-      run(hostBin, ['stop', '--profile', smokeProfile(home)], { env }),
+      run(hostBin, ['stop', '--profile', canonicalSmokeProfile(home)], { env }),
       'taskwraith-host stop'
     )
     hostBin = ''
@@ -132,7 +141,10 @@ function main() {
     console.log(`npm CLI package smoke ok: ${path.basename(tarball)}`)
   } finally {
     if (hostBin && fs.existsSync(hostBin)) {
-      run(hostBin, ['stop', '--profile', smokeProfile(home)], { env, timeout: 15_000 })
+      run(hostBin, ['stop', '--profile', canonicalSmokeProfile(home)], {
+        env,
+        timeout: 15_000
+      })
     }
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
