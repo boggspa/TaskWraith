@@ -1,6 +1,7 @@
 {
   "name": "taskwraith",
   "version": "1.9.6",
+  "private": true,
   "description": "TaskWraith desktop workspace",
   "main": "./out/main/index.js",
   "bin": {
@@ -91,6 +92,8 @@
     "tui": "npm run host:build --silent && npm run tui:build --silent && node out/tui/tui/cli.js --dev",
     "tui:demo": "npm run tui:build --silent && node out/tui/tui/cli.js --demo",
     "tui:snapshot": "npm run tui:build --silent && node out/tui/tui/cli.js --demo --snapshot --width=80 --height=24",
+    "cli:pack": "node scripts/prepare-cli-package.cjs --pack",
+    "smoke:cli-package": "node scripts/smoke-cli-package.cjs",
     "prepare:tui-runtime": "node scripts/prepare-tui-runtime.cjs",
     "prepare:tui-runtime:mac": "node scripts/prepare-tui-runtime.cjs --targets=darwin-arm64,darwin-x64",
     "prepare:tui-runtime:win": "node scripts/prepare-tui-runtime.cjs --targets=win32-x64,win32-arm64",

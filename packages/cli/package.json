@@ -1,0 +1,39 @@
+{
+  "name": "taskwraith",
+  "version": "1.9.6",
+  "description": "TaskWraith terminal client and standalone Host",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/boggspa/TaskWraith",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boggspa/TaskWraith.git"
+  },
+  "bugs": {
+    "url": "https://github.com/boggspa/TaskWraith/issues"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "terminal",
+    "tui"
+  ],
+  "bin": {
+    "taskwraith": "bin/taskwraith.cjs",
+    "tw": "bin/taskwraith.cjs",
+    "taskwraith-host": "bin/taskwraith-host.cjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/prepare-cli-package.cjs",
+    "postpack": "node ../../scripts/prepare-cli-package.cjs --clean"
+  }
+}
