@@ -8,7 +8,7 @@ import {
   isCanvasEvalToolName
 } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
-import { redactPermissionOpportunityIdsForDurableStorage } from '../mcp/ToolPermissionRetry'
+import { redactPermissionOpportunityIdsForDurableStorage } from '../../shared/permissionOpportunityRedaction'
 
 export interface OllamaLoopMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
