@@ -10,6 +10,12 @@ import {
 } from '../TaskWraithMcpTools'
 import { isTaskWraithMcpToolName, mcpJson } from './McpResultHelpers'
 import { validateGatewayToolArguments, type GatewayArgumentValidationIssue } from './McpToolGateway'
+import type {
+  PermissionOpportunityReleaseResult,
+  PermissionOpportunityTakeResult,
+  PermissionOpportunityValidatedRequest
+} from './PermissionOpportunityRegistry'
+import { isPermissionOpportunityBoundaryCode } from './PermissionOpportunityRegistry'
 
 export const TOOL_PERMISSION_RETRY_TOOL_NAME =
   'request_tool_permission' as const satisfies TaskWraithMcpToolName
@@ -131,6 +137,31 @@ export interface ToolPermissionRetryRequest {
   rationale?: string
 }
 
+/** Internal host-issued route. It is not advertised until main wires issuance. */
+export interface ToolPermissionOpportunityRequest {
+  permissionOpportunityId: string
+}
+
+export interface ToolPermissionOpportunityReservation {
+  request: PermissionOpportunityValidatedRequest
+  targetArgumentsSha256: string
+  /** Main must recompute the live binding inside this call immediately before consume. */
+  consumeWithLiveBinding: () =>
+    | PermissionOpportunityTakeResult
+    | Promise<PermissionOpportunityTakeResult>
+  release: () => PermissionOpportunityReleaseResult | Promise<PermissionOpportunityReleaseResult>
+}
+
+export type ToolPermissionOpportunityResolver = (
+  permissionOpportunityId: string
+) =>
+  | { ok: true; reservation: ToolPermissionOpportunityReservation }
+  | { ok: false; code: string; error: string }
+  | Promise<
+      | { ok: true; reservation: ToolPermissionOpportunityReservation }
+      | { ok: false; code: string; error: string }
+    >
+
 export interface ToolPermissionRetryInstruction {
   available: true
   scope: 'one_exact_invocation'
@@ -163,6 +194,32 @@ export type ToolPermissionRetryValidationResult =
       issues?: GatewayArgumentValidationIssue[]
     }
 
+function profileFacingToolName(
+  toolName: TaskWraithMcpToolName,
+  definitions: readonly TaskWraithMcpToolDefinition[]
+): TaskWraithMcpToolName {
+  return toolName === 'ensemble_bossman_control' &&
+    !definitions.some((definition) => definition.name === toolName) &&
+    definitions.some((definition) => definition.name === 'ensemble_control')
+    ? 'ensemble_control'
+    : toolName
+}
+
+export function isToolPermissionOpportunityRequest(
+  value: unknown
+): value is ToolPermissionOpportunityRequest {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 1 &&
+    typeof value.permissionOpportunityId === 'string' &&
+    value.permissionOpportunityId.trim().length > 0
+  )
+}
+
+function hasPermissionOpportunityId(value: unknown): boolean {
+  return isRecord(value) && Object.prototype.hasOwnProperty.call(value, 'permissionOpportunityId')
+}
+
 export function validateToolPermissionRetryRequest(input: {
   value: unknown
   definitions: readonly TaskWraithMcpToolDefinition[]
@@ -176,14 +233,15 @@ export function validateToolPermissionRetryRequest(input: {
     }
   }
 
-  const rawToolName = nonEmptyString(input.value.toolName)
-  if (!rawToolName || !isTaskWraithMcpToolName(rawToolName)) {
+  const requestedToolName = nonEmptyString(input.value.toolName)
+  if (!requestedToolName || !isTaskWraithMcpToolName(requestedToolName)) {
     return {
       ok: false,
       code: 'invalid_target',
       message: 'The retry target must be an exact canonical TaskWraith tool name.'
     }
   }
+  const rawToolName = requestedToolName
   if (NON_RETRIABLE_TARGETS.has(rawToolName)) {
     return {
       ok: false,
@@ -310,6 +368,106 @@ export function validateToolPermissionRetryRequest(input: {
   }
 }
 
+/**
+ * Revalidate a request retained by Electron main without treating its stored
+ * failure text as fresh provider evidence. Eligibility was established at issue
+ * time by the typed boundary code; this checks only the current target schema
+ * and the generic target ceilings before host-specific guards run downstream.
+ */
+export function validateHostIssuedToolPermissionRetryRequest(input: {
+  request: PermissionOpportunityValidatedRequest
+  definitions: readonly TaskWraithMcpToolDefinition[]
+  isAutoAllowed: (toolName: TaskWraithMcpToolName) => boolean
+}): ToolPermissionRetryValidationResult {
+  const requestedToolName = nonEmptyString(input.request.toolName)
+  if (!requestedToolName || !isTaskWraithMcpToolName(requestedToolName)) {
+    return {
+      ok: false,
+      code: 'invalid_target',
+      message: 'The retained permission opportunity has no canonical TaskWraith target.'
+    }
+  }
+  if (!isPermissionOpportunityBoundaryCode(input.request.boundaryCode)) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: 'The retained permission opportunity has no recognised host boundary code.'
+    }
+  }
+  const failure = nonEmptyString(input.request.failure)
+  if (!failure || failure.length > MAX_FAILURE_LENGTH) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: 'The retained permission opportunity has invalid failure evidence.'
+    }
+  }
+  const profileFacingTool = profileFacingToolName(requestedToolName, input.definitions)
+  if (NON_RETRIABLE_TARGETS.has(profileFacingTool)) {
+    return {
+      ok: false,
+      code: 'non_retriable_target',
+      message: `${profileFacingTool} has a dedicated or non-delegable approval path and cannot use one-shot permission retry.`
+    }
+  }
+  if (input.isAutoAllowed(profileFacingTool)) {
+    return {
+      ok: false,
+      code: 'target_does_not_need_permission',
+      message: `${profileFacingTool} already skips the generic TaskWraith permission gate; its failure cannot be fixed by a one-shot gate override.`
+    }
+  }
+  if (!isRecord(input.request.arguments)) {
+    return {
+      ok: false,
+      code: 'invalid_target_arguments',
+      message: `${profileFacingTool} cannot be retried because the retained arguments are not an object.`
+    }
+  }
+  const argumentBytes = serializedArgumentBytes(input.request.arguments)
+  if (argumentBytes === null || argumentBytes > MAX_ARGUMENT_BYTES) {
+    return {
+      ok: false,
+      code: 'invalid_target_arguments',
+      message: `${profileFacingTool} cannot be retried because the retained arguments exceed the current size ceiling.`
+    }
+  }
+  const definition = input.definitions.find((entry) => entry.name === profileFacingTool)
+  if (!definition) {
+    return {
+      ok: false,
+      code: 'invalid_target',
+      message: `The canonical definition for ${profileFacingTool} is unavailable.`
+    }
+  }
+  const argumentValidation = validateGatewayToolArguments(
+    definition.inputSchema,
+    input.request.arguments
+  )
+  if (!argumentValidation.ok) {
+    return {
+      ok: false,
+      code:
+        argumentValidation.code === 'invalid_schema'
+          ? 'invalid_target_schema'
+          : 'invalid_target_arguments',
+      message:
+        argumentValidation.code === 'invalid_schema'
+          ? `${profileFacingTool} cannot be retried because its canonical input schema is invalid.`
+          : `${profileFacingTool} cannot be retried because the retained arguments no longer match its canonical schema.`,
+      issues: argumentValidation.issues
+    }
+  }
+  return {
+    ok: true,
+    request: {
+      toolName: profileFacingTool,
+      arguments: input.request.arguments,
+      failure
+    }
+  }
+}
+
 export function buildToolPermissionRetryInstruction(input: {
   available: boolean
   toolName: TaskWraithMcpToolName
@@ -319,15 +477,10 @@ export function buildToolPermissionRetryInstruction(input: {
   isAutoAllowed: (toolName: TaskWraithMcpToolName) => boolean
 }): ToolPermissionRetryInstruction | null {
   if (!input.available) return null
-  const profileFacingToolName =
-    input.toolName === 'ensemble_bossman_control' &&
-    !input.definitions.some((definition) => definition.name === input.toolName) &&
-    input.definitions.some((definition) => definition.name === 'ensemble_control')
-      ? 'ensemble_control'
-      : input.toolName
+  const profileFacingTool = profileFacingToolName(input.toolName, input.definitions)
   const validation = validateToolPermissionRetryRequest({
     value: {
-      toolName: profileFacingToolName,
+      toolName: profileFacingTool,
       arguments: input.arguments,
       failure: input.failure
     },
@@ -353,7 +506,7 @@ export function buildToolPermissionRetryInstruction(input: {
   }
 }
 
-function normalizeValidatedToolPermissionRetryRequest(
+export function normalizeValidatedToolPermissionRetryRequest(
   request: ToolPermissionRetryRequest
 ): ToolPermissionRetryRequest {
   if (!isPortableEnsembleControlToolName(request.toolName)) return request
@@ -465,29 +618,107 @@ export function buildToolPermissionRetryApprovalPrompt(input: {
  * retain only their shape and fingerprint. The fingerprint is already part of
  * the live preview and binds the one-shot marker used at execution.
  */
-export function toolPermissionRetryApprovalPayloadForDurableStorage<T>(payload: T): T {
-  if (!isRecord(payload) || !isRecord(payload.preview)) return payload
-  const permissionRetry = payload.preview.permissionRetry
-  if (!isRecord(permissionRetry) || !isRecord(permissionRetry.exactArguments)) return payload
-  const exactArguments = permissionRetry.exactArguments
-  const exactArgumentByteLength = serializedArgumentBytes(exactArguments) ?? 0
-  const durablePermissionRetry = { ...permissionRetry }
-  delete durablePermissionRetry.exactArguments
-  delete durablePermissionRetry.priorFailure
-  delete durablePermissionRetry.rationale
-  return {
-    ...payload,
-    preview: {
-      ...payload.preview,
-      permissionRetry: {
-        ...durablePermissionRetry,
-        exactArgumentsRedacted: true,
-        agentNarrativeRedacted: true,
-        exactArgumentKeys: Object.keys(exactArguments).sort().slice(0, 64),
-        exactArgumentByteLength
-      }
+function redactPermissionOpportunityValue(
+  value: unknown,
+  ancestors: Set<object>,
+  depth = 0
+): {
+  value: unknown
+  redacted: boolean
+} {
+  if (depth > 24) return { value: '[redacted nested value]', redacted: true }
+  if (typeof value === 'string') {
+    const tokenRedacted = value.replace(
+      /twp_[A-Za-z0-9_-]{43}/g,
+      '[redacted permission opportunity]'
+    )
+    const tokenWasRedacted = tokenRedacted !== value
+    const trimmed = tokenRedacted.trim()
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+      return { value: tokenRedacted, redacted: tokenWasRedacted }
     }
-  } as T
+    try {
+      const parsed = JSON.parse(tokenRedacted) as unknown
+      const next = redactPermissionOpportunityValue(parsed, ancestors, depth + 1)
+      return next.redacted || tokenWasRedacted
+        ? { value: JSON.stringify(next.value), redacted: true }
+        : { value, redacted: false }
+    } catch {
+      return { value: tokenRedacted, redacted: tokenWasRedacted }
+    }
+  }
+  if (!value || typeof value !== 'object') return { value, redacted: false }
+  if (ancestors.has(value)) return { value: '[redacted circular value]', redacted: true }
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      let redacted = false
+      const items = value.map((entry) => {
+        const next = redactPermissionOpportunityValue(entry, ancestors, depth + 1)
+        redacted ||= next.redacted
+        return next.value
+      })
+      return { value: items, redacted }
+    }
+    const record = value as Record<string, unknown>
+    let redacted = false
+    const result: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(record)) {
+      if (key === 'permissionOpportunityId') {
+        redacted = true
+        result.permissionOpportunityId = '[redacted]'
+        continue
+      }
+      const next = redactPermissionOpportunityValue(entry, ancestors, depth + 1)
+      redacted ||= next.redacted
+      result[key] = next.value
+    }
+    if (redacted) result.permissionOpportunityIdRedacted = true
+    return { value: result, redacted }
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+/** Remove opaque opportunity ids from arbitrary durable event/ledger payload shapes. */
+export function redactPermissionOpportunityIdsForDurableStorage<T>(payload: T): T {
+  return redactPermissionOpportunityValue(payload, new Set<object>()).value as T
+}
+
+export function toolPermissionRetryApprovalPayloadForDurableStorage<T>(payload: T): T {
+  if (!isRecord(payload) || !isRecord(payload.preview)) {
+    return redactPermissionOpportunityIdsForDurableStorage(payload)
+  }
+  const permissionRetry = payload.preview.permissionRetry
+  if (!isRecord(permissionRetry)) return redactPermissionOpportunityIdsForDurableStorage(payload)
+  const exactArguments = isRecord(permissionRetry.exactArguments)
+    ? permissionRetry.exactArguments
+    : null
+  const exactArgumentByteLength = exactArguments
+    ? (serializedArgumentBytes(exactArguments) ?? 0)
+    : 0
+  const durablePermissionRetry = { ...permissionRetry }
+  if (exactArguments) {
+    delete durablePermissionRetry.exactArguments
+    delete durablePermissionRetry.priorFailure
+    delete durablePermissionRetry.rationale
+  }
+  const durablePayload = exactArguments
+    ? {
+        ...payload,
+        preview: {
+          ...payload.preview,
+          permissionRetry: {
+            ...durablePermissionRetry,
+            exactArgumentsRedacted: true,
+            agentNarrativeRedacted: true,
+            exactArgumentKeys: Object.keys(exactArguments).sort().slice(0, 64),
+            exactArgumentByteLength
+          }
+        }
+      }
+    : payload
+  return redactPermissionOpportunityIdsForDurableStorage(durablePayload)
 }
 
 export type OneOffToolPermissionRetryExecutionResult<TResult> =
@@ -635,6 +866,12 @@ export async function orchestrateToolPermissionRetry<
   definitions: readonly TaskWraithMcpToolDefinition[]
   isAutoAllowed: (toolName: TaskWraithMcpToolName) => boolean
   providerLabel: string
+  /**
+   * Main-owned atomic resolver for a host-issued opportunity. The resolver must
+   * bind its id to the live provider/run/chat/profile/workspace before returning
+   * the retained target; caller-supplied args never reach this branch.
+   */
+  resolvePermissionOpportunity?: ToolPermissionOpportunityResolver
   prepareTarget: (request: ToolPermissionRetryRequest) => PreparedToolPermissionRetryTarget<TResult>
   requestApproval: (
     prompt: ReturnType<typeof buildToolPermissionRetryApprovalPrompt>,
@@ -645,29 +882,110 @@ export async function orchestrateToolPermissionRetry<
     marker: OneOffToolPermissionRetryMarker
   ) => Promise<TResult>
 }): Promise<ToolPermissionRetryOrchestrationResult<TResult>> {
-  const validation = validateToolPermissionRetryRequest({
-    value: input.value,
-    definitions: input.definitions,
-    isAutoAllowed: input.isAutoAllowed
-  })
-  if (!validation.ok) {
-    return {
-      isError: true,
-      text: mcpJson({
-        ok: false,
-        tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
-        code: validation.code,
-        error: validation.message,
-        ...(validation.issues ? { issues: validation.issues } : {})
-      })
+  let validatedRequest: ToolPermissionRetryRequest
+  let opportunityReservation: ToolPermissionOpportunityReservation | undefined
+  if (isToolPermissionOpportunityRequest(input.value)) {
+    if (!input.resolvePermissionOpportunity) {
+      return {
+        isError: true,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          code: 'opportunity_unavailable',
+          error: 'This run cannot redeem a host-issued permission opportunity.'
+        })
+      }
     }
+    const resolvedOpportunity = await input.resolvePermissionOpportunity(
+      input.value.permissionOpportunityId
+    )
+    if (!resolvedOpportunity.ok) {
+      return {
+        isError: true,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          code: resolvedOpportunity.code,
+          error: resolvedOpportunity.error
+        })
+      }
+    }
+    opportunityReservation = resolvedOpportunity.reservation
+    const validation = validateHostIssuedToolPermissionRetryRequest({
+      request: opportunityReservation.request,
+      definitions: input.definitions,
+      isAutoAllowed: input.isAutoAllowed
+    })
+    if (!validation.ok) {
+      try {
+        await opportunityReservation.release()
+      } catch {
+        // A failed release never authorizes execution; the registry expires it.
+      }
+      return {
+        isError: true,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          code: validation.code,
+          error: validation.message,
+          ...(validation.issues ? { issues: validation.issues } : {})
+        })
+      }
+    }
+    validatedRequest = validation.request
+  } else {
+    if (hasPermissionOpportunityId(input.value)) {
+      return {
+        isError: true,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          code: 'invalid_opportunity_request',
+          error: 'A permission opportunity request must contain only permissionOpportunityId.'
+        })
+      }
+    }
+    const validation = validateToolPermissionRetryRequest({
+      value: input.value,
+      definitions: input.definitions,
+      isAutoAllowed: input.isAutoAllowed
+    })
+    if (!validation.ok) {
+      return {
+        isError: true,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          code: validation.code,
+          error: validation.message,
+          ...(validation.issues ? { issues: validation.issues } : {})
+        })
+      }
+    }
+    validatedRequest = validation.request
   }
 
   // Validate against the immutable profile-facing schema first, then bind the
   // exact approval and marker to the canonical invocation that will execute.
-  const request = normalizeValidatedToolPermissionRetryRequest(validation.request)
-  const prepared = input.prepareTarget(request)
+  const request = normalizeValidatedToolPermissionRetryRequest(validatedRequest)
+  const releaseOpportunityReservation = async (): Promise<void> => {
+    if (!opportunityReservation) return
+    try {
+      await opportunityReservation.release()
+    } catch {
+      // A failed release never authorizes execution; the registry expires it.
+    }
+  }
+  let prepared: PreparedToolPermissionRetryTarget<TResult>
+  try {
+    prepared = input.prepareTarget(request)
+  } catch (error) {
+    await releaseOpportunityReservation()
+    throw error
+  }
   if (!prepared.ok) {
+    await releaseOpportunityReservation()
     if ('result' in prepared) {
       return {
         text: prepared.result.text,
@@ -688,11 +1006,124 @@ export async function orchestrateToolPermissionRetry<
     }
   }
 
-  const prompt = buildToolPermissionRetryApprovalPrompt({
-    providerLabel: input.providerLabel,
-    request,
-    targetPreview: prepared.targetPreview
-  })
+  let prompt: ReturnType<typeof buildToolPermissionRetryApprovalPrompt>
+  try {
+    prompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: input.providerLabel,
+      request,
+      targetPreview: prepared.targetPreview
+    })
+  } catch (error) {
+    await releaseOpportunityReservation()
+    throw error
+  }
+  if (opportunityReservation) {
+    let opportunityDecision: ToolPermissionRetryDecision | undefined
+    let approved: boolean
+    try {
+      approved = await input.requestApproval(prompt, (nextDecision) => {
+        opportunityDecision = nextDecision
+      })
+    } catch (error) {
+      await releaseOpportunityReservation()
+      throw error
+    }
+    if (!approved) {
+      if (opportunityDecision) {
+        try {
+          await opportunityReservation.consumeWithLiveBinding()
+        } catch {
+          // A release is unsafe after a user/system decision; expiry remains the backstop.
+        }
+      } else {
+        await releaseOpportunityReservation()
+      }
+      const userDeclined =
+        opportunityDecision?.decisionSource === 'user' &&
+        (opportunityDecision.action === 'decline' || opportunityDecision.action === 'cancel')
+      return {
+        isError: true,
+        targetToolName: request.toolName,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          targetTool: request.toolName,
+          error: userDeclined
+            ? `The user ${opportunityDecision?.action === 'cancel' ? 'cancelled' : 'declined'} this one-shot permission retry. Do not ask again.`
+            : opportunityDecision?.decisionSource === 'system'
+              ? 'The one-shot permission retry timed out or was cancelled by the system. The target was not executed.'
+              : 'The one-shot permission retry was not approved. The target was not executed.'
+        })
+      }
+    }
+    let consumed: PermissionOpportunityTakeResult
+    try {
+      consumed = await opportunityReservation.consumeWithLiveBinding()
+    } catch {
+      return {
+        isError: true,
+        targetToolName: request.toolName,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          targetTool: request.toolName,
+          code: 'opportunity_consume_failed',
+          error: 'The approved permission opportunity could not be consumed.'
+        })
+      }
+    }
+    if (!consumed.ok) {
+      return {
+        isError: true,
+        targetToolName: request.toolName,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          targetTool: request.toolName,
+          code: consumed.code,
+          error: consumed.error
+        })
+      }
+    }
+    const retainedRequest = opportunityReservation.request
+    if (
+      consumed.opportunity.targetArgumentsSha256 !== opportunityReservation.targetArgumentsSha256 ||
+      argumentsFingerprint(consumed.opportunity.request.arguments) !==
+        opportunityReservation.targetArgumentsSha256 ||
+      consumed.opportunity.request.toolName !== retainedRequest.toolName ||
+      consumed.opportunity.request.boundaryCode !== retainedRequest.boundaryCode ||
+      consumed.opportunity.request.failure !== retainedRequest.failure
+    ) {
+      return {
+        isError: true,
+        targetToolName: request.toolName,
+        text: mcpJson({
+          ok: false,
+          tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+          targetTool: request.toolName,
+          code: 'opportunity_target_mismatch',
+          error:
+            'The consumed permission opportunity did not match the invocation reviewed by the user.'
+        })
+      }
+    }
+    const consumedRequest = normalizeValidatedToolPermissionRetryRequest({
+      toolName: consumed.opportunity.request.toolName,
+      arguments: consumed.opportunity.request.arguments,
+      failure: consumed.opportunity.request.failure
+    })
+    const result = await input.executeTarget(
+      consumedRequest,
+      createOneOffToolPermissionRetryMarker(consumedRequest)
+    )
+    return {
+      text: result.text,
+      isError: targetResultIsError(result),
+      targetToolName: consumedRequest.toolName,
+      targetResult: result,
+      targetExecuted: true
+    }
+  }
   let decision: ToolPermissionRetryDecision | undefined
   const outcome = await executeOneOffToolPermissionRetry({
     requestApproval: () =>
