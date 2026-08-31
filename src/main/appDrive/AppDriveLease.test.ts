@@ -57,6 +57,31 @@ function consume(leases: AppDriveLeaseRegistry, overrides: Record<string, unknow
   } as never)
 }
 
+function emulatorBinding(
+  overrides: Partial<AuthorizeAppDriveLeaseInput> = {}
+): AuthorizeAppDriveLeaseInput {
+  return binding({
+    surfaceId: 'canvas-emulator-a',
+    surfaceKind: 'emulator',
+    allowedVerbs: ['emulator_step'],
+    target: { canvasId: 'canvas-emulator-a' },
+    ...overrides
+  })
+}
+
+function consumeEmulator(leases: AppDriveLeaseRegistry, overrides: Record<string, unknown> = {}) {
+  return leases.acquireAndConsume({
+    surfaceId: 'canvas-emulator-a',
+    surfaceKind: 'emulator',
+    chatId: 'chat-a',
+    runId: 'run-a',
+    provider: 'codex',
+    participantId: 'seat-a',
+    verb: 'emulator_step',
+    ...overrides
+  } as never)
+}
+
 describe('AppDriveLeaseRegistry', () => {
   it('mints only from explicit user approval and freezes the exact binding', () => {
     const { leases } = setup()
@@ -105,6 +130,55 @@ describe('AppDriveLeaseRegistry', () => {
       ok: false,
       code: 'verb-not-allowed'
     })
+  })
+
+  it('keeps emulator_step as a distinct exact-surface lease and report kind', () => {
+    const { leases } = setup()
+    const lease = leases.authorizeUserLease(emulatorBinding())
+    expect(lease).toMatchObject({
+      surfaceId: 'canvas-emulator-a',
+      surfaceKind: 'emulator',
+      target: { canvasId: 'canvas-emulator-a' },
+      allowedVerbs: ['emulator_step']
+    })
+
+    const admitted = consumeEmulator(leases)
+    expect(admitted).toMatchObject({ ok: true, lease: { surfaceKind: 'emulator' } })
+    expect(consumeEmulator(leases, { surfaceKind: 'web' })).toMatchObject({
+      ok: false,
+      code: 'binding-mismatch'
+    })
+    expect(consumeEmulator(leases, { verb: 'click' })).toMatchObject({
+      ok: false,
+      code: 'verb-not-allowed'
+    })
+
+    if (!admitted.ok) throw new Error('expected emulator admission')
+    leases.completeAction({
+      leaseId: admitted.lease.leaseId,
+      actionId: admitted.actionId,
+      actor: { runId: 'run-a', provider: 'codex', participantId: 'seat-a' },
+      executed: true,
+      surfaceVerification: 'changed'
+    })
+    expect(leases.queryReports({ chatId: 'chat-a' })[0]).toMatchObject({
+      surfaceKind: 'emulator',
+      actions: [expect.objectContaining({ verb: 'emulator_step', status: 'verified' })]
+    })
+  })
+
+  it('refuses emulator lease metadata that could widen its reviewed surface', () => {
+    const { leases } = setup()
+    expect(() =>
+      leases.authorizeUserLease(
+        emulatorBinding({
+          target: { canvasId: 'canvas-emulator-a', origin: 'https://example.test' }
+        })
+      )
+    ).toThrow(/exact canvas surface/i)
+    expect(() =>
+      leases.authorizeUserLease(emulatorBinding({ allowedVerbs: ['emulator_step', 'click'] }))
+    ).toThrow(/only emulator_step/i)
   })
 
   it('refuses after the bounded step budget is exhausted', () => {

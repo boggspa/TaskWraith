@@ -4,7 +4,7 @@ export const APP_DRIVE_SESSION_REPORT_SCHEMA_VERSION = 1 as const
 export const APP_DRIVE_SESSION_REPORT_MAX_ACTIONS = 100
 export const APP_DRIVE_SESSION_REPORT_MAX_SESSIONS = 128
 
-export type AppDriveReportSurfaceKind = 'web' | 'simulator' | 'native'
+export type AppDriveReportSurfaceKind = 'web' | 'simulator' | 'emulator' | 'native'
 export type AppDriveReportStatus = 'active' | 'ended'
 export type AppDriveActionReportStatus =
   | 'pending'

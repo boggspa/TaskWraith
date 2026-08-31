@@ -49,4 +49,29 @@ describe('resolveAppDriveSurfaceDescriptor', () => {
   it('fails closed when a leased web action omits the target surface', () => {
     expect(resolveAppDriveSurfaceDescriptor('canvas_fill', {})).toBeNull()
   })
+
+  it('binds emulator_step to exactly one canvas and no game, URL, or ROM input', () => {
+    const descriptor = resolveAppDriveSurfaceDescriptor('emulator_step', {
+      canvasId: 'canvas-emulator-a',
+      gameId: 'homebrew-demo',
+      url: 'emulator://homebrew-demo',
+      romPath: '/private/rom.gb',
+      requireIndependentVerifier: true
+    })
+    expect(descriptor).toEqual({
+      surfaceId: 'canvas-emulator-a',
+      surfaceKind: 'emulator',
+      target: { canvasId: 'canvas-emulator-a' },
+      verb: 'emulator_step',
+      allowedVerbs: ['emulator_step'],
+      independentVerificationRequired: true
+    })
+    expect(isAppDriveLeasedTool('emulator_step', { canvasId: 'canvas-emulator-a' })).toBe(true)
+  })
+
+  it('fails closed when emulator_step has no canonical canvas id', () => {
+    for (const canvasId of [undefined, '', ' canvas-a', 'canvas-a ', 42]) {
+      expect(resolveAppDriveSurfaceDescriptor('emulator_step', { canvasId })).toBeNull()
+    }
+  })
 })

@@ -72,6 +72,39 @@ describe('AppDriveSessionReportStore', () => {
     }
   })
 
+  it('records an emulator surface as a distinct value-free report kind', () => {
+    const { store, holder } = harness()
+    const emulator = store.start({
+      leaseId: 'lease-emulator',
+      surfaceId: 'canvas-emulator-a',
+      surfaceKind: 'emulator',
+      chatId: 'chat-a',
+      holder,
+      approvedAt: 900,
+      expiresAt: 10_000,
+      stepBudget: 2
+    })
+    const action = store.beginAction({
+      leaseId: emulator.leaseId,
+      verb: 'emulator_step',
+      actor: holder
+    })
+    store.completeAction({
+      leaseId: emulator.leaseId,
+      actionId: action.actionId,
+      actor: holder,
+      executed: true,
+      surfaceVerification: 'changed'
+    })
+
+    expect(store.query({ chatId: 'chat-a', surfaceId: 'canvas-emulator-a' })).toMatchObject([
+      {
+        surfaceKind: 'emulator',
+        actions: [expect.objectContaining({ verb: 'emulator_step', status: 'verified' })]
+      }
+    ])
+  })
+
   it('requires a distinct Ensemble participant when independent verification is requested', () => {
     const { store, holder, started } = harness()
     const action = store.beginAction({

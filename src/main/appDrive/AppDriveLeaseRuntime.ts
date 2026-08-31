@@ -6,7 +6,7 @@ import {
   resolveAppDriveSurfaceDescriptor,
   type AppDriveSurfaceDescriptor
 } from '../../shared/appDriveSurface'
-import type { AppDriveLeaseRegistry } from './AppDriveLease'
+import type { AppDriveLeaseRegistry, AppDriveLeaseSnapshot } from './AppDriveLease'
 import {
   authorizeApprovedAppDriveSurface,
   revokeAppDriveSurfaceAuthority
@@ -31,6 +31,45 @@ export interface AppDriveLeaseRuntimeDeps {
     surfaceId: string
   ) => boolean
   webOrigin: (canvasId: string, context: CanvasCallContext) => string | undefined
+  /**
+   * Exact main-owned live-surface recheck for the fixed emulator. `other`
+   * distinguishes a current non-emulator Canvas from a missing one, so a bad
+   * emulator request can never tear down its separately reviewed web authority.
+   * Optional for source-compatible production wiring; absent fails closed.
+   */
+  resolveEmulatorSurface?: (
+    canvasId: string,
+    context: CanvasCallContext
+  ) => 'emulator' | 'other' | 'missing'
+}
+
+function isExactEmulatorDescriptor(descriptor: AppDriveSurfaceDescriptor): boolean {
+  return (
+    descriptor.surfaceKind === 'emulator' &&
+    descriptor.surfaceId === descriptor.target.canvasId &&
+    Object.keys(descriptor.target).length === 1 &&
+    descriptor.verb === 'emulator_step' &&
+    descriptor.allowedVerbs.length === 1 &&
+    descriptor.allowedVerbs[0] === 'emulator_step'
+  )
+}
+
+function matchesEmulatorLeaseBinding(
+  lease: AppDriveLeaseSnapshot,
+  input: {
+    chatId: string
+    runId: string
+    provider: ProviderId
+    participantId?: string
+  }
+): boolean {
+  return (
+    lease.surfaceKind === 'emulator' &&
+    lease.chatId === input.chatId &&
+    lease.runId === input.runId &&
+    lease.provider === input.provider &&
+    (lease.participantId ?? undefined) === input.participantId
+  )
 }
 
 export class AppDriveLeaseRuntime {
@@ -71,24 +110,68 @@ export class AppDriveLeaseRuntime {
     approval?: { action: AgentApprovalAction; decisionSource: 'user' | 'system' }
     oneOffPermissionRetry: boolean
   }): { ok: true } | { ok: false; error: string } {
-    if (!input.chatId || !input.runId) {
+    const chatId = input.chatId
+    const runId = input.runId
+    if (!chatId || !runId) {
       return { ok: false, error: 'App Drive requires exact active chat and run authority.' }
     }
+    const context: CanvasCallContext = {
+      provider: input.provider,
+      chatId,
+      runId,
+      workspacePath: input.workspacePath,
+      ...(input.participantId ? { participantId: input.participantId } : {})
+    }
+    if (input.descriptor.surfaceKind === 'emulator') {
+      let surfaceState: 'emulator' | 'other' | 'missing' | 'unknown' = 'unknown'
+      try {
+        if (input.service === 'canvasInteraction' && isExactEmulatorDescriptor(input.descriptor)) {
+          surfaceState =
+            this.deps.resolveEmulatorSurface?.(input.descriptor.surfaceId, context) ?? 'unknown'
+        }
+      } catch {
+        surfaceState = 'unknown'
+      }
+      if (surfaceState !== 'emulator') {
+        const current = this.deps.leases.peek(input.descriptor.surfaceId)
+        // Only an explicitly missing surface can retire a lease, and only when
+        // it is positively an emulator lease held by this exact caller. A
+        // wrong-kind/cross-chat request must never revoke a real web/simulator
+        // surface or its generic canvasInteraction session grant.
+        if (
+          surfaceState === 'missing' &&
+          current &&
+          matchesEmulatorLeaseBinding(current, {
+            chatId,
+            runId,
+            provider: input.provider,
+            ...(input.participantId ? { participantId: input.participantId } : {})
+          })
+        ) {
+          this.deps.leases.revokeSurface(input.descriptor.surfaceId, 'surface-closed')
+          this.deps.removeSessionGrant(
+            input.provider,
+            input.workspacePath,
+            'canvasInteraction',
+            runId,
+            input.descriptor.surfaceId
+          )
+        }
+        return {
+          ok: false,
+          error: 'App Drive requires the exact current chat-owned emulator surface.'
+        }
+      }
+    }
     if (input.descriptor.surfaceKind === 'web') {
-      const origin = this.deps.webOrigin(input.descriptor.surfaceId, {
-        provider: input.provider,
-        chatId: input.chatId,
-        runId: input.runId,
-        workspacePath: input.workspacePath,
-        participantId: input.participantId
-      })
+      const origin = this.deps.webOrigin(input.descriptor.surfaceId, context)
       if (origin) input.descriptor.target.origin = origin
     }
     return authorizeApprovedAppDriveSurface(
       {
         ...input,
-        chatId: input.chatId,
-        runId: input.runId
+        chatId,
+        runId
       },
       this.deps
     )
@@ -114,6 +197,44 @@ export class AppDriveLeaseRuntime {
         reason: input.reason
       },
       this.deps
+    )
+  }
+
+  /** Exact lifecycle release for a fixed emulator surface; never touches web leases. */
+  invalidateEmulatorSurface(input: {
+    canvasId: string
+    record: CanvasSessionRecord
+    ctx: CanvasCallContext
+    reason: 'surface-closed' | 'human-takeover'
+  }): void {
+    if (input.record.id !== input.canvasId || input.record.driver !== 'emulator') return
+    if (
+      !input.record.chatId ||
+      !input.record.runId ||
+      input.ctx.chatId !== input.record.chatId ||
+      input.ctx.runId !== input.record.runId ||
+      !input.ctx.provider
+    ) {
+      return
+    }
+    const lease = this.deps.leases.peek(input.canvasId)
+    if (lease) {
+      if (
+        lease.surfaceKind !== 'emulator' ||
+        lease.chatId !== input.record.chatId ||
+        lease.runId !== input.record.runId ||
+        lease.provider !== input.ctx.provider
+      ) {
+        return
+      }
+      this.deps.leases.revokeSurface(input.canvasId, input.reason)
+    }
+    this.deps.removeSessionGrant(
+      input.ctx.provider as ProviderId,
+      input.record.workspacePath,
+      'canvasInteraction',
+      input.record.runId,
+      input.canvasId
     )
   }
 

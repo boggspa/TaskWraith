@@ -19,7 +19,7 @@ export const APP_DRIVE_DEFAULT_STEP_BUDGET = 20
 export const APP_DRIVE_MAX_LEASE_TTL_MS = 30 * 60 * 1_000
 export const APP_DRIVE_MAX_STEP_BUDGET = 100
 
-export type AppDriveLeaseSurfaceKind = 'web' | 'simulator'
+export type AppDriveLeaseSurfaceKind = 'web' | 'simulator' | 'emulator'
 export type AppDriveLeaseStatus = 'active' | 'revoked'
 export type AppDriveLeaseRevocationReason =
   | 'navigation'
@@ -166,6 +166,23 @@ function canonicalVerbs(values: readonly string[]): readonly string[] {
   return Object.freeze(verbs)
 }
 
+function assertExactEmulatorLeaseBinding(
+  surfaceId: string,
+  allowedVerbs: readonly string[],
+  target: Readonly<AppDriveLeaseTarget>
+): void {
+  if (
+    target.canvasId !== surfaceId ||
+    Object.keys(target).length !== 1 ||
+    allowedVerbs.length !== 1 ||
+    allowedVerbs[0] !== 'emulator_step'
+  ) {
+    throw new Error(
+      'App Drive emulator leases require one exact canvas surface and only emulator_step.'
+    )
+  }
+}
+
 function freezeLease(value: AppDriveLeaseSnapshot): AppDriveLeaseSnapshot {
   return Object.freeze({
     ...value,
@@ -201,8 +218,12 @@ export class AppDriveLeaseRegistry {
       throw new Error('App Drive leases can only be minted by a user approval.')
     }
     const surfaceId = canonical(input.surfaceId, 'surfaceId')
-    if (input.surfaceKind !== 'web' && input.surfaceKind !== 'simulator') {
-      throw new Error('App Drive lease surfaceKind must be web or simulator.')
+    if (
+      input.surfaceKind !== 'web' &&
+      input.surfaceKind !== 'simulator' &&
+      input.surfaceKind !== 'emulator'
+    ) {
+      throw new Error('App Drive lease surfaceKind must be web, simulator, or emulator.')
     }
     const chatId = canonical(input.chatId, 'chatId')
     const runId = canonical(input.runId, 'runId')
@@ -217,6 +238,9 @@ export class AppDriveLeaseRegistry {
       throw new Error('App Drive lease target must be an object.')
     }
     const target = Object.freeze({ ...(input.target || {}) })
+    if (input.surfaceKind === 'emulator') {
+      assertExactEmulatorLeaseBinding(surfaceId, allowedVerbs, target)
+    }
     const approvedAt = finiteNumber(input.approvedAt ?? now, 'approvedAt')
     const expiresAt = finiteNumber(
       input.expiresAt ?? approvedAt + APP_DRIVE_DEFAULT_LEASE_TTL_MS,

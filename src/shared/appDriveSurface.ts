@@ -21,13 +21,20 @@ export const APP_DRIVE_SIMULATOR_CONTROL_TOOLS = [
   'simulator_scroll'
 ] as const
 
+/** The fixed packaged emulator has one bounded AppDrive control verb. */
+export const APP_DRIVE_EMULATOR_CONTROL_TOOLS = Object.freeze(['emulator_step'] as const)
+
 export type AppDriveWebControlTool = (typeof APP_DRIVE_WEB_CONTROL_TOOLS)[number]
 export type AppDriveSimulatorControlTool = (typeof APP_DRIVE_SIMULATOR_CONTROL_TOOLS)[number]
-export type AppDriveLeasedTool = AppDriveWebControlTool | AppDriveSimulatorControlTool
+export type AppDriveEmulatorControlTool = (typeof APP_DRIVE_EMULATOR_CONTROL_TOOLS)[number]
+export type AppDriveLeasedTool =
+  | AppDriveWebControlTool
+  | AppDriveSimulatorControlTool
+  | AppDriveEmulatorControlTool
 
 export interface AppDriveSurfaceDescriptor {
   surfaceId: string
-  surfaceKind: 'web' | 'simulator'
+  surfaceKind: 'web' | 'simulator' | 'emulator'
   target: {
     canvasId?: string
     origin?: string
@@ -75,6 +82,19 @@ export function resolveAppDriveSurfaceDescriptor(
       target: { canvasId },
       verb: toolName.slice('canvas_'.length),
       allowedVerbs: APP_DRIVE_WEB_CONTROL_TOOLS.map((name) => name.slice('canvas_'.length)),
+      independentVerificationRequired: args.requireIndependentVerifier === true
+    }
+  }
+
+  if (toolName === 'emulator_step') {
+    const canvasId = canonical(args.canvasId, 256)
+    if (!canvasId) return null
+    return {
+      surfaceId: canvasId,
+      surfaceKind: 'emulator',
+      target: { canvasId },
+      verb: 'emulator_step',
+      allowedVerbs: Object.freeze([...APP_DRIVE_EMULATOR_CONTROL_TOOLS]),
       independentVerificationRequired: args.requireIndependentVerifier === true
     }
   }
