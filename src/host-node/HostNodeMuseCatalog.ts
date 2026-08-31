@@ -10,6 +10,7 @@ import {
 import type { HostProviderModelProjection } from '../shared/hostProtocol'
 
 export const HOST_NODE_MUSE_MODEL_ID = 'muse-spark-1.2'
+export const HOST_NODE_MUSE_CONTRIBUTOR_MODEL_ID = 'muse-spark-1.2-contributor'
 export const HOST_NODE_MUSE_REASONING = [
   'minimal',
   'low',
@@ -67,27 +68,36 @@ const reasoningLabels: Readonly<Record<(typeof HOST_NODE_MUSE_REASONING)[number]
   ultra: 'Ultra'
 }
 
+const museModels = [
+  {
+    modelId: HOST_NODE_MUSE_MODEL_ID,
+    label: 'Muse Spark 1.2',
+    default: true
+  },
+  {
+    modelId: HOST_NODE_MUSE_CONTRIBUTOR_MODEL_ID,
+    label: 'Muse Contributor Spark 1.2',
+    detail:
+      'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
+  }
+] as const
+
 export function hostNodeMuseOffers(available = true): HostProviderOffersProjection {
-  const models: HostProviderModelOffer[] = [
-    {
-      modelId: HOST_NODE_MUSE_MODEL_ID,
-      label: 'Muse Spark 1.2',
-      available,
-      default: true,
-      reasoning: HOST_NODE_MUSE_REASONING.map((reasoningId) => ({
-        reasoningId,
-        label: reasoningLabels[reasoningId],
-        available
-      }))
-    }
-  ]
+  const models: HostProviderModelOffer[] = museModels.map((model) => ({
+    ...model,
+    available,
+    reasoning: HOST_NODE_MUSE_REASONING.map((reasoningId) => ({
+      reasoningId,
+      label: reasoningLabels[reasoningId],
+      available
+    }))
+  }))
   const offer: HostProviderOffersProjection = {
     providerId: 'muse',
     offerRevision: createHash('sha256')
       .update(
         JSON.stringify({
-          model: HOST_NODE_MUSE_MODEL_ID,
-          reasoning: HOST_NODE_MUSE_REASONING,
+          models,
           available,
           postures
         })
@@ -105,16 +115,14 @@ export function hostNodeMuseOffers(available = true): HostProviderOffersProjecti
 }
 
 export function hostNodeMuseInventory(available: boolean): readonly HostProviderModelProjection[] {
-  return [
-    {
-      providerId: 'muse',
-      displayProvider: 'Muse',
-      modelId: HOST_NODE_MUSE_MODEL_ID,
-      modelLabel: 'Muse Spark 1.2',
-      shortCode: 'MUSE',
-      available
-    }
-  ]
+  return museModels.map((model) => ({
+    providerId: 'muse',
+    displayProvider: 'Muse',
+    modelId: model.modelId,
+    modelLabel: model.label,
+    shortCode: 'MUSE',
+    available
+  }))
 }
 
 export function hostNodeMuseStatuses(

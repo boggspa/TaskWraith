@@ -350,7 +350,14 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
     muse: {
       displayProvider: 'Muse',
       shortCode: 'MUSE',
-      models: [model('muse-spark-1.2', 'Muse Spark 1.2', MUSE_REASONING, true)],
+      models: [
+        model('muse-spark-1.2', 'Muse Spark 1.2', MUSE_REASONING, true),
+        {
+          ...model('muse-spark-1.2-contributor', 'Muse Contributor Spark 1.2', MUSE_REASONING),
+          detail:
+            'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
+        }
+      ],
       authFlows: [{ flowId: 'muse:login', kind: 'manual', label: 'Sign in', available: true }]
     }
   }
@@ -364,6 +371,7 @@ function hashEntry(entry: Omit<HostProviderCatalogEntry, 'providerId'>): string 
           label: m.label,
           available: m.available,
           default: m.default === true,
+          detail: m.detail,
           reasoning: m.reasoning.map((r) => ({
             reasoningId: r.reasoningId,
             label: r.label,
@@ -402,6 +410,7 @@ export function hostProviderCatalogEntry(
       label: m.label,
       available: m.available,
       ...(m.default === true ? { default: true } : {}),
+      ...(m.detail ? { detail: m.detail } : {}),
       reasoning: m.reasoning.map((r) => ({ ...r }))
     })),
     postures: posturesForProvider(providerId, capabilities),
@@ -425,6 +434,7 @@ export function hostProviderOffers(
       label: m.label,
       available: m.available && available,
       ...(m.default === true ? { default: true } : {}),
+      ...(m.detail ? { detail: m.detail } : {}),
       reasoning: m.reasoning.map((r) => ({
         reasoningId: r.reasoningId,
         label: r.label,

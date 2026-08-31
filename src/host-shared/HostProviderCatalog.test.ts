@@ -196,16 +196,31 @@ describe('HostProviderCatalog', () => {
   it('matches HostNodeMuseCatalog for Muse', () => {
     const entry = hostProviderCatalogEntry('muse')
     expect(entry).not.toBeNull()
-    expect(entry!.models[0].modelId).toBe('muse-spark-1.2')
-    expect(entry!.models[0].label).toBe('Muse Spark 1.2')
-    expect(entry!.models[0].reasoning.map((r) => r.reasoningId)).toEqual([
-      'minimal',
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'ultra'
+    expect(
+      entry!.models.map(({ modelId, label, default: isDefault }) => ({
+        modelId,
+        label,
+        isDefault: Boolean(isDefault)
+      }))
+    ).toEqual([
+      { modelId: 'muse-spark-1.2', label: 'Muse Spark 1.2', isDefault: true },
+      {
+        modelId: 'muse-spark-1.2-contributor',
+        label: 'Muse Contributor Spark 1.2',
+        isDefault: false
+      }
     ])
+    expect(entry!.models[1]?.detail).toMatch(/content.*product improvement/i)
+    for (const model of entry!.models) {
+      expect(model.reasoning.map((r) => r.reasoningId)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'ultra'
+      ])
+    }
   })
 
   it('offers both K3 routes as regular-speed models with the full K3 effort ladder', () => {
