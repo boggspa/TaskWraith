@@ -4725,6 +4725,7 @@ export type ApprovalLedgerDecisionSource =
   | 'inspection_shell'
   | 'external_read'
   | 'explicit_user_request'
+  | 'canvas_eval_window'
   | 'system'
 export type ApprovalLedgerExpirationMode =
   | 'pending_timeout'

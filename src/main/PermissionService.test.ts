@@ -972,3 +972,96 @@ describe('PermissionService', () => {
     })
   })
 })
+
+describe('canvas_eval 12h approval window', () => {
+  const HOUR = 60 * 60 * 1000
+  const WINDOW = 12 * HOUR
+
+  function makeService(): PermissionService {
+    const runManager = new RunManager()
+    return new PermissionService({ runManager, sessionGrants: new Set() })
+  }
+
+  it('is not granted before any approval', () => {
+    expect(makeService().hasLiveCanvasEvalWindowGrant('canvas-a', 1_000)).toBe(false)
+  })
+
+  it('grants for exactly 12h from the first accept, then re-prompts', () => {
+    const service = makeService()
+    const t0 = 1_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + HOUR)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW - 1)).toBe(true)
+    // At the 12h boundary the window has elapsed → the next eval re-prompts.
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+  })
+
+  it('anchors the window to the FIRST accept — a later eval never slides the 12h', () => {
+    const service = makeService()
+    const t0 = 5_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    // A second accept / auto-approve 6h in must NOT extend the window.
+    service.recordCanvasEvalWindowGrant('canvas-a', t0 + 6 * HOUR)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW - 1)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+  })
+
+  it('is bound to the exact canvasId and requires one', () => {
+    const service = makeService()
+    const t0 = 2_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-b', t0 + HOUR)).toBe(false)
+    // A missing / blank surface can never establish or match a window grant.
+    service.recordCanvasEvalWindowGrant(undefined, t0)
+    service.recordCanvasEvalWindowGrant('', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant(undefined, t0)).toBe(false)
+    expect(service.hasLiveCanvasEvalWindowGrant('', t0)).toBe(false)
+  })
+
+  it('a re-prompt after expiry starts a fresh 12h window', () => {
+    const service = makeService()
+    const t0 = 3_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+    // The human is asked again and accepts; the window restarts from that accept.
+    const t1 = t0 + WINDOW + HOUR
+    service.recordCanvasEvalWindowGrant('canvas-a', t1)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t1 + HOUR)).toBe(true)
+  })
+
+  it('a human accept opens the window; decline does not; it never becomes a generic session grant', () => {
+    const runManager = new RunManager()
+    runManager.create({ runId: 'run-eval', provider: 'claude', workspacePath: '/repo' })
+    const service = new PermissionService({ runManager, sessionGrants: new Set() })
+
+    // Accept, carrying the exact surface the user was shown → window opens.
+    expect(
+      service.applyApprovalDecision({
+        provider: 'claude',
+        workspacePath: '/repo',
+        service: 'canvasEval',
+        runId: 'run-eval',
+        action: 'accept',
+        surfaceId: 'canvas-a'
+      })
+    ).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', Date.now())).toBe(true)
+    // The generic session/workspace machinery is untouched: canvas_eval stays
+    // non-grantable there, so resolvePermission still asks every time.
+    expect(service.hasSessionGrant('claude', '/repo', 'canvasEval', 'run-eval', 'canvas-a')).toBe(
+      false
+    )
+
+    // A decline opens nothing for that surface.
+    service.applyApprovalDecision({
+      provider: 'claude',
+      workspacePath: '/repo',
+      service: 'canvasEval',
+      runId: 'run-eval',
+      action: 'decline',
+      surfaceId: 'canvas-b'
+    })
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-b', Date.now())).toBe(false)
+  })
+})

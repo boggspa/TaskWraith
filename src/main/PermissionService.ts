@@ -41,6 +41,17 @@ export interface ApprovalDecisionInput {
   surfaceId?: string
 }
 
+/**
+ * canvas_eval is RCE and re-prompts per call by default. The lead-dev-authorised
+ * exception is a dedicated, per-canvas approval window: after the first human
+ * accept on a given canvasId, further canvas_eval on THAT canvas is auto-approved
+ * for this long before the human is asked again. It is deliberately NOT wired into
+ * the generic session/workspace grant machinery (isNonGrantableService keeps
+ * canvas_eval out of that), so the window is the only path that can suppress an
+ * eval prompt, it binds to one exact surface, and it always expires.
+ */
+const CANVAS_EVAL_APPROVAL_WINDOW_MS = 12 * 60 * 60 * 1000
+
 function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
   return (
     service === 'canvasEval' ||
@@ -69,6 +80,11 @@ function isSurfaceScopedService(service: AgenticServiceId | undefined): boolean 
 }
 
 export class PermissionService {
+  // canvasId -> epoch-ms at which its canvas_eval approval window expires.
+  // In-memory only: a window must not survive an app restart, and a fresh
+  // surface (new canvasId) always re-prompts. Pruned lazily on read.
+  private readonly canvasEvalWindowGrants = new Map<string, number>()
+
   constructor(private readonly options: PermissionServiceOptions) {}
 
   private getSettings(): AppSettings {
@@ -294,7 +310,43 @@ export class PermissionService {
         input.surfaceId
       )
     }
+    // canvas_eval is non-grantable to the generic machinery above; its ONLY
+    // suppression path is the dedicated per-canvas window, opened here on the
+    // first human accept for the exact surface the user reviewed.
+    if (input.service === 'canvasEval' && this.isApprovedAction(input.action)) {
+      this.recordCanvasEvalWindowGrant(input.surfaceId, Date.now())
+    }
     return this.isApprovedAction(input.action)
+  }
+
+  /**
+   * Open (or leave unchanged) the per-canvas canvas_eval approval window. Anchored
+   * to the FIRST accept: an auto-approved eval later in the window must not slide
+   * the expiry forward, so a live window is never overwritten. A blank surface is
+   * a no-op — a window can only ever bind to an exact canvasId.
+   */
+  recordCanvasEvalWindowGrant(canvasId: string | undefined, nowMs: number): void {
+    const id = canvasId?.trim()
+    if (!id) return
+    const existing = this.canvasEvalWindowGrants.get(id)
+    if (existing !== undefined && nowMs < existing) return
+    this.canvasEvalWindowGrants.set(id, nowMs + CANVAS_EVAL_APPROVAL_WINDOW_MS)
+  }
+
+  /**
+   * True while a live per-canvas canvas_eval approval window covers this exact
+   * canvasId. Expired windows are pruned on read so a later accept starts fresh.
+   */
+  hasLiveCanvasEvalWindowGrant(canvasId: string | undefined, nowMs: number): boolean {
+    const id = canvasId?.trim()
+    if (!id) return false
+    const expiresAt = this.canvasEvalWindowGrants.get(id)
+    if (expiresAt === undefined) return false
+    if (nowMs >= expiresAt) {
+      this.canvasEvalWindowGrants.delete(id)
+      return false
+    }
+    return true
   }
 
   isApprovedAction(action: AgentApprovalAction): boolean {

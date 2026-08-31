@@ -74,7 +74,9 @@ function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
           sessionGrantAllowed: false,
           decision: 'ask'
         }
-      })
+      }),
+      // No live per-canvas eval window by default → canvas_eval prompts as before.
+      hasLiveCanvasEvalWindowGrant: vi.fn(() => false)
     } as never,
     auditService: {
       recordAutomaticApprovalDecision: vi.fn((...args: unknown[]) => {
@@ -1122,6 +1124,52 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       approvalId: livePayload.approvalId
     })
     void pending
+  })
+
+  it('(i0) auto-approves canvas_eval WITHOUT a prompt while a live 12h per-canvas window covers the surface', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    // The human already accepted canvas_eval on this exact canvas: the window is live.
+    vi.mocked((deps.permissionService as never as { hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn> }).hasLiveCanvasEvalWindowGrant).mockReturnValue(true)
+    const script = 'document.title + "SECOND-EVAL"'
+    const onApprovalPromptCreated = vi.fn(({ approvalId }: { approvalId: string }) =>
+      createCanvasEvalApprovalReceipt(script, approvalId)
+    )
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'canvasEval',
+      '/repo',
+      request({
+        preview: {
+          kind: 'tool',
+          toolName: 'canvas_eval',
+          params: { canvasId: 'canvas-1', script }
+        },
+        onApprovalPromptCreated
+      })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The eval is still gated by its own script-bound receipt (execution stays
+    // audited + single-use) — the mint runs exactly as on the human path…
+    expect(onApprovalPromptCreated).toHaveBeenCalledTimes(1)
+    // …but the human is NOT prompted: no modal is registered, published, or sent.
+    expect(order).not.toContain('registerGeminiTool')
+    expect(order).not.toContain('getApprovalService')
+    expect(vi.mocked(deps.safeSendToSender)).not.toHaveBeenCalled()
+    // The auto-approval is audited under its own honest, non-YOLO reason.
+    expect(order).toContain('audit:autoAllow:canvas_eval_window')
+    // The window was consulted for THIS exact surface, and the call allows the tool.
+    expect(
+      vi.mocked(
+        (deps.permissionService as never as { hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn> })
+          .hasLiveCanvasEvalWindowGrant
+      ).mock.calls[0]?.[0]
+    ).toBe('canvas-1')
+    expect(await pending).toBe(true)
   })
 
   it('(i1) carries the target surface into BOTH the grant check and the pending record', async () => {

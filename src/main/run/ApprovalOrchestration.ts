@@ -806,6 +806,30 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     } else {
       request.onApprovalPromptCreated?.({ approvalId })
     }
+    // Lead-dev-authorised 12h per-canvas eval window: once the human has accepted
+    // canvas_eval on THIS exact canvas, suppress the re-prompt for 12h. The
+    // script-bound receipt was still minted just above (execution stays audited
+    // and single-use); only the human prompt is skipped, and the window is
+    // anchored to the first accept so it hard-expires 12h later.
+    if (
+      service === 'canvasEval' &&
+      canvasEvalApproval &&
+      requestSurfaceId &&
+      deps.permissionService.hasLiveCanvasEvalWindowGrant(requestSurfaceId, Date.now())
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'canvas_eval_window',
+        'session',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      return true
+    }
     const externalPathDetection = request.externalPathDetection
     const postureApprovalOnly = isPostureApprovalOnlyService(
       effectivePermissions?.presetId,
@@ -822,9 +846,15 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         ? ['accept', 'decline', 'cancel']
         : approvalActionsForPolicy(policy, workspacePath, service)
     const baseTitle = externalPathDetection ? deps.externalPathApprovalTitle() : request.title
-    const baseBody = externalPathDetection
+    const rawBody = externalPathDetection
       ? deps.externalPathApprovalBody(externalPathDetection)
       : request.body
+    // Informed consent: the human must know this accept is not per-call — it opens
+    // a 12h window in which canvas_eval runs on this canvas without asking again.
+    const baseBody =
+      service === 'canvasEval'
+        ? `${rawBody ?? ''}\n\nApproving runs this script now and allows canvas_eval on THIS canvas without asking again for 12 hours.`
+        : rawBody
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
     const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
     // Built from the preview's STRUCTURED fields, not from `body`: the remote
