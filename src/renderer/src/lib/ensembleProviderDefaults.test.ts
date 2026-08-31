@@ -1120,6 +1120,18 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 })
 
 describe('muse reasoning options', () => {
+  it('offers Contributor Spark without changing the standard default', () => {
+    const defaults = getEnsembleModelDefaults('muse')
+    expect(defaults.modelOptions.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
+      {
+        id: 'muse-spark-1.2-contributor',
+        label: 'Muse Contributor Spark 1.2'
+      }
+    ])
+    expect(defaults.defaultModelId).toBe('muse-spark-1.2')
+  })
+
   it('includes xhigh between high and ultra (Meta /effort ladder)', () => {
     expect(getEnsembleReasoningOptions('muse').map((option) => option.value)).toEqual([
       'minimal',

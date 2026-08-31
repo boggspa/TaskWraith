@@ -407,7 +407,8 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
   }
 ] satisfies CodexModelOption[]
 const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
-// Muse Code CLI seat catalog (opaque exec). Decode-ready; not live-selectable yet.
+// Muse Code CLI seat catalog (opaque exec). Contributor Spark stays opt-in: its
+// discount carries the provider catalogue's product-improvement data-use notice.
 const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
 const MUSE_DEFAULT_MODEL_ROWS = [
   {
@@ -415,6 +416,12 @@ const MUSE_DEFAULT_MODEL_ROWS = [
     label: 'Muse Spark 1.2',
     description: 'Muse Code CLI default model',
     isDefault: true
+  },
+  {
+    id: 'muse-spark-1.2-contributor',
+    label: 'Muse Contributor Spark 1.2',
+    description:
+      'Discounted tokens; content, including inter-session messages, may be used for product improvement'
   }
 ] satisfies CodexModelOption[]
 const MUSE_DEFAULT_MODELS = withCuratedUltraTaskSupport(MUSE_DEFAULT_MODEL_ROWS)

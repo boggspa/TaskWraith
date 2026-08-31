@@ -232,11 +232,11 @@ function ollamaReasoningOptions(
   }))
 }
 
-/** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
- *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
- *  live probe widens it. */
+/** Muse Code seat models. Wire ids mirror the visible rows in the on-disk Muse
+ *  model-catalog. Contributor Spark remains an explicit non-default choice. */
 const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
-  { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' }
+  { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
+  { id: 'muse-spark-1.2-contributor', label: 'Muse Contributor Spark 1.2' }
 ]
 const MUSE_MODELS = withCuratedUltraTaskSupport(MUSE_MODEL_ROWS)
 

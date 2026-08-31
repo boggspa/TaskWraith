@@ -1088,13 +1088,16 @@ const MISTRAL_STATIC_MODELS = [
     ultraTaskSupported: true
   }
 ]
-// Muse Code CLI seat. Exactly one row on purpose: Meta withdrew Muse Spark 1.1
-// when 1.2 shipped, and the CLI's own catalogue
-// (~/.local/share/muse/model-catalog/<provider>__p<profile>.json) carries
-// `is_current` + `visibility`, so lifecycle is PROVIDER-PUBLISHED — do not add
+// Muse Code CLI seat. Rows mirror the visible entries in the CLI's own catalogue.
+// That catalogue (~/.local/share/muse/model-catalog/<provider>__p<profile>.json)
+// carries `is_current` + `visibility`, so lifecycle is PROVIDER-PUBLISHED — do not add
 // a hand-kept retirement table like PI_MODEL_RETIREMENTS. Metadata comes from
 // that catalogue, never the web: the true context limit is 1,007,997, not the
 // widely-quoted 1,048,576.
+//
+// The contributor row is selectable but deliberately not TaskWraith's default:
+// its discount comes with the catalogue's product-improvement data-use notice,
+// so the user must choose it rather than being opted in by a default migration.
 //
 // The id must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
 // providerModelDefaults.ts — providerFallthroughGuards compares the two sides
@@ -1105,6 +1108,12 @@ const MUSE_STATIC_MODELS = [
     label: 'Muse Spark 1.2',
     description: '1M context - $1.25/$4.25 per Mtok',
     isDefault: true,
+    ultraTaskSupported: true
+  },
+  {
+    id: 'muse-spark-1.2-contributor',
+    label: 'Muse Contributor Spark 1.2',
+    description: '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
     ultraTaskSupported: true
   }
 ]

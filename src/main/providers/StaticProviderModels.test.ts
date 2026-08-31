@@ -51,6 +51,27 @@ describe('codexModelContextConfig', () => {
   })
 })
 
+describe('getStaticProviderModels (Muse catalogue)', () => {
+  it('offers Contributor Spark with its disclosure while keeping the standard route default', () => {
+    expect(getStaticProviderModels('muse')).toEqual([
+      {
+        id: 'muse-spark-1.2',
+        label: 'Muse Spark 1.2',
+        description: '1M context - $1.25/$4.25 per Mtok',
+        isDefault: true,
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-spark-1.2-contributor',
+        label: 'Muse Contributor Spark 1.2',
+        description:
+          '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+        ultraTaskSupported: true
+      }
+    ])
+  })
+})
+
 describe('getStaticProviderModels (Pi lifecycle)', () => {
   it('warns before Pi model sunsets and removes each model on its retirement date', () => {
     const before = getStaticProviderModels('pi', {
