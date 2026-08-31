@@ -196,7 +196,10 @@ function rehashedFrozenAdapter(
 ): EmulatorStateAdapterManifestV2 {
   return freezeStateAdapter({
     ...candidate,
-    schemaSha256: hash(canonicalEmulatorStateAdapterSchemaJson(candidate))
+    // The canonical schema intentionally omits this self-referential field.
+    schemaSha256: hash(
+      canonicalEmulatorStateAdapterSchemaJson({ ...candidate, schemaSha256: '0'.repeat(64) })
+    )
   })
 }
 
