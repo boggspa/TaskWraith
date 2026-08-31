@@ -4976,9 +4976,24 @@ export class EnsembleOrchestrator {
       const runtime = this.roundsByChatId.get(input.chatId)
       if (runtime && !runtime.cancelled) {
         const prompt = input.text.trim()
+        const ensemble = this.deps.getChat(input.chatId)?.ensemble
         const resolution = resolveEnsembleUserFanoutTargets({
           text: prompt,
-          participants: this.deps.getChat(input.chatId)?.ensemble?.participants || [],
+          participants: ensemble?.participants || [],
+          authority: {
+            bossmanParticipantId:
+              runtime.bossmanParticipantId ??
+              ensemble?.activeRound?.bossmanParticipantId ??
+              ensemble?.bossmanParticipantId,
+            captainParticipantIds:
+              runtime.captainParticipantIds ??
+              ensemble?.activeRound?.captainParticipantIds ??
+              ensemble?.captainParticipantIds,
+            secondInCommandParticipantId:
+              runtime.secondInCommandParticipantId ??
+              ensemble?.activeRound?.secondInCommandParticipantId ??
+              ensemble?.secondInCommandParticipantId
+          },
           ...(input.dmTargetParticipantId
             ? { exactTargetParticipantId: input.dmTargetParticipantId }
             : {})
@@ -5071,6 +5086,20 @@ export class EnsembleOrchestrator {
     const userFanout = resolveEnsembleUserFanoutTargets({
       text: input.prompt,
       participants: chat.ensemble.participants,
+      authority: {
+        bossmanParticipantId:
+          runtime.bossmanParticipantId ??
+          chat.ensemble.activeRound?.bossmanParticipantId ??
+          chat.ensemble.bossmanParticipantId,
+        captainParticipantIds:
+          runtime.captainParticipantIds ??
+          chat.ensemble.activeRound?.captainParticipantIds ??
+          chat.ensemble.captainParticipantIds,
+        secondInCommandParticipantId:
+          runtime.secondInCommandParticipantId ??
+          chat.ensemble.activeRound?.secondInCommandParticipantId ??
+          chat.ensemble.secondInCommandParticipantId
+      },
       ...(input.dmTargetParticipantId
         ? { exactTargetParticipantId: input.dmTargetParticipantId }
         : {})
@@ -13690,7 +13719,16 @@ export class EnsembleOrchestrator {
     const audience = resolveEnsembleCommunicationAudience({
       selectors: targets,
       participants,
-      senderParticipantId: run.participant.id
+      senderParticipantId: run.participant.id,
+      authority: {
+        bossmanParticipantId:
+          chat.ensemble.activeRound?.bossmanParticipantId ?? chat.ensemble.bossmanParticipantId,
+        captainParticipantIds:
+          chat.ensemble.activeRound?.captainParticipantIds ?? chat.ensemble.captainParticipantIds,
+        secondInCommandParticipantId:
+          chat.ensemble.activeRound?.secondInCommandParticipantId ??
+          chat.ensemble.secondInCommandParticipantId
+      }
     })
     const recipients = audience.participants
     if (recipients.length === 0 && !audience.toUser) {
@@ -17953,10 +17991,12 @@ export class EnsembleOrchestrator {
         }
       }
       const allParticipants = chat?.ensemble?.participants || []
+      const groupRoutingBossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+      const groupRoutingCaptainParticipantIds = this.activeCaptainParticipantIds(chat, runtime)
       const groupRoutingAuthorityParticipantIds = new Set(
         [
-          this.activeBossmanParticipantId(chat, runtime),
-          ...this.activeCaptainParticipantIds(chat, runtime)
+          groupRoutingBossmanParticipantId,
+          ...groupRoutingCaptainParticipantIds
         ].filter((participantId): participantId is string => Boolean(participantId))
       )
       const assistantMentionRoutingPlan = resolveAssistantMentionRoutingPlan({
@@ -17969,7 +18009,11 @@ export class EnsembleOrchestrator {
         ...(runtime.dmTargetParticipantId
           ? { dmTargetParticipantId: runtime.dmTargetParticipantId }
           : {}),
-        excludedGroupParticipantIds: groupRoutingAuthorityParticipantIds
+        excludedGroupParticipantIds: groupRoutingAuthorityParticipantIds,
+        authority: {
+          bossmanParticipantId: groupRoutingBossmanParticipantId,
+          captainParticipantIds: groupRoutingCaptainParticipantIds
+        }
       })
       const detectedParticipantTagMatches = assistantMentionRoutingPlan.participantMatches
       // An explicit yield normally wins over conversational @mentions. The
@@ -18075,6 +18119,7 @@ export class EnsembleOrchestrator {
           ? tagMatches.find((tagMatch) => tagMatch.participant.id === priorityAuthorityId)
           : undefined
         const routeableTagMatches =
+          !assistantMentionRoutingPlan.hasAuthorityGroupRoute &&
           priorityAuthorityMatch &&
           tagMatches.some(
             (tagMatch) => tagMatch.participant.id !== priorityAuthorityMatch.participant.id

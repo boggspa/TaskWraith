@@ -686,6 +686,41 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     })
   })
 
+  it('expands a user @Management steer to every idle enabled Captain beside the active Boss', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Coordinator' }),
+      participant('captain-a', 'claude', 2, { role: 'Planner' }),
+      participant('captain-b', 'kimi', 3, { role: 'Verifier' }),
+      participant('worker', 'grok', 4, { role: 'Builder' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original management round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: '@Management review the changed direction.'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(
+      harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
+    ).toEqual(['captain-a', 'captain-b'])
+    expect(
+      harness.dispatched.some((payload) => payload.ensembleRun?.participantId === 'worker')
+    ).toBe(false)
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
   it('keeps an already-running tagged seat on ordinary steer semantics without a duplicate lane', async () => {
     const harness = makeHarness()
     const started = harness.orchestrator.startRound({
@@ -1075,6 +1110,36 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(sideMessage?.metadata?.toUser).toBeUndefined()
   })
 
+  it('expands @Captains side-message recipients from configured authority ids', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Lead' }),
+      participant('captain-a', 'claude', 2, { role: 'Analyst' }),
+      participant('captain-b', 'kimi', 3, { role: 'Verifier' }),
+      participant('role-only', 'grok', 4, { role: 'Captain' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Lead owns the current turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+      to: '@Captains',
+      message: 'Please compare the two options.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      toParticipantIds: ['captain-a', 'captain-b']
+    })
+    expect(result.toParticipantIds).not.toContain('role-only')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
   it('lets the Boss route an assistant-authored stage group in roster order', async () => {
     const roster = [
       participant('boss', 'codex', 1, { role: 'Boss', stageRole: 'worker' }),
@@ -1100,6 +1165,65 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     complete(harness, 1)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('worker-2')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
+  it('lets the Boss route every configured Captain despite broad-group authority exclusions', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Lead' }),
+      participant('captain-a', 'claude', 2, { role: 'Analyst' }),
+      participant('worker', 'grok', 3, { role: 'Builder' }),
+      participant('captain-b', 'kimi', 4, { role: 'Verifier' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Coordinate the management pass.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@Captains decide the review split together.')
+    complete(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('captain-a')
+    complete(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
+  it('keeps assistant @Management collective instead of collapsing to the priority Boss', async () => {
+    const roster = [
+      participant('captain-a', 'claude', 1, { role: 'Analyst' }),
+      participant('boss', 'codex', 2, { role: 'Lead' }),
+      participant('worker', 'grok', 3, { role: 'Builder' }),
+      participant('captain-b', 'kimi', 4, { role: 'Verifier' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Ask management to choose the route.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@Management decide together before implementation.')
+    complete(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('boss')
+    complete(harness, 1)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
+    expect(
+      harness.dispatched.slice(0, 3).some((payload) => payload.ensembleRun?.participantId === 'worker')
+    ).toBe(false)
     await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
 

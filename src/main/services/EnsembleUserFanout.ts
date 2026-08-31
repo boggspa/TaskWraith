@@ -1,5 +1,8 @@
 import type { EnsembleParticipant } from '../store/types'
-import { ensembleGroupMentionMatchesStage } from '../../shared/ensembleGroupMention'
+import {
+  resolveEnsembleGroupMentionParticipantIds,
+  type EnsembleGroupMentionAuthority
+} from '../../shared/ensembleGroupMention'
 import {
   findAllMentions,
   isGroupMention,
@@ -59,13 +62,15 @@ function structuredParticipantMentions(text: string): StructuredParticipantMenti
  * The optional exact target is the MAIN-validated picker/structured identity
  * persisted with a queued prompt. It may disambiguate the one visible alias
  * that actually contains that participant, but it never adds a seat that the
- * prompt did not tag. Stage, role, and permission preset are deliberately not
- * routing filters; enabled roster membership is.
+ * prompt did not tag. Direct participant tags ignore stage and permission
+ * preset; roster-group tags use the shared stage/authority membership table.
+ * Arbitrary display-role text never grants Boss or Captain membership.
  */
 export function resolveEnsembleUserFanoutTargets(input: {
   text: string
   participants: EnsembleParticipant[]
   exactTargetParticipantId?: string
+  authority?: EnsembleGroupMentionAuthority
 }): EnsembleUserFanoutTargets {
   const enabledParticipants = input.participants.filter(
     (participant) => participant.enabled !== false
@@ -114,8 +119,13 @@ export function resolveEnsembleUserFanoutTargets(input: {
     }
     const match = signal.match
     if (isGroupMention(match)) {
+      const memberIds = resolveEnsembleGroupMentionParticipantIds({
+        group: match.group,
+        participants: rosterOrderedParticipants,
+        authority: input.authority
+      })
       for (const participant of rosterOrderedParticipants) {
-        if (ensembleGroupMentionMatchesStage(match.group, participant.stageRole)) {
+        if (memberIds.has(participant.id)) {
           addTarget(participant)
         }
       }

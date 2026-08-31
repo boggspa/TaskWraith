@@ -148,6 +148,37 @@ describe('resolveEnsembleUserFanoutTargets', () => {
     ])
   })
 
+  it('expands @Captains only from configured enabled Captain ids', () => {
+    const captain = participant('captain-a', 'Analyst', 4)
+    const disabledCaptain = participant('captain-disabled', 'Captain', 5, { enabled: false })
+    const roleOnly = participant('role-only', 'Captain', 6)
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@Captains review the correction.',
+      participants: [...ROSTER, captain, disabledCaptain, roleOnly],
+      authority: {
+        bossmanParticipantId: 'codex-boss',
+        captainParticipantIds: [captain.id, disabledCaptain.id]
+      }
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual([captain.id])
+    expect(result.hasParticipantMention).toBe(true)
+  })
+
+  it('expands @Management to the configured enabled Boss and Captains', () => {
+    const captain = participant('captain-a', 'Analyst', 4)
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@Management decide the next step.',
+      participants: [...ROSTER, captain],
+      authority: {
+        bossmanParticipantId: 'codex-boss',
+        captainParticipantIds: [captain.id]
+      }
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual(['codex-boss', captain.id])
+  })
+
   it('treats @BG as the background group rather than an ambiguous participant alias', () => {
     const background1 = participant('grok-bg-1', 'BackgroundOne', 4, {
       stageRole: 'background'

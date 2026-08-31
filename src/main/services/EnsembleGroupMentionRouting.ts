@@ -10,7 +10,10 @@ import {
 } from './EnsembleMentionAlias'
 import {
   ensembleGroupMentionMatchesStage,
+  isEnsembleAuthorityGroupMention,
+  resolveEnsembleGroupMentionParticipantIds,
   resolveEnsembleGroupMentionToken,
+  type EnsembleGroupMentionAuthority,
   type EnsembleGroupMentionId
 } from '../../shared/ensembleGroupMention'
 
@@ -30,6 +33,8 @@ export interface AssistantMentionRoutingPlan {
   participantMatches: ParticipantMentionMatch[]
   /** Group tokens deliberately left presentation-only at this boundary. */
   groupNotices: AssistantGroupMentionRoutingNotice[]
+  /** A permitted @Captains/@Management expansion must stay collective. */
+  hasAuthorityGroupRoute: boolean
 }
 
 export function formatAssistantGroupMentionRoutingNotice(
@@ -55,13 +60,19 @@ function orderedGroupParticipants(input: {
   group: EnsembleGroupMentionId
   participants: readonly EnsembleParticipant[]
   excludedParticipantIds: ReadonlySet<string>
+  authority?: EnsembleGroupMentionAuthority
 }): EnsembleParticipant[] {
+  const memberIds = resolveEnsembleGroupMentionParticipantIds({
+    group: input.group,
+    participants: input.participants,
+    authority: input.authority
+  })
   return input.participants
     .filter(
       (participant) =>
         participant.enabled !== false &&
         !input.excludedParticipantIds.has(participant.id) &&
-        ensembleGroupMentionMatchesStage(input.group, participant.stageRole)
+        memberIds.has(participant.id)
     )
     .slice()
     .sort((left, right) => left.order - right.order)
@@ -84,7 +95,10 @@ function expandedParticipantMatch(
  * Convert assistant-authored group addresses into the same participant-match
  * shape used by the existing between-turn mention promoter. The caller owns
  * the Boss/Captain authority decision and supplies broad-discovery exclusions
- * (normally every configured authority seat plus the speaker).
+ * (normally every configured authority seat plus the speaker). Explicit
+ * @Captains/@Management groups override those broad authority exclusions but
+ * still remove the speaking participant, preserving collective intent without
+ * allowing a self-loop.
  *
  * A user-targeted DM is never widened. Direct one-seat peer mentions retain
  * their existing behavior regardless of group authority.
@@ -96,6 +110,7 @@ export function resolveAssistantMentionRoutingPlan(input: {
   canRouteGroups: boolean
   dmTargetParticipantId?: string
   excludedGroupParticipantIds?: ReadonlySet<string>
+  authority?: EnsembleGroupMentionAuthority
 }): AssistantMentionRoutingPlan {
   const enabledParticipants = input.participants.filter(
     (participant) => participant.enabled !== false
@@ -110,6 +125,7 @@ export function resolveAssistantMentionRoutingPlan(input: {
   const noticeKeys = new Set<string>()
   const groupExclusions = new Set(input.excludedGroupParticipantIds || [])
   groupExclusions.add(input.callerParticipantId)
+  let hasAuthorityGroupRoute = false
 
   const addNotice = (
     match: GroupMentionMatch,
@@ -135,21 +151,26 @@ export function resolveAssistantMentionRoutingPlan(input: {
       addNotice(match, 'authority_required')
       continue
     }
+    const authorityGroup = isEnsembleAuthorityGroupMention(match.group)
     const targets = orderedGroupParticipants({
       group: match.group,
       participants: enabledParticipants,
-      excludedParticipantIds: groupExclusions
+      excludedParticipantIds: authorityGroup
+        ? new Set([input.callerParticipantId])
+        : groupExclusions,
+      authority: input.authority
     })
     if (targets.length === 0) {
       addNotice(match, 'no_eligible_targets')
       continue
     }
+    if (authorityGroup) hasAuthorityGroupRoute = true
     for (const participant of targets) {
       participantMatches.push(expandedParticipantMatch(match, participant))
     }
   }
 
-  return { participantMatches, groupNotices }
+  return { participantMatches, groupNotices, hasAuthorityGroupRoute }
 }
 
 /**
@@ -162,6 +183,7 @@ export function resolveEnsembleCommunicationTargets(input: {
   selectors: readonly string[]
   participants: readonly EnsembleParticipant[]
   senderParticipantId: string
+  authority?: EnsembleGroupMentionAuthority
 }): EnsembleParticipant[] {
   const enabledParticipants = input.participants.filter(
     (participant) => participant.enabled !== false
@@ -181,7 +203,8 @@ export function resolveEnsembleCommunicationTargets(input: {
       for (const participant of orderedGroupParticipants({
         group: group.id,
         participants: enabledParticipants,
-        excludedParticipantIds: excluded
+        excludedParticipantIds: excluded,
+        authority: input.authority
       })) {
         add(participant)
       }
@@ -212,6 +235,7 @@ export function resolveEnsembleCommunicationAudience(input: {
   selectors: readonly string[]
   participants: readonly EnsembleParticipant[]
   senderParticipantId: string
+  authority?: EnsembleGroupMentionAuthority
 }): EnsembleCommunicationAudience {
   const participantSelectors: string[] = []
   let toUser = false

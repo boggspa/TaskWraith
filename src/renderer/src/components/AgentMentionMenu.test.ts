@@ -149,6 +149,28 @@ describe('composerEnsembleGroupMentionCandidates', () => {
     expect(all).not.toHaveProperty('path')
   })
 
+  it('lists configured authority groups with enabled member counts', () => {
+    const boss = seat('boss', 1, 'worker')
+    const captain = seat('captain', 2, 'reviewer')
+    const disabledCaptain = seat('captain-disabled', 3, 'scout', false)
+    const groups = composerEnsembleGroupMentionCandidates([boss, captain, disabledCaptain], {
+      bossmanParticipantId: boss.id,
+      captainParticipantIds: [captain.id, disabledCaptain.id]
+    })
+
+    expect(groups.map((candidate) => candidate.name)).toEqual([
+      '@All',
+      '@Captains',
+      '@Management',
+      '@Workers',
+      '@Reviewers'
+    ])
+    expect(groups.find((candidate) => candidate.name === '@Captains')?.detail).toContain('1 seat')
+    expect(groups.find((candidate) => candidate.name === '@Management')?.detail).toContain(
+      '2 seats'
+    )
+  })
+
   it('returns no dead group rows when every participant is disabled', () => {
     expect(composerEnsembleGroupMentionCandidates([seat('worker', 1, 'worker', false)])).toEqual([])
   })

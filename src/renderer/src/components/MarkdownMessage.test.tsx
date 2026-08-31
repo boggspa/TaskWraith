@@ -404,12 +404,12 @@ describe('MarkdownMessage', () => {
         content={[
           '## Ask @All',
           '',
-          '@Scouts inspect, @Workers implement, @Reviewers verify, and @BG run soak tests.'
+          '@Management decide, @Captains coordinate, @Scouts inspect, @Workers implement, @Reviewers verify, and @BG run soak tests.'
         ].join('\n')}
       />
     )
 
-    expect((html.match(/participant-mention--group/g) || []).length).toBe(5)
+    expect((html.match(/participant-mention--group/g) || []).length).toBe(7)
     expect(html).toContain('color:var(--accent)')
     expect(html).not.toContain('--user-bubble-base')
     expect(html).toContain('@Reviewers')

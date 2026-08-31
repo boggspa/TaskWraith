@@ -53,7 +53,7 @@ describe('ParticipantMention', () => {
   })
 
   it('renders roster-group mentions with the OS-following accent', () => {
-    for (const word of ['All', 'Scouts', 'Workers', 'Reviewers', 'BG']) {
+    for (const word of ['All', 'Captains', 'Management', 'Scouts', 'Workers', 'Reviewers', 'BG']) {
       const html = renderToStaticMarkup(
         <AgentIdentityContext.Provider value={reviewerChat}>
           <ParticipantMention reference={word}>@{word}</ParticipantMention>

@@ -127,14 +127,14 @@ describe('ComposerHighlightOverlay', () => {
   it('renders roster-group mentions with the OS-following accent in mention-only mode', () => {
     const html = renderToStaticMarkup(
       <ComposerHighlightOverlay
-        value="@All ask @Reviewers and @BG."
+        value="@All ask @Captains, @Management, @Reviewers and @BG."
         participants={[]}
         textareaRef={textareaRef}
         syncEpoch="test"
       />
     )
 
-    expect((html.match(/composer-mention-token--group/g) || []).length).toBe(3)
+    expect((html.match(/composer-mention-token--group/g) || []).length).toBe(5)
     expect(html).toContain('color:var(--accent)')
     expect(html).not.toContain('--user-bubble-base')
     expect(html).not.toContain('--provider-')

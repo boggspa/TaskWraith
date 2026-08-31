@@ -225,12 +225,19 @@ describe('getParticipantAliases', () => {
   })
 
   it('does not let participant roles steal canonical group tokens', () => {
-    const namedAll = participant({
-      id: 'ensemble-all-role',
-      provider: 'codex',
-      role: 'All'
-    })
-    expect(getParticipantAliases(namedAll)).not.toContain('all')
+    for (const role of ['All', 'Captains', 'Management']) {
+      const namedGroup = participant({
+        id: `ensemble-${role.toLowerCase()}-role`,
+        provider: 'codex',
+        role
+      })
+      expect(getParticipantAliases(namedGroup)).not.toContain(role.toLowerCase())
+    }
+    expect(
+      getParticipantAliases(
+        participant({ id: 'ensemble-captain-role', provider: 'codex', role: 'Captain' })
+      )
+    ).toContain('captain')
   })
 })
 
@@ -266,7 +273,15 @@ describe('isUserMentionToken', () => {
 
 describe('isGroupMentionToken', () => {
   it('recognises only the provider-neutral public group aliases', () => {
-    for (const token of ['@All', 'scouts', '@Workers', 'reviewers', '@BG']) {
+    for (const token of [
+      '@All',
+      '@Captains',
+      'management',
+      'scouts',
+      '@Workers',
+      'reviewers',
+      '@BG'
+    ]) {
       expect(isGroupMentionToken(token)).toBe(true)
     }
     expect(isGroupMentionToken('@Scout')).toBe(false)
@@ -603,6 +618,8 @@ describe('resolveSingleEnsembleDmTarget', () => {
 
   it('keeps roster-group mentions panel-routed', () => {
     expect(resolveSingleEnsembleDmTarget('@All compare this', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('@Captains decide this', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('@Management review this', panel)).toBeNull()
     expect(resolveSingleEnsembleDmTarget('@Reviewers verify this', panel)).toBeNull()
   })
 
@@ -757,6 +774,14 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
     expect(
       resolveEnsembleDmTargetForDispatch({
         text: '@Workers take this',
+        participants: [CLAUDE_WRITE, CLAUDE_READ],
+        advisoryParticipantId: CLAUDE_READ.id,
+        exactPickerParticipantId: CLAUDE_WRITE.id
+      })
+    ).toEqual({ kind: 'multiple' })
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Management decide this',
         participants: [CLAUDE_WRITE, CLAUDE_READ],
         advisoryParticipantId: CLAUDE_READ.id,
         exactPickerParticipantId: CLAUDE_WRITE.id

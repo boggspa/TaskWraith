@@ -50,6 +50,7 @@ describe('resolveAssistantMentionRoutingPlan', () => {
     expect(plan.groupNotices).toEqual([
       { group: 'workers', token: '@Workers', reason: 'authority_required' }
     ])
+    expect(plan.hasAuthorityGroupRoute).toBe(false)
   })
 
   it('expands an authorised group in roster order while excluding speaker and authority seats', () => {
@@ -70,6 +71,7 @@ describe('resolveAssistantMentionRoutingPlan', () => {
       'grok-bg'
     ])
     expect(plan.groupNotices).toEqual([])
+    expect(plan.hasAuthorityGroupRoute).toBe(false)
   })
 
   it('never widens a user-targeted DM, even for an authorised caller', () => {
@@ -98,6 +100,41 @@ describe('resolveAssistantMentionRoutingPlan', () => {
     expect(plan.groupNotices).toEqual([
       { group: 'reviewers', token: '@Reviewers', reason: 'no_eligible_targets' }
     ])
+  })
+
+  it('keeps permitted authority groups collective and excludes only the caller', () => {
+    const captain2 = participant('captain-2', 9, 'worker')
+    const authority = {
+      bossmanParticipantId: 'boss',
+      captainParticipantIds: ['captain', captain2.id]
+    }
+    const captains = resolveAssistantMentionRoutingPlan({
+      text: '@Captains decide together.',
+      participants: [...ROSTER, captain2],
+      callerParticipantId: 'boss',
+      canRouteGroups: true,
+      excludedGroupParticipantIds: new Set(['boss', 'captain', captain2.id]),
+      authority
+    })
+    expect(captains.participantMatches.map((match) => match.participant.id)).toEqual([
+      'captain',
+      captain2.id
+    ])
+    expect(captains.hasAuthorityGroupRoute).toBe(true)
+
+    const management = resolveAssistantMentionRoutingPlan({
+      text: '@Management review this.',
+      participants: [...ROSTER, captain2],
+      callerParticipantId: 'captain',
+      canRouteGroups: true,
+      excludedGroupParticipantIds: new Set(['boss', 'captain', captain2.id]),
+      authority
+    })
+    expect(management.participantMatches.map((match) => match.participant.id)).toEqual([
+      'boss',
+      captain2.id
+    ])
+    expect(management.hasAuthorityGroupRoute).toBe(true)
   })
 })
 
@@ -151,6 +188,17 @@ describe('resolveEnsembleCommunicationTargets', () => {
         senderParticipantId: 'boss'
       })
     ).toEqual([])
+  })
+
+  it('expands configured authority selectors without trusting role labels', () => {
+    expect(
+      resolveEnsembleCommunicationTargets({
+        selectors: ['@Captains', '@Management'],
+        participants: ROSTER,
+        senderParticipantId: 'worker-1',
+        authority: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
+      }).map((participant) => participant.id)
+    ).toEqual(['captain', 'boss'])
   })
 })
 
@@ -227,7 +275,7 @@ describe('resolveBackgroundMentionRouting', () => {
 
   it('ignores foreground-only groups and preserves direct background aliases', () => {
     const plan = resolveBackgroundMentionRouting({
-      text: '@Workers implement this while @grok-bg collects traces.',
+      text: '@Workers and @Management decide while @grok-bg collects traces.',
       participants: backgroundRoster
     })
 

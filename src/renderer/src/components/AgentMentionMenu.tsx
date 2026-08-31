@@ -15,7 +15,8 @@ import { getProviderName } from './Sidebar'
 import type { ComposerMentionTriggerKind } from '../lib/ComposerMentionTrigger'
 import {
   ENSEMBLE_GROUP_MENTIONS,
-  ensembleGroupMentionMatchesStage
+  resolveEnsembleGroupMentionParticipantIds,
+  type EnsembleGroupMentionAuthority
 } from '../../../shared/ensembleGroupMention'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -123,14 +124,17 @@ export function composerMentionParticipantColor(
  * identity.
  */
 export function composerEnsembleGroupMentionCandidates(
-  participants: EnsembleParticipant[]
+  participants: EnsembleParticipant[],
+  authority?: EnsembleGroupMentionAuthority
 ): ComposerMentionCandidate[] {
   const enabled = participants.filter((participant) => participant.enabled !== false)
   if (enabled.length === 0) return []
   return ENSEMBLE_GROUP_MENTIONS.flatMap<ComposerMentionCandidate>((definition) => {
-    const count = enabled.filter((participant) =>
-      ensembleGroupMentionMatchesStage(definition.id, participant.stageRole)
-    ).length
+    const count = resolveEnsembleGroupMentionParticipantIds({
+      group: definition.id,
+      participants,
+      authority
+    }).size
     if (count === 0) return []
     return [
       {
@@ -266,7 +270,13 @@ export function AgentMentionMenu({
     // Both picker forms write plain editable text; individual seats
     // additionally keep an exact id as short-lived dispatch metadata.
     if (chat?.chatKind === 'ensemble' && ensembleParticipants) {
-      const groupItems = composerEnsembleGroupMentionCandidates(ensembleParticipants)
+      const liveAuthority =
+        chat.ensemble?.activeRound?.status === 'running' ? chat.ensemble.activeRound : chat.ensemble
+      const groupItems = composerEnsembleGroupMentionCandidates(ensembleParticipants, {
+        bossmanParticipantId: liveAuthority?.bossmanParticipantId,
+        captainParticipantIds: liveAuthority?.captainParticipantIds,
+        secondInCommandParticipantId: liveAuthority?.secondInCommandParticipantId
+      })
       const participantItems = ensembleParticipants
         .filter((participant) => participant.enabled)
         .sort((a, b) => a.order - b.order)
@@ -315,6 +325,7 @@ export function AgentMentionMenu({
   }, [
     triggerKind,
     chat?.chatKind,
+    chat?.ensemble,
     ensembleParticipants,
     activeSubagents,
     externalPathGrants,

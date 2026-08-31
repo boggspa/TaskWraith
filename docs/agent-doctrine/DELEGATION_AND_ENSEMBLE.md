@@ -236,10 +236,12 @@ runs only when explicitly delegated.
   admission/budget checks must pass.
 - **`@BG` is no longer one of those — it is a roster GROUP token** (shipped in
   v1.9.6; it was source-ahead of v1.9.5).
-  `src/shared/ensembleGroupMention.ts` defines five provider-neutral
-  group tokens that address a whole stage at once: `@All` (every enabled
-  participant), `@Scouts`, `@Workers`, `@Reviewers`, and `@BG` (every enabled
-  background seat). `findAllMentions` tests the first word against the group
+  `src/shared/ensembleGroupMention.ts` defines seven provider-neutral
+  group tokens: `@All` (every enabled participant); the stage groups `@Scouts`,
+  `@Workers`, `@Reviewers`, and `@BG`; `@Captains` (every enabled configured
+  Captain); and `@Management` (the enabled configured Boss plus Captains).
+  Authority membership is id-based, never inferred from a participant's display
+  role. `findAllMentions` tests the first word against the group
   table **before** any per-participant alias resolution
   (`EnsembleMentionAlias.ts`), so bare `@BG` now expands to every enabled BG
   seat and **can no longer be ambiguous** — the previous "rejected as ambiguous
@@ -256,6 +258,12 @@ runs only when explicitly delegated.
   deliberately different again — it accepts group tokens as recipient selectors
   under the tool's existing any-active-seat communication policy, without the
   Boss/Captain gate.
+- The ordinary active-authority priority rule still collapses a mixed set of
+  direct/advisory mentions to the Boss (or acting Captain). An explicit
+  `@Captains` or `@Management` group is the deliberate collective exception:
+  every enabled member other than the speaking participant remains routed.
+- Only the exact plural authority aliases are groups. `@Captain` and `@Manager`
+  remain ordinary participant aliases and may still be ambiguous.
 - Mention/yield launches are always capped to read-only posture. Scoped
   mutations must use the existing Boss- or Captain-authorized
   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
