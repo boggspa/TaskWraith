@@ -29,6 +29,17 @@ const LEGACY_BLACKBOARD_UPDATED =
 const LEGACY_BLACKBOARD_CLEANED = /^Blackboard cleaned: removed (\d{1,2}) (entry|entries)\.$/
 const LEGACY_BLACKBOARD_POLL = /^Blackboard poll opened: (.{1,80}) \((\d) choices\)\.$/
 
+const BLACKBOARD_CHANGE_CATEGORY_LABELS: Record<
+  Extract<BlackboardChangePresentation, { action: 'updated' }>['category'],
+  string
+> = {
+  decision: 'Decision',
+  fact: 'Fact',
+  risk: 'Risk',
+  'do-not-repeat': 'Do Not Repeat',
+  note: 'Note'
+}
+
 function hasControlCharacters(value: string): boolean {
   return [...value].some((character) => {
     const code = character.charCodeAt(0)
@@ -182,7 +193,9 @@ function ChangeContents({
       <span className="blackboard-change-label">{label}</span>
       {payload.action === 'updated' ? (
         <>
-          <span className="blackboard-change-category">{payload.category}</span>
+          <span className={`blackboard-change-category blackboard-cat-${payload.category}`}>
+            {BLACKBOARD_CHANGE_CATEGORY_LABELS[payload.category]}
+          </span>
           <span className="blackboard-change-separator">/</span>
           <span className="blackboard-change-key" title={payload.key}>
             {payload.key}

@@ -76,6 +76,43 @@ describe('BlackboardChangeRow', () => {
   })
 
   it.each([
+    ['decision', 'Decision'],
+    ['fact', 'Fact'],
+    ['risk', 'Risk'],
+    ['do-not-repeat', 'Do Not Repeat'],
+    ['note', 'Note']
+  ] as const)('renders %s as a title-cased semantic Blackboard category', (category, label) => {
+    const message = messageWithChange('updated')
+    if (message.metadata?.blackboardChange?.action === 'updated') {
+      message.metadata.blackboardChange.category = category
+    }
+
+    const html = renderToStaticMarkup(createElement(BlackboardChangeRow, { message }))
+
+    expect(html).toContain(
+      `class="blackboard-change-category blackboard-cat-${category}">${label}</span>`
+    )
+  })
+
+  it('uses bare SF Pro semantic text while reserving provider accent for the glyph', () => {
+    const categoryRule = cssSource.slice(
+      cssSource.indexOf('.blackboard-change-category {'),
+      cssSource.indexOf('}', cssSource.indexOf('.blackboard-change-category {')) + 1
+    )
+    const iconRule = cssSource.slice(
+      cssSource.indexOf('.blackboard-change-icon {'),
+      cssSource.indexOf('}', cssSource.indexOf('.blackboard-change-icon {')) + 1
+    )
+
+    expect(categoryRule).toContain('var(--blackboard-cat-color)')
+    expect(categoryRule).toContain('font-family: var(--font-sans)')
+    expect(categoryRule).toContain('font-weight: 800')
+    expect(categoryRule).not.toContain('var(--accent)')
+    expect(categoryRule).not.toMatch(/\b(?:padding|border|border-radius|background):/)
+    expect(iconRule).toContain('var(--accent)')
+  })
+
+  it.each([
     ['pollOpened', 'Blackboard poll opened', '3 choices'],
     ['cleaned', 'Blackboard cleaned', '2 entries removed']
   ] as const)('renders the %s mutation vocabulary', (action, label, detail) => {

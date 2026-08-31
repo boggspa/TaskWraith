@@ -28,12 +28,10 @@
 
 .blackboard-change-category {
   flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  color: color-mix(in srgb, var(--blackboard-cat-color) 52%, var(--text-secondary));
+  font-family: var(--font-sans);
   font-size: var(--font-size-xs);
+  font-weight: 800;
   line-height: 1.35;
 }
 
