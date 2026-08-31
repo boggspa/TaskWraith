@@ -180,4 +180,56 @@ describe('transcriptPanelMemoProps', () => {
       )
     ).toBe(false)
   })
+
+  it('invalidates on execution-only progress and control changes', () => {
+    const shared = baseProps()
+    const open = () => undefined
+    const cancel = () => undefined
+    const baseView = {
+      executionId: 'execution-1',
+      state: 'running',
+      settled: false,
+      counts: {
+        total: 2,
+        proposed: 1,
+        queued: 1,
+        running: 0,
+        needsAction: 0,
+        completed: 0,
+        failed: 0,
+        skipped: 0,
+        settled: 0
+      },
+      cells: [
+        { id: 'scout-1', status: 'queued', kind: 'solo_agent' },
+        { id: 'scout-2', status: 'proposed', kind: 'solo_agent' }
+      ]
+    }
+    const left = {
+      ...shared,
+      hasLiveOwnedExecution: true,
+      ownedExecutionViews: [baseView],
+      onOpenExecutionMapForThread: open,
+      onCancelOwnedExecution: cancel
+    }
+    expect(
+      transcriptPanelPropsEqual(left, { ...left, ownedExecutionViews: [{ ...baseView }] })
+    ).toBe(true)
+    expect(
+      transcriptPanelPropsEqual(left, {
+        ...left,
+        ownedExecutionViews: [
+          {
+            ...baseView,
+            counts: { ...baseView.counts, queued: 0, running: 1 },
+            cells: [{ ...baseView.cells[0], status: 'working' }, baseView.cells[1]]
+          }
+        ]
+      })
+    ).toBe(false)
+    expect(transcriptPanelPropsEqual(left, { ...left, hasLiveOwnedExecution: false })).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(left, { ...left, onCancelOwnedExecution: () => undefined })
+    ).toBe(false)
+  })
 })

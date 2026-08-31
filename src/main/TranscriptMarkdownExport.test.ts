@@ -475,6 +475,33 @@ describe('buildChatMessageTranscript', () => {
     )
   })
 
+  it('omits internal execution-attempt evidence from copies and handoff exports', () => {
+    const source = chat([
+      message({ id: 'u1', role: 'user', content: 'Normal user request' }),
+      message({
+        id: 'graph-prompt',
+        role: 'user',
+        content: 'INTERNAL_GRAPH_PROMPT',
+        metadata: { kind: 'executionGraphAttempt' }
+      }),
+      message({
+        id: 'graph-output',
+        role: 'assistant',
+        content: 'INTERNAL_SCOUT_OUTPUT',
+        metadata: { kind: 'executionGraphAttemptOutput' }
+      }),
+      message({ id: 'a1', role: 'assistant', content: 'Normal parent reply' })
+    ])
+
+    const copied = buildChatMessageTranscript(source)
+    const handoff = buildChatMarkdownTranscript(source)
+    expect(copied.text).toBe('Normal user request\n\nNormal parent reply')
+    expect(handoff.markdown).toContain('Normal user request')
+    expect(handoff.markdown).toContain('Normal parent reply')
+    expect(handoff.markdown).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(handoff.markdown).not.toContain('INTERNAL_SCOUT_OUTPUT')
+  })
+
   it('keeps inter-seat notes in message-only transcript copies', () => {
     const result = buildChatMessageTranscript(
       chat([

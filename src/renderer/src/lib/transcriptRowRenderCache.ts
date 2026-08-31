@@ -60,6 +60,8 @@ export interface TranscriptRowRenderSignature {
   renameContinuityKey: string
   auxiliaryKey: string
   revealKey: string
+  /** Live execution projection for an authored execution-result row. */
+  executionViewKey?: string
   callbackRefs: readonly unknown[]
 }
 
@@ -371,6 +373,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.renameContinuityKey !== next.renameContinuityKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false
   if (prev.revealKey !== next.revealKey) return false
+  if ((prev.executionViewKey || '') !== (next.executionViewKey || '')) return false
   if (prev.callbackRefs.length !== next.callbackRefs.length) return false
   for (let i = 0; i < prev.callbackRefs.length; i += 1) {
     if (prev.callbackRefs[i] !== next.callbackRefs[i]) return false

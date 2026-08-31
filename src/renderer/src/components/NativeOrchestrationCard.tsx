@@ -32,6 +32,9 @@ export interface NativeOrchestrationCardProps {
   statusLabel?: ReactNode
   /** True while the episode is live — drives the pulse dot + meter animation. */
   isRunning: boolean
+  /** Live but not executing provider work yet (for example, durably queued).
+   * Keeps determinate progress active without claiming a running provider. */
+  isPending?: boolean
   /** Card glyph (identicon / bespoke icon). Rendered inside the glyph slot. */
   glyph: ReactNode
   /** Card title, e.g. 'Codex Multi-agent'. */
@@ -88,6 +91,7 @@ export function NativeOrchestrationCard({
   status,
   statusLabel,
   isRunning,
+  isPending = false,
   glyph,
   name,
   headerTrailing,
@@ -111,10 +115,42 @@ export function NativeOrchestrationCard({
     : undefined
 
   const determinate =
-    isRunning &&
+    (isRunning || isPending) &&
     typeof progressFraction === 'number' &&
     Number.isFinite(progressFraction) &&
     progressFraction >= 0
+
+  const headerContent = (
+    <>
+      <span className="claude-workflow-card-glyph" aria-hidden>
+        {glyph}
+      </span>
+      <span className="claude-workflow-card-name">{name}</span>
+      {headerTrailing}
+      {statusLabel ? (
+        <span className={`claude-workflow-card-status status-${status}`}>
+          {isRunning && <span className="claude-workflow-card-pulse" aria-hidden />}
+          {statusLabel}
+        </span>
+      ) : null}
+      {hasDetail && (
+        <svg
+          className={`claude-workflow-card-chevron ${expanded ? 'expanded' : ''}`}
+          width="11"
+          height="11"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <polyline points="3,4.5 6,7.5 9,4.5" />
+        </svg>
+      )}
+    </>
+  )
 
   return (
     <div
@@ -122,45 +158,20 @@ export function NativeOrchestrationCard({
       data-provider={provider}
       style={rootStyle}
     >
-      <button
-        type="button"
-        className="claude-workflow-card-header"
-        aria-expanded={hasDetail ? expanded : undefined}
-        disabled={!hasDetail}
-        onClick={hasDetail ? () => setExpanded((current) => !current) : undefined}
-      >
-        <span className="claude-workflow-card-glyph" aria-hidden>
-          {glyph}
-        </span>
-        <span className="claude-workflow-card-name">{name}</span>
-        {headerTrailing}
-        {statusLabel ? (
-          <span className={`claude-workflow-card-status status-${status}`}>
-            {isRunning && <span className="claude-workflow-card-pulse" aria-hidden />}
-            {statusLabel}
-          </span>
-        ) : null}
-        {hasDetail && (
-          <svg
-            className={`claude-workflow-card-chevron ${expanded ? 'expanded' : ''}`}
-            width="11"
-            height="11"
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <polyline points="3,4.5 6,7.5 9,4.5" />
-          </svg>
-        )}
-      </button>
+      {hasDetail ? (
+        <button
+          type="button"
+          className="claude-workflow-card-header"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className="claude-workflow-card-header">{headerContent}</div>
+      )}
 
-      <div
-        className={`claude-workflow-card-meta${metaLead ? ' has-meta-lead' : ''}`}
-      >
+      <div className={`claude-workflow-card-meta${metaLead ? ' has-meta-lead' : ''}`}>
         {metaLead}
         {metaLead && metaParts.length > 0 ? (
           <span className="claude-workflow-card-meta-sep" aria-hidden>
@@ -181,7 +192,7 @@ export function NativeOrchestrationCard({
             style={{ width: `${Math.round(Math.min(1, progressFraction!) * 100)}%` }}
           />
         ) : (
-          <span className={isRunning ? 'indeterminate' : 'settled'} />
+          <span className={isRunning || isPending ? 'indeterminate' : 'settled'} />
         )}
       </div>
 

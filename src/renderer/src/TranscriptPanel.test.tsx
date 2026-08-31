@@ -234,6 +234,37 @@ function transcriptParityMessages(provider: ProviderId, chatKind: ChatKind): Cha
   ]
 }
 
+describe('execution graph transcript visibility', () => {
+  it('keeps internal graph prompts and raw stage output behind the execution surface', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            { ...msg(0), content: 'Ordinary user request' },
+            {
+              ...msg(2),
+              content: 'INTERNAL_GRAPH_PROMPT',
+              metadata: { kind: 'executionGraphAttempt' }
+            },
+            {
+              ...msg(3),
+              content: 'INTERNAL_SCOUT_OUTPUT',
+              metadata: { kind: 'executionGraphAttemptOutput' }
+            },
+            { ...msg(1), content: 'Ordinary parent reply' }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Ordinary user request')
+    expect(html).toContain('Ordinary parent reply')
+    expect(html).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(html).not.toContain('INTERNAL_SCOUT_OUTPUT')
+  })
+})
+
 /** Pull a spacer div's pixel height out of the static markup. */
 function spacerHeight(html: string, cls: string): number {
   const idx = html.indexOf(cls)
@@ -2603,6 +2634,56 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       // disclosure chevron. This card exists so a graph's answer reaches the
       // thread; hiding it would reproduce the silence it was built to remove.
       expect(html).toContain('The reviewed synthesis.')
+    })
+
+    it('shows one actionable live card while a delivered execution is paused', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [
+              {
+                id: 'execution-result-paused',
+                role: 'tool',
+                content: 'Internal blocker result card.',
+                timestamp: '2026-08-29T00:00:00.000Z',
+                metadata: {
+                  kind: 'executionResult',
+                  executionId: 'ultratask-paused',
+                  executionOutcome: 'requires_action'
+                }
+              }
+            ],
+            hasLiveOwnedExecution: true,
+            ownedExecutionViews: [
+              {
+                executionId: 'ultratask-paused',
+                title: 'UltraTask · paused',
+                state: 'requires_action',
+                settled: false,
+                cells: [{ id: 'scout-1', status: 'needs_action', kind: 'solo_agent' }],
+                counts: {
+                  total: 1,
+                  proposed: 0,
+                  queued: 0,
+                  running: 0,
+                  needsAction: 1,
+                  completed: 0,
+                  failed: 0,
+                  skipped: 0,
+                  settled: 0
+                }
+              }
+            ],
+            onResumeOwnedExecution: () => {},
+            onCancelOwnedExecution: () => {}
+          })}
+        />
+      )
+      expect(html).toContain('execution-live-card')
+      expect(html).toContain('execution-live-card-resume')
+      expect(html).not.toContain('execution-result-card-body')
+      expect(html).not.toContain('Internal blocker result card.')
     })
 
     it('replaces the title with the blocker in red when the round produced nothing', () => {

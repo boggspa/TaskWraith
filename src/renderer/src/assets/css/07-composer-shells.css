@@ -3235,6 +3235,12 @@
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
 }
+.execution-result-card-open-map:focus-visible,
+.execution-live-card-resume:focus-visible,
+.execution-live-card-cancel:focus-visible {
+  outline: 2px solid var(--provider-accent, var(--accent));
+  outline-offset: 2px;
+}
 
 .claude-workflow-card-header {
   appearance: none;
@@ -3687,6 +3693,9 @@
    as progress at a glance. */
 .execution-ghost-cell.status-working {
   color: var(--accent);
+}
+.execution-ghost-cell.status-queued {
+  color: color-mix(in srgb, var(--accent) 52%, var(--text-primary));
 }
 .execution-ghost-cell.status-needs_action {
   color: var(--tool-warning);

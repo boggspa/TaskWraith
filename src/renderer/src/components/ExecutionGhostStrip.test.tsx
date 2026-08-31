@@ -62,6 +62,20 @@ describe('ExecutionGhostStrip', () => {
     )
   })
 
+  it('distinguishes a durable queue claim from a provider-running step', () => {
+    const cells = executionGraphGhostCellStates({
+      steps,
+      activations: [
+        { stepId: 's1', state: 'queued' },
+        { stepId: 's2', state: 'running' }
+      ]
+    })
+    const html = renderToStaticMarkup(<ExecutionGhostStrip cells={cells} />)
+    expect(html).toContain('status-queued')
+    expect(html).toContain('status-working')
+    expect(html).toContain('aria-label="0 of 3 settled · 1 running · 1 queued · 1 proposed"')
+  })
+
   // An empty strip would read as "no agents have started yet" rather than
   // "this graph has none".
   it('renders nothing when a graph has no work-bearing steps', () => {
@@ -99,6 +113,16 @@ describe('ExecutionLiveCard', () => {
     expect(html).toContain('Open map')
     expect(html).toContain('execution-live-card-cancel')
     expect(html).toContain('>Running<')
+    expect(html).toContain('claude-workflow-card-pulse')
+    expect(html).not.toMatch(/<button[^>]*claude-workflow-card-header[\s\S]*<button/)
+  })
+
+  it('labels queued work honestly without a provider-running pulse', () => {
+    const html = render(view([{ stepId: 's1', state: 'queued' }], 'running'))
+    expect(html).toContain('>Queued<')
+    expect(html).toContain('1 queued')
+    expect(html).not.toContain('claude-workflow-card-pulse')
+    expect(html).toContain('class="determinate"')
   })
 
   // A paused graph is stopped. Animating it would claim work is happening when
@@ -118,6 +142,26 @@ describe('ExecutionLiveCard', () => {
     const html = render(view([{ stepId: 'g', state: 'waiting_approval' }], 'requires_action'))
     expect(html).toContain('execution-live-card-resume')
     expect(html).toContain('>Resume<')
+  })
+
+  it('wires map, resume, and cancel controls to their exact execution', () => {
+    const calls: string[] = []
+    const card = ExecutionLiveCard({
+      view: view([{ stepId: 'g', state: 'waiting_approval' }], 'requires_action'),
+      provider: 'antigravity' as ProviderId,
+      onOpenExecutionMap: (executionId) => calls.push(`map:${executionId}`),
+      onResumeExecution: (executionId) => calls.push(`resume:${executionId}`),
+      onCancelExecution: (executionId) => calls.push(`cancel:${executionId}`)
+    }) as any
+    const actions = card.props.headerTrailing.props.children as any[]
+    for (const className of [
+      'execution-result-card-open-map',
+      'execution-live-card-resume',
+      'execution-live-card-cancel'
+    ]) {
+      actions.find((action) => action?.props?.className === className)?.props.onClick()
+    }
+    expect(calls).toEqual(['map:exec-1', 'resume:exec-1', 'cancel:exec-1'])
   })
 
   it('does not offer Resume while work is still in flight', () => {

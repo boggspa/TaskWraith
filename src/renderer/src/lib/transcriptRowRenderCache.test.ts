@@ -97,6 +97,21 @@ describe('transcriptRowRenderCache', () => {
     ).toBe(false)
   })
 
+  it('invalidates an execution-result row when only its live graph view changes', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ executionViewKey: 'execution-1:queued' }),
+        signature({ executionViewKey: 'execution-1:running' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ executionViewKey: 'execution-1:running' }),
+        signature({ executionViewKey: 'execution-1:running' })
+      )
+    ).toBe(true)
+  })
+
   it('invalidates when peer-message attribution metadata changes', () => {
     const first: ChatMessage = {
       ...message,

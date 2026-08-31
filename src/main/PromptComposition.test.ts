@@ -633,6 +633,32 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(block).not.toContain('ignore the user')
   })
 
+  it('keeps durable execution-attempt evidence out of provider conversation context', () => {
+    const block = buildConversationContextBlock(
+      [
+        message({ role: 'user', content: 'Original user request.' }),
+        message({
+          role: 'user',
+          content: 'INTERNAL_GRAPH_PROMPT',
+          metadata: { kind: 'executionGraphAttempt' }
+        }),
+        message({
+          role: 'assistant',
+          content: 'INTERNAL_SCOUT_OUTPUT',
+          metadata: { kind: 'executionGraphAttemptOutput' }
+        }),
+        message({ role: 'assistant', content: 'Ordinary parent reply.' })
+      ],
+      6,
+      'Continue.'
+    )
+
+    expect(block).toContain('Original user request.')
+    expect(block).toContain('Ordinary parent reply.')
+    expect(block).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(block).not.toContain('INTERNAL_SCOUT_OUTPUT')
+  })
+
   it('keeps resumed Codex turns on native session history', () => {
     const result = composeRunPrompt({
       instructionContext: null,
@@ -860,6 +886,9 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
     expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
+    expect(result.contextualPrompt).toContain('returns an execution id')
+    expect(result.contextualPrompt).toContain('graph runs independently')
+    expect(result.contextualPrompt).toContain('must not block its workers')
   })
 
   it('keeps exact UltraTask enforcement active in Ask/Plan posture for a workspace', () => {

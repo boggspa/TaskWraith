@@ -53,6 +53,7 @@ import type {
   ResolvedInstructionLayer
 } from '../shared/instructions/InstructionTypes'
 import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
+import { isExecutionGraphInternalTranscriptMessage } from '../shared/executionGraphTranscriptVisibility'
 import {
   planPromptSessionBlock,
   resolvePromptSessionDeliveryMode
@@ -539,7 +540,7 @@ function buildUltraTaskLines(provider: ProviderId): string[] {
   return [
     'ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
     `In an Ensemble, call ${fanoutTool} and then ${awaitTool}. In a solo workspace chat, call ${ultraTaskTool} once with the current task; TaskWraith owns the scouts, worker, reviewer, synthesis, and every join.`,
-    `After ${ultraTaskTool} returns a workflow id, you may finish this provider turn without cancelling it. Only if ${ultraTaskTool} is unavailable, fall back to ${delegateWaveTool} or ${delegateTool} and immediately join those returned ids with ${awaitTool}.`,
+    `After ${ultraTaskTool} returns an execution id, use ${awaitTool} with executionIds for bounded progress checks and the final untrusted result. The graph runs independently while you wait, explain progress, converse, or do other work; those parent actions must not block its workers. Only if ${ultraTaskTool} is unavailable, fall back to ${delegateWaveTool} or ${delegateTool} and join their returned ids with ${awaitTool}.`,
     'Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.'
   ]
 }
@@ -781,6 +782,7 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
       !isExternalUntrustedMessage(message) &&
       !isExternalProviderThreadImportMessage(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
+      !isExecutionGraphInternalTranscriptMessage(message) &&
       !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())
   )

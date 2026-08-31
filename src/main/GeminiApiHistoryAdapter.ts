@@ -47,6 +47,7 @@ import { isExternalProviderThreadImportMessage } from '../shared/externalProvide
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
+import { isExecutionGraphInternalTranscriptMessage } from '../shared/executionGraphTranscriptVisibility'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
   return (
@@ -171,6 +172,7 @@ export function chatMessagesToGeminiContents(
       continue
     }
     if (isRetiredExternalChannelInboundMessage(message)) continue
+    if (isExecutionGraphInternalTranscriptMessage(message)) continue
     if (isTaskWraithCloseoutMessage(message)) continue
     if (
       message.role === 'user' ||

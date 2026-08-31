@@ -27,6 +27,7 @@ import {
 } from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
+import { isExecutionGraphInternalTranscriptMessage } from '../../../shared/executionGraphTranscriptVisibility'
 import {
   isEnsembleParticipantAuthoredMessage,
   isEnsembleYieldMessage
@@ -192,6 +193,7 @@ import {
 } from '../lib/transcriptSmoothScroll'
 import {
   transcriptAuxiliaryChatsSignature,
+  transcriptOwnedExecutionViewsSignature,
   transcriptPanelPropsEqual,
   transcriptRunningChatIdsSignature
 } from '../lib/transcriptPanelMemoProps'
@@ -2794,6 +2796,15 @@ export const TranscriptPanel = memo(
     const storeTranscript = useChatTranscript(chatId)
     const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
+    const liveOwnedExecutionIds = useMemo(
+      () =>
+        new Set(
+          (ownedExecutionViews || [])
+            .filter((view) => !view.settled)
+            .map((view) => view.executionId)
+        ),
+      [ownedExecutionViews]
+    )
     const visibleMessages = useMemo(() => {
       if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
       // Queued-run cards and routine Ensemble routing receipts were removed
@@ -2801,9 +2812,14 @@ export const TranscriptPanel = memo(
       return resolvedMessages.filter(
         (message) =>
           message?.metadata?.kind !== 'queuedRunRequest' &&
+          !isExecutionGraphInternalTranscriptMessage(message) &&
+          !(
+            isExecutionResultMessage(message) &&
+            liveOwnedExecutionIds.has(executionResultExecutionId(message) || '')
+          ) &&
           !isRedundantEnsembleTranscriptNotice(message)
       )
-    }, [isWelcomeChat, resolvedMessages])
+    }, [isWelcomeChat, liveOwnedExecutionIds, resolvedMessages])
     const hasLiveContextCompactionProgress = useMemo(
       () => contextCompactionProgress.some((event) => event.status === 'started'),
       [contextCompactionProgress]
@@ -5486,6 +5502,9 @@ export const TranscriptPanel = memo(
             const renameContinuityKey = renameContinuity
               ? `${renameContinuity.fromRole}\u0000${renameContinuity.currentRole}`
               : ''
+            const executionView = isExecutionResultCard
+              ? executionViewsById.get(executionResultExecutionId(msg) || '')
+              : undefined
             const rowSignature: TranscriptRowRenderSignature = {
               rowKey,
               message: msg,
@@ -5536,11 +5555,15 @@ export const TranscriptPanel = memo(
               renameContinuityKey,
               auxiliaryKey: auxiliaryKeyWithToolActions,
               revealKey,
+              executionViewKey: transcriptOwnedExecutionViewsSignature(
+                executionView ? [executionView] : []
+              ),
               callbackRefs: [
                 onMessageSelectionCandidate,
                 onOpenSubThread,
                 onOpenSubThreadInSidePanel,
                 onInspectRun,
+                onOpenExecutionMapForThread,
                 onOpenSideChatFromRun,
                 onCopyMessage,
                 onAddMessageToPrompt,
@@ -5666,7 +5689,7 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     provider={currentProvider}
-                    view={executionViewsById.get(executionResultExecutionId(msg) || '')}
+                    view={executionView}
                     onOpenExecutionMap={onOpenExecutionMapForThread}
                   />
                 ) : isFleetWaveCard ? (() => {

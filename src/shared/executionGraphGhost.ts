@@ -16,6 +16,7 @@
 /** Cell states, in the order a step travels through them. */
 export type ExecutionGhostStatus =
   | 'proposed'
+  | 'queued'
   | 'working'
   | 'needs_action'
   | 'completed'
@@ -32,7 +33,8 @@ export interface ExecutionGhostCell {
 export interface ExecutionGhostCounts {
   readonly total: number
   readonly proposed: number
-  readonly working: number
+  readonly queued: number
+  readonly running: number
   readonly needsAction: number
   readonly completed: number
   readonly failed: number
@@ -77,14 +79,15 @@ export function isWorkBearingStepKind(kind: string): boolean {
  * matters to anyone reading the counts rather than the picture.
  */
 const NOT_YET_STARTED = new Set(['dormant', 'ready'])
-const IN_FLIGHT = new Set(['claimed', 'queued', 'running', 'waiting_retry'])
+const QUEUED = new Set(['claimed', 'queued', 'waiting_retry'])
 /** Stopped, waiting on a person — the amber ask. */
 const AWAITING_A_PERSON = new Set(['waiting_input', 'waiting_approval', 'requires_action'])
 const ABANDONED = new Set(['cancelled', 'skipped'])
 
 export function executionGhostStatusForActivation(state: string | undefined): ExecutionGhostStatus {
   if (!state || NOT_YET_STARTED.has(state)) return 'proposed'
-  if (IN_FLIGHT.has(state)) return 'working'
+  if (QUEUED.has(state)) return 'queued'
+  if (state === 'running') return 'working'
   if (AWAITING_A_PERSON.has(state)) return 'needs_action'
   if (state === 'succeeded') return 'completed'
   if (state === 'failed') return 'failed'
@@ -127,14 +130,16 @@ export function executionGraphGhostCounts(
   cells: readonly ExecutionGhostCell[]
 ): ExecutionGhostCounts {
   let proposed = 0
-  let working = 0
+  let queued = 0
+  let running = 0
   let needsAction = 0
   let completed = 0
   let failed = 0
   let skipped = 0
   for (const cell of cells) {
     if (cell.status === 'proposed') proposed += 1
-    else if (cell.status === 'working') working += 1
+    else if (cell.status === 'queued') queued += 1
+    else if (cell.status === 'working') running += 1
     else if (cell.status === 'needs_action') needsAction += 1
     else if (cell.status === 'completed') completed += 1
     else if (cell.status === 'failed') failed += 1
@@ -143,7 +148,8 @@ export function executionGraphGhostCounts(
   return {
     total: cells.length,
     proposed,
-    working,
+    queued,
+    running,
     needsAction,
     completed,
     failed,
@@ -203,12 +209,13 @@ export function executionGhostCardView(run: {
 
 /**
  * The one-line read under the card header. Names only what is actually true —
- * a graph with nothing in flight must not claim agents are working.
+ * a graph with only queue claims must not claim providers are running.
  */
 export function executionGhostSummary(counts: ExecutionGhostCounts): string {
   if (counts.total === 0) return 'No agent steps'
   const parts: string[] = [`${counts.settled} of ${counts.total} settled`]
-  if (counts.working > 0) parts.push(`${counts.working} in flight`)
+  if (counts.running > 0) parts.push(`${counts.running} running`)
+  if (counts.queued > 0) parts.push(`${counts.queued} queued`)
   if (counts.needsAction > 0) parts.push(`${counts.needsAction} awaiting a decision`)
   if (counts.proposed > 0) parts.push(`${counts.proposed} proposed`)
   if (counts.failed > 0) parts.push(`${counts.failed} failed`)

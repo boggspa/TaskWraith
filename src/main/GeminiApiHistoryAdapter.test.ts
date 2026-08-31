@@ -297,6 +297,24 @@ describe('chatMessagesToGeminiContents', () => {
     expect(out[1].role).toBe('model')
   })
 
+  it('does not replay durable execution-attempt evidence as user or model history', () => {
+    const result = chatMessagesToGeminiContents([
+      msg('user', 'ordinary user'),
+      msg('user', 'INTERNAL_GRAPH_PROMPT', {
+        metadata: { kind: 'executionGraphAttempt' }
+      }),
+      msg('assistant', 'INTERNAL_SCOUT_OUTPUT', {
+        metadata: { kind: 'executionGraphAttemptOutput' }
+      }),
+      msg('assistant', 'ordinary assistant')
+    ])
+
+    expect(result).toEqual([
+      { role: 'user', parts: [{ text: 'ordinary user' }] },
+      { role: 'model', parts: [{ text: 'ordinary assistant' }] }
+    ])
+  })
+
   it('skips messages with empty / whitespace-only content', () => {
     const out = chatMessagesToGeminiContents([
       msg('user', 'q'),

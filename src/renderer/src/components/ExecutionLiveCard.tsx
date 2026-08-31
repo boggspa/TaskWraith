@@ -38,10 +38,11 @@ function liveStatusSlug(state: string): string {
   return state === 'requires_action' ? 'attention' : 'running'
 }
 
-function liveStatusLabel(state: string): string {
-  if (state === 'requires_action') return 'Needs attention'
-  if (state === 'waiting') return 'Waiting'
-  return 'Running'
+function liveStatusLabel(view: ExecutionGhostCardView): string {
+  if (view.state === 'requires_action') return 'Needs attention'
+  if (view.counts.running > 0) return 'Running'
+  if (view.counts.queued > 0) return 'Queued'
+  return 'Preparing'
 }
 
 export function ExecutionLiveCard({
@@ -53,6 +54,9 @@ export function ExecutionLiveCard({
 }: ExecutionLiveCardProps): JSX.Element {
   const seatLink = executionSeatLink(view.seatId, view.executionId)
   const paused = view.state === 'requires_action'
+  const providerRunning = !paused && view.counts.running > 0
+  const pending = !paused && !providerRunning
+  const progressFraction = view.counts.total ? view.counts.settled / view.counts.total : 0
 
   const metaParts = ['Durable execution', executionGhostSummary(view.counts)]
   if (paused) metaParts.push('paused — needs a decision')
@@ -62,10 +66,12 @@ export function ExecutionLiveCard({
       cardClassName="execution-live-card"
       provider={provider}
       status={liveStatusSlug(view.state)}
-      statusLabel={liveStatusLabel(view.state)}
+      statusLabel={liveStatusLabel(view)}
       // A paused graph is stopped: animating it would say work is happening
       // when the whole point of the state is that none is.
-      isRunning={!paused}
+      isRunning={providerRunning}
+      isPending={pending}
+      progressFraction={progressFraction}
       glyph={<ProviderBrandLogoIcon provider={provider} />}
       name={view.title || 'Durable execution'}
       metaParts={metaParts}

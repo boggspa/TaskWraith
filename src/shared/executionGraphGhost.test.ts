@@ -91,10 +91,10 @@ describe('execution graph ghost cells', () => {
     const expected: Record<string, string> = {
       dormant: 'proposed',
       ready: 'proposed',
-      claimed: 'working',
-      queued: 'working',
+      claimed: 'queued',
+      queued: 'queued',
       running: 'working',
-      waiting_retry: 'working',
+      waiting_retry: 'queued',
       waiting_input: 'needs_action',
       waiting_approval: 'needs_action',
       requires_action: 'needs_action',
@@ -124,7 +124,8 @@ describe('execution graph ghost counts', () => {
     expect(executionGraphGhostCounts(cells)).toEqual({
       total: 5,
       proposed: 0,
-      working: 1,
+      queued: 0,
+      running: 1,
       needsAction: 1,
       completed: 1,
       failed: 1,
@@ -139,7 +140,18 @@ describe('execution graph ghost counts', () => {
       executionGraphGhostCellStates({ steps, activations: [] })
     )
     expect(executionGhostSummary(idle)).toBe('0 of 5 settled · 5 proposed')
-    expect(executionGhostSummary(idle)).not.toContain('in flight')
+    expect(executionGhostSummary(idle)).not.toContain('running')
+
+    const active = executionGraphGhostCounts(
+      executionGraphGhostCellStates({
+        steps,
+        activations: [
+          { stepId: 'scout-1', state: 'queued' },
+          { stepId: 'scout-2', state: 'running' }
+        ]
+      })
+    )
+    expect(executionGhostSummary(active)).toBe('0 of 5 settled · 1 running · 1 queued · 3 proposed')
 
     const done = executionGraphGhostCounts(
       executionGraphGhostCellStates({

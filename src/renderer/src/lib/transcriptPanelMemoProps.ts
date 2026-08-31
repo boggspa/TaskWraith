@@ -36,6 +36,11 @@ export type TranscriptPanelMemoComparable = {
   currentWorkspacePath?: unknown
   currentProviderLabel: unknown
   currentProvider: unknown
+  onOpenExecutionMapForThread?: unknown
+  hasLiveOwnedExecution?: boolean
+  ownedExecutionViews?: readonly unknown[]
+  onCancelOwnedExecution?: unknown
+  onResumeOwnedExecution?: unknown
   thinkingProviderLabel?: unknown
   thinkingProvider?: unknown
   thinkingProviderClass?: unknown
@@ -139,6 +144,45 @@ export function transcriptAuxiliaryChatsSignature(chats: readonly ChatRecord[]):
     .join('\u0002')
 }
 
+export function transcriptOwnedExecutionViewsSignature(
+  views: readonly unknown[] | undefined
+): string {
+  if (!views?.length) return ''
+  return views
+    .map((value) => {
+      const view = (value || {}) as Record<string, any>
+      const counts = (view.counts || {}) as Record<string, unknown>
+      const cells = Array.isArray(view.cells) ? view.cells : []
+      return [
+        String(view.executionId || ''),
+        String(view.title || ''),
+        String(view.seatId || ''),
+        String(view.state || ''),
+        String(view.settled === true),
+        ...[
+          'total',
+          'proposed',
+          'queued',
+          'running',
+          'needsAction',
+          'completed',
+          'failed',
+          'skipped',
+          'settled'
+        ].map((key) => String(counts[key] ?? '')),
+        cells
+          .map((cell: Record<string, unknown>) =>
+            [cell.id, cell.status, cell.title, cell.kind]
+              .map((part) => String(part ?? ''))
+              .join('\u0004')
+          )
+          .join('\u0005')
+      ].join('\u0001')
+    })
+    .sort()
+    .join('\u0002')
+}
+
 export function transcriptAuxiliaryChatsEqual(
   previous: readonly ChatRecord[],
   next: readonly ChatRecord[]
@@ -196,6 +240,12 @@ export function transcriptPanelPropsEqual(
     previous.currentWorkspacePath === next.currentWorkspacePath &&
     previous.currentProviderLabel === next.currentProviderLabel &&
     previous.currentProvider === next.currentProvider &&
+    previous.onOpenExecutionMapForThread === next.onOpenExecutionMapForThread &&
+    previous.hasLiveOwnedExecution === next.hasLiveOwnedExecution &&
+    transcriptOwnedExecutionViewsSignature(previous.ownedExecutionViews) ===
+      transcriptOwnedExecutionViewsSignature(next.ownedExecutionViews) &&
+    previous.onCancelOwnedExecution === next.onCancelOwnedExecution &&
+    previous.onResumeOwnedExecution === next.onResumeOwnedExecution &&
     previous.thinkingProviderLabel === next.thinkingProviderLabel &&
     previous.thinkingProvider === next.thinkingProvider &&
     previous.thinkingProviderClass === next.thinkingProviderClass &&

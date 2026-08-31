@@ -9,6 +9,7 @@ import {
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { THREAD_MESSAGE_TRANSCRIPT_KIND } from '../shared/threadMessage'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
+import { isExecutionGraphInternalTranscriptMessage } from '../shared/executionGraphTranscriptVisibility'
 
 export interface TranscriptMarkdownExportResult {
   markdown: string
@@ -39,7 +40,11 @@ export interface TranscriptMarkdownExportOptions {
 }
 
 function exportableTranscriptMessages(chat: ChatRecord): ChatMessage[] {
-  return (chat.messages || []).filter((message) => !isRetiredExternalChannelInboundMessage(message))
+  return (chat.messages || []).filter(
+    (message) =>
+      !isRetiredExternalChannelInboundMessage(message) &&
+      !isExecutionGraphInternalTranscriptMessage(message)
+  )
 }
 
 /**
